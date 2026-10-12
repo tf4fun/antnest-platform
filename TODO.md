@@ -17,6 +17,7 @@ Issue 状态最后核对于 2026-10-11：136 个 issue，74 个已关闭，62 �
 
 ## 当前批次
 
+- #59 第二轮完整 CI（`23c097b9`、run `38245408598`）的 21 分片/84 套件为 72 passed、11 warning、1 failed：旧 Gateway bootstrap 的真实三字段 Principal 被误套用新版 Agent UI 显示解析器。真实旧形状先 red（15 通过、1 失败），消费方独立验证旧 DTO 后 81 项相关回归通过；原 Principal、Agent 结构、Cookie、TTL 与最终 401 门禁保留，独立 review 无阻塞。核心缓存停机/负载与 HTTPS 分片已复核通过；本轮失败证据保留，修正后的真实 Identity Docker 和完整 CI 仍待。
 - #59 Browser 消费批次仅适配组织管理员经 Console 的撤销：两原会话共用单调起点和实际部署 TTL，逐请求存证，等待二者完成后才进入 stream/UI/独立管理员检查。本地改密码与 self-revoke 的即时 401 不变；独立 review 通过，准备真实 HTTPS 复跑和完整 CI。
 - #59 Identity 消费批次已修复暖 Principal 的跨服务撤销观察及 feed SERVER 选择：截止时间来自实际部署 TTL，逐请求保留原 Principal/Trace/单调时刻，最终必须 401，冷 scope 和本地变更继续即时拒绝。445 项回归通过；追加失败先行的泄漏、取消完成窗口和真实 503 存证边界修复。旧 CI 的 127 条 feed 原始 Trace 离线复核通过，原失败状态不改。完整仓库检查识别 5 个旧 fixture 缺当前 CLIENT RPC 字段，补齐后原失败测试通过；最终仓库/全量 Docker CI 准入仍待。
 - #59 ACP 诊断消费者已失败先行修复（7 个确定性失败）：File/native 已审核错误保留为独立诊断数组，共享汇总先验证原始库存及告警，再接受 passed。93 项相关回归与独立 review 通过；未知错误、缺父、外部来源错误及未知告警继续拒绝，Docker 准入仍待。

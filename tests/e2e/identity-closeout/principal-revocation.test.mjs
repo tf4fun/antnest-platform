@@ -198,13 +198,11 @@ test("cancellation and transport failures are never retried or admitted", async 
   );
 });
 
-test("warm legacy workspace bootstrap retains its actual Principal projection", async () => {
+function legacyFixture() {
   const f = fixture();
   const expected = {
     user_id: principal.user_id,
     organization_id: principal.organization_id,
-    organization_slug: principal.organization_slug,
-    organization_name: principal.organization_name,
     administrator: false,
   };
   let calls = 0;
@@ -212,29 +210,192 @@ test("warm legacy workspace bootstrap retains its actual Principal projection", 
     assert.equal(path, "/api/app/bootstrap");
     assert.equal(options.headers.Cookie, "original-cookie");
     const status = ++calls === 1 ? 200 : 401;
-    return {
+    const response = {
       status,
       traceID: calls.toString(16).padStart(32, "0"),
       headers: new Headers({ "cache-control": "no-store" }),
       body:
         status === 200
-          ? { principal: expected, agents: [] }
+          ? {
+              principal: structuredClone(expected),
+              agents: [
+                {
+                  agent_id: "agent",
+                  name: "Agent",
+                  lifecycle_state: "created",
+                  activation_state: "enabled",
+                  runtime_state: "available",
+                },
+              ],
+            }
           : { code: "unauthenticated" },
     };
+    f.seen.push(response);
+    return response;
   };
-  const options = {
+  f.options = {
     ...f.options,
     path: "/api/app/bootstrap",
     principal: expected,
   };
-  assert.equal((await observePrincipalRevocation(options)).complete, true);
-  calls = 0;
+  return f;
+}
+
+test("warm legacy workspace bootstrap retains its actual Principal projection", async () => {
+  const f = legacyFixture();
+  const result = await observePrincipalRevocation(f.options);
+  assert.equal(result.complete, true);
+  assert.deepEqual(
+    result.observations.map((item) => item.status),
+    [200, 401],
+  );
+  assert.deepEqual(Object.keys(result.observations[0].principal).sort(), [
+    "administrator",
+    "organization_id",
+    "user_id",
+  ]);
+  const changed = legacyFixture();
   await assert.rejects(
     observePrincipalRevocation({
-      ...options,
-      principal: { ...expected, administrator: true },
+      ...changed.options,
+      principal: { ...changed.options.principal, administrator: true },
     }),
   );
+});
+
+test("legacy revocation accepts an empty workspace and inactive lifecycle projections", async () => {
+  for (const state of [
+    undefined,
+    { lifecycle_state: "not_created", runtime_state: "absent" },
+    { lifecycle_state: "deleted", runtime_state: "absent" },
+    {
+      lifecycle_state: "created",
+      activation_state: "disabled",
+      runtime_state: "exited",
+    },
+  ]) {
+    const f = legacyFixture();
+    const original = f.options.client.request;
+    f.options.client.request = async (...args) => {
+      const response = await original(...args);
+      if (response.status === 200)
+        response.body.agents = state
+          ? [{ agent_id: "agent", name: "Agent", ...state }]
+          : [];
+      return response;
+    };
+    assert.equal((await observePrincipalRevocation(f.options)).complete, true);
+  }
+});
+
+for (const [name, change] of [
+  [
+    "foreign user",
+    (r) => {
+      r.body.principal.user_id = "foreign";
+    },
+  ],
+  [
+    "foreign organization",
+    (r) => {
+      r.body.principal.organization_id = "foreign";
+    },
+  ],
+  [
+    "changed administrator",
+    (r) => {
+      r.body.principal.administrator = true;
+    },
+  ],
+  [
+    "invalid administrator",
+    (r) => {
+      r.body.principal.administrator = "false";
+    },
+  ],
+  [
+    "missing agents",
+    (r) => {
+      delete r.body.agents;
+    },
+  ],
+  [
+    "invalid agents",
+    (r) => {
+      r.body.agents = {};
+    },
+  ],
+  [
+    "missing agent identity",
+    (r) => {
+      delete r.body.agents[0].agent_id;
+    },
+  ],
+  [
+    "duplicate agent",
+    (r) => {
+      r.body.agents.push(structuredClone(r.body.agents[0]));
+    },
+  ],
+  [
+    "missing activation",
+    (r) => {
+      delete r.body.agents[0].activation_state;
+    },
+  ],
+  [
+    "uncreated activation",
+    (r) => {
+      r.body.agents[0].lifecycle_state = "not_created";
+    },
+  ],
+  [
+    "invalid runtime",
+    (r) => {
+      r.body.agents[0].runtime_state = "foreign";
+    },
+  ],
+  [
+    "private field",
+    (r) => {
+      r.body.agents[0].runtime_endpoint = "PRIVATE-LEGACY-CANARY";
+    },
+  ],
+  [
+    "Cookie write",
+    (r) => {
+      r.headers.append("set-cookie", "secret=changed");
+    },
+  ],
+  [
+    "unrelated status",
+    (r) => {
+      r.status = 503;
+    },
+  ],
+])
+  test(`legacy revocation preserves evidence then rejects ${name}`, async () => {
+    const f = legacyFixture();
+    const original = f.options.client.request;
+    f.options.client.request = async (...args) => {
+      const response = await original(...args);
+      change(response);
+      return response;
+    };
+    await assert.rejects(observePrincipalRevocation(f.options), (error) => {
+      assert(!inspect(error).includes("PRIVATE-LEGACY-CANARY"));
+      return true;
+    });
+    assert.equal(f.seen.length, 1);
+    assert.equal(f.recorded.length, 1);
+  });
+
+test("legacy bootstrap success at the revocation deadline is still rejected", async () => {
+  const f = legacyFixture();
+  f.advance(1100);
+  await assert.rejects(observePrincipalRevocation(f.options));
+  assert.equal(f.seen.length, 1);
+  assert.equal(f.recorded.length, 1);
 });
 
 test("malformed upstream values cannot escape in public assertion errors", async () => {

@@ -47,6 +47,10 @@ inspector supplies `ANTNEST_E2E_RESOLVE_TTL_MS` from the actual container settin
 Transport and JSON decoding failures stop immediately; they cannot supply a
 decoded observation. Content-validation errors use fixed messages, while the
 actual response values remain in private evidence.
+The deprecated Gateway `/api/app/bootstrap` keeps its three-field Principal
+(`user_id`, `organization_id`, `administrator`) and Agent management projection.
+Its revocation observer validates that DTO directly; the active Agent UI
+bootstrap still requires the organization display fields under its own contract.
 
 Organization feed searches select the unique Identity SERVER by service,
 route, method and RPC, then require its direct Gateway CLIENT parent. CLIENT

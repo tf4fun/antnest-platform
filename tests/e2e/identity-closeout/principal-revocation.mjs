@@ -6,10 +6,64 @@ import {
 } from "../../support/storage.mjs";
 import { assertNoStore } from "./support.mjs";
 import { assertOrganizationSession } from "./organization-session.mjs";
-import { workspaceFromBootstrap } from "../../../services/agent-ui/web/src/lib/bootstrap.ts";
 
 // Persist every HTTP result before the bounded observer checks its status.
 const observedStatuses = Array.from({ length: 500 }, (_, index) => index + 100);
+
+// This deprecated Gateway DTO predates the active Agent UI display projection.
+// Its Principal has only these three fields; it has no organization labels.
+function assertLegacyBootstrap(payload) {
+  assert.deepEqual(Object.keys(payload).sort(), ["agents", "principal"]);
+  assert.deepEqual(Object.keys(payload.principal).sort(), [
+    "administrator",
+    "organization_id",
+    "user_id",
+  ]);
+  for (const key of ["user_id", "organization_id"])
+    assert(
+      typeof payload.principal[key] === "string" &&
+        payload.principal[key].length > 0,
+    );
+  assert.equal(typeof payload.principal.administrator, "boolean");
+  assert(Array.isArray(payload.agents));
+  const ids = new Set();
+  for (const agent of payload.agents) {
+    assert(
+      Object.keys(agent).every((key) =>
+        [
+          "agent_id",
+          "name",
+          "lifecycle_state",
+          "activation_state",
+          "runtime_state",
+        ].includes(key),
+      ),
+    );
+    for (const key of ["agent_id", "name"])
+      assert(typeof agent[key] === "string" && agent[key].length > 0);
+    assert(
+      ["not_created", "created", "deleted"].includes(agent.lifecycle_state),
+    );
+    assert(
+      [
+        "unknown",
+        "waiting",
+        "available",
+        "unhealthy",
+        "exited",
+        "absent",
+      ].includes(agent.runtime_state),
+    );
+    assert.equal(
+      Object.hasOwn(agent, "activation_state"),
+      agent.lifecycle_state === "created",
+    );
+    if (agent.lifecycle_state === "created")
+      assert(["enabled", "disabled"].includes(agent.activation_state));
+    assert(!ids.has(agent.agent_id));
+    ids.add(agent.agent_id);
+  }
+}
 
 // Only already-warm cross-service mutations use this observer. Local Gateway
 // mutations and cold scopes keep their immediate rejection assertions.
@@ -92,7 +146,7 @@ export async function observePrincipalRevocation({
               slug: original.organization_slug,
               name: original.organization_name,
             });
-          else workspaceFromBootstrap(response.body);
+          else assertLegacyBootstrap(response.body);
           assert.deepEqual(
             response.body.principal,
             original,
