@@ -267,6 +267,24 @@ read, and is cancelled with a settled, quiescent durable terminal audit. The
 flow retains actual container states, wire frames, Workspace projections, model
 observations and complete raw Trace closures. Search/inventory or individual
 Trace failures retain independent evidence and fail the archive.
+The same stop window also observes five complete HTTP 503 responses: cold
+Console, Workspace and ACP scopes, a new local login, and an independently
+warmed browser session after its idle deadline. Only this disposable Gateway
+uses a verified two-second request timeout; cache TTL remains ten seconds.
+Provisioning keeps its normal 150-second budget. The fixture then recreates only
+its Gateway, verifies its ownership, image, health and deployed settings, and
+starts load and outage observations against that fresh process.
+All rejection requests are joined, and their responses must arrive inside the
+original five seconds without Cookie writes or business forwarding. Client
+timeouts cannot substitute for responses. A fixture binds the exact new token,
+user, organization, membership and browser kind in the owned Identity database,
+first proves that a wrong Membership cannot match or change it, then shortens
+only that row's idle deadline. Full rows are compared only in memory to prove
+the two warm credentials remain unchanged; durable evidence contains counts
+and booleans. Two ordinary session reads must not renew the short deadline.
+Database observation proves expiry before dispatch; the
+same Cookie receives an authoritative 401 after recovery. Raw failed Identity
+CLIENT spans and HTTP roots remain in strict diagnostics.
 After the recovery observation and public connection cleanup, this batch drains
 its Agent UI process so internal ACP HTTP watches can finish their real SERVER
 spans before collection; raw parents are never fabricated or discarded.
@@ -307,6 +325,7 @@ source hashes and strict findings. It is an offline replay, not a new Docker run
 Observer and failure-first coverage is in `resolve-cache-outage.test.mjs`,
 `resolve-cache-outage-collect.test.mjs`,
 `resolve-cache-outage-authority.test.mjs`,
+`resolve-cache-outage-rejection.test.mjs`, `resolve-cache-expiry-fixture.test.mjs`,
 `resolve-cache-outage-replay.test.mjs`, `workspace-closeout/chat-outage.test.mjs`,
 `resolve-cache-stream.test.mjs`, `workspace-closeout/c4-cache-model.test.mjs`
 and `lifecycle-closeout/acp.test.mjs`. The model fixture holds two stages of the
@@ -315,9 +334,9 @@ observer validates named SSE events with the production projection decoder,
 retains raw frames without reconnecting, and distinguishes remote closure from
 local cleanup. The ACP helper can negotiate delivery marks and target a cancel
 at the observed Run. A passed business window and raw archive do not establish
-complete outage/recovery admission: the separate authority gate, cold and expired
-HTTP rejection, recovery revocations and the remaining owning Trace gates remain explicit
-pending items in the report.
+complete outage/recovery admission. Authority, cancellation and HTTP rejection
+have separate owning results; recovery revocations and the remaining owning
+Trace gates stay explicit pending items in the report.
 
 Some contract checks can be run directly:
 

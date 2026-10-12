@@ -120,6 +120,7 @@ function archiveHarness(
   t,
   change = () => {},
   inspectAuthority = () => ({ status: "passed", fixture: true }),
+  inspectRejections,
 ) {
   const fixture = sample();
   fixture.evidence.observed_at_ms = Date.now() - 1000;
@@ -154,6 +155,7 @@ function archiveHarness(
         signal: AbortSignal.timeout(10000),
         directory: root,
         inspectAuthority,
+        inspectRejections,
         wait: async () => {},
         search: async (_base, query) => {
           const tags = JSON.parse(query.get("tags"));
@@ -237,6 +239,56 @@ function withOutageChat(s) {
   );
   return f;
 }
+
+test("outage archive runs HTTP rejection gate against archived sources", async (t) => {
+  let observed = false;
+  const h = archiveHarness(
+    t,
+    (s) => {
+      withOutageChat(s);
+      s.evidence.rejections = { fixture: true };
+    },
+    undefined,
+    (evidence, collection) => {
+      assert(evidence.rejections.fixture);
+      assert(collection.traces.size > 0);
+      for (const id of collection.traces.keys())
+        assert(collection.archivedTraceIDs.has(id));
+      observed = true;
+      return { status: "passed" };
+    },
+  );
+  const result = await h.archive();
+  assert(observed);
+  assert.equal(result.owning_gates.http_rejections.status, "passed");
+});
+
+test("HTTP rejection gate failure preserves raw archive and strict failure", async (t) => {
+  const h = archiveHarness(
+    t,
+    (s) => {
+      withOutageChat(s);
+      s.evidence.rejections = { fixture: true };
+    },
+    undefined,
+    () => {
+      throw new Error("wrong actual outage HTTP response");
+    },
+  );
+  await assert.rejects(h.archive(), AggregateError);
+  const report = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-archive.json")),
+  );
+  assert.equal(report.status, "archive_failed");
+  assert.equal(report.owning_gates.http_rejections.status, "pending");
+  assert.equal(report.owning_gates.cancellation.status, "passed");
+  assert(
+    report.failures.some((line) =>
+      line.includes("wrong actual outage HTTP response"),
+    ),
+  );
+  assert(existsSync(join(h.root, "outage-traces", `${id(1)}.json`)));
+});
 
 test("outage archive invokes the owning cancellation inspector with actual model and audit observations", async (t) => {
   const h = archiveHarness(t, withOutageChat);

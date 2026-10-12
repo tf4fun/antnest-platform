@@ -10,6 +10,7 @@ import { observedHeldRun } from "../workspace-closeout/browser-control.mjs";
 import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { observeWorkspaceStream } from "./resolve-cache-stream.mjs";
 import { collectOutageTraceArchive } from "./resolve-cache-outage-collect.mjs";
+import { shortenIdleSession } from "./resolve-cache-expiry-fixture.mjs";
 import {
   inspectOutageWindow,
   inspectFreshConsumerWindow,
@@ -34,9 +35,11 @@ export async function verifyWarmOutage({
   output,
   docker,
   compose,
+  requestTimeoutMS,
 }) {
   assert.equal(settings.resolveTTLMS, 10000);
   assert.equal(settings.captureRpcContent, false);
+  assert.equal(requestTimeoutMS, 2000);
   const agentID = fixture.agentID,
     base = `/api/app/workspace/v1/agents/${encodeURIComponent(agentID)}`;
   const evidence = {
@@ -47,6 +50,7 @@ export async function verifyWarmOutage({
     model_observations: [],
     identity: {},
     consumer_restarts: [],
+    rejections: { request_timeout_ms: requestTimeoutMS },
     ...mark(),
   };
   const secrets = [member.password, admin.password, "stage3-model-secret"];
@@ -64,6 +68,7 @@ export async function verifyWarmOutage({
     owner,
     identityID,
     stopped = false,
+    rejectionWork,
     problem,
     result;
   const write = () => {
@@ -251,6 +256,17 @@ export async function verifyWarmOutage({
         ?.currentValue,
       "auto",
     );
+    // These new tokens have never resolved a profile. Prepare them before
+    // starting the consumer key-cache budget, and keep their cookies separate.
+    const { client: coldConsole } = await login(admin, "cold-console-login");
+    const { client: coldWorkspace } = await login(
+      member,
+      "cold-workspace-login",
+    );
+    const { client: shortSession, response: shortLogin } = await login(
+      member,
+      "short-idle-login",
+    );
     // New processes provide a conservative lower bound for their in-memory
     // key caches; subsequent successful admissions prove that keys were loaded.
     console.log(
@@ -397,6 +413,26 @@ export async function verifyWarmOutage({
         value
       );
     }, "first model held");
+    const idleFixture = await shortenIdleSession({
+      project: config.project,
+      compose,
+      docker,
+      token: shortSession.accessToken,
+      principal: shortLogin.body.principal,
+      idleMS: 2000,
+      secrets,
+      protectedTokens: [client.accessToken, administrator.accessToken],
+      otherMembership: adminSession.body.principal.membership_id,
+    });
+    evidence.rejections.expired_session = idleFixture.evidence;
+    idleFixture.evidence.credential_scope = credentialScope(
+      shortSession.cookie,
+    );
+    await http(shortSession, "/api/session", { label: "short-idle-warm" });
+    await idleFixture.read("after-warm");
+    await http(shortSession, "/api/session", { label: "short-idle-hit" });
+    const shortIdle = await idleFixture.read("after-hit");
+    assert(!shortIdle.expired && shortIdle.remaining_ms > 0);
     const auditPath = `/api/admin/execution-audits/${encodeURIComponent(heldRun.runId)}`;
     const prewarm = await http(administrator, auditPath, {
       label: "warm-console-audit",
@@ -413,6 +449,57 @@ export async function verifyWarmOutage({
     evidence.identity.stopped = await inspectIdentity();
     assert.equal(evidence.identity.stopped.running, false);
     const windowSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+    const rejectionOptions = { status: 503, requestSignal: windowSignal };
+    // Observe every branch immediately and join all of them, including on a
+    // separate business failure. A fetch timeout never creates an HTTP row.
+    rejectionWork = Promise.allSettled([
+      http(coldConsole, "/api/admin/execution-synchronization", {
+        ...rejectionOptions,
+        label: "stopped-cold-console",
+      }),
+      http(coldWorkspace, `${sessionPath}/view`, {
+        ...rejectionOptions,
+        label: "stopped-cold-workspace",
+      }),
+      http(
+        coldWorkspace,
+        `/api/app/agents/${encodeURIComponent(agentID)}/v1/acp`,
+        {
+          ...rejectionOptions,
+          label: "stopped-cold-acp",
+          body: {
+            jsonrpc: "2.0",
+            id: "cold-initialize",
+            method: "initialize",
+            params: { protocolVersion: 1, clientCapabilities: {} },
+          },
+        },
+      ),
+      http(new GatewayClient(config.gateway), "/api/session/login", {
+        ...rejectionOptions,
+        label: "stopped-new-login",
+        body: member,
+      }),
+      (async () => {
+        // The DB observation gives a conservative monotonic upper bound. Read
+        // the DB again to prove expiry; no host/DB wall-clock comparison.
+        await delay(
+          Math.max(
+            0,
+            shortIdle.at + shortIdle.remaining_ms - performance.now(),
+          ),
+          undefined,
+          { signal: windowSignal },
+        );
+        windowSignal.throwIfAborted();
+        const expired = await idleFixture.read("expired");
+        assert(expired.expired && expired.remaining_ms <= 0);
+        return http(shortSession, "/api/session", {
+          ...rejectionOptions,
+          label: "stopped-expired-session",
+        });
+      })(),
+    ]);
     const after = stream.records.length;
     const started_at = performance.now();
     const response = await fetch(`${config.model}/release/${outagePhase}`, {
@@ -508,6 +595,20 @@ export async function verifyWarmOutage({
       windowSignal,
       5000,
     );
+    const rejectionResults = await rejectionWork;
+    const rejectionErrors = rejectionResults
+      .filter((row) => row.status === "rejected")
+      .map((row) => row.reason);
+    if (rejectionErrors.length)
+      throw new AggregateError(
+        rejectionErrors,
+        "actual outage HTTP rejection failed",
+      );
+    for (const { value } of rejectionResults)
+      assert(
+        value.at <= evidence.identity.stopped.at + 5000,
+        "HTTP rejection exceeded original five-second window",
+      );
     await delay(
       Math.max(0, evidence.identity.stopped.at + 5000 - performance.now()),
       undefined,
@@ -545,15 +646,14 @@ export async function verifyWarmOutage({
     await http(client, `${sessionPath}/view`, {
       label: "recovered-workspace-view",
     });
+    await http(shortSession, "/api/session", {
+      label: "recovered-expired-session",
+      status: 401,
+    });
     result = {
       ...result,
       consumer_key_budget: evidence.consumer_key_budget,
-      pending: [
-        "cache-cct-feed-budget-traces",
-        "cold-and-expired-http",
-        "recovery-revocations",
-        "strict-trace-admission",
-      ],
+      pending: ["recovery-revocations", "strict-trace-admission"],
     };
   } catch (error) {
     problem = error;
@@ -561,6 +661,15 @@ export async function verifyWarmOutage({
     throw error;
   } finally {
     const errors = [];
+    if (rejectionWork) {
+      const settled = await rejectionWork;
+      evidence.rejections.settled = settled.map((row) => ({
+        status: row.status,
+        ...(row.status === "rejected"
+          ? { message: row.reason.message }
+          : { label: row.value.label }),
+      }));
+    }
     if (stream)
       try {
         await stream.closeAndWait();

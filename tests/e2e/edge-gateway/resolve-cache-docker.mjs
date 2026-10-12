@@ -75,6 +75,7 @@ try {
     ANTNEST_EDGE_TLS_HOST_PORT: config.env.ANTNEST_EDGE_HOST_PORT,
     ANTNEST_EDGE_TLS_BIND_ADDRESS: "127.0.0.1",
     ANTNEST_EDGE_RESOLVE_CACHE_TTL: "10s",
+    ANTNEST_EDGE_REQUEST_TIMEOUT: "150s",
     ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL: "1s",
     ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: "false",
     ANTNEST_C4_CONTROL_DYNAMIC_RANGE:
@@ -154,6 +155,7 @@ try {
   assert.equal(settings.captureRpcContent, false);
   assert.equal(actual.OTEL_SDK_DISABLED, "false");
   assert.equal(actual.OTEL_TRACES_EXPORTER, "otlp");
+  assert.equal(actual.ANTNEST_EDGE_REQUEST_TIMEOUT, "150s");
   const controllerID = await docker(compose(["ps", "-q", "agent-controller"]));
   const [controller] = JSON.parse(await docker(["inspect", controllerID]));
   assert.equal(
@@ -169,15 +171,17 @@ try {
       "ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL=1s",
     ),
   );
-  save("deployment.json", {
+  const deployment = {
     gateway_image: gateway.Image,
     gateway_container: gateway.Id,
     ...settings,
+    request_timeout_ms: 150000,
     telemetry_disabled: actual.OTEL_SDK_DISABLED,
     traces_exporter: actual.OTEL_TRACES_EXPORTER,
     controller_container: controllerID,
     execution_resync_interval: "1s",
-  });
+  };
+  save("setup-deployment.json", deployment);
   setDefaultCACertificates([...roots, certificate.ca]);
   await until(
     async () => {
@@ -196,6 +200,55 @@ try {
     30000,
   );
   const fixture = await setup(config, signal);
+  // Provisioning keeps its normal budget. Recreate only the owned Gateway
+  // after setup and before any load/warm-cache observations. The short request
+  // budget lets real negative HTTP responses complete inside the 5s stop.
+  config.env.ANTNEST_EDGE_REQUEST_TIMEOUT = "2s";
+  await docker(
+    compose([
+      "up",
+      "-d",
+      "--no-deps",
+      "--force-recreate",
+      "--wait",
+      "--wait-timeout",
+      "30",
+      "--no-build",
+      "edge-gateway",
+    ]),
+  );
+  const observedID = await docker(compose(["ps", "-q", "edge-gateway"]));
+  assert.match(observedID, /^[a-f0-9]{64}$/u);
+  assert.notEqual(observedID, gatewayID);
+  const [observed] = JSON.parse(await docker(["inspect", observedID]));
+  assert.equal(
+    observed.Config.Labels["com.docker.compose.project"],
+    config.project,
+  );
+  assert.equal(
+    observed.Config.Labels["com.docker.compose.service"],
+    "edge-gateway",
+  );
+  assert.equal(observed.State.Running, true);
+  assert.equal(observed.State.Health.Status, "healthy");
+  assert.equal(observed.Image, gateway.Image);
+  assert.deepEqual(observed.HostConfig.PortBindings ?? {}, {});
+  const observedEnv = Object.fromEntries(
+    observed.Config.Env.map((value) => {
+      const split = value.indexOf("=");
+      return [value.slice(0, split), value.slice(split + 1)];
+    }),
+  );
+  assert.equal(observedEnv.ANTNEST_EDGE_REQUEST_TIMEOUT, "2s");
+  assert.deepEqual(resolveObservationConfig(observedEnv, {}), settings);
+  assert.equal(observedEnv.OTEL_SDK_DISABLED, "false");
+  assert.equal(observedEnv.OTEL_TRACES_EXPORTER, "otlp");
+  save("deployment.json", {
+    ...deployment,
+    gateway_container: observedID,
+    request_timeout_ms: 2000,
+    setup_gateway_container: gatewayID,
+  });
   console.log(JSON.stringify({ phase: "verify", check: "100-acp-load" }));
   const load = await verifyResolveLoad({
     config,
@@ -215,6 +268,7 @@ try {
     output,
     docker,
     compose,
+    requestTimeoutMS: 2000,
   });
   report = {
     status: "business_passed",

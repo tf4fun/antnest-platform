@@ -10,6 +10,7 @@ import { tag, traceTopology } from "../observability/trace-tree.mjs";
 import { inspectWorkspaceChatTrace } from "../workspace-closeout/chat-trace.mjs";
 import { outagePhase } from "./resolve-cache-outage.mjs";
 import { inspectOutageAuthority } from "./resolve-cache-outage-authority.mjs";
+import { inspectOutageRejections } from "./resolve-cache-outage-rejection.mjs";
 
 export function outageChatExpectation(evidence) {
   const observation = evidence.model_cancelled;
@@ -141,6 +142,7 @@ export async function collectOutageTraceArchive(
     search = searchJaegerTraces,
     collect = collectResolveTraceEvidence,
     inspectAuthority = inspectOutageAuthority,
+    inspectRejections = inspectOutageRejections,
   },
 ) {
   await wait(12000, undefined, { signal });
@@ -325,7 +327,9 @@ export async function collectOutageTraceArchive(
   const archivedTraceIDs = new Set(
     reports.flatMap((row) => [row.trace_id, ...row.source_trace_ids]),
   );
-  let authority = { status: "pending" };
+  let authority = { status: "pending" },
+    rejections = { status: "pending" },
+    collection;
   if (evidence.business_window) {
     try {
       assert(attemptInventoryComplete, "Gateway attempt inventory incomplete");
@@ -349,17 +353,20 @@ export async function collectOutageTraceArchive(
           ),
         ]),
       );
-      authority = await inspectAuthority(
-        evidence,
-        {
-          traces,
-          archivedTraceIDs,
-          feedAttemptTraceIDs: new Set(
-            found.feedAttempts.map((t) => t.traceID),
-          ),
-        },
-        secrets,
-      );
+      collection = {
+        traces,
+        archivedTraceIDs,
+        feedAttemptTraceIDs: new Set(found.feedAttempts.map((t) => t.traceID)),
+      };
+      authority = await inspectAuthority(evidence, collection, secrets);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (evidence.business_window && evidence.rejections) {
+    try {
+      assert(collection, "HTTP rejection raw archive missing");
+      rejections = await inspectRejections(evidence, collection, secrets);
     } catch (error) {
       errors.push(error);
     }
@@ -371,6 +378,7 @@ export async function collectOutageTraceArchive(
     reports,
     owning_gates: {
       authority,
+      http_rejections: rejections,
       cancellation: reports.some(
         (row) => row.trace_id === chat?.traceID && row.settled_read === true,
       )
