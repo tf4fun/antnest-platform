@@ -78,6 +78,55 @@ func TestInitialResolveProvenanceSeparatesSnapshotAgeAndRPCLatency(t *testing.T)
 	}
 }
 
+func TestPeriodicCacheHitExpiringDuringDeliveryRechecksWithinOriginalProbe(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		probeOrigin := time.Now()
+		// Real RPC work begins after the invocation. At the first ten-second
+		// poll the cache lookup still has one millisecond of valid reuse.
+		time.Sleep(time.Millisecond)
+		principal := streamPrincipal()
+		principal.ActivityIntervalMS = 30_000
+		principal.ResolveStartedAt, principal.ResolveCompletedAt = time.Now(), time.Now()
+		principal.ResolveValidUntil = time.Now().Add(10 * time.Second)
+		cfg := Config{MaximumStale: 30 * time.Second, InitialStarted: probeOrigin, Original: principal}
+		calls := 0
+		var deadlines []time.Time
+		cfg.Resolve = func(ctx context.Context) (identity.Principal, error) {
+			calls++
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Error("periodic check lost its deadline")
+			}
+			deadlines = append(deadlines, deadline)
+			current := principal
+			if calls == 1 {
+				if !current.ResolveValidUntil.After(time.Now()) {
+					t.Error("fixture did not begin with a legal cache hit")
+				}
+				current.ResolveCacheHit = true
+				time.Sleep(2 * time.Millisecond)
+			} else {
+				current.ResolveStartedAt, current.ResolveCompletedAt = time.Now(), time.Now()
+				current.ResolveValidUntil = time.Now().Add(10 * time.Second)
+			}
+			return current, nil
+		}
+		guard, err := Start(context.Background(), NewRegistry(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer guard.Close()
+		time.Sleep(10*time.Second + 2*time.Millisecond)
+		synctest.Wait()
+		if guard.Context().Err() != nil || calls != 2 {
+			t.Fatalf("healthy periodic stream lost at cache delivery expiry: calls=%d cause=%v", calls, context.Cause(guard.Context()))
+		}
+		if !deadlines[0].Equal(deadlines[1]) || !deadlines[0].Equal(probeOrigin.Add(20*time.Second)) {
+			t.Fatalf("recheck reset its original probe deadline: %v", deadlines)
+		}
+	})
+}
+
 func TestCachedIdleObservationTriggersFreshLookupInsteadOfPermanentClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		started := time.Now()

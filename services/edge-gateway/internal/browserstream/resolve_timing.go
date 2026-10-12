@@ -27,3 +27,17 @@ func ValidateTiming(principal identity.Principal, probeStarted time.Time, maximu
 	}
 	return started, nil
 }
+
+// A completed snapshot valid at the actual probe start can cross only its TTL
+// during delivery. This permits discarding it and rechecking, never admission.
+func recheckExpiredCacheHit(principal identity.Principal, probeStarted time.Time, maximumStale time.Duration, now time.Time) bool {
+	if !principal.ResolveCacheHit || !principal.ResolveValidUntil.After(probeStarted) || principal.ResolveValidUntil.After(now) ||
+		now.Sub(probeStarted) > Interval(maximumStale, principal.ActivityIntervalMS) {
+		return false
+	}
+	if _, err := ValidateTiming(principal, probeStarted, maximumStale, probeStarted); err != nil {
+		return false
+	}
+	return principal.IdleExpiresAt.After(now) && principal.ExpiresAt.After(now) && principal.ContextExpiresAt.After(now) &&
+		principal.ResolveStartedAt.Add(maximumStale-CloseGrace(maximumStale)).After(now)
+}

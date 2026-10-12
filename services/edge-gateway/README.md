@@ -95,6 +95,13 @@ Successful activity retires old cache observations while preserving already
 attached live readers within their original deadlines and security checks.
 Subsequent reads resolve again; obsolete results cannot refill the cache.
 
+Periodic stream checks discard a cache hit that was valid when the check
+started but crossed only its TTL during delivery. They may resolve once more
+within that same check's context and deadline. The expired hit cannot renew
+authority, and session expiry, the original WebSocket CCT and the independent
+stale-output timer remain enforced throughout the recheck. Initial requests
+and ACP message admission keep their existing rejection behavior.
+
 Self inventory includes the User's bindings across organizations and independently
 paginated immutable notices. Unbind and notice acknowledgment enforce the same
 Origin/session-bound CSRF boundary; all three routes use `no-store` and preserve

@@ -143,6 +143,9 @@ func (guard *Guard) run(cfg Config, lastAuthorityStart time.Time, remove func())
 	var workers sync.WaitGroup
 	var cancelCheck context.CancelFunc
 	var checkDone <-chan struct{}
+	var checkCtx context.Context
+	var probeStarted, probeDeadline time.Time
+	var rechecked bool
 	defer func() {
 		guard.cancel(context.Canceled)
 		if cancelCheck != nil {
@@ -155,6 +158,17 @@ func (guard *Guard) run(cfg Config, lastAuthorityStart time.Time, remove func())
 	current := cfg.Original
 	next := nextCheck(cfg.InitialStarted, guard.maximumStale, current)
 	results := make(chan checkResult, 1)
+	launch := func(ctx context.Context, started time.Time) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			principal, err := cfg.Resolve(ctx)
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			results <- checkResult{started: started, principal: principal, err: err}
+		}()
+	}
 	pending := false
 	timer := time.NewTimer(0)
 	defer timer.Stop()
@@ -169,21 +183,14 @@ func (guard *Guard) run(cfg Config, lastAuthorityStart time.Time, remove func())
 			return
 		}
 		if !pending && !next.After(now) {
-			started := now
-			checkDeadline := minTime(started.Add(Interval(guard.maximumStale, current.ActivityIntervalMS)), deadline)
-			checkCtx, cancel := context.WithDeadline(guard.ctx, checkDeadline)
-			cancelCheck = cancel
+			probeStarted = now
+			probeDeadline = minTime(probeStarted.Add(Interval(guard.maximumStale, current.ActivityIntervalMS)), deadline)
+			ctx, cancel := context.WithDeadline(guard.ctx, probeDeadline)
+			checkCtx, cancelCheck = ctx, cancel
 			checkDone = checkCtx.Done()
 			pending = true
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				principal, err := cfg.Resolve(checkCtx)
-				if checkCtx.Err() != nil {
-					err = checkCtx.Err()
-				}
-				results <- checkResult{started: started, principal: principal, err: err}
-			}()
+			rechecked = false
+			launch(checkCtx, probeStarted)
 		}
 		wake := deadline
 		if !pending {
@@ -202,28 +209,38 @@ func (guard *Guard) run(cfg Config, lastAuthorityStart time.Time, remove func())
 			return
 		case <-timer.C:
 		case result := <-results:
-			cancelCheck()
-			cancelCheck = nil
-			checkDone = nil
-			pending = false
+			now := time.Now()
 			// A ready result cannot outrun a simultaneous hard deadline.
-			if !deadline.After(time.Now()) {
+			if !deadline.After(now) {
 				guard.cancel(cause)
+				return
+			}
+			if checkCtx.Err() != nil || !probeDeadline.After(now) {
+				guard.cancel(ErrUnavailable)
 				return
 			}
 			if result.err != nil {
 				guard.cancel(resolveError(result.err))
 				return
 			}
-			if err := Validate(result.principal, cfg.Original, time.Now()); err != nil {
+			if err := Validate(result.principal, cfg.Original, now); err != nil {
 				guard.cancel(err)
 				return
 			}
-			authorityStarted, err := ValidateTiming(result.principal, result.started, guard.maximumStale, time.Now())
+			authorityStarted, err := ValidateTiming(result.principal, result.started, guard.maximumStale, now)
 			if err != nil {
+				if !rechecked && recheckExpiredCacheHit(result.principal, result.started, guard.maximumStale, now) {
+					rechecked = true
+					launch(checkCtx, probeStarted)
+					continue
+				}
 				guard.cancel(err)
 				return
 			}
+			cancelCheck()
+			cancelCheck = nil
+			checkDone = nil
+			pending = false
 			lastAuthorityStart, current = authorityStarted, result.principal
 			next = nextCheck(result.started, guard.maximumStale, current)
 		}
