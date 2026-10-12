@@ -187,6 +187,9 @@ function fixture() {
     },
     feed_attempt_searches: [rounds(), rounds(), rounds()],
   };
+  feedSearch.feed_server_searches = Array.from({ length: 3 }, () =>
+    structuredClone(feedSearch.found.feed),
+  );
   const collection = {
     traces,
     archivedTraceIDs: new Set(traces.keys()),
@@ -516,6 +519,30 @@ for (const [name, change] of [
     (f) => f.collection.feedSearch.feed_attempt_searches[0].pop(),
   ],
   ["missing search", (f) => delete f.collection.feedSearch],
+  [
+    "missing SERVER search rounds",
+    (f) => delete f.collection.feedSearch.feed_server_searches,
+  ],
+  [
+    "unpaired SERVER search rounds",
+    (f) => f.collection.feedSearch.feed_server_searches.pop(),
+  ],
+  [
+    "SERVER inventory changed during stable CLIENT rounds",
+    (f) => f.collection.feedSearch.feed_server_searches[0].pop(),
+  ],
+  [
+    "final SERVER inventory differs from paired search",
+    (f) => f.collection.feedSearch.feed_server_searches.at(-1).pop(),
+  ],
+  [
+    "successful CLIENT permanently absent from SERVER inventory",
+    (f) => {
+      f.collection.feedSearch.found.feed.pop();
+      for (const round of f.collection.feedSearch.feed_server_searches)
+        round.pop();
+    },
+  ],
   [
     "missing search round",
     (f) => f.collection.feedSearch.feed_attempt_searches.pop(),

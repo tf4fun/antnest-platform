@@ -174,11 +174,14 @@ function archiveHarness(
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const missing = new Set(),
     searched = [],
-    gatewayRounds = [];
+    gatewayRounds = [],
+    serverRounds = [],
+    windows = [];
   let searchFailure;
   change(fixture, {
     missing,
     gatewayRounds,
+    serverRounds,
     failSearch: (name) => (searchFailure = name),
   });
   const fallback = (traceID) => ({
@@ -207,7 +210,8 @@ function archiveHarness(
         inspectDiagnostics: () => ({ status: "passed" }),
         ...recoveryInspectors,
         wait: async () => {},
-        search: async (_base, query) => {
+        search: async (_base, query, options) => {
+          windows.push({ now: options.now, lookback: query.get("lookback") });
           const tags = JSON.parse(query.get("tags"));
           const name =
             query.get("operation") === "HTTP POST identity-service"
@@ -235,7 +239,9 @@ function archiveHarness(
           if (name === searchFailure) throw new Error(`${name} search failed`);
           return name === "feedAttempts" && gatewayRounds.length
             ? gatewayRounds.shift()
-            : fixture.found[name];
+            : name === "feed" && serverRounds.length
+              ? serverRounds.shift()
+              : fixture.found[name];
         },
         collect: (base, expected, secrets, options) =>
           collectResolveTraceEvidence(base, expected, secrets, {
@@ -257,7 +263,7 @@ function archiveHarness(
           }),
       },
     );
-  return { root, archive, searched };
+  return { root, archive, searched, windows };
 }
 
 function withOutageChat(s) {
@@ -645,11 +651,81 @@ test("outage archive uses the actual JWKS HTTP route and retains complete raw cl
     "messages",
     "feed",
     "feedAttempts",
+    "feed",
     "feedAttempts",
+    "feed",
     "feedAttempts",
     "jwks",
     "refresh",
   ]);
+});
+function successfulFeedSearch(traceID) {
+  return {
+    traceID,
+    processes: { edge: { serviceName: "edge-gateway" } },
+    spans: [
+      {
+        processID: "edge",
+        operationName: "HTTP POST identity-service",
+        tags: Object.entries({
+          "span.kind": "client",
+          "http.request.method": "POST",
+          "http.response.status_code": 200,
+          "server.address": "identity-service",
+          "rpc.method": "list_session_revocations",
+        }).map(([key, value]) => ({ key, value })),
+      },
+    ],
+  };
+}
+test("feed SERVER indexing converges after three unchanged incomplete SERVER rounds", async (t) => {
+  const h = archiveHarness(t, (s, { serverRounds }) => {
+    withOutageChat(s);
+    s.found.feedAttempts[0] = successfulFeedSearch(id(9));
+    serverRounds.push([], [], []);
+  });
+  const report = await h.archive();
+  assert.equal(report.owning_gates.authority.status, "passed");
+  assert.equal(h.searched.filter((n) => n === "feed").length, 6);
+  assert.equal(h.searched.filter((n) => n === "feedAttempts").length, 6);
+  assert.equal(new Set(h.windows.map((w) => JSON.stringify(w))).size, 1);
+  const raw = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-search.private.json")),
+  );
+  assert.equal(raw.feed_server_searches.length, 6);
+  assert.equal(raw.feed_attempt_searches.length, 6);
+  assert.deepEqual(raw.feed_server_searches.slice(0, 3), [[], [], []]);
+  assert.deepEqual(raw.found.feed, [{ traceID: id(9) }]);
+});
+test("permanently missing successful feed SERVER cannot converge and retains its CLIENT", async (t) => {
+  const h = archiveHarness(t, (s) => {
+    withOutageChat(s);
+    s.found.feed = [{ traceID: id(11) }];
+    s.found.feedAttempts[0] = successfulFeedSearch(id(9));
+  });
+  await assert.rejects(h.archive(), AggregateError);
+  assert.equal(h.searched.filter((n) => n === "feed").length, 20);
+  assert.equal(h.searched.filter((n) => n === "feedAttempts").length, 20);
+  assert(existsSync(join(h.root, "outage-traces", `${id(9)}.json`)));
+});
+test("changing SERVER inventory cannot reuse CLIENT stability or exceed twenty paired rounds", async (t) => {
+  const h = archiveHarness(t, (s, { serverRounds }) => {
+    withOutageChat(s);
+    serverRounds.push(
+      ...Array.from({ length: 20 }, (_, i) =>
+        i % 2 ? [{ traceID: id(9) }] : [{ traceID: id(11) }],
+      ),
+    );
+  });
+  await assert.rejects(h.archive(), AggregateError);
+  assert.equal(h.searched.filter((n) => n === "feed").length, 20);
+  assert.equal(h.searched.filter((n) => n === "feedAttempts").length, 20);
+  const raw = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-search.private.json")),
+  );
+  assert.equal(raw.feed_server_searches.length, 20);
+  for (const traceID of [id(9), id(11)])
+    assert(existsSync(join(h.root, "outage-traces", `${traceID}.json`)));
 });
 test("Gateway attempt search converges after a receiving feed SERVER is indexed first", async (t) => {
   const h = archiveHarness(t, (s, { gatewayRounds }) => {

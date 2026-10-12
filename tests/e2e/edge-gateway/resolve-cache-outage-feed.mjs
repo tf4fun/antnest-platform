@@ -205,9 +205,21 @@ function inventory(collection, all, window) {
   const checked = rounds.map(ids),
     last = checked.at(-1),
     servers = ids(search.found?.feed);
+  assert(
+    Array.isArray(search.feed_server_searches) &&
+      search.feed_server_searches.length === rounds.length,
+    "paired feed SERVER searches required",
+  );
+  const checkedServers = search.feed_server_searches.map(ids);
   assert(last.length > 0);
-  for (const round of checked.slice(-3)) {
+  for (let i = checked.length - 3; i < checked.length; i++) {
+    const round = checked[i];
     assert.deepEqual(round, last, "feed attempt inventory did not converge");
+    assert.deepEqual(
+      checkedServers[i],
+      servers,
+      "feed SERVER inventory did not converge",
+    );
     for (const id of servers)
       assert(round.includes(id), "feed SERVER omitted from CLIENT search");
   }
