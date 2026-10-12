@@ -13,12 +13,21 @@ export async function observeWorkspaceStream(
   agentID,
   sessionID,
   signal,
+  { credentialScope } = {},
 ) {
   signal?.throwIfAborted();
   const stop = new AbortController();
   const combined = AbortSignal.any([stop.signal, ...(signal ? [signal] : [])]);
   const closed = Promise.withResolvers();
-  const evidence = { started_at: performance.now(), frames: [], events: [] };
+  const cookie = client.cookie;
+  const path = `/api/app/workspace/v1/agents/${encodeURIComponent(agentID)}/events?sessionId=${encodeURIComponent(sessionID)}`;
+  const evidence = {
+    started_at: performance.now(),
+    frames: [],
+    events: [],
+    path,
+    ...(credentialScope ? { credential_scope: credentialScope(cookie) } : {}),
+  };
   const records = [];
   let state = initialBridgeStream(agentID, sessionID);
   let response, reader, pump, closure, failure, revoked;
@@ -39,18 +48,16 @@ export async function observeWorkspaceStream(
     10000,
   );
   try {
-    response = await fetch(
-      `${client.base}/api/app/workspace/v1/agents/${encodeURIComponent(agentID)}/events?sessionId=${encodeURIComponent(sessionID)}`,
-      {
-        headers: { Cookie: client.cookie, Origin: gatewayOrigin(client.base) },
-        signal: combined,
-      },
-    );
+    response = await fetch(`${client.base}${path}`, {
+      headers: { Cookie: cookie, Origin: gatewayOrigin(client.base) },
+      signal: combined,
+    });
     clearTimeout(timer);
     evidence.status = response.status;
     evidence.trace_id = response.headers.get("x-antnest-trace-id");
     evidence.headers_at = performance.now();
     evidence.server_date = response.headers.get("date");
+    evidence.set_cookie_count = response.headers.getSetCookie().length;
     assert.equal(response.status, 200, "Workspace SSE admission failed");
     assert.match(
       response.headers.get("content-type") ?? "",

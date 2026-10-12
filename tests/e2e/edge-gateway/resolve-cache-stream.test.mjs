@@ -41,12 +41,13 @@ async function fixture(
     cookie: "synthetic",
   };
   return {
-    async open(signal) {
+    async open(signal, options) {
       observer = await observeWorkspaceStream(
         client,
         "agent-1",
         "session-1",
         signal,
+        options,
       );
       return observer;
     },
@@ -66,6 +67,27 @@ async function fixture(
     },
   };
 }
+
+test("Workspace observer binds its dispatch Cookie to a private credential observation ID", async (t) => {
+  const f = await fixture(t);
+  let called = 0;
+  const stream = await f.open(undefined, {
+    credentialScope(cookie) {
+      assert.equal(cookie, "synthetic");
+      called++;
+      return "scope-only";
+    },
+  });
+  assert.equal(called, 1);
+  assert.equal(stream.evidence.credential_scope, "scope-only");
+  assert.equal(
+    stream.evidence.path,
+    "/api/app/workspace/v1/agents/agent-1/events?sessionId=session-1",
+  );
+  assert.equal(stream.evidence.set_cookie_count, 0);
+  assert(!JSON.stringify(stream.evidence).includes("synthetic"));
+  await stream.closeAndWait();
+});
 
 test("Workspace observer retains real header and scoped snapshot/delta content without reconnecting", async (t) => {
   const f = await fixture(t),

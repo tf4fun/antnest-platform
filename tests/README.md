@@ -278,6 +278,24 @@ It keeps the exact response-reader cleanup cancellation and the two expected
 model ERROR spans; other failures are rejected. The original held-model
 cancellation still requires one request and no Tool execution. The archive
 reports this cancellation gate separately from the remaining outage gates.
+The authority gate binds the dispatched HTTP/WSS/SSE Cookies using private
+random observation IDs; no Cookie, token hash, SID or new header is retained.
+Three actual prewarm requests must have cache decisions whose original Resolve
+source is unambiguous. Their send times plus the smaller of `valid_for_ms` and
+remaining feed TTL must cover the whole stop. The original WSS initialize and
+SSE admission must still use their initial snapshots, whose remaining validity
+also bounds the original CCT and session deadlines. These checks use observer
+monotonic times and Gateway span times separately, without comparing service
+wall clocks. Feed evidence includes Gateway attempts with no receiving SERVER;
+a proof must fit between the preceding attempt's completion and the actual
+terminal empty page's CLIENT start, with successful SQL before admission.
+The Gateway search uses a fixed time window, must include the observed receiving
+feed Traces, and must stabilize across three rounds within twenty attempts.
+Every search round is retained. Incomplete inventories fail this gate. Only the
+initial decision before long-connection forwarding can establish its original
+authority; later guard revalidation cannot renew that evidence.
+Original lifecycle errors and strict
+diagnostics remain unchanged and require their separate owning checks.
 For joined Node span ends, the inspector records inversions below one
 millisecond only when both starts use millisecond resolution in the same ACP
 process. Larger inversions, missing parents and cross-process comparisons are
@@ -288,6 +306,7 @@ source hashes and strict findings. It is an offline replay, not a new Docker run
 
 Observer and failure-first coverage is in `resolve-cache-outage.test.mjs`,
 `resolve-cache-outage-collect.test.mjs`,
+`resolve-cache-outage-authority.test.mjs`,
 `resolve-cache-outage-replay.test.mjs`, `workspace-closeout/chat-outage.test.mjs`,
 `resolve-cache-stream.test.mjs`, `workspace-closeout/c4-cache-model.test.mjs`
 and `lifecycle-closeout/acp.test.mjs`. The model fixture holds two stages of the
@@ -296,7 +315,7 @@ observer validates named SSE events with the production projection decoder,
 retains raw frames without reconnecting, and distinguishes remote closure from
 local cleanup. The ACP helper can negotiate delivery marks and target a cancel
 at the observed Run. A passed business window and raw archive do not establish
-complete outage/recovery admission: cache/CCT/feed budgets, cold and expired
+complete outage/recovery admission: the separate authority gate, cold and expired
 HTTP rejection, recovery revocations and the remaining owning Trace gates remain explicit
 pending items in the report.
 

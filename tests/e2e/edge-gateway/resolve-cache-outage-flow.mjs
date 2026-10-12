@@ -50,6 +50,15 @@ export async function verifyWarmOutage({
     ...mark(),
   };
   const secrets = [member.password, admin.password, "stage3-model-secret"];
+  // This opaque observation ID is assigned to the Cookie actually dispatched.
+  // Never persist a Cookie, SID, hash, or a new production correlation header.
+  const credentialScopes = new Map();
+  const credentialScope = (cookie) => {
+    if (!cookie) return null;
+    if (!credentialScopes.has(cookie))
+      credentialScopes.set(cookie, randomUUID());
+    return credentialScopes.get(cookie);
+  };
   const connections = [];
   let stream,
     owner,
@@ -84,6 +93,7 @@ export async function verifyWarmOutage({
       label = path,
     } = {},
   ) => {
+    const cookie = client.cookie;
     const started_at = performance.now();
     const response = await fetch(client.base + path, {
       method,
@@ -91,11 +101,11 @@ export async function verifyWarmOutage({
       signal: AbortSignal.any([requestSignal, AbortSignal.timeout(15000)]),
       headers: {
         "Content-Type": "application/json",
-        Cookie: client.cookie,
         Origin: gatewayOrigin(client.base),
         "X-Antnest-CSRF-Token": client.csrf,
         "Idempotency-Key": randomUUID(),
         ...headers,
+        Cookie: cookie,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -112,6 +122,7 @@ export async function verifyWarmOutage({
     }
     const row = {
       label,
+      credential_scope: credentialScope(cookie),
       method,
       path,
       started_at,
@@ -134,6 +145,7 @@ export async function verifyWarmOutage({
       body: credentials,
       label,
     });
+    response.issued_credential_scope = credentialScope(client.cookie);
     secrets.push(client.cookie);
     return { client, response };
   };
@@ -318,10 +330,12 @@ export async function verifyWarmOutage({
     assert.equal(state.body.active_session_id, null);
     assert.equal(state.body.unavailable_reason, null);
     assert.match(state.body.configuration_revision ?? "", /^[a-f0-9]{64}$/u);
-    owner = connectOwner(config.gateway, agentID, client.cookie, signal, {
+    const ownerCookie = client.cookie;
+    owner = connectOwner(config.gateway, agentID, ownerCookie, signal, {
       captureWire: true,
       injectTraceParent: false,
     });
+    owner.wire.credential_scope = credentialScope(ownerCookie);
     connections.push(owner);
     const capabilities = { intentReceipt: 1, targetCancel: 1, deliveryMark: 1 };
     const initialized = await owner.initialize({
@@ -341,7 +355,9 @@ export async function verifyWarmOutage({
     const view = await http(client, `${sessionPath}/view`, {
       label: "warm-workspace-view",
     });
-    stream = await observeWorkspaceStream(client, agentID, sessionID, signal);
+    stream = await observeWorkspaceStream(client, agentID, sessionID, signal, {
+      credentialScope,
+    });
     await stream.wait((value) => value.selectedView?.sessionId === sessionID);
     const intentID = randomUUID();
     await http(client, `${sessionPath}/prompts`, {

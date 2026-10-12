@@ -10,6 +10,7 @@ import { temporaryStorageRoot } from "../../support/storage.mjs";
 import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
 import { workspaceOutageFixture } from "../workspace-closeout/chat-fixtures.mjs";
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
+import { inspectOutageAuthority } from "./resolve-cache-outage-authority.mjs";
 
 const id = (n) => n.toString(16).padStart(32, "0");
 function sample() {
@@ -64,6 +65,7 @@ function sample() {
         trace(8, 99, "session/list"),
       ],
       feed: [{ traceID: id(9) }],
+      feedAttempts: [{ traceID: id(9) }, { traceID: id(11) }],
       jwks: [{ traceID: id(10) }],
       refresh: [],
     },
@@ -73,7 +75,7 @@ test("outage raw scope includes HTTP/SSE, both actual WSS connections, model ori
   const { evidence, found } = sample();
   assert.deepEqual(
     outageTraceSelection(evidence, found),
-    [1, 2, 3, 4, 5, 6, 7, 9, 10].map(id),
+    [1, 2, 3, 4, 5, 6, 7, 9, 10, 11].map(id),
   );
 });
 for (const [label, change] of [
@@ -114,15 +116,24 @@ for (const [label, change] of [
     assert.throws(() => outageTraceSelection(s.evidence, s.found));
   });
 
-function archiveHarness(t, change = () => {}) {
+function archiveHarness(
+  t,
+  change = () => {},
+  inspectAuthority = () => ({ status: "passed", fixture: true }),
+) {
   const fixture = sample();
   fixture.evidence.observed_at_ms = Date.now() - 1000;
   const root = mkdtempSync(join(temporaryStorageRoot(), "outage-archive-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const missing = new Set(),
-    searched = [];
+    searched = [],
+    gatewayRounds = [];
   let searchFailure;
-  change(fixture, { missing, failSearch: (name) => (searchFailure = name) });
+  change(fixture, {
+    missing,
+    gatewayRounds,
+    failSearch: (name) => (searchFailure = name),
+  });
   const fallback = (traceID) => ({
     ...structuredClone(fixture.found.messages[0]),
     traceID,
@@ -142,17 +153,27 @@ function archiveHarness(t, change = () => {}) {
       {
         signal: AbortSignal.timeout(10000),
         directory: root,
+        inspectAuthority,
         wait: async () => {},
         search: async (_base, query) => {
           const tags = JSON.parse(query.get("tags"));
-          const name = query.get("operation")
-            ? "refresh"
-            : query.get("service") === "edge-gateway"
-              ? "messages"
-              : tags["rpc.method"] === "list_session_revocations"
-                ? "feed"
-                : "jwks";
+          const name =
+            query.get("operation") === "HTTP POST identity-service"
+              ? "feedAttempts"
+              : query.get("operation")
+                ? "refresh"
+                : query.get("service") === "edge-gateway"
+                  ? "messages"
+                  : tags["rpc.method"] === "list_session_revocations"
+                    ? "feed"
+                    : "jwks";
           searched.push(name);
+          if (name === "feedAttempts")
+            assert.deepEqual(tags, {
+              "span.kind": "client",
+              "http.request.method": "POST",
+              "server.address": "identity-service",
+            });
           if (name === "jwks")
             assert.deepEqual(tags, {
               "http.route": "/rpc/identity/jwks",
@@ -160,7 +181,9 @@ function archiveHarness(t, change = () => {}) {
               "span.kind": "server",
             });
           if (name === searchFailure) throw new Error(`${name} search failed`);
-          return fixture.found[name];
+          return name === "feedAttempts" && gatewayRounds.length
+            ? gatewayRounds.shift()
+            : fixture.found[name];
         },
         collect: (base, expected, secrets, options) =>
           collectResolveTraceEvidence(base, expected, secrets, {
@@ -219,6 +242,7 @@ test("outage archive invokes the owning cancellation inspector with actual model
   const h = archiveHarness(t, withOutageChat);
   const result = await h.archive();
   assert.equal(result.owning_gates.cancellation.status, "passed");
+  assert.equal(result.owning_gates.authority.status, "passed");
   assert.equal(result.owning_gates.cancellation.trace_id, "a".repeat(32));
   assert.equal(
     result.reports.find((r) => r.trace_id === "a".repeat(32)).settled_read,
@@ -284,9 +308,70 @@ test("outage archive uses the actual JWKS HTTP route and retains complete raw cl
   assert.equal(result.status, "raw_closures_archived_owning_admission_pending");
   assert.deepEqual(
     result.archived_trace_ids,
-    [1, 2, 3, 4, 5, 6, 7, 9, 10].map(id),
+    [1, 2, 3, 4, 5, 6, 7, 9, 10, 11].map(id),
   );
-  assert.deepEqual(h.searched, ["messages", "feed", "jwks", "refresh"]);
+  assert.deepEqual(h.searched, [
+    "messages",
+    "feed",
+    "feedAttempts",
+    "feedAttempts",
+    "feedAttempts",
+    "jwks",
+    "refresh",
+  ]);
+});
+test("Gateway attempt search converges after a receiving feed SERVER is indexed first", async (t) => {
+  const h = archiveHarness(t, (s, { gatewayRounds }) => {
+    withOutageChat(s);
+    gatewayRounds.push([{ traceID: id(11) }]);
+  });
+  const report = await h.archive();
+  assert.equal(report.owning_gates.authority.status, "passed");
+  assert.equal(h.searched.filter((n) => n === "feedAttempts").length, 4);
+  const raw = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-search.private.json")),
+  );
+  assert.equal(raw.feed_attempt_searches.length, 4);
+  assert.deepEqual(raw.feed_attempt_searches[0], [{ traceID: id(11) }]);
+});
+test("permanently incomplete Gateway attempt search retains evidence and fails admission", async (t) => {
+  const h = archiveHarness(t, (s) => {
+    withOutageChat(s);
+    s.found.feedAttempts = [{ traceID: id(11) }];
+  });
+  await assert.rejects(h.archive(), AggregateError);
+  const report = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-archive.json")),
+  );
+  assert.equal(report.owning_gates.authority.status, "pending");
+  assert(existsSync(join(h.root, "outage-traces", `${id(9)}.json`)));
+});
+
+test("completed outage requires the real authority gate and keeps raw sources after rejection", async (t) => {
+  const h = archiveHarness(t, withOutageChat, inspectOutageAuthority);
+  await assert.rejects(h.archive(), AggregateError);
+  const report = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-archive.json")),
+  );
+  assert.equal(report.owning_gates.cancellation.status, "passed");
+  assert.equal(report.owning_gates.authority.status, "pending");
+  assert.equal(report.status, "archive_failed");
+  assert(existsSync(join(h.root, "outage-traces", `${id(11)}.json`)));
+});
+
+test("saturated Gateway search cannot mark authority passed", async (t) => {
+  const h = archiveHarness(t, (s) => {
+    withOutageChat(s);
+    s.found.feedAttempts = Array.from({ length: 500 }, () => ({
+      traceID: id(11),
+    }));
+  });
+  await assert.rejects(h.archive(), AggregateError);
+  const report = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-archive.json")),
+  );
+  assert.equal(report.owning_gates.authority.status, "pending");
+  assert(existsSync(join(h.root, "outage-traces", `${id(11)}.json`)));
 });
 
 for (const [label, change, expected] of [
@@ -305,6 +390,11 @@ for (const [label, change, expected] of [
     /inventory differs/,
   ],
   ["failed feed search", (_s, h) => h.failSearch("feed"), /feed search failed/],
+  [
+    "failed Gateway attempt search",
+    (_s, h) => h.failSearch("feedAttempts"),
+    /feedAttempts search failed/,
+  ],
   [
     "missing JWKS",
     (s) => {

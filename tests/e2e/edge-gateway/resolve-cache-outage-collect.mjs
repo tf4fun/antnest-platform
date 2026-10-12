@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { writeEvidenceFile } from "../../support/storage.mjs";
@@ -8,6 +9,7 @@ import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { tag, traceTopology } from "../observability/trace-tree.mjs";
 import { inspectWorkspaceChatTrace } from "../workspace-closeout/chat-trace.mjs";
 import { outagePhase } from "./resolve-cache-outage.mjs";
+import { inspectOutageAuthority } from "./resolve-cache-outage-authority.mjs";
 
 export function outageChatExpectation(evidence) {
   const observation = evidence.model_cancelled;
@@ -117,7 +119,12 @@ export function outageTraceSelection(evidence, found) {
     )
       add(trace.traceID);
   }
-  for (const trace of [...found.feed, ...found.jwks]) add(trace.traceID);
+  for (const trace of [
+    ...found.feed,
+    ...(found.feedAttempts ?? []),
+    ...found.jwks,
+  ])
+    add(trace.traceID);
   return [...ids].sort();
 }
 
@@ -133,11 +140,12 @@ export async function collectOutageTraceArchive(
     wait = delay,
     search = searchJaegerTraces,
     collect = collectResolveTraceEvidence,
+    inspectAuthority = inspectOutageAuthority,
   },
 ) {
   await wait(12000, undefined, { signal });
   const now = Date.now(),
-    found = { messages: [], feed: [], jwks: [], refresh: [] },
+    found = { messages: [], feed: [], feedAttempts: [], jwks: [], refresh: [] },
     errors = [],
     ids = new Set();
   const retainID = (id) => {
@@ -157,6 +165,8 @@ export async function collectOutageTraceArchive(
     for (const request of observation.state.requests)
       retainID(request.trace_id);
   const lookback = `${Math.ceil(now - evidence.observed_at_ms + 5000)}ms`;
+  let attemptInventoryComplete = false;
+  const attemptSearches = [];
   try {
     for (const [name, service, tags, operation] of [
       ["messages", "edge-gateway", { "rpc.service": "acp" }],
@@ -164,6 +174,16 @@ export async function collectOutageTraceArchive(
         "feed",
         "identity-service",
         { "rpc.method": "list_session_revocations", "span.kind": "server" },
+      ],
+      [
+        "feedAttempts",
+        "edge-gateway",
+        {
+          "span.kind": "client",
+          "http.request.method": "POST",
+          "server.address": "identity-service",
+        },
+        "HTTP POST identity-service",
       ],
       [
         "jwks",
@@ -185,18 +205,57 @@ export async function collectOutageTraceArchive(
       });
       try {
         signal.throwIfAborted();
-        found[name] = await search(base, query, {
-          now,
-          signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-        });
-        assert(found[name].length < 500, "outage Trace search saturated");
+        const read = () =>
+          search(base, query, {
+            now,
+            signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+          });
+        if (name === "feedAttempts") {
+          // SERVER and CLIENT search indexes can become visible separately.
+          // Keep the fixed window and every round, including missing attempts.
+          let previous,
+            stable = 0;
+          for (let attempt = 0; attempt < 20; attempt++) {
+            found[name] = await read();
+            attemptSearches.push(found[name]);
+            for (const trace of found[name]) retainID(trace.traceID);
+            assert(found[name].length < 500, "outage Trace search saturated");
+            const ids = found[name].map((t) => t.traceID).sort();
+            assert.equal(
+              new Set(ids).size,
+              ids.length,
+              "duplicate Gateway attempt inventory entry",
+            );
+            const current = JSON.stringify(ids);
+            const covered = found.feed.every((t) => ids.includes(t.traceID));
+            stable = covered ? (current === previous ? stable + 1 : 1) : 0;
+            previous = current;
+            if (stable >= 3) {
+              attemptInventoryComplete = true;
+              break;
+            }
+            if (attempt + 1 < 20) await wait(1000, undefined, { signal });
+          }
+          assert(
+            attemptInventoryComplete,
+            "Gateway attempt inventory did not converge",
+          );
+        } else {
+          found[name] = await read();
+          assert(found[name].length < 500, "outage Trace search saturated");
+        }
       } catch (error) {
         errors.push(error);
         if (signal.aborted) break;
       }
     }
   } finally {
-    const raw = JSON.stringify({ now, lookback, found });
+    const raw = JSON.stringify({
+      now,
+      lookback,
+      found,
+      feed_attempt_searches: attemptSearches,
+    });
     writeEvidenceFile(directory, "outage-trace-search.private.json", raw);
     try {
       assertSecretFree(raw, secrets);
@@ -209,11 +268,14 @@ export async function collectOutageTraceArchive(
   } catch (error) {
     errors.push(error);
   }
-  for (const trace of [...found.feed, ...found.jwks]) retainID(trace.traceID);
+  for (const trace of [...found.feed, ...found.feedAttempts, ...found.jwks])
+    retainID(trace.traceID);
   if (!found.feed.length)
     errors.push(new Error("actual session feed raw traces missing"));
   if (!found.jwks.length)
     errors.push(new Error("actual JWKS raw traces missing"));
+  if (!found.feedAttempts.length)
+    errors.push(new Error("Gateway Identity attempt inventory missing"));
   let chat;
   if (evidence.business_window || evidence.model_cancelled)
     try {
@@ -260,12 +322,55 @@ export async function collectOutageTraceArchive(
   }
   if (signal.aborted && !errors.includes(signal.reason))
     errors.push(signal.reason);
+  const archivedTraceIDs = new Set(
+    reports.flatMap((row) => [row.trace_id, ...row.source_trace_ids]),
+  );
+  let authority = { status: "pending" };
+  if (evidence.business_window) {
+    try {
+      assert(attemptInventoryComplete, "Gateway attempt inventory incomplete");
+      assert(
+        found.feedAttempts.length > 0,
+        "Gateway Identity attempt inventory missing",
+      );
+      for (const trace of found.feedAttempts)
+        assert(
+          archivedTraceIDs.has(trace.traceID),
+          "Gateway attempt was not archived",
+        );
+      const traces = new Map(
+        [...archivedTraceIDs].map((id) => [
+          id,
+          JSON.parse(
+            readFileSync(
+              join(directory, "outage-traces", `${id}.json`),
+              "utf8",
+            ),
+          ),
+        ]),
+      );
+      authority = await inspectAuthority(
+        evidence,
+        {
+          traces,
+          archivedTraceIDs,
+          feedAttemptTraceIDs: new Set(
+            found.feedAttempts.map((t) => t.traceID),
+          ),
+        },
+        secrets,
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+  }
   const result = {
     status: errors.length
       ? "archive_failed"
       : "raw_closures_archived_owning_admission_pending",
     reports,
     owning_gates: {
+      authority,
       cancellation: reports.some(
         (row) => row.trace_id === chat?.traceID && row.settled_read === true,
       )
@@ -276,11 +381,8 @@ export async function collectOutageTraceArchive(
       errors.length || reports.some((row) => row.strict_trace === "failed")
         ? "failed"
         : "passed",
-    archived_trace_ids: [
-      ...new Set(
-        reports.flatMap((row) => [row.trace_id, ...row.source_trace_ids]),
-      ),
-    ].sort(),
+    archived_trace_ids: [...archivedTraceIDs].sort(),
+    feed_attempt_trace_ids: found.feedAttempts.map((t) => t.traceID).sort(),
     failures: errors.map((error) => error.stack ?? String(error)),
   };
   writeEvidenceFile(
