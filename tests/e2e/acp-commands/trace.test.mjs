@@ -406,3 +406,17 @@ test("command strict outcome accepts only the reviewed clock warning class", () 
     { strict_trace: "failed", accepted: false },
   );
 });
+
+test("a passed summary cannot bypass the error inventory or warning gate", () => {
+  for (const patch of [
+    { warnings: ["unknown warning"] },
+    { error_spans: [] },
+    { error_spans: 1 },
+    { resolve_source_error_spans: 1 },
+    { platform_probe_errors: 1 },
+  ])
+    assert.equal(
+      commandStrictOutcome([{ strict_trace: "passed", ...patch }]).accepted,
+      false,
+    );
+});

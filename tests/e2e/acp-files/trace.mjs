@@ -148,7 +148,7 @@ export function inspectFileTrace(trace, requests, secrets = []) {
     phases,
     gateway_ancestry: true,
     services: [...new Set(trace.spans.map(tree.service))].sort(),
-    error_spans: errors.map((span) => ({
+    reviewed_error_spans: errors.map((span) => ({
       service: tree.service(span),
       operation: span.operationName,
     })),

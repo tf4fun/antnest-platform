@@ -1,6 +1,42 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectFileTrace, inspectReplayRequestTrace } from "./trace.mjs";
+import { commandStrictOutcome } from "../acp-commands/trace.mjs";
+
+for (const failed of [false, true])
+  test(`file owning diagnostics reach clock admission without a raw inventory collision (failed=${failed})`, () => {
+    const { trace, requests } = execution(
+      failed ? "v2-failed-edit" : "v1-create",
+    );
+    if (failed) trace.spans.at(-1).tags.push({ key: "error", value: true });
+    trace.warnings = [
+      "clock skew adjustment disabled; not applying calculated delta of 3µs",
+    ];
+    const raw = JSON.stringify(trace);
+    const result = inspectFileTrace(trace, requests);
+    assert.equal(commandStrictOutcome([result]).accepted, true);
+    assert.equal(result.strict_trace, "failed");
+    assert.equal(result.reviewed_error_spans.length, failed ? 1 : 0);
+    assert.equal(JSON.stringify(trace), raw);
+    const before = JSON.stringify(result);
+    commandStrictOutcome([result]);
+    assert.equal(JSON.stringify(result), before);
+    assert.equal(
+      commandStrictOutcome([{ ...result, warnings: ["unknown warning"] }])
+        .accepted,
+      false,
+    );
+    for (const mutate of [
+      (value) => value.spans[0].tags.push({ key: "error", value: true }),
+      (value) => {
+        value.spans[2].references[0].spanID = "missing";
+      },
+    ]) {
+      const bad = structuredClone(trace);
+      mutate(bad);
+      assert.throws(() => inspectFileTrace(bad, requests));
+    }
+  });
 
 function fixture(method = "session/prompt", sessionId = "session") {
   const trace = { traceID: "trace", processes: {}, spans: [] };

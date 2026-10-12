@@ -236,6 +236,11 @@ cleanup report cannot establish acceptance.
 Foundation graceful drain retains its separate three-interruption requirement
 and the worker-shutdown/workflow-return sequence, with the same exact error
 coverage; its outer shell still requires successful business completion.
+File and native ACP inspectors retain their individually checked failure
+diagnostics as `reviewed_error_spans`; these arrays are distinct from a raw
+numeric error inventory. Their shared aggregation checks warnings and any raw
+inventory before accepting an otherwise passing summary. Unrelated errors and
+missing ancestry still fail in the owning inspector.
 
 ### Jaeger queries in tests
 

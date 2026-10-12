@@ -366,9 +366,13 @@ export { boundary as requestTraceBoundary };
 // Command traces fail strict only on Jaeger warnings; the shared reviewed rule
 // accepts the clock-skew warning class and nothing else.
 export function commandStrictOutcome(checked) {
+  if (!clockWarningsOnly(checked))
+    return { strict_trace: "failed", accepted: false };
   if (checked.every((trace) => trace.strict_trace === "passed"))
     return { strict_trace: "passed", accepted: true };
-  return clockWarningsOnly(checked)
-    ? { strict_trace: "failed", clock_warnings_accepted: true, accepted: true }
-    : { strict_trace: "failed", accepted: false };
+  return {
+    strict_trace: "failed",
+    clock_warnings_accepted: true,
+    accepted: true,
+  };
 }

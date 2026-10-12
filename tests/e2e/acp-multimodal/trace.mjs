@@ -224,7 +224,7 @@ export function inspectNativeTrace(
     no_tool_execution: true,
     persistence: true,
     gateway_ancestry: true,
-    error_spans: errors.map((span) => ({
+    reviewed_error_spans: errors.map((span) => ({
       service: tree.service(span),
       operation: span.operationName,
       code: tag(span, "antnest.error.code"),

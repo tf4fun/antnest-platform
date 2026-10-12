@@ -17,6 +17,7 @@ Issue 状态最后核对于 2026-10-11：136 个 issue，74 个已关闭，62 �
 
 ## 当前批次
 
+- #59 ACP 诊断消费者已失败先行修复（7 个确定性失败）：File/native 已审核错误保留为独立诊断数组，共享汇总先验证原始库存及告警，再接受 passed。93 项相关回归与独立 review 通过；未知错误、缺父、外部来源错误及未知告警继续拒绝，Docker 准入仍待。
 - #59 已于 `04f713f1` 取消 PR #254 草稿并运行首轮完整 CI（run `38238487672`）：34 个 job 全部结束，21 分片/84 套件中 59 通过、12 warning、13 failed，暂不准入。新增 `gateway-resolve-cache` 停机/负载套件通过；失败集中于 Stage 3/Lifecycle 的已验证重试错误被 raw 统计误拒、ACP 检查器错误数组与数字库存不兼容、跨服务停用后旧测试要求立即 401、组织 feed 误选 CLIENT 为 SERVER。真实 HTTPS 已在本地复现管理员撤销后第一次缓存读取 200，清理及 3,482 个源码输入核对通过。Lifecycle 消费批次已失败先行并通过 931 项回归，逐条绑定当前错误身份及原因，Foundation/fenced restart 保留各自 3/2 个中断门禁；Docker 准入仍待。1,662 份 CI/复现证据经 SHA-256 校验保存在主工作区。完整 CI 必须重跑，合并仍待。
 - #59 第二十一轮全新 Docker 在 `9145b57a` 完整准入：100 ACP 5.65s、Gateway CLIENT/Identity SERVER 各 2 次 Resolve；Identity 停止 5.06s，新输出 186ms、取消并 quiescent 315ms；四类恢复关闭 0.10–1.12s。八门禁及全局诊断通过，154 原始 Trace、81 错误全部归属、636 warning 保留；六个停用 GET 各有真实 access-denial 事件，清理验证通过，3,482 个源码输入结束立即核对未变。原 exit 2 按既有完整 CI 准入规则为已审查 warning，非缺失门禁。282 份证据已按 SHA256 保全至主工作区。远端 Repository checks 另发现 ACP HTTP transport 的 guarded-source hash 未随已 review 的诊断修改同步；路由和调用权限未变，同步该单一 hash 后 `make test-service-authentication` 通过。下一步取消草稿并运行完整 CI，合并仍待。
 - #59 第二十轮 Docker 的业务、清理及七门禁通过；feed 已接到完整配对查询，但一条成功请求包含既有契约允许的 PostgreSQL `connect`，被固定三 span 的验收假设误拒。消费方改为核对同 Identity SERVER/进程、driver/DB endpoint、连接先于唯一 SELECT 及无额外错误；合法连接与错误归属反例先 red 后 green，237 项受影响回归通过，复审补齐 SELECT 与 SERVER 同进程约束。八门禁及全局诊断离线复验通过，81 错误全部归属、642 warning 保留，158 原始输入未改；第二十轮原 exit 1 和清理保持。下一步第二十一轮真实 Docker 和完整集成 CI。
