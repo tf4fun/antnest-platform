@@ -16,7 +16,7 @@ type credentialAttemptAdmission struct {
 }
 
 func lockCredentialAttempts(ctx context.Context, tx *databaseTransaction, wait *credentialWaitBudget, keys [2]credentialAttemptKey) (*credentialAttemptAdmission, error) {
-	if keys[0].scope != organizationAttemptScope || (keys[1].scope != loginAttemptScope && keys[1].scope != passwordChangeAttemptScope) {
+	if keys[0].scope != organizationAttemptScope || (keys[1].scope != loginAttemptScope && keys[1].scope != changeAttemptScope) {
 		return nil, fmt.Errorf("credential attempt locks require Organization before account or User")
 	}
 	admission := &credentialAttemptAdmission{keys: keys}

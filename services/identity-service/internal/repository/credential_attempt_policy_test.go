@@ -50,7 +50,7 @@ func TestCredentialAttemptKeysSeparateNamespacesScopesAndUTF8Parts(t *testing.T)
 }
 
 func TestCredentialAttemptBackoffThresholdsSaturationAndFirstFailureWindow(t *testing.T) {
-	for _, scope := range []credentialAttemptScope{loginAttemptScope, passwordChangeAttemptScope, organizationAttemptScope} {
+	for _, scope := range []credentialAttemptScope{loginAttemptScope, changeAttemptScope, organizationAttemptScope} {
 		t.Run(string(scope), func(t *testing.T) {
 			threshold := 5
 			if scope == organizationAttemptScope {

@@ -11,17 +11,17 @@ import (
 type credentialAttemptScope string
 
 const (
-	organizationAttemptScope   credentialAttemptScope = "organization"
-	loginAttemptScope          credentialAttemptScope = "login_account"
-	passwordChangeAttemptScope credentialAttemptScope = "password_change_user"
-	credentialAttemptWindow                           = 15 * time.Minute
+	organizationAttemptScope credentialAttemptScope = "organization"
+	loginAttemptScope        credentialAttemptScope = "login_account"
+	changeAttemptScope       credentialAttemptScope = "password_change_user"
+	credentialAttemptWindow                         = 15 * time.Minute
 )
 
 func (scope credentialAttemptScope) threshold() int {
 	switch scope {
 	case organizationAttemptScope:
 		return 100
-	case loginAttemptScope, passwordChangeAttemptScope:
+	case loginAttemptScope, changeAttemptScope:
 		return 5
 	default:
 		return 0
@@ -36,6 +36,8 @@ type credentialAttemptKey struct {
 // Keys take already-normalized identities. Namespace tags and byte lengths
 // prevent cross-scope, unknown-slug and delimiter collisions without persisting
 // the underlying email, slug or User ID in attempt state or error messages.
+// The scope is a public domain label; neither it nor parts contains a password
+// or password verifier. SHA-256 indexes identities, not authentication secrets.
 func newCredentialAttemptKey(scope credentialAttemptScope, parts ...string) (credentialAttemptKey, error) {
 	if scope.threshold() == 0 {
 		return credentialAttemptKey{}, fmt.Errorf("invalid credential attempt scope")
@@ -79,7 +81,7 @@ func passwordChangeAttemptKeys(organizationID, userID string) ([2]credentialAtte
 	if err != nil {
 		return [2]credentialAttemptKey{}, err
 	}
-	user, err := newCredentialAttemptKey(passwordChangeAttemptScope, userID)
+	user, err := newCredentialAttemptKey(changeAttemptScope, userID)
 	return [2]credentialAttemptKey{organization, user}, err
 }
 
