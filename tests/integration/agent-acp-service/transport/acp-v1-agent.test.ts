@@ -28,6 +28,49 @@ const binding: ConnectionBinding = {
 };
 
 describe("ACP v1 agent mapping", () => {
+  it("keeps the original first connection close when a diagnostic observer throws", async () => {
+    let closeFailure: ((error: unknown) => void) | undefined;
+    let actual: acp.AgentConnection | undefined;
+    const failure = new Error("original failure");
+    const observe = vi.fn(() => {
+      throw new Error("observer failed");
+    });
+    const agent = createAcpV1Agent({
+      binding,
+      application: createApplication({}),
+      promptCapabilities: { image: false, embeddedContext: false },
+      onConnectionFailure: observe,
+      notices: {
+        subscribe: (_binding, _send, close) => {
+          closeFailure = close;
+          return {
+            attach: () => Promise.resolve(),
+            detach: () => undefined,
+            disconnect: () => undefined,
+          };
+        },
+      },
+    }).onConnect((connection) => {
+      actual = connection;
+    });
+    await acp
+      .client()
+      .connectWith(agent, async (connection) => {
+        await connection.request(acp.methods.agent.initialize, {
+          protocolVersion: 1,
+          clientCapabilities: { session: { notices: {} } },
+        });
+        closeFailure!(failure);
+        closeFailure!(new Error("later failure"));
+        expect(actual!.signal.aborted).toBe(true);
+        expect(actual!.signal.reason).toBe(failure);
+      })
+      .catch((error: unknown) => {
+        expect(error).toMatchObject({ message: "ACP connection closed" });
+      });
+    expect(actual!.signal.reason).toBe(failure);
+    expect(observe).toHaveBeenCalledExactlyOnceWith(failure, "learning-notice");
+  });
   it("publishes Skills before Session creation and retains the catalog on delivery checkpoints and refreshes after a Run", async () => {
     const notifications: acp.SessionNotification[] = [];
     const commands = [

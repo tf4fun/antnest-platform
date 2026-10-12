@@ -23,6 +23,7 @@ import type {
 import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
 import type { LearningNoticePublisher } from "../../../application/learning-notice-publisher.js";
 import type { LearningChangeItem } from "../../../adapters/postgres/learning-change-read.js";
+import type { AcpConnectionFailureSource } from "../../../telemetry/acp-http.js";
 
 export type CreateAcpV1AgentInput = {
   binding: ConnectionBinding;
@@ -32,6 +33,7 @@ export type CreateAcpV1AgentInput = {
   permissions?: PermissionConnectionsPort;
   notices?: Pick<LearningNoticePublisher, "subscribe">;
   skillCommands?: SkillCommandsPort;
+  onConnectionFailure?: (error: unknown, source: AcpConnectionFailureSource) => void;
 };
 
 export function createAcpV1Agent({
@@ -42,6 +44,7 @@ export function createAcpV1Agent({
   permissions,
   notices,
   skillCommands,
+  onConnectionFailure,
 }: CreateAcpV1AgentInput): acp.AgentApp {
   const dispatch = createAcpDispatcher("v1", binding);
   let initialized = false;
@@ -49,6 +52,17 @@ export function createAcpV1Agent({
   let bridgeLearningNotices = false;
   let noticeSubscription: ReturnType<LearningNoticePublisher["subscribe"]> | undefined;
   let connection: acp.AgentConnection;
+  const closeFailed = (error: unknown, source: AcpConnectionFailureSource) => {
+    // Capture only the first live close cause, before the SDK can finish GET.
+    if (!connection.signal.aborted) {
+      try {
+        onConnectionFailure?.(error, source);
+      } catch {
+        // Diagnostic observers cannot prevent the original connection close.
+      }
+    }
+    connection.close(error);
+  };
   let skills: SkillCommand[] = [];
   let skillExecutionId: string | null = null;
   const commandCatalog = () => [...availableCommands(), ...skills];
@@ -106,7 +120,7 @@ export function createAcpV1Agent({
               deliveryCheckpoint(connection.client, sessionId, sequence, commandCatalog()),
           }
         : {}),
-      onFailure: (error) => connection.close(error),
+      onFailure: (error) => closeFailed(error, "session-output"),
       ...(beforeFirst === undefined ? {} : { beforeFirst }),
       waitForDelivery,
     });
@@ -127,7 +141,7 @@ export function createAcpV1Agent({
               { cancellationSignal: signal },
             ),
           signal,
-          (error) => connection.close(error),
+          (error) => closeFailed(error, "permission"),
         ),
     });
   };
@@ -198,7 +212,7 @@ export function createAcpV1Agent({
                 await notifyCommands(sessionId);
               }
             },
-            (error) => connection.close(error),
+            (error) => closeFailed(error, "learning-notice"),
           );
         }
         await refreshSkills(signal);

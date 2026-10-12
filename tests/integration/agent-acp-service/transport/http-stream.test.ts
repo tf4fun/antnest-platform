@@ -1,5 +1,6 @@
 import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { createServer } from "node:http";
+import { randomBytes } from "node:crypto";
 import {
   binding,
   identityHeaders,
@@ -8,7 +9,24 @@ import {
 import { v1Configuration } from "../../../../services/agent-acp-service/src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import {
+  context,
+  propagation,
+  trace,
+  SpanStatusCode,
+} from "@opentelemetry/api";
+import { core, node, tracing } from "@opentelemetry/sdk-node";
+import { configureBoundaries } from "../../../../services/agent-acp-service/src/telemetry/diagnostics.js";
 
 import { AgentAcpHttpServer } from "../../../../services/agent-acp-service/src/transport/http-server.js";
 import { AcpHttpTransport } from "../../../../services/agent-acp-service/src/transport/acp/http-transport.js";
@@ -27,6 +45,20 @@ const initialize = {
   method: "initialize",
   params: { protocolVersion: 1, clientCapabilities: {} },
 };
+const exporter = new tracing.InMemorySpanExporter();
+const provider = new node.NodeTracerProvider({
+  spanProcessors: [new tracing.SimpleSpanProcessor(exporter)],
+});
+beforeAll(() => {
+  provider.register({ propagator: new core.W3CTraceContextPropagator() });
+  configureBoundaries({ captureRpcContent: false, disabled: false });
+});
+afterAll(async () => {
+  await provider.shutdown();
+  trace.disable();
+  context.disable();
+  propagation.disable();
+});
 
 describe("ACP v1 Streamable HTTP", () => {
   let server: AgentAcpHttpServer | undefined;
@@ -62,6 +94,7 @@ describe("ACP v1 Streamable HTTP", () => {
     acceptPrompt: vi.fn(),
   } satisfies AcpApplicationPort;
   beforeEach(() => {
+    exporter.reset();
     vi.clearAllMocks();
     application.createSession
       .mockReset()
@@ -81,6 +114,7 @@ describe("ACP v1 Streamable HTTP", () => {
     limit = 4096,
     notices?: AgentAcpHttpServerOptions["notices"],
     skillCommands?: AgentAcpHttpServerOptions["skillCommands"],
+    outputs?: SessionOutputStreams,
   ) {
     server = new AgentAcpHttpServer({
       authentication: testAuthentication(),
@@ -89,6 +123,7 @@ describe("ACP v1 Streamable HTTP", () => {
       maxWebSocketPayloadBytes: limit,
       ...(notices === undefined ? {} : { notices }),
       ...(skillCommands === undefined ? {} : { skillCommands }),
+      ...(outputs === undefined ? {} : { outputs }),
     });
     await server.listen("127.0.0.1", 0);
     const address = server.address();
@@ -96,6 +131,209 @@ describe("ACP v1 Streamable HTTP", () => {
       throw new Error("Missing address");
     url = `http://127.0.0.1:${address.port}/v1/acp`;
   }
+
+  it.each([
+    [
+      "learning-notice",
+      () => new DomainError("access_denied", "private-canary"),
+      true,
+    ],
+    [
+      "session-output",
+      () => new DomainError("access_denied", "private-canary"),
+      true,
+    ],
+    ["learning-notice", () => new Error("private-canary"), false],
+    [
+      "learning-notice",
+      () =>
+        new Error("private-canary", {
+          cause: new DomainError("access_denied", "private-canary"),
+        }),
+      false,
+    ],
+    [
+      "learning-notice",
+      () =>
+        Object.assign(new Error("private-canary"), {
+          name: "DomainError",
+          code: "access_denied",
+        }),
+      false,
+    ],
+    [
+      "learning-notice",
+      () => new DomainError("session_not_found", "private-canary"),
+      false,
+    ],
+  ] as const)(
+    "binds only an original %s access-denial closure to its own live GET (%#)",
+    async (source, failure, marked) => {
+      const outputs = new SessionOutputStreams();
+      const traceIDs = new Set<string>();
+      const agentTraceIDs = new Map<string, string>();
+      const closeFailures: Array<(error: unknown) => void> = [];
+      await start(
+        true,
+        4096,
+        {
+          subscribe: (_binding, _send, close) => {
+            closeFailures.push(close);
+            return {
+              attach: () => Promise.resolve(),
+              detach: () => undefined,
+              disconnect: () => undefined,
+            };
+          },
+        },
+        undefined,
+        outputs,
+      );
+      async function connect(agentId: string) {
+        const ready = Promise.withResolvers<void>();
+        const traceID = randomBytes(16).toString("hex");
+        traceIDs.add(traceID);
+        agentTraceIDs.set(agentId, traceID);
+        const connection = acp.client().connect(
+          createHttpStream(url, {
+            headers: {
+              ...identityHeaders({
+                ...binding(),
+                principalId: "owner",
+                agentId,
+              }),
+              traceparent: `00-${traceID}-1234567890abcdef-01`,
+            },
+            fetch: async (input, init) => {
+              const response = await fetch(input, init);
+              if (
+                (init?.method ??
+                  (input instanceof Request ? input.method : "GET")) === "GET"
+              ) {
+                expect(response.status).toBe(200);
+                ready.resolve();
+              }
+              return response;
+            },
+          }),
+        );
+        connections.push(connection);
+        await connection.agent.request(acp.methods.agent.initialize, {
+          protocolVersion: 1,
+          clientCapabilities: { session: { notices: {} } },
+        });
+        await ready.promise;
+        return connection;
+      }
+      const first = await connect(binding().agentId);
+      const other = await connect("other-agent");
+      if (source === "session-output") {
+        await first.agent.request(acp.methods.agent.session.load, {
+          sessionId: "session-1",
+          cwd: "/workspace",
+          mcpServers: [],
+        });
+      }
+      const gets = () =>
+        exporter
+          .getFinishedSpans()
+          .filter(
+            (s) =>
+              s.name === "HTTP GET /v1/acp" &&
+              traceIDs.has(s.spanContext().traceId),
+          );
+      const previouslyFinished = new Set(
+        gets().map((s) => s.spanContext().spanId),
+      );
+      if (source === "session-output") {
+        application.readSessionOutput.mockRejectedValueOnce(failure());
+        outputs.invalidateOrganization(binding().organizationId);
+      } else {
+        closeFailures[0]!(failure());
+        // A second callback must not relabel the first failure, even before the
+        // SDK has finalized its underlying HTTP response.
+        closeFailures[0]!(
+          new DomainError("access_denied", "second-private-canary"),
+        );
+      }
+      const terminated = () =>
+        gets().filter(
+          (s) =>
+            !previouslyFinished.has(s.spanContext().spanId) &&
+            s.spanContext().traceId === agentTraceIDs.get(binding().agentId) &&
+            s.attributes["http.response.status_code"] === 200,
+        );
+      await expect.poll(() => terminated().length).toBeGreaterThan(0);
+      expect(other.signal.aborted).toBe(false);
+      other.close();
+      await other.closed;
+      await expect
+        .poll(() =>
+          gets().some(
+            (s) => s.spanContext().traceId === agentTraceIDs.get("other-agent"),
+          ),
+        )
+        .toBe(true);
+      closeFailures[1]!(
+        new DomainError("access_denied", "late-private-canary"),
+      );
+      await server!.close();
+      await expect
+        .poll(() =>
+          gets().some(
+            (s) => s.spanContext().traceId === agentTraceIDs.get("other-agent"),
+          ),
+        )
+        .toBe(true);
+      for (const closed of terminated()) {
+        expect(closed.status.code).toBe(SpanStatusCode.ERROR);
+        expect(closed.attributes).toMatchObject({
+          "http.response.status_code": 200,
+          "error.type": "stream_interrupted",
+          "antnest.outcome": "disconnected",
+        });
+        expect(
+          closed.events.map((e) => ({
+            name: e.name,
+            attributes: e.attributes,
+          })),
+        ).toEqual(
+          marked
+            ? [
+                {
+                  name: "antnest.stream.termination",
+                  attributes: {
+                    reason: "access_denied",
+                    "error.type": "DomainError",
+                    source,
+                    "antnest.agent.id": binding().agentId,
+                    "antnest.organization.id": binding().organizationId,
+                  },
+                },
+              ]
+            : [],
+        );
+      }
+      for (const closed of gets().filter(
+        (s) => s.spanContext().traceId === agentTraceIDs.get("other-agent"),
+      ))
+        expect(closed.events).toEqual([]);
+      const spans = exporter
+        .getFinishedSpans()
+        .filter((s) => traceIDs.has(s.spanContext().traceId));
+      expect(
+        spans
+          .filter((s) => s.name !== "HTTP GET /v1/acp")
+          .flatMap((s) => s.events)
+          .some((e) => e.name === "antnest.stream.termination"),
+      ).toBe(false);
+      expect(
+        JSON.stringify(
+          spans.map((s) => ({ tags: s.attributes, events: s.events })),
+        ),
+      ).not.toContain("private-canary");
+    },
+  );
 
   it("passes Runtime Skill discovery into the real HTTP connection before Session creation", async () => {
     const commands = [
