@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
+import { inspectOutageCancellation } from "./chat-outage-trace.mjs";
 import { assertWorkspaceResolveReceipt } from "./request-trace.mjs";
 import {
   assertGatewayResolutionAttributes,
@@ -226,6 +227,10 @@ function heldModelCancellation(trace, expected, boundary, model, http) {
     ),
     "held model cancellation executed a Tool",
   );
+  cancelledModelError(trace, model, http);
+}
+
+function cancelledModelError(trace, model, http) {
   const requireTags = (span, tags) => {
     for (const [key, value] of Object.entries(tags))
       assert.equal(tag(span, key), value, `wrong model cancellation ${key}`);
@@ -397,9 +402,22 @@ export function inspectWorkspaceChatTrace(
   const cancelled = requests.some((item) => item.disconnected === true);
   if (expected.phase === "c4-browser-hold-cancel")
     assert(cancelled, "held model cancellation not observed");
-  let checked;
+  if (expected.phase === "c4-cache-outage")
+    assert(cancelled, "outage model cancellation not observed");
+  let checked, endQuantization;
   if (cancelled) {
-    heldModelCancellation(trace, expected, boundary, models[0], clients[0]);
+    if (expected.phase === "c4-cache-outage") {
+      const cancellation = inspectOutageCancellation(
+        trace,
+        expected,
+        boundary,
+        finishes[0],
+      );
+      endQuantization = cancellation.endQuantization;
+      cancelledModelError(trace, cancellation.model, cancellation.http);
+    } else {
+      heldModelCancellation(trace, expected, boundary, models[0], clients[0]);
+    }
     checked = {
       ...chatTraceEvidence(
         trace,
@@ -409,6 +427,9 @@ export function inspectWorkspaceChatTrace(
         trace.spans.filter(hasError).length,
       ),
       expected_cancellation: true,
+      ...(expected.phase === "c4-cache-outage"
+        ? { settled_read: true, end_quantization: endQuantization }
+        : {}),
     };
   } else {
     assert(!trace.spans.some(hasError), "error span in successful chat");

@@ -8,6 +8,8 @@ import {
 } from "./resolve-cache-outage-collect.mjs";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
 import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
+import { workspaceOutageFixture } from "../workspace-closeout/chat-fixtures.mjs";
+import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 
 const id = (n) => n.toString(16).padStart(32, "0");
 function sample() {
@@ -170,9 +172,11 @@ function archiveHarness(t, change = () => {}) {
               if (missing.has(traceID))
                 return new Response("", { status: 404 });
               const trace =
+                fixture.traces?.get(traceID) ??
                 fixture.found.messages.find(
                   (item) => item.traceID === traceID,
-                ) ?? fallback(traceID);
+                ) ??
+                fallback(traceID);
               return Response.json({ data: [trace] });
             },
           }),
@@ -180,6 +184,99 @@ function archiveHarness(t, change = () => {}) {
     );
   return { root, archive, searched };
 }
+
+function withOutageChat(s) {
+  const f = workspaceOutageFixture("shared");
+  s.traces = f.traces;
+  const evidence = s.evidence;
+  Object.assign(evidence, {
+    agent_id: f.expected.agentId,
+    session_id: f.expected.sessionId,
+    run_id: f.expected.runId,
+    settings: { resolveTTLMS: 10000 },
+    cancel_at: f.expected.cancelAt,
+    business_window: { run_id: f.expected.runId },
+    model_cancelled: { state: { requests: f.expected.requests, errors: [] } },
+    audit: f.expected.audit,
+  });
+  evidence.model_observations.push(evidence.model_cancelled);
+  evidence.http.push(
+    {
+      label: "outage-prompt",
+      method: "POST",
+      path: "/api/app/workspace/v1/agents/agent/sessions/session/prompts",
+      trace_id: f.trace.traceID,
+      status: 202,
+      set_cookie_count: 0,
+      body: { acceptance: "bridge" },
+    },
+    evidence.audit,
+  );
+  return f;
+}
+
+test("outage archive invokes the owning cancellation inspector with actual model and audit observations", async (t) => {
+  const h = archiveHarness(t, withOutageChat);
+  const result = await h.archive();
+  assert.equal(result.owning_gates.cancellation.status, "passed");
+  assert.equal(result.owning_gates.cancellation.trace_id, "a".repeat(32));
+  assert.equal(
+    result.reports.find((r) => r.trace_id === "a".repeat(32)).settled_read,
+    true,
+  );
+  assert.equal(result.strict_trace, "failed");
+  assert.equal(result.status, "raw_closures_archived_owning_admission_pending");
+});
+
+for (const [label, change, message] of [
+  [
+    "wrong actual Run terminal",
+    (_s, f) => setTag(f.run, "run.tool_effect_state", "unknown"),
+    /tool_effect_state/u,
+  ],
+  [
+    "wrong actual prompt trace",
+    (s) => {
+      s.evidence.http.find((r) => r.label === "outage-prompt").trace_id = id(1);
+    },
+    /prompt Trace/u,
+  ],
+  [
+    "missing model completion observation",
+    (s) => {
+      delete s.evidence.model_cancelled;
+    },
+    /model observation/u,
+  ],
+  [
+    "detached audit observation",
+    (s) => {
+      s.evidence.audit = { ...s.evidence.audit, status: 503 };
+    },
+    /audit observation/u,
+  ],
+])
+  test(`outage archive rejects ${label} but still retains independent raw traces`, async (t) => {
+    const h = archiveHarness(t, (s) => {
+      const f = withOutageChat(s);
+      change(s, f);
+    });
+    await assert.rejects(h.archive(), (error) => {
+      assert(error instanceof AggregateError);
+      assert(
+        error.errors.some((e) => message.test(e.message)),
+        error.message,
+      );
+      return true;
+    });
+    for (const traceID of [id(1), "a".repeat(32)])
+      assert(existsSync(join(h.root, "outage-traces", `${traceID}.json`)));
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(report.status, "archive_failed");
+    assert.equal(report.owning_gates.cancellation.status, "pending");
+  });
 
 test("outage archive uses the actual JWKS HTTP route and retains complete raw closures", async (t) => {
   const h = archiveHarness(t);

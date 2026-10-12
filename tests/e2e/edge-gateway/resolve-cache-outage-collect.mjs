@@ -6,6 +6,60 @@ import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { tag, traceTopology } from "../observability/trace-tree.mjs";
+import { inspectWorkspaceChatTrace } from "../workspace-closeout/chat-trace.mjs";
+import { outagePhase } from "./resolve-cache-outage.mjs";
+
+export function outageChatExpectation(evidence) {
+  const observation = evidence.model_cancelled;
+  assert(observation?.state, "actual outage model observation missing");
+  assert.deepEqual(observation.state.errors, []);
+  const requests = observation.state.requests.filter(
+    (row) => row.phase === outagePhase,
+  );
+  assert.equal(requests.length, 2, "actual outage model pair missing");
+  const prompts = evidence.http.filter((row) => row.label === "outage-prompt");
+  assert.equal(prompts.length, 1, "actual outage prompt missing or duplicate");
+  const prompt = prompts[0];
+  assert.equal(prompt.method, "POST");
+  assert.equal(
+    prompt.path,
+    `/api/app/workspace/v1/agents/${encodeURIComponent(evidence.agent_id)}/sessions/${encodeURIComponent(evidence.session_id)}/prompts`,
+  );
+  assert.equal(prompt.status, 202);
+  assert.equal(prompt.set_cookie_count, 0);
+  assert.equal(prompt.body.acceptance, "bridge");
+  for (const request of requests)
+    assert.equal(
+      request.trace_id,
+      prompt.trace_id,
+      "actual model differs from prompt Trace",
+    );
+  const audits = evidence.http.filter(
+    (row) => row.trace_id === evidence.audit?.trace_id,
+  );
+  assert.equal(
+    audits.length,
+    1,
+    "actual terminal audit observation absent or duplicate",
+  );
+  assert.deepEqual(
+    audits[0],
+    evidence.audit,
+    "actual terminal audit observation changed",
+  );
+  return {
+    traceID: prompt.trace_id,
+    agentId: evidence.agent_id,
+    sessionId: evidence.session_id,
+    runId: evidence.run_id,
+    bridge: true,
+    phase: outagePhase,
+    requests,
+    audit: evidence.audit,
+    cancelAt: evidence.cancel_at,
+    resolveTTLMS: evidence.settings.resolveTTLMS,
+  };
+}
 
 export function outageTraceSelection(evidence, found) {
   const ids = new Set(),
@@ -68,7 +122,7 @@ export function outageTraceSelection(evidence, found) {
 }
 
 // This retains full raw sources, warnings and errors. It does not replace the
-// still-pending owning cancellation/authority/HTTP inspectors.
+// owning authority/HTTP/cleanup inspectors. Cancellation is checked separately.
 export async function collectOutageTraceArchive(
   base,
   evidence,
@@ -160,23 +214,45 @@ export async function collectOutageTraceArchive(
     errors.push(new Error("actual session feed raw traces missing"));
   if (!found.jwks.length)
     errors.push(new Error("actual JWKS raw traces missing"));
+  let chat;
+  if (evidence.business_window || evidence.model_cancelled)
+    try {
+      chat = outageChatExpectation(evidence);
+    } catch (error) {
+      errors.push(error);
+    }
   const reports = [];
   for (const traceID of [...ids].sort()) {
     if (signal.aborted) break;
     try {
       reports.push(
-        ...(await collect(base, [{ traceID }], secrets, {
-          signal,
-          directory: join(directory, "outage-traces"),
-          inspect(trace) {
-            traceTopology(trace);
-            return {
-              trace_id: trace.traceID,
-              raw_span_count: trace.spans.length,
-              owning_gate: "pending",
-            };
+        ...(await collect(
+          base,
+          [chat?.traceID === traceID ? chat : { traceID }],
+          secrets,
+          {
+            signal,
+            directory: join(directory, "outage-traces"),
+            inspect(trace, expected, secrets, sources) {
+              traceTopology(trace);
+              if (chat?.traceID === trace.traceID)
+                return {
+                  ...inspectWorkspaceChatTrace(
+                    trace,
+                    expected,
+                    secrets,
+                    sources,
+                  ),
+                  owning_gate: "workspace-outage-cancellation",
+                };
+              return {
+                trace_id: trace.traceID,
+                raw_span_count: trace.spans.length,
+                owning_gate: "pending",
+              };
+            },
           },
-        })),
+        )),
       );
     } catch (error) {
       errors.push(error);
@@ -189,6 +265,13 @@ export async function collectOutageTraceArchive(
       ? "archive_failed"
       : "raw_closures_archived_owning_admission_pending",
     reports,
+    owning_gates: {
+      cancellation: reports.some(
+        (row) => row.trace_id === chat?.traceID && row.settled_read === true,
+      )
+        ? { status: "passed", trace_id: chat.traceID }
+        : { status: "pending" },
+    },
     strict_trace:
       errors.length || reports.some((row) => row.strict_trace === "failed")
         ? "failed"

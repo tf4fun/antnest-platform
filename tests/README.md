@@ -271,8 +271,24 @@ After the recovery observation and public connection cleanup, this batch drains
 its Agent UI process so internal ACP HTTP watches can finish their real SERVER
 spans before collection; raw parents are never fabricated or discarded.
 
+The Workspace owning inspector also binds the actual two model CLIENT IDs to
+the first successful tool response, one settled Runtime `read`, the second
+model's observed disconnect, and the same Run's terminal SQL and public audit.
+It keeps the exact response-reader cleanup cancellation and the two expected
+model ERROR spans; other failures are rejected. The original held-model
+cancellation still requires one request and no Tool execution. The archive
+reports this cancellation gate separately from the remaining outage gates.
+For joined Node span ends, the inspector records inversions below one
+millisecond only when both starts use millisecond resolution in the same ACP
+process. Larger inversions, missing parents and cross-process comparisons are
+not admitted; raw timestamps and warnings remain unchanged.
+`node tests/e2e/edge-gateway/resolve-cache-outage-replay.mjs INPUT OUTPUT`
+rechecks a retained outage archive in an unused output directory, retaining
+source hashes and strict findings. It is an offline replay, not a new Docker run.
+
 Observer and failure-first coverage is in `resolve-cache-outage.test.mjs`,
 `resolve-cache-outage-collect.test.mjs`,
+`resolve-cache-outage-replay.test.mjs`, `workspace-closeout/chat-outage.test.mjs`,
 `resolve-cache-stream.test.mjs`, `workspace-closeout/c4-cache-model.test.mjs`
 and `lifecycle-closeout/acp.test.mjs`. The model fixture holds two stages of the
 same Run, with fresh text and a settled read between them. The Workspace
@@ -281,7 +297,7 @@ retains raw frames without reconnecting, and distinguishes remote closure from
 local cleanup. The ACP helper can negotiate delivery marks and target a cancel
 at the observed Run. A passed business window and raw archive do not establish
 complete outage/recovery admission: cache/CCT/feed budgets, cold and expired
-HTTP rejection, recovery revocations and owning Trace gates remain explicit
+HTTP rejection, recovery revocations and the remaining owning Trace gates remain explicit
 pending items in the report.
 
 Some contract checks can be run directly:

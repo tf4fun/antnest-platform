@@ -166,3 +166,211 @@ export function workspaceChatFixture(source = "cache", cancelled = false) {
   }
   return { ...f, add };
 }
+
+export function workspaceOutageFixture(source = "cache") {
+  const f = workspaceChatFixture(source, true);
+  const phase = "c4-cache-outage";
+  f.expected.phase = phase;
+  setTag(f.run, "run.tool_effect_state", "settled");
+  f.run.duration = 12000;
+  f.model.startTime = 1028000;
+  f.model.duration = 1200;
+  f.http.startTime = 1028100;
+  f.http.duration = 700;
+  f.expected.requests[0] = {
+    ...f.expected.requests[0],
+    phase,
+    received_at_ms: 1028,
+    disconnected_at_ms: 1029,
+  };
+  const add = (id, parent, name, tags, service, start, duration) => {
+    const span = f.add(id, parent, name, tags, service);
+    span.startTime = start;
+    span.duration = duration;
+    return span;
+  };
+  f.firstModel = add(
+    "first-model",
+    "run",
+    "model.complete",
+    {
+      "span.kind": "internal",
+      "antnest.outcome": "ok",
+      "antnest.model.result.kind": "tool_calls",
+    },
+    "agent-acp-service",
+    1022000,
+    1000,
+  );
+  f.firstHTTP = add(
+    "3333333333333333",
+    "first-model",
+    "HTTP POST model",
+    {
+      "span.kind": "client",
+      "http.request.method": "POST",
+      "http.status_code": 200,
+    },
+    "agent-acp-service",
+    1022100,
+    600,
+  );
+  f.expected.requests.unshift({
+    phase,
+    stage: "tool",
+    trace_id: f.trace.traceID,
+    model_span_id: f.firstHTTP.spanID,
+    received_at_ms: 1022,
+    released_at_ms: 1023,
+  });
+  f.read = add(
+    "read",
+    "run",
+    "mcp.tools.call",
+    {
+      "span.kind": "internal",
+      "tool.name": "read",
+      "antnest.run.id": "run-id",
+      "run.id": "run-id",
+      "antnest.outcome": "ok",
+    },
+    "agent-acp-service",
+    1024000,
+    2000,
+  );
+  f.readHTTP = add(
+    "read-http",
+    "read",
+    "HTTP POST antnest-runtime",
+    {
+      "span.kind": "client",
+      "http.request.method": "POST",
+      "http.status_code": 200,
+      "http.response.body.size": 482,
+      "antnest.outcome": "cancelled",
+      "antnest.operation.phase": "http.send_or_read",
+      "antnest.cancellation.type": "AbortError",
+    },
+    "agent-acp-service",
+    1024200,
+    1500,
+  );
+  f.readHTTP.logs = [
+    {
+      fields: fields({
+        event: "antnest.cancelled",
+        "antnest.cancellation.phase": "http.send_or_read",
+        "antnest.cancellation.type": "AbortError",
+      }),
+    },
+  ];
+  f.readServer = add(
+    "read-server",
+    "read-http",
+    "HTTP POST /mcp",
+    {
+      "span.kind": "server",
+      "http.request.method": "POST",
+      "http.route": "/mcp",
+      "http.status_code": "200",
+      "http.response.body.size": 482,
+      "antnest.protocol.outcome": "success",
+      "rpc.method": "tools/call",
+      "antnest.agent.id": "agent",
+    },
+    "antnest-runtime",
+    1024300,
+    1200,
+  );
+  f.readServer.logs = [
+    {
+      fields: fields({
+        event: "Runtime HTTP request completed",
+        level: "INFO",
+        "http.transport.outcome": "success",
+        "error.type": "",
+        "http.status_code": "200",
+        "http.request.method": "POST",
+        "antnest.agent.id": "agent",
+        "service.name": "antnest-runtime",
+        trace_id: f.trace.traceID,
+        span_id: f.readServer.spanID,
+        "url.path": "/mcp",
+      }),
+    },
+  ];
+  f.readOperation = add(
+    "read-operation",
+    "read-server",
+    "runtime.mcp.operation",
+    {
+      "span.kind": "internal",
+      "rpc.method": "tools/call",
+      "mcp.operation.name": "tools/call",
+      "mcp.tool.name": "read",
+      "mcp.operation.outcome": "success",
+      "antnest.operation.outcome": "success",
+      "error.type": "",
+      "otel.status_code": "OK",
+      "antnest.agent.id": "agent",
+    },
+    "antnest-runtime",
+    1024400,
+    1000,
+  );
+  f.readOperation.logs = [
+    {
+      fields: fields({
+        event: "Runtime MCP operation completed",
+        level: "INFO",
+        "mcp.operation.name": "tools/call",
+        "mcp.operation.outcome": "success",
+        "error.type": "",
+        "antnest.agent.id": "agent",
+        "service.name": "antnest-runtime",
+        trace_id: f.trace.traceID,
+        span_id: f.readOperation.spanID,
+      }),
+    },
+  ];
+  f.readTool = add(
+    "read-tool",
+    "read-operation",
+    "runtime.mcp.tool",
+    {
+      "span.kind": "internal",
+      "mcp.tool.name": "read",
+      "mcp.tool.outcome": "success",
+      "otel.status_code": "OK",
+      "antnest.agent.id": "agent",
+    },
+    "antnest-runtime",
+    1024450,
+    900,
+  );
+  f.finish = f.trace.spans.find((span) => span.spanID === "finish");
+  f.finish.startTime = 1030000;
+  f.finish.duration = 1000;
+  f.expected.cancelAt = 1029;
+  f.expected.audit = {
+    method: "GET",
+    path: "/api/admin/execution-audits/run-id",
+    trace_id: "d".repeat(32),
+    started_at: 1031,
+    at: 1035,
+    status: 200,
+    set_cookie_count: 0,
+    body: {
+      run_id: "run-id",
+      agent_id: "agent",
+      session_id: "session",
+      state: "cancelled",
+      terminal_class: "cancelled",
+      executor_state: "quiescent",
+      tool_effect_state: "settled",
+      error_class: null,
+      stop_reason: null,
+    },
+  };
+  return f;
+}
