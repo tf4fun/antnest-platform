@@ -79,6 +79,9 @@ export function connectACP(version, agent, cookie, options = {}) {
       timeout,
     );
   return {
+    get observedConnectionTraceID() {
+      return actualTraceID;
+    },
     get traceID() {
       return observedTraceID();
     },

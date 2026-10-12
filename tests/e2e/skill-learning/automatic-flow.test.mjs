@@ -1713,6 +1713,7 @@ test(
         // Console 5xx cannot be attributed to the layer that produced it.
         for (const service of [
           "edge-gateway",
+          "identity-service",
           "admin-console",
           "agent-acp-service",
           "agent-controller",
