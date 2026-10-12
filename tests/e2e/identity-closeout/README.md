@@ -312,8 +312,13 @@ session has expired. Console and Agent UI tests verify password-dialog retention
 versus returning to login, including late responses from an older in-page
 session.
 
-Finally the coordinator stops only Identity and proves that protected requests
-return 503 without deleting cookies. The stopped Identity keeps its pinned
+Finally the coordinator issues a new session without reading a protected route,
+then stops only Identity. The first session, console and workspace reads must
+all fail at Gateway with `503 identity_unavailable`, no-store and no Cookie
+change. Login does not populate the Resolve cache. This cold-scope check does
+not classify a warm Console account request whose downstream Identity call
+fails; cached authority and ongoing ACP work during an outage have their own
+Resolve-cache E2E coverage. The stopped Identity keeps its pinned
 Compose address and drops connects. Gateway's 5-second dependency connect bound
 must report the outage within the default 15-second request wait. It restarts Identity with the token TTL set
 to five seconds for new tokens: the earlier long-lived cookie must recover, and a
