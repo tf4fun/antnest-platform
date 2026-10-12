@@ -14,6 +14,7 @@ import { inspectOutageRejections } from "./resolve-cache-outage-rejection.mjs";
 import { inspectRecoveryRunTraces } from "./resolve-cache-recovery-trace.mjs";
 import { inspectRecoveryAuthority } from "./resolve-cache-recovery-authority.mjs";
 import { inspectRecoveryHTTP as inspectRecoveryHTTPTraces } from "./resolve-cache-recovery-http.mjs";
+import { inspectOutageFeed } from "./resolve-cache-outage-feed.mjs";
 
 export function outageChatExpectation(evidence) {
   const observation = evidence.model_cancelled;
@@ -161,6 +162,7 @@ export async function collectOutageTraceArchive(
     inspectRecovery = inspectRecoveryRunTraces,
     inspectRecoveryBudgets = inspectRecoveryAuthority,
     inspectRecoveryHTTP = inspectRecoveryHTTPTraces,
+    inspectFeed = inspectOutageFeed,
   },
 ) {
   await wait(12000, undefined, { signal });
@@ -358,6 +360,7 @@ export async function collectOutageTraceArchive(
     recovery = { status: "pending" },
     recoveryAuthority = { status: "pending" },
     recoveryHTTP = { status: "pending" },
+    feed = { status: "pending" },
     collection;
   if (evidence.business_window) {
     try {
@@ -386,6 +389,12 @@ export async function collectOutageTraceArchive(
         traces,
         archivedTraceIDs,
         feedAttemptTraceIDs: new Set(found.feedAttempts.map((t) => t.traceID)),
+        feedSearch: {
+          now,
+          lookback,
+          found: { feed: found.feed },
+          feed_attempt_searches: attemptSearches,
+        },
       };
       authority = await inspectAuthority(evidence, collection, secrets);
     } catch (error) {
@@ -396,6 +405,24 @@ export async function collectOutageTraceArchive(
     try {
       assert(collection, "HTTP rejection raw archive missing");
       rejections = await inspectRejections(evidence, collection, secrets);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (evidence.business_window) {
+    try {
+      assert(collection, "feed raw archive missing");
+      const result = await inspectFeed(evidence, collection, secrets);
+      assert.equal(
+        result?.status,
+        "passed",
+        "feed owning inspector did not pass",
+      );
+      assert(
+        Array.isArray(result.owned_error_spans),
+        "feed error claims missing",
+      );
+      feed = result;
     } catch (error) {
       errors.push(error);
     }
@@ -435,6 +462,7 @@ export async function collectOutageTraceArchive(
       recovery_runs: recovery,
       recovery_authority: recoveryAuthority,
       recovery_http: recoveryHTTP,
+      feed,
       cancellation: reports.some(
         (row) => row.trace_id === chat?.traceID && row.settled_read === true,
       )

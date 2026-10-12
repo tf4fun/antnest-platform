@@ -202,6 +202,7 @@ function archiveHarness(
         directory: root,
         inspectAuthority,
         inspectRejections,
+        inspectFeed: () => ({ status: "passed", owned_error_spans: [] }),
         ...recoveryInspectors,
         wait: async () => {},
         search: async (_base, query) => {
@@ -300,6 +301,66 @@ test("recovery inventory failure still archives independently known observers", 
   for (const n of [20, 21, 30, 31, 40])
     assert(existsSync(join(h.root, "outage-traces", `${id(n)}.json`)));
 });
+
+for (const mode of ["passed", "throws", "pending"])
+  test(`feed owning gate ${mode} preserves complete search and raw diagnostics`, async (t) => {
+    let observed = false;
+    const claims = [
+      {
+        trace_id: id(11),
+        span_id: "1234567890abcdef",
+        reason: "identity-feed-stopped",
+      },
+    ];
+    const h = archiveHarness(
+      t,
+      (s) => withOutageChat(s),
+      undefined,
+      undefined,
+      {
+        inspectFeed(evidence, collection, secrets) {
+          assert(evidence.business_window);
+          assert.deepEqual(secrets, ["private-canary"]);
+          assert(collection.traces.size > 0);
+          for (const traceID of collection.traces.keys())
+            assert(collection.archivedTraceIDs.has(traceID));
+          assert.equal(collection.feedSearch.feed_attempt_searches.length, 3);
+          assert.deepEqual(
+            collection.feedSearch.found.feed.map((t) => t.traceID),
+            [id(9)],
+          );
+          assert.deepEqual(
+            collection.feedSearch.feed_attempt_searches
+              .at(-1)
+              .map((t) => t.traceID),
+            [id(9), id(11)],
+          );
+          assert(Number.isSafeInteger(collection.feedSearch.now));
+          assert.match(collection.feedSearch.lookback, /^[0-9]+ms$/u);
+          observed = true;
+          if (mode === "throws")
+            throw new Error("wrong feed failure ownership");
+          return { status: mode, owned_error_spans: claims };
+        },
+      },
+    );
+    if (mode === "passed") await h.archive();
+    else await assert.rejects(h.archive(), AggregateError);
+    assert(observed, "feed inspector was not invoked");
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(
+      report.owning_gates.feed.status,
+      mode === "passed" ? "passed" : "pending",
+    );
+    assert.equal(report.owning_gates.cancellation.status, "passed");
+    assert.equal(report.strict_trace, "failed");
+    if (mode === "passed")
+      assert.deepEqual(report.owning_gates.feed.owned_error_spans, claims);
+    else assert.equal(report.status, "archive_failed");
+    assert(existsSync(join(h.root, "outage-traces", `${id(11)}.json`)));
+  });
 
 test("outage archive runs HTTP rejection gate against archived sources", async (t) => {
   let observed = false;
