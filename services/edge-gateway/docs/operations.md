@@ -315,6 +315,17 @@ both parent chains. A cancelled shared wait may lack a CLIENT only under the
 explicit `cancelled-before-client` boundary in the [cache contract](../../../contracts/edge-gateway/resolve-cache.md).
 Neither that marker nor unrelated SQL excuses a missing parent (#247).
 
+The recovery HTTP E2E gate binds the observed logout, password change and
+Membership changes to their actual Gateway/Console/Identity chain and committed
+Identity transaction. Session-feed inserts must match the number of revoked
+token rows; password replacement and deactivation's principal feed remain
+required. Parameterized SQL does not establish individual token IDs or reasons.
+The old-session and rejected-login checks require the exact 401 response,
+credential scope, Identity receipt and successful lookup. Only the matched
+Trace/span pairs are classified as expected refusals. Raw errors, warnings and
+the strict Trace result remain intact; HTTP admission alone does not complete
+stream retirement, feed-outage or full CI acceptance.
+
 To export metrics, enable the SDK and set `OTEL_METRICS_EXPORTER=otlp` with a
 reachable metrics receiver, normally via `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`.
 Jaeger supplies trace storage, not a metrics backend. `OTEL_TRACES_EXPORTER=none`

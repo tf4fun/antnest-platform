@@ -13,6 +13,7 @@ import { inspectOutageAuthority } from "./resolve-cache-outage-authority.mjs";
 import { inspectOutageRejections } from "./resolve-cache-outage-rejection.mjs";
 import { inspectRecoveryRunTraces } from "./resolve-cache-recovery-trace.mjs";
 import { inspectRecoveryAuthority } from "./resolve-cache-recovery-authority.mjs";
+import { inspectRecoveryHTTP as inspectRecoveryHTTPTraces } from "./resolve-cache-recovery-http.mjs";
 
 export function outageChatExpectation(evidence) {
   const observation = evidence.model_cancelled;
@@ -159,6 +160,7 @@ export async function collectOutageTraceArchive(
     inspectRejections = inspectOutageRejections,
     inspectRecovery = inspectRecoveryRunTraces,
     inspectRecoveryBudgets = inspectRecoveryAuthority,
+    inspectRecoveryHTTP = inspectRecoveryHTTPTraces,
   },
 ) {
   await wait(12000, undefined, { signal });
@@ -355,6 +357,7 @@ export async function collectOutageTraceArchive(
     rejections = { status: "pending" },
     recovery = { status: "pending" },
     recoveryAuthority = { status: "pending" },
+    recoveryHTTP = { status: "pending" },
     collection;
   if (evidence.business_window) {
     try {
@@ -414,6 +417,12 @@ export async function collectOutageTraceArchive(
     } catch (error) {
       errors.push(error);
     }
+    try {
+      assert(collection, "recovery HTTP raw archive missing");
+      recoveryHTTP = await inspectRecoveryHTTP(evidence, collection, secrets);
+    } catch (error) {
+      errors.push(error);
+    }
   }
   const result = {
     status: errors.length
@@ -425,6 +434,7 @@ export async function collectOutageTraceArchive(
       http_rejections: rejections,
       recovery_runs: recovery,
       recovery_authority: recoveryAuthority,
+      recovery_http: recoveryHTTP,
       cancellation: reports.some(
         (row) => row.trace_id === chat?.traceID && row.settled_read === true,
       )

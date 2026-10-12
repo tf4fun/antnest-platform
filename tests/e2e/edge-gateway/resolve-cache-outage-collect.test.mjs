@@ -166,6 +166,7 @@ function archiveHarness(
   change = () => {},
   inspectAuthority = () => ({ status: "passed", fixture: true }),
   inspectRejections,
+  recoveryInspectors = {},
 ) {
   const fixture = sample();
   fixture.evidence.observed_at_ms = Date.now() - 1000;
@@ -201,6 +202,7 @@ function archiveHarness(
         directory: root,
         inspectAuthority,
         inspectRejections,
+        ...recoveryInspectors,
         wait: async () => {},
         search: async (_base, query) => {
           const tags = JSON.parse(query.get("tags"));
@@ -348,6 +350,56 @@ test("HTTP rejection gate failure preserves raw archive and strict failure", asy
   );
   assert(existsSync(join(h.root, "outage-traces", `${id(1)}.json`)));
 });
+
+for (const failed of [false, true])
+  test(`recovery HTTP gate ${failed ? "retains failure" : "checks archived sources"}`, async (t) => {
+    let observed = false;
+    const h = archiveHarness(
+      t,
+      (s) => {
+        withOutageChat(s);
+        s.evidence.recovery_window = { status: "passed" };
+      },
+      undefined,
+      undefined,
+      {
+        inspectRecovery: () => ({ status: "passed" }),
+        inspectRecoveryBudgets: () => ({ status: "passed" }),
+        inspectRecoveryHTTP(evidence, collection, secrets) {
+          assert(evidence.recovery_window);
+          assert.deepEqual(secrets, ["private-canary"]);
+          assert(collection.traces.size > 0);
+          for (const id of collection.traces.keys())
+            assert(collection.archivedTraceIDs.has(id));
+          observed = true;
+          if (failed) throw new Error("wrong recovery HTTP transaction");
+          return { status: "passed", owned_error_spans: [] };
+        },
+      },
+    );
+    if (failed) await assert.rejects(h.archive(), AggregateError);
+    else await h.archive();
+    assert(observed, "recovery HTTP inspector was not invoked");
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(
+      report.owning_gates.recovery_http.status,
+      failed ? "pending" : "passed",
+    );
+    assert.equal(report.owning_gates.recovery_runs.status, "passed");
+    assert.equal(report.owning_gates.cancellation.status, "passed");
+    assert.equal(report.strict_trace, "failed");
+    if (failed) {
+      assert.equal(report.status, "archive_failed");
+      assert(
+        report.failures.some((line) =>
+          line.includes("wrong recovery HTTP transaction"),
+        ),
+      );
+    }
+    assert(existsSync(join(h.root, "outage-traces", `${id(1)}.json`)));
+  });
 
 test("outage archive invokes the owning cancellation inspector with actual model and audit observations", async (t) => {
   const h = archiveHarness(t, withOutageChat);
