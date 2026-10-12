@@ -233,6 +233,15 @@ Real handler responses are validated against the central principal JSON
 Schema. PostgreSQL tests check every principal builder, both OIDC callback
 paths, fresh organization metadata on token resolution, and organization
 renames during local login without weakening password/role/status checks.
+Password resource component tests share one real engine across bootstrap,
+dummy preparation, login, user creation and password change. They exercise
+200 independent unknown-account RPCs, reconcile busy responses with KDF
+rejections, and verify budget drain and subsequent successful login. The local
+fixture warms 48 PostgreSQL connections (above two active plus 32 queued KDFs),
+leaving schema administration room under the diagnostic relay's 64-connection
+ceiling. Historical/malformed hashes and stopped admission are covered; full-row
+snapshots check that rejected work preserves credentials, tokens and revocation
+feeds. Production-container RSS requires its separate Docker pressure gate.
 `node tests/e2e/service-authentication/identity/run.mjs` checks this owning service
 in an isolated Identity/PostgreSQL stack with a test-only HTTPS IdP. It checks
 real policy-gated callbacks and review persistence through rotation, toggles
