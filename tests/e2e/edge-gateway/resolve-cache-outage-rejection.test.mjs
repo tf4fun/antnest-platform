@@ -7,6 +7,30 @@ import {
   setTag,
 } from "../observability/gateway-resolution-fixtures.mjs";
 
+function failed(span, type, message, causes, stage) {
+  for (const [key, value] of Object.entries({
+    error: true,
+    "error.type": type,
+    "otel.status_code": "ERROR",
+    "otel.status_description": message,
+  }))
+    setTag(span, key, value);
+  span.logs = stage
+    ? [
+        {
+          timestamp: span.startTime + span.duration,
+          fields: Object.entries({
+            event: "antnest.error",
+            "error.type": type,
+            "antnest.error.stage": stage,
+            "antnest.error.message": message,
+            "antnest.error.cause_types": JSON.stringify(causes),
+          }).map(([key, value]) => ({ key, value })),
+        },
+      ]
+    : [];
+}
+
 function fixture() {
   const traces = new Map(),
     rows = {},
@@ -89,15 +113,62 @@ function fixture() {
       f.trace.spans = f.trace.spans.filter(
         (s) => !["resolve-server", "sql"].includes(s.spanID),
       );
-      setTag(f.root, "error", true);
+      failed(
+        f.root,
+        profile ? "network_error" : "deadline_exceeded",
+        profile ? "Network operation failed" : "Request deadline exceeded",
+        profile
+          ? ["*fmt.wrapError", "*url.Error", "*net.OpError", "*os.SyscallError"]
+          : ["*fmt.wrapError", "*url.Error", "context.deadlineExceededError"],
+        "request",
+      );
       setTag(client, "http.response.status_code", undefined);
-      setTag(client, "error", true);
-      setTag(client, "error.type", "deadline_exceeded");
+      failed(
+        client,
+        profile ? "network_error" : "deadline_exceeded",
+        profile ? "Network operation failed" : "Request deadline exceeded",
+        profile
+          ? ["*net.OpError", "*os.SyscallError", "syscall.Errno"]
+          : ["context.deadlineExceededError"],
+        "send",
+      );
       setTag(client, "antnest.request.timeout_ms", 1999);
-      setTag(f.decision, "error", true);
+      failed(f.decision, undefined, "unavailable");
       setTag(f.decision, resolvePrefix + "outcome", "unavailable");
     }
     if (status === 401) {
+      failed(
+        f.root,
+        "operation_failed",
+        "Operation failed; unclassified error text was not exported",
+        ["*errors.errorString"],
+        "request",
+      );
+      failed(client, "401", "HTTP status 401");
+      failed(f.decision, undefined, "rejected");
+      const server = f.trace.spans.find((s) => s.spanID === "resolve-server");
+      const attributes = {
+        "antnest.error.cause_types": '["*domain.Error"]',
+        "antnest.error.code": "unauthenticated",
+        "antnest.error.message": "Authentication failed",
+        "antnest.error.stage": "protocol",
+        "antnest.error.type": "unauthenticated",
+        "error.type": "unauthenticated",
+      };
+      for (const [key, value] of Object.entries({
+        ...attributes,
+        "antnest.outcome": "rejected",
+        "antnest.result": "rejected",
+      }))
+        setTag(server, key, value);
+      server.logs = [
+        {
+          timestamp: server.startTime + server.duration,
+          fields: Object.entries({ event: "antnest.error", ...attributes }).map(
+            ([key, value]) => ({ key, value }),
+          ),
+        },
+      ];
       setTag(f.decision, resolvePrefix + "outcome", "rejected");
       for (const s of f.trace.spans.filter((s) =>
         ["resolve-server", "resolve-client"].includes(s.spanID),
@@ -249,34 +320,382 @@ function fixture() {
 
 test("five real outage rejections keep HTTP/cookie/scope/Trace evidence and unchanged short-idle authority", () => {
   const f = fixture();
+  const before = structuredClone([...f.collection.traces]);
   const result = inspectOutageRejections(f.evidence, f.collection);
   assert.equal(result.status, "passed");
   assert.equal(result.requests.length, 5);
   assert.equal(result.expired_recovery.status, 401);
   assert.equal(result.strict_trace, "failed");
+  const expected = [
+    ...Object.entries(f.parts)
+      .filter(([name]) => name.startsWith("stopped-"))
+      .flatMap(([, p]) =>
+        p.trace.spans.map((s) => ({
+          trace_id: p.trace.traceID,
+          span_id: s.spanID,
+          reason: "outage-http-unavailable",
+        })),
+      ),
+    ...f.parts["recovered-expired-session"].trace.spans
+      .filter((s) => s.spanID !== "sql")
+      .map((s) => ({
+        trace_id: s.traceID,
+        span_id: s.spanID,
+        reason: "recovered-session-expired",
+      })),
+  ];
+  const ordered = (rows) =>
+    [...rows].sort((a, b) =>
+      `${a.trace_id}:${a.span_id}`.localeCompare(`${b.trace_id}:${b.span_id}`),
+    );
+  assert.deepEqual(ordered(result.owned_error_spans), ordered(expected));
+  assert.equal(result.owned_error_spans.length, 18);
+  assert.deepEqual([...f.collection.traces], before);
 });
 test("process-owned Resolve cancellation can finish its real CLIENT after the HTTP deadline response", () => {
   const f = fixture();
   const part = f.parts["stopped-cold-console"];
   part.trace.spans.at(-1).duration = 100000;
-  setTag(part.root, "error.type", "deadline_exceeded");
-  part.root.logs = [
-    {
-      timestamp: part.root.startTime + part.root.duration,
-      fields: [
-        { key: "event", value: "antnest.error" },
-        { key: "error.type", value: "deadline_exceeded" },
-        { key: "antnest.error.stage", value: "request" },
-      ],
-    },
-  ];
+  failed(
+    part.root,
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["context.deadlineExceededError"],
+    "request",
+  );
+  failed(
+    part.trace.spans.at(-1),
+    "cancelled",
+    "Request was cancelled",
+    ["*errors.errorString"],
+    "send",
+  );
   const result = inspectOutageRejections(f.evidence, f.collection);
   assert(
     result.requests.find((r) => r.label === "stopped-cold-console")
       .retained_client_after_response_us > 0,
   );
 });
+
+test("outage error claims do not absorb unrelated archived source failures", () => {
+  const f = fixture();
+  const source = resolutionFixture("rpc").trace;
+  source.traceID = "f".repeat(32);
+  for (const span of source.spans) {
+    span.traceID = source.traceID;
+    for (const reference of span.references) reference.traceID = source.traceID;
+  }
+  setTag(source.spans[0], "error", true);
+  f.collection.traces.set(source.traceID, source);
+  f.collection.archivedTraceIDs.add(source.traceID);
+  const result = inspectOutageRejections(f.evidence, f.collection);
+  assert.equal(result.owned_error_spans.length, 18);
+  assert(!result.owned_error_spans.some((s) => s.trace_id === source.traceID));
+});
+
+for (const [type, message, causes] of [
+  [
+    "network_error",
+    "Network operation failed",
+    ["*net.OpError", "syscall.Errno"],
+  ],
+  [
+    "dns_error",
+    "Could not resolve the remote service",
+    ["*net.OpError", "*net.DNSError"],
+  ],
+  [
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["*net.OpError", "*net.timeoutError"],
+  ],
+  [
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["*net.OpError", "*net.DNSError", "*net.timeoutError"],
+  ],
+])
+  test(`outage claims preserve the production ${type} chain ${causes.join("/")}`, () => {
+    const f = fixture(),
+      part = f.parts["stopped-cold-console"];
+    failed(
+      part.root,
+      type,
+      message,
+      ["*fmt.wrapError", "*url.Error", ...causes].slice(0, 4),
+      "request",
+    );
+    failed(part.trace.spans.at(-1), type, message, causes, "send");
+    assert.equal(
+      inspectOutageRejections(f.evidence, f.collection).owned_error_spans
+        .length,
+      18,
+    );
+  });
+
+test("outage claims reject a cancelled CLIENT without the original waiter deadline reason", () => {
+  const f = fixture(),
+    part = f.parts["stopped-cold-console"];
+  failed(
+    part.root,
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["*fmt.wrapError", "*url.Error", "context.deadlineExceededError"],
+    "request",
+  );
+  failed(
+    part.trace.spans.at(-1),
+    "cancelled",
+    "Request was cancelled",
+    ["*errors.errorString"],
+    "send",
+  );
+  assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+});
+
+test("outage claims reject independently valid but mismatched root and CLIENT causes", () => {
+  const f = fixture(),
+    part = f.parts["stopped-cold-console"];
+  failed(
+    part.root,
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["*fmt.wrapError", "*url.Error", "context.deadlineExceededError"],
+    "request",
+  );
+  failed(
+    part.trace.spans.at(-1),
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["*net.OpError", "*net.timeoutError"],
+    "send",
+  );
+  assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+});
+
+for (const key of [
+  "antnest.outcome",
+  "antnest.result",
+  "antnest.operation.phase",
+  "antnest.cancellation.type",
+])
+  test(`outage claims reject unrelated ${key}`, () => {
+    const f = fixture();
+    setTag(f.parts["stopped-cold-console"].root, key, "other");
+    assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+  });
+
+test("outage claims reject an error event outside its request lifetime", () => {
+  const f = fixture(),
+    root = f.parts["stopped-cold-console"].root;
+  root.logs[0].timestamp = root.startTime - 1;
+  assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+});
+
+for (const [label, selection, mutate] of [
+  [
+    "unrelated root failure",
+    "root",
+    (s) => setTag(s, "error.type", "permission_denied"),
+  ],
+  [
+    "missing root ERROR",
+    "root",
+    (s) => setTag(s, "otel.status_code", undefined),
+  ],
+  [
+    "missing root description",
+    "root",
+    (s) => setTag(s, "otel.status_description", undefined),
+  ],
+  [
+    "extra root exception",
+    "root",
+    (s) => setTag(s, "exception.type", "OtherError"),
+  ],
+  ["missing root event", "root", (s) => (s.logs = [])],
+  [
+    "duplicate root event",
+    "root",
+    (s) => s.logs.push(structuredClone(s.logs[0])),
+  ],
+  [
+    "wrong root stage",
+    "root",
+    (s) =>
+      (s.logs[0].fields.find((x) => x.key === "antnest.error.stage").value =
+        "send"),
+  ],
+  [
+    "duplicate root diagnostic field",
+    "root",
+    (s) => s.logs[0].fields.push({ ...s.logs[0].fields[0] }),
+  ],
+  ["decision without ERROR", "decision", (s) => setTag(s, "error", undefined)],
+  [
+    "unrelated decision exception",
+    "decision",
+    (s) => setTag(s, "exception.type", "OtherError"),
+  ],
+  [
+    "extra decision event",
+    "decision",
+    (s) => (s.logs = [{ fields: [{ key: "event", value: "exception" }] }]),
+  ],
+  ["missing CLIENT event", "client", (s) => (s.logs = [])],
+  [
+    "wrong CLIENT stage",
+    "client",
+    (s) =>
+      (s.logs[0].fields.find((x) => x.key === "antnest.error.stage").value =
+        "read_response"),
+  ],
+  [
+    "unrelated CLIENT cause",
+    "client",
+    (s) =>
+      (s.logs[0].fields.find(
+        (x) => x.key === "antnest.error.cause_types",
+      ).value = '["*json.SyntaxError"]'),
+  ],
+  [
+    "duplicate CLIENT error tag",
+    "client",
+    (s) => s.tags.push({ key: "error", value: true }),
+  ],
+  [
+    "401 missing root ERROR",
+    "recovered-root",
+    (s) => setTag(s, "error", undefined),
+  ],
+  [
+    "401 unrelated CLIENT description",
+    "recovered-client",
+    (s) => setTag(s, "otel.status_description", "unrelated failure"),
+  ],
+  [
+    "401 extra CLIENT event",
+    "recovered-client",
+    (s) => (s.logs = [{ fields: [{ key: "event", value: "exception" }] }]),
+  ],
+  [
+    "401 wrong decision result",
+    "recovered-decision",
+    (s) => setTag(s, "otel.status_description", "unavailable"),
+  ],
+  [
+    "401 unrelated SERVER event",
+    "recovered-server",
+    (s) =>
+      (s.logs[0].fields.find((x) => x.key === "antnest.error.code").value =
+        "forbidden"),
+  ],
+  ["401 missing SERVER event", "recovered-server", (s) => (s.logs = [])],
+  [
+    "401 unrelated database failure",
+    "recovered-server",
+    (s) => setTag(s, "db.response.status_code", "23505"),
+  ],
+  [
+    "401 wrong RPC method",
+    "recovered-server",
+    (s) => setTag(s, "rpc.method", "local_login"),
+  ],
+  [
+    "401 successful SERVER result",
+    "recovered-server",
+    (s) => setTag(s, "antnest.result", "success"),
+  ],
+])
+  test(`outage claims reject ${label}`, () => {
+    const f = fixture();
+    const part =
+      f.parts[
+        selection.startsWith("recovered-")
+          ? "recovered-expired-session"
+          : "stopped-cold-console"
+      ];
+    const role = selection.replace("recovered-", "");
+    const span =
+      role === "root" || role === "decision"
+        ? part[role]
+        : part.trace.spans.find((s) => s.spanID === `resolve-${role}`);
+    mutate(span);
+    assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+  });
 for (const [label, mutate] of [
+  [
+    "stopped decision before its request",
+    (f) => {
+      const p = f.parts["stopped-cold-console"];
+      p.decision.duration += p.decision.startTime - p.root.startTime + 1;
+      p.decision.startTime = p.root.startTime - 1;
+    },
+  ],
+  [
+    "recovered CLIENT after its decision",
+    (f) => {
+      const p = f.parts["recovered-expired-session"];
+      p.trace.spans.find((s) => s.spanID === "resolve-client").startTime =
+        p.decision.startTime + p.decision.duration + 1;
+    },
+  ],
+  [
+    "recovered CLIENT before its decision",
+    (f) => {
+      const p = f.parts["recovered-expired-session"];
+      p.trace.spans.find((s) => s.spanID === "resolve-client").startTime =
+        p.decision.startTime - 1;
+    },
+  ],
+  [
+    "recovered decision after its request",
+    (f) => {
+      const p = f.parts["recovered-expired-session"];
+      const offset = p.root.duration + 1000;
+      p.decision.startTime += offset;
+      p.trace.spans.find((s) => s.spanID === "resolve-client").startTime +=
+        offset;
+    },
+  ],
+  [
+    "recovered 401 on another route",
+    (f) => {
+      f.rows["recovered-expired-session"].path = "/api/session/logout";
+      setTag(
+        f.parts["recovered-expired-session"].root,
+        "http.route",
+        "/api/session/logout",
+      );
+    },
+  ],
+  [
+    "recovered 401 with another method",
+    (f) => {
+      f.rows["recovered-expired-session"].method = "POST";
+      setTag(
+        f.parts["recovered-expired-session"].root,
+        "http.request.method",
+        "POST",
+      );
+    },
+  ],
+  [
+    "recovered 401 without response time",
+    (f) => delete f.rows["recovered-expired-session"].at,
+  ],
+  [
+    "recovered 401 before its request",
+    (f) => (f.rows["recovered-expired-session"].at = 15999),
+  ],
+  [
+    "recovered 401 with nonfinite request time",
+    (f) => (f.rows["recovered-expired-session"].started_at = Infinity),
+  ],
+  [
+    "recovered 401 with nonfinite response time",
+    (f) => (f.rows["recovered-expired-session"].at = Infinity),
+  ],
   [
     "503 without an actual response",
     (f) => delete f.rows["stopped-cold-console"].status,

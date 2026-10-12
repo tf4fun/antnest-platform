@@ -19,6 +19,112 @@ const one = (rows, message) => {
   assert.equal(rows.length, 1, message);
   return rows[0];
 };
+const fields = (rows) => {
+  const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  assert.equal(
+    Object.keys(values).length,
+    rows.length,
+    "duplicate diagnostic field",
+  );
+  return values;
+};
+function errorTags(span, expected) {
+  const actual = fields(span.tags ?? []);
+  for (const [key, value] of Object.entries(expected))
+    assert.equal(actual[key], value, `missing or wrong refusal ${key}`);
+  for (const [key, value] of Object.entries(actual))
+    if (
+      /^(error($|\.)|exception\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.)|otel\.status_)/u.test(
+        key,
+      )
+    ) {
+      assert(Object.hasOwn(expected, key), "unrelated refusal error metadata");
+      assert.equal(value, expected[key], "unrelated refusal error metadata");
+    }
+}
+function errorEvent(span, expected) {
+  const event = one(span.logs ?? [], "one exact refusal event required");
+  assert(
+    Number.isFinite(event.timestamp) &&
+      event.timestamp >= span.startTime &&
+      event.timestamp <= end(span),
+    "refusal event outside owning span",
+  );
+  const actual = fields(event.fields ?? []);
+  assert.deepEqual(actual, { event: "antnest.error", ...expected });
+}
+function decisionError(span, outcome) {
+  errorTags(span, {
+    error: true,
+    "otel.status_code": "ERROR",
+    "otel.status_description": outcome,
+  });
+  assert.equal(span.logs?.length ?? 0, 0, "unexpected Resolve decision event");
+}
+const transportFailures = {
+  deadline_exceeded: {
+    message: "Request deadline exceeded",
+    causes: [
+      ["context.deadlineExceededError"],
+      ["*net.OpError", "*net.timeoutError"],
+      ["*net.OpError", "*net.DNSError", "*net.timeoutError"],
+    ],
+  },
+  cancelled: {
+    message: "Request was cancelled",
+    causes: [["*errors.errorString"]],
+  },
+  network_error: {
+    message: "Network operation failed",
+    causes: [
+      ["*net.OpError", "*os.SyscallError", "syscall.Errno"],
+      ["*net.OpError", "syscall.Errno"],
+    ],
+  },
+  dns_error: {
+    message: "Could not resolve the remote service",
+    causes: [["*net.OpError", "*net.DNSError"]],
+  },
+};
+function transportFailure(span, stage, profile) {
+  const type = tag(span, "error.type"),
+    expected = transportFailures[type];
+  assert(expected, "unrelated stopped transport failure");
+  assert(
+    stage === "send" || type !== "cancelled",
+    "request cancellation lacks stopped HTTP ownership",
+  );
+  const event = one(span.logs ?? [], "one failed transport event required");
+  const value = fields(event.fields ?? [])["antnest.error.cause_types"];
+  const causes =
+    stage === "send"
+      ? expected.causes
+      : [
+          ...expected.causes.map((chain) =>
+            ["*fmt.wrapError", "*url.Error", ...chain].slice(0, 4),
+          ),
+          ...(profile && type === "deadline_exceeded"
+            ? [["context.deadlineExceededError"]]
+            : []),
+        ];
+  assert(
+    causes.some((chain) => JSON.stringify(chain) === value),
+    "unrelated stopped transport cause",
+  );
+  errorTags(span, {
+    error: true,
+    "error.type": type,
+    "otel.status_code": "ERROR",
+    "otel.status_description": expected.message,
+  });
+  errorEvent(span, {
+    "error.type": type,
+    "antnest.error.stage": stage,
+    "antnest.error.message": expected.message,
+    "antnest.error.cause_types": value,
+  });
+  return { type, causes: JSON.parse(value) };
+}
 const end = (s) => {
   assert(
     Number.isFinite(s.startTime) &&
@@ -62,7 +168,8 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     secrets,
     collection,
   );
-  const selected = [];
+  const selected = [],
+    owned = [];
   const raw = (observation) => {
     assert(
       collection.archivedTraceIDs.has(observation.trace_id),
@@ -270,6 +377,7 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     const markers = trace.spans.filter(
       (s) => s.operationName === "gateway.identity.resolve",
     );
+    const rootFailure = transportFailure(root, "request", profile);
     let decision;
     if (profile) {
       decision = one(markers, "one failed Resolve decision required");
@@ -280,6 +388,7 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       assert.equal(tag(decision, prefix + "source"), "rpc");
       assert.equal(tag(decision, prefix + "outcome"), "unavailable");
       assert.equal(tag(decision, prefix + "cancel_kind"), undefined);
+      decisionError(decision, "unavailable");
       assert(
         !(decision.references ?? []).some(
           (ref) => ref.refType === "FOLLOWS_FROM",
@@ -306,6 +415,24 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       "actual Identity request deadline missing or exceeds fixture budget",
     );
     assert.equal(tag(client, "http.response.status_code"), undefined);
+    const clientFailure = transportFailure(client, "send", profile);
+    const waiterDeadline =
+      profile &&
+      rootFailure.type === "deadline_exceeded" &&
+      rootFailure.causes.length === 1 &&
+      rootFailure.causes[0] === "context.deadlineExceededError";
+    if (!waiterDeadline) {
+      assert.equal(
+        rootFailure.type,
+        clientFailure.type,
+        "unrelated request and CLIENT transport failures",
+      );
+      assert.deepEqual(
+        rootFailure.causes,
+        ["*fmt.wrapError", "*url.Error", ...clientFailure.causes].slice(0, 4),
+        "request cause does not wrap the actual CLIENT failure",
+      );
+    }
     assert(
       hasError(client) &&
         [
@@ -325,14 +452,18 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       client.startTime >= (decision ?? root).startTime &&
         client.startTime <= end(decision ?? root),
     );
-    if (decision) assert(end(decision) <= end(root));
+    if (decision)
+      assert(
+        decision.startTime >= root.startTime && end(decision) <= end(root),
+        "stopped decision outside its actual request",
+      );
     const retained = Math.max(0, end(client) - end(root));
     if (retained) {
       // A request deadline releases the last waiter and cancels process-owned
       // work. That worker's real CLIENT may end after the response; preserve
       // its finished raw span and exact deadline provenance, never shorten it.
       assert(
-        profile && tag(root, "error.type") === "deadline_exceeded",
+        waiterDeadline,
         "late CLIENT lacks actual request deadline provenance",
       );
       assert(
@@ -352,6 +483,12 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
         ["cancelled", "deadline_exceeded"].includes(tag(client, "error.type")),
       );
     }
+    for (const span of [root, client, ...(decision ? [decision] : [])])
+      owned.push({
+        trace_id: trace.traceID,
+        span_id: span.spanID,
+        reason: "outage-http-unavailable",
+      });
     return {
       label,
       profile,
@@ -365,7 +502,15 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     };
   });
   const recovered = row("recovered-expired-session");
-  assert(recovered.started_at > finish);
+  assert.equal(recovered.path, "/api/session");
+  assert.equal(recovered.method, "GET");
+  assert(
+    Number.isFinite(recovered.started_at) &&
+      Number.isFinite(recovered.at) &&
+      recovered.started_at > finish &&
+      recovered.at >= recovered.started_at,
+    "complete expired-session response after restart required",
+  );
   assert.equal(recovered.credential_scope, expiredScope);
   assert.equal(recovered.status, 401);
   assert.equal(recovered.set_cookie_count, 0);
@@ -383,6 +528,9 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
   assert.equal(tag(decision, prefix + "profile"), "session");
   assert.equal(tag(decision, prefix + "source"), "rpc");
   assert.equal(tag(decision, prefix + "outcome"), "rejected");
+  assert.equal(tree.service(decision), "edge-gateway");
+  assert.equal(tag(decision, "span.kind"), "internal");
+  decisionError(decision, "rejected");
   const server = one(
     trace.spans.filter(
       (s) =>
@@ -392,10 +540,59 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     "authoritative rejection receiver missing",
   );
   assert.equal(tag(server, "http.response.status_code"), 401);
+  assert.equal(tag(server, "span.kind"), "server");
+  assert.equal(tag(server, "http.request.method"), "POST");
+  assert.equal(tag(server, "rpc.method"), "resolve_access_token");
   const client = tree.parent(server);
   assert.equal(tree.parent(client), root);
   assert.equal(tree.service(client), "edge-gateway");
   assert.equal(tag(client, "http.response.status_code"), 401);
+  assert.equal(tag(client, "span.kind"), "client");
+  assert.equal(tag(client, "http.request.method"), "POST");
+  assert.equal(client.operationName, "HTTP POST identity-service");
+  assert.equal(tag(client, "server.address"), "identity-service");
+  assert(
+    decision.startTime >= root.startTime &&
+      end(decision) <= end(root) &&
+      client.startTime >= decision.startTime &&
+      end(client) <= end(decision),
+    "recovered rejection outside its actual request and decision",
+  );
+  const gatewayMessage =
+    "Operation failed; unclassified error text was not exported";
+  errorTags(root, {
+    error: true,
+    "error.type": "operation_failed",
+    "otel.status_code": "ERROR",
+    "otel.status_description": gatewayMessage,
+  });
+  errorEvent(root, {
+    "error.type": "operation_failed",
+    "antnest.error.stage": "request",
+    "antnest.error.message": gatewayMessage,
+    "antnest.error.cause_types": '["*errors.errorString"]',
+  });
+  errorTags(client, {
+    error: true,
+    "error.type": "401",
+    "otel.status_code": "ERROR",
+    "otel.status_description": "HTTP status 401",
+  });
+  assert.equal(client.logs?.length ?? 0, 0, "unexpected refused CLIENT event");
+  const protocolError = {
+    "antnest.error.cause_types": '["*domain.Error"]',
+    "antnest.error.code": "unauthenticated",
+    "antnest.error.message": "Authentication failed",
+    "antnest.error.stage": "protocol",
+    "antnest.error.type": "unauthenticated",
+    "error.type": "unauthenticated",
+  };
+  errorTags(server, {
+    ...protocolError,
+    "antnest.outcome": "rejected",
+    "antnest.result": "rejected",
+  });
+  errorEvent(server, protocolError);
   const database = databaseChildrenTopology(trace, server);
   const sql = one(database, "one actual expired browser token SELECT required");
   assert.equal(tag(sql, "db.operation.name"), "SELECT");
@@ -412,15 +609,22 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     database.every((s) => !hasError(s)),
     "expired-session SQL failed",
   );
-  const owned = new Set([root, decision, client, server, ...database]);
+  const required = new Set([root, decision, client, server, ...database]);
   assert(
-    trace.spans.every((s) => owned.has(s)),
+    trace.spans.every((s) => required.has(s)),
     "expired-session rejection has unexpected forwarding or work",
   );
+  for (const span of [root, decision, client, server])
+    owned.push({
+      trace_id: trace.traceID,
+      span_id: span.spanID,
+      reason: "recovered-session-expired",
+    });
   // Expected failures remain in unmodified raw sources and the strict result.
   return {
     status: "passed",
     requests,
+    owned_error_spans: owned,
     expired_recovery: { status: 401, trace_id: recovered.trace_id },
     ...resolveTraceDiagnostics(
       selected[0],
