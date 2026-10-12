@@ -51,6 +51,37 @@ export function assertDisplayReadHeaders(headers, surface) {
 import { observeBoundedRevocation as observeDisplayRejection } from "../../support/bounded-revocation.mjs";
 export { observeDisplayRejection };
 
+export async function searchOrganizationFeed(
+  jaeger,
+  { directory, earliest, latest, fetchImpl },
+) {
+  assert(
+    Number.isFinite(earliest) && Number.isFinite(latest) && earliest <= latest,
+  );
+  // Trace timestamps are microseconds; Jaeger search boundaries use milliseconds.
+  // Round outward, then keep the existing exact CLIENT-time selection. Evidence
+  // collection must not pull a still-exporting feed from later wall-clock time.
+  const now = Math.ceil(latest / 1000);
+  const lookback = Math.max(1, now - Math.floor(earliest / 1000));
+  const result = await searchJaegerTraces(
+    jaeger,
+    new URLSearchParams({
+      service: "identity-service",
+      tags: JSON.stringify({ "rpc.method": "list_session_revocations" }),
+      limit: "1000",
+      lookback: `${lookback}ms`,
+    }),
+    { fetchImpl, now },
+  );
+  writeEvidenceFile(
+    directory,
+    "organization-feed-search.json",
+    JSON.stringify(result),
+  );
+  assert(result.length < 1000, "Organization trace search may be truncated");
+  return result;
+}
+
 // Six distinct login tokens isolate the three actual surfaces and the quiet
 // expiry branch. Bootstrap and SSR otherwise share workspace/empty-Agent.
 export async function prepareOrganizationFreshness({
@@ -275,9 +306,10 @@ export async function prepareOrganizationFreshness({
         );
         return result;
       };
-      const feedTraces = await search("organization-feed-search.json", {
-        service: "identity-service",
-        tags: JSON.stringify({ "rpc.method": "list_session_revocations" }),
+      const feedTraces = await searchOrganizationFeed(jaeger, {
+        directory,
+        earliest,
+        latest,
       });
       const feedExpected = selectSessionFeedRequests(
         feedTraces,

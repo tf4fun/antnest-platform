@@ -56,6 +56,12 @@ Organization feed searches select the unique Identity SERVER by service,
 route, method and RPC, then require its direct Gateway CLIENT parent. CLIENT
 and SERVER ordering in Jaeger search results does not affect the original
 observation window or the subsequent empty-page SQL checks.
+The feed query's end and lookback are fixed to the observed display/proof window,
+rounded outward from microseconds to Jaeger's millisecond boundaries. Collection
+delay cannot extend that window into a later feed whose export is incomplete.
+Exact CLIENT-time selection, complete parent chains, zero-row SELECTs and
+unread-page rejection remain required inside the window. Refresh queries retain
+their separate trigger-based selection.
 
 The legacy core, Organization display and offboarding OIDC scenarios explicitly
 select `verified_email`, with no domain restriction and no administrator trust.

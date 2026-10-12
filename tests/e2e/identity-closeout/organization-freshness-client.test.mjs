@@ -1,9 +1,153 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
 import {
   assertDisplayReadHeaders,
   observeDisplayRejection,
+  searchOrganizationFeed,
 } from "./organization-freshness-client.mjs";
+import {
+  selectSessionFeedRequests,
+  inspectEmptySessionFeed,
+} from "./organization-freshness.mjs";
+import {
+  resolutionFixture,
+  setTag,
+} from "../observability/gateway-resolution-fixtures.mjs";
+
+function queryFixture(t) {
+  const directory = mkdtempSync(join(tmpdir(), "antnest-organization-feed-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const f = resolutionFixture("rpc");
+  const client = f.trace.spans.find((s) => s.spanID === "resolve-client");
+  const server = f.trace.spans.find((s) => s.spanID === "resolve-server");
+  const sql = f.trace.spans.find((s) => s.spanID === "sql");
+  client.references = [];
+  setTag(client, "rpc.method", "list_session_revocations");
+  setTag(server, "http.route", "/rpc/identity/list-session-revocations");
+  setTag(server, "rpc.method", "list_session_revocations");
+  setTag(
+    sql,
+    "db.query.text",
+    "SELECT sequence, token_id, user_id, organization_id, reason, occurred_at, traceparent FROM session_revocations WHERE sequence > $1 ORDER BY sequence LIMIT $2",
+  );
+  setTag(sql, "pgx.rows_affected", 0);
+  f.trace.spans = [client, server, sql];
+  const outside = structuredClone(f.trace);
+  outside.traceID = "d".repeat(32);
+  outside.spans = outside.spans.filter((s) => s.spanID !== client.spanID);
+  for (const span of outside.spans) {
+    span.traceID = outside.traceID;
+    span.startTime += 8000000;
+    for (const ref of span.references) ref.traceID = outside.traceID;
+  }
+  const earliest = 1000123,
+    latest = 4000567;
+  const inventory = [f.trace, outside],
+    queries = [];
+  let nextPageToken;
+  const fetchImpl = async (url) => {
+    url = new URL(url);
+    if (url.pathname === "/api/v3/trace-summaries") {
+      const low = Date.parse(url.searchParams.get("query.startTimeMin")) * 1000;
+      const high =
+        Date.parse(url.searchParams.get("query.startTimeMax")) * 1000;
+      queries.push({ low, high });
+      return Response.json({
+        summaries: inventory
+          .filter((trace) =>
+            trace.spans.some(
+              (s) =>
+                s.processID === "identity" &&
+                s.startTime >= low &&
+                s.startTime <= high,
+            ),
+          )
+          .map((trace) => ({ traceId: trace.traceID })),
+        ...(nextPageToken ? { nextPageToken } : {}),
+      });
+    }
+    const traceID = url.pathname.split("/").at(-1);
+    return Response.json({
+      data: [inventory.find((trace) => trace.traceID === traceID)],
+    });
+  };
+  const search = () =>
+    searchOrganizationFeed("http://synthetic-jaeger", {
+      directory,
+      earliest,
+      latest,
+      fetchImpl,
+    });
+  return {
+    directory,
+    earliest,
+    latest,
+    client,
+    server,
+    sql,
+    trace: f.trace,
+    inventory,
+    queries,
+    search,
+    paginate() {
+      nextPageToken = "unread";
+    },
+  };
+}
+
+test("display feed search freezes the observed window and excludes a later incomplete trace", async (t) => {
+  let clock = 10000;
+  t.mock.method(Date, "now", () => clock);
+  const f = queryFixture(t);
+  for (const next of [10000, 120000]) {
+    clock = next;
+    const traces = await f.search();
+    assert.deepEqual(selectSessionFeedRequests(traces, f.earliest, f.latest), [
+      { traceID: f.trace.traceID },
+    ]);
+    assert.equal(
+      inspectEmptySessionFeed(traces[0], { traceID: f.trace.traceID }, []).rows,
+      0,
+    );
+    assert.equal(
+      JSON.parse(
+        readFileSync(join(f.directory, "organization-feed-search.json")),
+      ).length,
+      1,
+    );
+  }
+  assert.deepEqual(f.queries, [
+    { low: 1000000, high: 4001000 },
+    { low: 1000000, high: 4001000 },
+  ]);
+});
+
+for (const failure of ["missing parent", "SQL error", "nonempty page"])
+  test(`fixed display feed window still rejects in-window ${failure}`, async (t) => {
+    t.mock.method(Date, "now", () => 120000);
+    const f = queryFixture(t);
+    f.inventory.pop();
+    if (failure === "missing parent") f.trace.spans = [f.server, f.sql];
+    if (failure === "SQL error") setTag(f.sql, "otel.status_code", "ERROR");
+    if (failure === "nonempty page") setTag(f.sql, "pgx.rows_affected", 1);
+    const traces = await f.search();
+    assert.equal(traces.length, 1);
+    assert.throws(() => {
+      const selected = selectSessionFeedRequests(traces, f.earliest, f.latest);
+      assert.equal(selected.length, 1);
+      inspectEmptySessionFeed(traces[0], selected[0], []);
+    });
+  });
+
+test("fixed display feed search does not accept an unread Jaeger page", async (t) => {
+  t.mock.method(Date, "now", () => 120000);
+  const f = queryFixture(t);
+  f.paginate();
+  await assert.rejects(f.search(), /unread Jaeger search page/);
+});
 
 test("actual SSR private/no-store policy is admitted while JSON retains its exact no-store policy", () => {
   for (const surface of ["session", "bootstrap", "ssr"]) {
