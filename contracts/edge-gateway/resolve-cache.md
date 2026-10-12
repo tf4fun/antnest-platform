@@ -293,6 +293,23 @@ retaining strict missing-parent diagnostics such as #247. A legitimate cached
 request has no new Identity SQL span; no fabricated span or broad SQL exemption
 is acceptable.
 
+An outage diagnostic inspector reports `owned_error_spans` as exact
+`{trace_id, span_id, reason}` claims only after validating each owning request's
+wire evidence, complete ancestry and error shape. For stopped HTTP requests,
+validate the Gateway request, optional Resolve decision and actual failed
+Identity CLIENT independently; a deadline response can precede its cancelled
+process-owned CLIENT only when the request carries its original waiter deadline
+cause. Otherwise the request error must wrap the same CLIENT type and cause
+chain, subject to the producer's four-cause limit. For recovered expired sessions,
+require the actual completed `GET /api/session` 401 after restart, unauthenticated
+Identity protocol event and successful zero-row token lookup.
+Required error tags and events must be present, unique and match their owning
+boundary; extra or unrelated diagnostics reject. A status code or temporal
+overlap alone cannot establish error ownership. Claims never cover every span
+in a linked source Trace, suppress raw errors/warnings or turn the original
+strict verdict into success. Final integration must reconcile the complete
+diagnostic set against the claims of all successful inspectors.
+
 Delivery order:
 
 1. Shared policy, schemas already supplied by Identity, admission assertions
