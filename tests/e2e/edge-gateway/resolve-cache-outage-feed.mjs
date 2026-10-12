@@ -39,6 +39,7 @@ const failures = {
     message: "Request deadline exceeded",
     causes: [
       ["context.deadlineExceededError"],
+      ["*net.OpError", "*poll.DeadlineExceededError"],
       ["*net.OpError", "*net.timeoutError"],
       ["*net.OpError", "*net.DNSError", "*net.timeoutError"],
     ],

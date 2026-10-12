@@ -64,6 +64,206 @@ function fixture() {
   return { traces, archivedTraceIDs: new Set(traces.keys()), gates, claims };
 }
 const check = (f) => inspectOutageDiagnostics(f, f.gates);
+function completedRead() {
+  const f = fixture(),
+    trace = [...f.traces.values()][2],
+    root = trace.spans[0];
+  const fields = (values) =>
+    Object.entries(values).map(([key, value]) => ({ key, value }));
+  trace.processes.acp = { serviceName: "agent-acp-service" };
+  trace.processes.runtime = { serviceName: "antnest-runtime" };
+  root.processID = "acp";
+  root.operationName = "acp initialize";
+  root.tags = fields({
+    "span.kind": "server",
+    "rpc.method": "initialize",
+    "antnest.agent.id": "agent_test",
+  });
+  const add = (id, parent, processID, operationName, tags) => {
+    const span = {
+      traceID: trace.traceID,
+      spanID: id.repeat(16),
+      processID,
+      operationName,
+      startTime: 1010,
+      duration: 60,
+      references: [
+        { refType: "CHILD_OF", traceID: trace.traceID, spanID: parent.spanID },
+      ],
+      tags: fields(tags),
+      logs: [],
+    };
+    trace.spans.push(span);
+    return span;
+  };
+  const client = add("b", root, "acp", "HTTP POST antnest-runtime", {
+    "span.kind": "client",
+    "http.request.method": "POST",
+    "http.response.status_code": 200,
+    "antnest.outcome": "cancelled",
+    "antnest.cancellation.type": "AbortError",
+  });
+  client.logs = [
+    {
+      timestamp: 1070,
+      fields: fields({
+        event: "antnest.cancelled",
+        "antnest.cancellation.type": "AbortError",
+      }),
+    },
+  ];
+  const server = add("c", client, "runtime", "HTTP POST /mcp", {
+    "span.kind": "server",
+    "http.request.method": "POST",
+    "http.route": "/mcp",
+    "http.response.status_code": 200,
+    "rpc.method": "resources/read",
+    "antnest.agent.id": "agent_test",
+    "antnest.protocol.outcome": "success",
+    "http.transport.outcome": "canceled",
+    "http.transport.error.type": "client_disconnected",
+  });
+  const operation = add("d", server, "runtime", "runtime.mcp.operation", {
+    "rpc.method": "resources/read",
+    "antnest.agent.id": "agent_test",
+    "otel.status_code": "OK",
+    "mcp.operation.outcome": "success",
+    "antnest.operation.outcome": "success",
+    "error.type": "",
+  });
+  operation.startTime = 1020;
+  operation.duration = 20;
+  for (const span of [server, operation])
+    for (const [key, value] of Object.entries({
+      "antnest.runtime.execution.id": "execution_test",
+      "antnest.runtime.generation": "1",
+    }))
+      span.tags.push({ key, value });
+  const completion = {
+    timestamp: 1070,
+    fields: fields({
+      event: "Runtime HTTP request completed",
+      level: "WARN",
+      "service.name": "antnest-runtime",
+      "http.request.method": "POST",
+      "http.response.status_code": 200,
+      "url.path": "/mcp",
+      "antnest.agent.id": "agent_test",
+      trace_id: server.traceID,
+      span_id: server.spanID,
+      "error.type": "client_disconnected",
+      "http.transport.outcome": "canceled",
+    }),
+  };
+  const cancelled = {
+    timestamp: 1060,
+    fields: fields({
+      event: "antnest.cancelled",
+      "antnest.phase": "http",
+      "antnest.cancellation.type": "client_disconnected",
+      "antnest.protocol.outcome": "success",
+    }),
+  };
+  server.logs = [completion, cancelled];
+  return { ...f, root, client, server, operation, completion, cancelled };
+}
+const changeTag = (span, key, value) => {
+  const field = span.tags.find((f) => f.key === key);
+  if (field) field.value = value;
+  else span.tags.push({ key, value });
+};
+const changeEvent = (event, key, value) =>
+  changeTag({ tags: event.fields }, key, value);
+test("completed initialize MCP read disconnect remains exact neutral transport evidence", () => {
+  const f = completedRead(),
+    before = structuredClone(f),
+    result = check(f);
+  assert.equal(result.owned_error_count, 2);
+  assert.deepEqual(result.non_error_diagnostics, [
+    {
+      trace_id: f.server.traceID,
+      span_id: f.server.spanID,
+      event_index: 0,
+      event_timestamp_us: f.completion.timestamp,
+      reason: "completed-initialize-mcp-read-disconnect",
+    },
+  ]);
+  assert.deepEqual(f, before);
+});
+for (const [key, value] of [
+  ["antnest.agent.id", "other"],
+  ["error.type", "client_disconnected"],
+])
+  test(`neutral completion rejects duplicate ${key}`, () => {
+    const f = completedRead();
+    f.completion.fields.push({ key, value });
+    assert.throws(() => check(f));
+  });
+for (const [name, change] of [
+  [
+    "wrong service",
+    (f) =>
+      (f.traces.get(f.server.traceID).processes.runtime.serviceName = "other"),
+  ],
+  [
+    "wrong initialize",
+    (f) => changeTag(f.root, "rpc.method", "session/prompt"),
+  ],
+  ["wrong Agent", (f) => changeTag(f.root, "antnest.agent.id", "other")],
+  [
+    "wrong execution",
+    (f) => changeTag(f.operation, "antnest.runtime.execution.id", "other"),
+  ],
+  [
+    "wrong generation",
+    (f) => changeTag(f.operation, "antnest.runtime.generation", "2"),
+  ],
+  ["unrelated read", (f) => changeTag(f.server, "rpc.method", "tools/call")],
+  ["failed HTTP", (f) => changeTag(f.server, "http.response.status_code", 500)],
+  [
+    "failed protocol",
+    (f) => changeTag(f.server, "antnest.protocol.outcome", "error"),
+  ],
+  [
+    "failed operation",
+    (f) => changeTag(f.operation, "antnest.operation.outcome", "error"),
+  ],
+  ["missing operation", (f) => f.traces.get(f.server.traceID).spans.pop()],
+  ["operation outside server", (f) => (f.operation.startTime = 2000)],
+  ["missing cancellation", (f) => f.server.logs.pop()],
+  [
+    "wrong cancellation",
+    (f) => changeEvent(f.cancelled, "antnest.cancellation.type", "Error"),
+  ],
+  [
+    "wrong event span",
+    (f) => changeEvent(f.completion, "span_id", "e".repeat(16)),
+  ],
+  [
+    "wrong event Agent",
+    (f) => changeEvent(f.completion, "antnest.agent.id", "other"),
+  ],
+  ["late completion", (f) => (f.completion.timestamp = 2000)],
+  [
+    "failed client",
+    (f) => changeTag(f.client, "http.response.status_code", 503),
+  ],
+  ["missing client cancellation", (f) => (f.client.logs = [])],
+  [
+    "extra exception",
+    (f) => changeEvent(f.completion, "exception.type", "Error"),
+  ],
+  [
+    "error tag",
+    (f) => changeTag(f.server, "error.type", "client_disconnected"),
+  ],
+])
+  test(`neutral MCP disconnect rejects ${name}`, () => {
+    const f = completedRead();
+    change(f);
+    assert.throws(() => check(f));
+  });
+
 test("diagnostics reconcile exact IDs across the whole immutable archive", () => {
   const f = fixture(),
     before = structuredClone(f),

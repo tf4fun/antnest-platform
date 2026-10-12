@@ -236,6 +236,17 @@ test("an in-flight feed can fail after Docker stops Identity", () => {
   move(f.parts.stopped, 900);
   assert.equal(check(f).owned_error_spans[0].reason, "identity-feed-stopped");
 });
+test("a stopped feed retains the Go socket deadline cause", () => {
+  const f = fixture();
+  eventField(
+    f.parts.stopped,
+    "antnest.error.cause_types",
+    JSON.stringify(["*net.OpError", "*poll.DeadlineExceededError"]),
+  );
+  const before = structuredClone(f);
+  assert.equal(check(f).owned_error_spans[0].reason, "identity-feed-stopped");
+  assert.deepEqual(f, before);
+});
 test("restart-not-ready includes the gap before the new process starts", () => {
   const f = fixture();
   move(f.parts.restarting, 6350);

@@ -5,6 +5,7 @@ import {
 } from "../../support/gateway-resolution-evidence.mjs";
 import { clockSkewWarning } from "../../support/strict-findings.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
+import { tag, traceTopology } from "../observability/trace-tree.mjs";
 
 import { outageGateNames } from "../../support/resolve-cache-admission.mjs";
 export { outageGateNames };
@@ -12,6 +13,122 @@ const claimNames = outageGateNames.filter(
   (n) => !["authority", "recovery_authority"].includes(n),
 );
 const key = (row) => `${row.trace_id}:${row.span_id}`;
+const eventTag = (event, name) => tag({ tags: event.fields }, name);
+function completedInitializeRead(trace, server, completion) {
+  const tree = traceTopology(trace),
+    client = tree.parent(server),
+    initialize = tree.parent(client);
+  const requireTags = (span, expected) => {
+    assert(span, "missing initialize MCP parent");
+    for (const fields of [
+      span.tags ?? [],
+      ...(span.logs ?? []).map((event) => event.fields ?? []),
+    ])
+      assert.equal(
+        new Set(fields.map((field) => field.key)).size,
+        fields.length,
+        "duplicate initialize MCP diagnostic field",
+      );
+    for (const [name, value] of Object.entries(expected))
+      assert.equal(tag(span, name), value, `wrong initialize MCP ${name}`);
+    assert(!hasError(span), "failed initialize MCP span");
+  };
+  assert.equal(tree.service(server), "antnest-runtime");
+  assert.equal(server.operationName, "HTTP POST /mcp");
+  requireTags(server, {
+    "span.kind": "server",
+    "http.request.method": "POST",
+    "http.route": "/mcp",
+    "rpc.method": "resources/read",
+    "antnest.protocol.outcome": "success",
+    "http.transport.outcome": "canceled",
+    "http.transport.error.type": "client_disconnected",
+  });
+  assert([200, "200"].includes(tag(server, "http.response.status_code")));
+  const agent = tag(server, "antnest.agent.id");
+  assert(typeof agent === "string" && agent.length > 0);
+  assert.equal(tree.service(client), "agent-acp-service");
+  assert.equal(client.operationName, "HTTP POST antnest-runtime");
+  requireTags(client, {
+    "span.kind": "client",
+    "http.request.method": "POST",
+    "http.response.status_code": 200,
+    "antnest.outcome": "cancelled",
+    "antnest.cancellation.type": "AbortError",
+  });
+  assert.equal(client.logs?.length, 1);
+  assert.equal(eventTag(client.logs[0], "event"), "antnest.cancelled");
+  assert.equal(
+    eventTag(client.logs[0], "antnest.cancellation.type"),
+    "AbortError",
+  );
+  assert.equal(tree.service(initialize), "agent-acp-service");
+  assert.equal(initialize.operationName, "acp initialize");
+  requireTags(initialize, {
+    "span.kind": "server",
+    "rpc.method": "initialize",
+    "antnest.agent.id": agent,
+  });
+  const operations = trace.spans.filter((span) => tree.parent(span) === server);
+  assert.equal(operations.length, 1);
+  const operation = operations[0];
+  assert.equal(tree.service(operation), "antnest-runtime");
+  assert.equal(operation.operationName, "runtime.mcp.operation");
+  requireTags(operation, {
+    "rpc.method": "resources/read",
+    "antnest.agent.id": agent,
+    "otel.status_code": "OK",
+    "mcp.operation.outcome": "success",
+    "antnest.operation.outcome": "success",
+  });
+  for (const name of [
+    "antnest.runtime.execution.id",
+    "antnest.runtime.generation",
+  ]) {
+    const value = tag(server, name);
+    assert(typeof value === "string" && value.length > 0);
+    assert.equal(tag(operation, name), value, `wrong initialize MCP ${name}`);
+  }
+  assert(
+    operation.startTime >= server.startTime &&
+      operation.startTime + operation.duration <=
+        server.startTime + server.duration,
+  );
+  assert.equal(server.logs?.length, 2);
+  const cancelled = server.logs.find(
+    (event) => eventTag(event, "event") === "antnest.cancelled",
+  );
+  assert(cancelled && cancelled !== completion);
+  for (const [name, value] of Object.entries({
+    event: "antnest.cancelled",
+    "antnest.phase": "http",
+    "antnest.cancellation.type": "client_disconnected",
+    "antnest.protocol.outcome": "success",
+  }))
+    assert.equal(eventTag(cancelled, name), value);
+  for (const [name, value] of Object.entries({
+    event: "Runtime HTTP request completed",
+    level: "WARN",
+    "service.name": "antnest-runtime",
+    "http.request.method": "POST",
+    "url.path": "/mcp",
+    "antnest.agent.id": agent,
+    trace_id: server.traceID,
+    span_id: server.spanID,
+    "error.type": "client_disconnected",
+    "http.transport.outcome": "canceled",
+  }))
+    assert.equal(eventTag(completion, name), value);
+  assert(
+    [200, "200"].includes(eventTag(completion, "http.response.status_code")),
+  );
+  for (const event of [completion, cancelled])
+    assert(
+      Number.isFinite(event.timestamp) &&
+        event.timestamp >= operation.startTime + operation.duration &&
+        event.timestamp <= server.startTime + server.duration,
+    );
+}
 export function inspectOutageDiagnostics(collection, gates, secrets = []) {
   assert(
     collection.traces instanceof Map &&
@@ -25,7 +142,8 @@ export function inspectOutageDiagnostics(collection, gates, secrets = []) {
   const first = collection.traces.values().next().value;
   assert(first, "raw outage archive missing");
   const all = resolveTraceSources(first, secrets, collection),
-    errors = new Map();
+    errors = new Map(),
+    neutral = [];
   for (const trace of all) {
     const warning = (items) => {
       assert(Array.isArray(items), "malformed warning inventory");
@@ -50,35 +168,54 @@ export function inspectOutageDiagnostics(collection, gates, secrets = []) {
           span,
         );
       else
-        for (const field of [
-          ...(span.tags ?? []),
-          ...(span.logs ?? []).flatMap((e) => e.fields ?? []),
-        ]) {
-          const explicitError =
-            (/^(error\.(type|code)|exception\.|antnest\.error\.)/u.test(
-              field.key,
-            ) &&
-              field.value !== "" &&
-              field.value !== undefined &&
-              !(
-                field.key === "antnest.error.class" && field.value === "none"
-              )) ||
-            (field.key === "event" &&
-              ["exception", "error"].includes(field.value)) ||
-            (field.key === "otel.status_code" && field.value === 2) ||
-            ((field.key === "outcome" || field.key.endsWith(".outcome")) &&
-              [
-                "error",
-                "failed",
-                "failure",
-                "rejected",
-                "unavailable",
-              ].includes(field.value));
-          assert(
-            !explicitError,
-            "unclassified raw diagnostic outside error inventory",
-          );
-        }
+        for (const group of [
+          { fields: span.tags ?? [] },
+          ...(span.logs ?? []).map((event) => ({
+            event,
+            fields: event.fields ?? [],
+          })),
+        ])
+          for (const field of group.fields) {
+            const explicitError =
+              (/^(error\.(type|code)|exception\.|antnest\.error\.)/u.test(
+                field.key,
+              ) &&
+                field.value !== "" &&
+                field.value !== undefined &&
+                !(
+                  field.key === "antnest.error.class" && field.value === "none"
+                )) ||
+              (field.key === "event" &&
+                ["exception", "error"].includes(field.value)) ||
+              (field.key === "otel.status_code" && field.value === 2) ||
+              ((field.key === "outcome" || field.key.endsWith(".outcome")) &&
+                [
+                  "error",
+                  "failed",
+                  "failure",
+                  "rejected",
+                  "unavailable",
+                ].includes(field.value));
+            if (
+              explicitError &&
+              group.event &&
+              field.key === "error.type" &&
+              field.value === "client_disconnected"
+            ) {
+              completedInitializeRead(trace, span, group.event);
+              neutral.push({
+                trace_id: trace.traceID,
+                span_id: span.spanID,
+                event_index: span.logs.indexOf(group.event),
+                event_timestamp_us: group.event.timestamp,
+                reason: "completed-initialize-mcp-read-disconnect",
+              });
+            } else
+              assert(
+                !explicitError,
+                "unclassified raw diagnostic outside error inventory",
+              );
+          }
     }
   }
   for (const name of outageGateNames)
@@ -129,6 +266,7 @@ export function inspectOutageDiagnostics(collection, gates, secrets = []) {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([, v]) => ({ ...v, owners: [...v.owners].sort() })),
     unowned_error_spans: [],
+    non_error_diagnostics: neutral,
     ...resolveTraceDiagnostics(first, all),
   };
 }
