@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { assertOrganizationSession } from "./organization-session.mjs";
 import { GatewayClient, assertNoStore } from "./support.mjs";
+import { observePrincipalRevocation } from "./principal-revocation.mjs";
 import {
   verifyIdentityEvidence as verifyIdentityTraces,
   identityEvidenceExitCode,
@@ -274,7 +275,14 @@ for (const active of [false, true]) {
       Operations: [{ op: "replace", path: "active", value: active }],
     },
   });
-  if (!active) await scimUser.request("/api/session", { status: 401 });
+  if (!active)
+    await observePrincipalRevocation({
+      client: scimUser,
+      principal: federated,
+      committedMS: performance.now(),
+      ttlMS: Number(process.env.ANTNEST_E2E_RESOLVE_TTL_MS),
+      name: "oidc-scim-revocation",
+    });
   await login(scimUser, active ? "renamed" : "scim", providerName, active);
 }
 assert.equal((await principal(scimUser)).user_id, federated.user_id);

@@ -5,6 +5,130 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { connectOwner, ownerStream, requestOptions } from "./acp.mjs";
 
+test("public ACP retains the actual upgrade, raw exchanges and remote close", async (t) => {
+  const require = createRequire(
+    new URL(
+      "../../../services/agent-acp-service/package.json",
+      import.meta.url,
+    ),
+  );
+  const { WebSocketServer } = require("ws");
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  const actual = "b".repeat(32);
+  server.on("headers", (headers) =>
+    headers.push(`X-Antnest-Trace-ID: ${actual}`),
+  );
+  await once(server, "listening");
+  t.after(async () => {
+    for (const socket of server.clients) socket.terminate();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  let sentParent;
+  server.on("connection", (socket, request) => {
+    sentParent = request.headers.traceparent;
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString());
+      socket.send(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result:
+            message.method === "initialize"
+              ? {
+                  protocolVersion: message.params.protocolVersion,
+                  agentCapabilities: {},
+                }
+              : { sessions: [] },
+        }),
+      );
+    });
+  });
+  const client = connectOwner(
+    `http://127.0.0.1:${server.address().port}`,
+    "agent",
+    "synthetic-cookie",
+    undefined,
+    { captureWire: true, injectTraceParent: false },
+  );
+  t.after(client.close);
+  await client.initialize();
+  assert.equal(
+    sentParent,
+    undefined,
+    "external acceptance must not invent a missing parent",
+  );
+  assert.deepEqual(await client.request("list", {}), { sessions: [] });
+  assert.equal(client.connectionTraceID, actual);
+  assert.equal(client.wire.upgrade.trace_id, actual);
+  assert.equal(client.wire.upgrade.status, 101);
+  assert(client.wire.started_at <= client.wire.upgrade.at);
+  assert.deepEqual(
+    client.wire.frames.map(({ direction, raw }) => [
+      direction,
+      JSON.parse(raw).method ?? "reply",
+    ]),
+    [
+      ["send", "initialize"],
+      ["receive", "reply"],
+      ["send", "session/list"],
+      ["receive", "reply"],
+    ],
+  );
+  assert(client.wire.frames.every(({ at }) => at >= client.wire.upgrade.at));
+  for (const socket of server.clients) socket.close(1008, "session_rejected");
+  const event = await client.waitForClose(1000);
+  assert.equal(event.localClose, false);
+  assert.equal(event.code, 1008);
+  assert.equal(event.reason, "session_rejected");
+  await client.closeAndWait();
+  assert.equal(
+    event.localClose,
+    false,
+    "cleanup cannot relabel a received close",
+  );
+});
+
+test("local ACP shutdown and absent response trace cannot prove remote admission", async (t) => {
+  const require = createRequire(
+    new URL(
+      "../../../services/agent-acp-service/package.json",
+      import.meta.url,
+    ),
+  );
+  const { WebSocketServer } = require("ws");
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  t.after(async () => {
+    for (const socket of server.clients) socket.terminate();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const opened = once(server, "connection");
+  const client = connectOwner(
+    `http://127.0.0.1:${server.address().port}`,
+    "agent",
+    "synthetic-cookie",
+  );
+  t.after(client.close);
+  const [socket] = await opened;
+  socket.once("message", (raw) => {
+    const message = JSON.parse(raw.toString());
+    socket.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          protocolVersion: message.params.protocolVersion,
+          agentCapabilities: {},
+        },
+      }),
+    );
+  });
+  await client.initialize();
+  await client.closeAndWait();
+  assert.equal(client.wire.upgrade.trace_id, undefined);
+  assert.equal((await client.waitForClose(1000)).localClose, true);
+});
+
 test("owner cancellation uses the standard notification on a fresh connection", async (t) => {
   const require = createRequire(
     new URL(
@@ -47,6 +171,11 @@ test("owner cancellation uses the standard notification on a fresh connection", 
   assert.match(client.connectionTraceID, /^[a-f0-9]{32}$/);
   const received = once(socket, "message");
   await client.cancel("session-fixture");
+  assert.deepEqual(
+    client.wire.frames,
+    [],
+    "ordinary fixtures do not retain raw message payloads",
+  );
   const [data] = await received;
   assert.deepEqual(JSON.parse(data.toString()), {
     jsonrpc: "2.0",
@@ -62,6 +191,80 @@ test("ACP request cancellation includes global abort, not just its own timeout",
   abort.abort(new Error("profile stopped"));
   assert.equal(options.cancellationSignal.aborted, true);
   assert.throws(() => requestOptions(60000, abort.signal), /profile stopped/);
+});
+
+test("owner negotiates delivery metadata and sends cancel for the observed Run", async (t) => {
+  const require = createRequire(
+    new URL(
+      "../../../services/agent-acp-service/package.json",
+      import.meta.url,
+    ),
+  );
+  const { WebSocketServer } = require("ws");
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  let client;
+  t.after(async () => {
+    if (client) await client.closeAndWait();
+    for (const socket of server.clients) socket.terminate();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const messages = [];
+  const connected = once(server, "connection");
+  server.on("connection", (socket) =>
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString());
+      messages.push(message);
+      if (message.id !== undefined)
+        socket.send(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: 1,
+              agentCapabilities: {},
+              _meta: message.params._meta,
+            },
+          }),
+        );
+    }),
+  );
+  client = connectOwner(
+    `http://127.0.0.1:${server.address().port}`,
+    "agent",
+    "synthetic-cookie",
+  );
+  const [socket] = await connected;
+  const meta = {
+    "antnest.dev/bridge": {
+      intentReceipt: 1,
+      targetCancel: 1,
+      deliveryMark: 1,
+    },
+  };
+  const initialized = await client.initialize(meta);
+  const cancelled = once(socket, "message");
+  await client.cancel("session", "observed-run");
+  await cancelled;
+  assert.deepEqual(
+    messages.map(({ method, params }) => ({ method, params })),
+    [
+      {
+        method: "initialize",
+        params: { protocolVersion: 1, clientCapabilities: {}, _meta: meta },
+      },
+      {
+        method: "session/cancel",
+        params: {
+          sessionId: "session",
+          _meta: {
+            "antnest.dev/target-cancel": { expectedRunId: "observed-run" },
+          },
+        },
+      },
+    ],
+  );
+  assert.deepEqual(initialized._meta, meta);
 });
 
 test("owner client records the actual upgrade status instead of treating all failures as authorization", async (t) => {

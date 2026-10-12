@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
 import { observeStream } from "../acp-commands/transport.mjs";
+import { createSessionCloseObserver } from "../identity-closeout/session-close.mjs";
+export { collectLifecycleACPTrace } from "./acp-trace.mjs";
 
 // Resolve the same pinned SDK as the service, without a second package manifest.
 const require = createRequire(
@@ -29,7 +31,11 @@ export function ownerStream(
       headers: {
         Cookie: cookie,
         Origin: gatewayOrigin(gateway),
-        traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
+        ...(traceID === null
+          ? {}
+          : {
+              traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
+            }),
       },
     },
   );
@@ -44,27 +50,65 @@ export function requestOptions(timeout, signal) {
   };
 }
 
-export function connectOwner(gateway, agentID, cookie, signal) {
+export function connectOwner(
+  gateway,
+  agentID,
+  cookie,
+  signal,
+  { captureWire = false, injectTraceParent = true } = {},
+) {
   signal?.throwIfAborted();
   const updates = [];
   const requests = [],
     connectionTraceID = randomBytes(16).toString("hex");
   const closed = new AbortController();
-  let closeCode, handshakeStatus;
+  const peerClose = createSessionCloseObserver();
+  const wire = { started_at: performance.now(), frames: [] };
+  let closeCode, handshakeStatus, actualTraceID, socket;
   // The SDK removes its error listener on close, but Node ws can still emit a
   // handshake error. Keep that error connected to pending request rejection.
   class OwnedSocket extends WebSocket {
     constructor(...args) {
       super(...args);
+      socket = this;
+      this.once("upgrade", (response) => {
+        actualTraceID = response.headers["x-antnest-trace-id"];
+        handshakeStatus = response.statusCode;
+        wire.upgrade = {
+          at: performance.now(),
+          trace_id: actualTraceID,
+          status: handshakeStatus,
+        };
+      });
+      this.on("message", (data) => {
+        if (captureWire)
+          wire.frames.push({
+            direction: "receive",
+            at: performance.now(),
+            raw: data.toString(),
+          });
+      });
       this.on("error", (error) => closed.abort(error));
-      this.on("close", (code) => {
+      this.on("close", (code, reason) => {
         closeCode = code;
+        peerClose.record(code, reason);
+        closed.abort(new Error("ACP peer closed"));
       });
       this.on("unexpected-response", (_request, response) => {
         handshakeStatus = response.statusCode;
         response.resume();
         this.terminate();
       });
+    }
+
+    send(data, ...args) {
+      if (captureWire)
+        wire.frames.push({
+          direction: "send",
+          at: performance.now(),
+          raw: data.toString(),
+        });
+      return super.send(data, ...args);
     }
   }
   const connection = acp
@@ -85,7 +129,7 @@ export function connectOwner(gateway, agentID, cookie, signal) {
           cookie,
           createWebSocketStream,
           OwnedSocket,
-          connectionTraceID,
+          injectTraceParent ? connectionTraceID : null,
         ),
         requests,
       ),
@@ -94,6 +138,7 @@ export function connectOwner(gateway, agentID, cookie, signal) {
   const close = () => {
     if (disposed) return;
     disposed = true;
+    peerClose.markLocalClose();
     signal?.removeEventListener("abort", close);
     closed.abort(signal?.reason ?? new Error("ACP connection closed"));
     connection.close();
@@ -130,22 +175,46 @@ export function connectOwner(gateway, agentID, cookie, signal) {
   return {
     updates,
     requests,
-    connectionTraceID,
+    wire,
+    get connectionTraceID() {
+      return (
+        actualTraceID ?? (injectTraceParent ? connectionTraceID : undefined)
+      );
+    },
     agentId: agentID,
     transport: "websocket",
     close,
+    waitForClose: (timeout) => peerClose.wait(timeout),
+    async closeAndWait() {
+      close();
+      try {
+        return await peerClose.wait(3000);
+      } catch (error) {
+        socket?.terminate();
+        await peerClose.wait(1000);
+        throw error;
+      }
+    },
     get closeCode() {
       return closeCode;
     },
     get handshakeStatus() {
       return handshakeStatus;
     },
-    cancel: (sessionId) =>
-      connection.agent.notify(acp.methods.agent.session.cancel, { sessionId }),
-    initialize: () =>
+    cancel: (sessionId, expectedRunId) =>
+      connection.agent.notify(acp.methods.agent.session.cancel, {
+        sessionId,
+        ...(expectedRunId === undefined
+          ? {}
+          : {
+              _meta: { "antnest.dev/target-cancel": { expectedRunId } },
+            }),
+      }),
+    initialize: (meta) =>
       request(acp.methods.agent.initialize, {
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {},
+        ...(meta === undefined ? {} : { _meta: meta }),
       }),
     request: (method, params, timeout) =>
       request(acp.methods.agent.session[method], params, timeout),

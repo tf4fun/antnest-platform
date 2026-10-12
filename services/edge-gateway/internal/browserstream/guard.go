@@ -75,8 +75,8 @@ func resolveError(err error) error {
 	return ErrUnavailable
 }
 
-// Start must run before opening upstream. InitialStarted is the beginning of
-// the first Resolve RPC, not the time its successful response was received.
+// Start must run before opening upstream. InitialStarted is the first probe's
+// invocation start; private Principal provenance retains the actual RPC start.
 func Start(parent context.Context, registry *Registry, cfg Config) (*Guard, error) {
 	if cfg.MaximumStale == 0 {
 		cfg.MaximumStale = DefaultMaximumStale
@@ -89,9 +89,9 @@ func Start(parent context.Context, registry *Registry, cfg Config) (*Guard, erro
 	if err := Validate(cfg.Original, cfg.Original, now); err != nil {
 		return nil, err
 	}
-	interval := Interval(cfg.MaximumStale, cfg.Original.ActivityIntervalMS)
-	if now.Sub(cfg.InitialStarted) > interval {
-		return nil, ErrUnavailable
+	authorityStarted, err := ValidateTiming(cfg.Original, cfg.InitialStarted, cfg.MaximumStale, now)
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancelCause(parent)
 	guard := &Guard{ctx: ctx, cancel: cancel, done: make(chan struct{}), original: cfg.Original,
@@ -106,13 +106,13 @@ func Start(parent context.Context, registry *Registry, cfg Config) (*Guard, erro
 			guard.hardCap, guard.hardCause = cfg.Original.ContextExpiresAt, ErrCallerContextExpired
 		}
 	}
-	deadline, cause := guard.deadline(cfg.InitialStarted)
+	deadline, cause := guard.deadline(authorityStarted)
 	if !deadline.After(now) {
 		cancel(cause)
 		return nil, cause
 	}
 	remove := registry.register(guard)
-	go guard.run(cfg, remove)
+	go guard.run(cfg, authorityStarted, remove)
 	return guard, nil
 }
 
@@ -139,10 +139,13 @@ type checkResult struct {
 	err       error
 }
 
-func (guard *Guard) run(cfg Config, remove func()) {
+func (guard *Guard) run(cfg Config, lastAuthorityStart time.Time, remove func()) {
 	var workers sync.WaitGroup
 	var cancelCheck context.CancelFunc
 	var checkDone <-chan struct{}
+	var checkCtx context.Context
+	var probeStarted, probeDeadline time.Time
+	var rechecked bool
 	defer func() {
 		guard.cancel(context.Canceled)
 		if cancelCheck != nil {
@@ -153,9 +156,19 @@ func (guard *Guard) run(cfg Config, remove func()) {
 		close(guard.done)
 	}()
 	current := cfg.Original
-	lastStarted := cfg.InitialStarted
-	next := nextCheck(lastStarted, guard.maximumStale, current)
+	next := nextCheck(cfg.InitialStarted, guard.maximumStale, current)
 	results := make(chan checkResult, 1)
+	launch := func(ctx context.Context, started time.Time) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			principal, err := cfg.Resolve(ctx)
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			results <- checkResult{started: started, principal: principal, err: err}
+		}()
+	}
 	pending := false
 	timer := time.NewTimer(0)
 	defer timer.Stop()
@@ -163,28 +176,21 @@ func (guard *Guard) run(cfg Config, remove func()) {
 		if guard.ctx.Err() != nil {
 			return
 		}
-		deadline, cause := guard.deadline(lastStarted)
+		deadline, cause := guard.deadline(lastAuthorityStart)
 		now := time.Now()
 		if !deadline.After(now) {
 			guard.cancel(cause)
 			return
 		}
 		if !pending && !next.After(now) {
-			started := now
-			checkDeadline := minTime(started.Add(Interval(guard.maximumStale, current.ActivityIntervalMS)), deadline)
-			checkCtx, cancel := context.WithDeadline(guard.ctx, checkDeadline)
-			cancelCheck = cancel
+			probeStarted = now
+			probeDeadline = minTime(probeStarted.Add(Interval(guard.maximumStale, current.ActivityIntervalMS)), deadline)
+			ctx, cancel := context.WithDeadline(guard.ctx, probeDeadline)
+			checkCtx, cancelCheck = ctx, cancel
 			checkDone = checkCtx.Done()
 			pending = true
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				principal, err := cfg.Resolve(checkCtx)
-				if checkCtx.Err() != nil {
-					err = checkCtx.Err()
-				}
-				results <- checkResult{started: started, principal: principal, err: err}
-			}()
+			rechecked = false
+			launch(checkCtx, probeStarted)
 		}
 		wake := deadline
 		if !pending {
@@ -203,29 +209,40 @@ func (guard *Guard) run(cfg Config, remove func()) {
 			return
 		case <-timer.C:
 		case result := <-results:
-			cancelCheck()
-			cancelCheck = nil
-			checkDone = nil
-			pending = false
+			now := time.Now()
 			// A ready result cannot outrun a simultaneous hard deadline.
-			if !deadline.After(time.Now()) {
+			if !deadline.After(now) {
 				guard.cancel(cause)
+				return
+			}
+			if checkCtx.Err() != nil || !probeDeadline.After(now) {
+				guard.cancel(ErrUnavailable)
 				return
 			}
 			if result.err != nil {
 				guard.cancel(resolveError(result.err))
 				return
 			}
-			if err := Validate(result.principal, cfg.Original, time.Now()); err != nil {
+			if err := Validate(result.principal, cfg.Original, now); err != nil {
 				guard.cancel(err)
 				return
 			}
-			if time.Since(result.started) > Interval(guard.maximumStale, result.principal.ActivityIntervalMS) {
-				guard.cancel(ErrUnavailable)
+			authorityStarted, err := ValidateTiming(result.principal, result.started, guard.maximumStale, now)
+			if err != nil {
+				if !rechecked && recheckExpiredCacheHit(result.principal, result.started, guard.maximumStale, now) {
+					rechecked = true
+					launch(checkCtx, probeStarted)
+					continue
+				}
+				guard.cancel(err)
 				return
 			}
-			lastStarted, current = result.started, result.principal
-			next = nextCheck(lastStarted, guard.maximumStale, current)
+			cancelCheck()
+			cancelCheck = nil
+			checkDone = nil
+			pending = false
+			lastAuthorityStart, current = authorityStarted, result.principal
+			next = nextCheck(result.started, guard.maximumStale, current)
 		}
 	}
 }
@@ -233,7 +250,11 @@ func (guard *Guard) run(cfg Config, remove func()) {
 func nextCheck(started time.Time, maximumStale time.Duration, principal identity.Principal) time.Time {
 	// An idle deadline is an observation, never a permanent close timer: a
 	// different tab may have recorded explicit activity in the meantime.
-	return minTime(started.Add(Interval(maximumStale, principal.ActivityIntervalMS)), principal.IdleExpiresAt)
+	next := minTime(started.Add(Interval(maximumStale, principal.ActivityIntervalMS)), principal.IdleExpiresAt)
+	if !principal.ResolveValidUntil.IsZero() {
+		next = minTime(next, principal.ResolveValidUntil)
+	}
+	return next
 }
 
 func minTime(a, b time.Time) time.Time {

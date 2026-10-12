@@ -248,6 +248,7 @@ func (client *Client) UnbindExternalIdentity(ctx context.Context, input External
 	if result.RevokedCount == nil || result.CurrentRevoked == nil || *result.RevokedCount < 0 || *result.CurrentRevoked && *result.RevokedCount == 0 {
 		return SessionRevokeResult{}, fmt.Errorf("invalid external identity revocation result")
 	}
+	client.invalidateUser(principal.UserID)
 	return SessionRevokeResult{RevokedCount: *result.RevokedCount, CurrentRevoked: *result.CurrentRevoked}, nil
 }
 

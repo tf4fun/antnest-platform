@@ -275,6 +275,26 @@ revoke only that Membership's browser rows; global User disable revokes across
 Organizations. Logout revokes only its locked SID after fresh nonlocking live
 authority checks. Role, password, logout and explicit browser revocations emit
 no principal offboarding event and never disable Agents.
+
+Each session-feed read uses a fresh single-statement snapshot on the
+authoritative database. Its cursor is the last returned committed sequence, or
+the input cursor for an empty page; it is never the sequence allocator's high
+water mark. A short terminal page can prove catch-up for that read while a
+writer remains uncommitted. Continuing from that cursor must later return the
+writer's committed event, or skip its rollback gap and return the next committed
+event. Writer serialization before sequence allocation makes that continuation
+safe even from a nonzero cursor. The real PostgreSQL regression in
+[browser_session_feed_terminal_test.go](../../../tests/integration/go/identity-service/internal/e2e/browser_session_feed_terminal_test.go)
+holds the exact predecessor lock throughout both short and empty reads, then
+checks commit and rollback continuation alongside the existing ordering cases.
+
+The [Gateway revision 21 cache contract](../../../contracts/edge-gateway/resolve-cache.md)
+consumes this existing feed without an Identity wire/schema change. Its
+caught-up proof is useful only after all returned events are applied, ages from
+the terminal RPC's start and never renews an authority snapshot. The owning
+Gateway and cross-service integration batches remain separate from this
+Identity producer evidence.
+
 Directory role/lifecycle requests carrying a browser Caller revalidate it with
 the same transaction after the last business lock and before changing authority.
 The check therefore rejects a logged-out waiting administrator while permitting

@@ -1,14 +1,10 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
-import {
-  saveFoundationTrace,
-  saveFoundationFailure,
-} from "./foundation-trace.mjs";
+import { saveFoundationFailure } from "./foundation-trace.mjs";
 import { assertRestoreRun, assertReplayAudits } from "./restore-evidence.mjs";
 import { flushTraceProducers, physicalIdentity } from "./network-support.mjs";
 import {
@@ -16,7 +12,7 @@ import {
   inspectLossDenial,
   readLossEvent,
 } from "./loss-current.mjs";
-import { connectOwner } from "./acp.mjs";
+import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import { lines } from "./docker.mjs";
 import { runtimeControllerRead } from "./runtime-status.mjs";
 import { assertControllerStopped } from "./drain-evidence.mjs";
@@ -181,17 +177,13 @@ export async function runLoss(input) {
   const requestTraces = await collectLifecycleEvidence(
     requests,
     (expected) =>
-      collectManagedTrace(
-        config.jaeger,
+      collectLifecycleACPTrace(
+        config,
         expected,
         input.traceSecrets,
         expected.kind === "ordinary"
           ? calls.filter((c) => c.phase === expected.phase)
           : [],
-        (trace) => {
-          expected.traceID = trace.traceID;
-          saveFoundationTrace(config, trace);
-        },
         (trace, expected, secrets, modelCalls) => {
           if (expected.rejection)
             return inspectLossDenial(trace, expected, secrets);

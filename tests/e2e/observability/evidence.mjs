@@ -100,6 +100,26 @@ function inspectPayloads(span, captureRpcContent) {
   return seen.size;
 }
 
+export function inspectTraceContent(trace, config = {}) {
+  graph(trace);
+  const serialized = JSON.stringify(trace);
+  for (const secret of config.secrets ?? []) {
+    assert(secret.length >= 6, "secret canary must be specific");
+    for (const encoded of [
+      secret,
+      encodeURIComponent(secret),
+      Buffer.from(secret).toString("base64"),
+    ])
+      assert(!serialized.includes(encoded), "secret canary found in trace");
+  }
+  let diagnosticEvents = 0;
+  for (const span of trace.spans) {
+    inspectHeaders(span);
+    diagnosticEvents += inspectPayloads(span, config.captureRpcContent);
+  }
+  return diagnosticEvents;
+}
+
 export function inspectHTTPTrace(trace, config) {
   const { service, parent } = graph(trace);
   const roots = trace.spans.filter(
@@ -146,21 +166,7 @@ export function inspectHTTPTrace(trace, config) {
     );
     return { from, to, calls: matched.length };
   });
-  const serialized = JSON.stringify(trace);
-  for (const secret of config.secrets ?? []) {
-    assert(secret.length >= 6, "secret canary must be specific");
-    for (const encoded of [
-      secret,
-      encodeURIComponent(secret),
-      Buffer.from(secret).toString("base64"),
-    ])
-      assert(!serialized.includes(encoded), "secret canary found in trace");
-  }
-  let diagnosticEvents = 0;
-  for (const span of trace.spans) {
-    inspectHeaders(span);
-    diagnosticEvents += inspectPayloads(span, config.captureRpcContent);
-  }
+  const diagnosticEvents = inspectTraceContent(trace, config);
   return {
     trace_id: trace.traceID,
     spans: trace.spans.length,

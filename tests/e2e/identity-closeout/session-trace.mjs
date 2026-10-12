@@ -16,6 +16,9 @@ import {
 import { hasError, selectRequestTrace } from "../acp-plan/requests.mjs";
 import { assertSecretFree } from "./evidence.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
+import { inspectGatewayResolution } from "../../support/gateway-resolution.mjs";
+import { identityTraceSources, identityTraceDiagnostics } from "./support.mjs";
+import { verifyIdentityEvidence } from "./trace.mjs";
 
 export function selectDeniedMessage(data, expected) {
   assert(
@@ -185,7 +188,7 @@ export async function collectDeniedMessage(base, expected, secrets) {
   throw new Error("actual denied Gateway message trace missing");
 }
 
-export function inspectSessionClosure(trace, expected, secrets) {
+export function inspectSessionClosure(trace, expected, secrets, options = {}) {
   assert.match(expected.connectionTraceID ?? "", /^[a-f0-9]{32}$/);
   assert.equal(
     trace?.traceID,
@@ -221,8 +224,7 @@ export function inspectSessionClosure(trace, expected, secrets) {
       "closure does not match its issued expiry",
     );
   const tree = traceTopology(trace);
-  assertCaptureDisabled(trace);
-  assertSecretFree(JSON.stringify(trace), secrets);
+  const sources = identityTraceSources(trace, secrets, options);
   const roots = trace.spans.filter((span) => !tree.parent(span));
   assert.equal(roots.length, 1, "connection must have one complete root");
   const root = roots[0];
@@ -248,6 +250,51 @@ export function inspectSessionClosure(trace, expected, secrets) {
   assert.equal(tree.service(socketClient), "edge-gateway");
   assert.equal(tag(socketClient, "span.kind"), "client");
   assert.equal(tree.parent(socketClient), root);
+  assert(Number.isFinite(socketClient.startTime), "socket dial start missing");
+  const decisions = trace.spans.filter(
+    (span) =>
+      tree.service(span) === "edge-gateway" &&
+      span.operationName === "gateway.identity.resolve" &&
+      tree.parent(span) === root &&
+      span.startTime < socketClient.startTime,
+  );
+  assert.equal(
+    decisions.length,
+    1,
+    "one initial Resolve decision before socket dial required",
+  );
+  const resolution = inspectGatewayResolution(
+    trace,
+    {
+      rootSpanID: root.spanID,
+      decisionSpanID: decisions[0].spanID,
+      upstreamSpanID: socketClient.spanID,
+      profile: "acp",
+      ttlMs: expected.resolveTTLms ?? 10000,
+    },
+    options,
+  );
+  const revalidations = trace.spans
+    .filter(
+      (span) =>
+        tree.service(span) === "edge-gateway" &&
+        span.operationName === "gateway.identity.resolve" &&
+        tree.parent(span) === root &&
+        span.startTime >= socketClient.startTime &&
+        tag(span, "antnest.identity.resolve.outcome") === "admitted",
+    )
+    .map((span) =>
+      inspectGatewayResolution(
+        trace,
+        {
+          rootSpanID: root.spanID,
+          decisionSpanID: span.spanID,
+          profile: "acp",
+          ttlMs: expected.resolveTTLms ?? 10000,
+        },
+        options,
+      ),
+    );
   const resolutions = trace.spans.filter(
     (span) =>
       tree.service(span) === "identity-service" &&
@@ -255,13 +302,15 @@ export function inspectSessionClosure(trace, expected, secrets) {
       tag(span, "http.route") === "/rpc/identity/resolve-access-token" &&
       tag(span, "http.response.status_code") === 200,
   );
-  assert(
-    resolutions.length > 0,
-    "successful initial Identity resolution missing",
-  );
-  let sql = 0,
-    initialResolutions = 0;
-  assert(Number.isFinite(socketClient.startTime), "socket dial start missing");
+  // Count SQL by the actual receiving SERVER. Several decisions can consume
+  // one shared RPC; their provenance does not create additional database work.
+  const sql = new Map();
+  for (const result of [resolution, ...revalidations])
+    if (result.identity_server_span_id)
+      sql.set(
+        `${result.source_trace_id}:${result.identity_server_span_id}`,
+        result.database_spans,
+      );
   for (const server of resolutions) {
     assert.equal(tag(server, "http.request.method"), "POST");
     assert.equal(tag(server, "rpc.method"), "resolve_access_token");
@@ -275,41 +324,43 @@ export function inspectSessionClosure(trace, expected, secrets) {
         client.duration >= 0,
       "Identity client timing missing",
     );
-    if (client.startTime + client.duration <= socketClient.startTime)
-      initialResolutions++;
-    sql += databaseChildrenTopology(trace, server).length;
+    sql.set(
+      `${trace.traceID}:${server.spanID}`,
+      databaseChildrenTopology(trace, server).length,
+    );
   }
-  assert(
-    initialResolutions > 0,
-    "initial Identity admission before socket dial missing",
-  );
   assert(
     !trace.spans.some((span) =>
       tag(span, "rpc.method")?.startsWith("session/"),
     ),
     "connection closure cannot fabricate an ACP message trace",
   );
-  const warnings = [
-    ...(trace.warnings ?? []),
-    ...trace.spans.flatMap((span) => span.warnings ?? []),
-  ];
-  const errors = trace.spans.filter(hasError).length;
   return {
     ...expected,
     trace_id: trace.traceID,
     closure: "silent",
-    identity_sql: sql,
+    identity_sql: [...sql.values()].reduce((total, count) => total + count, 0),
+    gateway_resolution: resolution,
+    gateway_revalidations: revalidations,
     spans: trace.spans.length,
-    warning_count: warnings.length,
-    warnings: [...new Set(warnings)],
-    error_spans: errors,
-    strict_trace: warnings.length || errors ? "failed" : "passed",
+    ...identityTraceDiagnostics(trace, sources),
   };
 }
 
-export async function collectSessionClosure(base, expected, secrets) {
-  return collectTrace(base, expected.connectionTraceID, (trace) => {
-    saveSessionTrace(trace);
-    return inspectSessionClosure(trace, expected, secrets);
-  });
+export async function collectSessionClosure(
+  base,
+  expected,
+  secrets,
+  options = {},
+) {
+  const result = await verifyIdentityEvidence(
+    base,
+    [{ ...expected, traceID: expected.connectionTraceID }],
+    secrets,
+    {
+      ...options,
+      inspect: inspectSessionClosure,
+    },
+  );
+  return result[0];
 }

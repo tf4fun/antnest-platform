@@ -62,7 +62,7 @@ browser and route `/protocol/oidc/callback` and `/scim/v2` to Edge Gateway.
 
 Local password rotation has no service-side configuration. Credential fields
 are request-only and must not be added to access logs, traces, environment
-variables, or retry storage. Gateway revision 20 owns `/api/session/password`;
+variables, or retry storage. Gateway revision 21 owns `/api/session/password`;
 the old Console password route is denied. Identity atomically changes the
 password, revokes all browser sessions across organizations, and issues a
 replacement bounded by the original absolute deadline. The browser validates
@@ -83,12 +83,20 @@ Self session controls cover all organizations. Directory session controls use
 only the current signed organization, including for system administrators.
 
 [External login administration](oidc-linking.md) requires Identity revision 16
-and Gateway revision 20. Review historical Provider warnings explicitly before
+and Gateway revision 21. Review historical Provider warnings explicitly before
 treating their email-linking policy as approved. SCIM pairing is chosen at
 credential issuance and cannot be edited. Personal notices load without Agent
 inventory; 503 failures keep visible data and never replay binding, unbinding
 or acknowledgment. A successful current-session unbind returns its committed
 result before the browser retires the page. It does not stop accepted Agent work.
+
+Organization name/slug presentation uses the validated session Principal, which
+Gateway may cache within its bounded Resolve TTL (default 10 seconds). Hits and
+healthy empty feed pages do not renew that snapshot. A reload performs a real
+session read; after snapshot expiry that read requires live Identity resolution.
+Already rendered labels wait for the next consumed session response and its
+request latency. Refreshing the account profile alone does not replace that
+Principal, and there is no background rename watcher or label-based authority.
 
 An overview with unavailable Agent inventory is never emitted: that failure
 fails the request. Optional section envelopes should be surfaced as partial-data

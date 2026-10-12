@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"go.opentelemetry.io/otel"
@@ -131,6 +132,45 @@ func TestHTTPTransportOwnsClientSpanAndPropagatesItsParent(t *testing.T) {
 		t.Fatal("HTTP transport captured content")
 	}
 	assertNoTraceValue(t, spans, secret)
+}
+
+func TestHTTPClientSpanObserverPublishesUnderItsLockBeforeTransport(t *testing.T) {
+	recorder := recordHTTPSpans(t)
+	ctx, root := otel.Tracer("test").Start(context.Background(), "request", trace.WithSpanKind(trace.SpanKindServer))
+	defer root.End()
+	var mu sync.Mutex
+	var observed trace.SpanContext
+	calls := 0
+	ctx = WithHTTPClientSpanObserver(ctx, &mu, func(spanContext trace.SpanContext) {
+		calls++
+		if mu.TryLock() {
+			mu.Unlock()
+			t.Error("CLIENT creation/publication was not protected by the cancellation snapshot lock")
+		}
+		observed = spanContext
+	})
+	transport := NewHTTPTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if !mu.TryLock() {
+			t.Error("CLIENT observer lock was held across transport I/O")
+		} else {
+			mu.Unlock()
+		}
+		if !observed.IsValid() || !observed.Equal(trace.SpanContextFromContext(request.Context())) {
+			t.Error("observer did not publish the exact CLIENT before transport began")
+		}
+		return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+	}))
+	request, err := http.NewRequestWithContext(ctx, "POST", "http://identity.internal/rpc/identity/resolve-access-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.RoundTrip(request); err != nil {
+		t.Fatal(err)
+	}
+	spans := recorder.Ended()
+	if calls != 1 || len(spans) != 1 || !spans[0].SpanContext().Equal(observed) || spans[0].Parent().SpanID() != root.SpanContext().SpanID() {
+		t.Fatal("observer fabricated a span or changed actual RPC parentage")
+	}
 }
 
 func assertNoTraceValue(t *testing.T, spans []sdktrace.ReadOnlySpan, secret string) {

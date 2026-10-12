@@ -43,6 +43,48 @@ Both ACP requests and both watch paths are traced; the state watch must own the
 real ACP RPC with no Controller execution-state dependency. Create and Delete
 keep the Temporal, SQL and publication and settlement checks.
 
+The event watch uses the `console` Resolve profile and the execution-state watch
+uses `workspace`. Initial admission must finish before the actual Gateway CLIENT
+to Console or ACP. Every admitted revalidation validates `rpc/cache/shared`
+provenance, exact CLIENT-to-Identity-SERVER receipt and its owning successful SQL,
+or the finite cache budget. Shared and background sources retain their real
+parent chains and archived trigger Traces. SQL is counted once per actual source
+SERVER, not once per waiter. No current Identity SERVER is invented for a hit.
+
+The observer records the first closure cause, response Trace ID, host observation
+time and delivered-event count. Test close, abort and invalid input cannot prove
+remote closure. Before/after inventories must show the same Gateway process
+exited cleanly during the observed stop operation. The remote observation must
+fall between the host's actual stop start and stop completion plus one second;
+the existing host/VM span window stays at stop start minus one second through
+completion plus one second. Every Gateway span in the current/source/trigger
+closure, including retained CLIENTs and refresh roots, must finish before its
+process exits (allowing one millisecond for Docker timestamp parsing). Retained
+work can outlive its original caller; independent Identity work can also outlive
+the Gateway process.
+
+A noninitial `unavailable` decision may be a verified shutdown cancellation,
+never admission. Shared waiters require `caller-cancelled` or `process-shutdown`
+and either an exact already-created CLIENT link or a link-free
+`cancelled-before-client` snapshot. Retained source work may complete successfully
+for another waiter, or be cancelled; its actual receipt is validated separately.
+A direct `rpc` marker has no cancellation reason, so it requires an actual typed
+cancelled CLIENT. A missing CLIENT, a successful RPC with an unclassified
+unavailable caller, capacity/deadline errors, 5xx receipts or SQL failures cannot
+prove shutdown cancellation. TTL zero retains synchronous CLIENT completion;
+cached retained work can complete after its original caller marker.
+Each cancelled transport error event must carry its own `cancelled` type and
+stage. A send failure has no response status; an HTTP 200 cancellation occurs
+during `read_response` or `close_response`. Unrelated exceptions, conflicting
+error classifications and incomplete error events cannot share that exception.
+
+Guard and state-frame checks can overlap. A marker ends before its result reaches
+the guard, so marker completion is not an observed cancellation anchor and does
+not order concurrent checks. Each decision must independently satisfy the watch
+root, source and shutdown evidence. No additional forwarding CLIENT is accepted.
+These idle-stream traces do not substitute for controlled evidence of the
+production guard's cancellation/output timing.
+
 Stream cancellation during maintenance is recognized only on the exact watch
 path, with HTTP 200, spans completed within the observed stop window and a
 matching error classification:
@@ -58,6 +100,13 @@ reporting or turn strict errors into passes. Missing parents and capture or
 privacy defects fail topology. Warnings, errors, spans and timestamps are kept
 unchanged, independent Traces are still collected after failures, and business
 and topology results are reported separately from strict status.
+
+Collection requires three identical full current/source/trigger snapshots;
+late errors and warnings reset convergence even when span IDs are unchanged.
+Whole-closure diagnostics remain strict failures. Only precisely classified
+errors in the current watch contribute to `cancellation_error_spans`; source and
+trigger errors cannot inherit that classification. Cancelling collection joins
+the active request and bypasses neither the owning inspector nor source archives.
 
 ## Cleanup and verification
 

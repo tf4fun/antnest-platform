@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestIdentityErrorsDoNotCopyUntrustedDetailsIntoTrace(t *testing.T) {
@@ -35,10 +36,19 @@ func TestIdentityErrorsDoNotCopyUntrustedDetailsIntoTrace(t *testing.T) {
 			t.Fatal("dependency error lost")
 		}
 	}
-	if len(recorder.Ended()) != 2 {
+	if len(recorder.Ended()) != 4 {
 		t.Fatalf("spans=%d", len(recorder.Ended()))
 	}
+	clients, decisions := 0, 0
 	for _, span := range recorder.Ended() {
+		if span.SpanKind() == trace.SpanKindClient {
+			clients++
+		} else if span.Name() == "gateway.identity.resolve" && span.SpanKind() == trace.SpanKindInternal {
+			decisions++
+			if cacheTraceAttribute(span, "outcome") != "unavailable" || cacheTraceAttribute(span, "source") != "rpc" {
+				t.Fatal("failed Resolve decision lost its stable classification")
+			}
+		}
 		if strings.Contains(span.Status().Description, canary) {
 			t.Fatal("upstream code leaked in span status")
 		}
@@ -49,5 +59,13 @@ func TestIdentityErrorsDoNotCopyUntrustedDetailsIntoTrace(t *testing.T) {
 				}
 			}
 		}
+		for _, attr := range span.Attributes() {
+			if strings.Contains(attr.Value.String(), canary) {
+				t.Fatal("private authority or remote error leaked in span attributes")
+			}
+		}
+	}
+	if clients != 2 || decisions != 2 {
+		t.Fatal("expected two actual CLIENT spans and two independent decisions")
 	}
 }

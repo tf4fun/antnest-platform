@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectPricingTrace } from "./trace.mjs";
+import { nativeStrictOutcome } from "../acp-multimodal/trace.mjs";
+
+test("pricing evidence retains warnings through native cost aggregation", () => {
+  const f = fixture();
+  f.trace.warnings = [
+    "clock skew adjustment disabled; not applying calculated delta of 3µs",
+  ];
+  const result = inspectPricingTrace(f.trace, f.expected);
+  assert.equal(result.strict_trace, "failed");
+  assert.equal(nativeStrictOutcome([result]).accepted, true);
+  assert.equal(
+    nativeStrictOutcome([{ ...result, warnings: ["unknown warning"] }])
+      .accepted,
+    false,
+  );
+});
 function fixture() {
   const trace = { traceID: "t", processes: {}, spans: [] };
   const add = (id, parent, service, operationName, tags) => {

@@ -5,6 +5,7 @@ import { chromium } from "../../../services/agent-ui/web/node_modules/playwright
 import { member, until } from "./c4-setup.mjs";
 import { note, imageData } from "./browser-model.mjs";
 import { audioData } from "../acp-multimodal/fixtures.mjs";
+import { observedHeldRun } from "./browser-control.mjs";
 import {
   assertReadableText,
   assertTouchTargets,
@@ -399,6 +400,19 @@ export async function runBrowser(
           .isEnabled()),
       "cross-session busy",
       signal,
+    );
+    const heldSession = report.sessions["c4-browser-hold-cancel"];
+    const heldResponse = await gatewayBrowserRequest(
+      context,
+      `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${encodeURIComponent(heldSession)}`,
+    );
+    assert.equal(heldResponse.status(), 200);
+    report.cancelled_run_view = await heldResponse.json();
+    frames.push(JSON.stringify(report.cancelled_run_view));
+    report.cancelled_run = observedHeldRun(
+      report.cancelled_run_view,
+      fixture.agentID,
+      heldSession,
     );
     await page
       .getByRole("button", { name: "Stop operation", exact: true })

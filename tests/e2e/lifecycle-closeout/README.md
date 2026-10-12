@@ -25,16 +25,16 @@ COMPOSE_PARALLEL_LIMIT=1 make docker-build-stage3 -j1
 make e2e-lifecycle
 ```
 
-| Target | Profile | Contract |
-| --- | --- | --- |
-| `make e2e-lifecycle` | Foundation, including the active-Run drain | [migration-contract.md](migration-contract.md) |
-| `make e2e-lifecycle-shutdown` | Whole-platform stream shutdown and restart | [shutdown-migration-contract.md](shutdown-migration-contract.md) |
-| `make e2e-lifecycle-health` | Runtime health and observation | [health-migration-contract.md](health-migration-contract.md) |
-| `make e2e-lifecycle-restore` | Offline backup and restore | [restore-migration-contract.md](restore-migration-contract.md) |
+| Target                           | Profile                                                   | Contract                                                               |
+| -------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `make e2e-lifecycle`             | Foundation, including the active-Run drain                | [migration-contract.md](migration-contract.md)                         |
+| `make e2e-lifecycle-shutdown`    | Whole-platform stream shutdown and restart                | [shutdown-migration-contract.md](shutdown-migration-contract.md)       |
+| `make e2e-lifecycle-health`      | Runtime health and observation                            | [health-migration-contract.md](health-migration-contract.md)           |
+| `make e2e-lifecycle-restore`     | Offline backup and restore                                | [restore-migration-contract.md](restore-migration-contract.md)         |
 | `make e2e-lifecycle-interrupted` | Interrupted Runtime update with a lost committed response | [interrupted-migration-contract.md](interrupted-migration-contract.md) |
-| `make e2e-lifecycle-network` | Runtime network policy on the real packet path | [network-migration-contract.md](network-migration-contract.md) |
-| `make e2e-lifecycle-loss` | Unplanned Runtime loss, live and cold | [loss-migration-contract.md](loss-migration-contract.md) |
-| `make e2e-lifecycle-crash` | Opt-in Runtime Controller crash during reconstruction | [crash-contract.md](crash-contract.md) |
+| `make e2e-lifecycle-network`     | Runtime network policy on the real packet path            | [network-migration-contract.md](network-migration-contract.md)         |
+| `make e2e-lifecycle-loss`        | Unplanned Runtime loss, live and cold                     | [loss-migration-contract.md](loss-migration-contract.md)               |
+| `make e2e-lifecycle-crash`       | Opt-in Runtime Controller crash during reconstruction     | [crash-contract.md](crash-contract.md)                                 |
 
 The workspace protocol profile reuses the same Foundation runner; see
 [its contract](../workspace-closeout/protocol-migration-contract.md).
@@ -77,6 +77,37 @@ and make the strict result exit 2. Supplied passwords, model keys and session
 cookies must not appear in any span; RPC content capture is disabled. A span
 that was never exported because its process was killed is reported as a gap,
 never replaced by a fabricated span.
+
+Normal Console lifecycle admission and HTTP Create replay additionally validate
+the `console` Resolve source before the actual Gateway-to-Console CLIENT.
+Current, shared-source and refresh-trigger traces are archived by Trace ID and
+must converge across three complete snapshots. The exact Resolve RPC receipt
+must have successful CLIENT, SERVER and owning SQL evidence; cached admission
+does not replace Controller owner authorization or committed business writes.
+Create replay still requires its one read-only transaction with no work dispatch.
+The owning inspector is awaited, and its strict verdict and full source
+diagnostics are both retained. Source errors cannot inherit clock-only or
+workflow-restart diagnostic exceptions. Clock-only acceptance requires zero raw
+errors; a restart exception requires the exact reviewed total.
+
+The Foundation, shutdown, network, Runtime-loss and restore ACP request
+collectors select the actual message using its observed connection and request
+identity, then validate the `acp` Resolve source. They retain the owning Run,
+model phase, durable-write and rejection checks. Selection records the actual
+Trace ID before admission can fail, and the complete current/source/trigger
+closure is archived and converges over three snapshots. Raw source diagnostics
+remain in the strict result; the Foundation allowance for two `agent_busy`
+errors cannot absorb additional source errors. Cancellation waits for active
+collection and the owning inspector to finish.
+
+Controller-root Runtime observation and Identity offboarding keep their own
+admission paths. The opt-in killed-process crash collector validates the original
+Console admission through its existing verified recovery projection, preserving
+the complete raw current/source/trigger closure and its failed strict verdict.
+External sources receive no crash exception. See the
+[crash Trace rules](crash-contract.md#trace-rules). Shutdown watches have their
+own cancellation gate; network policy writes use their separate PUT/200 gate.
+Cross-service #59 Docker/HTTPS admission remains pending.
 
 ## Foundation
 
@@ -144,6 +175,24 @@ initialized ACP v1 WebSocket with an empty Session. It stops the application
 services with ordinary Compose SIGTERM, without closing clients first. Every
 service must exit zero without OOM or forced termination, and the remote ends
 must close the watches and WebSocket. Temporal stops before PostgreSQL.
+
+The SSE observer preserves its first closure cause, actual response Trace ID,
+observation time and delivered-event count in an immutable record. Test-owned
+close, global abort and invalid responses or events have separate causes;
+subsequent cleanup cannot relabel them as a remote transport end. A remote end
+also clears the reconnect timer that EventSource creates after its error callback.
+The watch collector validates `console` event-watch and `workspace` state-watch
+Resolve admission before their actual forwarding CLIENT. Every successful
+revalidation proves its `rpc/cache/shared` source; linked sources and refresh
+triggers are archived and must converge over three complete raw snapshots.
+Pending shutdown cancellation has its own non-admission evidence, including the
+actual stop operation, the same cleanly exited Gateway container and remote
+closure. Source errors remain strict failures and cannot inherit the current
+watch's cancellation classification. See the
+[shutdown Trace rules](shutdown-migration-contract.md#trace-rules) for timing,
+concurrency and unavailable-result limits. The separate ACP request consumer
+uses the shared request collector described above; the #59 cross-service
+Docker/HTTPS integration is still pending.
 
 An HTTP stream cancelled by shutdown may end as `handler_aborted` only when the
 span also carries `antnest.http.request_cancelled=true`, keeps HTTP 200 and ends
@@ -224,6 +273,16 @@ The test requires:
   start time, workspace or executable configuration;
 - policy-write traces follow Gateway, Console, Agent Controller and Egress.
   Prompt, model and tool spans stop at Runtime; there is no per-packet tracing.
+
+The four recorded successful policy PUTs validate `console` Resolve admission
+before the actual Gateway CLIENT forwards to the Console SERVER. The Egress
+write must descend from that same Console request and retain the existing Agent,
+route, success and error checks. Current, shared-source and refresh-trigger
+traces are archived and converge over three complete snapshots; raw source
+errors and warnings remain strict failures. The collector uses the caller's
+abort signal and waits for active requests and response bodies. The existing
+409 and idempotent-replay business assertions are unchanged; these requests do
+not acquire additional Trace coverage through this adapter.
 
 ## Unplanned Runtime Loss
 

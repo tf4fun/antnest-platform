@@ -234,6 +234,16 @@ events. Each event is the complete current view, without replay IDs or a journal
 After headers are sent, an unavailable state source emits a non-secret
 `workspace_error` envelope and closes; before streaming, it returns HTTP 503.
 No stream contents are recorded in telemetry. Reconnect starts a new snapshot.
+The separate ACP v1 HTTP GET transport can record an original access-denial
+failure on its existing SERVER when that failure actually closes its connection;
+see the [HTTP close evidence contract](../../docs/observability-contract.md#acp-http-access-revocation-closure).
+When the exact normal `RunSupervisor.shutdown()` reason reaches the watch RPC
+boundary, its existing SERVER records the fixed
+`antnest.stream.termination=process-shutdown` alongside the original ERROR.
+An earlier failure, a matching message or wrapped cause is not normal shutdown;
+get-state reads do not receive this marker. The non-secret error envelope and
+stream lifetime remain unchanged. See the
+[shared diagnostic contract](../../docs/observability-contract.md#acp-workspace-stream-shutdown).
 State writes and terminal flushes are bounded by the service's configurable
 delivery timeout. A blocked client is disconnected; terminal frames are best
 effort, not a condition for revocation. Idle subscriptions do not expire on this

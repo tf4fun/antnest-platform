@@ -92,10 +92,13 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 
 	httpClient := internal.HTTPClient()
 	httpClient.Transport = telemetry.NewHTTPTransport(httpClient.Transport)
-	identityClient, err := identity.NewClient(cfg.IdentityURL, httpClient)
+	identityClient, err := identity.NewCachedClient(ctx, cfg.IdentityURL, httpClient, identity.ResolveCacheConfig{
+		TTL: cfg.ResolveCacheTTL, Size: cfg.ResolveCacheSize, RequestTimeout: cfg.RequestTimeout,
+	})
 	if err != nil {
 		return fmt.Errorf("create Identity client: %w", err)
 	}
+	defer identityClient.Close()
 	agentClient, err := agentcontroller.NewClient(cfg.AgentControllerURL, httpClient)
 	if err != nil {
 		return fmt.Errorf("create Agent Controller client: %w", err)
@@ -139,7 +142,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		listener = tls.NewListener(listener, httpServer.TLSConfig)
 	}
 	logger.Info("Edge Gateway is ready", "listen_address", cfg.ListenAddress)
-	stopSessionFeed := startSessionRevocationFeed(ctx, browserStreams, identityClient)
+	stopSessionFeed := startSessionRevocationFeed(ctx, browserStreams, identityClient, identityClient)
 	defer stopSessionFeed()
 	return serveHTTP(ctx, httpServer, listener, lifecycle, cfg.ShutdownTimeout)
 }

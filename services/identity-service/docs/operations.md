@@ -294,6 +294,22 @@ the cursor. Gateway consumes the feed and revalidates quiet streams within its
 bounded stale interval; the real HTTPS browser-session gate verifies remote
 SSE/WSS retirement without terminating an accepted Agent Run.
 
+For the [Gateway revision 21 cache consumer](../../../contracts/edge-gateway/resolve-cache.md),
+only a fully applied short terminal page establishes committed catch-up. The
+proof ages from that RPC's start and says nothing about a writer that has not
+committed yet. Full pages, failed calls or unfinished event application cannot
+refresh it; an empty page must not advance to a separately observed sequence
+high water mark. Continue from the returned cursor to receive subsequent
+commits, allowing rollback gaps. Serve this feed from the authoritative database;
+replica lag and event retention have no defined cache-proof protocol.
+
+After restoring an Identity backup, restart every Gateway so it clears cached
+authority, resets its session cursor to zero and catches up again. Never resume
+an old process cursor against a restored database or infer cache freshness from
+an empty page beyond restored history. These are consumer deployment requirements;
+this Identity evidence batch does not enable Gateway caching or introduce a
+second `list-access-revocations` endpoint.
+
 `list_principal_revocations` is a workload-authenticated Controller-only RPC and must not be
 forwarded by Gateway. It uses the same route and automatic driver spans and
 metrics as other RPC queries; completion logs do not contain event payloads.

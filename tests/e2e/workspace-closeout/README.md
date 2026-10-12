@@ -28,14 +28,44 @@ An in-flight Tool cancellation keeps unknown effects and
 profile checks physical process exit separately from ACP's immutable unknown Run
 facts. It does not cover automatic reuse or browser layout.
 
-Each state watch must retain successful Identity admission and SQL before the
-Gateway starts its ACP watch. Revocation evidence records the actual authority
-request Trace ID and observed remote-close window. A private feed may close the
-stream before a final Identity 401: the oracle accepts only the directly owned
-Gateway response-read failure paired with an interrupted ACP watch in that
-window. `revocation_verified` records whether the watch Trace contains the final
-Identity denial; the authority request remains separately linked. Raw errors
-and clock warnings still fail the strict check.
+Each direct ACP request also proves its own Resolve admission before the actual
+Gateway forwarding span. Both WebSocket messages and direct HTTP ACP requests
+use the `acp` profile. WebSocket evidence selects the message using its actual
+request ID and connection link; HTTP evidence uses the response Trace ID. The
+selected message ID remains in failure reports even when source admission
+fails. Complete Resolve sources are collected before awaiting the original
+command, replay, barrier, cancellation or browser no-Tool inspector. Those
+execution, persistence and Runtime-binding checks remain independent of cache
+admission, and source diagnostics cannot clear their strict failures.
+
+Each state watch must prove a successful `workspace` Resolve decision before
+the Gateway starts its actual ACP watch. The initial decision and every later
+revalidation use the shared `rpc/cache/shared` contract: cache admission needs a
+valid snapshot and feed-proof budget; actual RPCs need their receiving Identity
+SERVER and SQL. Shared decisions bind the exact archived CLIENT, with the
+original request or refresh root and its cache trigger. Multiple shared waiters
+may reuse one actual SQL owner; multiple RPC creators cannot claim one CLIENT.
+The collector archives current, source and trigger traces and requires three
+consecutive identical complete snapshots before returning evidence.
+
+Revocation evidence records the actual authority request Trace ID and observed
+remote-close window. A private feed may close the stream before a final
+Identity 401: the oracle accepts only the directly owned Gateway response-read
+failure paired with an interrupted ACP watch in that window.
+`revocation_verified` requires a validated actual Identity denial; a cancelled
+pending check alone does not prove it. Raw errors and clock warnings throughout
+the collected traces still fail the strict check.
+
+The observer preserves the first closure's actual Trace ID, time and cause;
+cleanup cannot relabel it. A pending unavailable Resolve additionally needs
+that independent observation, a matching Gateway cancellation or private-feed
+closure, and its exact source state. Global aborts and invalid states fail the
+watch gate. Retained shared work may finish after the watch closes, but an
+actual-client link cannot point to a CLIENT created after the cancellation
+snapshot. A missing RPC CLIENT cannot distinguish caller cancellation from
+preflight unavailability, so that case remains unverified. Unknown receiver
+5xx and SQL errors also remain failures, including an Identity dependency 503
+that might have resulted from query cancellation.
 
 The observer also records the Gateway's actual HTTP `Date` and host request /
 response times. These bound the host-to-service clock offset, including the
@@ -69,6 +99,21 @@ external model through a deterministic OpenAI-compatible peer. It covers:
 Two real browser connections observe the same Session. Its activity time must
 change after a new prompt, both pages must display the received title and time,
 and a fresh list/load after reload must preserve those values.
+
+The HTTP Bridge uses the `workspace` Resolve profile and must retain the actual
+Gateway → Agent UI → ACP prompt → Run ancestry. Each model-fixture request binds
+its exact Provider CLIENT and `model.complete` parent inside that Run, which must
+retain successful terminal SQL. Current, shared-source and refresh-trigger
+traces are archived in `traces/` and must converge across three full snapshots.
+
+Before Stop, the browser records the member's actual Bridge view and its unique
+ACP-accepted Run. Only the declared held-model cancellation phase may classify
+the single observed Provider disconnect: it requires that exact Run to finish
+cancelled and quiescent without Tool effects, with successful terminal SQL. The
+model error must point back to the actual HTTP CLIENT failure. Other Gateway,
+Bridge, ACP, SQL or Tool errors still fail business validation. Expected
+cancellation retains raw errors and strict failure; every trace must have an
+explicit strict verdict, and unknown source warnings still fail CI review.
 
 ```sh
 node --test --test-concurrency=1 tests/e2e/workspace-closeout/*.test.mjs

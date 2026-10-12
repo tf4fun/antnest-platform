@@ -19,7 +19,7 @@ Do not restart into an intermediate configuration or change receiver origins
 through browser inputs. Public listener TLS uses a separate certificate and key;
 it does not reuse internal workload credentials.
 
-Deploy Identity revision 16 before Gateway revision 20. Its required session
+Deploy Identity revision 16 before Gateway revision 21. Its required session
 metadata, account/session RPCs, external identity list/unbind/notice RPCs and
 private revocation feed must be available. The three new self routes preserve
 cookies on success and failure; after unbinding the current session, the next
@@ -32,30 +32,37 @@ Identity policy defaults to a
 30-minute idle deadline and a 12-hour absolute deadline; ordinary traffic does
 not renew either. See the [session lifecycle contract](../../../contracts/identity/browser-sessions.md).
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `ANTNEST_EDGE_LISTEN` | no | `:8080` | HTTP or native HTTPS listen address |
-| `ANTNEST_EDGE_PUBLIC_ORIGIN` | except direct loopback HTTP | - | canonical browser origin, including any non-default port |
-| `ANTNEST_EDGE_TLS_CERT_FILE` | with key | - | native public TLS certificate chain PEM |
-| `ANTNEST_EDGE_TLS_KEY_FILE` | with certificate | - | native public TLS private key PEM |
-| `ANTNEST_EDGE_TLS_CA_FILE` | no | system trust | extra stable private CA bundle for native-TLS local health |
-| `ANTNEST_EDGE_TRUSTED_PROXIES` | for HTTPS termination upstream | empty | comma-separated trusted proxy CIDRs; empty trusts none |
-| `ANTNEST_IDENTITY_SERVICE_URL` | yes | - | trusted Identity Service base URL |
-| `ANTNEST_ADMIN_CONSOLE_URL` | yes | - | trusted Admin Console base URL |
-| `ANTNEST_AGENT_UI_URL` | yes | - | internal Node Agent UI base URL for authenticated HTML, static assets, the Workspace HTTP API and SSE |
-| `ANTNEST_AGENT_CONTROLLER_URL` | yes | - | trusted Agent Controller base URL for ID/name discovery only |
-| `ANTNEST_AGENT_ACP_URL` | yes | - | trusted Agent ACP Service base URL |
-| `ANTNEST_EDGE_COOKIE_SECURE` | no | `true` | Secure cookies; false requires a literal loopback HTTP listener |
-| `ANTNEST_EDGE_CSRF_KEY_FILE` | yes | - | readable regular file containing exactly 32 raw CSRF key bytes; identical on all replicas for one origin |
-| `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` | no | `false` | explicit compatibility for API mutations with both Origin and Fetch Metadata absent; logs a startup warning |
-| `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | `10s` | non-streaming dependency and forwarded admin request timeout |
-| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT` | no | `15s` | ordinary HTTP graceful-drain budget |
-| `ANTNEST_EDGE_STREAM_LEASE` | no | `5m` | maximum authenticated SSE lifetime |
-| `ANTNEST_EDGE_LOGIN_WINDOW` | no | `5m` | in-memory login admission window |
-| `ANTNEST_EDGE_LOGIN_SOURCE_MAX` | no | `30` | attempts per source per window |
-| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX` | no | `10` | attempts per normalized account per window |
-| `ANTNEST_ENVIRONMENT` | no | empty | deployment environment telemetry attribute |
-| `OTEL_*` | no | - | standard OTLP HTTP/protobuf signal configuration |
+| Variable                                  | Required                       | Default               | Description                                                                                                 |
+| ----------------------------------------- | ------------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_EDGE_LISTEN`                     | no                             | `:8080`               | HTTP or native HTTPS listen address                                                                         |
+| `ANTNEST_EDGE_PUBLIC_ORIGIN`              | except direct loopback HTTP    | -                     | canonical browser origin, including any non-default port                                                    |
+| `ANTNEST_EDGE_TLS_CERT_FILE`              | with key                       | -                     | native public TLS certificate chain PEM                                                                     |
+| `ANTNEST_EDGE_TLS_KEY_FILE`               | with certificate               | -                     | native public TLS private key PEM                                                                           |
+| `ANTNEST_EDGE_TLS_CA_FILE`                | no                             | system trust          | extra stable private CA bundle for native-TLS local health                                                  |
+| `ANTNEST_EDGE_TRUSTED_PROXIES`            | for HTTPS termination upstream | empty                 | comma-separated trusted proxy CIDRs; empty trusts none                                                      |
+| `ANTNEST_IDENTITY_SERVICE_URL`            | yes                            | -                     | trusted Identity Service base URL                                                                           |
+| `ANTNEST_ADMIN_CONSOLE_URL`               | yes                            | -                     | trusted Admin Console base URL                                                                              |
+| `ANTNEST_AGENT_UI_URL`                    | yes                            | -                     | internal Node Agent UI base URL for authenticated HTML, static assets, the Workspace HTTP API and SSE       |
+| `ANTNEST_AGENT_CONTROLLER_URL`            | yes                            | -                     | trusted Agent Controller base URL for ID/name discovery only                                                |
+| `ANTNEST_AGENT_ACP_URL`                   | yes                            | -                     | trusted Agent ACP Service base URL                                                                          |
+| `ANTNEST_EDGE_COOKIE_SECURE`              | no                             | `true`                | Secure cookies; false requires a literal loopback HTTP listener                                             |
+| `ANTNEST_EDGE_CSRF_KEY_FILE`              | yes                            | -                     | readable regular file containing exactly 32 raw CSRF key bytes; identical on all replicas for one origin    |
+| `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` | no                             | `false`               | explicit compatibility for API mutations with both Origin and Fetch Metadata absent; logs a startup warning |
+| `ANTNEST_EDGE_REQUEST_TIMEOUT`            | no                             | `10s`                 | non-streaming dependency and forwarded admin request timeout                                                |
+| `ANTNEST_EDGE_RESOLVE_CACHE_TTL`          | no                             | `10s`                 | Resolve snapshot TTL, 0–30s; zero selects direct resolution                                                 |
+| `ANTNEST_EDGE_RESOLVE_CACHE_SIZE`         | no                             | `50000`               | entry limit, 1–50,000, also validated when TTL is zero                                                      |
+| `ANTNEST_EDGE_SHUTDOWN_TIMEOUT`           | no                             | `15s`                 | ordinary HTTP graceful-drain budget                                                                         |
+| `ANTNEST_EDGE_STREAM_LEASE`               | no                             | `5m`                  | maximum authenticated SSE lifetime                                                                          |
+| `ANTNEST_EDGE_LOGIN_WINDOW`               | no                             | `5m`                  | in-memory login admission window                                                                            |
+| `ANTNEST_EDGE_LOGIN_SOURCE_MAX`           | no                             | `30`                  | attempts per source per window                                                                              |
+| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX`          | no                             | `10`                  | attempts per normalized account per window                                                                  |
+| `ANTNEST_ENVIRONMENT`                     | no                             | empty                 | deployment environment telemetry attribute                                                                  |
+| `OTEL_*`                                  | no                             | -                     | standard OTLP HTTP/protobuf signal configuration                                                            |
+| `OTEL_METRICS_EXPORTER`                   | no                             | `none`                | Gateway metrics opt-in: `otlp` or `none`; independent of traces                                             |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`     | no                             | generic OTLP endpoint | metrics-specific full HTTP URL, normally ending in `/v1/metrics`                                            |
+| `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL`     | no                             | generic OTLP protocol | only `http/protobuf` is supported                                                                           |
+| `OTEL_METRIC_EXPORT_INTERVAL`             | no                             | `60000`               | periodic metrics collection interval in milliseconds                                                        |
+| `OTEL_METRIC_EXPORT_TIMEOUT`              | no                             | `30000`               | periodic metrics export budget in milliseconds; shutdown is separately bounded                              |
 
 The forwarded admin request timeout (10 seconds by default) is shorter than
 Admin Console's 15-second `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT`. A Console request
@@ -209,6 +216,55 @@ Finally, check the public HTTPS `/status`, sign in, make a Console admin request
 send a Workspace message and initialize an ACP client over WSS. An internal
 Gateway health check alone cannot validate the TLS proxy or public certificate.
 
+## Resolve Cache Operation
+
+Each replica owns a separate volatile cache. Scope includes the exact browser
+token hash, audience profile and Agent, so warming one scope does not admit a
+different profile or Agent. Snapshots expire at the earliest of actual Resolve
+start + TTL, idle, absolute and original CCT expiry. Hits never extend authority.
+Only a complete terminal revocation-feed page applied to all consumers proves
+catch-up, anchored to that page RPC's start. No proof at startup or proof age at
+least TTL means live-only resolution. Four full pages, partial application or
+a failed poll cannot refresh proof; an earlier still-fresh proof remains usable
+until its original TTL boundary. Valid sequence gaps
+remain legal; do not advance a cursor from wall time or a guessed sequence.
+
+Capacity is bounded by 50,000 configured entries, 64 MiB of accounted entry
+storage, 16 KiB per entry, 32 retained work slots, 128 waiters per exact scope
+across generations and 1,024 total waiters. Accounted storage includes all
+retained strings and entry overhead; it is not process RSS. Valid larger live
+responses are not cached. Completed-but-undelivered and cancelled-but-unjoined
+work still consumes a slot. Saturated misses return 503; no direct fallback
+escapes the limit. TTL zero restores the previous direct path and disables these
+new cache/shared-work budgets. Restart with the chosen TTL to switch modes.
+
+The shared RPC timeout is `min(5s, request timeout, TTL)`. At half TTL, valid hits
+may initiate bounded refresh. Failures do not extend the old snapshot, and
+attempts for that entry remain spaced by at least half TTL. Revocation and
+validated local security mutations evict/fence old authority before later delivery.
+Validated activity evicts same-session entries and prevents identified old work
+from accepting new readers or refilling the cache. Readers already attached may
+finish with their original live result, subject to the original deadlines and
+final revocation/cancellation checks. No CCT or deadline is edited, and there is
+no automatic retry. Old and new generations both count against capacity; an old
+authoritative denial still invalidates newer work and every cached token scope.
+
+A short Identity outage can preserve admission only for a prewarmed exact scope
+whose snapshot, proof, session, stale-output and existing connection CCT budgets
+remain valid. It does not make new login, a cold scope or expired authority
+available. Ordinary failure responses preserve cookies. Cache reuse does not
+extend JWKS trust or an existing direct WebSocket's original CCT hard cap;
+reconnection still requires normal admission. Already accepted Runs retain their
+independent execution lifetime.
+
+After restoring an Identity database from backup, restart **all Gateway
+replicas** to discard cached snapshots and restart the feed at cursor zero
+before serving authenticated traffic. A restored sequence history cannot be
+reconciled with an old in-memory cursor. This requires no new Identity schema
+or second revocation interface. Names and slugs share the Principal TTL; users
+observe a rename on the next real session/bootstrap/SSR read after expiry,
+including that request's latency.
+
 ## Request Diagnostics
 
 The public response carries `X-Antnest-Trace-ID`. In Jaeger, expect Gateway
@@ -249,6 +305,62 @@ this HTTP forwarding layer. Standard SDK export configuration remains available.
 Gateway follows the [platform observability contract](../../../docs/observability-contract.md)
 but cannot repair a missing downstream SERVER span itself.
 
+Each Resolve invocation ends a `gateway.identity.resolve` INTERNAL marker under
+its actual HTTP or ACP message root. `source=rpc|cache|shared`, the fixed profile
+and `outcome=admitted|rejected|unavailable` describe the decision. A cache hit
+records fractional `snapshot_age_ms`, `proof_age_ms` and positive `valid_for_ms`
+at admission. Shared decisions link the exact actual CLIENT span; background
+refresh has its own root linked to its trigger. Archive source traces and check
+both parent chains. A cancelled shared wait may lack a CLIENT only under the
+explicit `cancelled-before-client` boundary in the [cache contract](../../../contracts/edge-gateway/resolve-cache.md).
+Neither that marker nor unrelated SQL excuses a missing parent (#247).
+
+Every actual session-revocation feed CLIENT records the fixed
+`rpc.method=list_session_revocations`, `rpc.service=identity` and
+`rpc.system.name=antnest.http-json`, including a failed send with no receiver.
+The Identity adapter supplies these fields; URL/header values never select
+them. Feed contents and private cursors remain excluded. Consumers must bind
+this method to the observed outage and the original transport error before
+classifying it. Historical anonymous CLIENT failures remain pending evidence;
+the producer marker alone does not complete feed-outage admission.
+
+The recovery HTTP E2E gate binds the observed logout, password change and
+Membership changes to their actual Gateway/Console/Identity chain and committed
+Identity transaction. Session-feed inserts must match the number of revoked
+token rows; password replacement and deactivation's principal feed remain
+required. Parameterized SQL does not establish individual token IDs or reasons.
+The old-session and rejected-login checks require the exact 401 response,
+credential scope, Identity receipt and successful lookup. Only the matched
+Trace/span pairs are classified as expected refusals. Raw errors, warnings and
+the strict Trace result remain intact; HTTP admission alone does not complete
+stream retirement, feed-outage or full CI acceptance.
+
+To export metrics, enable the SDK and set `OTEL_METRICS_EXPORTER=otlp` with a
+reachable metrics receiver, normally via `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`.
+Jaeger supplies trace storage, not a metrics backend. `OTEL_TRACES_EXPORTER=none`
+does not disable metrics; `OTEL_SDK_DISABLED=true` disables both. Endpoint and
+protocol settings alone do not opt Gateway into metrics. Compose forwards the
+metrics endpoint/protocol and periodic interval/timeout settings.
+
+Metrics under `antnest.gateway.identity.resolve.` are:
+
+| Suffix                                       | Meaning                                                                                                                                |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `decisions`                                  | request count by fixed `source`, `profile`, `outcome`                                                                                  |
+| `rpc.calls`, `rpc.duration`                  | actual live attempt count and duration in seconds, including response validation and background refresh, by fixed `profile`, `outcome` |
+| `cache.entries`, `cache.accounted_bytes`     | retained entry count and accounted bytes, including entries awaiting lazy expiry                                                       |
+| `cache.work`, `cache.waiters`                | retained work slots and attached callers                                                                                               |
+| `cache.proof.available`, `cache.proof.fresh` | 0/1 observations for a known proof and proof within TTL                                                                                |
+| `cache.proof.age`                            | dynamically collected age in seconds; absent until a proof exists                                                                      |
+
+Cache gauges describe the process's single Identity client. None contains token,
+token hash, SID, CCT, cache key or arbitrary Identity error text. TTL zero still
+counts direct attempts and decisions, but produces no cache gauges. Collection
+does not perform Identity I/O. Export is asynchronous to admission; final
+shutdown flushes remaining counters/histograms after cache observers unregister.
+Those final exports do not promise a zero-valued final cache gauge or backend
+durability. Receiver acceptance/storage requires receiver-side evidence.
+
 ## Shutdown And Streams
 
 Signal and listener-error exits cancel and drain WebSocket handlers separately
@@ -274,16 +386,27 @@ If graceful drain expires, Gateway force-closes connections and allows a
 separate bounded five-second handler/telemetry cleanup, retaining the original
 deadline error. The request-completion counter covers ordinary HTTP as well as
 streams, while only receive streams are cancelled before their graceful-drain
-window. Compose gives Gateway 30 seconds: the default 15-second grace, up to
-five seconds for cancelled handlers, up to five seconds for exporter shutdown,
+window. Compose gives Gateway 40 seconds: the default 15-second grace, up to
+five seconds for cancelled handlers, five seconds for metrics shutdown,
+five seconds to drain traces and up to five seconds for trace exporter cleanup,
 and margin. Increase the platform stop grace as well when increasing the HTTP
 shutdown budget.
 
 Main owns one private session-revocation poller and cancels/joins it before
 transport teardown on both signal and listener failure. It starts from cursor
 zero after restart, reads at most 500 events per page and four pages per catch-up
-pass, and retains only active stream registrations. Feed outage or lag never
-waives each stream's independent Identity checks. Constructors start no poller.
+pass, and fans events to active stream registrations and the Resolve cache.
+Shutdown rejects new cache work, cancels and joins shared/refresh RPCs and the
+feed, clears entries, and unregisters metric callbacks before transport and
+telemetry teardown. Feed outage or lag never waives each stream's independent
+bounded checks. Constructors start no cache worker or poller.
+
+Telemetry cleanup uses fresh bounded contexts even if its caller has already
+expired, and retains that cancellation in the returned error. At trace drain
+expiry, Gateway cancels active exporter HTTP requests, rejects further queued
+uploads and joins the SDK batch worker before closing exporter resources.
+An export timeout remains a shutdown failure; discarded measurements are not
+reported as successful delivery.
 
 Run the service-owned signal regression from the repository root after building
 its image:

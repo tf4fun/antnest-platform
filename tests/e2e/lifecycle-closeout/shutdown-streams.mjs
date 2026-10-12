@@ -24,7 +24,16 @@ export function openShutdownWatch(client, path, event, validate, signal) {
   let traceID;
   let ended = false,
     disposed = false,
-    failure;
+    failure,
+    closure;
+  const observeClosure = (kind) => {
+    closure ??= Object.freeze({
+      kind,
+      traceID,
+      observedAt: Date.now(),
+      receivedEvents: events.length,
+    });
+  };
   const source = new EventSource(client.base + path, {
     fetch: async (url, init) => {
       const response = await fetch(url, {
@@ -39,6 +48,7 @@ export function openShutdownWatch(client, path, event, validate, signal) {
       const actual = response.headers.get("x-antnest-trace-id");
       if (!response.ok || !/^[a-f0-9]{32}$/.test(actual ?? "")) {
         failure = new Error("invalid shutdown watch response identity");
+        observeClosure("invalid-response");
         await response.body?.cancel();
         throw failure;
       }
@@ -46,11 +56,14 @@ export function openShutdownWatch(client, path, event, validate, signal) {
       return response;
     },
   });
-  const close = () => {
+  const dispose = (kind) => {
+    observeClosure(kind);
     disposed = true;
     source.close();
-    signal.removeEventListener("abort", close);
+    signal.removeEventListener("abort", abort);
   };
+  const close = () => dispose("local-close");
+  const abort = () => dispose("global-abort");
   source.addEventListener(event, (received) => {
     try {
       const value = JSON.parse(received.data);
@@ -59,15 +72,21 @@ export function openShutdownWatch(client, path, event, validate, signal) {
       assert(events.length < 100, "unbounded shutdown watch events");
     } catch {
       failure = new Error("invalid shutdown watch event");
-      close();
+      dispose("invalid-event");
     }
   });
   source.addEventListener("error", () => {
+    if (disposed) return;
+    observeClosure("transport-end");
     ended = true;
     source.close();
+    // EventSource schedules its reconnect timer after dispatching this event.
+    // Close synchronously to stop reads, then clear that post-dispatch timer.
+    queueMicrotask(() => source.close());
+    signal.removeEventListener("abort", abort);
   });
-  signal.addEventListener("abort", close, { once: true });
-  if (signal.aborted) close();
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
   const healthy = () => {
     if (failure) throw failure;
     assert(!disposed, "watch closed by the test");
@@ -75,6 +94,9 @@ export function openShutdownWatch(client, path, event, validate, signal) {
   return {
     get traceID() {
       return traceID;
+    },
+    get closure() {
+      return closure;
     },
     events,
     close,

@@ -3,7 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { createValidatedNodeHttpHandler } from "./validated-node-handler.js";
 import type { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
-import { TracedAcpHttpServer } from "../../telemetry/acp-http.js";
+import { TracedAcpHttpServer, recordAcpAccessDenial } from "../../telemetry/acp-http.js";
+import type { Span } from "@opentelemetry/api";
 
 import type { ConnectionBinding } from "../../domain/types.js";
 import type { AcpApplicationPort } from "../../ports/acp-application.js";
@@ -166,6 +167,7 @@ class HttpConnection {
   public id: string | undefined;
   private readonly server: AcpServer;
   private readonly requests = new Set<ServerResponse>();
+  private readonly getSpans = new Map<ServerResponse, Span>();
   private readonly handler: ReturnType<typeof createValidatedNodeHttpHandler>;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
@@ -177,7 +179,21 @@ class HttpConnection {
     private readonly options: ConnectionOptions,
   ) {
     this.server = new TracedAcpHttpServer({
-      agent: createAcpV1Agent({ binding, ...options }).onConnect((connection) => {
+      agent: createAcpV1Agent({
+        binding,
+        ...options,
+        onConnectionFailure: (error, source) => {
+          for (const [response, span] of this.getSpans) {
+            if (
+              !response.destroyed &&
+              !response.writableEnded &&
+              response.headersSent &&
+              response.statusCode === 200
+            )
+              recordAcpAccessDenial(span, error, source, binding);
+          }
+        },
+      }).onConnect((connection) => {
         void connection.closed.then(() => {
           // DELETE closes the SDK first; its HTTP acknowledgement still owns
           // the response until finish/close releases the outer connection.
@@ -193,6 +209,8 @@ class HttpConnection {
     clearTimeout(this.timer);
     if (request.method === "DELETE") this.pendingDeletes++;
     this.requests.add(response);
+    const span = activeHttpSpan();
+    if (request.method === "GET" && span !== undefined) this.getSpans.set(response, span);
     return new Promise((resolve) => {
       response.once("finish", () => {
         if (this.stopped) return;
@@ -209,6 +227,7 @@ class HttpConnection {
       });
       response.once("close", () => {
         this.requests.delete(response);
+        this.getSpans.delete(response);
         if (request.method === "DELETE") this.pendingDeletes--;
         if (this.id === undefined || (this.sdkClosed && this.pendingDeletes === 0))
           this.options.release();

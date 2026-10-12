@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 // CurrentAccount is the browser projection. Identity's organization display
@@ -139,6 +140,7 @@ func (client *Client) TouchSession(ctx context.Context) (SessionMetadata, error)
 	if !result.Valid() || !result.ExpiresAt.Equal(principal.ExpiresAt) {
 		return SessionMetadata{}, fmt.Errorf("identity returned invalid activity metadata")
 	}
+	client.invalidateActivity(principal.SessionID)
 	return result, nil
 }
 
@@ -170,6 +172,7 @@ func (client *Client) ChangePassword(ctx context.Context, input PasswordInput) (
 		return LoginResult{}, fmt.Errorf("identity returned invalid password replacement")
 	}
 	result.LoginResult.Principal = replacement
+	client.invalidateUser(principal.UserID)
 	return result.LoginResult, nil
 }
 
@@ -245,6 +248,7 @@ func (client *Client) RevokeSessions(ctx context.Context, input SessionRevokeInp
 		*result.CurrentRevoked && (*result.RevokedCount == 0 || input.Mode == "others") {
 		return SessionRevokeResult{}, fmt.Errorf("identity returned invalid session revocation")
 	}
+	client.invalidateUser(principal.UserID)
 	return SessionRevokeResult{RevokedCount: *result.RevokedCount, CurrentRevoked: *result.CurrentRevoked}, nil
 }
 
@@ -257,6 +261,7 @@ func (client *Client) ListSessionRevocations(ctx context.Context, after int64, l
 		NextSequence *int64              `json:"next_sequence"`
 	}
 	// This workload operation deliberately does not forward a browser CCT.
+	ctx = telemetry.WithIdentitySessionRevocations(ctx)
 	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/list-session-revocations", map[string]any{"after_sequence": after, "limit": limit}, &result)
 	if err != nil {
 		return SessionRevocationPage{}, err

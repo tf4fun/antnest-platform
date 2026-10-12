@@ -111,7 +111,7 @@ for (const [name, initial, residual, expected, diagnostics, logFailure] of [
       if (initial !== 0) assert(summary >= 0 && summary < stop);
       else assert.equal(summary, -1);
       const capture = commands.indexOf(
-        "compose logs --no-color identity-service admin-console edge-gateway",
+        "compose logs --no-color identity-service admin-console edge-gateway agent-ui agent-controller agent-acp-service",
       );
       if (diagnostics) {
         assert(capture >= 0 && capture < stop);

@@ -80,6 +80,36 @@ test("test-owned cancellation cannot count as remote closure", async (t) => {
   watch.close();
   await assert.rejects(watch.waitClosed(), /closed by the test/);
 });
+
+test("shutdown remote closure is an immutable independently timed observation", async (t) => {
+  const { watch, end, abort } = await fixture(t);
+  await watch.ready();
+  assert.equal(watch.closure, undefined);
+  const before = Date.now();
+  end();
+  await watch.waitClosed();
+  const observed = watch.closure;
+  assert.equal(observed?.kind, "transport-end");
+  assert.equal(observed.traceID, watch.traceID);
+  assert.equal(observed.receivedEvents, 1);
+  assert(observed.observedAt >= before && observed.observedAt <= Date.now());
+  assert(Object.isFrozen(observed));
+  watch.close();
+  abort.abort();
+  assert.equal(watch.closure, observed);
+});
+
+for (const kind of ["local-close", "global-abort"])
+  test(`shutdown ${kind} cannot become a remote-closure witness`, async (t) => {
+    const { watch, abort, end } = await fixture(t);
+    await watch.ready();
+    if (kind === "local-close") watch.close();
+    else abort.abort(new Error("stop test"));
+    end();
+    await assert.rejects(watch.waitClosed());
+    assert.equal(watch.closure?.kind, kind);
+    assert.equal(watch.closure.traceID, watch.traceID);
+  });
 test("invalid initial events cannot prove a usable watch", async (t) => {
   const { watch } = await fixture(t, "private-invalid-response");
   await assert.rejects(watch.ready(), (error) => {
@@ -96,4 +126,54 @@ for (const traceID of [null, "not-a-trace"])
       watch.ready(),
       /invalid shutdown watch response identity/,
     );
+  });
+
+function reconnectTimers(t) {
+  const start = globalThis.setTimeout,
+    clear = globalThis.clearTimeout,
+    active = new Set();
+  let created = 0;
+  t.mock.method(globalThis, "setTimeout", (callback, milliseconds, ...args) => {
+    const timer = start(callback, milliseconds, ...args);
+    // Scope real timer ownership to EventSource; Undici can independently
+    // create idle-connection timers with the same delay.
+    if (new Error().stack.includes("/eventsource/")) {
+      created++;
+      active.add(timer);
+    }
+    return timer;
+  });
+  t.mock.method(globalThis, "clearTimeout", (timer) => {
+    active.delete(timer);
+    return clear(timer);
+  });
+  t.after(() => {
+    for (const timer of active) clear(timer);
+  });
+  return { active, created: () => created };
+}
+
+for (const invalid of [false, true])
+  test(`shutdown ${invalid ? "invalid response" : "remote EOF"} leaves no reconnect timer`, async (t) => {
+    const timers = reconnectTimers(t);
+    const { watch, end } = await fixture(
+      t,
+      '{"agent_id":"agent"}',
+      invalid ? null : "a".repeat(32),
+    );
+    if (invalid) {
+      await assert.rejects(watch.ready(), /invalid shutdown watch response/);
+      assert.equal(watch.closure.kind, "invalid-response");
+    } else {
+      await watch.ready();
+      end();
+      await watch.waitClosed();
+      assert.equal(watch.closure.kind, "transport-end");
+    }
+    assert.equal(
+      timers.created(),
+      1,
+      "the real reconnect path was not observed",
+    );
+    assert.equal(timers.active.size, 0, "reconnect timer survives closure");
   });

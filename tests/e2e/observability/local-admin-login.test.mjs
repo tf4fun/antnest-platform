@@ -1,91 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectLocalAdminLogin } from "./local-admin-login.mjs";
+import { inspectLocalAdminLogin as checkLogin } from "./local-admin-login.mjs";
 import { fields } from "./trace-fixtures.mjs";
+import { fixture, sessionOptions } from "./local-admin-login-fixtures.mjs";
 import { inspect } from "node:util";
 
-function fixture(stage = "login") {
-  const traceID = "a".repeat(32);
-  const route = stage === "login" ? "/api/session/login" : "/api/session";
-  const rpc = `/rpc/identity/${stage === "login" ? "local-login" : "resolve-access-token"}`;
-  const span = (id, service, kind, parent, name, tags = {}) => ({
-    traceID,
-    spanID: id,
-    processID: service,
-    operationName: name,
-    duration: 1,
-    references: parent
-      ? [{ refType: "CHILD_OF", traceID, spanID: parent }]
-      : [],
-    tags: fields({ "span.kind": kind, ...tags }),
-    logs: [],
-  });
-  const spans = [
-    span("root", "edge", "server", null, "HTTP", {
-      "http.route": route,
-      "http.request.method": stage === "login" ? "POST" : "GET",
-      "http.response.status_code": 200,
-    }),
-    span("client", "edge", "client", "root", "HTTP POST", {
-      "http.request.method": "POST",
-      "http.response.status_code": 200,
-      "server.address": "identity-service",
-    }),
-    span("identity", "identity", "server", "client", "HTTP POST", {
-      "http.route": rpc,
-      "rpc.method": stage === "login" ? "local_login" : "resolve_access_token",
-      "http.request.method": "POST",
-      "http.response.status_code": 200,
-    }),
-  ];
-  spans[2].logs = ["antnest.request", "antnest.response"].map((event) => ({
-    fields: fields({ event, "antnest.payload.json": "{}" }),
-  }));
-  if (stage === "login")
-    spans.push(
-      span("tx", "identity", "internal", "identity", "postgresql transaction", {
-        "db.system.name": "postgresql",
-        "antnest.transaction.outcome": "committed",
-      }),
-    );
-  const operations =
-    stage === "login"
-      ? [
-          "SELECT",
-          "BEGIN",
-          "SELECT",
-          "SELECT",
-          "SELECT",
-          "INSERT",
-          "INSERT",
-          "COMMIT",
-        ]
-      : ["SELECT", "UPDATE"];
-  operations.forEach((operation, index) =>
-    spans.push(
-      span(
-        `sql-${index}`,
-        "identity",
-        "client",
-        stage === "login" && index > 0 ? "tx" : "identity",
-        operation,
-        {
-          "db.system.name": "postgresql",
-          "db.operation.name": operation,
-          "db.query.text": `${operation} /* fixture ${index} */`,
-        },
-      ),
-    ),
+const inspectLocalAdminLogin = (trace, stage) =>
+  checkLogin(
+    trace,
+    stage,
+    stage === "session" ? sessionOptions(trace) : undefined,
   );
-  return {
-    traceID,
-    processes: {
-      edge: { serviceName: "edge-gateway" },
-      identity: { serviceName: "identity-service" },
-    },
-    spans,
-  };
-}
 
 for (const stage of ["login", "session"]) {
   test(`local admin ${stage} has exact HTTP and transaction ownership`, () => {
@@ -93,7 +18,7 @@ for (const stage of ["login", "session"]) {
     trace.spans.reverse();
     const result = inspectLocalAdminLogin(trace, stage);
     assert.equal(result.spans, stage === "login" ? 12 : 5);
-    assert.equal(result.database_spans, stage === "login" ? 8 : 2);
+    assert.equal(result.database_spans, stage === "login" ? 8 : 1);
     assert.equal(result.transactions, stage === "login" ? 1 : 0);
     assert.equal(result.errors, 0);
     assert.equal(result.diagnostic_events, 2);
@@ -165,11 +90,11 @@ for (const stage of ["login", "session"]) {
     });
 }
 
-test("session read within the last-used sample window needs no UPDATE", () => {
+test("ordinary browser session Resolve always has one SELECT and no UPDATE", () => {
   const trace = fixture("session");
   trace.spans = trace.spans.filter((s) => s.operationName !== "UPDATE");
   const result = inspectLocalAdminLogin(trace, "session");
-  assert.equal(result.spans, 4);
+  assert.equal(result.spans, 5);
   assert.equal(result.database_spans, 1);
   assert.equal(result.errors, 0);
 });

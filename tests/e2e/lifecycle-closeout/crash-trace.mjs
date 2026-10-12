@@ -16,6 +16,10 @@ import { inspectLifecycle } from "../stage3-base/trace.mjs";
 // The raw trace remains untouched and strictly failed. Only the new process's
 // recovery and the surviving Controller workflow can claim complete topology.
 export function inspectCrashTrace(trace, expected, secrets = []) {
+  return inspectCrashRecovery(trace, expected, secrets).evidence;
+}
+
+export function inspectCrashRecovery(trace, expected, secrets = []) {
   assert.equal(expected.kind, "rebuild");
   assert.equal(trace.traceID, expected.traceID);
   const proof = expected.crashRecovery;
@@ -310,22 +314,25 @@ export function inspectCrashTrace(trace, expected, secrets = []) {
     );
   }
   return {
-    kind: expected.kind,
-    trace_id: trace.traceID,
-    request_id: expected.requestId,
-    agent_id: expected.agentId,
-    topology_scope: "completed_recovery",
-    spans: trace.spans.length,
-    recovery_spans: retained.length,
-    attempts: attempts.length,
-    strict_trace: "failed",
-    crash_diagnostics: {
-      excluded_span_ids: excluded.map((s) => s.spanID),
-      missing_parents: missing,
-      error_spans: trace.spans.filter(hasError).map((s) => s.spanID),
-      warnings:
-        (trace.warnings ?? []).length +
-        trace.spans.reduce((n, s) => n + (s.warnings?.length ?? 0), 0),
+    projection,
+    evidence: {
+      kind: expected.kind,
+      trace_id: trace.traceID,
+      request_id: expected.requestId,
+      agent_id: expected.agentId,
+      topology_scope: "completed_recovery",
+      spans: trace.spans.length,
+      recovery_spans: retained.length,
+      attempts: attempts.length,
+      strict_trace: "failed",
+      crash_diagnostics: {
+        excluded_span_ids: excluded.map((s) => s.spanID),
+        missing_parents: missing,
+        error_spans: trace.spans.filter(hasError).map((s) => s.spanID),
+        warnings:
+          (trace.warnings ?? []).length +
+          trace.spans.reduce((n, s) => n + (s.warnings?.length ?? 0), 0),
+      },
     },
   };
 }

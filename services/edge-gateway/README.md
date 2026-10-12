@@ -56,22 +56,22 @@ Gateway still owns browser credential stripping and route authorization.
 
 ## Interfaces
 
-| Direction | Interface                                                                                                                    | Purpose                                                                                                                                              |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Inbound   | `/api/session`, `/api/session/login`, `/api/session/login-methods`, `/api/session/oidc/start`, `GET /protocol/oidc/callback` | Browser session read, login, logout (`DELETE /api/session`) and OIDC; see the [session contract](../../contracts/edge-gateway/session-contract.json) |
-| Inbound | `/api/session/account`, `/api/session/password`, `/api/session/activity`, `/api/session/sessions`, `/api/session/sessions/revoke` | Current account, password rotation, explicit user activity, self inventory and revocation |
-| Inbound | `GET /api/session/external-identities`, `DELETE /api/session/external-identities/{binding_id}`, `POST /api/session/external-identities/notices/acknowledge` | Self binding inventory, explicit unbind and individual notice acknowledgment |
-| Inbound   | `/scim/v2/*`                                                                                                                 | Protocol-preserving SCIM proxy to Identity                                                                                                           |
-| Inbound   | `/api/admin/*` and Console application                                                                                       | Administrator-only BFF routes forwarded to Admin Console with CSRF checks                                                                            |
-| Inbound   | `GET /api/app/bootstrap`                                                                                                     | Principal display facts and accessible Agent IDs and names                                                                                           |
-| Inbound   | `/api/app/agents/{agent_id}/state`, `/state/watch`                                                                           | [Workspace state](docs/workspace-state.md) snapshot and SSE watch                                                                                    |
-| Inbound   | `/api/app/agents/{agent_id}/v1/acp`, `/v2/acp`, `/acp` (v1 alias)                                                            | ACP WebSocket (v1 and v2) and v1 Streamable HTTP relay                                                                                               |
-| Inbound   | `/workspace/*`, `/api/app/workspace/v1/*`                                                                                    | Agent UI HTML, assets and Workspace HTTP/SSE API                                                                                                     |
-| Inbound   | `GET /status`                                                                                                                | Local readiness only; it never probes another service                                                                                                |
-| Outbound  | Identity Service RPC                                                                                                         | Login, non-touch resolution, account/session controls, OIDC and the private session-revocation feed |
-| Outbound  | Agent Controller RPC                                                                                                         | Principal-scoped Agent ID/name discovery only                                                                                                        |
-| Outbound  | Agent ACP Service                                                                                                            | ACP protocol traffic and execution-state reads/watches                                                                                               |
-| Outbound  | Admin Console, Agent UI                                                                                                      | Reverse-proxied application traffic                                                                                                                  |
+| Direction | Interface                                                                                                                                                   | Purpose                                                                                                                                              |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbound   | `/api/session`, `/api/session/login`, `/api/session/login-methods`, `/api/session/oidc/start`, `GET /protocol/oidc/callback`                                | Browser session read, login, logout (`DELETE /api/session`) and OIDC; see the [session contract](../../contracts/edge-gateway/session-contract.json) |
+| Inbound   | `/api/session/account`, `/api/session/password`, `/api/session/activity`, `/api/session/sessions`, `/api/session/sessions/revoke`                           | Current account, password rotation, explicit user activity, self inventory and revocation                                                            |
+| Inbound   | `GET /api/session/external-identities`, `DELETE /api/session/external-identities/{binding_id}`, `POST /api/session/external-identities/notices/acknowledge` | Self binding inventory, explicit unbind and individual notice acknowledgment                                                                         |
+| Inbound   | `/scim/v2/*`                                                                                                                                                | Protocol-preserving SCIM proxy to Identity                                                                                                           |
+| Inbound   | `/api/admin/*` and Console application                                                                                                                      | Administrator-only BFF routes forwarded to Admin Console with CSRF checks                                                                            |
+| Inbound   | `GET /api/app/bootstrap`                                                                                                                                    | Principal display facts and accessible Agent IDs and names                                                                                           |
+| Inbound   | `/api/app/agents/{agent_id}/state`, `/state/watch`                                                                                                          | [Workspace state](docs/workspace-state.md) snapshot and SSE watch                                                                                    |
+| Inbound   | `/api/app/agents/{agent_id}/v1/acp`, `/v2/acp`, `/acp` (v1 alias)                                                                                           | ACP WebSocket (v1 and v2) and v1 Streamable HTTP relay                                                                                               |
+| Inbound   | `/workspace/*`, `/api/app/workspace/v1/*`                                                                                                                   | Agent UI HTML, assets and Workspace HTTP/SSE API                                                                                                     |
+| Inbound   | `GET /status`                                                                                                                                               | Local readiness only; it never probes another service                                                                                                |
+| Outbound  | Identity Service RPC                                                                                                                                        | Login, non-touch resolution, account/session controls, OIDC and the private session-revocation feed                                                  |
+| Outbound  | Agent Controller RPC                                                                                                                                        | Principal-scoped Agent ID/name discovery only                                                                                                        |
+| Outbound  | Agent ACP Service                                                                                                                                           | ACP protocol traffic and execution-state reads/watches                                                                                               |
+| Outbound  | Admin Console, Agent UI                                                                                                                                     | Reverse-proxied application traffic                                                                                                                  |
 
 All other service interfaces are private deployment details. ACP HTTP and
 WebSocket behavior is described in [Architecture](docs/architecture.md).
@@ -84,7 +84,24 @@ Ordinary 401 responses, SSR rejection, activity and revocation preserve cookies.
 See the [browser lifecycle contract](../../contracts/identity/browser-sessions.md)
 for the logout matrix, password recovery and consumer integration.
 
-Gateway revision 20 consumes Identity revision 16's external identity controls.
+Gateway revision 21 consumes Identity revision 16's external identity controls
+and existing private revocation feed. Its bounded Resolve cache defaults to
+10 seconds, clips every snapshot to the original session and CCT deadlines,
+and bypasses cached authority until the feed proves catch-up. Scope includes
+the exact token hash, server-owned audience profile and Agent. TTL zero restores
+direct resolution. See the [cache contract](../../contracts/edge-gateway/resolve-cache.md)
+and [operations guide](docs/operations.md) for capacity, outages and diagnostics.
+Successful activity retires old cache observations while preserving already
+attached live readers within their original deadlines and security checks.
+Subsequent reads resolve again; obsolete results cannot refill the cache.
+
+Periodic stream checks discard a cache hit that was valid when the check
+started but crossed only its TTL during delivery. They may resolve once more
+within that same check's context and deadline. The expired hit cannot renew
+authority, and session expiry, the original WebSocket CCT and the independent
+stale-output timer remain enforced throughout the recheck. Initial requests
+and ACP message admission keep their existing rejection behavior.
+
 Self inventory includes the User's bindings across organizations and independently
 paginated immutable notices. Unbind and notice acknowledgment enforce the same
 Origin/session-bound CSRF boundary; all three routes use `no-store` and preserve
@@ -92,15 +109,17 @@ cookies, including a successful unbind that revokes the current session. Gateway
 forwards the verified session CCT and derives self scope and actor locally.
 It does not offer browser binding creation or a Provider chooser. See the
 [OIDC linking contract](../../contracts/identity/oidc-linking.md).
-Console and Agent UI consumption and the real HTTPS linking workflow remain
-separate #61 delivery batches.
+Console and Agent UI consumption and the real HTTPS linking workflow were
+delivered with #61. The #59 Trace/display consumer batch and real HTTPS
+outage/load integration remain separate pending admissions in the global TODO.
 
 Browser login and session principals preserve Identity's required Organization
 slug/name. Gateway projects these display facts to the active Node Workspace
 API and SSR as verified UTF-8 Base64URL headers; see
 [Organization projection](../../contracts/agent-ui/organization-projection.md).
-Every authenticated request re-resolves Identity, so re-bootstrap observes a
-rename without changing authorization scope. Organization display delivery
+The complete Principal uses the bounded Resolve snapshot. A rename becomes
+visible on the next real session/bootstrap/SSR read after snapshot expiry,
+including that request's latency, without changing authorization scope. Organization display delivery
 [#92](https://github.com/tf4fun/antnest-platform/issues/92) and
 [#93](https://github.com/tf4fun/antnest-platform/issues/93) are complete. The
 workload/CCT deployment and integration admissions are recorded in the
@@ -141,6 +160,8 @@ context are sent directly to the configured service origin.
 | `ANTNEST_EDGE_CSRF_KEY_FILE`                               | yes                         | -            | exactly 32 raw private bytes in a readable regular file; shared across Gateway replicas                                                                                     |
 | `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS`                  | no                          | `false`      | compatibility for API mutations with both Origin and Fetch Metadata absent; emits a startup warning; CSRF still required                                                    |
 | `ANTNEST_EDGE_REQUEST_TIMEOUT`                             | no                          | `10s`        | Deadline for non-streaming dependency calls and forwarded admin requests                                                                                                    |
+| `ANTNEST_EDGE_RESOLVE_CACHE_TTL`                           | no                          | `10s`        | Resolve cache TTL, 0–30s; zero restores direct resolution                                                                                                                   |
+| `ANTNEST_EDGE_RESOLVE_CACHE_SIZE`                          | no                          | `50000`      | cache entry limit, 1–50,000                                                                                                                                                 |
 | `ANTNEST_EDGE_STREAM_LEASE`                                | no                          | `5m`         | Maximum lifetime of an authenticated SSE observation                                                                                                                        |
 | `ANTNEST_EDGE_LOGIN_WINDOW`                                | no                          | `5m`         | In-memory login admission window                                                                                                                                            |
 | `ANTNEST_EDGE_LOGIN_SOURCE_MAX`                            | no                          | `30`         | Login attempts per source per window                                                                                                                                        |
@@ -155,7 +176,8 @@ It disables environment proxies and refuses redirects, so
 another endpoint cannot report Gateway healthy. This follows the
 [purpose-listener deployment contract](../../contracts/platform/service-authentication.md#5-networkdeployment-batch).
 
-Durations use Go duration syntax and must be positive. The 10-second request
+Durations use Go duration syntax and must be positive, except Resolve cache TTL
+which also accepts zero to disable caching. The 10-second request
 timeout bounds forwarded admin requests and is shorter than Admin Console's
 15-second dependency timeout (`ANTNEST_ADMIN_DEPENDENCY_TIMEOUT`), so a slow
 Console dependency surfaces as a Gateway `503` first. Raise both together if
@@ -203,6 +225,9 @@ docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
 
 # Docker signal regression for long-lived receive streams
 node tests/e2e/edge-gateway/shutdown-docker.mjs
+
+# HTTPS Resolve-cache load batch (default 10-second TTL)
+node tests/e2e/edge-gateway/resolve-cache-docker.mjs
 ```
 
 Integration sources live in
@@ -219,6 +244,18 @@ through the public entry (browser HTTP and ACP v1/v2 logout revocation, SCIM
 provisioning, OIDC, Console projections and causal Jaeger spans);
 `make e2e-acp-session` covers post-upgrade expiry, dependency outage and
 recovery, and durable Run completion after logout or disconnect.
+
+The standalone Resolve-cache load batch builds isolated service candidates and
+uses a fresh HTTPS session for the measured WSS connection. Dial, initialize
+and 100 sequential `session/list` exchanges must finish within eight seconds;
+the test crosses half TTL to witness an actual background refresh. It counts
+Gateway Resolve CLIENT attempts and Identity SERVER receipts independently,
+including handshake, connection probes and refresh, with a maximum of three
+each. Full raw trace closure and warnings remain in private evidence. Set
+`ANTNEST_RESOLVE_CACHE_E2E_OUTPUT` to select an unused directory under
+`artifacts/verification/`. Cleanup verifies the retained environment and removes
+owned candidates. This batch currently reports Identity outage/recovery as
+pending; it does not establish the complete #59 acceptance gate.
 
 ## Documentation
 

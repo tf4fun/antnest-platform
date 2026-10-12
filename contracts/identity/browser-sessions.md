@@ -187,15 +187,37 @@ locks. Transactions publishing both feeds always lock/publish principal first,
 session second. Session event rows do not introduce parent-row foreign-key
 locks that reverse this order. Rollback publishes no event.
 
+## Resolve cache consumption
+
+Gateway revision 21 adds [bounded positive caching](../edge-gateway/resolve-cache.md)
+without changing Identity's session feed or issuing a second access-revocation
+RPC. Reads use a new single-statement snapshot on the authoritative store. A
+validated page shorter than the requested limit proves committed catch-up only
+after all its events have been applied. The proof age starts at the terminal
+page's RPC start; even a short fourth page may qualify, while full pages,
+budget exhaustion without a terminal page, failures and incomplete application
+do not refresh it. The proof does not cover a still-uncommitted writer.
+
+Empty pages preserve the cursor. Recent caught-up proof permits reuse of an
+otherwise valid cache entry; it cannot renew the Principal/CCT snapshot itself.
+A missing/stale proof requires live resolution. Database restore requires
+Gateway restart, cache clearing and cursor reset before reuse. No retained-feed
+epoch or replica-read protocol is introduced. Identity's commit ordering and
+rollback-gap tests remain applicable, with a nonzero-cursor terminal-page case
+added in the owning evidence batch.
+
 ## Live streams and process lifecycle
 
 Gateway binds each authenticated long-lived response to the original private
 SID and User/Organization/Membership. Admin streams also retain their required
-current roles. Non-touch live Identity checks enforce these facts even when
-neither side sends frames. The maximum stale-output bound `R` defaults to
-30 seconds. Polling interval is `min(R / 3, activity_interval_ms)`; each Identity
-read times out within that interval. A hard deadline anchored to the start of
-that check includes slow successful responses and socket-close grace, which
+current roles. Non-touch resolution enforces these facts even when neither side
+sends frames. Revision 21 permits a bounded positive snapshot, carrying the
+actual Resolve start/completion and reuse deadline separately from the current
+probe start; a hit never refreshes authority age. The maximum stale-output bound
+`R` defaults to 30 seconds. Polling interval is `min(R / 3, activity_interval_ms)`;
+each invocation times out within that interval. A hard deadline anchored to the
+actual Resolve RPC start, retained across cache hits, includes slow successful
+responses and socket-close grace, which
 is at most `min(1 second, R / 3)`.
 
 Idle expiry is a mutable observation that schedules a fresh live check; an old
@@ -205,9 +227,12 @@ also retains its original handshake CCT expiry as a hard cap and must reconnect
 afterward; Gateway does not silently refresh that credential. Initial session
 resolution times out within `R / 3` while its activity hint is unknown; after a
 reply, its elapsed time must also fit `min(R / 3, activity_interval_ms)`. The
-initial stale deadline remains anchored to that RPC's start. A late reply or
-elapsed hard deadline rejects before upstream admission; the guard exists
-before an upstream stream starts.
+initial stale deadline remains anchored to that RPC's start. For a cache hit,
+the current invocation still meets its reply budget while retained cache/feed/
+session/CCT authority and the remaining stale-output deadline are checked;
+cache age is not RPC latency. A live miss retains the RPC-duration budget.
+A late reply or elapsed hard deadline rejects before upstream admission; the
+guard exists before an upstream stream starts.
 
 Revocation, authority changes, stale/failed checks and hard expiry stop output
 and close the stream within the bound. Cancellation interrupts a blocked
@@ -218,11 +243,15 @@ deadlines clear only after the handler is finished. Already admitted ACP Runs
 keep ACP's documented cancellation and disconnect semantics.
 
 One process-owned Gateway poller reads the private feed and cancels active
-streams registered by SID. Constructors start no goroutines. Main starts the
+streams registered by SID. Revision 21 fans the same validated events to the
+bounded Resolve cache and records catch-up only after both consumers apply them.
+Constructors start no goroutines. Main starts the
 poller with its owned context, cancels and joins it before transport teardown.
 The cursor starts at zero after restart, pages remain bounded, and no unbounded
 event cache is kept. Feed delays, backlog, outage or register/poll races do not
-weaken the independent live-check bound; the feed accelerates closure.
+weaken the independent live-check bound; the feed accelerates closure. Positive
+cache reuse additionally requires fresh catch-up proof; bypassing the cache
+never removes the independent stream bound.
 
 ## Browser request generations and activity reporting
 

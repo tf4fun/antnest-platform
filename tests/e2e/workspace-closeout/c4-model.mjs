@@ -37,7 +37,15 @@ export function decide(payload) {
     assert.equal(tail.length, 0);
     return { phase, hold: held.has(phase), text: `${phase} completed` };
   }
-  if (["c4-browser-approve", "c4-browser-after-rebuild"].includes(phase)) {
+  if (
+    [
+      "c4-browser-approve",
+      "c4-browser-after-rebuild",
+      "c4-cache-outage",
+    ].includes(phase)
+  ) {
+    const outage = phase === "c4-cache-outage";
+    const freshText = `${phase}: fresh output before cancellation.`;
     if (phase === "c4-browser-after-rebuild")
       assert(
         JSON.stringify(payload.messages).includes(
@@ -53,9 +61,15 @@ export function decide(payload) {
       },
     };
     assert(payload.tools.some((tool) => tool.function.name === call.name));
-    if (!tail.length) return { phase, call };
+    if (!tail.length)
+      return {
+        phase,
+        call,
+        ...(outage ? { hold: true, text: freshText } : {}),
+      };
     assert.equal(tail.length, 2);
     assert.equal(tail[0].role, "assistant");
+    if (outage) assert.equal(tail[0].content, freshText);
     const callID = tail[0].tool_calls?.[0]?.id;
     assert.match(callID ?? "", /^[a-f0-9]{64}$/);
     assert.deepEqual(tail[0].tool_calls, [
@@ -73,7 +87,11 @@ export function decide(payload) {
     const result = JSON.parse(tail[1].content);
     assert.equal(result.content, note);
     assert.equal(result.effect_state, "settled");
-    return { phase, text: `${phase}: retained note alpha-beta verified.` };
+    return {
+      phase,
+      text: `${phase}: retained note alpha-beta verified.`,
+      ...(outage ? { hold: true } : {}),
+    };
   }
   return basicDecision(payload);
 }
@@ -110,6 +128,15 @@ export function createC4Model() {
       }
       const result = decide(JSON.parse(Buffer.concat(chunks).toString()));
       const stage = result.call ? "tool" : "reply";
+      if (result.phase === "c4-cache-outage" && stage === "reply") {
+        const prior = requests.find(
+          (row) => row.phase === result.phase && row.stage === "tool",
+        );
+        assert(
+          prior && Number.isFinite(prior.released_at_ms) && !prior.disconnected,
+          "cache outage reply requires the released first model response",
+        );
+      }
       assert(
         !requests.some((r) => r.phase === result.phase && r.stage === stage),
         "model execution repeated",
@@ -119,10 +146,12 @@ export function createC4Model() {
         stage,
         trace_id: parent.split("-")[1],
         model_span_id: parent.split("-")[2],
+        received_at_ms: Date.now(),
       };
       requests.push(record);
       const finish = () => {
-        pending.delete(result.phase);
+        if (pending.get(result.phase) === finish) pending.delete(result.phase);
+        if (result.hold) record.released_at_ms = Date.now();
         reply(200, {
           choices: [
             {
@@ -130,7 +159,7 @@ export function createC4Model() {
               message: result.call
                 ? {
                     role: "assistant",
-                    content: null,
+                    content: result.text ?? null,
                     tool_calls: [
                       {
                         id: `${result.phase}-tool`,
@@ -151,7 +180,11 @@ export function createC4Model() {
       if (result.hold) {
         pending.set(result.phase, finish);
         response.once("close", () => {
-          if (pending.delete(result.phase)) record.disconnected = true;
+          if (pending.get(result.phase) === finish) {
+            pending.delete(result.phase);
+            record.disconnected = true;
+            record.disconnected_at_ms = Date.now();
+          }
         });
       } else finish();
     } catch (error) {

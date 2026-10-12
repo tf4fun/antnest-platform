@@ -2,6 +2,33 @@ import { isSpanContextValid, propagation, ROOT_CONTEXT, trace } from "@opentelem
 import { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
 import { activeHttpSpan } from "./http.js";
 import { boundaryConfig } from "./diagnostics.js";
+import type { Span } from "@opentelemetry/api";
+import type { ConnectionBinding } from "../domain/types.js";
+import { DomainError } from "../domain/errors.js";
+
+export type AcpConnectionFailureSource = "session-output" | "learning-notice" | "permission";
+
+export function recordAcpAccessDenial(
+  span: Span,
+  error: unknown,
+  source: AcpConnectionFailureSource,
+  binding: ConnectionBinding,
+): void {
+  if (
+    boundaryConfig().disabled ||
+    !span.isRecording() ||
+    !(error instanceof DomainError) ||
+    error.code !== "access_denied"
+  )
+    return;
+  span.addEvent("antnest.stream.termination", {
+    reason: "access_denied",
+    "error.type": "DomainError",
+    source,
+    "antnest.agent.id": binding.agentId,
+    "antnest.organization.id": binding.organizationId,
+  });
+}
 
 // The SDK queues messages across HTTP requests. Carry the receiving span through
 // standard ACP metadata instead of relying on the queue's async-local context.

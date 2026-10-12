@@ -570,7 +570,7 @@
     },
     "account_security": {
       "browser_session_contract": "../identity/browser-sessions.md",
-      "gateway_revision": 20,
+      "gateway_revision": 21,
       "identity_revision": 16,
       "password_owner": "edge_gateway_POST_/api/session/password",
       "retired_console_password_route": "deny_without_dependency_effect",

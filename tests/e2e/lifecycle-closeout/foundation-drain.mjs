@@ -1,19 +1,15 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import {
-  collectManagedTrace,
-  inspectManagedTrace,
-} from "../managed-mcp/request-trace.mjs";
+import { inspectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
-import { saveFoundationTrace } from "./foundation-trace.mjs";
 import { assertCompletedExecution } from "./foundation-evidence.mjs";
 import { isBusyDenied } from "../managed-mcp/drain.mjs";
 import { assertReplay } from "../acp-persistence/evidence.mjs";
 import { assertCatalog } from "../acp-commands/evidence.mjs";
 import { until } from "../acp-closeout/wait.mjs";
-import { connectOwner } from "./acp.mjs";
+import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import {
   assertDrain,
   assertControllerStopped,
@@ -341,12 +337,11 @@ export async function withHeldRun({
     ];
     for (const expected of observed)
       traces.push(
-        await collectManagedTrace(
-          config.jaeger,
+        await collectLifecycleACPTrace(
+          config,
           expected,
           secrets,
           requests,
-          (trace) => saveFoundationTrace(config, trace),
           (trace, expected, secrets, calls) => {
             const result = expected.rejection
               ? inspectManagedTrace(trace, expected, secrets, calls)

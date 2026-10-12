@@ -5,23 +5,18 @@ import { applicationServices } from "./deployment.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertEmptySession } from "../identity-closeout/acp-session-evidence.mjs";
 import { until } from "../workspace-closeout/state.mjs";
-import { connectOwner } from "./acp.mjs";
+import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import {
   assertStopped,
   assertRestarted,
-  inspectShutdownTrace,
+  collectShutdownTrace,
   assertReadyExecutionState,
   assertIdleMaintenance,
 } from "./shutdown-evidence.mjs";
-import { collectTrace } from "../managed-mcp/trace.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
-import {
-  saveFoundationTrace,
-  saveFoundationFailure,
-} from "./foundation-trace.mjs";
+import { saveFoundationFailure } from "./foundation-trace.mjs";
 import { physicalIdentity } from "./network-support.mjs";
 import { openShutdownWatchSet } from "./shutdown-streams.mjs";
 import { collectSingleNodeMembership } from "./temporal-membership.mjs";
@@ -48,6 +43,25 @@ async function inventory(config, docker) {
   return (await docker(["inspect", "--format", format, ...ids]))
     .split("\n")
     .map(JSON.parse);
+}
+export async function collectShutdownWatchTraces(
+  config,
+  expectations,
+  secrets,
+  signal,
+  options = {},
+) {
+  return collectLifecycleEvidence(
+    expectations,
+    (expected) =>
+      collectShutdownTrace(config.jaeger, expected, secrets, {
+        ...options,
+        directory: `${config.evidence}/traces`,
+        signal,
+      }),
+    (expected, error) => saveFoundationFailure(config, expected, error),
+    signal,
+  );
 }
 export async function runShutdown({
   config,
@@ -159,13 +173,16 @@ export async function runShutdown({
     eventWatch.assertOpen();
     stateWatch.assertOpen();
     assert.equal(acp.closeCode, undefined, "ACP closed before maintenance");
+    const liveAt = Date.now();
     // Host/VM wall clocks get one second of tolerance, not an unbounded window.
-    const stopWindow = { start: Date.now() - 1000 };
+    const stopStartedAt = Date.now();
+    const stopWindow = { start: stopStartedAt - 1000 };
     await docker(
       config.compose(["stop", "-t", "45", ...applicationServices]),
       true,
     );
-    stopWindow.end = Date.now() + 1000;
+    const stopCompletedAt = Date.now();
+    stopWindow.end = stopCompletedAt + 1000;
     await eventWatch.waitClosed();
     await stateWatch.waitClosed();
     await until(
@@ -176,11 +193,16 @@ export async function runShutdown({
     assert.equal(acp.closeCode, 1001, "ACP did not close for normal shutdown");
     await docker(config.compose(["stop", "-t", "30", "temporal"]), true);
     await docker(config.compose(["stop", "-t", "30", "postgres"]), true);
-    const stopped = assertStopped(
-      config.project,
+    const after = await inventory(config, docker);
+    const stopped = assertStopped(config.project, before, after);
+    const stop = {
+      liveAt,
+      startedAt: stopStartedAt,
+      completedAt: stopCompletedAt,
+      project: config.project,
       before,
-      await inventory(config, docker),
-    );
+      after,
+    };
     const expectations = [
       {
         traceID: eventWatch.traceID,
@@ -190,6 +212,8 @@ export async function runShutdown({
         kind: "event_watch",
         agentID,
         stopWindow,
+        stop,
+        closure: eventWatch.closure,
       },
       {
         traceID: stateWatch.traceID,
@@ -199,21 +223,14 @@ export async function runShutdown({
         kind: "state_watch",
         agentID,
         stopWindow,
+        stop,
+        closure: stateWatch.closure,
       },
     ];
-    const traces = await collectLifecycleEvidence(
+    const traces = await collectShutdownWatchTraces(
+      config,
       expectations,
-      (expected) =>
-        collectTrace(
-          config.jaeger,
-          expected.traceID,
-          (trace) => {
-            saveFoundationTrace(config, trace);
-            return inspectShutdownTrace(trace, expected, traceSecrets);
-          },
-          signal,
-        ),
-      (expected, error) => saveFoundationFailure(config, expected, error),
+      traceSecrets,
       signal,
     );
     // Start existing containers only: no one-shot migration jobs or replacements.
@@ -296,15 +313,11 @@ export async function runShutdown({
     const requestTraces = await collectLifecycleEvidence(
       requests,
       (expected) =>
-        collectManagedTrace(
-          config.jaeger,
+        collectLifecycleACPTrace(
+          config,
           expected,
           traceSecrets,
           [],
-          (trace) => {
-            expected.traceID = trace.traceID;
-            saveFoundationTrace(config, trace);
-          },
           (trace, expected, secrets, calls) =>
             strictSessionEvidence(
               inspectCommandTrace(trace, expected, secrets, calls),
@@ -335,6 +348,8 @@ export async function runShutdown({
         restarted: restartedMembership,
       },
       stop_window: stopWindow,
+      stop_observation: stop,
+      watch_closures: [eventWatch.closure, stateWatch.closure],
       watches_closed_by_server: 2,
       acp_close_code: acp.closeCode,
       same_session_recovered: true,

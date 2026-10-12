@@ -3,6 +3,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient, assertNoStore } from "../identity-closeout/support.mjs";
 import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
+import { observePrincipalRevocation } from "../identity-closeout/principal-revocation.mjs";
+import { withSessionRevocationObserver } from "./browser-session-revocation.mjs";
 
 const admin = {
   organization_slug: "stage3",
@@ -294,16 +296,7 @@ export async function quietObservers(config, agentID, client, signal) {
       await reader?.cancel().catch(() => {});
     } finally {
       await draining;
-      owner?.close();
-      if (owner)
-        await until(
-          () =>
-            owner.closeCode !== undefined ||
-            owner.handshakeStatus !== undefined,
-          "observer socket cleanup",
-          undefined,
-          5000,
-        );
+      await owner?.closeAndWait();
     }
   };
   try {
@@ -436,11 +429,12 @@ export async function verifyBrowserSessions({
   fixture,
   signal,
   setIdlePolicy,
+  output,
   record = () => {},
 }) {
   const contexts = [],
     audits = [],
-    evidence = { phases: [], wire: [] };
+    evidence = { phases: [], wire: [], revocations: [] };
   const recordPhase = (phase) => {
     evidence.phases.push(phase);
     record(evidence);
@@ -678,10 +672,31 @@ export async function verifyBrowserSessions({
         dialog.getByRole("button", { name: "Confirm revocation" }),
         `/api/admin/directory/users/${fixture.ownerID}/sessions/revoke`,
       );
+      const committedMS = performance.now();
       assert.equal(result.current_revoked, false);
       assert(result.revoked_count >= 2);
-      await readSession(consoleSession.client, 401);
-      await readSession(workspaceSession.client, 401);
+      const revocations = await Promise.allSettled(
+        [
+          ["console", consoleSession],
+          ["workspace", workspaceSession],
+        ].map(([surface, session]) =>
+          observePrincipalRevocation({
+            client: session.client,
+            principal: session.metadata.principal,
+            committedMS,
+            ttlMS: config.resolveTTLMS,
+            name: `browser-admin-${surface}-revocation`,
+            directory: output,
+            signal,
+            record: (item) => {
+              evidence.revocations.push({ surface, ...item });
+              record(evidence);
+            },
+          }),
+        ),
+      );
+      for (const observed of revocations)
+        if (observed.status === "rejected") throw observed.reason;
       await readSession(administrator.client);
       const streams = await observers.revoked(at);
       await signedOut(workspaceSession.page);
@@ -716,25 +731,32 @@ export async function verifyBrowserSessions({
     await dialog
       .getByRole("button", { name: "Sign out all sessions", exact: true })
       .click();
-    // The successful current-session revocation navigates immediately. Its
-    // response body can leave CDP before Playwright reads it, so prove the
-    // effect with both original Cookies and the real UI transition instead.
-    await clickResponse(
-      workspaceSession.page,
-      dialog.getByRole("button", { name: "Confirm sign out all sessions" }),
-      revokePath,
-      200,
-      false,
+    const allStreams = await withSessionRevocationObserver(
+      () =>
+        quietObservers(config, fixture.agentID, consoleSession.client, signal),
+      async () => {
+        // The successful current-session revocation navigates immediately. Its
+        // response body can leave CDP before Playwright reads it, so prove the
+        // effect with both original Cookies and the real UI transition instead.
+        await clickResponse(
+          workspaceSession.page,
+          dialog.getByRole("button", { name: "Confirm sign out all sessions" }),
+          revokePath,
+          200,
+          false,
+        );
+        await readSession(consoleSession.client, 401);
+        await readSession(workspaceSession.client, 401);
+        await signedOut(workspaceSession.page);
+        await readSession(administrator.client);
+      },
     );
-    await readSession(consoleSession.client, 401);
-    await readSession(workspaceSession.client, 401);
-    await signedOut(workspaceSession.page);
-    await readSession(administrator.client);
     recordPhase({
       name: "self-all",
       currentAndPeerDenied: true,
       currentPrivateUIRetired: true,
       independentActorPreserved: true,
+      streams: allStreams,
     });
     for (const value of contexts) await value.close();
     console.log(

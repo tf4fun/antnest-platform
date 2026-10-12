@@ -14,8 +14,12 @@ services:
       - "127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT:?required}:5432"
       - "127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT:?required}:16686"
   agent-controller:
+    image: ${ANTNEST_E2E_CONTROLLER_IMAGE:-antnest/agent-controller:local}
     environment:
       ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true"
   agent-acp-service:
+    image: ${ANTNEST_E2E_ACP_IMAGE:-antnest/agent-acp-service:local}
     environment:
       ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true"
+  runtime-egress:
+    image: ${ANTNEST_E2E_EGRESS_IMAGE:-antnest/runtime-egress:local}

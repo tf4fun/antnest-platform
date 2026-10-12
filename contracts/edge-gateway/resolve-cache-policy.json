@@ -1,0 +1,235 @@
+{
+  "contract": "antnest.edge-gateway.resolve-cache",
+  "revision": 2,
+  "identity_revision": 16,
+  "gateway_session_revision": 21,
+  "resolve_method": "resolve_access_token",
+  "semantics": "resolve-cache.md",
+  "scope": {
+    "key": ["sha256(access_token)", "profile", "agent_id"],
+    "owner": "identity-client-and-issuer",
+    "profiles": ["console", "workspace", "acp", "session"],
+    "validate_before_lookup": true,
+    "session_profile_allows_agent": false,
+    "retain_raw_token_in_entries": false
+  },
+  "configuration": {
+    "ttl": {
+      "env": "ANTNEST_EDGE_RESOLVE_CACHE_TTL",
+      "default_ms": 10000,
+      "minimum_ms": 0,
+      "maximum_ms": 30000,
+      "disabled_ms": 0
+    },
+    "entries": {
+      "env": "ANTNEST_EDGE_RESOLVE_CACHE_SIZE",
+      "default": 50000,
+      "minimum": 1,
+      "maximum": 50000
+    },
+    "disabled_features": [
+      "positive-cache",
+      "singleflight",
+      "background-refresh",
+      "shared-work-capacity",
+      "shared-rpc-deadline"
+    ]
+  },
+  "authority": {
+    "active_positive_only": true,
+    "cache_errors": false,
+    "snapshot": "complete-principal-and-original-cct",
+    "age_anchor": "real-resolve-rpc-start",
+    "deadline_minimum": [
+      "resolve-start-plus-ttl",
+      "idle-expires-at",
+      "absolute-expires-at",
+      "cct-expires-at"
+    ],
+    "expiry_equality_admitted": false,
+    "hit_extends_deadline": false,
+    "feed_proof_extends_deadline": false,
+    "inflight_revocation_barrier": true,
+    "late_waiter_recheck": true,
+    "authoritative_denials": [
+      "unauthenticated",
+      "inactive_principal",
+      "complete-principal-active-false"
+    ],
+    "authoritative_denial_eviction": "token-all-scopes-with-inflight-barrier"
+  },
+  "limits": {
+    "accounted_cache_bytes": 67108864,
+    "accounted_entry_bytes": 16384,
+    "entry_structure_charge_bytes": 1024,
+    "account_private_cct_and_all_retained_strings": true,
+    "active_scopes": 32,
+    "waiters_per_scope": 128,
+    "total_waiters": 1024,
+    "completed_results_keep_work_slot_until_delivery": true,
+    "scope_waiters_include_retained_generations": true,
+    "shared_rpc_max_ms": 5000,
+    "rpc_clipped_by_request_timeout_and_ttl": true,
+    "oversized_valid_response": "return-live-without-caching",
+    "entry_pressure": "evict-lru",
+    "miss_work_exhaustion": "503-identity_unavailable",
+    "unbounded_direct_fallback": false,
+    "process_rss_guarantee": false
+  },
+  "feed": {
+    "method": "list_session_revocations",
+    "page_limit": 500,
+    "maximum_pages_per_poll": 4,
+    "poll_interval_ms": 1000,
+    "rpc_max_ms": 5000,
+    "proof_anchor": "terminal-page-rpc-start",
+    "require_all_events_applied": true,
+    "require_short_terminal_page": true,
+    "last_budget_page_can_prove_caught_up": true,
+    "full_page_refreshes_proof": false,
+    "initially_fresh": false,
+    "stale_behavior": "live-resolve-only",
+    "proof_max_age": "configured-cache-ttl",
+    "restore_requires_gateway_restart_and_cursor_reset": true
+  },
+  "work": {
+    "refresh_after_ttl_fraction": 0.5,
+    "refresh_retry_ttl_fraction": 0.5,
+    "refresh_uses_same_limits": true,
+    "refresh_capacity_failure": "serve-still-valid-hit-without-refresh",
+    "waiter_cancellation": "independent",
+    "last_owner_leaves": "cancel-flight",
+    "constructor_starts_workers": false,
+    "shutdown": [
+      "reject-new-work",
+      "cancel-flights",
+      "join-flights",
+      "close-transports"
+    ]
+  },
+  "activity": {
+    "requires_validated_successful_touch": true,
+    "scope": "trusted-sid-and-known-token-flights",
+    "evict_before_response": true,
+    "old_flights_accept_new_waiters": false,
+    "old_flights_store_results": false,
+    "cancel_existing_waiters": false,
+    "old_result_delivery": "original-authority-and-deadline-checks",
+    "modify_principal_or_cct": false,
+    "denial_and_revocation_override": true,
+    "old_work_retains_capacity_until_join_and_delivery": true,
+    "automatic_resolve_retry": false,
+    "truly_unknown_sid": "conservative-original-bounded-result",
+    "actual_rpc_counted": true,
+    "http_admission": "held-resolve-overlaps-validated-touch-first-responses-200-without-retry"
+  },
+  "streams": {
+    "private_provenance": [
+      "resolve_started_at",
+      "resolve_completed_at",
+      "valid_until",
+      "cache_hit"
+    ],
+    "probe_start_updates_authority_age": false,
+    "cache_age_is_rpc_duration": false,
+    "original_handshake_cct_hard_cap": true,
+    "accepted_run_cancelled_by_revocation": false,
+    "output_bound_anchor": "real-resolve-rpc-start",
+    "expired_hit_recheck": {
+      "scope": "periodic-guard-only",
+      "maximum_per_probe": 1,
+      "trigger": "complete-valid-cache-hit-at-probe-start-expired-on-delivery",
+      "require": "only-ttl-reuse-expired-all-identity-session-cct-stale-bounds-still-valid",
+      "preserve": [
+        "probe-context",
+        "probe-deadline",
+        "last-authority-start",
+        "original-hard-caps",
+        "all-resolve-trace-decisions"
+      ],
+      "expired_result_admitted": false,
+      "initial_or_message_retry": false
+    }
+  },
+  "organization_display": {
+    "snapshot_age": "configured-cache-ttl",
+    "empty_feed_page_renews_snapshot": false,
+    "observation": "next-real-read-plus-request-latency"
+  },
+  "admission": {
+    "outage_seconds": 5,
+    "outage_scope": "prewarmed-exact-scope-on-established-streams",
+    "outage_requires": [
+      "real-stream-output",
+      "real-cancel",
+      "terminal-and-quiescent"
+    ],
+    "outage_rejects": [
+      "new-login",
+      "cold-token",
+      "cold-profile",
+      "cold-agent",
+      "expired-cache-or-authority"
+    ],
+    "load_messages": 100,
+    "load_window_max_ms": 8000,
+    "load_actual_resolve_calls_max": 3,
+    "load_count_includes_handshake_and_refresh": true,
+    "load_count_excludes_feed_activity_and_jwks": true,
+    "raw_evidence_required": true
+  },
+  "diagnostics": {
+    "feed_client": {
+      "span": "existing-http-client",
+      "attributes": {
+        "rpc.system.name": "antnest.http-json",
+        "rpc.service": "identity",
+        "rpc.method": "list_session_revocations"
+      },
+      "source": "owning-protocol-adapter",
+      "required_on_send_failure": true,
+      "infer_from_url_or_headers": false,
+      "capture_content": false,
+      "preserve_parent_error_and_lifetime": true
+    },
+    "decision_span": "gateway.identity.resolve",
+    "decision_scope": "request-admission",
+    "sources": ["rpc", "cache", "shared"],
+    "parent": "current-http-or-acp-message-root",
+    "background_root": "process-owned",
+    "background_requires_trigger_link": true,
+    "shared_source_link": "actual-rpc-client-span",
+    "shared_source_trace_archived": true,
+    "shared_source_states": ["actual-client", "cancelled-before-client"],
+    "cancelled_before_client": {
+      "outcome": "unavailable",
+      "requires_cancellation_evidence": true,
+      "snapshot": "linearized-with-client-creation-and-publication",
+      "permits_upstream_admission": false,
+      "substitutes_for_authorization_evidence": false,
+      "existing_client_requires_link_and_source_trace": true,
+      "missing_synchronous_parent_allowed": false
+    },
+    "both_parent_chains_required": true,
+    "preserve_actual_rpc_parent": true,
+    "cache_required_facts": [
+      "profile",
+      "snapshot_age_ms",
+      "proof_age_ms",
+      "valid_for_ms"
+    ],
+    "shared_requires_actual_source_evidence": true,
+    "marker_ends_before_upstream_admission": true,
+    "allow_missing_synchronous_parent": false,
+    "waive_non_resolve_sql": false,
+    "forbidden_labels": [
+      "token",
+      "token_hash",
+      "sid",
+      "caller_context",
+      "cache_key"
+    ],
+    "attribute_prefix": "antnest.identity.resolve.",
+    "outcomes": ["admitted", "rejected", "unavailable"]
+  }
+}

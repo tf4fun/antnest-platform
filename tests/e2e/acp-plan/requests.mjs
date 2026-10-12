@@ -113,6 +113,7 @@ export function inspectCatalogRuntime(trace, tree, request, expected) {
   assert(
     !expected.rejection &&
       [
+        "initialize",
         "session/new",
         "session/load",
         "session/fork",

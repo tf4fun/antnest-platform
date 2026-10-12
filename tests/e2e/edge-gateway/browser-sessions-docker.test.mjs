@@ -25,6 +25,7 @@ import { certificates } from "./tls-certificates.mjs";
 import { verifyBrowserSessions } from "./browser-sessions-flow.mjs";
 import { startLinkingProvider } from "./oidc-linking-fixture.mjs";
 import { verifyOIDCLinking } from "./oidc-linking-flow.mjs";
+import { resolveObservationConfig } from "../observability/resolve-config.mjs";
 
 const ownerLabel = "io.antnest.verification.project";
 
@@ -180,6 +181,20 @@ test(
       const [gatewayContainer] = JSON.parse(
         await docker(["inspect", gatewayID]),
       );
+      const ttlKey = "ANTNEST_EDGE_RESOLVE_CACHE_TTL";
+      const ttlValues = gatewayContainer.Config.Env.filter((value) =>
+        value.startsWith(ttlKey + "="),
+      );
+      assert(ttlValues.length <= 1, "duplicate deployed Resolve TTL");
+      config.resolveTTLMS = resolveObservationConfig(
+        { [ttlKey]: ttlValues[0]?.slice(ttlKey.length + 1) ?? "" },
+        {},
+      ).resolveTTLMS;
+      writeEvidenceFile(
+        output,
+        "gateway-resolve-config.json",
+        JSON.stringify({ resolveTTLMS: config.resolveTTLMS }),
+      );
       assert.deepEqual(
         gatewayContainer.HostConfig.PortBindings ?? {},
         {},
@@ -273,6 +288,7 @@ test(
         fixture,
         signal,
         setIdlePolicy,
+        output,
         record: (evidence) =>
           writeEvidenceFile(
             output,

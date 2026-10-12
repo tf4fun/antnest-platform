@@ -61,6 +61,30 @@ export function assertWorkspaceBootstrap(
   return workspace;
 }
 
+// Controller can revoke its live directory before Gateway's Principal cache.
+// This serial fixture performs no restoration during the observation window,
+// so a removed Agent must not reappear before the request itself is rejected.
+export function assertRevokingWorkspaceBootstrap(
+  payload,
+  principal,
+  organization,
+  previousAgentIDs,
+  secrets = [],
+) {
+  const remaining = previousAgentIDs.filter(
+    (id) =>
+      Array.isArray(payload?.agents) &&
+      payload.agents.some((agent) => agent?.agentId === id),
+  );
+  return assertWorkspaceBootstrap(
+    payload,
+    principal,
+    organization,
+    remaining,
+    secrets,
+  );
+}
+
 export function assertWorkspaceDocument(
   html,
   principal,

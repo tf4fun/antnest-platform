@@ -215,9 +215,10 @@ export function createWorkspaceRuntime(input: {
   async function readAuthorizedSession(
     owner: AgentBridgeOwner,
     sessionId: string,
+    afterCurrent = false,
   ): Promise<{ session: Session; blocked: boolean }> {
     try {
-      return { session: await owner.authorizeSession(sessionId), blocked: false };
+      return { session: await owner.authorizeSession(sessionId, { afterCurrent }), blocked: false };
     } catch (cause) {
       if (owner.retainedSession(sessionId) === null) throw cause;
       const execution = await owner.authorizeExecution(sessionId);
@@ -338,7 +339,7 @@ export function createWorkspaceRuntime(input: {
                 ...(owner.cachedAgentState().activeSessionId ? [owner.cachedAgentState().activeSessionId!] : []),
               ]);
               for (const id of sessionsToRead) {
-                if (owner.retainedSession(id) !== null) await readAuthorizedSession(owner, id);
+                if (owner.retainedSession(id) !== null) await readAuthorizedSession(owner, id, true);
                 else await owner.authorizeExecution(id);
               }
             }

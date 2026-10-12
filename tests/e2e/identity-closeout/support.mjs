@@ -6,15 +6,22 @@ import {
   annotateFailure,
   transportFailure,
 } from "../../support/verification/failure.mjs";
-import { assertSecretFree } from "./evidence.mjs";
 import { collectTrace } from "../observability/collect.mjs";
+import { collectResolutionSources } from "../../support/gateway-resolution-collect.mjs";
 import {
-  assertCaptureDisabled,
+  resolveTraceSources as identityTraceSources,
+  resolveTraceDiagnostics as identityTraceDiagnostics,
+} from "../../support/gateway-resolution-evidence.mjs";
+import { inspectGatewayResolution } from "../../support/gateway-resolution.mjs";
+import { hasError } from "../acp-plan/requests.mjs";
+import {
   owningServerTopology,
   traceTree,
   traceTopology,
   tag,
 } from "../observability/trace-tree.mjs";
+
+export { identityTraceSources, identityTraceDiagnostics };
 
 export function assertNoStore(headers) {
   // A proxy may append the same cache directive as its upstream.
@@ -138,17 +145,32 @@ export class GatewayClient {
   }
 }
 
-export function inspectIdentityTrace(trace, expectation, secrets) {
-  traceTree(trace);
-  return inspectIdentityTraceTopology(trace, expectation, secrets);
+export function inspectIdentityTrace(
+  trace,
+  expectation,
+  secrets,
+  options = {},
+) {
+  for (const source of identityTraceSources(trace, secrets, options)) {
+    traceTree(source);
+    assert(
+      !source.spans.some(hasError),
+      "Identity trace errors require review",
+    );
+  }
+  return inspectIdentityTraceTopology(trace, expectation, secrets, options);
 }
 
-export function inspectIdentityTraceTopology(trace, expectation, secrets) {
+export function inspectIdentityTraceTopology(
+  trace,
+  expectation,
+  secrets,
+  options = {},
+) {
   if (expectation.traceID !== undefined)
     assert.equal(trace?.traceID, expectation.traceID, "wrong Identity trace");
-  const { service, chain: ancestors } = traceTopology(trace);
-  assertCaptureDisabled(trace);
-  assertSecretFree(JSON.stringify(trace), secrets);
+  const { service, chain: ancestors, parent } = traceTopology(trace);
+  identityTraceSources(trace, secrets, options);
   const isIdentityServer = (span) =>
     service(span) === "identity-service" && tag(span, "span.kind") === "server";
   const { server: identityRequest, database } = owningServerTopology(trace, {
@@ -164,6 +186,39 @@ export function inspectIdentityTraceTopology(trace, expectation, secrets) {
         .slice(1, edgeIndex)
         .some((span) => service(span) === "admin-console"),
       "missing Console ancestry",
+    );
+  }
+  const gatewayRoot = chain.find(
+    (span) =>
+      service(span) === "edge-gateway" && tag(span, "span.kind") === "server",
+  );
+  const upstream = gatewayRoot && chain[chain.indexOf(gatewayRoot) - 1];
+  const decisions = gatewayRoot
+    ? trace.spans.filter(
+        (span) =>
+          service(span) === "edge-gateway" &&
+          span.operationName === "gateway.identity.resolve" &&
+          parent(span) === gatewayRoot &&
+          tag(span, "antnest.identity.resolve.outcome") === "admitted",
+      )
+    : [];
+  const profile =
+    expectation.resolveProfile ?? (expectation.console ? "console" : undefined);
+  let resolution;
+  if (profile !== undefined || decisions.length) {
+    assert(profile, "Resolve profile expectation missing");
+    assert.equal(decisions.length, 1, "one business Resolve decision required");
+    assert(upstream, "actual Gateway business forwarding span missing");
+    resolution = inspectGatewayResolution(
+      trace,
+      {
+        rootSpanID: gatewayRoot.spanID,
+        decisionSpanID: decisions[0].spanID,
+        profile,
+        upstreamSpanID: upstream.spanID,
+        ttlMs: expectation.resolveTTLms ?? 10000,
+      },
+      options,
     );
   }
   const outbound = (expectation.oidcRequests ?? []).map((expected) => {
@@ -227,6 +282,7 @@ export function inspectIdentityTraceTopology(trace, expectation, secrets) {
     capture_rpc_content: false,
     gateway_ancestry: true,
     services: [...new Set(chain.map(service))].sort(),
+    ...(resolution ? { gateway_resolution: resolution } : {}),
     ...(expectation.oidcRequests ? { oidc_requests: outbound } : {}),
   };
 }
@@ -235,7 +291,7 @@ export async function verifyIdentityTraces(
   base,
   expectations,
   secrets,
-  options,
+  options = {},
 ) {
   const result = [];
   for (const traceID of new Set(expectations.map((item) => item.traceID))) {
@@ -244,11 +300,19 @@ export async function verifyIdentityTraces(
       ...(await collectTrace(
         base,
         traceID,
-        (trace) =>
-          expectations
+        async (trace) => {
+          const collection = await collectResolutionSources(base, [trace], {
+            ...options,
+            directory:
+              options.directory ?? process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+          });
+          return expectations
             .filter((item) => item.traceID === traceID)
-            .map((item) => inspectIdentityTrace(trace, item, secrets)),
-        undefined,
+            .map((item) =>
+              inspectIdentityTrace(trace, item, secrets, collection),
+            );
+        },
+        options.signal,
         options,
       )),
     );

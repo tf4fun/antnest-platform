@@ -607,6 +607,7 @@ test("tier C organization display installs the Agent UI browser client", () => {
 
 test("foundation runners report strict-only findings through exit 2", () => {
   const foundation = {
+    "gateway-resolve-cache": "edge-gateway/resolve-cache-docker.mjs",
     "c-lifecycle-loss": "lifecycle-closeout/run.mjs loss",
     "c-lifecycle-restore": "lifecycle-closeout/run.mjs restore",
     "c-lifecycle-shutdown": "lifecycle-closeout/run.mjs shutdown",
@@ -625,6 +626,39 @@ test("foundation runners report strict-only findings through exit 2", () => {
     // make reports every failed recipe as 2, which would hide the runner's code.
     assert.equal(entry.run, `node tests/e2e/${foundation[suite.id]}`);
   }
+});
+
+test("resolve cache outage is a required Tier B observed HTTPS suite", () => {
+  const suite = suites.find((item) => item.id === "gateway-resolve-cache");
+  assert(suite);
+  assert.equal(suite.tier, "b");
+  assert.equal(suite.strict, true);
+  assert.deepEqual(suite.setup, ["agent-ui-web"]);
+  assert(suite.pull.includes("caddy:2.11.7-alpine"));
+  assert(
+    suite.pull.includes("cr.jaegertracing.io/jaegertracing/jaeger:2.21.0"),
+  );
+  assert.deepEqual(
+    suite.images,
+    suites.find((item) => item.id === "gateway-tls").images,
+  );
+  assert(
+    shards.find((item) => item.id === "b-gateway").suites.includes(suite.id),
+  );
+  assert(
+    selectSuites(["services/edge-gateway/internal/auth/cache.go"]).some(
+      (item) => item.id === suite.id,
+    ),
+  );
+  const makefile = readFileSync(
+    new URL("../../Makefile", import.meta.url),
+    "utf8",
+  );
+  assert.match(makefile, /\t\$\(MAKE\) test-resolve-cache-fixtures/u);
+  assert.match(
+    makefile,
+    /test-resolve-cache-fixtures:\n\tnode --test --test-concurrency=1 tests\/e2e\/edge-gateway\/resolve-cache-\*\.test\.mjs/u,
+  );
 });
 
 test("bake definitions tag local images and read the image workflow cache", () => {

@@ -1,7 +1,7 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../acp-closeout/support.mjs";
@@ -12,7 +12,7 @@ import {
 } from "../../support/verification/agent-state.mjs";
 import { waitForPublication } from "../acp-cost/setup.mjs";
 import { collectCommandTrace } from "../acp-commands/trace.mjs";
-import { collectTrace } from "../managed-mcp/trace.mjs";
+import { collectLifecycleAdmissionTrace } from "./resolve-trace.mjs";
 import { identity, gateway, login } from "./identity.mjs";
 import { catalog, editCatalog } from "./catalog.mjs";
 import {
@@ -1456,25 +1456,20 @@ async function main() {
     console.log(asciiJSON(business));
     const lifecycleTraces = [],
       sessionTraces = [];
-    const lifecycleRaw = [];
     await mkdir("/tmp/stage3-traces", { mode: 0o700 });
-    for (const [index, expected] of lifecycle.entries()) {
+    for (const expected of lifecycle) {
       stage = `trace:${expected.kind}`;
-      lifecycleRaw.push(
-        await collectTrace("http://jaeger:16686", expected.traceID, (trace) => {
-          if (trace)
-            writeFileSync(
-              `/tmp/stage3-traces/${index}-${expected.kind}.json`,
-              JSON.stringify(trace),
-              { mode: 0o600 },
-            );
-          return trace;
-        }),
+      lifecycleTraces.push(
+        await collectLifecycleAdmissionTrace(
+          "http://jaeger:16686",
+          expected,
+          secrets,
+          {
+            directory: "/tmp/stage3-traces",
+            inspect: inspectLifecycle,
+          },
+        ),
       );
-    }
-    for (const [index, trace] of lifecycleRaw.entries()) {
-      stage = `trace:${lifecycle[index].kind}`;
-      lifecycleTraces.push(inspectLifecycle(trace, lifecycle[index], secrets));
     }
     for (const expected of requests) {
       stage = `trace:${expected.label}`;

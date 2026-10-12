@@ -15,13 +15,13 @@ Trace warnings and expected rejection errors are reported as failures.
 
 ## Running
 
-| Command | Profile |
-| --- | --- |
-| `make e2e-identity-core` | Local login, SCIM and OIDC |
+| Command                         | Profile                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| `make e2e-identity-core`        | Local login, SCIM and OIDC                                                      |
 | `make e2e-organization-display` | Real local/OIDC browser sessions, Organization projection and display freshness |
-| `make e2e-identity-access` | HTTP access isolation, Identity outage and token expiry |
-| `make e2e-agent-access` | Agent organization access and owner offboarding |
-| `make e2e-acp-session` | Browser logout and Identity faults on existing ACP connections |
+| `make e2e-identity-access`      | HTTP access isolation, Identity outage and token expiry                         |
+| `make e2e-agent-access`         | Agent organization access and owner offboarding                                 |
+| `make e2e-acp-session`          | Browser logout and Identity faults on existing ACP connections                  |
 
 All targets require Docker and the local Stage 3 images
 (`make docker-build-stage3`). Each profile is independent and must not be
@@ -33,6 +33,35 @@ node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
 ```
 
 Helper tests do not replace the real integration run.
+
+Cross-service membership, SCIM and administrator revocations observe an already
+warm Principal until the actual deployed Gateway snapshot TTL. Every response
+retains its unique Trace ID, monotonic send/completion times and original
+Principal; successful reads must keep the original Cookie, DTO and no-store
+policy, and the final response must be `401 unauthenticated`. The deadline is
+fixed at the mutation response and is never extended by a successful read.
+Cold scopes and local Gateway logout, password changes and self-revocation keep
+immediate denial checks, as does replay of an old Cookie after restoration.
+Partial observations are saved before validation. The Identity deployment
+inspector supplies `ANTNEST_E2E_RESOLVE_TTL_MS` from the actual container setting.
+Transport and JSON decoding failures stop immediately; they cannot supply a
+decoded observation. Content-validation errors use fixed messages, while the
+actual response values remain in private evidence.
+The deprecated Gateway `/api/app/bootstrap` keeps its three-field Principal
+(`user_id`, `organization_id`, `administrator`) and Agent management projection.
+Its revocation observer validates that DTO directly; the active Agent UI
+bootstrap still requires the organization display fields under its own contract.
+
+Organization feed searches select the unique Identity SERVER by service,
+route, method and RPC, then require its direct Gateway CLIENT parent. CLIENT
+and SERVER ordering in Jaeger search results does not affect the original
+observation window or the subsequent empty-page SQL checks.
+The feed query's end and lookback are fixed to the observed display/proof window,
+rounded outward from microseconds to Jaeger's millisecond boundaries. Collection
+delay cannot extend that window into a later feed whose export is incomplete.
+Exact CLIENT-time selection, complete parent chains, zero-row SELECTs and
+unread-page rejection remain required inside the window. Refresh queries retain
+their separate trigger-based selection.
 
 The legacy core, Organization display and offboarding OIDC scenarios explicitly
 select `verified_email`, with no domain restriction and no administrator trust.
@@ -47,6 +76,11 @@ Chromium; the browser context sends the two fixture hosts directly, without
 changing machine proxy settings or intercepting product APIs. Raw and partial
 TLS connections, browser contexts, candidate images and stack resources are
 closed on success, failure or interruption.
+For organization-admin revocation, the HTTPS fixture observes both original
+browser sessions against one mutation timestamp and the inspected Gateway TTL,
+saves each response before validation, and joins both observations before
+checking stream and private-UI retirement. Its password and self-revocation
+checks still require immediate rejection.
 
 The core client is invoked by the parent as:
 
@@ -101,6 +135,17 @@ with the Identity Organization row, including Unicode and escaped HTML text.
 Forged headers, foreign Agent requests, logout/cookie replay and inactive local
 and OIDC memberships must retain ID-based authorization boundaries.
 
+After membership deactivation, Controller's live directory can empty before
+Gateway evicts its still-valid Principal snapshot. During this bounded rejection
+window, each 200 must retain the exact verified Principal and complete valid
+metadata, while its Agent IDs may only be a subset of the preceding read. This
+serial fixture performs no restoration inside the window, so a removed Agent
+must not reappear. Healthy rename/bootstrap/SSR reads still require the exact
+fixture directory. Cold workspace scopes reject immediately, and warm reads
+must converge to 401 within the existing TTL admission bound. Every transitional
+response is retained privately; successful 200 request/source Trace closures
+are validated and included in the final strict result.
+
 Gateway's Go real-output schema tests use `santhosh-tekuri/jsonschema` with the
 default Go regexp engine, whose `\s` whitespace class is ASCII-only (`\S` is
 its complement). Those
@@ -118,14 +163,63 @@ restores those columns on exit. Reload and re-bootstrap must observe the change
 without altering principal IDs/roles, Agent selection or an unsaved draft. The
 other Organization remains unaffected. This fixture is not a product rename API.
 
+The cache admission reads the actual Gateway container settings and requires
+the default 10-second Resolve TTL with RPC content capture disabled. Six fresh
+login tokens independently warm session, bootstrap and SSR, each in continuous
+and quiet-expiry modes. Bootstrap and SSR otherwise share the same workspace
+profile with no Agent selection. Two early cache hits precede the rename;
+continuous passive GETs span the TTL, while the quiet scopes are next read only
+after the observed commit plus TTL. Half-TTL refresh may expose the new labels
+earlier. The report separates read scheduling delay from response latency and
+does not reject a request admitted before expiry solely for completing later.
+
+This passive interval precedes browser draft input and Refresh clicks, whose
+activity requests can evict a session cache. Actual Gateway/Node admission,
+Resolve CLIENT/SERVER/SQL and separately searched refresh/trigger traces are
+archived with complete source closures. Healthy empty feed pages require the
+real `session_revocations` SELECT with `pgx.rows_affected=0`; observed poll gaps
+must stay within 2.5 seconds, cover the interval and accompany advancing cache
+proof observations. Hits cannot reset the original snapshot age. These checks
+retain strict Trace warnings and missing-parent failures. This HTTP composition
+does not substitute for #59's separate HTTPS outage and load admission.
+
 `ANTNEST_E2E_AGENT_UI_IMAGE` selects an isolated UI candidate alongside the
 Identity, Gateway and RC overrides above. Playwright comes from the locked Agent
 UI dependencies and requires its Chromium installation. All contexts and child
 processes are closed before the parent removes its Docker resources. Browser
-JSON/HTML and service logs are scanned for synthetic access credentials; only
-check names and counts become lasting evidence. Session cookies and IdP canaries
+JSON/HTML and service logs are scanned for synthetic access credentials. Private
+evidence retains timing, synthetic display values and raw Trace closures, with
+no session cookies or RPC content. Session cookies and IdP canaries
 remain in memory or the parent's private temporary directory and are removed on
 teardown.
+
+Unexpected browser 5xx responses retain their actual response Trace IDs. Before
+teardown, the runner attempts to archive the last four failed request closures
+as diagnostics while retaining the original business failure. A failed Refresh
+response body is scanned for fixture secrets before private retention. The
+membership rejection loop also saves each completed read's timing/status/Trace
+and the last secret-checked JSON response before validating its content. A
+failed content assertion therefore retains its actual 200 response and Trace
+closure without retrying the request or changing the admission verdict. JSON
+decoding or credential-scan failures still reject before body retention.
+The optional private diagnostic log also includes Agent UI, Controller and ACP;
+these diagnostic records never establish admission or replace a passing run.
+
+The shared Stage 3a overlay also accepts `ANTNEST_E2E_CONSOLE_IMAGE`,
+`ANTNEST_E2E_CONTROLLER_IMAGE`, `ANTNEST_E2E_ACP_IMAGE` and
+`ANTNEST_E2E_EGRESS_IMAGE`. Local admission must verify build inputs or build
+current candidates for every changed image; an old `:local` tag is not evidence
+for the current checkout. Candidate overrides leave baseline tags intact.
+
+For an independent revocation-consumer diagnostic,
+`ANTNEST_E2E_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL=100ms` selects
+Controller's existing poll interval in the disposable Identity overlay. The
+default remains 2s, and retained deployment Compose does not use this override.
+The deployment report verifies and records the actual container setting. A
+shorter interval increases the opportunity to observe Controller directory
+revocation before Gateway cache eviction; it does not guarantee their order or
+establish the cause of a historical failure. Membership scope, bounded rejection
+and strict Trace gates still apply during this diagnostic.
 
 1. Local login establishes HttpOnly session cookies without returning the token
    in JSON. Member access, rejected CSRF logout, successful logout and replay of
@@ -141,9 +235,14 @@ teardown.
 4. SCIM rotation issues a replacement and revokes the old credential. Lists
    never redisclose secrets, and browser cookies do not authorize SCIM.
 5. Jaeger assertions require actual parent chains from the Gateway through
-   Identity to its repository, including the Console for administrator
-   mutations. Service names alone are not evidence. Passwords, session cookies
-   and SCIM credentials must not appear in Traces.
+   Identity to its owning PostgreSQL spans, including the Console for
+   administrator mutations. Console expectations select the `console` Resolve
+   profile; password-change expectations explicitly select `session`. An
+   admitted Resolve decision must finish before the real Gateway forwarding
+   CLIENT. Its `rpc`, `cache`, or `shared` evidence never replaces the business
+   operation's own SQL or the actual IdP request checks. Login, OIDC and SCIM
+   operations do not acquire an invented Resolve requirement. Passwords,
+   session cookies and SCIM credentials must not appear in any collected Trace.
 
 ## OIDC
 
@@ -219,8 +318,13 @@ session has expired. Console and Agent UI tests verify password-dialog retention
 versus returning to login, including late responses from an older in-page
 session.
 
-Finally the coordinator stops only Identity and proves that protected requests
-return 503 without deleting cookies. The stopped Identity keeps its pinned
+Finally the coordinator issues a new session without reading a protected route,
+then stops only Identity. The first session, console and workspace reads must
+all fail at Gateway with `503 identity_unavailable`, no-store and no Cookie
+change. Login does not populate the Resolve cache. This cold-scope check does
+not classify a warm Console account request whose downstream Identity call
+fails; cached authority and ongoing ACP work during an outage have their own
+Resolve-cache E2E coverage. The stopped Identity keeps its pinned
 Compose address and drops connects. Gateway's 5-second dependency connect bound
 must report the outage within the default 15-second request wait. It restarts Identity with the token TTL set
 to five seconds for new tokens: the earlier long-lived cookie must recover, and a
@@ -343,9 +447,16 @@ must still be error-free.
 Silent close evidence records the peer code, reason, time, absence of local
 shutdown and unchanged SDK request list. The fixture obtains its connection
 Trace ID from the actual upgrade response, without injecting an unexported
-parent. Complete connection Traces must include Gateway, ACP upgrade and the
-initial owning Identity SQL; no message Trace is invented for a request that
-was never sent. Actual message-denial trace validators remain separate.
+parent. Complete connection Traces must include Gateway, the real ACP upgrade,
+and exactly one initial `acp` Resolve decision before the socket CLIENT. A
+live RPC requires its exact Identity receiver and SQL; a cache hit requires
+valid snapshot/proof/deadline budgets; a shared decision requires the archived
+source CLIENT, receiver and SQL, including the cache-hit trigger of a background
+refresh. Every later admitted revalidation has the same source checks. SQL is
+counted by its real receiving SERVER, so repeated shared consumers do not
+invent extra queries. No message Trace is invented for a request that was
+never sent. Actual message-denial trace validators remain separate; a rejected
+or unavailable decision cannot substitute for successful admission.
 Successful requests
 bind the SDK request ID and returned Session ID, and execution binds the
 Provider HTTP span IDs. Traces are scanned for the synthetic cookies and model
@@ -359,6 +470,21 @@ revocation has a bounded delay; admitted Runs continue to completion.
 Compact final metrics and unmodified raw Traces are kept in private
 `artifacts/verification/` directories. `ANTNEST_IDENTITY_EVIDENCE_DIR` must stay
 outside `.cache/`, including symbolic aliases and missing descendants.
+Identity's diagnostic collector waits for three consecutive equal, validated
+snapshots of the entire request/source/trigger closure. A missing source, late
+SQL or changed diagnostics resets convergence. Partial raw evidence is retained
+on failure. Warnings and errors from every collected Trace remain strict
+failures; missing parents are never classified away as clock skew. Cancellation
+waits for active request/body reads and inspectors before returning.
+[`collectResolveTraceEvidence`](../../support/gateway-resolution-evidence.mjs)
+provides this common collection loop and requires an owning business inspector.
+The Identity wrapper supplies its default inspector and evidence directory.
+Top-level warning/error counts describe the entire raw closure; any overlapping
+business diagnostics are retained in `inspector_diagnostics`, including warning
+arrays used by CI review. Clean source diagnostics cannot clear a business
+inspector's strict failure. This Trace consumer support does not complete #59's
+pending fault, display-freshness and
+load integration scenarios.
 Collectors validate known output files before any HTTP request, and access
 clients validate the directory and failure log before login or database setup.
 Linked or non-regular output files are rejected, and files are written with

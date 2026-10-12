@@ -15,6 +15,7 @@ import {
 } from "../observability/trace-tree.mjs";
 import { skillClientArgs } from "./client-container.mjs";
 import { assertSourceActive } from "./source-projection-check.mjs";
+import { captureLearningFailureTraces } from "./automatic-failure.mjs";
 
 const CALLER_GRANTS = [
   "acp-controller",
@@ -77,11 +78,30 @@ export async function callerAcpFlow({
       );
       return JSON.parse(text.trim().split("\n").at(-1));
     } catch (error) {
-      await writeFile(
-        `${output}/caller-${phase}-failure.log`,
-        await docker(["logs", name]).catch(() => "logs unavailable"),
-        { mode: 0o600, flag: "wx" },
-      );
+      try {
+        const logs = await docker(["logs", name]).catch(
+          () => "logs unavailable",
+        );
+        await writeFile(`${output}/caller-${phase}-failure.log`, logs, {
+          mode: 0o600,
+          flag: "wx",
+        });
+        await captureLearningFailureTraces({
+          logs,
+          jaeger: config.jaeger,
+          save: (file, value) =>
+            writeFile(
+              `${output}/caller-${phase}-${file}`,
+              JSON.stringify(value),
+              { mode: 0o600, flag: "wx" },
+            ),
+        });
+      } catch (captureError) {
+        throw new AggregateError(
+          [error, captureError],
+          "Caller failure evidence could not be collected",
+        );
+      }
       throw error;
     } finally {
       await docker(["rm", "-f", name]).catch(() => undefined);

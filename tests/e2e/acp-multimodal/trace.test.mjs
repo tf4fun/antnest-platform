@@ -3,6 +3,28 @@ import test from "node:test";
 import { inspectNativeTrace, nativeStrictOutcome } from "./trace.mjs";
 import { requestFixture } from "../acp-plan/trace-fixture.mjs";
 
+for (const failed of [false, true])
+  for (const version of [1, 2])
+    test(`native owning diagnostics reach strict aggregation (failed=${failed}, version=${version})`, () => {
+      const f = fixture(failed, version);
+      f.trace.warnings = [
+        "clock skew adjustment disabled; not applying calculated delta of 3µs",
+      ];
+      const raw = JSON.stringify(f.trace);
+      const checked = inspect(f);
+      const before = JSON.stringify(checked);
+      assert.equal(nativeStrictOutcome([checked]).accepted, true);
+      assert.equal(checked.strict_trace, "failed");
+      assert.equal(checked.reviewed_error_spans.length > 0, failed);
+      assert.equal(JSON.stringify(checked), before);
+      assert.equal(JSON.stringify(f.trace), raw);
+      assert.equal(
+        nativeStrictOutcome([{ ...checked, warnings: ["unknown warning"] }])
+          .accepted,
+        false,
+      );
+    });
+
 function fixture(failed = false, version = 1, http = false) {
   const f = requestFixture("session/prompt");
   const { add, expected, trace } = f;

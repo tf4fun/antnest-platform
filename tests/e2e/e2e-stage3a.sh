@@ -524,6 +524,7 @@ cleanup() {
       umask 077
       node tests/support/storage.mjs "$identity_diagnostic_log" &&
         compose logs --no-color identity-service admin-console edge-gateway \
+          agent-ui agent-controller agent-acp-service \
           > "$identity_diagnostic_log" 2>&1
     ) || true
   fi

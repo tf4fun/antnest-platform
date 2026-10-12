@@ -21,7 +21,8 @@ async function login() {
 }
 if (phase === "prepare") {
   const response = await login();
-  await browser.request("/api/admin/account");
+  // Login does not populate Resolve cache. Keep every protected scope cold:
+  // a warm Console proof could forward account reads to its failed dependency.
   await writeFile(
     statePath,
     JSON.stringify({
@@ -37,6 +38,7 @@ if (phase === "prepare") {
     "/api/admin/account",
     "/api/app/bootstrap",
   ]) {
+    // Each scope is first used after Identity stops, so Gateway must reject it.
     // A stopped Identity keeps its pinned Compose address and drops connects;
     // Gateway's dependency connect bound must report it within the default.
     const response = await browser.request(path, {

@@ -31,3 +31,12 @@ into this RPC envelope. `start_oidc_login.authorization_url` necessarily
 contains the one-time OIDC `state` value in its query string; callers must
 treat the complete URL as a secret and must not log it. Callback responses do
 not return that state value.
+
+## Gateway Resolve cache consumer
+
+Gateway revision 21 reuses the existing Resolve and session-revocation schemas
+under the [bounded cache contract](../edge-gateway/resolve-cache.md). Terminal-page
+proof depends on the existing commit-order guarantee and fresh authoritative
+reads; it does not add an RPC, watermark or Identity migration. The shared
+policy, Identity PostgreSQL evidence, Gateway implementation and consumer/HTTPS
+integration have separate admission batches.

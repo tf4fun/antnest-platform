@@ -180,14 +180,32 @@ func assertWorkspaceTrace(t *testing.T, spans []sdktrace.ReadOnlySpan, traceID, 
 			}
 		}
 	}
-	want := 3
+	wantClients, wantDecisions := 2, 1
 	if suffix != "" {
-		want = 4
+		wantClients, wantDecisions = 3, 2
 	}
+	want := 1 + wantClients + wantDecisions
 	if !root.IsValid() || len(selected) != want {
 		t.Fatalf("trace spans=%d want=%d root=%s", len(selected), want, root)
 	}
+	clients, decisions := 0, 0
 	for _, span := range selected {
+		if span.SpanKind() == trace.SpanKindClient {
+			clients++
+		}
+		if span.Name() == "gateway.identity.resolve" {
+			decisions++
+			if span.SpanKind() != trace.SpanKindInternal || span.Parent().SpanID() != root {
+				t.Fatal("Resolve decision lost this request's parent")
+			}
+			attributes := map[string]string{}
+			for _, value := range span.Attributes() {
+				attributes[string(value.Key)] = value.Value.AsString()
+			}
+			if attributes["antnest.identity.resolve.source"] != "rpc" || attributes["antnest.identity.resolve.outcome"] != "admitted" {
+				t.Fatal("live request decision was not recorded separately from CLIENT calls")
+			}
+		}
 		if span.SpanKind() == trace.SpanKindClient && span.Parent().SpanID() != root {
 			t.Fatalf("detached client %s", span.Name())
 		}
@@ -199,6 +217,9 @@ func assertWorkspaceTrace(t *testing.T, spans []sdktrace.ReadOnlySpan, traceID, 
 				t.Fatal("credential in trace")
 			}
 		}
+	}
+	if clients != wantClients || decisions != wantDecisions {
+		t.Fatalf("actual CLIENT/decision counts = %d/%d, want %d/%d", clients, decisions, wantClients, wantDecisions)
 	}
 }
 

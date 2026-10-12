@@ -66,7 +66,7 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
-The browser consumes Gateway revision 20 and Identity revision 16 under the
+The browser consumes Gateway revision 21 and Identity revision 16 under the
 [browser session contract](../../contracts/identity/browser-sessions.md).
 Hydrated SSR content stays inert until a fresh Gateway session read succeeds.
 Only genuine input reports activity; background reads, SSE and reconnection do
@@ -120,12 +120,17 @@ semantics are described in [Architecture](docs/architecture.md#bridge-capacity-a
 - Edge Gateway: the only supported caller; supplies verified identity.
 - Identity: CCT keys fetched only from its authenticated configured origin;
   cached trust expires after 30 seconds and fails closed during an outage.
-- Organization display: Gateway revision 15 supplies verified slug/name as
+- Organization display: Gateway revision 21 supplies verified slug/name as
   canonical UTF-8 Base64URL headers. Node decodes and validates the same
   principal for bootstrap and SSR; both frontend bootstrap mappings require
   these labels. The chooser and account footer render the real name with the
-  existing styles. A reload or re-bootstrap reads current Identity metadata,
-  without changing ID-based authorization or clearing a same-identity Session.
+  existing styles. Gateway may reuse the complete Principal within its configured
+  Resolve TTL (default 10 seconds); hits and empty revocation-feed pages do not
+  renew that snapshot. After expiry, the next actual session/bootstrap/SSR read
+  requires live resolution. Visible updates include that read and its latency;
+  already rendered text does not update by itself. Node adds no metadata cache
+  or rename watcher, and display changes preserve ID-based authorization and a
+  same-identity Session.
   See the [shared projection contract](../../contracts/agent-ui/organization-projection.md).
 - Agent ACP Service: required for all conversation and execution-state work.
 - Agent Controller: required for Agent discovery at bootstrap; the

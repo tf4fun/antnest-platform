@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
-import {
-  evidenceDirectory,
-  evidenceFilePath,
-  writeEvidenceFile,
-} from "../../support/storage.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import { inspectIdentityTraceTopology } from "./support.mjs";
-import { hasError } from "../acp-plan/requests.mjs";
+import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
 
 export function correlateOIDCRequests(expectations, received) {
   return expectations.map((expected) => ({
@@ -49,105 +44,16 @@ export async function verifyIdentityEvidence(
     wait = delay,
     attempts = 40,
     directory = process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+    inspect = inspectIdentityTraceTopology,
+    signal,
   } = {},
 ) {
-  assert(expectations.length > 0, "Identity trace expectations absent");
-  directory = evidenceDirectory(directory);
-  const ids = new Set(expectations.map((item) => item.traceID));
-  for (const id of ids) {
-    assert.match(id ?? "", /^[a-f0-9]{32}$/, "Gateway trace ID missing");
-    evidenceFilePath(directory, `${id}.json`);
-  }
-  const result = [];
-  for (const id of ids) {
-    let previous,
-      stable = 0,
-      lastError,
-      complete;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      let response, text;
-      try {
-        response = await request(
-          `${base.replace(/\/$/, "")}/api/traces/${id}`,
-          { signal: AbortSignal.timeout(10000) },
-        );
-        text = await response.text();
-      } catch {
-        throw new Error("Jaeger trace request failed");
-      }
-      if (response.status !== 404) {
-        assert.equal(response.status, 200, "Jaeger trace request failed");
-        let body;
-        try {
-          body = JSON.parse(text);
-        } catch {
-          throw new Error("Jaeger returned invalid JSON");
-        }
-        assert.equal(
-          body.errors?.length ?? 0,
-          0,
-          "Jaeger backend errors require review",
-        );
-        assert(
-          Array.isArray(body.data) && body.data.length <= 1,
-          "invalid Jaeger trace response",
-        );
-        if (!body.data.length) {
-          previous = undefined;
-          stable = 0;
-        }
-        if (body.data.length) {
-          const trace = body.data[0];
-          assert.equal(trace.traceID, id, "wrong Identity trace");
-          try {
-            const checked = expectations
-              .filter((item) => item.traceID === id)
-              .map((item) =>
-                inspectIdentityTraceTopology(trace, item, secrets),
-              );
-            const warnings = [
-              ...(trace.warnings ?? []),
-              ...trace.spans.flatMap((span) => span.warnings ?? []),
-            ];
-            const errors = trace.spans.filter(hasError).length;
-            const current = JSON.stringify(
-              trace.spans.map((span) => span.spanID).sort(),
-            );
-            stable = current === previous ? stable + 1 : 1;
-            previous = current;
-            if (stable >= 3) {
-              if (directory) {
-                writeEvidenceFile(
-                  directory,
-                  `${id}.json`,
-                  JSON.stringify(trace),
-                );
-              }
-              complete = checked.map((item) => ({
-                ...item,
-                warning_count: warnings.length,
-                warnings: [...new Set(warnings)],
-                error_spans: errors,
-                strict_trace: warnings.length || errors ? "failed" : "passed",
-              }));
-              break;
-            }
-            lastError = new Error("Identity trace export did not converge");
-          } catch (error) {
-            lastError = error;
-            previous = undefined;
-            stable = 0;
-          }
-        }
-      }
-      if (response.status === 404) {
-        previous = undefined;
-        stable = 0;
-      }
-      if (attempt + 1 < attempts) await wait(1000);
-    }
-    assert(complete, lastError?.message ?? "Identity trace not exported");
-    result.push(...complete);
-  }
-  return result;
+  return collectResolveTraceEvidence(base, expectations, secrets, {
+    request,
+    wait,
+    attempts,
+    directory,
+    inspect,
+    signal,
+  });
 }

@@ -142,3 +142,19 @@ HTML, bootstrap and protocol behavior; browser interaction is covered by the
 Raw lifecycle diagnostics, when collected, stay in the ignored private
 `artifacts/verification/stage3-base/<project>/stage3-traces/` directory. Only aggregate business,
 topology, warning and cleanup evidence is printed.
+
+Normal lifecycle POST requests prove a single `console` Resolve decision before
+the actual Gateway CLIENT forwards to Console. `rpc`, `cache` and `shared`
+admission retain the complete current/source/refresh-trigger trace closure,
+archived by Trace ID and stable across three full snapshots. An HTTP 200 receipt
+cannot hide an actual Resolve CLIENT, Identity SERVER or owning SQL error.
+Controller `resolve-owner-authorization`, Temporal activities, committed driver
+writes and Runtime/Egress effects remain separate business checks.
+
+Source errors remain strict failures and cannot inherit a current workflow's
+clock-only or restart diagnostic exception. Source warnings and the original
+business verdict remain available in the aggregate report. Clock-only acceptance
+requires zero raw errors; a restart exception requires the exact reviewed total.
+The separate ACP
+message collectors and declared killed-process recovery still require their
+own Resolve consumer integration.

@@ -40,15 +40,19 @@ reads, cached views, idempotency hits and SSE resumes repeat scope checks. A
 scope is `(organization, principal, agent)`; a Session adds its Session ID.
 
 `GET /bootstrap` and Workspace SSR additionally require the verified
-Organization slug/name supplied by Gateway revision 15. Their transport is one
+Organization slug/name supplied by Gateway revision 21. Their transport is one
 canonical, unpadded Base64URL UTF-8 value in each of
 `X-Antnest-Organization-Slug` and `X-Antnest-Organization-Name`. Missing,
 duplicate or malformed values return `401` before discovery. The browser-safe
 principal has required `organizationSlug` and `organizationName` strings;
 these are display facts only. The Node handler, shared schema, frontend mappings
-and SSR/hydration use the same principal without a placeholder fallback. A new
-authenticated bootstrap observes current Identity metadata without resetting
-an unchanged ID-based scope. See [Organization projection](organization-projection.md).
+and SSR/hydration use the same principal without a placeholder fallback. Gateway
+can reuse a complete Principal within the configured Resolve TTL; hits and empty
+feed pages do not extend its age. After expiry, the next actual authenticated
+read resolves Identity again. Display changes become visible after that read
+and its latency, preserving an unchanged ID-based scope, selection and draft.
+Node adds no independent metadata cache or rename watcher.
+See [Organization projection](organization-projection.md).
 
 The browser receives no ACP connection identifier, provider credential, Runtime
 address, internal access token, trusted identity header or raw admin audit

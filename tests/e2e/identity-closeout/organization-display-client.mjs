@@ -8,7 +8,16 @@ import { GatewayClient, assertNoStore } from "./support.mjs";
 import { assertSecretFree } from "./evidence.mjs";
 import { assertOrganizationSession } from "./organization-session.mjs";
 import {
+  prepareOrganizationFreshness,
+  observeDisplayRejection,
+} from "./organization-freshness-client.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
+import { summarizeFailure } from "../../support/verification/failure.mjs";
+import { identityEvidenceExitCode, verifyIdentityEvidence } from "./trace.mjs";
+import { inspectOrganizationRead } from "./organization-freshness.mjs";
+import {
   assertWorkspaceBootstrap,
+  assertRevokingWorkspaceBootstrap,
   assertWorkspaceDocument,
 } from "./organization-workspace.mjs";
 import { createFixtureClient, parseFixtureJSON } from "./oidc-transport.mjs";
@@ -18,9 +27,10 @@ import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { workspacePath } from "../../../services/agent-ui/web/server/src/protocol/workspace-route.ts";
 
-const [gateway, port, certPath, seedPath, canaryPath] = process.argv.slice(2);
+const [gateway, port, certPath, seedPath, canaryPath, jaeger] =
+  process.argv.slice(2);
 assert(
-  gateway && port && certPath && seedPath && canaryPath,
+  gateway && port && certPath && seedPath && canaryPath && jaeger,
   "Organization integration arguments required",
 );
 assert.equal(process.env.ANTNEST_E2E_DISPOSABLE, "true");
@@ -52,6 +62,10 @@ const browserProblems = [];
 const browserRequests = [];
 let browser,
   original,
+  freshnessEvidence,
+  failedMembershipRead,
+  membershipEvidence = [],
+  membershipRejection,
   renamed = false,
   step = "ownership",
   bootstraps = 0,
@@ -247,6 +261,7 @@ function watchBrowser(page) {
         peer: url.origin === gateway ? "gateway" : "idp",
         path: url.pathname,
         status: response.status(),
+        traceID: response.headers()["x-antnest-trace-id"],
       });
       if (browserRequests.length > 40) browserRequests.shift();
     }
@@ -514,12 +529,35 @@ try {
     "real-ui-oidc-start-verified-tls-idp-callback-and-workspace-render",
   );
 
+  step = "display-cache-prewarm";
+  const freshness = await prepareOrganizationFreshness({
+    gateway,
+    project,
+    docker,
+    principal: a,
+    original,
+    agentID: agentA,
+    secrets,
+    directory: process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+    login: (client) => login(client, original.slug),
+  });
   step = "rename";
+  freshness.beginRename();
+  renamed = true;
   const changed = await organizationRow(a.organization_id, {
     slug: "stage3-renamed",
     name: "研发 · Équipe 🚀 <script>display only</script>",
   });
-  renamed = true;
+  const committedMS = performance.now();
+  assert.deepEqual(await organizationRow(a.organization_id), changed);
+  step = "display-cache-read-through-expiry";
+  await freshness.afterRename(changed, committedMS);
+  step = "display-cache-traces";
+  freshnessEvidence = await freshness.collect(jaeger);
+  checks.push(
+    "independent-session-bootstrap-ssr-hits-empty-feed-refresh-and-ttl-expiry",
+  );
+  step = "rename-browser-display";
   for (const [page, principal] of [
     [localPage, a],
     [oidcPage, oidcPrincipal],
@@ -538,6 +576,19 @@ try {
         .getByRole("button", { name: "Refresh workspace", exact: true })
         .click(),
     ]);
+    if (response.status() !== 200) {
+      const body = await response.text();
+      assertSecretFree(body, secrets);
+      writeEvidenceFile(
+        process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+        "organization-browser-failure-response.json",
+        JSON.stringify({
+          status: response.status(),
+          traceID: response.headers()["x-antnest-trace-id"],
+          body,
+        }),
+      );
+    }
     assert.equal(response.status(), 200);
     assertWorkspaceBootstrap(
       await response.json(),
@@ -622,8 +673,95 @@ try {
   await admin.request(`/api/admin/directory/memberships/${a.membership_id}`, {
     body: { ...update, active: false },
   });
-  await browserJSON(oidcContext, "/api/app/workspace/v1/bootstrap", 401);
+  const deactivatedMS = performance.now();
+  // This token has not warmed a workspace scope, so it must fail immediately.
   await fresh.request("/api/app/workspace/v1/bootstrap", { status: 401 });
+  const revocationReads = [];
+  const revocationResponses = [];
+  let remainingAgentIDs = [agentA];
+  let membershipRead;
+  await observeDisplayRejection({
+    committedMS: deactivatedMS,
+    ttlMS: freshnessEvidence.timeline.ttl_ms,
+    record: (item, response) => {
+      membershipRead = item;
+      if (item.status === 200 && Array.isArray(response.body?.agents))
+        item.agent_count = response.body.agents.length;
+      revocationReads.push(item);
+      writeEvidenceFile(
+        process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+        "organization-membership-rejection.json",
+        JSON.stringify({
+          committedMS: deactivatedMS,
+          ttlMS: freshnessEvidence.timeline.ttl_ms,
+          reads: revocationReads,
+        }),
+      );
+      // Keep the actual last response before content assertions can fail.
+      // writeEvidenceFile restricts this secret-checked evidence to mode 0600.
+      writeEvidenceFile(
+        process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+        "organization-membership-response.private.json",
+        JSON.stringify({ ...item, body: response.body }),
+      );
+      revocationResponses.push({ ...item, body: response.body });
+      writeEvidenceFile(
+        process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+        "organization-membership-responses.private.json",
+        JSON.stringify(revocationResponses),
+      );
+    },
+    request: async () => {
+      membershipRead = undefined;
+      const response = await gatewayBrowserRequest(
+        oidcContext,
+        gateway + "/api/app/workspace/v1/bootstrap",
+        { timeout: 15000 },
+      );
+      const body = await response.json();
+      assertSecretFree(JSON.stringify(body), secrets);
+      return {
+        status: response.status(),
+        traceID: response.headers()["x-antnest-trace-id"],
+        body,
+      };
+    },
+    validate: (response) => {
+      if (response.status === 200) {
+        const workspace = assertRevokingWorkspaceBootstrap(
+          response.body,
+          oidcPrincipal,
+          changed,
+          remainingAgentIDs,
+          secrets,
+        );
+        remainingAgentIDs = workspace.agents.map((agent) => agent.id);
+      }
+    },
+  }).catch((error) => {
+    failedMembershipRead = membershipRead;
+    throw error;
+  });
+  const admittedReads = revocationReads
+    .filter((item) => item.status === 200)
+    .map((item) => ({
+      ...item,
+      surface: "bootstrap",
+      ttlMS: freshnessEvidence.timeline.ttl_ms,
+    }));
+  if (admittedReads.length)
+    membershipEvidence = await verifyIdentityEvidence(
+      jaeger,
+      admittedReads,
+      secrets,
+      { inspect: inspectOrganizationRead },
+    );
+  membershipRejection = {
+    committed_ms: deactivatedMS,
+    ttl_ms: freshnessEvidence.timeline.ttl_ms,
+    reads: revocationReads,
+    trace_evidence: membershipEvidence,
+  };
   await bootstrap(other, b, foreign, [agentB]);
   await admin.request(`/api/admin/directory/memberships/${a.membership_id}`, {
     body: { ...update, active: true },
@@ -638,6 +776,39 @@ try {
     "Browser encountered script or hydration errors",
   );
 } catch (error) {
+  // Diagnostic collection cannot admit this run or replace its original error.
+  // Keep the failed request and its actual Resolve closure before stack teardown.
+  const failedRequests = [
+    ...browserRequests.filter((request) => request.status >= 500),
+    ...(failedMembershipRead ? [failedMembershipRead] : []),
+  ]
+    .filter((request) => /^[a-f0-9]{32}$/u.test(request.traceID ?? ""))
+    .slice(-4);
+  if (failedRequests.length) {
+    let diagnostics;
+    try {
+      diagnostics = await verifyIdentityEvidence(
+        jaeger,
+        failedRequests,
+        secrets,
+        {
+          attempts: 12,
+          inspect: (trace) => ({
+            trace_id: trace.traceID,
+            diagnostic_only: true,
+            strict_trace: "failed",
+          }),
+        },
+      );
+    } catch (collectionError) {
+      diagnostics = { collection_failure: summarizeFailure(collectionError) };
+    }
+    writeEvidenceFile(
+      process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+      "organization-browser-failure-traces.json",
+      JSON.stringify({ diagnostic_only: true, failedRequests, diagnostics }),
+    );
+  }
   // URLs/cookies and browser call logs are intentionally not error evidence.
   const pages = [];
   for (const context of contexts)
@@ -660,6 +831,7 @@ try {
     JSON.stringify({
       event: "organization_display_failed",
       stage: step,
+      ...summarizeFailure(error),
       error: error?.name,
       code: error?.code,
       oidc_redirects: oidcRedirects,
@@ -709,5 +881,23 @@ process.stdout.write(
     real_browser_sessions: 3,
     oidc_authorize_redirects: oidcRedirects,
     model_prompts_submitted: 0,
+    membership_rejection: membershipRejection,
+    organization_freshness: {
+      timeline: freshnessEvidence.timeline,
+      feed_coverage: freshnessEvidence.feed_coverage,
+      reads: freshnessEvidence.reads.length,
+      refreshes: freshnessEvidence.refreshes.length,
+      trace_evidence: [
+        ...freshnessEvidence.resolutions,
+        ...freshnessEvidence.feeds,
+        ...freshnessEvidence.refreshes,
+      ],
+    },
   }) + "\n",
 );
+process.exitCode = identityEvidenceExitCode([
+  ...membershipEvidence,
+  ...freshnessEvidence.resolutions,
+  ...freshnessEvidence.feeds,
+  ...freshnessEvidence.refreshes,
+]);

@@ -4,6 +4,7 @@ import { DomainError } from "../../src/domain/errors.js";
 import type { AcceptedAcpRun, ExecuteRunResult } from "../../src/ports/acp-application.js";
 import type { RunExecutionPort } from "../../src/application/run-executor.js";
 import { binding, snapshot } from "../support/fixtures.js";
+import { isShutdownReason } from "../../src/shutdown.js";
 
 const completed: ExecuteRunResult = {
   terminalClass: "completed",
@@ -350,6 +351,36 @@ describe("RunSupervisor ownership", () => {
     await shutdown;
     await submitted.completion;
   });
+
+  it.each([false, true])(
+    "preserves the exact first shutdown reason (prior failure=%s) and joins active work",
+    async (failed) => {
+      const gate = Promise.withResolvers<ExecuteRunResult>();
+      const execute = vi.fn<RunExecutionPort["execute"]>().mockReturnValue(gate.promise);
+      const supervisor = new RunSupervisor({ execute });
+      const submitted = await supervisor.submit(input(), () => Promise.resolve(acceptedRun()));
+      const failure = new Error("Agent ACP Service is shutting down");
+      if (failed) supervisor.stop(failure);
+      let finished = false;
+      const shutdown = supervisor.shutdown().then(() => {
+        finished = true;
+      });
+      const reason: unknown = supervisor.stopSignal.reason;
+      const again = supervisor.shutdown();
+      try {
+        expect(isShutdownReason(reason)).toBe(!failed);
+        if (failed) expect(reason).toBe(failure);
+        expect(supervisor.stopSignal.reason).toBe(reason);
+        expect(execute.mock.calls[0]?.[0].signal.reason).toBe(reason);
+        await Promise.resolve();
+        expect(finished).toBe(false);
+      } finally {
+        gate.resolve(cancelled);
+        await Promise.all([shutdown, again, submitted.completion]);
+      }
+      expect(finished).toBe(true);
+    },
+  );
 
   it("observes executor failure even when the submitting connection does not observe completion", async () => {
     const execute = vi

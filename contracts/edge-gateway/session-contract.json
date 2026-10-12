@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 20,
+  "version": 21,
   "session_security": {
     "contract": "session-security.md",
     "secure_cookie_names": ["__Host-antnest_session", "__Host-antnest_csrf"],
@@ -33,7 +33,7 @@
   "session_validation": {
     "scope": "ordinary authenticated requests; explicit logout follows routes.logout.cookie_outcomes",
     "invalid_or_expired": "401 unauthenticated; preserve browser cookies",
-    "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
+    "identity_unavailable": "503 identity_unavailable when no bounded cached positive or successful live resolution is available; preserve cookies and never admit that request upstream",
     "cache": "no-store"
   },
   "routes": {
@@ -444,8 +444,9 @@
     "validation": "required non-whitespace strings; Node rejects missing, duplicate, non-canonical Base64URL or invalid UTF-8 values with 401 before discovery",
     "bootstrap_principal_schema": "../agent-ui/workspace-api.schema.json#/$defs/verifiedWorkspacePrincipal",
     "authorization": "display only; signed caller-context identities/roles and existing consumer business authorization determine access",
-    "freshness": "no metadata cache; each authenticated request resolves Identity again; re-bootstrap and SSR reload observe the current name without changing session scope",
-    "deployment": "Gateway producer #92 first; Agent UI bootstrap consumer #93 then activates the verifiedWorkspacePrincipal schema; full integration follows both local admissions"
+    "freshness": "complete principal snapshot no older than configured Resolve cache TTL, anchored to actual RPC start; next real read observes a newer snapshot after expiry and successful Identity resolution; hits and feed pages do not renew it",
+    "deployment": "Gateway producer #92 first; Agent UI bootstrap consumer #93 then activates the verifiedWorkspacePrincipal schema; full integration follows both local admissions",
+    "freshness_contract": "resolve-cache.md#organization-display"
   },
   "error": {
     "required": ["code", "message"],
@@ -493,20 +494,24 @@
       "maximum_stale_seconds": 30,
       "polling_interval": "min(maximum stale bound / 3, activity_interval_ms)",
       "rpc_timeout": "at most polling interval",
+      "expired_hit_recheck": "one periodic-only recheck after TTL expires during delivery; same probe context and deadline, no expired authority admission or extension of stale/session/original CCT caps",
       "close_grace": "at most min(1 second, maximum stale bound / 3)",
       "initial_resolution": {
         "timeout": "at most maximum stale bound / 3 before the activity hint is known",
         "reply_budget": "elapsed at most min(maximum stale bound / 3, returned activity_interval_ms)",
-        "stale_deadline_anchor": "initial RPC start",
-        "late_reply": "reject before starting upstream"
+        "stale_deadline_anchor": "actual Resolve RPC start, including a reused cached snapshot",
+        "late_reply": "reject before starting upstream",
+        "cache_hit": "current invocation must meet its reply budget and retained snapshot must pass cache/feed/session/CCT and remaining stale-output bounds; cache age is not RPC duration",
+        "live_miss": "actual RPC duration and current invocation must fit the existing initial reply budget"
       },
-      "deadline_anchor": "check start; slow successful replies do not reset stale deadline",
+      "deadline_anchor": "actual successful Resolve RPC start retained across cache hits; probe start controls scheduling only",
       "feed_dependency": false,
       "absolute_deadline": "fixed hard cap",
       "idle_deadline": "mutable observation schedules fresh live check",
       "direct_acp_websocket_cct": "original handshake expiry is a fixed hard cap; reconnect required"
     },
-    "session_revocation_feed": "one process-owned Gateway poller; private SID registry; live checks remain authoritative"
+    "session_revocation_feed": "one process-owned poller fans validated events to private SID stream registry and Resolve cache; live stream stale bound remains independent; cache reuse requires recent caught-up proof"
   },
-  "oidc_linking_contract": "../identity/oidc-linking.md"
+  "oidc_linking_contract": "../identity/oidc-linking.md",
+  "identity_resolve_cache": "resolve-cache-policy.json"
 }
