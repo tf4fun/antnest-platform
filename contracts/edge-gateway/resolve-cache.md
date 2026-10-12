@@ -275,7 +275,11 @@ clocks. A claimed root handler abort and forwarding read failure require their
 exact fields/events and successful response with the original Agent UI receiver.
 Internal ACP watches retain the actual view as their causal parent and may
 outlive that HTTP response. Only an observed normal same-container ACP restart
-or final UI drain may explain their precise disconnect diagnostics; the ACP
+or final UI drain may explain their precise disconnect diagnostics. A separate
+offboarding claim requires the original GET's fixed access-denial close event,
+its trusted Agent/organization, the actual committed membership deactivation,
+and the same disabled Agent readback within the observed recovery window. A
+generic disconnect near a membership mutation is insufficient. The ACP
 execution-state watch additionally requires the producer's `process-shutdown`
 witness. Scan actual view traces rather than assigning a fixed number of watches
 to each view, because a view may reuse an existing connection. Extra errors,

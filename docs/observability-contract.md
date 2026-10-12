@@ -124,6 +124,27 @@ expresses causality. Sub-millisecond cross-host clock inversions keep their raw
 warnings and are evaluated by their actual source; they are not removed by
 adjusting business waits or timestamps.
 
+### ACP HTTP access-revocation closure
+
+When a session-output, learning-notice or permission failure actually invokes
+the ACP v1 connection's close path, an original `DomainError` with code
+`access_denied` may add one `antnest.stream.termination` event to each still-open
+HTTP GET SERVER span owned by that connection. Record it synchronously before
+the SDK close call; SDK response completion can precede outer transport cleanup.
+The event has only `reason=access_denied`, `error.type=DomainError`,
+`source=session-output|learning-notice|permission`, `antnest.agent.id` and
+`antnest.organization.id` from the trusted connection binding.
+
+The first connection failure owns the reason. An already closed connection,
+POST/DELETE, a finished response, a different connection, wrapped or lookalike
+errors, and other error codes do not receive this event. Ordinary rejected RPCs
+and silent output-subscription retirement are not connection-close evidence.
+Keep the existing `stream_interrupted`/`disconnected` ERROR and its original
+lifetime; add no span, payload, error message, token or connection identifier.
+Consumers still require the actual same-Agent/organization offboarding evidence
+and completed GET ancestry. The event does not prove offboarding by itself, and
+historical generic disconnects remain unclassified.
+
 ### ACP workspace stream shutdown
 
 The existing `watch_agent_execution_state` SERVER may record the fixed
