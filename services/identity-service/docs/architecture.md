@@ -443,6 +443,23 @@ coherence. An ExternalIdentity must join a Provider and Membership from the
 same Organization and User; a completed AuthSession must reference a Token
 whose Organization, User, and Membership match the session result.
 
+Migration `0009` introduces private `credential_attempts` state, keyed by
+`(scope, key_hash)`, with `window_start`, a bounded failure counter and nullable
+`locked_until`. Its length-prefixed SHA-256 keys distinguish Organization IDs,
+unknown slugs, login accounts and global password-change Users; raw identifiers
+are not stored in this table. Repository admission locks the Organization bucket
+before the account/User bucket, retains those locks until outcome commit, and
+uses fresh database time after waits and verification. Its cumulative two-second
+database allowance excludes KDF work and preserves caller cancellation.
+Classified capacity errors retain `credential_busy` even when their private
+database cause would otherwise normalize to `not_found` or `conflict`.
+
+Cleanup removes at most 500 expired, unlocked rows per invocation and skips
+rows held by admission. A single admission upsert prevents cleanup from deleting
+a bucket between its creation and locking read. These are repository primitives
+only: login/password-change integration, periodic cleanup and HTTP 429 remain
+pending, as described in the password resource section above.
+
 ## Failure Semantics
 
 - Password/token mismatch is a stable unauthenticated result, not an internal

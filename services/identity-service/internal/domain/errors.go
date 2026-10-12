@@ -72,4 +72,5 @@ var (
 	ErrInvalidArgument        = NewError("invalid_argument", "The request contains an invalid argument", false)
 	ErrInvalidCurrentPassword = NewError("invalid_current_password", "Current password is incorrect", false)
 	ErrCredentialBusy         = NewError("credential_busy", "Password verification is busy", true)
+	ErrCredentialRateLimited  = NewError("credential_rate_limited", "Too many password attempts", true)
 )

@@ -106,6 +106,9 @@ Resource exhaustion returns `credential_busy`/503 with `Retry-After: 1`; queued
 cancellation and shutdown retain ownership until started work joins. Dummy
 initialization uses a random rejection target without a startup KDF, while
 unknown-account logins still perform one complete current-policy verification.
+Migration `0009` adds private hashed attempt counters and bounded repository
+admission/cleanup primitives; password endpoints and scheduled cleanup are not
+connected to them yet.
 Persisted attempt limits, transactional rehash and Gateway/Console consumption
 remain pending in this draft. See the
 [password verification policy](contracts/identity/password-verification.md).

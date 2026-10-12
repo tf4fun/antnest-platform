@@ -135,6 +135,9 @@ are validated at startup. See [password resource admission](docs/operations.md#p
 for bounds, queue limits, stored-hash compatibility and cancellation behavior.
 Identity revision 17 currently adds `credential_busy`; persistent attempt limits,
 login rehash and consumer adoption remain pending #60 batches.
+Migration `0009` adds private attempt state and repository admission/cleanup
+primitives. Login and password-change transactions, the cleanup schedule and
+the `credential_rate_limited` response are not connected to them yet.
 
 | Variable                                                                                                        | Required         | Default            | Description                                                                                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -242,6 +245,12 @@ leaving schema administration room under the diagnostic relay's 64-connection
 ceiling. Historical/malformed hashes and stopped admission are covered; full-row
 snapshots check that rejected work preserves credentials, tokens and revocation
 feeds. Production-container RSS requires its separate Docker pressure gate.
+Attempt-state PostgreSQL tests cover migration preservation, shared counters
+across Store instances, fifth/sixth serialization, blocked-Organization row
+growth, fresh time after lock waits, bounded cleanup and transaction rollback.
+They also verify pool/row wait exhaustion and release when BEGIN has succeeded
+but its caller's admission expires. These repository checks do not establish
+runtime login or password-change rate limiting.
 Dummy preparation reserves the same configured capacity but generates a random
 salt and rejection target without computing a startup hash. Unknown-account
 verification still runs one full-cost Argon2 operation and always rejects.
