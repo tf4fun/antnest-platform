@@ -286,6 +286,13 @@ may accompany completion. The suite is complete only after HTTPS load, outage,
 recovery, all owning gates, diagnostic reconciliation and resource cleanup pass;
 an intermediate report or exit zero alone cannot establish CI admission.
 
+An initialize-time Runtime MCP configuration read can complete its handler before
+the SDK closes the HTTP response ahead of EOF. Its exact completion event may
+retain `client_disconnected` as neutral transport evidence only with the real
+ACP initialize/HTTP parent chain, HTTP 200, successful Runtime MCP operation and
+matching cancellation witness. This does not prove client receipt, claim an
+error, or excuse another failure; retain the original event and exact span ID.
+
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
 under the current HTTP or ACP-message root, ending before any resulting upstream
 admission. Its `antnest.identity.resolve.` attributes include `source` from
