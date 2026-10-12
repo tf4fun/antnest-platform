@@ -220,6 +220,16 @@ Its `gatewayBrowserSessionCookies` helper injects API-login sessions with their
 mode's Secure, HttpOnly, host-only, root-path and Lax attributes. Chromium's CDP
 requires an HTTPS injection URL for `__Host-` cookies, including on loopback;
 the browser and API requests retain the deployment's actual URL.
+
+`e2e-browser-sessions-https` verifies sign-out-everywhere with independent quiet
+SSE and WSS connections opened using the peer Console session's original Cookie
+before the Workspace action. Both original Cookies must return 401, the current
+private page must retire, and both remote transports must close within 30 seconds
+and before natural CCT expiry; WSS must report 1008. Local observer cleanup runs
+after that evidence and waits for the actual socket close, even on failure.
+Fixture tests hold a real upgraded socket's close handshake to prove that HTTP
+101 cannot substitute for completed cleanup.
+
 `e2e-agent-ui-receipt-contract` also uses the local model fixture and needs
 Playwright Chromium and the standard local stack images. Its captured receipt
 evidence defaults to `artifacts/verification/`; override its directory with

@@ -17,6 +17,7 @@ Issue 状态最后核对于 2026-10-11：136 个 issue，74 个已关闭，62 �
 
 ## 当前批次
 
+- #59 第四轮完整 CI（`1433b9f8`、run `38254354624`）仓库检查通过 4,357 Node / 61 Python，保留 5 个既有条件跳过。冷停机 Identity access 和现有 HTTPS 会话流程已通过；组织显示 Trace 与缓存停机 feed 准入出现新失败，正在根据本轮原始证据定位，原失败状态保留。逐条验收另发现 self-all 仅有 Cookie/UI 证据，现已测试先行补入 peer 原 Cookie 的独立 WSS/SSE 观察；review 发现 HTTP 101 被误当作清理完成，真实 held-socket 反例先 red，改为等待实际 close。41 项相关回归、独立复审、全新 HTTPS Docker 和清理均通过；3,492 个源码输入结束立即核对未变。两个 CI 失败修正、最终完整 CI 与合并继续待完成。
 - #59 第三轮完整 CI（`a70eafdc`、run `38249902304`）的 21 分片/84 套件为 72 passed、11 warning、1 failed；仓库检查通过 4,349 Node / 61 Python，保留 5 个既有条件跳过。Identity access 主流程已通过，随后停机检查误把暖 Console 的下游 `dependency_unavailable` 当成 Gateway 冷 Resolve 失败。两项独立 review 确认应保持新凭据三种 scope 全冷；真实 HTTP CLI 反例先 red（6 通过、1 失败），移除 prepare 的多余 account 预读并补齐取消后子进程 join 后，全部 301 项 Identity 消费方回归及格式/语法/存储/链接检查通过，最终 review 无阻塞。三路 503/error code/no-store/零 Cookie 及恢复和最终 401 要求不变；原 CI 失败保留，修正后的完整准入仍待。
 - #59 第二轮完整 CI（`23c097b9`、run `38245408598`）的 21 分片/84 套件为 72 passed、11 warning、1 failed：旧 Gateway bootstrap 的真实三字段 Principal 被误套用新版 Agent UI 显示解析器。真实旧形状先 red（15 通过、1 失败），消费方独立验证旧 DTO 后 81 项相关回归通过；原 Principal、Agent 结构、Cookie、TTL 与最终 401 门禁保留，独立 review 无阻塞。核心缓存停机/负载与 HTTPS 分片已复核通过；本轮失败证据保留，修正后的真实 Identity Docker 和完整 CI 仍待。
 - #59 Browser 消费批次仅适配组织管理员经 Console 的撤销：两原会话共用单调起点和实际部署 TTL，逐请求存证，等待二者完成后才进入 stream/UI/独立管理员检查。本地改密码与 self-revoke 的即时 401 不变；独立 review 通过，准备真实 HTTPS 复跑和完整 CI。

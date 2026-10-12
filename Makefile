@@ -159,7 +159,7 @@ test-repo:
 	$(MAKE) test-resolve-cache-fixtures
 	node --test --test-concurrency=1 tests/e2e/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs
+	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs tests/e2e/edge-gateway/browser-session-revocation.test.mjs
 
 .PHONY: test-resolve-cache-fixtures
 test-resolve-cache-fixtures:
