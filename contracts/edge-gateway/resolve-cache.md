@@ -261,8 +261,11 @@ readiness. The latter must finish before
 both the healthy observation and the first successful post-restart feed.
 Neither phase admits a failure after recovery, an unidentified process root,
 an unrelated error field/event or a missing attempt. Successful feed responses
-retain their actual Identity receiver and read-only session-revocation SELECT;
-their exact set must equal the final SERVER inventory even if the two search
+retain their actual Identity receiver and read-only session-revocation SELECT.
+An actual successful PostgreSQL `connect` may precede that SELECT under the same
+Identity SERVER and process, with the same driver and database endpoint. It
+cannot replace the SQL receipt, carry SQL/rows/errors, or cover unknown work.
+The successful response set must equal the final SERVER inventory even if the two search
 indexes become visible at different times.
 Claims never change the original strict result or cover other inventory errors.
 

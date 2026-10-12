@@ -210,6 +210,129 @@ const move = (part, ms) => {
 const eventField = (part, key, value) =>
   (part.client.logs[0].fields.find((f) => f.key === key).value = value);
 
+function withConnection(f) {
+  const part = f.parts.recovered,
+    sql = part.trace.spans[2];
+  const database = {
+    "otel.scope.name": "github.com/exaring/otelpgx",
+    "otel.scope.version": "v0.9.3",
+    "db.namespace": "identity",
+    "server.address": "postgres",
+    "server.port": 5432,
+    "user.name": "identity",
+  };
+  for (const [key, value] of Object.entries(database)) setTag(sql, key, value);
+  const connect = {
+    ...structuredClone(sql),
+    spanID: "connect",
+    operationName: "connect",
+    duration: 5000,
+    tags: fields({
+      ...database,
+      "span.kind": "client",
+      "db.system.name": "postgresql",
+    }),
+  };
+  sql.startTime += 10000;
+  sql.duration -= 10000;
+  part.trace.spans.push(connect);
+  return connect;
+}
+
+test("successful feed retains its actual PostgreSQL connection without counting it as SQL", () => {
+  const f = fixture();
+  withConnection(f);
+  const before = structuredClone(f),
+    result = check(f);
+  assert.equal(result.status, "passed");
+  assert.equal(result.attempts.length, 4);
+  assert.equal(result.owned_error_spans.length, 2);
+  assert.equal(result.error_spans, 3);
+  assert.deepEqual(f, before);
+});
+for (const [name, change] of [
+  [
+    "foreign SELECT process",
+    (f) => {
+      f.parts.recovered.trace.processes.foreign = {
+        serviceName: "identity-service",
+      };
+      f.parts.recovered.trace.spans[2].processID = "foreign";
+    },
+  ],
+  [
+    "same service other process",
+    (f, s) => {
+      f.parts.recovered.trace.processes.foreign = {
+        serviceName: "identity-service",
+      };
+      s.processID = "foreign";
+    },
+  ],
+  [
+    "wrong shared driver",
+    (f, s) => {
+      setTag(s, "otel.scope.name", "other");
+      setTag(f.parts.recovered.trace.spans[2], "otel.scope.name", "other");
+    },
+  ],
+  [
+    "foreign service",
+    (f, s) => {
+      s.processID = "edge";
+    },
+  ],
+  [
+    "foreign parent",
+    (f, s) => {
+      s.references[0].spanID = "client";
+    },
+  ],
+  [
+    "pool acquisition",
+    (f, s) => {
+      s.operationName = "pool.acquire";
+    },
+  ],
+  ["extra SQL", (f, s) => setTag(s, "db.query.text", query)],
+  ["invented row receipt", (f, s) => setTag(s, "pgx.rows_affected", 0)],
+  ["wrong span kind", (f, s) => setTag(s, "span.kind", "internal")],
+  ["other database", (f, s) => setTag(s, "db.namespace", "other")],
+  ["other server", (f, s) => setTag(s, "server.address", "other")],
+  ["other port", (f, s) => setTag(s, "server.port", 5433)],
+  ["other database user", (f, s) => setTag(s, "user.name", "other")],
+  ["other driver", (f, s) => setTag(s, "otel.scope.name", "other")],
+  ["missing endpoint", (f, s) => setTag(s, "server.address", undefined)],
+  ["connection error", (f, s) => setTag(s, "error", true)],
+  ["hidden exception", (f, s) => setTag(s, "exception.type", "Error")],
+  [
+    "connection event",
+    (f, s) => {
+      s.logs = [
+        { timestamp: s.startTime, fields: fields({ event: "unexpected" }) },
+      ];
+    },
+  ],
+  [
+    "connect before owning request",
+    (f, s) => {
+      s.startTime = f.parts.recovered.trace.spans[1].startTime - 1;
+    },
+  ],
+  [
+    "connect after SQL starts",
+    (f, s) => {
+      s.duration = 11000;
+    },
+  ],
+])
+  test(`feed connection rejects ${name}`, () => {
+    const f = fixture(),
+      s = withConnection(f);
+    change(f, s);
+    assert.throws(() => check(f));
+  });
+
 test("feed claims distinguish stopped and restart-not-ready errors and preserve all unrelated raw diagnostics", () => {
   const f = fixture(),
     before = structuredClone(f),

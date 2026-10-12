@@ -333,6 +333,7 @@ function successful({ trace, tree, client }) {
     "one feed SELECT required",
   );
   assert.equal(tree.parent(sql), server);
+  assert.equal(sql.processID, server.processID);
   assert(
     sql.startTime >= server.startTime && end(sql) <= end(server),
     "feed SELECT outside owning SERVER lifetime",
@@ -347,7 +348,59 @@ function successful({ trace, tree, client }) {
       tag(sql, "pgx.rows_affected") >= 0 &&
       tag(sql, "pgx.rows_affected") <= 500,
   );
-  assert.equal(trace.spans.length, 3, "unrelated work in successful feed");
+  // A pool may establish a physical PostgreSQL connection for this read after
+  // Identity restarts. It is a driver observation, not another SQL execution.
+  for (const connect of trace.spans.filter(
+    (s) => ![client, server, sql].includes(s),
+  )) {
+    assert.equal(
+      connect.operationName,
+      "connect",
+      "unrelated work in successful feed",
+    );
+    assert.equal(tree.service(connect), "identity-service");
+    assert.equal(connect.processID, server.processID);
+    assert.equal(tree.parent(connect), server);
+    assert.equal(tag(connect, "span.kind"), "client");
+    assert.equal(tag(connect, "db.system.name"), "postgresql");
+    assert.equal(tag(connect, "otel.scope.name"), "github.com/exaring/otelpgx");
+    for (const key of [
+      "db.query.text",
+      "db.operation.name",
+      "pgx.rows_affected",
+    ])
+      assert.equal(
+        tag(connect, key),
+        undefined,
+        "connection cannot stand in for SQL",
+      );
+    for (const key of [
+      "otel.scope.name",
+      "otel.scope.version",
+      "db.namespace",
+      "server.address",
+      "user.name",
+    ]) {
+      assert(
+        typeof tag(connect, key) === "string" && tag(connect, key).length > 0,
+        "connection database identity missing",
+      );
+      assert.equal(
+        tag(connect, key),
+        tag(sql, key),
+        "connection belongs to another database",
+      );
+    }
+    assert(
+      Number.isSafeInteger(tag(connect, "server.port")) &&
+        tag(connect, "server.port") > 0,
+    );
+    assert.equal(tag(connect, "server.port"), tag(sql, "server.port"));
+    assert(
+      connect.startTime >= server.startTime && end(connect) <= sql.startTime,
+      "connection outside owning feed read",
+    );
+  }
 }
 export function inspectOutageFeed(evidence, collection, secrets = []) {
   const first = collection.traces.values().next().value;
