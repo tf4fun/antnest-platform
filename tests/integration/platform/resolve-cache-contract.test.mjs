@@ -212,6 +212,30 @@ test("stream provenance separates real authority age, RPC duration and probe sch
   assert.equal(streams.output_bound_anchor, "real-resolve-rpc-start");
 });
 
+test("only a periodic cache hit crossing its reuse deadline permits one bounded recheck", () => {
+  const recheck = policy().streams.expired_hit_recheck;
+  assert.deepEqual(recheck, {
+    scope: "periodic-guard-only",
+    maximum_per_probe: 1,
+    trigger: "complete-valid-cache-hit-at-probe-start-expired-on-delivery",
+    require:
+      "only-ttl-reuse-expired-all-identity-session-cct-stale-bounds-still-valid",
+    preserve: [
+      "probe-context",
+      "probe-deadline",
+      "last-authority-start",
+      "original-hard-caps",
+      "all-resolve-trace-decisions",
+    ],
+    expired_result_admitted: false,
+    initial_or_message_retry: false,
+  });
+  assert.equal(
+    gateway.session_lifecycle.stream_revalidation.expired_hit_recheck,
+    "one periodic-only recheck after TTL expires during delivery; same probe context and deadline, no expired authority admission or extension of stale/session/original CCT caps",
+  );
+});
+
 test("organization labels share snapshot age without changing the browser wire or cookie writers", () => {
   const value = policy();
   assert.equal(value.organization_display.snapshot_age, "configured-cache-ttl");

@@ -494,6 +494,7 @@
       "maximum_stale_seconds": 30,
       "polling_interval": "min(maximum stale bound / 3, activity_interval_ms)",
       "rpc_timeout": "at most polling interval",
+      "expired_hit_recheck": "one periodic-only recheck after TTL expires during delivery; same probe context and deadline, no expired authority admission or extension of stale/session/original CCT caps",
       "close_grace": "at most min(1 second, maximum stale bound / 3)",
       "initial_resolution": {
         "timeout": "at most maximum stale bound / 3 before the activity hint is known",

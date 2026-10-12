@@ -204,6 +204,20 @@ The current invocation must still fit its reply budget. Snapshot age is not
 RPC duration. Do not reject a valid hit merely by treating its age as network
 latency, or repeatedly schedule immediate probes from the old authority start.
 
+A periodic guard can receive a previously complete, valid cache hit after its
+TTL reuse deadline passes during delivery. Discard that result and resolve at
+most once more within the same probe context and original deadline, only when
+the snapshot was already complete and valid at the actual probe start and its
+SID, identities, roles, idle/absolute/CCT deadlines and remaining stale bound
+are still valid at delivery. This exception applies only to TTL reuse expiry;
+malformed provenance, changed authority, live/shared results, errors and any
+other expired bound keep their rejection behavior. The discarded hit cannot
+update authority age, the current principal or the next-probe schedule. Keep
+the independent stale/original CCT timers active while rechecking and joining
+cancelled workers. Preserve both real Resolve trace decisions and their source
+links. Initial HTTP/stream admission, ACP per-message admission and Activity
+retain their existing no-automatic-retry behavior.
+
 Every stream remains bound to its original SID, identities and roles.
 Background checks and per-message admission use the same scoped resolver but
 cannot extend authority through hits. Silent output still stops within `R`;

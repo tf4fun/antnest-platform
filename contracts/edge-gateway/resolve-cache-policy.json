@@ -134,7 +134,22 @@
     "cache_age_is_rpc_duration": false,
     "original_handshake_cct_hard_cap": true,
     "accepted_run_cancelled_by_revocation": false,
-    "output_bound_anchor": "real-resolve-rpc-start"
+    "output_bound_anchor": "real-resolve-rpc-start",
+    "expired_hit_recheck": {
+      "scope": "periodic-guard-only",
+      "maximum_per_probe": 1,
+      "trigger": "complete-valid-cache-hit-at-probe-start-expired-on-delivery",
+      "require": "only-ttl-reuse-expired-all-identity-session-cct-stale-bounds-still-valid",
+      "preserve": [
+        "probe-context",
+        "probe-deadline",
+        "last-authority-start",
+        "original-hard-caps",
+        "all-resolve-trace-decisions"
+      ],
+      "expired_result_admitted": false,
+      "initial_or_message_retry": false
+    }
   },
   "organization_display": {
     "snapshot_age": "configured-cache-ttl",
