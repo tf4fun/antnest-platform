@@ -363,8 +363,9 @@ Identity revision 17 projects `credential_busy` as 503 and
 `credential_rate_limited` as 429 with canonical messages, bounded Retry-After,
 no-store and no cookie writes. Local login now uses persistent admission and
 transactional rehash; password changes use the global User attempt bucket with
-atomic session rotation. Scheduled cleanup remains pending, followed by
-Gateway/Console consumption and final container and cross-service pressure admission.
+atomic session rotation. Each process owns one bounded cleanup worker.
+Gateway/Console consumption and final cross-service pressure
+admission remain pending.
 
 ## Application Modules
 
@@ -462,7 +463,12 @@ database cause would otherwise normalize to `not_found` or `conflict`.
 Cleanup removes at most 500 expired, unlocked rows per invocation and skips
 rows held by admission. A single admission upsert prevents cleanup from deleting
 a bucket between its creation and locking read. Login and password changes use
-these primitives; the periodic cleanup owner remains pending.
+these primitives. After the listener opens, the process starts one serial worker
+with the request lifetime. It waits one minute before its first pass and after
+each completion; errors and full batches do not trigger retries or catch-up.
+This is a per-instance schedule, not a cluster-wide row quota. All server exit
+paths cancel and join the worker before closing the password engine and database
+pool, including a Serve error with a live parent context.
 
 Password changes validate the signed Caller before allocating attempt buckets,
 then acquire User, Organization, Membership and credential locks in order.

@@ -6,7 +6,7 @@ revision. Its historical wire baseline is Identity revision 16 and Gateway
 version 21. The candidate Identity revision-17 catalog declares
 `credential_busy`/503 and `credential_rate_limited`/429. Identity implements both
 projections, persisted login/password-change attempts and transactional
-rehash/rotation. Scheduled cleanup remains pending.
+rehash/rotation, with one bounded cleanup worker per instance.
 Gateway remains at version 21 until its version-22 consumer implementation.
 Console adoption and cross-service
 integration also remain pending. A policy reference alone does not activate a

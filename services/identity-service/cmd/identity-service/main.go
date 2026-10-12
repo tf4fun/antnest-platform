@@ -272,6 +272,8 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return classifyFailure("listener", err)
 	}
+	stopCleanup := startCredentialCleanup(requestCtx, store.CleanupCredentialAttempts, logger)
+	defer stopCleanup()
 	readiness.Set(true)
 	logger.Info("Identity Service is ready", "listen_address", cfg.ListenAddress)
 	serverErrors := make(chan error, 1)

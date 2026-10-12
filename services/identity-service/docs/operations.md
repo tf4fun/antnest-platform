@@ -105,8 +105,16 @@ missing local credential, busy/cancelled operation or failed rotation rolls back
 the attempt changes. An ambiguous commit returns no credentials and is never
 retried or compensated. Caller expiry observed after a successful commit also
 withholds the result without compensating durable counters or rotation.
-Periodic cleanup and the updated container/integration admission remain pending
-under the [password policy](../../../contracts/identity/password-verification.md).
+Each instance runs one serial cleanup worker: the first pass waits one minute,
+and each completed pass starts a new one-minute wait. One pass removes at most
+500 rows whose 15-minute window and backoff have both expired, skipping rows
+locked by admission. A full batch or error waits until the next interval; there
+is no immediate retry or catch-up. Multiple instances have independent schedules.
+Shutdown cancels and joins the worker, including database rollback, before
+closing the pool. Failures emit only the fixed `credential_cleanup_failure`
+class; expected shutdown cancellation is silent.
+Gateway/Console adoption and cross-service admission remain pending under the
+[password policy](../../../contracts/identity/password-verification.md).
 The memory budget bounds active Argon2 work, not total process RSS or garbage
 collector retention. Container pressure and recovery require separate evidence.
 

@@ -140,9 +140,11 @@ attempt keys. Login holds ordered attempt and authority locks through password
 verification, optional policy rehash, account reset and token/event commit.
 Password changes use the global User counter across Organizations and commit
 verification, rotation, all-session revocation and User-counter reset atomically.
-The original signed Caller is revalidated after waits and KDF work. Periodic
-cleanup, Gateway/Console adoption and final container/integration admission remain
-pending #60 work.
+The original signed Caller is revalidated after waits and KDF work. Each instance
+cleans at most 500 expired attempt rows after an initial minute and waits another
+minute after each pass. Shutdown cancels and joins that worker before closing
+the database. Gateway/Console adoption and final cross-service admission
+remain pending #60 work.
 
 | Variable                                                                                                        | Required         | Default            | Description                                                                                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -254,7 +256,12 @@ Attempt-state PostgreSQL tests cover migration preservation, shared counters
 across Store instances, fifth/sixth serialization, blocked-Organization row
 growth, fresh time after lock waits, bounded cleanup and transaction rollback.
 They also verify pool/row wait exhaustion and release when BEGIN has succeeded
-but its caller's admission expires. Service-entry tests separately exercise
+but its caller's admission expires.
+The real service startup test holds a cleanup query behind a PostgreSQL table
+lock, then verifies shutdown returns with its connection closed and preserves
+the held state. Unit tests cover first-pass delay, completion-based scheduling,
+no overlap or catch-up, bounded failure logs, and cancel/join with a live parent.
+Service-entry tests separately exercise
 login and password-change fifth/sixth races across Stores, global User counters
 across Organizations, Caller expiry/logout during verification and lock waits,
 and complete rollback of counters with failed issuance or rotation. Real
