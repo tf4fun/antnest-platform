@@ -65,6 +65,7 @@ function fixture() {
     },
     pg_max_connections: 100,
     probe: { exit_code: 0, stopped: true },
+    baseline_logs: [],
     checkpoints: { baseline_count: 2, drained_count: 3, recovery_count: 4 },
     samples: Array.from({ length: 5 }, (_, i) => ({
       kind: "sample",
@@ -147,6 +148,24 @@ test("pressure admission uses kernel high water and attributes all busy response
 for (const [name, change] of Object.entries({
   "hidden RSS spike": (e) => (e.samples[3].raw = raw({ hwm: 524289 })),
   "baseline above budget": (e) => (e.samples[0].raw = raw({ rss: 131073 })),
+  "business login before baseline": (e) =>
+    e.baseline_logs.push({
+      msg: "Identity HTTP request completed",
+      method: "POST",
+      route: "/rpc/identity/local-login",
+    }),
+  "user creation before baseline": (e) =>
+    e.baseline_logs.push({
+      msg: "Identity HTTP request completed",
+      method: "POST",
+      route: "/rpc/identity/create-local-user",
+    }),
+  "password change before baseline": (e) =>
+    e.baseline_logs.push({
+      msg: "Identity HTTP request completed",
+      method: "POST",
+      route: "/rpc/identity/change-local-password",
+    }),
   "process replacement": (e) => (e.samples[3].raw = raw({ start: "555" })),
   "container replacement": (e) => (e.after.id = "b".repeat(64)),
   "host PID replacement": (e) => e.after.pid++,

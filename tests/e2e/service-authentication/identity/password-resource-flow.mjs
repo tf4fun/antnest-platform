@@ -78,6 +78,24 @@ export function verifyPasswordResourceEvidence(evidence) {
   );
   assert(evidence.pg_max_connections >= config.db_pool);
   assert.deepEqual(evidence.probe, { exit_code: 0, stopped: true });
+  assert(
+    Array.isArray(evidence.baseline_logs),
+    "pre-pressure service logs missing",
+  );
+  const passwordRoutes = new Set([
+    requestPath,
+    "/rpc/identity/create-local-user",
+    "/rpc/identity/change-local-password",
+  ]);
+  assert(
+    !evidence.baseline_logs.some(
+      (row) =>
+        row.msg === "Identity HTTP request completed" &&
+        row.method === "POST" &&
+        passwordRoutes.has(row.route),
+    ),
+    "business KDF ran before the process baseline",
+  );
   const {
     baseline_count: baseline,
     drained_count: drained,
@@ -301,6 +319,7 @@ export async function exercisePasswordResources({
   signal,
   evidence,
   recover,
+  cleanupDocker,
 }) {
   const output = resolve(evidence, "password-resources");
   const save = (name, value) =>
@@ -347,6 +366,12 @@ export async function exercisePasswordResources({
       config: result.config,
       pg_max_connections: result.pg_max_connections,
     });
+    const baselineLogs = await docker(["logs", id]);
+    writeEvidenceFile(output, "identity-baseline.ndjson", baselineLogs + "\n");
+    result.baseline_logs = baselineLogs
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
     await docker([
       "create",
       "--name",
@@ -471,15 +496,15 @@ export async function exercisePasswordResources({
     save("evidence.json", result);
     summary = verifyPasswordResourceEvidence(result);
     save("summary.json", summary);
-    // The existing rekey flow now recreates this stopped instance. Its new PID
-    // is deliberately excluded from the pressure and shutdown evidence.
+    // The runner recreates this stopped instance before any other business
+    // workflow. The new PID is excluded from pressure and shutdown evidence.
   } catch (error) {
     failure = error;
     save("incomplete.json", result);
   } finally {
     // An interrupted Docker CLI does not stop its remote container. Resolve the
     // fixed owned name even when create/start never returned an ID.
-    const cleanup = dockerClient(env, undefined, 60000);
+    const cleanup = cleanupDocker ?? dockerClient(env, undefined, 60000);
     try {
       const owned = await cleanup([
         "ps",

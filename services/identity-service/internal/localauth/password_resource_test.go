@@ -10,17 +10,22 @@ import (
 )
 
 type resourcePasswords struct {
-	hashErr, verifyErr    error
-	hashes, verifications int
-	match                 bool
-	encoded               string
-	ctx                   context.Context
+	hashErr, dummyErr, verifyErr   error
+	hashes, dummies, verifications int
+	match                          bool
+	encoded                        string
+	ctx                            context.Context
 }
 
 func (p *resourcePasswords) HashPassword(ctx context.Context, _ string) (string, error) {
 	p.hashes++
 	p.ctx = ctx
-	return "dummy-hash", p.hashErr
+	return "unexpected-user-hash", p.hashErr
+}
+func (p *resourcePasswords) DummyHash(ctx context.Context) (string, error) {
+	p.dummies++
+	p.ctx = ctx
+	return "dummy-hash", p.dummyErr
 }
 func (p *resourcePasswords) VerifyPassword(ctx context.Context, encoded, _ string) (bool, error) {
 	p.verifications++
@@ -55,7 +60,7 @@ func TestPasswordResourceErrorsHaveKnownUnknownAndInactiveParity(t *testing.T) {
 					t.Fatal(err)
 				}
 				result, err := service.Login(t.Context(), input)
-				if !errors.Is(err, failure) || result.AccessToken != "" || repository.issued.TokenHash != "" || passwords.hashes != 1 || passwords.verifications != 1 || passwords.encoded != wantEncoded || passwords.ctx != t.Context() {
+				if !errors.Is(err, failure) || result.AccessToken != "" || repository.issued.TokenHash != "" || passwords.hashes != 0 || passwords.dummies != 1 || passwords.verifications != 1 || passwords.encoded != wantEncoded || passwords.ctx != t.Context() {
 					t.Fatalf("password error lost identity parity: error=%v calls=%+v", err, passwords)
 				}
 			})
@@ -63,7 +68,7 @@ func TestPasswordResourceErrorsHaveKnownUnknownAndInactiveParity(t *testing.T) {
 	}
 }
 
-func TestPasswordDummyMatchCannotIssueTokenAndStartupKeepsHashFailure(t *testing.T) {
+func TestPasswordDummyMatchCannotIssueTokenAndStartupKeepsPreparationFailure(t *testing.T) {
 	for _, identity := range []string{"unknown", "inactive", "missing-credential", "invalid-identity"} {
 		t.Run(identity, func(t *testing.T) {
 			repository := &authRepositoryStub{credential: LocalCredential{PasswordHash: "stored-hash", Principal: activePrincipal()}}
@@ -90,9 +95,9 @@ func TestPasswordDummyMatchCannotIssueTokenAndStartupKeepsHashFailure(t *testing
 		})
 	}
 	for _, failure := range []error{domain.ErrCredentialBusy, context.Canceled} {
-		passwords := &resourcePasswords{hashErr: failure}
+		passwords := &resourcePasswords{dummyErr: failure}
 		service, err := NewService(t.Context(), &authRepositoryStub{}, sequentialIDs(), fixedNow, time.Hour, passwords)
-		if service != nil || !errors.Is(err, failure) || passwords.hashes != 1 || passwords.ctx != t.Context() {
+		if service != nil || !errors.Is(err, failure) || passwords.hashes != 0 || passwords.dummies != 1 || passwords.ctx != t.Context() {
 			t.Fatalf("dummy startup error=%v service=%v", err, service)
 		}
 	}

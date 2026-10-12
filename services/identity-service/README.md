@@ -242,6 +242,9 @@ leaving schema administration room under the diagnostic relay's 64-connection
 ceiling. Historical/malformed hashes and stopped admission are covered; full-row
 snapshots check that rejected work preserves credentials, tokens and revocation
 feeds. Production-container RSS requires its separate Docker pressure gate.
+Dummy preparation reserves the same configured capacity but generates a random
+salt and rejection target without computing a startup hash. Unknown-account
+verification still runs one full-cost Argon2 operation and always rejects.
 `node tests/e2e/service-authentication/identity/run.mjs` checks this owning service
 in an isolated Identity/PostgreSQL stack with a test-only HTTPS IdP. It checks
 200 concurrent independent unknown-account logins at the default Argon2 cost,
@@ -250,7 +253,10 @@ sampler shares the original Identity PID namespace, reads raw `/proc` high-water
 and current RSS through pressure and real-login recovery, and rejects missing
 sources, restarts or an exceeded memory allowance. Numeric shutdown receipts
 prove that work joined and all permits drained before the original container is
-replaced for key rotation. These measurements are evidence for this run, not a
+replaced. The baseline is sampled before any business password RPC, after normal
+bootstrap and dummy preparation. A fresh container using the same immutable
+image then runs the remaining authentication and key-rotation checks.
+These measurements are evidence for this run, not a
 universal or byte-exact RSS bound. The suite also checks
 real policy-gated callbacks and review persistence through rotation, toggles
 and service restart. The broader `make e2e-identity-core`

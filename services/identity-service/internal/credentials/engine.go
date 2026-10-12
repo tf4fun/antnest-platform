@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"runtime"
 	"strconv"
 	"strings"
@@ -62,9 +63,17 @@ type Passwords interface {
 	NeedsRehash(string) (bool, error)
 }
 
+// LoginPasswords also prepares the rejection-only verifier used for identities
+// without an active local credential. It must never become a stored credential.
+type LoginPasswords interface {
+	Passwords
+	DummyHash(context.Context) (string, error)
+}
+
 type Engine struct {
-	config PasswordConfig
-	kernel func([]byte, []byte, uint32, uint32, uint8, uint32) []byte
+	config      PasswordConfig
+	kernel      func([]byte, []byte, uint32, uint32, uint8, uint32) []byte
+	dummyRandom io.Reader
 
 	mu      sync.Mutex
 	queue   []*passwordWaiter
@@ -77,7 +86,7 @@ func NewEngine(config PasswordConfig) (*Engine, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	return &Engine{config: config, kernel: argon2.IDKey}, nil
+	return &Engine{config: config, kernel: argon2.IDKey, dummyRandom: rand.Reader}, nil
 }
 
 func (e *Engine) HashPassword(ctx context.Context, password string) (string, error) {
@@ -96,8 +105,37 @@ func (e *Engine) HashPassword(ctx context.Context, password string) (string, err
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", p.MemoryKiB, p.Iterations, p.Parallelism,
-		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(digest)), nil
+	return encodePassword(p, salt, digest), nil
+}
+
+// DummyHash avoids an unnecessary startup KDF by preparing a random rejection
+// target. Verification still runs Argon2 with the complete configured cost.
+// Reserve the same policy weight conservatively and join entropy reads before
+// releasing capacity, including when cancellation or shutdown discards a result.
+func (e *Engine) DummyHash(ctx context.Context) (string, error) {
+	p := e.config.Policy
+	release, err := e.acquire(ctx, p.MemoryKiB)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	if err := e.resultError(ctx); err != nil {
+		return "", err
+	}
+	entropy := make([]byte, argonSaltBytes+argonKeyBytes)
+	defer clear(entropy)
+	if _, err := io.ReadFull(e.dummyRandom, entropy); err != nil {
+		return "", fmt.Errorf("generate dummy password verifier: %w", err)
+	}
+	if err := e.resultError(ctx); err != nil {
+		return "", err
+	}
+	return encodePassword(p, entropy[:argonSaltBytes], entropy[argonSaltBytes:]), nil
+}
+
+func encodePassword(policy PasswordPolicy, salt, digest []byte) string {
+	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", policy.MemoryKiB, policy.Iterations, policy.Parallelism,
+		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(digest))
 }
 
 func (e *Engine) VerifyPassword(ctx context.Context, encoded, password string) (bool, error) {

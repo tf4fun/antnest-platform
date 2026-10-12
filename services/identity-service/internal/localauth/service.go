@@ -71,7 +71,7 @@ type Service struct {
 	now        func() time.Time
 	tokenTTL   time.Duration
 	dummyHash  string
-	passwords  credentials.Passwords
+	passwords  credentials.LoginPasswords
 }
 
 func NewService(
@@ -80,7 +80,7 @@ func NewService(
 	newID func(string) string,
 	now func() time.Time,
 	tokenTTL time.Duration,
-	passwords credentials.Passwords,
+	passwords credentials.LoginPasswords,
 ) (*Service, error) {
 	if repository == nil || newID == nil || now == nil || passwords == nil {
 		return nil, fmt.Errorf("local auth requires repository, id generator, clock, and password engine")
@@ -88,7 +88,7 @@ func NewService(
 	if tokenTTL <= 0 {
 		return nil, fmt.Errorf("access token TTL must be positive")
 	}
-	dummyHash, err := passwords.HashPassword(ctx, "antnest-invalid-account-password")
+	dummyHash, err := passwords.DummyHash(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("prepare password timing defense: %w", err)
 	}
