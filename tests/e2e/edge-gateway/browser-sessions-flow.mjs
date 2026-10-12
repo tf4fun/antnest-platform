@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient, assertNoStore } from "../identity-closeout/support.mjs";
 import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
+import { observePrincipalRevocation } from "../identity-closeout/principal-revocation.mjs";
 
 const admin = {
   organization_slug: "stage3",
@@ -436,11 +437,12 @@ export async function verifyBrowserSessions({
   fixture,
   signal,
   setIdlePolicy,
+  output,
   record = () => {},
 }) {
   const contexts = [],
     audits = [],
-    evidence = { phases: [], wire: [] };
+    evidence = { phases: [], wire: [], revocations: [] };
   const recordPhase = (phase) => {
     evidence.phases.push(phase);
     record(evidence);
@@ -678,10 +680,31 @@ export async function verifyBrowserSessions({
         dialog.getByRole("button", { name: "Confirm revocation" }),
         `/api/admin/directory/users/${fixture.ownerID}/sessions/revoke`,
       );
+      const committedMS = performance.now();
       assert.equal(result.current_revoked, false);
       assert(result.revoked_count >= 2);
-      await readSession(consoleSession.client, 401);
-      await readSession(workspaceSession.client, 401);
+      const revocations = await Promise.allSettled(
+        [
+          ["console", consoleSession],
+          ["workspace", workspaceSession],
+        ].map(([surface, session]) =>
+          observePrincipalRevocation({
+            client: session.client,
+            principal: session.metadata.principal,
+            committedMS,
+            ttlMS: config.resolveTTLMS,
+            name: `browser-admin-${surface}-revocation`,
+            directory: output,
+            signal,
+            record: (item) => {
+              evidence.revocations.push({ surface, ...item });
+              record(evidence);
+            },
+          }),
+        ),
+      );
+      for (const observed of revocations)
+        if (observed.status === "rejected") throw observed.reason;
       await readSession(administrator.client);
       const streams = await observers.revoked(at);
       await signedOut(workspaceSession.page);

@@ -66,6 +66,11 @@ Chromium; the browser context sends the two fixture hosts directly, without
 changing machine proxy settings or intercepting product APIs. Raw and partial
 TLS connections, browser contexts, candidate images and stack resources are
 closed on success, failure or interruption.
+For organization-admin revocation, the HTTPS fixture observes both original
+browser sessions against one mutation timestamp and the inspected Gateway TTL,
+saves each response before validation, and joins both observations before
+checking stream and private-UI retirement. Its password and self-revocation
+checks still require immediate rejection.
 
 The core client is invoked by the parent as:
 
