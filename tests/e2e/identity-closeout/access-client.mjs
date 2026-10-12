@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { evidenceDirectory } from "../../support/storage.mjs";
 import { assertNoStore, GatewayClient } from "./support.mjs";
 import { assertOrganizationSession } from "./organization-session.mjs";
+import { observePrincipalRevocation } from "./principal-revocation.mjs";
 import {
   verifyIdentityEvidence as verifyIdentityTraces,
   identityEvidenceExitCode,
@@ -24,6 +25,7 @@ const secrets = [
 ];
 const traces = [];
 const checks = [];
+const resolveTTLMS = Number(process.env.ANTNEST_E2E_RESOLVE_TTL_MS);
 const remember = (client) => secrets.push(...client.cookies.values());
 async function login(client, slug, email, password, status = 200) {
   const response = await client.request("/api/session/login", {
@@ -319,8 +321,15 @@ const membershipState = {
 await root.request(`/api/admin/directory/memberships/${pa.membership_id}`, {
   body: { ...membershipState, active: false },
 });
-await a2.request("/api/session", { status: 401 });
-await shared.request("/api/app/bootstrap");
+await observePrincipalRevocation({
+  client: a2,
+  principal: pa,
+  committedMS: performance.now(),
+  ttlMS: resolveTTLMS,
+  name: "access-membership-revocation",
+});
+const sharedWorkspace = (await shared.request("/api/app/bootstrap")).body
+  .principal;
 await root.request(`/api/admin/directory/memberships/${pa.membership_id}`, {
   body: { ...membershipState, active: true },
 });
@@ -338,6 +347,7 @@ const disabled = await root.request(
   `/api/admin/directory/users/${pa.user_id}/active`,
   { body: { active: false } },
 );
+const userDisabledMS = performance.now();
 traces.push({
   traceID: disabled.traceID,
   method: "POST",
@@ -362,10 +372,20 @@ for (const active of [false, true]) {
     [a2, savedA2],
     [shared, savedShared],
   ]) {
-    await browser.request("/api/app/bootstrap", {
-      headers: { Cookie: cookie },
-      status: 401,
-    });
+    if (!active && browser === shared)
+      await observePrincipalRevocation({
+        client: browser,
+        path: "/api/app/bootstrap",
+        principal: sharedWorkspace,
+        committedMS: userDisabledMS,
+        ttlMS: resolveTTLMS,
+        name: "access-user-revocation",
+      });
+    else
+      await browser.request("/api/app/bootstrap", {
+        headers: { Cookie: cookie },
+        status: 401,
+      });
   }
 }
 await login(a2, "stage3", "access-admin@example.com", secrets[3]);

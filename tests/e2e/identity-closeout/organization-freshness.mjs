@@ -147,6 +147,37 @@ export function inspectOrganizationRead(
   };
 }
 
+export function selectSessionFeedRequests(traces, earliest, latest) {
+  assert(
+    Number.isFinite(earliest) && Number.isFinite(latest) && earliest <= latest,
+  );
+  const expected = [];
+  for (const trace of traces) {
+    const { client } = sessionFeedRPC(trace);
+    end(client);
+    if (client.startTime >= earliest && client.startTime <= latest)
+      expected.push({ traceID: trace.traceID });
+  }
+  return expected;
+}
+
+function sessionFeedRPC(trace) {
+  const result = owningServerTopology(trace, {
+    service: "identity-service",
+    route: "/rpc/identity/list-session-revocations",
+    method: "POST",
+    rpcMethod: "list_session_revocations",
+    clientService: "edge-gateway",
+  });
+  assert.equal(tag(result.client, "rpc.method"), "list_session_revocations");
+  assert.equal(
+    traceTopology(trace).parent(result.client),
+    undefined,
+    "feed must be process-owned work",
+  );
+  return result;
+}
+
 export function inspectEmptySessionFeed(
   trace,
   expected,
@@ -155,20 +186,8 @@ export function inspectEmptySessionFeed(
 ) {
   assert.equal(trace.traceID, expected.traceID);
   const diagnostics = successfulSources(trace, secrets, collection);
-  const tree = traceTopology(trace);
-  const { client, server, database } = owningServerTopology(trace, {
-    service: "identity-service",
-    route: "/rpc/identity/list-session-revocations",
-    method: "POST",
-    rpcMethod: "list_session_revocations",
-    clientService: "edge-gateway",
-    status: 200,
-  });
-  assert.equal(
-    tree.parent(client),
-    undefined,
-    "feed must be process-owned work",
-  );
+  const { client, server, database } = sessionFeedRPC(trace);
+  assert.equal(tag(server, "http.response.status_code"), 200);
   assert.equal(tag(client, "http.response.status_code"), 200);
   const sql = one(database, "one actual session feed SELECT required");
   assert.equal(tag(sql, "db.operation.name"), "SELECT");

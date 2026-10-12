@@ -14,7 +14,6 @@ import {
   writeEvidenceFile,
 } from "../../support/storage.mjs";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
-import { tag } from "../observability/trace-tree.mjs";
 import {
   displaySurfaces,
   inspectOrganizationRead,
@@ -22,6 +21,7 @@ import {
   inspectOrganizationRefresh,
   assertOrganizationTimeline,
   assertDisplayFeedCoverage,
+  selectSessionFeedRequests,
 } from "./organization-freshness.mjs";
 
 const stablePrincipal = ({
@@ -48,49 +48,8 @@ export function assertDisplayReadHeaders(headers, surface) {
   );
 }
 
-export async function observeDisplayRejection({
-  committedMS,
-  ttlMS,
-  request,
-  now = () => performance.now(),
-  wait = delay,
-  record = () => {},
-  validate = () => {},
-}) {
-  assert(
-    Number.isFinite(committedMS) &&
-      Number.isFinite(ttlMS) &&
-      ttlMS > 0 &&
-      ttlMS <= 30000,
-  );
-  const observations = [];
-  for (;;) {
-    const startedMS = now();
-    assert(startedMS >= committedMS);
-    const response = await request();
-    const item = {
-      startedMS,
-      completedMS: now(),
-      status: response.status,
-      traceID: response.traceID,
-    };
-    observations.push(item);
-    record(item, response);
-    assert.match(item.traceID ?? "", /^[a-f0-9]{32}$/u);
-    assert(item.completedMS >= startedMS);
-    assert(
-      [200, 401].includes(item.status),
-      "unexpected membership rejection response",
-    );
-    await validate(response, item);
-    if (item.status === 401) return observations;
-    assert(
-      startedMS < committedMS + ttlMS,
-      "inactive membership admitted after snapshot TTL",
-    );
-    await wait(Math.min(100, Math.max(0, committedMS + ttlMS - now())));
-  }
-}
+import { observeBoundedRevocation as observeDisplayRejection } from "../../support/bounded-revocation.mjs";
+export { observeDisplayRejection };
 
 // Six distinct login tokens isolate the three actual surfaces and the quiet
 // expiry branch. Bootstrap and SSR otherwise share workspace/empty-Agent.
@@ -320,17 +279,11 @@ export async function prepareOrganizationFreshness({
         service: "identity-service",
         tags: JSON.stringify({ "rpc.method": "list_session_revocations" }),
       });
-      const feedExpected = [];
-      for (const trace of feedTraces) {
-        const server = trace.spans.find(
-          (s) => tag(s, "rpc.method") === "list_session_revocations",
-        );
-        const parent = server?.references.find((r) => r.refType === "CHILD_OF");
-        const client = trace.spans.find((s) => s.spanID === parent?.spanID);
-        assert(client, "feed search returned incomplete ancestry");
-        if (client.startTime >= earliest && client.startTime <= latest)
-          feedExpected.push({ traceID: trace.traceID });
-      }
+      const feedExpected = selectSessionFeedRequests(
+        feedTraces,
+        earliest,
+        latest,
+      );
       const feeds = await verifyIdentityEvidence(
         jaeger,
         feedExpected,

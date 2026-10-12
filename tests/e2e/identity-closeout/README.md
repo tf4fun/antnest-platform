@@ -34,6 +34,25 @@ node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
 
 Helper tests do not replace the real integration run.
 
+Cross-service membership, SCIM and administrator revocations observe an already
+warm Principal until the actual deployed Gateway snapshot TTL. Every response
+retains its unique Trace ID, monotonic send/completion times and original
+Principal; successful reads must keep the original Cookie, DTO and no-store
+policy, and the final response must be `401 unauthenticated`. The deadline is
+fixed at the mutation response and is never extended by a successful read.
+Cold scopes and local Gateway logout, password changes and self-revocation keep
+immediate denial checks, as does replay of an old Cookie after restoration.
+Partial observations are saved before validation. The Identity deployment
+inspector supplies `ANTNEST_E2E_RESOLVE_TTL_MS` from the actual container setting.
+Transport and JSON decoding failures stop immediately; they cannot supply a
+decoded observation. Content-validation errors use fixed messages, while the
+actual response values remain in private evidence.
+
+Organization feed searches select the unique Identity SERVER by service,
+route, method and RPC, then require its direct Gateway CLIENT parent. CLIENT
+and SERVER ordering in Jaeger search results does not affect the original
+observation window or the subsequent empty-page SQL checks.
+
 The legacy core, Organization display and offboarding OIDC scenarios explicitly
 select `verified_email`, with no domain restriction and no administrator trust.
 They preserve their existing member-convergence scenarios; SCIM tokens in those

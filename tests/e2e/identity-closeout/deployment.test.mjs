@@ -1,6 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectIdentityDeployment } from "./deployment.mjs";
+
+test("revocation deadline comes from the actual deployed Gateway TTL", () => {
+  for (const [setting, expected] of [
+    ["10s", 10000],
+    ["250ms", 250],
+    ["0", 0],
+  ]) {
+    const value = rows();
+    const gateway = value.find(
+      (row) =>
+        row.Config.Labels["com.docker.compose.service"] === "edge-gateway",
+    );
+    gateway.Config.Env = [`ANTNEST_EDGE_RESOLVE_CACHE_TTL=${setting}`];
+    assert.equal(
+      inspectIdentityDeployment(value, "fixture").resolve_cache_ttl_ms,
+      expected,
+    );
+  }
+});
 function rows() {
   return [
     "postgres",

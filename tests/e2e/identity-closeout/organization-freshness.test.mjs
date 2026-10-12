@@ -6,6 +6,7 @@ import {
   assertOrganizationTimeline,
   inspectOrganizationRefresh,
   assertDisplayFeedCoverage,
+  selectSessionFeedRequests,
 } from "./organization-freshness.mjs";
 import {
   resolutionFixture,
@@ -135,6 +136,7 @@ function feedFixture() {
   const server = f.trace.spans.find((s) => s.spanID === "resolve-server");
   const sql = f.trace.spans.find((s) => s.spanID === "sql");
   client.references = [];
+  setTag(client, "rpc.method", "list_session_revocations");
   setTag(server, "http.route", "/rpc/identity/list-session-revocations");
   setTag(server, "rpc.method", "list_session_revocations");
   setTag(
@@ -146,6 +148,66 @@ function feedFixture() {
   f.trace.spans = [client, server, sql];
   return { trace: f.trace, client, server, sql };
 }
+
+test("feed search selects the exact Identity SERVER independent of CLIENT-first ordering", () => {
+  for (const reorder of [false, true]) {
+    const f = feedFixture();
+    if (reorder) f.trace.spans.reverse();
+    assert.deepEqual(
+      selectSessionFeedRequests(
+        [f.trace],
+        f.client.startTime,
+        f.client.startTime,
+      ),
+      [{ traceID: f.trace.traceID }],
+    );
+    assert.deepEqual(
+      selectSessionFeedRequests(
+        [f.trace],
+        f.client.startTime + 1,
+        f.client.startTime + 2,
+      ),
+      [],
+    );
+  }
+});
+
+for (const [name, mutate] of [
+  [
+    "missing CLIENT",
+    (f) => {
+      f.trace.spans = f.trace.spans.filter((span) => span !== f.client);
+    },
+  ],
+  [
+    "duplicate SERVER",
+    (f) =>
+      f.trace.spans.push({ ...structuredClone(f.server), spanID: "duplicate" }),
+  ],
+  [
+    "foreign service",
+    (f) => {
+      f.trace.processes[f.server.processID].serviceName = "foreign";
+    },
+  ],
+  ["wrong route", (f) => setTag(f.server, "http.route", "/other")],
+  ["wrong method", (f) => setTag(f.server, "http.request.method", "GET")],
+  ["wrong RPC", (f) => setTag(f.server, "rpc.method", "resolve")],
+  [
+    "foreign CLIENT",
+    (f) => {
+      f.trace.processes[f.client.processID].serviceName = "foreign";
+    },
+  ],
+  ["wrong CLIENT RPC", (f) => setTag(f.client, "rpc.method", "resolve")],
+])
+  test(`feed selection rejects ${name}`, () => {
+    const f = feedFixture();
+    mutate(f);
+    assert.throws(() =>
+      selectSessionFeedRequests([f.trace], 0, Number.MAX_SAFE_INTEGER),
+    );
+  });
 
 test("healthy empty feed evidence comes from the actual process-owned RPC and zero-row SELECT", () => {
   const f = feedFixture();

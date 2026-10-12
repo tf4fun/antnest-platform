@@ -29,7 +29,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 docker_cmd inspect $containers >"$temporary/deployment.json"
-node "$root/tests/e2e/identity-closeout/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
+node "$root/tests/e2e/identity-closeout/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME" >"$evidence/deployment.json"
+ANTNEST_E2E_RESOLVE_TTL_MS=$(node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(String(r.resolve_cache_ttl_ms));' "$evidence/deployment.json")
+export ANTNEST_E2E_RESOLVE_TTL_MS
 strict_status=0
 run_suite() {
   suite=$1; shift

@@ -226,6 +226,7 @@ export function authorityFixture() {
   server.operationName = "HTTP POST /rpc/identity/list-session-revocations";
   setTag(server, "http.route", "/rpc/identity/list-session-revocations");
   setTag(server, "rpc.method", "list_session_revocations");
+  setTag(client, "rpc.method", "list_session_revocations");
   setTag(
     sql,
     "db.query.text",
