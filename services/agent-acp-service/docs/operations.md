@@ -192,6 +192,17 @@ injecting its context and tracks response consumption/close. Baggage, query
 strings, authorization and cookies are not exported. See the service
 [observability implementation and remaining SDK limits](observability.md).
 
+The workspace `watch_agent_execution_state` SERVER records
+`antnest.stream.termination=process-shutdown` only when its caught error is the
+original normal `RunSupervisor.shutdown()` reason. It preserves the existing
+ERROR status, sanitized error event, response envelope and span lifetime. An
+earlier service failure, an identical error message, a wrapped cause, caller
+disconnect, revocation or another storage/delivery failure does not establish
+this marker. The marker identifies the propagated error; consumers must still
+bind the stream to actual process lifecycle evidence before classifying an
+expected shutdown. Unmarked historical errors remain unclassified. See the
+[shared shutdown evidence contract](../../../docs/observability-contract.md#acp-workspace-stream-shutdown).
+
 Spans include low-risk identifiers such as Agent ID, Session ID, Run ID,
 organization ID, configuration revision, execution revision, MCP source class,
 and terminal class. High-cardinality identifiers are span attributes, never

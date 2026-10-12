@@ -3,6 +3,7 @@ import { finished } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { DEFAULT_STATE_DELIVERY_TIMEOUT_MS } from "../config.js";
+import { isShutdownReason } from "../shutdown.js";
 import { agentExecutionStateRequestSchema } from "../domain/agent-execution-state.js";
 import type {
   AgentExecutionStatePort,
@@ -71,6 +72,8 @@ export async function serveAgentExecutionState(
     if (isDisconnected()) return;
     const failure = stateError(error);
     if (span !== undefined) {
+      if (streaming && isShutdownReason(error))
+        span.setAttribute("antnest.stream.termination", "process-shutdown");
       recordBoundaryError(span, error, "agent.execution_state");
       if (failure.status >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
       if (!streaming) rpcContent(span, "response", failure.body);

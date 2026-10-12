@@ -173,7 +173,7 @@
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
-      "sha256": "81d1536b73d07b12565e5810535e6decdc04b88c00940e92486c3de7a24aa736",
+      "sha256": "83900bb3fe3b6bd22671988ca603bdd22117466507ea83a321308d8ad8c1d987",
       "routes": [
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/watch-agent-execution-state"

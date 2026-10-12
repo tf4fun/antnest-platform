@@ -1,6 +1,7 @@
 import type { AcceptedAcpRun, SubmittedAcpRun } from "../ports/acp-application.js";
 import type { ConnectionBinding } from "../domain/types.js";
 import { DomainError } from "../domain/errors.js";
+import { createShutdownReason } from "../shutdown.js";
 import {
   isExecutionAccessRevoked,
   type ExecutionAccessSnapshot,
@@ -163,7 +164,7 @@ export class RunSupervisor implements RunLifecyclePort {
   }
 
   public async shutdown(): Promise<void> {
-    this.stop(new Error("Agent ACP Service is shutting down"));
+    if (!this.stopping.signal.aborted) this.stop(createShutdownReason());
     await Promise.all([...this.active.values()].map((slot) => slot.finished.promise));
   }
 

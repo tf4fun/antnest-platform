@@ -1,5 +1,10 @@
 import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
-import { context, propagation, trace } from "@opentelemetry/api";
+import {
+  context,
+  propagation,
+  SpanStatusCode,
+  trace,
+} from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { setTimeout as delay } from "node:timers/promises";
@@ -176,6 +181,21 @@ async function watch(base: string, headers = identityHeaders()) {
   return { frames, finished, close };
 }
 
+async function finishedStateSpan(path = watchPath) {
+  await vi.waitFor(() =>
+    expect(
+      exporter
+        .getFinishedSpans()
+        .filter((span) => span.attributes["http.route"] === path),
+    ).toHaveLength(1),
+  );
+  const span = exporter
+    .getFinishedSpans()
+    .find((item) => item.attributes["http.route"] === path);
+  if (span === undefined) throw new Error("Missing execution state span");
+  return span;
+}
+
 describe("workspace state HTTP and SSE", () => {
   it.each([getPath, watchPath])(
     "authorizes opaque identity locally at %s",
@@ -209,6 +229,7 @@ describe("workspace state HTTP and SSE", () => {
           availability: "ready",
         });
         await stream.close();
+        await finishedStateSpan();
       }
       const rejected = await post(
         base,
@@ -250,6 +271,7 @@ describe("workspace state HTTP and SSE", () => {
     local.completion.resolve(completed);
     await run.completion;
     await stream.close();
+    await finishedStateSpan();
   });
   it("reads and reconnects to real local occupancy, then returns to idle without Controller calls", async () => {
     const local = await localState();
@@ -277,6 +299,8 @@ describe("workspace state HTTP and SSE", () => {
     expect(
       stream.frames.every((frame) => frame.event === "workspace_state"),
     ).toBe(true);
+    await stream.close();
+    await finishedStateSpan();
   });
 
   it("hides Session identity from authorized peers and clears revoked streams", async () => {
@@ -304,6 +328,9 @@ describe("workspace state HTTP and SSE", () => {
       active_session_id: null,
       configuration_revision: null,
     });
+    expect(
+      (await finishedStateSpan()).attributes["antnest.stream.termination"],
+    ).toBeUndefined();
   });
 
   it.each([getPath, watchPath])(
@@ -364,6 +391,7 @@ describe("workspace state HTTP and SSE", () => {
     await expect(
       local.directory.apply({ ...executionConfiguration(), revision: 2 }),
     ).rejects.toThrow("private publication detail");
+    await local.supervisor.shutdown();
     await stream.finished;
     expect(stream.frames.at(-1)?.event).toBe("workspace_error");
     expect(JSON.parse(stream.frames.at(-1)!.data)).toMatchObject({
@@ -372,6 +400,9 @@ describe("workspace state HTTP and SSE", () => {
     expect(JSON.stringify(stream.frames)).not.toContain(
       "private publication detail",
     );
+    const span = await finishedStateSpan();
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.attributes["antnest.stream.termination"]).toBeUndefined();
   });
 
   it("aborts and releases the state subscription when its HTTP client disconnects", async () => {
@@ -385,6 +416,148 @@ describe("workspace state HTTP and SSE", () => {
     const stream = await watch(await listen(service));
     await stream.close();
     await released.promise;
+    await local.supervisor.shutdown();
+    expect(
+      (await finishedStateSpan()).attributes["antnest.stream.termination"],
+    ).toBeUndefined();
+  });
+
+  it.each([false, true])(
+    "identifies normal shutdown on the original stream span with capture=%s",
+    async (captureRpcContent) => {
+      configureBoundaries({ captureRpcContent, disabled: false });
+      const local = await localState();
+      const parent = provider.getTracer("test").startSpan("gateway-client");
+      const carrier = identityHeaders();
+      propagation.inject(trace.setSpan(context.active(), parent), carrier);
+      try {
+        const stream = await watch(await listen(local.service), carrier);
+        await local.supervisor.shutdown();
+        await stream.finished;
+        const span = await finishedStateSpan();
+        expect(span.attributes).toMatchObject({
+          "antnest.stream.termination": "process-shutdown",
+          "rpc.method": "watch_agent_execution_state",
+          "http.response.status_code": 200,
+          "antnest.operation.phase": "agent.execution_state",
+          "antnest.outcome": "error",
+          "error.type": "Error",
+        });
+        expect(span.status.code).toBe(SpanStatusCode.ERROR);
+        expect(span.parentSpanContext?.spanId).toBe(
+          parent.spanContext().spanId,
+        );
+        expect(span.spanContext().traceId).toBe(parent.spanContext().traceId);
+        expect(
+          span.events.some((event) => event.name === "antnest.error"),
+        ).toBe(true);
+        const diagnostics = JSON.stringify({
+          attributes: span.attributes,
+          events: span.events,
+        });
+        expect(diagnostics).toContain("Error: unregistered message omitted");
+        for (const excluded of [
+          "antnest.request",
+          "antnest.response",
+          "antnest.payload.json",
+          "configuration_revision",
+          "synthetic-provider-key",
+        ])
+          expect(diagnostics).not.toContain(excluded);
+        expect(stream.frames.at(-1)?.event).toBe("workspace_error");
+        expect(JSON.parse(stream.frames.at(-1)!.data)).toEqual({
+          code: "execution_state_unavailable",
+          message: "Agent execution state is unavailable",
+          retryable: true,
+        });
+      } finally {
+        parent.end();
+      }
+      expect(exporter.getFinishedSpans()).toHaveLength(2);
+    },
+  );
+
+  it("does not relabel a prior failure with the same shutdown message", async () => {
+    const local = await localState();
+    const stream = await watch(await listen(local.service));
+    const failure = new Error("Agent ACP Service is shutting down");
+    local.supervisor.stop(failure);
+    await local.supervisor.shutdown();
+    await stream.finished;
+    expect(local.supervisor.stopSignal.reason).toBe(failure);
+    const span = await finishedStateSpan();
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.attributes["antnest.stream.termination"]).toBeUndefined();
+  });
+
+  it("preserves a storage failure that rejects during normal shutdown", async () => {
+    const local = await localState();
+    const stream = await watch(await listen(local.service));
+    const pending = Promise.withResolvers<boolean>();
+    const calls = local.protection.hasUnstoppedRuntimeCalls.mock.calls.length;
+    local.protection.hasUnstoppedRuntimeCalls.mockReturnValueOnce(
+      pending.promise,
+    );
+    try {
+      await local.directory.apply({ ...executionConfiguration(), revision: 2 });
+      await vi.waitFor(() =>
+        expect(local.protection.hasUnstoppedRuntimeCalls).toHaveBeenCalledTimes(
+          calls + 1,
+        ),
+      );
+      await local.supervisor.shutdown();
+      pending.reject(new Error("private storage detail"));
+      await stream.finished;
+      const span = await finishedStateSpan();
+      expect(span.status.code).toBe(SpanStatusCode.ERROR);
+      expect(span.attributes["antnest.stream.termination"]).toBeUndefined();
+      expect(stream.frames.at(-1)?.event).toBe("workspace_error");
+      expect(
+        JSON.stringify({ frames: stream.frames, events: span.events }),
+      ).not.toContain("private storage detail");
+    } finally {
+      pending.resolve(false);
+      await stream.close();
+    }
+  });
+
+  it("preserves a delivery failure that rejects during normal shutdown", async () => {
+    const local = await localState();
+    const service: AgentExecutionStatePort = {
+      read: local.service.read.bind(local.service),
+      watch: (identity, send, signal) =>
+        local.service.watch(
+          identity,
+          async (state, lifetime) => {
+            await send(state, lifetime);
+            await local.supervisor.shutdown();
+            throw new Error("private delivery detail");
+          },
+          signal,
+        ),
+    };
+    const stream = await watch(await listen(service));
+    await stream.finished;
+    const span = await finishedStateSpan();
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.attributes["antnest.stream.termination"]).toBeUndefined();
+    expect(stream.frames.at(-1)?.event).toBe("workspace_error");
+    expect(
+      JSON.stringify({ frames: stream.frames, events: span.events }),
+    ).not.toContain("private delivery detail");
+  });
+
+  it("does not mark a nonstreaming read after normal shutdown as a terminated stream", async () => {
+    const local = await localState();
+    await local.supervisor.shutdown();
+    const response = await post(await listen(local.service));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      code: "execution_state_unavailable",
+    });
+    const span = await finishedStateSpan(getPath);
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.attributes["antnest.stream.termination"]).toBeUndefined();
   });
 
   it("emits a caller-child span but never captures stream payloads even when RPC capture is enabled", async () => {
@@ -417,6 +590,7 @@ describe("workspace state HTTP and SSE", () => {
     expect(streaming?.attributes["rpc.method"]).toBe(
       "watch_agent_execution_state",
     );
+    expect(streaming?.attributes["antnest.stream.termination"]).toBeUndefined();
     expect(
       streaming?.events.filter(
         (event) =>

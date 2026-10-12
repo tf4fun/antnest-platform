@@ -2,10 +2,37 @@ import { describe, expect, it, vi } from "vitest";
 
 import { WorkerOwnershipLostError } from "../src/adapters/postgres/worker-lock.js";
 import {
+  createShutdownReason,
   flushBeforeFailStop,
+  isShutdownReason,
   raceWithOwnershipLoss,
   withShutdownDeadline,
 } from "../src/shutdown.js";
+
+describe("normal shutdown reason identity", () => {
+  it("recognizes only the original plain Error created for shutdown", () => {
+    const reason = createShutdownReason();
+    expect(reason.constructor).toBe(Error);
+    expect(reason.name).toBe("Error");
+    expect(reason.message).toBe("Agent ACP Service is shutting down");
+    expect(isShutdownReason(reason)).toBe(true);
+    expect(createShutdownReason()).not.toBe(reason);
+  });
+
+  it("does not infer normal shutdown from text, copied fields, wrapped causes or other values", () => {
+    const reason = createShutdownReason();
+    for (const candidate of [
+      new Error(reason.message),
+      Object.assign(new Error(reason.message), reason),
+      new Error("Aborted", { cause: reason }),
+      { name: reason.name, message: reason.message },
+      null,
+      undefined,
+      reason.message,
+    ])
+      expect(isShutdownReason(candidate)).toBe(false);
+  });
+});
 
 describe("withShutdownDeadline", () => {
   it("does not force exit after graceful shutdown", async () => {

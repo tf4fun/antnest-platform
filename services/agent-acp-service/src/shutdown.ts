@@ -1,3 +1,15 @@
+const shutdownReasons = new WeakSet<Error>();
+
+export function createShutdownReason(): Error {
+  const reason = new Error("Agent ACP Service is shutting down");
+  shutdownReasons.add(reason);
+  return reason;
+}
+
+export function isShutdownReason(reason: unknown): reason is Error {
+  return reason instanceof Error && shutdownReasons.has(reason);
+}
+
 export async function withShutdownDeadline(
   operation: Promise<void>,
   timeoutMs: number,
