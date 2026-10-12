@@ -338,6 +338,12 @@ export const suites = [
   })),
   ...[
     [
+      "gateway-resolve-cache",
+      "Edge Gateway resolve cache outage and recovery",
+      ["agent-ui-web"],
+      "node tests/e2e/edge-gateway/resolve-cache-docker.mjs",
+    ],
+    [
       "gateway-tls",
       "Edge Gateway HTTPS deployment",
       ["agent-ui-web", "chromium"],
@@ -367,10 +373,14 @@ export const suites = [
     tier: "b",
     setup,
     disabled,
+    strict: id === "gateway-resolve-cache",
     images: platformImages,
-    pull: ["gateway-tls", "browser-sessions-https"].includes(id)
-      ? [...temporal, "caddy:2.11.7-alpine"]
-      : temporal,
+    pull:
+      id === "gateway-resolve-cache"
+        ? [...observed, "caddy:2.11.7-alpine"]
+        : ["gateway-tls", "browser-sessions-https"].includes(id)
+          ? [...temporal, "caddy:2.11.7-alpine"]
+          : temporal,
     paths: [
       "services/**",
       "deploy/tls/**",
@@ -1055,6 +1065,7 @@ export const shards = [
     id: "b-gateway",
     name: "Edge Gateway and Agent UI",
     suites: [
+      "gateway-resolve-cache",
       "gateway-tls",
       "browser-sessions-https",
       "gateway-security-headers",

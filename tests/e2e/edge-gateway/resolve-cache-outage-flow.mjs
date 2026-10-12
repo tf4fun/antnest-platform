@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertOutageAdmission } from "../../support/resolve-cache-admission.mjs";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
@@ -671,7 +672,6 @@ export async function verifyWarmOutage({
       ...result,
       consumer_key_budget: evidence.consumer_key_budget,
       recovery: evidence.recovery_window,
-      pending: ["recovery-trace-admission", "strict-trace-admission"],
     };
   } catch (error) {
     problem = error;
@@ -769,5 +769,6 @@ export async function verifyWarmOutage({
     if (errors.length && !problem)
       throw new AggregateError(errors, "outage evidence finalization failed");
   }
-  return { ...result, trace_evidence: evidence.trace_evidence };
+  assertOutageAdmission(evidence.trace_evidence);
+  return { ...result, pending: [], trace_evidence: evidence.trace_evidence };
 }

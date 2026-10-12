@@ -3,6 +3,11 @@
 // warning; error spans on denial and cancellation paths are recorded by
 // contract (docs/observability-contract.md) and checked by each runner's
 // topology. Any other Jaeger warning fails the suite.
+import {
+  isResolveCacheCompletion,
+  resolveCacheSuite,
+} from "./resolve-cache-admission.mjs";
+
 export const clockSkewWarning =
   /^clock skew adjustment disabled; not applying calculated delta of -?[0-9.]+(?:ns|µs|ms|s)$/u;
 
@@ -43,6 +48,8 @@ function hasStrictTraceFailure(value) {
 }
 
 function isStrictCompletion(record) {
+  if (record.suite === resolveCacheSuite)
+    return record.strict_trace === "failed" && isResolveCacheCompletion(record);
   const hasTraces = Array.isArray(record.traces) && record.traces.length > 0;
   if (record.status === "business_and_topology_passed")
     return (

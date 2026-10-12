@@ -5,10 +5,20 @@ import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hasStrictCompletion, unreviewedWarnings } from "./strict-findings.mjs";
+import {
+  hasResolveCacheCompletion,
+  resolveCacheCISuite,
+} from "./resolve-cache-admission.mjs";
 
 // Strict runners exit 2 when business and topology checks pass but strict
 // trace findings remain; only reviewed findings pass, with a warning.
-export function verdict(code, output, strict) {
+export function verdict(code, output, strict, suiteID) {
+  if (
+    suiteID === resolveCacheCISuite &&
+    (!hasResolveCacheCompletion(output, code === 0 ? "passed" : "failed") ||
+      unreviewedWarnings(output).length > 0)
+  )
+    return "failed";
   if (code === 0) return "passed";
   if (
     code === 2 &&
@@ -115,7 +125,9 @@ export async function runShard(
     const interrupted = stopped();
     write("::endgroup::");
     const status =
-      timedOut || interrupted ? "failed" : verdict(code, output, suite.strict);
+      timedOut || interrupted
+        ? "failed"
+        : verdict(code, output, suite.strict, suite.id);
     if (status === "failed" && code === 2 && suite.strict)
       for (const warning of unreviewedWarnings(output))
         write(`unreviewed strict trace warning: ${warning}`);

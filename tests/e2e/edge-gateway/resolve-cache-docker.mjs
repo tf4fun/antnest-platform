@@ -24,6 +24,11 @@ import { certificates } from "./tls-certificates.mjs";
 import { verifyResolveLoad } from "./resolve-cache-flow.mjs";
 import { verifyWarmOutage } from "./resolve-cache-outage-flow.mjs";
 import { cacheEvidencePaths } from "./resolve-cache-ownership.mjs";
+import {
+  isResolveCacheCompletion,
+  finalizeResolveCacheReport,
+  resolveCacheSuite,
+} from "../../support/resolve-cache-admission.mjs";
 
 process.chdir(fileURLToPath(new URL("../../../", import.meta.url)));
 const abort = new AbortController();
@@ -271,10 +276,11 @@ try {
     requestTimeoutMS: 2000,
   });
   report = {
+    suite: resolveCacheSuite,
     status: "business_passed",
-    scenarios: 1,
-    verified: ["100-acp-load"],
-    pending: ["identity-outage-recovery"],
+    scenarios: 2,
+    verified: ["100-acp-load", "identity-outage-recovery", "trace-admission"],
+    pending: [],
     traces: [load, ...outage.trace_evidence.reports],
     warm_outage: {
       ...outage,
@@ -286,7 +292,11 @@ try {
         ? "failed"
         : "passed",
   };
-  save("report.json", report);
+  assert(
+    isResolveCacheCompletion({ ...report, cleanup: "verified" }),
+    "cache admission incomplete before cleanup",
+  );
+  save("report.pending.json", { ...report, cleanup: "pending" });
 } catch (error) {
   failure = error;
   if (output)
@@ -361,23 +371,31 @@ try {
       assert.equal(comparison.unchanged, true, JSON.stringify(comparison));
     });
   for (const event of ["SIGINT", "SIGTERM"]) process.off(event, interrupt);
-  if (failure || errors.length) {
-    if (output && errors.length)
-      writeEvidenceFile(
-        output,
-        "cleanup-errors.private.txt",
-        errors.map((error) => error.stack ?? String(error)).join("\n"),
-      );
-    console.log(
-      JSON.stringify({
-        status: "business_failed",
-        evidence: output,
-        cleanup: errors.length ? "failed" : "verified",
-      }),
+  if (output && errors.length)
+    writeEvidenceFile(
+      output,
+      "cleanup-errors.private.txt",
+      errors.map((error) => error.stack ?? String(error)).join("\n"),
     );
-    process.exitCode = 1;
-  } else {
-    console.log(JSON.stringify({ ...report, cleanup: "verified" }));
-    process.exitCode = report.strict_trace === "failed" ? 2 : 0;
-  }
+  if (output && signal.aborted)
+    writeEvidenceFile(
+      output,
+      "interruption.private.txt",
+      signal.reason?.stack ?? String(signal.reason),
+    );
+  report = finalizeResolveCacheReport(report, {
+    signal,
+    failed: Boolean(failure),
+    cleanupFailed: errors.length > 0,
+    evidence: output,
+  });
+  if (output)
+    writeEvidenceFile(output, "report.json", JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report));
+  process.exitCode =
+    report.status === "business_failed"
+      ? 1
+      : report.strict_trace === "failed"
+        ? 2
+        : 0;
 }

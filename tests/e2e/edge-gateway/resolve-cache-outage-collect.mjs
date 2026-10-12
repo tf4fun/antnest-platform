@@ -16,6 +16,7 @@ import { inspectRecoveryAuthority } from "./resolve-cache-recovery-authority.mjs
 import { inspectRecoveryHTTP as inspectRecoveryHTTPTraces } from "./resolve-cache-recovery-http.mjs";
 import { inspectOutageFeed } from "./resolve-cache-outage-feed.mjs";
 import { inspectOutageStreams } from "./resolve-cache-outage-stream.mjs";
+import { inspectOutageDiagnostics } from "./resolve-cache-outage-diagnostics.mjs";
 
 export function outageChatExpectation(evidence) {
   const observation = evidence.model_cancelled;
@@ -165,6 +166,7 @@ export async function collectOutageTraceArchive(
     inspectRecoveryHTTP = inspectRecoveryHTTPTraces,
     inspectFeed = inspectOutageFeed,
     inspectStreams = inspectOutageStreams,
+    inspectDiagnostics = inspectOutageDiagnostics,
   },
 ) {
   await wait(12000, undefined, { signal });
@@ -470,27 +472,53 @@ export async function collectOutageTraceArchive(
       errors.push(error);
     }
   }
+  const cancellation = reports.find(
+    (row) => row.trace_id === chat?.traceID && row.settled_read === true,
+  );
+  const gates = {
+    authority,
+    http_rejections: rejections,
+    recovery_runs: recovery,
+    recovery_authority: recoveryAuthority,
+    recovery_http: recoveryHTTP,
+    feed,
+    stream,
+    cancellation:
+      cancellation && Array.isArray(cancellation.owned_error_spans)
+        ? {
+            status: "passed",
+            trace_id: chat.traceID,
+            owned_error_spans: cancellation.owned_error_spans,
+          }
+        : { status: "pending" },
+  };
+  let diagnostics = { status: "pending" };
+  if (evidence.recovery_window)
+    try {
+      assert(collection, "complete diagnostic raw archive missing");
+      const checked = await inspectDiagnostics(collection, gates, secrets);
+      assert.equal(
+        checked?.status,
+        "passed",
+        "complete diagnostic reconciliation did not pass",
+      );
+      diagnostics = checked;
+    } catch (error) {
+      errors.push(error);
+    }
   const result = {
     status: errors.length
       ? "archive_failed"
-      : "raw_closures_archived_owning_admission_pending",
+      : diagnostics.status === "passed"
+        ? "owning_admission_passed"
+        : "raw_closures_archived_owning_admission_pending",
     reports,
-    owning_gates: {
-      authority,
-      http_rejections: rejections,
-      recovery_runs: recovery,
-      recovery_authority: recoveryAuthority,
-      recovery_http: recoveryHTTP,
-      feed,
-      stream,
-      cancellation: reports.some(
-        (row) => row.trace_id === chat?.traceID && row.settled_read === true,
-      )
-        ? { status: "passed", trace_id: chat.traceID }
-        : { status: "pending" },
-    },
+    owning_gates: gates,
+    diagnostics,
     strict_trace:
-      errors.length || reports.some((row) => row.strict_trace === "failed")
+      errors.length ||
+      diagnostics.strict_trace === "failed" ||
+      reports.some((row) => row.strict_trace === "failed")
         ? "failed"
         : "passed",
     archived_trace_ids: [...archivedTraceIDs].sort(),

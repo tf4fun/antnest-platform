@@ -4,6 +4,10 @@
 
 ### Upgrade requirement
 
+After restoring an Identity database, restart Gateways to reset their Resolve
+cache and revocation-feed cursors (#59). Setting
+`ANTNEST_EDGE_RESOLVE_CACHE_TTL=0s` keeps direct Identity resolution.
+
 **#61 requires matching Identity, Gateway, Console and Agent UI consumers.**
 Stop old Identity replicas before applying migrations `0006`–`0008`, and deploy
 Identity revision 16, Gateway revision 20 and Console revision 52 with the updated
@@ -95,6 +99,14 @@ separate from the subsequent online key rotation. See
 [Rotating encryption keys](docs/encryption-key-rotation.md).
 
 ### Changed
+
+Gateway caches validated Identity resolution for up to ten seconds by default,
+scoped to the exact session token, request profile and Agent (#59). Established
+HTTP, ACP and Workspace traffic can survive a brief Identity outage without
+extending session or CCT expiry. Mutations and the revocation feed invalidate
+affected scopes; revoked streams close while already accepted Runs retain
+their existing lifetime rules. Cache capacity and shared Resolve work are
+bounded, and cold or expired requests still require Identity.
 
 New OIDC Providers require administrator or paired SCIM pre-binding by default
 (#61). Verified-email linking is an explicit policy, with optional exact domains;

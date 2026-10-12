@@ -204,6 +204,7 @@ function archiveHarness(
         inspectRejections,
         inspectFeed: () => ({ status: "passed", owned_error_spans: [] }),
         inspectStreams: () => ({ status: "passed", owned_error_spans: [] }),
+        inspectDiagnostics: () => ({ status: "passed" }),
         ...recoveryInspectors,
         wait: async () => {},
         search: async (_base, query) => {
@@ -517,6 +518,54 @@ for (const mode of ["passed", "throws", "pending", "missing-claims"])
     if (mode === "passed")
       assert.deepEqual(report.owning_gates.stream.owned_error_spans, claims);
     else assert.equal(report.status, "archive_failed");
+    assert(existsSync(join(h.root, "outage-traces", `${id(11)}.json`)));
+  });
+
+for (const mode of ["passed", "throws", "pending"])
+  test(`complete diagnostic gate ${mode} retains raw failure`, async (t) => {
+    let called = false;
+    const h = archiveHarness(
+      t,
+      (s) => {
+        withOutageChat(s);
+        s.evidence.recovery_window = { status: "passed" };
+      },
+      undefined,
+      undefined,
+      {
+        inspectRecovery: () => ({ status: "passed", owned_error_spans: [] }),
+        inspectRecoveryBudgets: () => ({ status: "passed" }),
+        inspectRecoveryHTTP: () => ({
+          status: "passed",
+          owned_error_spans: [],
+        }),
+        async inspectDiagnostics(collection, gates, secrets) {
+          called = true;
+          assert.deepEqual(secrets, ["private-canary"]);
+          assert(collection.traces.size > 0);
+          assert.equal(gates.stream.status, "passed");
+          assert.equal(gates.feed.status, "passed");
+          assert.equal(gates.cancellation.owned_error_spans.length, 2);
+          if (mode === "throws") throw new Error("unowned source error");
+          return { status: mode };
+        },
+      },
+    );
+    if (mode === "passed") await h.archive();
+    else await assert.rejects(h.archive(), AggregateError);
+    assert(called);
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(
+      report.diagnostics.status,
+      mode === "passed" ? "passed" : "pending",
+    );
+    assert.equal(report.strict_trace, "failed");
+    assert.equal(
+      report.status,
+      mode === "passed" ? "owning_admission_passed" : "archive_failed",
+    );
     assert(existsSync(join(h.root, "outage-traces", `${id(11)}.json`)));
   });
 
