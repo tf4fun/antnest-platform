@@ -23,6 +23,13 @@ func TestLoadPasswordResourceDefaultsAndOverrides(t *testing.T) {
 	if err != nil || cfg.Passwords != want {
 		t.Fatalf("password overrides=%+v error=%v", cfg.Passwords, err)
 	}
+	values["ANTNEST_IDENTITY_ARGON2_MEMORY_KIB"] = "128"
+	values["ANTNEST_IDENTITY_ARGON2_PARALLELISM"] = "16"
+	values["ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT"] = "64"
+	cfg, err = Load(func(key string) string { return values[key] })
+	if err != nil || cfg.Passwords.Policy.Parallelism != 16 || cfg.Passwords.MaxConcurrent != 64 {
+		t.Fatalf("valid conversion boundaries rejected: %v", err)
+	}
 }
 
 func TestLoadRejectsUnboundedOrInconsistentPasswordResourcesWithoutEchoingValues(t *testing.T) {
@@ -32,9 +39,9 @@ func TestLoadRejectsUnboundedOrInconsistentPasswordResourcesWithoutEchoingValues
 	}{
 		{"MEMORY_KIB", []string{"0", "7", "15", "1048577", "-1", "4294967296", "private-not-an-integer"}},
 		{"ITERATIONS", []string{"0", "11", "1.5", "private-not-an-integer"}},
-		{"PARALLELISM", []string{"0", "17", "256", "private-not-an-integer"}},
+		{"PARALLELISM", []string{"0", "17", "256", "4294967295", "4294967296", "private-not-an-integer"}},
 		{"MEMORY_BUDGET_KIB", []string{"0", "7", "65535", "4194305", "private-not-an-integer"}},
-		{"MAX_CONCURRENT", []string{"0", "65", "-1", "private-not-an-integer"}},
+		{"MAX_CONCURRENT", []string{"0", "65", "-1", "2147483648", "4294967295", "4294967296", "private-not-an-integer"}},
 	} {
 		for _, value := range setting.values {
 			t.Run(setting.key+"/"+value, func(t *testing.T) {

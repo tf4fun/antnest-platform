@@ -36,10 +36,18 @@ func loadPasswordConfig(lookup func(string) string) (credentials.PasswordConfig,
 		}
 		values[index] = uint32(value)
 	}
+	// Keep policy bounds adjacent to conversions that narrow the parsed width.
+	parallelism, maxConcurrent := values[2], values[4]
+	if parallelism < 1 || parallelism > 16 {
+		return credentials.PasswordConfig{}, fmt.Errorf("ANTNEST_IDENTITY_ARGON2_PARALLELISM must be an integer between 1 and 16")
+	}
+	if maxConcurrent < 1 || maxConcurrent > 64 {
+		return credentials.PasswordConfig{}, fmt.Errorf("ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT must be an integer between 1 and 64")
+	}
 	config := credentials.PasswordConfig{
-		Policy:          credentials.PasswordPolicy{MemoryKiB: values[0], Iterations: values[1], Parallelism: uint8(values[2])},
+		Policy:          credentials.PasswordPolicy{MemoryKiB: values[0], Iterations: values[1], Parallelism: uint8(parallelism)},
 		MemoryBudgetKiB: values[3],
-		MaxConcurrent:   int(values[4]),
+		MaxConcurrent:   int(maxConcurrent),
 	}
 	if err := config.Validate(); err != nil {
 		return credentials.PasswordConfig{}, err
