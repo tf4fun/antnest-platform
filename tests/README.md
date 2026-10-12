@@ -157,7 +157,7 @@ scenario and remove every resource they own. They are never part of
 | `e2e-workspace`, `e2e-workspace-browser`                                                                                                                                                                                                                                                                      | `workspace-closeout/`                                                      | Agent UI workspace protocol and browser behavior.                                                                                                                                                                                                                                                  |
 | `e2e-agent-ui-receipt-contract`                                                                                                                                                                                                                                                                               | `agent-ui/`                                                                | A real failed Run through Gateway and Chromium; actual ACP receipt/observation JSON validates against the shared schema and Node parsers; workspace failure survives reload. Builds isolated current ACP, Agent UI, Gateway, Identity and RC candidates without replacing local tags.              |
 | `e2e-gateway-security-headers`                                                                                                                                                                                                                                                                                | `edge-gateway/`                                                            | Existing-conversation navigation/reload through Gateway and Chromium, one upstream CSP, nonce script execution, blob image/audio loading, and zero CSP violations. Uses the local model fixture and isolated current candidates; verifies cleanup preserves the retained Docker environment.       |
-| `e2e-browser-sessions-https` | `edge-gateway/` | Real Identity, Console and Workspace through the TLS proxy: default OIDC linking refusal, explicit binding/restoration, exact notices, paired SCIM, lockout confirmation, session/stream retirement without cancelling an accepted Run, password replacement and idle expiry. |
+| `e2e-browser-sessions-https`                                                                                                                                                                                                                                                                                  | `edge-gateway/`                                                            | Real Identity, Console and Workspace through the TLS proxy: default OIDC linking refusal, explicit binding/restoration, exact notices, paired SCIM, lockout confirmation, session/stream retirement without cancelling an accepted Run, password replacement and idle expiry.                      |
 | `e2e-stage3-skill-delivery`, `e2e-stage4-skill-*`, `integration-stage4-skill-*`                                                                                                                                                                                                                               | `stage3-base/`, `lifecycle-closeout/`, `tests/integration/skill-registry/` | Skill package delivery to Runtimes, including Registry outage, races, response loss, drift and restore.                                                                                                                                                                                            |
 | `e2e-skill-learning-*`, `e2e-runtime-tool-usability`                                                                                                                                                                                                                                                          | `skill-learning/`                                                          | Automatic Skill learning: creation and update, notices, preemption, policy and lifecycle cancellation, install interruption and resend, key rotation, model failure and recovery, restart and browser checks.                                                                                      |
 | `e2e-skill-discovery-*`, `e2e-skill-temporary-*`, `e2e-skill-deployment`, `e2e-skill-source-lifecycle`, `e2e-skill-registry-trace`                                                                                                                                                                            | `skill-registry/`, `skill-learning/`                                       | Skill Registry discovery, temporary Runtime use, Console promotion, Template propagation and source lifecycle.                                                                                                                                                                                     |
@@ -246,26 +246,43 @@ forged forwarding headers. `ANTNEST_GATEWAY_TLS_E2E_OUTPUT` selects the private
 evidence directory. Cleanup removes the fixture keys, candidates and deployment.
 
 `node tests/e2e/edge-gateway/resolve-cache-docker.mjs` runs the separate #59
-HTTPS/WSS load batch with the same local stack, Node and TLS prerequisites.
+HTTPS/WSS load and warm-outage batches with the same local stack, Node and TLS prerequisites.
 It includes the real upgrade, initialize and 100 sequential `session/list`
 exchanges in an eight-second window, crossing half of the default 10-second
 cache TTL to exercise refresh. Actual Gateway Resolve attempts and Identity
 receipts are independently limited to three. It archives raw wire frames,
 independent Jaeger searches and complete trace sources, then verifies resource
-cleanup; exit 2 retains strict trace warnings. Its report explicitly leaves
-Identity outage/recovery pending. `ANTNEST_RESOLVE_CACHE_E2E_OUTPUT` selects an
-unused private evidence directory. This load batch is not yet registered as the
+cleanup; exit 2 retains strict trace findings. `ANTNEST_RESOLVE_CACHE_E2E_OUTPUT` selects an
+unused private evidence directory. These batches are not yet registered as the
 complete Resolve-cache CI suite.
 
-The pending outage flow has local observer coverage in
+The warm-outage flow restarts its two Node consumer processes, waits for a fresh
+Controller configuration acknowledgement and a ready Agent, then establishes
+actual WSS and SSE admissions. The fixture uses the existing Controller resync
+setting at one second and verifies its deployed value. Successful admissions
+and the earlier restart-call timestamps give a conservative 30-second JWKS
+deadline; setup and the complete five-second Identity stop must fit inside it.
+While Identity is stopped, the same Run produces new text, completes a real
+read, and is cancelled with a settled, quiescent durable terminal audit. The
+flow retains actual container states, wire frames, Workspace projections, model
+observations and complete raw Trace closures. Search/inventory or individual
+Trace failures retain independent evidence and fail the archive.
+After the recovery observation and public connection cleanup, this batch drains
+its Agent UI process so internal ACP HTTP watches can finish their real SERVER
+spans before collection; raw parents are never fabricated or discarded.
+
+Observer and failure-first coverage is in `resolve-cache-outage.test.mjs`,
+`resolve-cache-outage-collect.test.mjs`,
 `resolve-cache-stream.test.mjs`, `workspace-closeout/c4-cache-model.test.mjs`
 and `lifecycle-closeout/acp.test.mjs`. The model fixture holds two stages of the
 same Run, with fresh text and a settled read between them. The Workspace
 observer validates named SSE events with the production projection decoder,
 retains raw frames without reconnecting, and distinguishes remote closure from
 local cleanup. The ACP helper can negotiate delivery marks and target a cancel
-at the observed Run. These HTTP/socket tests do not establish real Identity
-outage or recovery admission.
+at the observed Run. A passed business window and raw archive do not establish
+complete outage/recovery admission: cache/CCT/feed budgets, cold and expired
+HTTP rejection, recovery revocations and owning Trace gates remain explicit
+pending items in the report.
 
 Some contract checks can be run directly:
 

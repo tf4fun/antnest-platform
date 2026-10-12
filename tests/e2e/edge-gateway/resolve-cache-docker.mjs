@@ -22,6 +22,7 @@ import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { resolveObservationConfig } from "../observability/resolve-config.mjs";
 import { certificates } from "./tls-certificates.mjs";
 import { verifyResolveLoad } from "./resolve-cache-flow.mjs";
+import { verifyWarmOutage } from "./resolve-cache-outage-flow.mjs";
 import { cacheEvidencePaths } from "./resolve-cache-ownership.mjs";
 
 process.chdir(fileURLToPath(new URL("../../../", import.meta.url)));
@@ -74,6 +75,7 @@ try {
     ANTNEST_EDGE_TLS_HOST_PORT: config.env.ANTNEST_EDGE_HOST_PORT,
     ANTNEST_EDGE_TLS_BIND_ADDRESS: "127.0.0.1",
     ANTNEST_EDGE_RESOLVE_CACHE_TTL: "10s",
+    ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL: "1s",
     ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: "false",
     ANTNEST_C4_CONTROL_DYNAMIC_RANGE:
       config.env.ANTNEST_EGRESS_CONTROL_SUBNET.replace(".0/24", ".128/25"),
@@ -152,12 +154,29 @@ try {
   assert.equal(settings.captureRpcContent, false);
   assert.equal(actual.OTEL_SDK_DISABLED, "false");
   assert.equal(actual.OTEL_TRACES_EXPORTER, "otlp");
+  const controllerID = await docker(compose(["ps", "-q", "agent-controller"]));
+  const [controller] = JSON.parse(await docker(["inspect", controllerID]));
+  assert.equal(
+    controller.Config.Labels["com.docker.compose.project"],
+    config.project,
+  );
+  assert.equal(
+    controller.Config.Labels["com.docker.compose.service"],
+    "agent-controller",
+  );
+  assert(
+    controller.Config.Env.includes(
+      "ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL=1s",
+    ),
+  );
   save("deployment.json", {
     gateway_image: gateway.Image,
     gateway_container: gateway.Id,
     ...settings,
     telemetry_disabled: actual.OTEL_SDK_DISABLED,
     traces_exporter: actual.OTEL_TRACES_EXPORTER,
+    controller_container: controllerID,
+    execution_resync_interval: "1s",
   });
   setDefaultCACertificates([...roots, certificate.ca]);
   await until(
@@ -185,13 +204,33 @@ try {
     signal,
     output,
   });
+  console.log(
+    JSON.stringify({ phase: "verify", check: "identity-warm-outage" }),
+  );
+  const outage = await verifyWarmOutage({
+    config,
+    fixture,
+    settings,
+    signal,
+    output,
+    docker,
+    compose,
+  });
   report = {
     status: "business_passed",
     scenarios: 1,
     verified: ["100-acp-load"],
     pending: ["identity-outage-recovery"],
-    traces: [load],
-    strict_trace: load.strict_trace,
+    traces: [load, ...outage.trace_evidence.reports],
+    warm_outage: {
+      ...outage,
+      trace_evidence: { ...outage.trace_evidence, reports: undefined },
+    },
+    strict_trace:
+      load.strict_trace === "failed" ||
+      outage.trace_evidence.strict_trace === "failed"
+        ? "failed"
+        : "passed",
   };
   save("report.json", report);
 } catch (error) {
