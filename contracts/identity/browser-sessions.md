@@ -101,6 +101,14 @@ Missing local credentials and invalid new-password policy return
 `invalid_argument`. Gateway maps those generic input errors to `invalid_request`
 and preserves cookies for both error classes.
 
+The separately versioned [password verification policy](password-verification.md)
+defines #60's pending persisted attempt admission, shared Argon2 budget and
+retryable 429/503 failures. Its service batches preserve this live Caller,
+expected-password-hash, atomic revocation and replacement-deadline boundary.
+Transparent login rehash does not revoke sessions. The new failure catalog and
+Gateway consumer are activated with their owning implementations, not by this
+shared declaration.
+
 ## Inventory and revocation
 
 The public session `id` is an independently generated opaque reference. It is

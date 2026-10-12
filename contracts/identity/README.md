@@ -12,6 +12,14 @@ stable error codes callers may branch on. `$ref` values address definitions in
 the same JSON document. `error.http_status_by_code` records non-default HTTP
 status mappings; listed error codes without an entry use HTTP 500.
 
+The versioned [password verification policy](password-verification.md) defines
+the pending #60 attempt store, shared Argon2 budget, stored-parameter migration
+and retryable failures. Its [machine-readable contract](password-verification-policy.json)
+is shared first. Identity publishes the active error catalog with its owning
+implementation at revision 17; Gateway and Console consumer batches and real
+integration follow.
+The current revision-16 wire catalog remains unchanged in this shared batch.
+
 Revision 15 defines [browser session lifecycles](browser-sessions.md): separate
 idle and absolute deadlines, explicit activity, password rotation, session
 inventory and revocation, and the Identity-only `session` CCT profile. These

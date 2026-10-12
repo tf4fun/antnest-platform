@@ -1,6 +1,7 @@
 {
   "contract": "antnest.edge-gateway.session",
   "version": 21,
+  "password_verification_policy": "../identity/password-verification-policy.json",
   "session_security": {
     "contract": "session-security.md",
     "secure_cookie_names": ["__Host-antnest_session", "__Host-antnest_csrf"],
