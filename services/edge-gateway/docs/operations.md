@@ -315,6 +315,15 @@ both parent chains. A cancelled shared wait may lack a CLIENT only under the
 explicit `cancelled-before-client` boundary in the [cache contract](../../../contracts/edge-gateway/resolve-cache.md).
 Neither that marker nor unrelated SQL excuses a missing parent (#247).
 
+Every actual session-revocation feed CLIENT records the fixed
+`rpc.method=list_session_revocations`, `rpc.service=identity` and
+`rpc.system.name=antnest.http-json`, including a failed send with no receiver.
+The Identity adapter supplies these fields; URL/header values never select
+them. Feed contents and private cursors remain excluded. Consumers must bind
+this method to the observed outage and the original transport error before
+classifying it. Historical anonymous CLIENT failures remain pending evidence;
+the producer marker alone does not complete feed-outage admission.
+
 The recovery HTTP E2E gate binds the observed logout, password change and
 Membership changes to their actual Gateway/Console/Identity chain and committed
 Identity transaction. Session-feed inserts must match the number of revoked

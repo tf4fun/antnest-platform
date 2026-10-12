@@ -53,6 +53,10 @@ func (t *httpTransport) CloseIdleConnections() {
 func startClient(ctx context.Context, method string, target *url.URL) (context.Context, trace.Span) {
 	ctx, span := otel.Tracer(instrumentationName+"/http").Start(ctx, "HTTP "+method+" "+target.Hostname(), trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(attribute.String("http.request.method", method), attribute.String("server.address", target.Hostname()), attribute.String("url.scheme", target.Scheme))
+	if ctx.Value(identitySessionRevocationsKey{}) == true {
+		span.SetAttributes(attribute.String("rpc.system.name", "antnest.http-json"),
+			attribute.String("rpc.service", "identity"), attribute.String("rpc.method", "list_session_revocations"))
+	}
 	if port, err := strconv.Atoi(target.Port()); err == nil {
 		span.SetAttributes(attribute.Int("server.port", port))
 	}

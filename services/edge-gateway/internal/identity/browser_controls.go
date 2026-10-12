@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 // CurrentAccount is the browser projection. Identity's organization display
@@ -260,6 +261,7 @@ func (client *Client) ListSessionRevocations(ctx context.Context, after int64, l
 		NextSequence *int64              `json:"next_sequence"`
 	}
 	// This workload operation deliberately does not forward a browser CCT.
+	ctx = telemetry.WithIdentitySessionRevocations(ctx)
 	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/list-session-revocations", map[string]any{"after_sequence": after, "limit": limit}, &result)
 	if err != nil {
 		return SessionRevocationPage{}, err
