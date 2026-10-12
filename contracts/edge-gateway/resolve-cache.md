@@ -233,6 +233,17 @@ fixed outcome/profile labels. Tokens, token hashes, private SIDs, CCTs and
 cache keys must not become metric labels or diagnostic log fields. A proof-age
 measurement is not proof of zero replication or event lag.
 
+The owning `ListSessionRevocations` adapter identifies each real feed attempt on
+its existing HTTP CLIENT with fixed `rpc.method=list_session_revocations`,
+`rpc.service=identity` and `rpc.system.name=antnest.http-json`. These attributes
+exist even when sending fails before an Identity SERVER exists. They describe
+the adapter's operation, never inferred URL, header or body data. They add no
+span, content capture, cursor, private SID or token, and preserve actual
+parentage, error and lifetime. A consumer needs this method witness together
+with the actual outage and failure evidence; an anonymous Identity CLIENT is
+not sufficient proof of a failed feed request. Historical traces without the
+witness remain unclassified.
+
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
 under the current HTTP or ACP-message root, ending before any resulting upstream
 admission. Its `antnest.identity.resolve.` attributes include `source` from

@@ -122,6 +122,22 @@ test("session feed catch-up proof requires a fully applied short page, including
   assert.equal(feed.restore_requires_gateway_restart_and_cursor_reset, true);
 });
 
+test("failed feed attempts retain a fixed method on the actual HTTP CLIENT", () => {
+  assert.deepEqual(policy().diagnostics.feed_client, {
+    span: "existing-http-client",
+    attributes: {
+      "rpc.system.name": "antnest.http-json",
+      "rpc.service": "identity",
+      "rpc.method": "list_session_revocations",
+    },
+    source: "owning-protocol-adapter",
+    required_on_send_failure: true,
+    infer_from_url_or_headers: false,
+    capture_content: false,
+    preserve_parent_error_and_lifetime: true,
+  });
+});
+
 test("refresh and shared work preserve cancellation ownership and bounded retries", () => {
   const { work } = policy();
   assert.equal(work.refresh_after_ttl_fraction, 0.5);

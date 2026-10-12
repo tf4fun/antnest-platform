@@ -32,6 +32,14 @@ content capture point just because it is decoded into an object internally.
 Ordinary HTTP proxies do not capture internal RPC payloads, so the same content
 is not copied at every hop.
 
+Gateway's Identity session-revocation adapter records fixed
+`rpc.method=list_session_revocations`, `rpc.service=identity` and
+`rpc.system.name=antnest.http-json` on its existing outbound HTTP CLIENT. The
+method identifies actual attempts including send failures with no receiver;
+the adapter supplies it explicitly, without URL/header inference or additional
+spans. It preserves the original failure and transport lifetime and never
+captures feed content, private SIDs, cursor values or credentials.
+
 ## 2. One Content Switch
 
 ```env

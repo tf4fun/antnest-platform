@@ -164,6 +164,19 @@
     "raw_evidence_required": true
   },
   "diagnostics": {
+    "feed_client": {
+      "span": "existing-http-client",
+      "attributes": {
+        "rpc.system.name": "antnest.http-json",
+        "rpc.service": "identity",
+        "rpc.method": "list_session_revocations"
+      },
+      "source": "owning-protocol-adapter",
+      "required_on_send_failure": true,
+      "infer_from_url_or_headers": false,
+      "capture_content": false,
+      "preserve_parent_error_and_lifetime": true
+    },
     "decision_span": "gateway.identity.resolve",
     "decision_scope": "request-admission",
     "sources": ["rpc", "cache", "shared"],
