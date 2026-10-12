@@ -257,6 +257,16 @@ Identity outage/recovery pending. `ANTNEST_RESOLVE_CACHE_E2E_OUTPUT` selects an
 unused private evidence directory. This load batch is not yet registered as the
 complete Resolve-cache CI suite.
 
+The pending outage flow has local observer coverage in
+`resolve-cache-stream.test.mjs`, `workspace-closeout/c4-cache-model.test.mjs`
+and `lifecycle-closeout/acp.test.mjs`. The model fixture holds two stages of the
+same Run, with fresh text and a settled read between them. The Workspace
+observer validates named SSE events with the production projection decoder,
+retains raw frames without reconnecting, and distinguishes remote closure from
+local cleanup. The ACP helper can negotiate delivery marks and target a cancel
+at the observed Run. These HTTP/socket tests do not establish real Identity
+outage or recovery admission.
+
 Some contract checks can be run directly:
 
 ```sh

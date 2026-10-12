@@ -201,12 +201,20 @@ export function connectOwner(
     get handshakeStatus() {
       return handshakeStatus;
     },
-    cancel: (sessionId) =>
-      connection.agent.notify(acp.methods.agent.session.cancel, { sessionId }),
-    initialize: () =>
+    cancel: (sessionId, expectedRunId) =>
+      connection.agent.notify(acp.methods.agent.session.cancel, {
+        sessionId,
+        ...(expectedRunId === undefined
+          ? {}
+          : {
+              _meta: { "antnest.dev/target-cancel": { expectedRunId } },
+            }),
+      }),
+    initialize: (meta) =>
       request(acp.methods.agent.initialize, {
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {},
+        ...(meta === undefined ? {} : { _meta: meta }),
       }),
     request: (method, params, timeout) =>
       request(acp.methods.agent.session[method], params, timeout),

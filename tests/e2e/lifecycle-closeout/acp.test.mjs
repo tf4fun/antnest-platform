@@ -193,6 +193,80 @@ test("ACP request cancellation includes global abort, not just its own timeout",
   assert.throws(() => requestOptions(60000, abort.signal), /profile stopped/);
 });
 
+test("owner negotiates delivery metadata and sends cancel for the observed Run", async (t) => {
+  const require = createRequire(
+    new URL(
+      "../../../services/agent-acp-service/package.json",
+      import.meta.url,
+    ),
+  );
+  const { WebSocketServer } = require("ws");
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  let client;
+  t.after(async () => {
+    if (client) await client.closeAndWait();
+    for (const socket of server.clients) socket.terminate();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const messages = [];
+  const connected = once(server, "connection");
+  server.on("connection", (socket) =>
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString());
+      messages.push(message);
+      if (message.id !== undefined)
+        socket.send(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: 1,
+              agentCapabilities: {},
+              _meta: message.params._meta,
+            },
+          }),
+        );
+    }),
+  );
+  client = connectOwner(
+    `http://127.0.0.1:${server.address().port}`,
+    "agent",
+    "synthetic-cookie",
+  );
+  const [socket] = await connected;
+  const meta = {
+    "antnest.dev/bridge": {
+      intentReceipt: 1,
+      targetCancel: 1,
+      deliveryMark: 1,
+    },
+  };
+  const initialized = await client.initialize(meta);
+  const cancelled = once(socket, "message");
+  await client.cancel("session", "observed-run");
+  await cancelled;
+  assert.deepEqual(
+    messages.map(({ method, params }) => ({ method, params })),
+    [
+      {
+        method: "initialize",
+        params: { protocolVersion: 1, clientCapabilities: {}, _meta: meta },
+      },
+      {
+        method: "session/cancel",
+        params: {
+          sessionId: "session",
+          _meta: {
+            "antnest.dev/target-cancel": { expectedRunId: "observed-run" },
+          },
+        },
+      },
+    ],
+  );
+  assert.deepEqual(initialized._meta, meta);
+});
+
 test("owner client records the actual upgrade status instead of treating all failures as authorization", async (t) => {
   for (const status of [401, 500]) {
     const server = createServer((_req, res) => {
