@@ -11,6 +11,10 @@ import { fileURLToPath } from "node:url";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { gatewaySessionCookies } from "../../../support/gateway-session-cookies.mjs";
 import { browserSessionChecks } from "./browser-sessions.mjs";
+import {
+  passwordFailures,
+  assertPasswordCaseCounts,
+} from "./password-admission.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-gateway-auth-${randomUUID()}`;
@@ -44,6 +48,15 @@ const hashes = Object.fromEntries(
 );
 hashes["admin-console"].push(createHash("sha256").update(next).digest("hex"));
 const fixture = {
+  passwordFailures: passwordFailures.map(
+    ({ name, status, body, retry, mixedSuccess }) => ({
+      name,
+      status,
+      body,
+      retry,
+      mixedSuccess,
+    }),
+  ),
   ports,
   hashes,
   password: randomBytes(24).toString("base64url"),
@@ -87,6 +100,25 @@ process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 const timer = setTimeout(stop, 600000);
 const docker = dockerClient(env, controller.signal, 600000);
+const recordEvidence = (name, value) =>
+  writeFileSync(
+    resolve(evidence, name),
+    JSON.stringify(value, null, 2) + "\n",
+    { mode: 0o600 },
+  );
+const readPasswordEvidence = async () =>
+  JSON.parse(
+    await docker([
+      ...compose,
+      "exec",
+      "-T",
+      "dependencies",
+      "node",
+      "--input-type=module",
+      "-e",
+      "import {readFileSync} from 'node:fs'; const token=readFileSync('/run/auth/outgoing/identity-service','utf8'); const r=await fetch('http://127.0.0.1:8101/__fixture/password-evidence',{headers:{'Antnest-Service-Authorization':'Bearer '+token},signal:AbortSignal.timeout(5000)}); if(!r.ok) throw Error('evidence unavailable'); console.log(JSON.stringify(await r.json()));",
+    ]),
+  );
 let complete = false,
   cleaned = false,
   checks = 0;
@@ -263,6 +295,8 @@ try {
   writeFileSync(consoleFile, next, { mode: 0o600 });
   await request("/api/admin/agents");
   checks += await browserSessionChecks({
+    readPasswordEvidence,
+    recordEvidence,
     url,
     origin: publicOrigin,
     fixture,
@@ -300,6 +334,9 @@ try {
   const [stopped] = JSON.parse(await docker(["inspect", id]));
   assert.equal(stopped.Config.Labels["com.docker.compose.project"], project);
   assert.equal(stopped.State.ExitCode, 0);
+  const passwordEvidence = await readPasswordEvidence();
+  assertPasswordCaseCounts(passwordEvidence);
+  recordEvidence("password-admission-after-stop.json", passwordEvidence);
   checks++;
   complete = true;
 } finally {

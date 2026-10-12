@@ -222,6 +222,9 @@ func (h *handler) browserAdmissionError(ctx context.Context, principal identity.
 }
 
 func (h *handler) writeBrowserIdentityError(response http.ResponseWriter, err error, password bool) error {
+	if password && writePasswordAdmissionError(response, err) {
+		return err
+	}
 	switch {
 	case identity.IsCode(err, "unauthenticated"), identity.IsCode(err, "inactive_principal"), identity.IsCode(err, "caller_context_invalid"), identity.IsCode(err, "caller_context_required"):
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")

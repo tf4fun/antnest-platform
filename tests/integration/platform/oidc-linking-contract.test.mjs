@@ -412,7 +412,7 @@ test("Console declares a limited Provider chooser and current-organization bindi
 
 test("shared revisions and typed binding failures are explicit", () => {
   assert.equal(identity.revision, 17);
-  assert.equal(gateway.version, 21);
+  assert.equal(gateway.version, 22);
   assert.equal(admin.version, 52);
   assert.equal(identity.oidc_linking_contract, "oidc-linking.md");
   for (const code of [

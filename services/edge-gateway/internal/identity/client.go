@@ -332,15 +332,24 @@ func (client *Client) doRequestWithCaller(ctx context.Context, method string, ta
 	defer func() { _ = response.Body.Close() }()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	if err != nil {
+		if passwordRPC(target.Path) {
+			return invalidPasswordFailure()
+		}
 		return fmt.Errorf("read identity response: %w", err)
 	}
 	if len(payload) > maximumResponseBytes {
 		return fmt.Errorf("identity response exceeds limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if passwordRPC(target.Path) {
+			return decodePasswordFailure(response.StatusCode, response.Header, payload)
+		}
 		remote := &RemoteError{StatusCode: response.StatusCode, Code: "identity_error", Message: "Identity request failed"}
 		_ = json.Unmarshal(payload, remote)
 		return remote
+	}
+	if passwordRPC(target.Path) && !validPasswordSuccess(payload) {
+		return invalidPasswordFailure()
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		return nil

@@ -19,7 +19,7 @@ Do not restart into an intermediate configuration or change receiver origins
 through browser inputs. Public listener TLS uses a separate certificate and key;
 it does not reuse internal workload credentials.
 
-Deploy Identity revision 16 before Gateway revision 21. Its required session
+Deploy Identity revision 17 before Gateway revision 22. Its required session
 metadata, account/session RPCs, external identity list/unbind/notice RPCs and
 private revocation feed must be available. The three new self routes preserve
 cookies on success and failure; after unbinding the current session, the next
@@ -31,6 +31,16 @@ the reference proxy, including session retirement without Agent offboarding.
 Identity policy defaults to a
 30-minute idle deadline and a 12-hour absolute deadline; ordinary traffic does
 not renew either. See the [session lifecycle contract](../../../contracts/identity/browser-sessions.md).
+
+For login and password changes, `429 credential_rate_limited` means Identity's
+persisted attempt backoff applies; `503 credential_busy` means its bounded
+password capacity could not admit work. Both preserve the browser session and
+carry one validated seconds value in `Retry-After`, with `retryable: true` and
+`Cache-Control: no-store`. Gateway does not retry the operation. Malformed
+upstream failure metadata returns generic `503 identity_unavailable` without
+a retry hint. The existing edge `login_rate_limited` is a separate prefilter.
+Console user creation and the final coordinated #60 deployment gate remain
+pending; the Gateway consumer alone does not establish that workflow.
 
 | Variable                                  | Required                       | Default               | Description                                                                                                 |
 | ----------------------------------------- | ------------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------- |

@@ -21,12 +21,19 @@ type browserRPCRecord struct {
 	Body map[string]any
 }
 
+type browserRPCFailure struct {
+	status     int
+	body       string
+	retryAfter []string
+}
+
 type browserControlFixture struct {
 	mu        sync.Mutex
 	records   []browserRPCRecord
 	status    map[string]int
 	code      map[string]string
 	replies   map[string]string
+	failures  map[string]browserRPCFailure
 	handler   http.Handler
 	now       time.Time
 	principal identity.Principal
@@ -34,7 +41,7 @@ type browserControlFixture struct {
 
 func newBrowserControlFixture(t *testing.T) *browserControlFixture {
 	t.Helper()
-	f := &browserControlFixture{now: time.Now().UTC().Truncate(time.Second), status: map[string]int{}, code: map[string]string{}, replies: map[string]string{}}
+	f := &browserControlFixture{now: time.Now().UTC().Truncate(time.Second), status: map[string]int{}, code: map[string]string{}, replies: map[string]string{}, failures: map[string]browserRPCFailure{}}
 	f.principal = ordinaryPrincipal()
 	f.principal.ExpiresAt, f.principal.IdleExpiresAt = f.now.Add(12*time.Hour), f.now.Add(30*time.Minute)
 	f.principal.ActivityIntervalMS = 30000
@@ -51,7 +58,19 @@ func newBrowserControlFixture(t *testing.T) *browserControlFixture {
 		f.mu.Lock()
 		f.records = append(f.records, browserRPCRecord{Path: path, Body: body})
 		status, code := f.status[path], f.code[path]
+		failure, failed := f.failures[path]
 		f.mu.Unlock()
+		if failed {
+			for _, value := range failure.retryAfter {
+				w.Header().Add("Retry-After", value)
+			}
+			w.Header().Set("Set-Cookie", "private-upstream-cookie=private-authority; Path=/")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(failure.status)
+			_, _ = w.Write([]byte(failure.body))
+			return
+		}
 		if status != 0 {
 			writeJSON(w, status, map[string]any{"code": code, "message": "private internal detail", "retryable": status >= 500})
 			return

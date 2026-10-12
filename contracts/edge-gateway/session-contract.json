@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 21,
+  "version": 22,
   "password_verification_policy": "../identity/password-verification-policy.json",
   "session_security": {
     "contract": "session-security.md",
@@ -57,7 +57,13 @@
         "idle_expires_at",
         "activity_interval_ms"
       ],
-      "response_schema": "session-response.schema.json#/$defs/login"
+      "response_schema": "session-response.schema.json#/$defs/login",
+      "password_failure_schema": "session-response.schema.json#/$defs/password_failure",
+      "error_status_by_code": {
+        "credential_busy": 503,
+        "credential_rate_limited": 429
+      },
+      "retry_after_policy": "../identity/password-verification-policy.json#/wire"
     },
     "login_methods": {
       "method": "POST",
@@ -329,7 +335,13 @@
       "response_schema": "session-response.schema.json#/$defs/password_rotation",
       "request_schema": "session-response.schema.json#/$defs/password_request",
       "csrf": "required",
-      "origin": "shared origin_admission"
+      "origin": "shared origin_admission",
+      "password_failure_schema": "session-response.schema.json#/$defs/password_failure",
+      "error_status_by_code": {
+        "credential_busy": 503,
+        "credential_rate_limited": 429
+      },
+      "retry_after_policy": "../identity/password-verification-policy.json#/wire"
     },
     "session_activity": {
       "method": "POST",
@@ -464,7 +476,9 @@
       "agent_unavailable",
       "invalid_current_password",
       "external_identity_last_method",
-      "not_found"
+      "not_found",
+      "credential_busy",
+      "credential_rate_limited"
     ]
   },
   "service_authentication": {

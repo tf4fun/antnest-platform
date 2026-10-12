@@ -4,9 +4,9 @@ Gateway session revision 21 defines the positive Resolve cache for
 [#59](https://github.com/tf4fun/antnest-platform/issues/59). The machine-readable
 limits are in [resolve-cache-policy.json](resolve-cache-policy.json), policy
 revision 2. The `resolve-access-token` and `list-session-revocations` wire
-schemas from Identity revision 16 remain unchanged in revision 17. The updated
-compatible catalog reference does not activate Gateway's pending #60
-password-resource response handling, which requires its own consumer batch.
+schemas from Identity revision 16 remain unchanged in revision 17. Gateway
+session revision 22 retains this cache policy and adds the separately scoped
+[password failure consumer](../identity/password-verification.md).
 
 ## Scope and authority
 

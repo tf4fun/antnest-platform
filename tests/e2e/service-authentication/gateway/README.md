@@ -12,6 +12,16 @@ classification, password cookie/CSRF rotation with inherited absolute expiry,
 old-session rejection and the explicit logout matrix. Ordinary and upstream
 responses cannot overwrite session cookies.
 
+The revision 22 password matrix exercises both real Gateway entry points with
+validated busy/rate failures and malformed status, body and Retry-After values.
+Authenticated private counters prove exactly one owning RPC per case, no session
+issuance, rotation or revocation, continued use of the original cookie and later
+successful login/password rotation. Case counts are checked again after Gateway
+stops. These receipts contain counts only and stay in private evidence; the
+fixture control endpoint has no published port. The original edge login limit
+remains enabled. Real Identity accounting and final #60 HTTPS integration are
+separate admissions.
+
 The external identity flow covers independent binding/notice pagination,
 cross-organization self entries, immutable historical notice fields, exact opaque
 subjects, explicit per-ID acknowledgment and idempotent zero counts. It checks

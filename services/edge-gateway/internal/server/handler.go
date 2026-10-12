@@ -859,6 +859,9 @@ func parseServiceURL(raw string) (*url.URL, error) {
 }
 
 func (h *handler) writeIdentityError(response http.ResponseWriter, err error) {
+	if writePasswordAdmissionError(response, err) {
+		return
+	}
 	switch {
 	case identity.IsCode(err, "unauthenticated"), identity.IsCode(err, "inactive_principal"):
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Email or password is incorrect")

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { gatewaySessionCookies } from "../../../support/gateway-session-cookies.mjs";
 import { externalIdentityChecks } from "./external-identities.mjs";
+import { passwordAdmissionChecks } from "./password-admission.mjs";
 
 // Exercise the real Gateway against the authenticated Identity wire double.
 // Producer transactions and real browser generations have separate admissions.
@@ -12,6 +13,8 @@ export async function browserSessionChecks({
   fixture,
   signal,
   initial,
+  readPasswordEvidence,
+  recordEvidence,
 }) {
   let checks = 0;
   function jar(headers) {
@@ -222,6 +225,14 @@ export async function browserSessionChecks({
   }
   await request("/api/session", { session: other, status: 401 });
   await request("/api/session");
+
+  checks += await passwordAdmissionChecks({
+    request,
+    login,
+    fixture,
+    readEvidence: readPasswordEvidence,
+    recordEvidence,
+  });
 
   const wrong = (
     await request("/api/session/password", {

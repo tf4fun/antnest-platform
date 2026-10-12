@@ -51,6 +51,63 @@ test("Identity's active catalog publishes both password admission failures", () 
   }
 });
 
+test("Gateway revision 22 publishes password failures only on login and password change", () => {
+  assert.equal(gateway.version, 22);
+  for (const name of ["login", "change_password"]) {
+    const route = gateway.routes[name];
+    assert.equal(
+      route.password_failure_schema,
+      "session-response.schema.json#/$defs/password_failure",
+    );
+    assert.deepEqual(route.error_status_by_code, {
+      credential_busy: 503,
+      credential_rate_limited: 429,
+    });
+    assert.equal(
+      route.retry_after_policy,
+      "../identity/password-verification-policy.json#/wire",
+    );
+  }
+  for (const code of [
+    "credential_busy",
+    "credential_rate_limited",
+    "login_rate_limited",
+  ]) {
+    assert(gateway.error.codes.includes(code), code);
+  }
+});
+
+test("Gateway's public password failure body enforces code/message pairs and excludes headers and secrets", () => {
+  const schema = read("edge-gateway/session-response.schema.json").$defs
+    .password_failure;
+  assert(schema, "password failure schema is missing");
+  const validate = new Ajv2020({ strict: true }).compile(schema);
+  for (const code of ["credential_busy", "credential_rate_limited"]) {
+    const { body } = failure(code);
+    assert.equal(validate(body), true);
+    for (const candidate of [
+      { ...body, code: "identity_unavailable" },
+      {
+        ...body,
+        message:
+          code === "credential_busy"
+            ? "Too many password attempts"
+            : "Password verification is busy",
+      },
+      { ...body, retryable: false },
+      { ...body, retryable: null },
+      { ...body, retry_after: "1" },
+      { ...body, access_token: "private-token" },
+    ])
+      assert.equal(validate(candidate), false);
+    for (const key of ["code", "message", "retryable"]) {
+      const candidate = { ...body };
+      delete candidate[key];
+      assert.equal(validate(candidate), false);
+    }
+  }
+});
+
 test("account and organization counters cover login and current-password verification", () => {
   const { scopes, operations } = policy().attempts;
   assert.deepEqual(Object.keys(scopes).sort(), [

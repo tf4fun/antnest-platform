@@ -256,7 +256,7 @@ func TestWorkspaceStateMachineContractMatchesPublicResponses(t *testing.T) {
 	if err := json.Unmarshal(payload, &contract); err != nil {
 		t.Fatal(err)
 	}
-	if contract.Version != 21 {
+	if contract.Version != 22 {
 		t.Fatalf("version=%d", contract.Version)
 	}
 	for _, name := range []string{"workspace_state", "workspace_state_watch"} {
