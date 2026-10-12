@@ -282,7 +282,9 @@ and the same disabled Agent readback within the observed recovery window. A
 generic disconnect near a membership mutation is insufficient. The ACP
 execution-state watch additionally requires the producer's `process-shutdown`
 witness. Scan actual view traces rather than assigning a fixed number of watches
-to each view, because a view may reuse an existing connection. Extra errors,
+to each view, because a view may reuse an existing connection. Each observed
+post-restart watch needs its own offboarding or final-drain evidence; all may
+close on proved offboarding before the UI drain begins. Extra errors,
 missing ancestry or archives, local closure and unrelated shutdowns are not
 covered. Every claim names one original trace/span; raw diagnostics stay strict.
 

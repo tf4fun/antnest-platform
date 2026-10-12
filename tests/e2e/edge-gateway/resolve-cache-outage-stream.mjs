@@ -11,6 +11,7 @@ import {
   databaseChildrenTopology,
 } from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
+import { inspectRecoveryHTTP } from "./resolve-cache-recovery-http.mjs";
 
 const one = (rows, message) => {
   assert.equal(rows.length, 1, message);
@@ -210,7 +211,12 @@ function transition(evidence, row, service, restart) {
   };
 }
 
-export function inspectOutageStreams(evidence, collection, secrets = []) {
+export function inspectOutageStreams(
+  evidence,
+  collection,
+  secrets = [],
+  { inspectRecovery = inspectRecoveryHTTP } = {},
+) {
   assert.equal(evidence.settings.resolveTTLMS, 10000);
   assert.equal(evidence.settings.captureRpcContent, false);
   const get = (id) => {
@@ -483,6 +489,66 @@ export function inspectOutageStreams(evidence, collection, secrets = []) {
     streamItems.every((s) => s.stream.closure.at < drain.started_at),
     "UI drained before public closure",
   );
+  let offboarding;
+  const offboardingCase = () => {
+    if (offboarding) return offboarding;
+    // Reuse the complete recovery gate: real HTTP responses, committed Identity
+    // mutation/SQL/feed evidence, cancellation and the disabled Agent readback.
+    // A close marker alone cannot establish that offboarding actually happened.
+    const proof = inspectRecovery(evidence, collection, secrets);
+    assert.equal(proof.status, "passed", "offboarding recovery not proved");
+    const receipt = one(
+      proof.mutations.filter((m) => m.action === "deactivate"),
+      "one actual offboarding mutation required",
+    );
+    const c = cases[3];
+    assert.equal(receipt.trace_id, c.mutation.trace_id);
+    const trace = get(receipt.trace_id),
+      tree = traceTopology(trace),
+      server = tree.spans.get(receipt.identity_server_span_id),
+      transaction = tree.spans.get(receipt.transaction_span_id);
+    assert(server && transaction, "offboarding receipt source missing");
+    assert.equal(tree.service(server), "identity-service");
+    assert.equal(tag(server, "span.kind"), "server");
+    assert.equal(tag(server, "http.route"), "/rpc/identity/update-membership");
+    assert.equal(tag(server, "rpc.method"), "update_membership");
+    assert.equal(tag(server, "http.response.status_code"), 200);
+    assert.equal(tree.parent(transaction), server);
+    assert.equal(tree.service(transaction), "identity-service");
+    assert.equal(transaction.operationName, "postgresql transaction");
+    assert.equal(tag(transaction, "antnest.transaction.outcome"), "committed");
+    const principal = c.login.body.principal,
+      member = c.mutation.body.membership,
+      disabled = c.disabled_agent;
+    assert.equal(member.id, principal.membership_id);
+    assert.equal(member.user_id, principal.user_id);
+    assert.equal(member.active, false);
+    sameHTTP(disabled);
+    assert.equal(
+      disabled.path,
+      `/api/admin/agents/${encodeURIComponent(evidence.agent_id)}`,
+    );
+    assert.equal(disabled.method, "GET");
+    assert.equal(disabled.status, 200);
+    for (const [key, value] of Object.entries({
+      agent_id: evidence.agent_id,
+      owner_user_id: principal.user_id,
+      desired_state: "disabled",
+      lifecycle_state: "created",
+      activation_state: "disabled",
+      runtime_state: "absent",
+    }))
+      assert.equal(disabled.body[key], value);
+    [disabled.started_at, disabled.at].forEach(finite);
+    assert(
+      disabled.started_at >= c.mutation.at &&
+        disabled.at >= disabled.started_at &&
+        disabled.at < drain.started_at,
+      "disabled readback outside actual offboarding",
+    );
+    offboarding = c;
+    return c;
+  };
   const views = [
     {
       row: byLabel("prep-view"),
@@ -490,18 +556,21 @@ export function inspectOutageStreams(evidence, collection, secrets = []) {
       session: evidence.session_id,
       lifecycle: acp,
       prep: true,
+      principal: prepLogin.body.principal,
     },
     ...["warm-workspace-view", "recovered-workspace-view"].map((label) => ({
       row: byLabel(label),
       scope: warmScope,
       session: evidence.session_id,
       lifecycle: drain,
+      principal: warmLogin.body.principal,
     })),
     ...cases.map((c, i) => ({
       row: c.initial_view,
       scope: scopes[i],
       session: c.session_id,
       lifecycle: drain,
+      principal: c.login.body.principal,
     })),
   ];
   assert.equal(
@@ -544,29 +613,78 @@ export function inspectOutageStreams(evidence, collection, secrets = []) {
       );
       const finished = end(span);
       assert(
-        finished >= b.interval.lower(v.lifecycle.started_at) &&
-          finished <
-            Math.min(
-              b.interval.upper(v.lifecycle.after.at),
-              v.lifecycle.finished_upper,
-            ),
+        finished <
+          Math.min(
+            b.interval.upper(v.lifecycle.after.at),
+            v.lifecycle.finished_upper,
+          ),
         "watch outside actual normal termination",
       );
       let reason;
+      const normalTermination = () =>
+        assert(
+          finished >= b.interval.lower(v.lifecycle.started_at),
+          "watch before actual normal termination without close witness",
+        );
       if (tag(span, "http.route") === "/v1/acp") {
         assert.equal(span.operationName, "HTTP GET /v1/acp");
         assert.equal(tag(span, "http.request.method"), "GET");
         for (const key of ["rpc.method", "rpc.service", "rpc.system.name"])
           assert.equal(tag(span, key), undefined);
-        diagnostics(span, {
+        const expected = {
           ...error,
           "error.type": "stream_interrupted",
           "antnest.outcome": "disconnected",
-        });
-        reason = v.prep
-          ? "internal-acp-restart-disconnect"
-          : "internal-ui-drain-disconnect";
+        };
+        const marker = (span.logs ?? []).find((log) =>
+          log.fields?.some(
+            (f) =>
+              f.key === "event" && f.value === "antnest.stream.termination",
+          ),
+        );
+        if (marker) {
+          assert(!v.prep, "preparation watch cannot claim later offboarding");
+          const c = offboardingCase(),
+            source = values(marker.fields).source;
+          assert(
+            ["session-output", "learning-notice", "permission"].includes(
+              source,
+            ),
+            "unknown access-denial close source",
+          );
+          for (const key of ["user_id", "membership_id", "organization_id"]) {
+            assert(
+              c.login.body.principal[key],
+              "offboarding principal missing",
+            );
+            assert.equal(
+              v.principal?.[key],
+              c.login.body.principal[key],
+              "watch belongs to another offboarded principal",
+            );
+          }
+          diagnostics(span, expected, {
+            event: "antnest.stream.termination",
+            reason: "access_denied",
+            "error.type": "DomainError",
+            source,
+            "antnest.agent.id": evidence.agent_id,
+            "antnest.organization.id": v.principal.organization_id,
+          });
+          assert(
+            marker.timestamp >= b.interval.lower(c.mutation.started_at),
+            "access-denial close before actual offboarding mutation",
+          );
+          reason = "internal-offboarding-access-denied";
+        } else {
+          normalTermination();
+          diagnostics(span, expected);
+          reason = v.prep
+            ? "internal-acp-restart-disconnect"
+            : "internal-ui-drain-disconnect";
+        }
       } else {
+        normalTermination();
         assert(v.prep, "shutdown witness belongs to preparation view");
         assert.equal(
           span.operationName,
@@ -620,8 +738,13 @@ export function inspectOutageStreams(evidence, collection, secrets = []) {
     "actual ACP restart watch missing",
   );
   assert(
-    watches.some((w) => w.reason === "internal-ui-drain-disconnect"),
-    "actual UI drain watch missing",
+    watches.some((w) =>
+      [
+        "internal-ui-drain-disconnect",
+        "internal-offboarding-access-denied",
+      ].includes(w.reason),
+    ),
+    "actual post-restart watch close missing",
   );
   assert(
     watches.some((w) => w.reason === "internal-acp-normal-shutdown"),

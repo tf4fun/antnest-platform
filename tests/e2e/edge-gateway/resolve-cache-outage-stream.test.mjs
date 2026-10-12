@@ -351,7 +351,8 @@ function fixture() {
     parts,
   };
 }
-const check = (f, secrets = []) => inspectOutageStreams(f.evidence, f, secrets);
+const check = (f, secrets = [], options) =>
+  inspectOutageStreams(f.evidence, f, secrets, options);
 test("stream claims bind five remote retirements and actual retained internal watches without changing raw errors", () => {
   const f = fixture(),
     before = structuredClone(f.traces),
@@ -778,4 +779,298 @@ for (const kind of ["claimed-error", "cancelled-read"])
         : benignTelemetry(f, kind);
     setTag(s, "http.transport.outcome", "error");
     assert.throws(() => check(f));
+  });
+
+function offboardingFixture(source = "session-output") {
+  const f = fixture(),
+    c = f.evidence.recovery.cases[3],
+    traceID = "b".repeat(32);
+  c.mutation.trace_id = traceID;
+  c.mutation.body = {
+    membership: { id: "member", user_id: "user", role: "admin", active: false },
+  };
+  c.disabled_agent = {
+    label: "disabled-agent",
+    trace_id: "c".repeat(32),
+    path: "/api/admin/agents/agent",
+    method: "GET",
+    status: 200,
+    started_at: 26500,
+    at: 26600,
+    body: {
+      agent_id: "agent",
+      owner_user_id: "user",
+      desired_state: "disabled",
+      lifecycle_state: "created",
+      activation_state: "disabled",
+      runtime_state: "absent",
+    },
+  };
+  f.evidence.http.push(c.disabled_agent);
+  const server = {
+    traceID,
+    spanID: "identity-offboarding",
+    processID: "identity",
+    operationName: "HTTP POST /rpc/identity/update-membership",
+    startTime: (epoch + 25010) * 1000,
+    duration: 50000,
+    references: [],
+    logs: [],
+    tags: fields({
+      "span.kind": "server",
+      "http.request.method": "POST",
+      "http.route": "/rpc/identity/update-membership",
+      "http.response.status_code": 200,
+      "rpc.method": "update_membership",
+    }),
+  };
+  const transaction = {
+    ...structuredClone(server),
+    spanID: "offboarding-transaction",
+    operationName: "postgresql transaction",
+    startTime: server.startTime + 1000,
+    duration: 40000,
+    references: [{ refType: "CHILD_OF", traceID, spanID: server.spanID }],
+    tags: fields({
+      "span.kind": "internal",
+      "db.system.name": "postgresql",
+      "antnest.transaction.outcome": "committed",
+    }),
+  };
+  f.traces.set(traceID, {
+    traceID,
+    processes: { identity: { serviceName: "identity-service" } },
+    spans: [server, transaction],
+  });
+  f.archivedTraceIDs.add(traceID);
+  f.proof = {
+    status: "passed",
+    mutations: [
+      {
+        action: "deactivate",
+        trace_id: traceID,
+        identity_server_span_id: server.spanID,
+        transaction_span_id: transaction.spanID,
+      },
+    ],
+  };
+  f.proofCalls = 0;
+  // Isolate the stream consumer from the independently tested full recovery
+  // inspector. The default-path test below requires that real inspector.
+  f.options = {
+    inspectRecovery(evidence, collection, secrets) {
+      assert.equal(evidence, f.evidence);
+      assert.equal(collection, f);
+      assert.deepEqual(secrets, ["private-canary"]);
+      f.proofCalls++;
+      return f.proof;
+    },
+  };
+  f.mark = (s, finish = 26000) => {
+    s.duration = (epoch + finish) * 1000 - s.startTime;
+    s.logs = [
+      {
+        timestamp: end(s) - 1,
+        fields: fields({
+          event: "antnest.stream.termination",
+          reason: "access_denied",
+          "error.type": "DomainError",
+          source,
+          "antnest.agent.id": "agent",
+          "antnest.organization.id": "org",
+        }),
+      },
+    ];
+  };
+  f.close = f.parts["warm-workspace-view"].watches[0];
+  f.mark(f.close);
+  f.transaction = transaction;
+  return f;
+}
+const checkOffboarding = (f) => check(f, ["private-canary"], f.options);
+for (const source of ["session-output", "learning-notice", "permission"])
+  test(`offboarding ${source} close requires original cause and actual recovery proof`, () => {
+    const f = offboardingFixture(source),
+      before = structuredClone({ evidence: f.evidence, traces: f.traces }),
+      result = checkOffboarding(f);
+    assert.equal(result.status, "passed");
+    assert.equal(result.owned_error_spans.length, 19);
+    assert.equal(result.error_spans, 20);
+    assert.equal(result.strict_trace, "failed");
+    assert.equal(f.proofCalls, 1);
+    assert.deepEqual(
+      result.internal_watches.find(
+        (s) => s.trace_id === f.close.traceID && s.span_id === f.close.spanID,
+      ),
+      {
+        trace_id: f.close.traceID,
+        span_id: f.close.spanID,
+        reason: "internal-offboarding-access-denied",
+      },
+    );
+    assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+  });
+test("all retained watches may close on proved offboarding before the final UI drain", () => {
+  const f = offboardingFixture();
+  for (const [name, p] of Object.entries(f.parts))
+    if (name !== "prep-view") for (const s of p.watches) f.mark(s);
+  const result = checkOffboarding(f);
+  assert.equal(
+    result.internal_watches.filter(
+      (s) => s.reason === "internal-offboarding-access-denied",
+    ).length,
+    6,
+  );
+  assert(
+    !result.internal_watches.some(
+      (s) => s.reason === "internal-ui-drain-disconnect",
+    ),
+  );
+  assert.equal(f.proofCalls, 1);
+});
+test("production default rejects incomplete real offboarding evidence", () => {
+  const f = offboardingFixture();
+  // The isolated fixture lacks full recovery RPC/SQL/business observations.
+  // Its marker alone must never admit the close via the production entry point.
+  assert.throws(() => check(f));
+});
+const eventValue = (f, key, value) => {
+  f.close.logs[0].fields.find((r) => r.key === key).value = value;
+};
+for (const [name, change] of [
+  [
+    "missing original marker",
+    (f) => {
+      f.close.logs = [];
+    },
+  ],
+  ["foreign Agent", (f) => eventValue(f, "antnest.agent.id", "other")],
+  [
+    "foreign organization",
+    (f) => eventValue(f, "antnest.organization.id", "other"),
+  ],
+  ["generic error", (f) => eventValue(f, "error.type", "Error")],
+  ["unknown close source", (f) => eventValue(f, "source", "unknown")],
+  [
+    "different close reason",
+    (f) => eventValue(f, "reason", "connection_closed"),
+  ],
+  [
+    "duplicate marker",
+    (f) => f.close.logs.push(structuredClone(f.close.logs[0])),
+  ],
+  [
+    "extra marker field",
+    (f) =>
+      f.close.logs[0].fields.push({ key: "message", value: "private-canary" }),
+  ],
+  [
+    "duplicate marker field",
+    (f) =>
+      f.close.logs[0].fields.push({ key: "reason", value: "access_denied" }),
+  ],
+  [
+    "late marker",
+    (f) => {
+      f.close.logs[0].timestamp = end(f.close) + 1;
+    },
+  ],
+  ["close before actual mutation", (f) => f.mark(f.close, 24000)],
+  [
+    "marker before actual mutation",
+    (f) => {
+      f.close.logs[0].timestamp = (epoch + 24000) * 1000;
+    },
+  ],
+  ["close after UI termination", (f) => f.mark(f.close, 29000)],
+  ["preparation close", (f) => f.mark(f.parts["prep-view"].watches[0], 1890)],
+  [
+    "unproved recovery",
+    (f) => {
+      f.proof.status = "pending";
+    },
+  ],
+  [
+    "missing mutation proof",
+    (f) => {
+      f.proof.mutations = [];
+    },
+  ],
+  [
+    "foreign mutation proof",
+    (f) => {
+      f.proof.mutations[0].trace_id = "e".repeat(32);
+    },
+  ],
+  [
+    "missing mutation archive",
+    (f) => f.archivedTraceIDs.delete(f.proof.mutations[0].trace_id),
+  ],
+  [
+    "missing actual transaction",
+    (f) => {
+      f.proof.mutations[0].transaction_span_id = "missing";
+    },
+  ],
+  [
+    "uncommitted transaction",
+    (f) => setTag(f.transaction, "antnest.transaction.outcome", "rolled_back"),
+  ],
+  [
+    "different view principal",
+    (f) => {
+      f.evidence.recovery.cases[0].login.body = {
+        principal: {
+          user_id: "other",
+          membership_id: "member",
+          organization_id: "org",
+        },
+      };
+      f.mark(f.parts["logout-view"].watches[0]);
+    },
+  ],
+  [
+    "missing actual disabled readback",
+    (f) => {
+      f.evidence.http = f.evidence.http.filter(
+        (r) => r !== f.evidence.recovery.cases[3].disabled_agent,
+      );
+    },
+  ],
+  [
+    "foreign disabled Agent",
+    (f) => {
+      f.evidence.recovery.cases[3].disabled_agent.body.agent_id = "other";
+    },
+  ],
+  [
+    "foreign Agent owner",
+    (f) => {
+      f.evidence.recovery.cases[3].disabled_agent.body.owner_user_id = "other";
+    },
+  ],
+  [
+    "Agent still enabled",
+    (f) => {
+      f.evidence.recovery.cases[3].disabled_agent.body.activation_state =
+        "active";
+    },
+  ],
+  [
+    "failed disabled readback",
+    (f) => {
+      f.evidence.recovery.cases[3].disabled_agent.status = 503;
+    },
+  ],
+  [
+    "disabled readback before mutation",
+    (f) => {
+      f.evidence.recovery.cases[3].disabled_agent.started_at = 24000;
+    },
+  ],
+])
+  test(`offboarding stream rejects ${name}`, () => {
+    const f = offboardingFixture();
+    change(f);
+    assert.throws(() => checkOffboarding(f));
   });
