@@ -203,6 +203,7 @@ function archiveHarness(
         inspectAuthority,
         inspectRejections,
         inspectFeed: () => ({ status: "passed", owned_error_spans: [] }),
+        inspectStreams: () => ({ status: "passed", owned_error_spans: [] }),
         ...recoveryInspectors,
         wait: async () => {},
         search: async (_base, query) => {
@@ -460,6 +461,63 @@ for (const failed of [false, true])
       );
     }
     assert(existsSync(join(h.root, "outage-traces", `${id(1)}.json`)));
+  });
+
+for (const mode of ["passed", "throws", "pending", "missing-claims"])
+  test(`stream gate ${mode} preserves raw archive and exact claims`, async (t) => {
+    let called = false;
+    const claims = [
+      {
+        trace_id: id(11),
+        span_id: "1234567890abcdef",
+        reason: "public-sse-revoked-handler",
+      },
+    ];
+    const h = archiveHarness(
+      t,
+      (s) => {
+        withOutageChat(s);
+        s.evidence.recovery_window = { status: "passed" };
+      },
+      undefined,
+      undefined,
+      {
+        inspectRecovery: () => ({ status: "passed" }),
+        inspectRecoveryBudgets: () => ({ status: "passed" }),
+        inspectRecoveryHTTP: () => ({
+          status: "passed",
+          owned_error_spans: [],
+        }),
+        async inspectStreams(evidence, collection, secrets) {
+          assert(evidence.recovery_window);
+          assert.deepEqual(secrets, ["private-canary"]);
+          assert(collection.traces.size > 0);
+          for (const traceID of collection.traces.keys())
+            assert(collection.archivedTraceIDs.has(traceID));
+          await Promise.resolve();
+          called = true;
+          if (mode === "throws") throw new Error("wrong stream ownership");
+          if (mode === "missing-claims") return { status: "passed" };
+          return { status: mode, owned_error_spans: claims };
+        },
+      },
+    );
+    if (mode === "passed") await h.archive();
+    else await assert.rejects(h.archive(), AggregateError);
+    assert(called, "stream inspector not awaited");
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(
+      report.owning_gates.stream.status,
+      mode === "passed" ? "passed" : "pending",
+    );
+    assert.equal(report.owning_gates.cancellation.status, "passed");
+    assert.equal(report.strict_trace, "failed");
+    if (mode === "passed")
+      assert.deepEqual(report.owning_gates.stream.owned_error_spans, claims);
+    else assert.equal(report.status, "archive_failed");
+    assert(existsSync(join(h.root, "outage-traces", `${id(11)}.json`)));
   });
 
 test("outage archive invokes the owning cancellation inspector with actual model and audit observations", async (t) => {

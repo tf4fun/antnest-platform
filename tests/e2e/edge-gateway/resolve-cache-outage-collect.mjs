@@ -15,6 +15,7 @@ import { inspectRecoveryRunTraces } from "./resolve-cache-recovery-trace.mjs";
 import { inspectRecoveryAuthority } from "./resolve-cache-recovery-authority.mjs";
 import { inspectRecoveryHTTP as inspectRecoveryHTTPTraces } from "./resolve-cache-recovery-http.mjs";
 import { inspectOutageFeed } from "./resolve-cache-outage-feed.mjs";
+import { inspectOutageStreams } from "./resolve-cache-outage-stream.mjs";
 
 export function outageChatExpectation(evidence) {
   const observation = evidence.model_cancelled;
@@ -163,6 +164,7 @@ export async function collectOutageTraceArchive(
     inspectRecoveryBudgets = inspectRecoveryAuthority,
     inspectRecoveryHTTP = inspectRecoveryHTTPTraces,
     inspectFeed = inspectOutageFeed,
+    inspectStreams = inspectOutageStreams,
   },
 ) {
   await wait(12000, undefined, { signal });
@@ -361,6 +363,7 @@ export async function collectOutageTraceArchive(
     recoveryAuthority = { status: "pending" },
     recoveryHTTP = { status: "pending" },
     feed = { status: "pending" },
+    stream = { status: "pending" },
     collection;
   if (evidence.business_window) {
     try {
@@ -450,6 +453,22 @@ export async function collectOutageTraceArchive(
     } catch (error) {
       errors.push(error);
     }
+    try {
+      assert(collection, "stream raw archive missing");
+      const result = await inspectStreams(evidence, collection, secrets);
+      assert.equal(
+        result?.status,
+        "passed",
+        "stream owning inspector did not pass",
+      );
+      assert(
+        Array.isArray(result.owned_error_spans),
+        "stream error claims missing",
+      );
+      stream = result;
+    } catch (error) {
+      errors.push(error);
+    }
   }
   const result = {
     status: errors.length
@@ -463,6 +482,7 @@ export async function collectOutageTraceArchive(
       recovery_authority: recoveryAuthority,
       recovery_http: recoveryHTTP,
       feed,
+      stream,
       cancellation: reports.some(
         (row) => row.trace_id === chat?.traceID && row.settled_read === true,
       )
