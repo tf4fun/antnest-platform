@@ -120,6 +120,16 @@ unknown-account verification, dummy initialization, transparent rehash,
 password-change verification/hash, local-user creation and bootstrap. A
 separate pool per service or a direct KDF fallback would exceed the process bound.
 
+Dummy initialization prepares a random 16-byte salt and 32-byte rejection target
+in canonical Argon2id encoding with the current, unrounded policy parameters.
+It performs no startup KDF: no password needs to match this target. Preparation
+still acquires the configured memory weight and one operation slot from the same
+engine, and retains cancellation and shutdown join semantics. These conservative
+permit counters describe reserved capacity, not actual Argon2 allocation.
+Unknown, inactive and missing-credential login attempts still run one full-cost
+verification after admission and can never authenticate, even if it matches.
+The dummy target is never persisted or rehashed.
+
 Grant memory weight and one operation slot together in FIFO order. Account the
 declared memory KiB from the validated stored hash for verification, and from
 configured policy for a new hash. Both limits must hold simultaneously. A

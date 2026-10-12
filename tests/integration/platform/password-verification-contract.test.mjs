@@ -192,6 +192,21 @@ test("one process-wide resource pool covers every production hash and verify ent
   assert.equal(resources.unbounded_fallback, false);
 });
 
+test("dummy preparation has no startup KDF, but retains current-policy admission and real verification", () => {
+  assert.deepEqual(policy().resources.dummy_initialization, {
+    verifier: "random-salt-and-random-rejection-target",
+    policy: "current-configured-parameters-without-rounding",
+    salt_bytes: 16,
+    key_bytes: 32,
+    preparation_kdf_calls: 0,
+    shares_weighted_admission: true,
+    cancellation_and_shutdown: "join-started-work-discard-result-then-release",
+    verification_kdf_calls_per_admitted_attempt: 1,
+    persist_or_rehash: false,
+    permit_weight_is_actual_allocation: false,
+  });
+});
+
 test("queued cancellation releases its place, but running Argon2 retains all capacity until joined", () => {
   const work = policy().resources;
   assert.equal(work.queued_cancellation, "remove-waiter-without-starting-kdf");
