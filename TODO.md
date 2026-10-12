@@ -17,6 +17,7 @@ Issue 状态最后核对于 2026-10-11：136 个 issue，74 个已关闭，62 �
 
 ## 当前批次
 
+- #59 第十九轮 Docker 已验证业务、关闭原因及清理，最终因 feed 接线遗漏退出 1：已归档 SERVER 配对查询未传给 inspector，其余七门禁通过。3,482 个源码输入结束立即核对未变；补传字段的三个 callback 用例先 red 后 green，333 项受影响回归及独立 review 通过。使用该轮真实原始搜索和 Trace 离线复验，八门禁及全局诊断通过，81 个错误全部归属、695 个 warning 原样保留、158 个输入未变；不改认原 Docker 失败。下一步全新第二十轮 Docker，再运行完整集成 CI。
 - #59 ACP 关闭原因消费方已通过本地复审：精确核对原 GET 的 access-denial event、同 view principal/Agent/组织、实际已提交停用及 disabled readback；允许六个保留 GET 全在停用阶段关闭，但未带事件的断流仍受原停机窗口约束。三种关闭来源及全部停用先 red 后 green，739 项受影响回归无失败或跳过，独立 review 无阻塞。下一步全新第十九轮 Docker，随后取消草稿跑完整集成 CI；旧第十八轮仍失败，Node SDK 亚毫秒调查继续暂缓。
 - #59 ACP 关闭原因 producer 已通过本地单服务门禁：契约 `685339a3` 固定原 `DomainError/access_denied`、实际关闭来源及可信 Agent/组织；在 SDK close 前只向本连接仍活跃的 HTTP200 GET 原 span 加固定事件，不改变关闭行为或原 ERROR。10 项单元与真实 HTTP 反例先失败后修复，重复/迟到回调、其他 Agent 隔离、包装/伪装错误和诊断异常均覆盖；完整 1,720 项单元、215 项组件及类型/lint/构建/格式/契约/存储/链接通过，独立 review 无阻塞。消费方 offboarding 分支和全新 Docker 证据仍待，旧第十八轮不能补认领；完整 CI 与合并继续待完成。
 - #59 当前剩余收口批次：第十八轮六个 ACP GET 在成员停用时集中结束、比最终 UI stop 早约 1.1s；旧 span 只有通用 `stream_interrupted`，不能仅凭时间重合认领。需先定义契约，再由 ACP 在实际连接关闭路径补固定、脱敏的来源/拒绝原因并绑定原 GET span，消费方同时验证同 Agent/组织的已提交停用及 disabled readback；随后全新 Docker 与完整集成 CI。第十八轮继续记为失败证据。feed 配对收敛修正已 review、769 项回归通过并推送 `8408d6f6`；Node SDK 亚毫秒排查继续暂缓。

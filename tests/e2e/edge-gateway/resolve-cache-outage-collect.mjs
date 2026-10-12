@@ -443,6 +443,7 @@ export async function collectOutageTraceArchive(
           lookback,
           found: { feed: found.feed },
           feed_attempt_searches: attemptSearches,
+          feed_server_searches: serverSearches,
         },
       };
       authority = await inspectAuthority(evidence, collection, secrets);

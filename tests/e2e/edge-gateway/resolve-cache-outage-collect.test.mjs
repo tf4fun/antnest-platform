@@ -333,6 +333,20 @@ for (const mode of ["passed", "throws", "pending"])
           for (const traceID of collection.traces.keys())
             assert(collection.archivedTraceIDs.has(traceID));
           assert.equal(collection.feedSearch.feed_attempt_searches.length, 3);
+          const savedSearch = JSON.parse(
+            readFileSync(join(h.root, "outage-trace-search.private.json")),
+          );
+          assert.deepEqual(
+            collection.feedSearch.feed_server_searches,
+            savedSearch.feed_server_searches,
+            "owning feed inspector must receive the archived SERVER rounds",
+          );
+          assert.deepEqual(
+            collection.feedSearch.feed_server_searches.map((round) =>
+              round.map((t) => t.traceID),
+            ),
+            [[id(9)], [id(9)], [id(9)]],
+          );
           assert.deepEqual(
             collection.feedSearch.found.feed.map((t) => t.traceID),
             [id(9)],
