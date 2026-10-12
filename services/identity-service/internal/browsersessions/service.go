@@ -87,8 +87,7 @@ func (a Access) Authorize(principal domain.Principal) error {
 }
 
 type Repository interface {
-	GetLocalCredential(context.Context, string) (domain.LocalCredential, error)
-	ChangePassword(context.Context, PasswordCommand) (PasswordResult, error)
+	ChangePassword(context.Context, PasswordAttempt, PreparePassword) (PasswordOutcome, error)
 	Touch(context.Context, *callercontext.Caller) (Deadlines, error)
 	List(context.Context, Access, ListInput) (Page, error)
 	Revoke(context.Context, Access, RevokeInput) (RevokeResult, error)

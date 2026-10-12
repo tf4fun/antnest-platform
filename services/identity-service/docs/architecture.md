@@ -362,9 +362,9 @@ them. Missing local credentials on the password-change path retain the existing
 Identity revision 17 projects `credential_busy` as 503 and
 `credential_rate_limited` as 429 with canonical messages, bounded Retry-After,
 no-store and no cookie writes. Local login now uses persistent admission and
-transactional rehash. Password-change attempt integration and scheduled cleanup
-remain pending, followed by Gateway/Console consumption and final container and
-cross-service pressure admission.
+transactional rehash; password changes use the global User attempt bucket with
+atomic session rotation. Scheduled cleanup remains pending, followed by
+Gateway/Console consumption and final container and cross-service pressure admission.
 
 ## Application Modules
 
@@ -461,8 +461,21 @@ database cause would otherwise normalize to `not_found` or `conflict`.
 
 Cleanup removes at most 500 expired, unlocked rows per invocation and skips
 rows held by admission. A single admission upsert prevents cleanup from deleting
-a bucket between its creation and locking read. Login uses these primitives;
-password-change integration and the periodic cleanup owner remain pending.
+a bucket between its creation and locking read. Login and password changes use
+these primitives; the periodic cleanup owner remains pending.
+
+Password changes validate the signed Caller before allocating attempt buckets,
+then acquire User, Organization, Membership and credential locks in order.
+The Service verifies the locked hash with the original request context and
+rechecks Caller before hashing a replacement. Both failed guesses and successful
+rotations acquire sorted browser SID locks and revalidate again, so logout during
+KDF work prevents either outcome from committing. Failure counting commits before
+the Service returns its business rejection. Rotation changes the hash, revokes
+all previous User sessions, issues a replacement with the original absolute
+deadline and resets only the User counter in one transaction. After its own
+revocation, final checks use the locked live session and the original signed CCT;
+they do not resolve the now-revoked SID or extend the CCT. Commit errors and
+postcommit expiry return no credential and never retry or compensate the outcome.
 
 ## Failure Semantics
 

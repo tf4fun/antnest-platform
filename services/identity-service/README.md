@@ -134,12 +134,15 @@ Password hashing and verification share one process engine. Optional
 are validated at startup. See [password resource admission](docs/operations.md#password-resource-admission)
 for bounds, queue limits, stored-hash compatibility and cancellation behavior.
 Identity revision 17 returns `credential_busy`/503 for resource admission and
-`credential_rate_limited`/429 for persisted login backoff, with bounded
+`credential_rate_limited`/429 for persisted login and password-change backoff, with bounded
 `Retry-After` and `Cache-Control: no-store`. Migration `0009` stores private
 attempt keys. Login holds ordered attempt and authority locks through password
 verification, optional policy rehash, account reset and token/event commit.
-Password-change attempt integration, periodic cleanup, Gateway/Console adoption
-and final container/integration admission remain pending #60 work.
+Password changes use the global User counter across Organizations and commit
+verification, rotation, all-session revocation and User-counter reset atomically.
+The original signed Caller is revalidated after waits and KDF work. Periodic
+cleanup, Gateway/Console adoption and final container/integration admission remain
+pending #60 work.
 
 | Variable                                                                                                        | Required         | Default            | Description                                                                                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -251,8 +254,13 @@ Attempt-state PostgreSQL tests cover migration preservation, shared counters
 across Store instances, fifth/sixth serialization, blocked-Organization row
 growth, fresh time after lock waits, bounded cleanup and transaction rollback.
 They also verify pool/row wait exhaustion and release when BEGIN has succeeded
-but its caller's admission expires. These repository checks do not establish
-runtime login or password-change rate limiting.
+but its caller's admission expires. Service-entry tests separately exercise
+login and password-change fifth/sixth races across Stores, global User counters
+across Organizations, Caller expiry/logout during verification and lock waits,
+and complete rollback of counters with failed issuance or rotation. Real
+PostgreSQL COMMIT acknowledgements are dropped to verify zero credentials,
+one attempt and no compensation of durable outcomes. These component checks
+do not replace final container or browser-consumer integration admission.
 Dummy preparation reserves the same configured capacity but generates a random
 salt and rejection target without computing a startup hash. Unknown-account
 verification still runs one full-cost Argon2 operation and always rejects.

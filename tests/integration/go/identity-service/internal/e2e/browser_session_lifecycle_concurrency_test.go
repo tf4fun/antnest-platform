@@ -215,7 +215,7 @@ func TestBrowserConcurrentPasswordChangeRejectsRevokedWaiter(t *testing.T) {
 		}
 	})
 	secondStore := f.tracedStore(t, func(_ context.Context, conn *pgx.Conn, sql string) {
-		if strings.Contains(sql, "FROM users") && strings.Contains(sql, "FOR UPDATE") {
+		if strings.Contains(sql, "INSERT INTO credential_attempts") {
 			secondCaptured.Do(func() { waiting <- conn.PgConn().PID() })
 		}
 	})
@@ -260,7 +260,7 @@ func TestBrowserConcurrentPasswordChangeRejectsRevokedWaiter(t *testing.T) {
 	}
 }
 
-func TestBrowserPasswordRejectsChangedExpectedHash(t *testing.T) {
+func TestBrowserPasswordLocksCredentialThroughRotation(t *testing.T) {
 	f := newBrowserControlsFixture(t)
 	current := f.login(t, "admission", "member@example.com")
 	ctx, cancel := context.WithTimeout(f.caller(t, current), 15*time.Second)
@@ -284,25 +284,57 @@ func TestBrowserPasswordRejectsChangedExpectedHash(t *testing.T) {
 		result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 		done <- lifecyclePasswordOutcome{result, err}
 	})
-	awaitBrowserPID(t, ctx, ready)
+	firstPID := awaitBrowserPID(t, ctx, ready)
 	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "external credential update")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.pool.Exec(ctx, `UPDATE local_credentials SET password_hash=$2 WHERE user_id=$1`, f.user.User.ID, hash); err != nil {
+	writer, err := f.pool.Acquire(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	before := revocationStateSnapshot(t, f.localAdmissionFixture)
+	writeDone := make(chan error, 1)
+	writerPID := writer.Conn().PgConn().PID()
+	workers.Go(func() {
+		defer writer.Release()
+		_, err := writer.Exec(ctx, `UPDATE local_credentials SET password_hash=$2 WHERE user_id=$1`, f.user.User.ID, hash)
+		writeDone <- err
+	})
+	assertBrowserBlocker(t, ctx, f, writerPID, firstPID)
 	close(release)
 	result := <-done
-	if !errors.Is(result.err, domain.ErrConflict) || result.result != (browsersessions.PasswordResult{}) {
-		t.Fatalf("stale expected hash admitted rotation: %v", result.err)
+	if result.err != nil || result.result.AccessToken == "" {
+		t.Fatalf("locked credential did not admit rotation before the external writer: %v", result.err)
 	}
-	if !reflect.DeepEqual(before, revocationStateSnapshot(t, f.localAdmissionFixture)) {
-		t.Fatal("expected-hash conflict left session or audit effects")
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
 	}
 	credential, err := f.store.Directory().GetLocalCredential(ctx, f.user.User.ID)
 	if err != nil || credential.PasswordHash != hash {
-		t.Fatal("stale request overwrote concurrent password hash")
+		t.Fatal("rotation overwrote the serialized external password update")
+	}
+	if _, err := f.auth.Resolve(ctx, current.AccessToken); !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatal("rotation retained the original browser session")
+	}
+	if _, err := f.auth.Resolve(ctx, result.result.AccessToken); err != nil {
+		t.Fatal("serialized credential writer changed the replacement session")
+	}
+}
+
+func TestBrowserPasswordCompareAndSwapFailureRollsBackAttemptsAndAuthority(t *testing.T) {
+	f := newBrowserControlsFixture(t)
+	current := f.login(t, "admission", "member@example.com")
+	ctx := f.caller(t, current)
+	before := passwordMutationState(t, f)
+	if _, err := f.pool.Exec(t.Context(), `CREATE FUNCTION reject_password_cas() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NULL; END$$;
+		CREATE TRIGGER reject_password_cas BEFORE UPDATE ON local_credentials FOR EACH ROW EXECUTE FUNCTION reject_password_cas()`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.service.ChangePassword(ctx, browserPasswordInput(f))
+	if !errors.Is(err, domain.ErrConflict) || result != (browsersessions.PasswordResult{}) {
+		t.Fatalf("zero-row password CAS admitted rotation: %v", err)
+	}
+	if !reflect.DeepEqual(before, passwordMutationState(t, f)) {
+		t.Fatal("failed password CAS changed counters, credentials, sessions or events")
 	}
 }

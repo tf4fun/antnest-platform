@@ -66,13 +66,13 @@ Identity creates one password engine per process and shares it across bootstrap,
 dummy preparation, local login, administrator user creation and browser password
 changes. The following optional variables control new hashes and local capacity:
 
-| Variable | Default | Accepted values |
-| --- | --- | --- |
-| `ANTNEST_IDENTITY_ARGON2_MEMORY_KIB` | `65536` | 8–1048576 KiB; at least eight times parallelism |
-| `ANTNEST_IDENTITY_ARGON2_ITERATIONS` | `3` | 1–10 |
-| `ANTNEST_IDENTITY_ARGON2_PARALLELISM` | `2` | 1–16 |
-| `ANTNEST_IDENTITY_ARGON2_MEMORY_BUDGET_KIB` | `131072` | 8–4194304 KiB; must fit the configured new hash |
-| `ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT` | `min(64, max(2, GOMAXPROCS))` | 1–64 |
+| Variable                                    | Default                       | Accepted values                                 |
+| ------------------------------------------- | ----------------------------- | ----------------------------------------------- |
+| `ANTNEST_IDENTITY_ARGON2_MEMORY_KIB`        | `65536`                       | 8–1048576 KiB; at least eight times parallelism |
+| `ANTNEST_IDENTITY_ARGON2_ITERATIONS`        | `3`                           | 1–10                                            |
+| `ANTNEST_IDENTITY_ARGON2_PARALLELISM`       | `2`                           | 1–16                                            |
+| `ANTNEST_IDENTITY_ARGON2_MEMORY_BUDGET_KIB` | `131072`                      | 8–4194304 KiB; must fit the configured new hash |
+| `ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT`    | `min(64, max(2, GOMAXPROCS))` | 1–64                                            |
 
 Startup rejects invalid or incoherent settings without echoing their values.
 Memory and operation permits are acquired together in FIFO order. At most 32
@@ -90,8 +90,23 @@ before KDF work. Successful local login upgrades a different valid stored policy
 in the same transaction as issuance and account-counter reset. Persisted login
 backoff returns `credential_rate_limited`/429 before KDF work, with Retry-After
 rounded up and bounded to 1–900 seconds. Organization failures are not reset by
-a successful login. Password-change attempt limits and periodic cleanup remain
-pending under the [password policy](../../../contracts/identity/password-verification.md).
+a successful login. Password changes use the same organization bucket and a
+global User bucket shared across Organizations. Verification, failed-guess
+counters, password replacement, all-session revocation and User-counter reset
+are one transaction. The fifth wrong current password commits the first backoff;
+the sixth attempt returns 429 before KDF work. A successful rotation resets only
+the User bucket. Both operations share a cumulative two-second database wait
+budget, separate from KDF admission and the original request deadline.
+
+Password changes revalidate the original signed Caller after admission and
+authority waits, between verification and replacement hashing, and before
+committing an outcome. Before commit, detecting an expired or revoked caller,
+missing local credential, busy/cancelled operation or failed rotation rolls back
+the attempt changes. An ambiguous commit returns no credentials and is never
+retried or compensated. Caller expiry observed after a successful commit also
+withholds the result without compensating durable counters or rotation.
+Periodic cleanup and the updated container/integration admission remain pending
+under the [password policy](../../../contracts/identity/password-verification.md).
 The memory budget bounds active Argon2 work, not total process RSS or garbage
 collector retention. Container pressure and recovery require separate evidence.
 
@@ -270,7 +285,7 @@ There is no per-field filtering or bespoke payload size limit. See
   transaction. The replacement retains the original absolute deadline. A lost
   successful response requires login with the new password; retrying an old
   SID or request ID never recovers a raw token. Wrong current password returns
-  `invalid_argument` (`400`) and preserves the session. Expiry during the feed
+  `invalid_current_password` (`400`) and preserves the session. Expiry during the feed
   writer wait rolls back the entire password transaction. Expiry observed only
   after successful commit suppresses the credential response; the new password
   remains committed and the user must log in again.

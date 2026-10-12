@@ -9,109 +9,161 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/browsersessions"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
-func (a *BrowserSessionsAdapter) GetLocalCredential(ctx context.Context, userID string) (domain.LocalCredential, error) {
-	return a.store.Directory().GetLocalCredential(ctx, userID)
-}
-
-func (a *BrowserSessionsAdapter) ChangePassword(ctx context.Context, command browsersessions.PasswordCommand) (browsersessions.PasswordResult, error) {
-	var result browsersessions.PasswordResult
+func (a *BrowserSessionsAdapter) ChangePassword(ctx context.Context, attempt browsersessions.PasswordAttempt, prepare browsersessions.PreparePassword) (browsersessions.PasswordOutcome, error) {
+	if prepare == nil {
+		return browsersessions.PasswordOutcome{}, fmt.Errorf("browser password change requires credential preparation")
+	}
+	var outcome browsersessions.PasswordOutcome
+	var live callercontext.Session
 	var checkedAt time.Time
-	idleTTL := a.store.browserIdlePolicy()
-	claims := command.Caller.Claims()
-	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
-		// Serialize issuance, rotation and all-user revocation on User first.
-		// Parent locks precede token locks and feed writer locks in every path.
-		for _, lock := range []struct{ query, id string }{
-			{`SELECT id FROM users WHERE id = $1 AND active FOR UPDATE`, claims.Subject},
-			{`SELECT id FROM organizations WHERE id = $1 AND active FOR SHARE`, claims.Organization},
-			{`SELECT id FROM organization_memberships WHERE id = $1 AND active AND scim_deleted_at IS NULL FOR SHARE`, claims.Membership},
-		} {
-			var id string
-			if err := tx.QueryRow(ctx, lock.query, lock.id).Scan(&id); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					return callercontext.ErrInvalid
-				}
-				return err
-			}
-		}
-		ids, err := lockBrowserSessionIDs(ctx, tx, claims.Subject)
-		if err != nil {
+	checkFrozen := func() error {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		live, err := a.store.revalidateBrowserCaller(ctx, tx, command.Caller)
-		if err != nil {
+		// Preserve the original signed CCT and the locked live deadlines after
+		// our own revocation, including while waiting for commit acknowledgement.
+		if _, err := attempt.Caller.Revalidate(ctx, func(context.Context, string, time.Time) (callercontext.Session, error) {
+			return live, nil
+		}); err != nil {
 			return err
 		}
-		var hint string
-		if err := tx.QueryRow(ctx, `SELECT user_agent_hint FROM api_tokens WHERE id = $1`, live.ID).Scan(&hint); err != nil {
-			return err
-		}
-		now := a.store.browserAdmissionTime(time.Time{})
-		if !live.ExpiresAt.After(now) || !live.IdleExpiresAt.After(now) {
-			return callercontext.ErrInvalid
-		}
-		updated, err := tx.Exec(ctx, `UPDATE local_credentials SET password_hash = $3, updated_at = $4
-			WHERE user_id = $1 AND password_hash = $2`, live.Principal.UserID, command.ExpectedPasswordHash, command.PasswordHash, now)
-		if err != nil {
-			return err
-		}
-		if updated.RowsAffected() != 1 {
-			return domain.ErrConflict
-		}
-		events, err := revokeLockedBrowserSessions(ctx, tx, ids, "", "", "", "password_changed", now)
-		if err != nil {
-			return err
-		}
-		raw, hash, err := credentials.NewOpaqueToken("ant_api_")
-		if err != nil {
-			return err
-		}
-		result.TokenID = a.store.newID("authtoken")
-		if err := tx.QueryRow(ctx, `INSERT INTO api_tokens
-			(id, token_hash, public_session_id, user_id, organization_id, membership_id, issued_at, last_used_at, expires_at, idle_expires_at, user_agent_hint)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, LEAST($8::timestamptz, $9::timestamptz), $10)
-			RETURNING expires_at, idle_expires_at`, result.TokenID, hash, a.store.newID("browsersession"), live.Principal.UserID,
-			live.Principal.OrganizationID, live.Principal.MembershipID, now, live.ExpiresAt, now.Add(idleTTL), hint).Scan(&result.ExpiresAt, &result.IdleExpiresAt); err != nil {
-			return err
-		}
-		fresh := a.store.browserAdmissionTime(now)
-		if !live.IdleExpiresAt.After(fresh) || !result.ExpiresAt.After(fresh) || !result.IdleExpiresAt.After(fresh) {
-			return callercontext.ErrInvalid
-		}
-		result.Status, result.Principal, result.AccessToken = "changed", live.Principal, raw
-		result.ExpiresAt, result.IdleExpiresAt = result.ExpiresAt.UTC(), result.IdleExpiresAt.UTC()
-		result.ActivityIntervalMS = browserActivityInterval(idleTTL)
-		if err := a.store.appendEvent(ctx, tx, event{OrganizationID: live.Principal.OrganizationID, ActorPrincipalID: live.Principal.UserID, Type: "local_credential.changed", SubjectType: "user", SubjectID: live.Principal.UserID, RequestID: command.RequestID, CreatedAt: now}); err != nil {
-			return err
-		}
-		if err := a.store.appendEvent(ctx, tx, event{OrganizationID: live.Principal.OrganizationID, ActorPrincipalID: live.Principal.UserID, Type: "access_token.issued", SubjectType: "access_token", SubjectID: result.TokenID, RequestID: command.RequestID, CreatedAt: now}); err != nil {
-			return err
-		}
-		if err := appendSessionRevocations(ctx, tx, events); err != nil {
-			return err
-		}
-		// The feed writer may wait after issuance. An expired replacement must
-		// roll the entire transaction back rather than return a dead credential.
-		checkedAt = a.store.browserAdmissionTime(fresh)
-		if !result.ExpiresAt.After(checkedAt) || !result.IdleExpiresAt.After(checkedAt) {
+		checkedAt = a.store.browserAdmissionTime(checkedAt)
+		if !live.ExpiresAt.After(checkedAt) || !live.IdleExpiresAt.After(checkedAt) || outcome.Changed &&
+			(!outcome.Result.ExpiresAt.After(checkedAt) || !outcome.Result.IdleExpiresAt.After(checkedAt)) {
 			return callercontext.ErrInvalid
 		}
 		return nil
+	}
+	err := a.store.inCredentialTransaction(ctx, func(tx *databaseTransaction, wait *credentialWaitBudget) error {
+		checkCaller := func() error {
+			// Wrap the entire revalidation: Caller maps resolver storage failures
+			// to dependency errors, but database admission busy must survive.
+			return wait.wait(ctx, func(bounded context.Context) error {
+				var err error
+				live, err = a.store.revalidateBrowserCaller(bounded, tx, attempt.Caller)
+				return err
+			})
+		}
+		if err := checkCaller(); err != nil {
+			return err
+		}
+		claims := attempt.Caller.Claims()
+		keys, err := passwordChangeAttemptKeys(claims.Organization, claims.Subject)
+		if err != nil {
+			return err
+		}
+		admission, err := lockCredentialAttempts(ctx, tx, wait, keys)
+		if err != nil {
+			var limited *domain.CredentialRateLimitError
+			if errors.As(err, &limited) {
+				if callerErr := checkCaller(); callerErr != nil {
+					return callerErr
+				}
+			}
+			return err
+		}
+		if err := checkCaller(); err != nil {
+			return err
+		}
+		credential, err := lockBrowserPasswordCredential(ctx, tx, wait, attempt.Caller, checkCaller)
+		if err != nil {
+			return err
+		}
+		prepared, err := prepare(ctx, credential, checkCaller)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		if err := wait.wait(ctx, func(bounded context.Context) error {
+			var err error
+			ids, err = lockBrowserSessionIDs(bounded, tx, claims.Subject)
+			return err
+		}); err != nil {
+			return err
+		}
+		// Logout can commit during KDF work. Both outcomes take the SID locks
+		// and revalidate before they can mutate durable state.
+		if err := checkCaller(); err != nil {
+			return err
+		}
+		if !prepared.Matched {
+			if err := admission.recordFailure(ctx, tx, wait); err != nil {
+				return err
+			}
+			return checkCaller()
+		}
+		if prepared.ExpectedPasswordHash != credential.PasswordHash || prepared.PasswordHash == "" {
+			return domain.ErrConflict
+		}
+		if err := wait.wait(ctx, func(bounded context.Context) error {
+			var err error
+			outcome.Result, err = a.rotateBrowserPassword(bounded, tx, attempt, prepared, live, ids)
+			return err
+		}); err != nil {
+			return err
+		}
+		if err := admission.resetAccount(ctx, tx, wait); err != nil {
+			return err
+		}
+		outcome.Changed = true
+		return checkFrozen()
 	})
-	// An ambiguous commit never exposes a replayable credential. The caller
-	// must log in with the new password if its successful response was lost.
 	if err != nil {
-		return browsersessions.PasswordResult{}, fmt.Errorf("rotate browser password: %w", err)
+		// An ambiguous commit never exposes credentials or replays the attempt.
+		return browsersessions.PasswordOutcome{}, fmt.Errorf("rotate browser password: %w", err)
 	}
-	// Commit acknowledgement can arrive after expiry. Its effects are durable,
-	// but no expired raw credential is returned and no rollback is promised.
-	checkedAt = a.store.browserAdmissionTime(checkedAt)
-	if !result.ExpiresAt.After(checkedAt) || !result.IdleExpiresAt.After(checkedAt) {
-		return browsersessions.PasswordResult{}, callercontext.ErrInvalid
+	// ACK may arrive after expiry. Withhold the result without compensating
+	// a committed rotation or failed guess.
+	if err := checkFrozen(); err != nil {
+		return browsersessions.PasswordOutcome{}, err
 	}
-	return result, nil
+	return outcome, nil
+}
+
+func lockBrowserPasswordCredential(ctx context.Context, tx *databaseTransaction, wait *credentialWaitBudget, caller *callercontext.Caller, recheck func() error) (domain.LocalCredential, error) {
+	claims := caller.Claims()
+	// Buckets precede User -> Organization -> Membership -> credential. Take
+	// credential update intent on its first locking read, before sorted SIDs.
+	for _, lock := range []struct {
+		query string
+		args  []any
+	}{
+		{`SELECT id FROM users WHERE id = $1 AND active FOR UPDATE`, []any{claims.Subject}},
+		{`SELECT id FROM organizations WHERE id = $1 AND active FOR SHARE`, []any{claims.Organization}},
+		{`SELECT id FROM organization_memberships WHERE id = $1 AND user_id=$2 AND organization_id=$3 AND active AND scim_deleted_at IS NULL FOR SHARE`, []any{claims.Membership, claims.Subject, claims.Organization}},
+	} {
+		var id string
+		err := wait.wait(ctx, func(bounded context.Context) error {
+			return tx.QueryRow(bounded, lock.query, lock.args...).Scan(&id)
+		})
+		if errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, domain.ErrCredentialBusy) {
+			return domain.LocalCredential{}, callercontext.ErrInvalid
+		}
+		if err != nil {
+			return domain.LocalCredential{}, err
+		}
+		if err := recheck(); err != nil {
+			return domain.LocalCredential{}, err
+		}
+	}
+	credential := domain.LocalCredential{UserID: claims.Subject}
+	err := wait.wait(ctx, func(bounded context.Context) error {
+		return tx.QueryRow(bounded, `SELECT password_hash FROM local_credentials WHERE user_id=$1 FOR UPDATE`, claims.Subject).Scan(&credential.PasswordHash)
+	})
+	if errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, domain.ErrCredentialBusy) {
+		if err := recheck(); err != nil {
+			return domain.LocalCredential{}, err
+		}
+		return domain.LocalCredential{}, domain.InvalidArgument("Local password is not available for this account")
+	}
+	if err != nil {
+		return domain.LocalCredential{}, err
+	}
+	if err := recheck(); err != nil {
+		return domain.LocalCredential{}, err
+	}
+	return credential, nil
 }
