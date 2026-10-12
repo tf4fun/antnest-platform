@@ -41,6 +41,16 @@ test("both owning contracts reference one versioned password policy", () => {
   });
 });
 
+test("Identity's active catalog publishes both password admission failures", () => {
+  for (const [code, status] of [
+    ["credential_busy", 503],
+    ["credential_rate_limited", 429],
+  ]) {
+    assert(identity.error.properties.code.enum.includes(code), code);
+    assert.equal(identity.error.http_status_by_code[code], status);
+  }
+});
+
 test("account and organization counters cover login and current-password verification", () => {
   const { scopes, operations } = policy().attempts;
   assert.deepEqual(Object.keys(scopes).sort(), [

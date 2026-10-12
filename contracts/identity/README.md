@@ -18,9 +18,10 @@ and retryable failures. Its [machine-readable contract](password-verification-po
 is shared first. Identity publishes the active error catalog with its owning
 implementation at revision 17; Gateway and Console consumer batches and real
 integration follow.
-The Identity resource batch now activates `credential_busy` in revision 17.
-Persistent attempt limits, `credential_rate_limited` and transactional rehash
-remain the next Identity batch; consumer and integration work remain pending.
+The candidate revision-17 catalog declares `credential_busy`/503 and
+`credential_rate_limited`/429. The resource batch implements the busy response;
+persistent attempt limits, the 429 projection and transactional rehash are the
+next owning-service batch. Consumer and integration work remain pending.
 
 Revision 15 defines [browser session lifecycles](browser-sessions.md): separate
 idle and absolute deadlines, explicit activity, password rotation, session
