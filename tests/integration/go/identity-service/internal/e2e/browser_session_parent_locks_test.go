@@ -218,7 +218,7 @@ func TestBrowserLocalLoginAndSCIMReplacementShareParentLockOrder(t *testing.T) {
 	releaseLogin := make(chan struct{})
 	var loginCaptured sync.Once
 	loginStore := f.tracedStore(t, func(ctx context.Context, conn *pgx.Conn, sql string) {
-		if strings.Contains(sql, "FOR SHARE OF m, c") {
+		if strings.Contains(sql, "FROM organization_memberships") && strings.Contains(sql, "FOR SHARE") {
 			loginCaptured.Do(func() {
 				loginReady <- conn.PgConn().PID()
 				select {

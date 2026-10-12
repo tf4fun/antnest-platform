@@ -15,9 +15,12 @@ type browserAuthRepository struct {
 	token Token
 }
 
-func (r *browserAuthRepository) IssueToken(_ context.Context, command IssueTokenCommand) (Token, error) {
-	r.issued = command
-	return r.token, nil
+func (r *browserAuthRepository) Login(ctx context.Context, attempt LoginAttempt, prepare PrepareLogin) (LoginOutcome, error) {
+	outcome, err := r.authRepositoryStub.Login(ctx, attempt, prepare)
+	if err == nil && outcome.Authenticated {
+		outcome.Token = r.token
+	}
+	return outcome, err
 }
 
 func TestBrowserLoginReturnsPersistedDeadlinesAndForwardsDisplayHint(t *testing.T) {

@@ -12,8 +12,7 @@ import (
 )
 
 type Repository interface {
-	FindLocalCredential(context.Context, string, string) (LocalCredential, error)
-	IssueToken(context.Context, IssueTokenCommand) (Token, error)
+	Login(context.Context, LoginAttempt, PrepareLogin) (LoginOutcome, error)
 	ResolveToken(context.Context, string, time.Time) (domain.Principal, error)
 	RevokeByTokenHash(context.Context, string, time.Time) (RevokeStatus, error)
 }
@@ -21,6 +20,28 @@ type Repository interface {
 type LocalCredential struct {
 	PasswordHash string
 	Principal    domain.Principal
+}
+
+type LoginAttempt struct {
+	OrganizationSlug string
+	Email            string
+}
+
+// PrepareLogin runs once after the repository has locked admission and the
+// authoritative credential. It uses the original request context for KDF work.
+// A non-match is an outcome to commit, while an error aborts the transaction.
+type PrepareLogin func(context.Context, LocalCredential) (LoginPreparation, error)
+
+type LoginPreparation struct {
+	Matched                 bool
+	ReplacementPasswordHash string
+	IssueToken              IssueTokenCommand
+}
+
+type LoginOutcome struct {
+	Authenticated bool
+	Principal     domain.Principal
+	Token         Token
 }
 
 type LoginInput struct {
@@ -107,42 +128,71 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 		return LoginResult{}, domain.InvalidArgument("user_agent_hint must contain at most 256 characters")
 	}
 	slug, email, validInput := normalizeLoginIdentity(input.OrganizationSlug, input.Email)
-	credential, lookupErr := s.lookupCredential(ctx, slug, email, validInput)
+	if !validInput {
+		if _, err := s.passwords.VerifyPassword(ctx, s.dummyHash, input.Password); err != nil {
+			return LoginResult{}, fmt.Errorf("verify invalid local login: %w", err)
+		}
+		return LoginResult{}, domain.ErrUnauthenticated
+	}
+	// Freeze issuance deadlines before any database admission or credential
+	// wait. Verification must not grant the request a fresh lifetime afterwards.
+	issuedAt := s.now().UTC()
+	var rawToken string
+	outcome, err := s.repository.Login(ctx, LoginAttempt{OrganizationSlug: slug, Email: email},
+		func(original context.Context, credential LocalCredential) (LoginPreparation, error) {
+			prepared, raw, err := s.prepareLogin(original, input, credential, issuedAt)
+			rawToken = raw
+			return prepared, err
+		})
+	if err != nil {
+		return LoginResult{}, fmt.Errorf("complete local login: %w", err)
+	}
+	if !outcome.Authenticated {
+		return LoginResult{}, domain.ErrUnauthenticated
+	}
+	token := outcome.Token
+	return LoginResult{
+		Principal: outcome.Principal, TokenID: token.ID, AccessToken: rawToken, ExpiresAt: token.ExpiresAt,
+		IdleExpiresAt: token.IdleExpiresAt, ActivityIntervalMS: token.ActivityIntervalMS,
+	}, nil
+}
+
+func (s *Service) prepareLogin(ctx context.Context, input LoginInput, credential LocalCredential, issuedAt time.Time) (LoginPreparation, string, error) {
 	encoded := credential.PasswordHash
-	realCredential := lookupErr == nil && validInput && credential.Principal.Active && encoded != ""
+	realCredential := credential.Principal.Active && encoded != ""
 	if !realCredential {
 		encoded = s.dummyHash
 	}
 	passwordMatches, verifyErr := s.passwords.VerifyPassword(ctx, encoded, input.Password)
 	if verifyErr != nil {
-		return LoginResult{}, fmt.Errorf("verify local password: %w", verifyErr)
-	}
-	if lookupErr != nil && !errors.Is(lookupErr, domain.ErrNotFound) {
-		return LoginResult{}, fmt.Errorf("find local credential: %w", lookupErr)
+		return LoginPreparation{}, "", fmt.Errorf("verify local password: %w", verifyErr)
 	}
 	if !realCredential || !passwordMatches {
-		return LoginResult{}, domain.ErrUnauthenticated
+		return LoginPreparation{}, "", nil
+	}
+	needsRehash, err := s.passwords.NeedsRehash(encoded)
+	if err != nil {
+		return LoginPreparation{}, "", fmt.Errorf("inspect verified local password: %w", err)
+	}
+	var replacement string
+	if needsRehash {
+		replacement, err = s.passwords.HashPassword(ctx, input.Password)
+		if err != nil {
+			return LoginPreparation{}, "", fmt.Errorf("upgrade local password: %w", err)
+		}
 	}
 
 	rawToken, tokenHash, err := credentials.NewOpaqueToken("ant_api_")
 	if err != nil {
-		return LoginResult{}, err
+		return LoginPreparation{}, "", err
 	}
-	now := s.now().UTC()
-	expiresAt := now.Add(s.tokenTTL)
-	token, err := s.repository.IssueToken(ctx, IssueTokenCommand{
+	command := IssueTokenCommand{
 		TokenID: s.newID("authtoken"), TokenHash: tokenHash, Principal: credential.Principal,
 		ExpectedPasswordHash: credential.PasswordHash,
-		RequestID:            input.RequestID, IssuedAt: now, ExpiresAt: expiresAt,
+		RequestID:            input.RequestID, IssuedAt: issuedAt, ExpiresAt: issuedAt.Add(s.tokenTTL),
 		UserAgentHint: input.UserAgentHint,
-	})
-	if err != nil {
-		return LoginResult{}, fmt.Errorf("issue access token: %w", err)
 	}
-	return LoginResult{
-		Principal: credential.Principal, TokenID: token.ID, AccessToken: rawToken, ExpiresAt: token.ExpiresAt,
-		IdleExpiresAt: token.IdleExpiresAt, ActivityIntervalMS: token.ActivityIntervalMS,
-	}, nil
+	return LoginPreparation{Matched: true, ReplacementPasswordHash: replacement, IssueToken: command}, rawToken, nil
 }
 
 func (s *Service) Resolve(ctx context.Context, rawToken string) (domain.Principal, error) {
@@ -181,16 +231,4 @@ func normalizeLoginIdentity(organizationSlug, email string) (string, string, boo
 	slug, slugErr := domain.NormalizeSlug(organizationSlug)
 	normalizedEmail, emailErr := domain.NormalizeEmail(email)
 	return slug, normalizedEmail, slugErr == nil && emailErr == nil
-}
-
-func (s *Service) lookupCredential(
-	ctx context.Context,
-	organizationSlug string,
-	email string,
-	validInput bool,
-) (LocalCredential, error) {
-	if !validInput {
-		return LocalCredential{}, domain.ErrNotFound
-	}
-	return s.repository.FindLocalCredential(ctx, organizationSlug, email)
 }

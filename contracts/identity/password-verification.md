@@ -4,10 +4,11 @@ This is the shared policy for [#60](https://github.com/tf4fun/antnest-platform/i
 The [machine-readable policy](password-verification-policy.json) has its own
 revision. Its historical wire baseline is Identity revision 16 and Gateway
 version 21. The candidate Identity revision-17 catalog declares
-`credential_busy`/503 and `credential_rate_limited`/429. The resource batch
-implements busy; persistent attempts, the 429 projection and transactional
-rehash are still pending within the Identity delivery. Gateway remains at
-version 21 until its version-22 consumer implementation. Console adoption and cross-service
+`credential_busy`/503 and `credential_rate_limited`/429. Identity implements both
+projections, persisted login attempts and transactional login rehash.
+Password-change attempt integration and scheduled cleanup remain pending.
+Gateway remains at version 21 until its version-22 consumer implementation.
+Console adoption and cross-service
 integration also remain pending. A policy reference alone does not activate a
 service or establish completion of this policy.
 

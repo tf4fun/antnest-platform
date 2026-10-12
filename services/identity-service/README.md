@@ -133,11 +133,13 @@ Password hashing and verification share one process engine. Optional
 `ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT` (bounded GOMAXPROCS default)
 are validated at startup. See [password resource admission](docs/operations.md#password-resource-admission)
 for bounds, queue limits, stored-hash compatibility and cancellation behavior.
-Identity revision 17 currently adds `credential_busy`; persistent attempt limits,
-login rehash and consumer adoption remain pending #60 batches.
-Migration `0009` adds private attempt state and repository admission/cleanup
-primitives. Login and password-change transactions, the cleanup schedule and
-the `credential_rate_limited` response are not connected to them yet.
+Identity revision 17 returns `credential_busy`/503 for resource admission and
+`credential_rate_limited`/429 for persisted login backoff, with bounded
+`Retry-After` and `Cache-Control: no-store`. Migration `0009` stores private
+attempt keys. Login holds ordered attempt and authority locks through password
+verification, optional policy rehash, account reset and token/event commit.
+Password-change attempt integration, periodic cleanup, Gateway/Console adoption
+and final container/integration admission remain pending #60 work.
 
 | Variable                                                                                                        | Required         | Default            | Description                                                                                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

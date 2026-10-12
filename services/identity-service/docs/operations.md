@@ -86,9 +86,12 @@ consumer batch; this Identity batch does not yet complete the browser workflow.
 
 Stored Argon2id v19 hashes are verified with their original bounded parameters,
 including the original memory value. Malformed or noncanonical encodings fail
-before KDF work. Changing configuration affects newly generated hashes; automatic
-login rehash and persistent account/Organization attempt limits remain the next
-Identity batch of the [password policy](../../../contracts/identity/password-verification.md).
+before KDF work. Successful local login upgrades a different valid stored policy
+in the same transaction as issuance and account-counter reset. Persisted login
+backoff returns `credential_rate_limited`/429 before KDF work, with Retry-After
+rounded up and bounded to 1–900 seconds. Organization failures are not reset by
+a successful login. Password-change attempt limits and periodic cleanup remain
+pending under the [password policy](../../../contracts/identity/password-verification.md).
 The memory budget bounds active Argon2 work, not total process RSS or garbage
 collector retention. Container pressure and recovery require separate evidence.
 

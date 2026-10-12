@@ -106,11 +106,14 @@ Resource exhaustion returns `credential_busy`/503 with `Retry-After: 1`; queued
 cancellation and shutdown retain ownership until started work joins. Dummy
 initialization uses a random rejection target without a startup KDF, while
 unknown-account logins still perform one complete current-policy verification.
-Migration `0009` adds private hashed attempt counters and bounded repository
-admission/cleanup primitives; password endpoints and scheduled cleanup are not
-connected to them yet.
-Persisted attempt limits, transactional rehash and Gateway/Console consumption
-remain pending in this draft. See the
+Migration `0009` adds private hashed attempt counters. Local login now holds
+ordered attempt and authority locks through verification: wrong passwords commit
+counters, while successful legacy-password rehash, account reset and token/event
+issuance commit together. Persisted backoff returns `credential_rate_limited`/429
+before KDF work, with a bounded Retry-After and no cookie writes. Rehash preserves
+existing sessions; ambiguous commits return no credentials or automatic replay.
+Password-change attempt integration, periodic cleanup, Gateway/Console
+consumption and final integration remain pending in this draft. See the
 [password verification policy](contracts/identity/password-verification.md).
 
 Gateway caches validated Identity resolution for up to ten seconds by default,

@@ -1,10 +1,15 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
@@ -79,12 +84,20 @@ func TestLocalLoginRevalidationIgnoresOrganizationDisplayChanges(t *testing.T) {
 		t.Skip("ANTNEST_IDENTITY_TEST_DATABASE_URL is not set")
 	}
 	fixture := newLocalAdmissionFixture(t, databaseURL, time.Now)
-	adapter := &beforeIssuanceRepository{Repository: fixture.store.LocalAuth(), before: func() {
-		if _, err := fixture.pool.Exec(t.Context(), `UPDATE organizations SET slug = 'renamed', name = 'Renamed Organization' WHERE id = $1`, fixture.admin.Organization.ID); err != nil {
-			t.Fatal(err)
+	var changed sync.Once
+	var mutationErr error
+	calls := 0
+	adapter := fixture.tracedStore(t, func(ctx context.Context, _ *pgx.Conn, sql string) {
+		// Namespace discovery is complete, but no authority parent is locked.
+		// A rename at this point must not retarget the frozen Organization ID.
+		if strings.Contains(sql, "INSERT INTO credential_attempts") {
+			changed.Do(func() {
+				calls++
+				_, mutationErr = fixture.pool.Exec(ctx, `UPDATE organizations SET slug = 'renamed', name = 'Renamed Organization' WHERE id = $1`, fixture.admin.Organization.ID)
+			})
 		}
-	}}
-	auth, err := localauth.NewService(t.Context(), adapter, fixture.newID, time.Now, time.Hour, testPasswordEngine(t))
+	})
+	auth, err := localauth.NewService(t.Context(), adapter.LocalAuth(), fixture.newID, time.Now, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,16 +105,16 @@ func TestLocalLoginRevalidationIgnoresOrganizationDisplayChanges(t *testing.T) {
 		RequestID: "metadata-change-during-login", OrganizationSlug: fixture.admin.Organization.Slug,
 		Email: "member@example.com", Password: "correct horse battery staple",
 	})
-	if err != nil || login.AccessToken == "" || adapter.calls != 1 {
-		t.Fatalf("organization display change rejected a verified credential: calls=%d err=%v", adapter.calls, err)
+	if err != nil || login.AccessToken == "" || calls != 1 || mutationErr != nil {
+		t.Fatalf("organization display change rejected a verified credential: calls=%d mutation=%v err=%v", calls, mutationErr, err)
 	}
-	assertPrincipalOrganization(t, login.Principal, fixture.admin.Organization)
 	principal, err := auth.Resolve(t.Context(), login.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	currentOrganization := fixture.admin.Organization
 	currentOrganization.Slug, currentOrganization.Name = "renamed", "Renamed Organization"
+	assertPrincipalOrganization(t, login.Principal, currentOrganization)
 	assertPrincipalOrganization(t, principal, currentOrganization)
 	fixture.assertIssuanceCount(t, 1)
 }

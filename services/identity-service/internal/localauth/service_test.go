@@ -135,13 +135,21 @@ type authRepositoryStub struct {
 	revokeStatus RevokeStatus
 }
 
-func (r *authRepositoryStub) FindLocalCredential(context.Context, string, string) (LocalCredential, error) {
-	return r.credential, r.lookupErr
-}
-
-func (r *authRepositoryStub) IssueToken(_ context.Context, command IssueTokenCommand) (Token, error) {
-	r.issued = command
-	return Token{ID: command.TokenID, ExpiresAt: command.ExpiresAt}, nil
+func (r *authRepositoryStub) Login(ctx context.Context, _ LoginAttempt, prepare PrepareLogin) (LoginOutcome, error) {
+	credential := r.credential
+	if r.lookupErr != nil {
+		if !errors.Is(r.lookupErr, domain.ErrNotFound) {
+			return LoginOutcome{}, r.lookupErr
+		}
+		credential = LocalCredential{}
+	}
+	prepared, err := prepare(ctx, credential)
+	if err != nil || !prepared.Matched {
+		return LoginOutcome{}, err
+	}
+	r.issued = prepared.IssueToken
+	return LoginOutcome{Authenticated: true, Principal: credential.Principal,
+		Token: Token{ID: r.issued.TokenID, ExpiresAt: r.issued.ExpiresAt}}, nil
 }
 
 func (r *authRepositoryStub) ResolveToken(_ context.Context, digest string, _ time.Time) (domain.Principal, error) {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
@@ -748,6 +749,16 @@ func writeError(response http.ResponseWriter, err error) {
 		status = http.StatusServiceUnavailable
 		code, message, retryable = domain.ErrorDetails(domain.ErrCredentialBusy)
 		response.Header().Set("Retry-After", "1")
+		response.Header().Set("Cache-Control", "no-store")
+	case errors.Is(err, domain.ErrCredentialRateLimited):
+		status = http.StatusTooManyRequests
+		code, message, retryable = domain.ErrorDetails(domain.ErrCredentialRateLimited)
+		seconds := 1
+		var limited *domain.CredentialRateLimitError
+		if errors.As(err, &limited) && limited != nil {
+			seconds = min(max(limited.RetryAfterSeconds, 1), 900)
+		}
+		response.Header().Set("Retry-After", strconv.Itoa(seconds))
 		response.Header().Set("Cache-Control", "no-store")
 	case errors.Is(err, domain.ErrInvalidArgument), errors.Is(err, domain.ErrInvalidCurrentPassword):
 		status = http.StatusBadRequest
