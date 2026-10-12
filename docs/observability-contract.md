@@ -124,6 +124,23 @@ expresses causality. Sub-millisecond cross-host clock inversions keep their raw
 warnings and are evaluated by their actual source; they are not removed by
 adjusting business waits or timestamps.
 
+### ACP workspace stream shutdown
+
+The existing `watch_agent_execution_state` SERVER may record the fixed
+`antnest.stream.termination=process-shutdown` only when the actual thrown object
+is the normal shutdown reason created by `RunSupervisor.shutdown()`. Register
+that exact Error identity without changing its name, message or propagation.
+A prior failure remains the first stop reason and must never be registered as
+normal shutdown. Matching text, error names, wrapped causes, an aborted signal
+or a nearby container stop do not establish this diagnostic.
+
+The marker identifies the propagated shutdown reason, not the first lifetime
+source of every stream. Caller disconnect, access revocation, unrelated
+publication/storage/delivery errors and non-streaming reads do not receive it.
+Keep the original ERROR, error event, response, parentage and transport lifetime;
+do not capture stream contents. Consumers still need the actual stream and
+process-lifecycle evidence. Historical unmarked errors remain unclassified.
+
 ### Database transactions
 
 Database instrumentation uses technical boundaries, not repository business
