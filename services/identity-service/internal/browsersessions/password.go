@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 )
@@ -49,16 +48,16 @@ func (s *Service) ChangePassword(ctx context.Context, input PasswordInput) (Pass
 	if credential.UserID != access.UserID {
 		return PasswordResult{}, fmt.Errorf("password credential has inconsistent User binding")
 	}
-	valid, err := credentials.VerifyPassword(credential.PasswordHash, input.CurrentPassword)
+	valid, err := s.passwords.VerifyPassword(ctx, credential.PasswordHash, input.CurrentPassword)
 	if err != nil {
 		return PasswordResult{}, fmt.Errorf("verify current browser password: %w", err)
 	}
 	if !valid {
 		return PasswordResult{}, domain.ErrInvalidCurrentPassword
 	}
-	hash, err := credentials.HashPassword(input.NewPassword)
+	hash, err := s.passwords.HashPassword(ctx, input.NewPassword)
 	if err != nil {
-		return PasswordResult{}, domain.InvalidArgument(err.Error())
+		return PasswordResult{}, fmt.Errorf("hash new browser password: %w", err)
 	}
 	return s.repository.ChangePassword(ctx, PasswordCommand{Caller: access.Caller, RequestID: input.RequestID, ExpectedPasswordHash: credential.PasswordHash, PasswordHash: hash})
 }

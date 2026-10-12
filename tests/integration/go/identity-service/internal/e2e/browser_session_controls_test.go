@@ -53,11 +53,11 @@ func browserControlsForFixture(t *testing.T, f localAdmissionFixture, now *atomi
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth, err := localauth.NewService(f.store.LocalAuth(), f.newID, f.clock, time.Hour)
+	auth, err := localauth.NewService(t.Context(), f.store.LocalAuth(), f.newID, f.clock, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return browserControlsFixture{localAdmissionFixture: f, now: now, authority: authority, auth: auth, service: browsersessions.NewService(f.store.BrowserSessions())}
+	return browserControlsFixture{localAdmissionFixture: f, now: now, authority: authority, auth: auth, service: browsersessions.NewService(f.store.BrowserSessions(), testPasswordEngine(t))}
 }
 
 func (f browserControlsFixture) login(t *testing.T, slug, email string) localauth.LoginResult {
@@ -84,7 +84,7 @@ func (f browserControlsFixture) caller(t *testing.T, login localauth.LoginResult
 
 func (f browserControlsFixture) otherOrganization(t *testing.T) domain.Organization {
 	t.Helper()
-	d := directory.NewService(f.store.Directory(), f.newID, f.clock)
+	d := directory.NewService(f.store.Directory(), f.newID, f.clock, testPasswordEngine(t))
 	o, err := d.CreateOrganization(t.Context(), directory.CreateOrganizationInput{RequestID: "create-second", ActorPrincipalID: f.admin.User.ID, Slug: "second", Name: "Second", OwnerEmail: "admin@example.com", OwnerDisplayName: "Administrator"})
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestBrowserBlockedActivityCannotReviveExpiredSession(t *testing.T) {
 	}
 	finished := make(chan outcome, 1)
 	workers.Go(func() {
-		result, err := browsersessions.NewService(store.BrowserSessions()).Touch(ctx, f.user.User.ID)
+		result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).Touch(ctx, f.user.User.ID)
 		finished <- outcome{result, err}
 	})
 	select {

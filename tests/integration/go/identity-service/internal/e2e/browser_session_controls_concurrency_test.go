@@ -62,7 +62,7 @@ func TestBrowserMutualAdministratorRevocationDoesNotLockActors(t *testing.T) {
 		}
 		input := browsersessions.RevokeInput{RequestID: "mutual-revoke", ActorPrincipalID: pair.actor.Principal.UserID, UserID: pair.target, Scope: "organization", Mode: "all"}
 		workers.Go(func() {
-			result, err := browsersessions.NewService(store.BrowserSessions()).Revoke(callercontext.WithCaller(ctx, actor), input)
+			result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).Revoke(callercontext.WithCaller(ctx, actor), input)
 			finished <- outcome{result, err}
 		})
 	}
@@ -137,7 +137,7 @@ func TestBrowserBulkRevalidatesActorAfterTargetLockWait(t *testing.T) {
 			}
 			finished := make(chan outcome, 1)
 			workers.Go(func() {
-				result, err := browsersessions.NewService(store.BrowserSessions()).Revoke(ctx, browsersessions.RevokeInput{RequestID: "post-wait-revoke", ActorPrincipalID: f.admin.User.ID, UserID: f.user.User.ID, Scope: "organization", Mode: "all"})
+				result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).Revoke(ctx, browsersessions.RevokeInput{RequestID: "post-wait-revoke", ActorPrincipalID: f.admin.User.ID, UserID: f.user.User.ID, Scope: "organization", Mode: "all"})
 				finished <- outcome{result, err}
 			})
 			select {
@@ -232,7 +232,7 @@ func TestBrowserSessionFeedCommitOrderAndRollbackGaps(t *testing.T) {
 			})
 			finished := make(chan error, 1)
 			workers.Go(func() {
-				_, err := browsersessions.NewService(store.BrowserSessions()).Revoke(ctx, browsersessions.RevokeInput{RequestID: "feed-order", ActorPrincipalID: f.user.User.ID, UserID: f.user.User.ID, Scope: "self", Mode: "all"})
+				_, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).Revoke(ctx, browsersessions.RevokeInput{RequestID: "feed-order", ActorPrincipalID: f.user.User.ID, UserID: f.user.User.ID, Scope: "self", Mode: "all"})
 				finished <- err
 			})
 			select {

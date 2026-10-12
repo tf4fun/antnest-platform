@@ -125,6 +125,17 @@ for the failure behavior when components are upgraded out of order.
 
 ## Configuration
 
+Password hashing and verification share one process engine. Optional
+`ANTNEST_IDENTITY_ARGON2_MEMORY_KIB` (65536),
+`ANTNEST_IDENTITY_ARGON2_ITERATIONS` (3),
+`ANTNEST_IDENTITY_ARGON2_PARALLELISM` (2),
+`ANTNEST_IDENTITY_ARGON2_MEMORY_BUDGET_KIB` (131072), and
+`ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT` (bounded GOMAXPROCS default)
+are validated at startup. See [password resource admission](docs/operations.md#password-resource-admission)
+for bounds, queue limits, stored-hash compatibility and cancellation behavior.
+Identity revision 17 currently adds `credential_busy`; persistent attempt limits,
+login rehash and consumer adoption remain pending #60 batches.
+
 | Variable                                                                                                        | Required         | Default            | Description                                                                                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ANTNEST_SERVICE_AUTH_MODE`                                                                                     | Yes              | None               | Exact `token` or `mtls`; no fallback.                                                                                                                                                               |

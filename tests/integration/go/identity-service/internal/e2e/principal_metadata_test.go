@@ -17,7 +17,7 @@ func TestPrincipalOrganizationMetadataBuilders(t *testing.T) {
 	}
 	fixture := newLocalAdmissionFixture(t, databaseURL, time.Now)
 	ctx := t.Context()
-	auth, err := localauth.NewService(fixture.store.LocalAuth(), fixture.newID, time.Now, time.Hour)
+	auth, err := localauth.NewService(t.Context(), fixture.store.LocalAuth(), fixture.newID, time.Now, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestLocalLoginRevalidationIgnoresOrganizationDisplayChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 	}}
-	auth, err := localauth.NewService(adapter, fixture.newID, time.Now, time.Hour)
+	auth, err := localauth.NewService(t.Context(), adapter, fixture.newID, time.Now, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}

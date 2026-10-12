@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/browsersessions"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
@@ -66,7 +65,7 @@ func TestBrowserLogoutChecksFreshDeadlineAfterTokenWait(t *testing.T) {
 					captured.Do(func() { pid <- conn.PgConn().PID() })
 				}
 			})
-			auth, err := localauth.NewService(store.LocalAuth(), f.newID, f.clock, time.Hour)
+			auth, err := localauth.NewService(t.Context(), store.LocalAuth(), f.newID, f.clock, time.Hour, testPasswordEngine(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,13 +135,13 @@ func TestBrowserPasswordAndRoleChangeSerializeWithoutRevivingSessions(t *testing
 			passwordDone := make(chan lifecyclePasswordOutcome, 1)
 			startRole := func() {
 				workers.Go(func() {
-					_, err := directory.NewService(roleStore.Directory(), f.newID, f.clock).UpdateMembership(roleContext, directory.UpdateMembershipInput{RequestID: "overlap-role-password", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID, Email: f.user.Membership.Email, DisplayName: f.user.Membership.DisplayName, Role: domain.OrganizationRoleAdmin, Active: true})
+					_, err := directory.NewService(roleStore.Directory(), f.newID, f.clock, testPasswordEngine(t)).UpdateMembership(roleContext, directory.UpdateMembershipInput{RequestID: "overlap-role-password", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID, Email: f.user.Membership.Email, DisplayName: f.user.Membership.DisplayName, Role: domain.OrganizationRoleAdmin, Active: true})
 					roleDone <- err
 				})
 			}
 			startPassword := func() {
 				workers.Go(func() {
-					result, err := browsersessions.NewService(passwordStore.BrowserSessions()).ChangePassword(ctx, browserPasswordInput(f))
+					result, err := browsersessions.NewService(passwordStore.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 					passwordDone <- lifecyclePasswordOutcome{result, err}
 				})
 			}
@@ -222,14 +221,14 @@ func TestBrowserConcurrentPasswordChangeRejectsRevokedWaiter(t *testing.T) {
 	})
 	firstDone, secondDone := make(chan lifecyclePasswordOutcome, 1), make(chan lifecyclePasswordOutcome, 1)
 	workers.Go(func() {
-		result, err := browsersessions.NewService(firstStore.BrowserSessions()).ChangePassword(firstCtx, browserPasswordInput(f))
+		result, err := browsersessions.NewService(firstStore.BrowserSessions(), testPasswordEngine(t)).ChangePassword(firstCtx, browserPasswordInput(f))
 		firstDone <- lifecyclePasswordOutcome{result, err}
 	})
 	firstPID := awaitBrowserPID(t, firstCtx, ready)
 	workers.Go(func() {
 		input := browserPasswordInput(f)
 		input.NewPassword = "another replacement password"
-		result, err := browsersessions.NewService(secondStore.BrowserSessions()).ChangePassword(secondCtx, input)
+		result, err := browsersessions.NewService(secondStore.BrowserSessions(), testPasswordEngine(t)).ChangePassword(secondCtx, input)
 		secondDone <- lifecyclePasswordOutcome{result, err}
 	})
 	assertBrowserBlocker(t, firstCtx, f, awaitBrowserPID(t, firstCtx, waiting), firstPID)
@@ -255,7 +254,7 @@ func TestBrowserConcurrentPasswordChangeRejectsRevokedWaiter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	valid, err := credentials.VerifyPassword(credential.PasswordHash, browserPasswordInput(f).NewPassword)
+	valid, err := testPasswordEngine(t).VerifyPassword(t.Context(), credential.PasswordHash, browserPasswordInput(f).NewPassword)
 	if err != nil || !valid {
 		t.Fatal("losing request replaced the committed password")
 	}
@@ -282,11 +281,11 @@ func TestBrowserPasswordRejectsChangedExpectedHash(t *testing.T) {
 	})
 	done := make(chan lifecyclePasswordOutcome, 1)
 	workers.Go(func() {
-		result, err := browsersessions.NewService(store.BrowserSessions()).ChangePassword(ctx, browserPasswordInput(f))
+		result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 		done <- lifecyclePasswordOutcome{result, err}
 	})
 	awaitBrowserPID(t, ctx, ready)
-	hash, err := credentials.HashPassword("external credential update")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "external credential update")
 	if err != nil {
 		t.Fatal(err)
 	}

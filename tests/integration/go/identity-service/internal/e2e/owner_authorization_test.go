@@ -10,7 +10,7 @@ import (
 func TestOwnerAuthorizationRetainsScopedRevocationsAfterRestoration(t *testing.T) {
 	f := revocationFixture(t)
 	ctx := t.Context()
-	service := directory.NewService(f.store.Directory(), f.newID, time.Now)
+	service := directory.NewService(f.store.Directory(), f.newID, time.Now, testPasswordEngine(t))
 	other, err := service.CreateOrganization(ctx, directory.CreateOrganizationInput{
 		RequestID: "other-org", ActorPrincipalID: f.admin.User.ID, Slug: "other", Name: "Other",
 		OwnerEmail: "admin-other@example.com", OwnerDisplayName: "Admin",

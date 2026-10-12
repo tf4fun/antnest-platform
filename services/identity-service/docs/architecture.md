@@ -331,6 +331,36 @@ rotation, but never select the token hash. Listing and revocation require
 organization administration; Provider administration requires a system
 administrator.
 
+## Password resource ownership
+
+The composition root creates one `credentials.Engine` from validated Argon2
+configuration and injects that same instance into local authentication,
+directory commands, browser password changes and bootstrap. No production
+hash/verify function can create a private fallback engine. The engine admits
+memory KiB and operation count atomically, maintains a bounded FIFO queue, and
+retains both permits until synchronous Argon2 work has finished, even after
+cancellation. Shutdown prevents new admission before HTTP drain and joins KDF
+work before closing the database.
+
+The parser accepts canonical Argon2id v19 PHC strings of at most 256 bytes,
+with exactly `m,t,p`, a 16-byte salt and 32-byte key. It rejects invalid bounds
+or noncanonical decimal/base64 before admission. Verification uses the original
+stored memory parameter without rounding its encoded value; `NeedsRehash`
+compares a valid stored policy to the configured new-hash policy.
+
+Unknown, inactive, unavailable-local-credential and syntactically invalid local
+logins each use one current-policy dummy verification. A dummy match never
+authenticates. Resource, cancellation and internal errors retain their types
+across these paths; administrator creation and password changes also preserve
+them. Missing local credentials on the password-change path retain the existing
+`invalid_argument` behavior and do not invoke a dummy.
+
+This resource batch activates `credential_busy` in Identity revision 17.
+Persistent attempt admission, moving verification inside its owning transaction,
+and successful-login rehash are pending Identity work. The transaction boundary
+described above remains the current behavior until that batch is delivered.
+Gateway and Console consumption and cross-service pressure tests follow it.
+
 ## Application Modules
 
 ```text

@@ -93,13 +93,15 @@ enforced here; raw identity hints provide no authority.
 | Outbound  | Agent ACP Service                                                                                        | [Execution configuration publication](docs/execution-publication.md) and lifecycle settlement                    |
 | Outbound  | Skill Registry                                                                                           | Resolve exact Skill versions for Template revisions (optional)                                                   |
 
-The Identity consumer is reviewed against revision 16 of the
+The Identity consumer is reviewed against revision 17 of the
 [Identity contract](../../contracts/identity/identity-contract.json).
 `resolve_principal`, `resolve_owner_authorization` and
 `list_principal_revocations` retain their request, response and authorization
-semantics in the external-identity linking revision. The new binding and notice
-methods remain owned by Identity and its account consumers; Controller's three
-existing RPCs do not acquire new request fields or authority.
+semantics from the external-identity linking revision. Revision 17 adds a
+password-resource error outside these three RPCs; no Controller runtime change
+or password-policy consumer is introduced by this compatibility reference.
+Binding and notice methods remain owned by Identity and its account consumers;
+Controller's existing RPCs do not acquire new request fields or authority.
 
 Resource identifiers follow the
 [platform resource ID contract](../../contracts/resource-identifiers.md). Create

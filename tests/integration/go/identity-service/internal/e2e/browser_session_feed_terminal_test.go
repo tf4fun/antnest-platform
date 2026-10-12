@@ -73,7 +73,7 @@ func TestBrowserSessionFeedTerminalPageFromNonzeroCursor(t *testing.T) {
 			}
 			finished := make(chan outcome, 1)
 			workers.Go(func() {
-				result, err := browsersessions.NewService(store.BrowserSessions()).Revoke(ctx, browsersessions.RevokeInput{RequestID: "nonzero-terminal", ActorPrincipalID: f.user.User.ID, UserID: f.user.User.ID, Scope: "self", Mode: "all"})
+				result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).Revoke(ctx, browsersessions.RevokeInput{RequestID: "nonzero-terminal", ActorPrincipalID: f.user.User.ID, UserID: f.user.User.ID, Scope: "self", Mode: "all"})
 				finished <- outcome{result, err}
 			})
 			var writerPID uint32

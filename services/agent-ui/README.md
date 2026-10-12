@@ -66,8 +66,10 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
-The browser consumes Gateway revision 21 and Identity revision 16 under the
+The browser consumes Gateway revision 21 and Identity revision 17 under the
 [browser session contract](../../contracts/identity/browser-sessions.md).
+Identity's browser-session schemas are unchanged; Gateway password-resource
+response handling remains a pending #60 batch.
 Hydrated SSR content stays inert until a fresh Gateway session read succeeds.
 Only genuine input reports activity; background reads, SSE and reconnection do
 not extend idle time. Account controls remain available without an Agent and

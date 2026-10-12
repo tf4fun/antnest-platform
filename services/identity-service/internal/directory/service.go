@@ -141,13 +141,14 @@ type Service struct {
 	repository Repository
 	newID      func(string) string
 	now        func() time.Time
+	passwords  credentials.Passwords
 }
 
-func NewService(repository Repository, newID func(string) string, now func() time.Time) *Service {
-	if repository == nil || newID == nil || now == nil {
-		panic("directory service requires repository, id generator, and clock")
+func NewService(repository Repository, newID func(string) string, now func() time.Time, passwords credentials.Passwords) *Service {
+	if repository == nil || newID == nil || now == nil || passwords == nil {
+		panic("directory service requires repository, id generator, clock, and password engine")
 	}
-	return &Service{repository: repository, newID: newID, now: now}
+	return &Service{repository: repository, newID: newID, now: now, passwords: passwords}
 }
 
 func (s *Service) CreateOrganization(
@@ -219,9 +220,9 @@ func (s *Service) CreateLocalUser(
 	if err != nil {
 		return CreateLocalUserResult{}, err
 	}
-	passwordHash, err := credentials.HashPassword(input.Password)
+	passwordHash, err := s.passwords.HashPassword(ctx, input.Password)
 	if err != nil {
-		return CreateLocalUserResult{}, domain.InvalidArgument(err.Error())
+		return CreateLocalUserResult{}, fmt.Errorf("hash local-user password: %w", err)
 	}
 
 	now := s.now().UTC()

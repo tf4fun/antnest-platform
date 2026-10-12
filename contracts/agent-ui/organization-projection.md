@@ -1,6 +1,8 @@
 # Verified Organization display metadata
 
-Gateway session contract revision 21 consumes Identity contract revision 16.
+Gateway session contract revision 21 consumes the unchanged Organization
+projection in Identity contract revision 17. This compatibility reference does
+not activate the pending Gateway password-resource consumer.
 Node verifies Gateway workload identity and the signed CCT; display headers
 never supply subject, Organization or administrator authority.
 `organization_slug` and `organization_name` are required, non-whitespace strings

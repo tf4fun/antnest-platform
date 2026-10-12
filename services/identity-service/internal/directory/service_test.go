@@ -16,7 +16,7 @@ func TestCreateOrganizationRequiresSystemAdministrator(t *testing.T) {
 	repository := &directoryRepositoryStub{principal: domain.Principal{
 		UserID: "root", SystemRole: domain.SystemRoleAdmin, Active: true,
 	}}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 	organization, err := service.CreateOrganization(context.Background(), CreateOrganizationInput{
 		RequestID: "request-organization", ActorPrincipalID: "root",
 		Slug: " Engineering ", Name: " Engineering Team ",
@@ -54,7 +54,7 @@ func TestCreateLocalUserNormalizesAndHashesPassword(t *testing.T) {
 	repository := &directoryRepositoryStub{principal: domain.Principal{
 		UserID: "admin", OrganizationID: "org-1", OrganizationRole: domain.OrganizationRoleAdmin, Active: true,
 	}}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 	result, err := service.CreateLocalUser(context.Background(), CreateLocalUserInput{
 		RequestID: "request-user", ActorPrincipalID: "admin",
 		OrganizationID: "org-1", Email: " Alice@Example.COM ",
@@ -87,7 +87,7 @@ func TestListDirectoryIsOrganizationScoped(t *testing.T) {
 	repository := &directoryRepositoryStub{principal: domain.Principal{
 		UserID: "admin", OrganizationID: "org-1", OrganizationRole: domain.OrganizationRoleAdmin, Active: true,
 	}, directory: Directory{Users: []Member{{User: domain.User{ID: "user-1"}}}}}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 	result, err := service.List(context.Background(), "admin", "org-1")
 	if err != nil || len(result.Users) != 1 {
 		t.Fatalf("list directory = %#v, %v", result, err)
@@ -115,7 +115,7 @@ func TestGetCurrentAccountProjectsTheActorAndLocalPasswordCapability(t *testing.
 		},
 		credential: domain.LocalCredential{UserID: "user-1", PasswordHash: "opaque"},
 	}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 
 	account, err := service.GetCurrentAccount(context.Background(), "user-1", "org-1")
 	if err != nil {
@@ -152,7 +152,7 @@ func TestGetCurrentAccountRejectsInactiveOrMismatchedIdentity(t *testing.T) {
 			ID: "membership-1", OrganizationID: "org-1", UserID: "user-1",
 		},
 	}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 	if _, err := service.GetCurrentAccount(context.Background(), "user-1", "org-1"); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("inactive account error = %v, want forbidden", err)
 	}
@@ -178,7 +178,7 @@ func TestGetCurrentAccountRejectsMismatchedOrganizationProjection(t *testing.T) 
 		},
 		credential: domain.LocalCredential{UserID: "user-1"},
 	}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 
 	if _, err := service.GetCurrentAccount(context.Background(), "user-1", "org-1"); err == nil {
 		t.Fatal("mismatched organization projection was accepted")
@@ -193,7 +193,7 @@ func TestResolvePrincipalReturnsOnlyTheRequestedOrganizationBinding(t *testing.T
 		SystemRole: domain.SystemRoleUser, OrganizationRole: domain.OrganizationRoleMember,
 		Active: true,
 	}}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 
 	principal, err := service.ResolvePrincipal(context.Background(), "user-1", "org-1")
 	if err != nil {
@@ -221,7 +221,7 @@ func TestAddOrganizationMembershipUsesStableUserIdentity(t *testing.T) {
 	repository := &directoryRepositoryStub{principal: domain.Principal{
 		UserID: "admin", OrganizationID: "org-2", OrganizationRole: domain.OrganizationRoleAdmin, Active: true,
 	}}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 
 	membership, err := service.AddOrganizationMembership(context.Background(), AddOrganizationMembershipInput{
 		RequestID: "membership-request", ActorPrincipalID: "admin",
@@ -249,7 +249,7 @@ func TestUpdateLocalMembershipAndGlobalUserActivationRespectOwnership(t *testing
 			Source: domain.SourceLocal, Active: true,
 		},
 	}
-	service := NewService(repository, sequentialIDs(), fixedNow)
+	service := NewService(repository, sequentialIDs(), fixedNow, testPasswordEngine(t))
 
 	updated, err := service.UpdateMembership(context.Background(), UpdateMembershipInput{
 		RequestID: "membership-update", ActorPrincipalID: "admin", OrganizationID: "org-1",

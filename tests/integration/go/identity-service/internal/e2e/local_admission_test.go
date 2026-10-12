@@ -11,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
@@ -44,7 +43,7 @@ func TestLocalLoginRevalidatesBeforeIssuingToken(t *testing.T) {
 				if test.mutate != "" {
 					arguments := []any{fixture.user.User.ID}
 					if test.name == "password_rotated" {
-						hash, err := credentials.HashPassword("rotated member password")
+						hash, err := testPasswordEngine(t).HashPassword(t.Context(), "rotated member password")
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -55,7 +54,7 @@ func TestLocalLoginRevalidatesBeforeIssuingToken(t *testing.T) {
 					}
 				}
 			}}
-			auth, err := localauth.NewService(adapter, fixture.newID, time.Now, time.Hour)
+			auth, err := localauth.NewService(t.Context(), adapter, fixture.newID, time.Now, time.Hour, testPasswordEngine(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,7 +124,7 @@ func newLocalAdmissionFixture(t *testing.T, databaseURL string, clock func() tim
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := credentials.HashPassword("correct horse battery staple")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +136,7 @@ func newLocalAdmissionFixture(t *testing.T, databaseURL string, clock func() tim
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := directory.NewService(store.Directory(), newID, storedNow).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{
+	user, err := directory.NewService(store.Directory(), newID, storedNow, testPasswordEngine(t)).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{
 		RequestID: "create-member", ActorPrincipalID: bootstrap.User.ID, OrganizationID: bootstrap.Organization.ID,
 		Email: "member@example.com", DisplayName: "Member", Password: "correct horse battery staple", Role: domain.OrganizationRoleMember,
 	})

@@ -65,7 +65,7 @@ func TestBrowserPasswordFeedWaitCannotReturnExpiredReplacement(t *testing.T) {
 			}
 			finished := make(chan outcome, 1)
 			workers.Go(func() {
-				result, err := browsersessions.NewService(store.BrowserSessions()).ChangePassword(ctx, browserPasswordInput(f))
+				result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 				finished <- outcome{result, err}
 			})
 			select {
@@ -128,7 +128,7 @@ func TestBrowserPasswordResponseChecksDeadlineAfterSuccessfulCommit(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := browsersessions.NewService(store.BrowserSessions()).ChangePassword(ctx, browserPasswordInput(f))
+	result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 	if commits != 1 {
 		t.Fatal("deadline probe did not run after the real password transaction committed")
 	}

@@ -18,9 +18,11 @@ Issue 状态最后核对于 2026-10-13：136 个 issue，75 个已关闭，61 �
 ## 当前批次
 
 - 当前按用户指定顺序推进 Epic [#81](https://github.com/tf4fun/antnest-platform/issues/81)：**#10 → #62 → #63 → #58 → #61 → #59 → #60 → #2 → #66 → #64**。本顺序优先于下方按主题组织的队列；#67 保留为后续共享契约工作。
-- 当前执行 [#60](https://github.com/tf4fun/antnest-platform/issues/60)：共享密码验证策略 revision 1 已定义持久账号/组织退避、进程级 Argon2 内存/操作预算、旧参数验证与事务 rehash、429/503 及有界 Retry-After。Identity revision 16、Gateway version 21 仍是当前运行契约；新错误随各自实现批次激活。本批未修改服务实现，issue 保持开放。
+- 当前执行 [#60](https://github.com/tf4fun/antnest-platform/issues/60)，[PR #256](https://github.com/tf4fun/antnest-platform/pull/256) 保持 draft。共享密码策略 revision 1 之后，候选 Identity revision 17 已实现进程级 Argon2 内存/操作预算、严格旧参数验证、请求取消/停机 join 和 `credential_busy`/503。持久失败计数、事务 rehash、429 与消费方尚未交付；main 仍为 Identity 16、Gateway 21，issue 保持开放。
 - #60 共享批次准入：20 项新契约检查通过，评审发现的提交结果不明、dummy 适用范围、Console 创建用户消费方及 RSS 压力证据边界均已补齐，两份独立复审无阻塞。平台契约回归 163 项通过；首次沙箱运行因 mTLS 本地监听权限失败，原始结果保留。证据在 `artifacts/verification/issue-60/shared-contract/`，不能替代运行时、数据库或 Docker 验收。
-- #60 待交付顺序：Identity 资源预算/哈希参数 → Identity PostgreSQL 尝试计数/事务 rehash → Gateway 消费方 → Console 创建用户消费方 → 显式跨服务集成。最终须验证双 Identity 实例、第五/第六次并发失败、旧哈希/改密竞争、200 并发真实 KDF 压力和 RSS、HTTPS 重试提示及 Cookie 保留，再 review 与合并。
+- #60 资源批当前证据：Identity 17 个包的完整 race 回归为 794 项测试及子测试通过、零失败/跳过；28 项入口与 13 项 RPC/诊断定向检查已保留失败先行和通过结果。生产启动只创建一个 Engine，bootstrap、dummy、登录、创建用户和改密共用；dummy 即使匹配也不能签发令牌，忙碌/取消/内部错误不再被改写成密码错误。引擎、入口和 RPC 独立复审无阻塞。原 33 个测试文件的 API 迁移已逐份核对为机械变换。
+- #60 兼容性：184 项平台/Workspace 契约检查通过；既有 Resolve、浏览器会话和组织显示 schema 未变，相关 revision 引用同步到 Identity 17，Gateway 仍为 21、Console 仍为 52。此引用同步不代表消费了新密码错误。18 个 Identity 集成包仅通过编译检查，不能计为 PostgreSQL 或容器验收。私有证据位于 `artifacts/verification/issue-60/identity-resource/`。
+- #60 待交付顺序：Identity 资源批 PostgreSQL/容器验收 → Identity PostgreSQL 尝试计数/事务 rehash → Gateway 消费方 → Console 创建用户消费方 → 显式跨服务集成。最终须验证双 Identity 实例、第五/第六次并发失败、旧哈希/改密竞争、200 并发真实 KDF 压力和 RSS、HTTPS 重试提示及 Cookie 保留，再 review 与合并。资源批未完成所有准入，不能因草稿 CI 绿色而合并。
 - 已完成：[#59](https://github.com/tf4fun/antnest-platform/issues/59) 随 [PR #254](https://github.com/tf4fun/antnest-platform/pull/254) 合并并关闭，merge commit `1fcf37ab`，验收 head `6c44381c`。七项验收及 Epic #81 的身份缓存停机条件均完成。
 - #59 行为：Gateway 按 token hash、服务端 profile 与 Agent 隔离完整 Principal；TTL、idle、absolute 与原 CCT 均为硬上限，命中不续期。共享 miss 有独立等待者取消与最后拥有者 join；复用 Identity 撤销 feed，并处理本地失效、后台刷新和静默流退役。Gateway session revision 21、Identity revision 16、cache policy revision 2；TTL=0 保留逐次 Resolve。
 - #59 本地准入：服务与消费者分批完成失败先行、unit/contract/component、适用 Docker 和独立 review。最终 Gateway 完整 race、298 项/1,722 子项 Go 集成、200 项相关 Node/契约/Trace 回归通过；真实 HTTP Activity 与被阻塞 bootstrap 的两个首次响应均为 200，无请求重试。周期 guard 的缓存交付跨 TTL 竞争已确定性复现并修复，只能在原 probe context/deadline 内重查一次，不延长权限或硬期限。最终新镜像 caller 与缓存停机 Docker 通过准入，3,495 个源码输入运行后立即核对未变，资源清理通过。

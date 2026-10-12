@@ -37,6 +37,14 @@ omission events or stream aggregation. RPC capture occurs once at the receiving
 dispatcher, not again in its HTTP transport. Completion logs never carry bodies.
 Only W3C trace context is propagated, not external baggage.
 
+Password resource failures retain the fixed `credential_busy` summary.
+`antnest.password.admission_reason` is emitted only for the engine's bounded
+causes: `queue_full`, `wait_expired`, `weight_exceeds_budget`, or `shutdown`.
+Arbitrary cause text is never exported. A `credential_busy` response without
+this KDF cause is not evidence of Argon2 pressure; database admission must be
+distinguished in the later attempt-admission batch. These error attributes do
+not by themselves prove peak process RSS or container continuity.
+
 ## Boundaries
 
 One inbound SERVER span extracts the upstream context, including successful

@@ -1,6 +1,6 @@
 {
   "contract": "antnest.identity",
-  "revision": 16,
+  "revision": 17,
   "password_verification_policy": "password-verification-policy.json",
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
@@ -948,6 +948,7 @@
         "enum": [
           "invalid_argument",
           "invalid_current_password",
+          "credential_busy",
           "bad_request",
           "unauthenticated",
           "service_unauthenticated",
@@ -996,6 +997,7 @@
     },
     "http_status_by_code": {
       "invalid_argument": 400,
+      "credential_busy": 503,
       "bad_request": 400,
       "unauthenticated": 401,
       "service_unauthenticated": 401,

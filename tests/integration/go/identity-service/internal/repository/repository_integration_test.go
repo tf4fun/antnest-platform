@@ -92,7 +92,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	passwordHash, err := credentials.HashPassword("correct horse battery staple")
+	passwordHash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	}
 	directoryService := directory.NewService(store.Directory(), func(kind string) string {
 		return fmt.Sprintf("id-%d", sequence.Add(1))
-	}, func() time.Time { return now })
+	}, func() time.Time { return now }, testPasswordEngine(t))
 	for _, change := range []struct {
 		name   string
 		role   domain.OrganizationRole
@@ -305,9 +305,9 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		t.Fatalf("repeat organization membership = %#v, %v", repeatedMembership, err)
 	}
 
-	authService, err := localauth.NewService(store.LocalAuth(), func(kind string) string {
+	authService, err := localauth.NewService(t.Context(), store.LocalAuth(), func(kind string) string {
 		return fmt.Sprintf("id-%d", sequence.Add(1))
-	}, func() time.Time { return now }, 12*time.Hour)
+	}, func() time.Time { return now }, 12*time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := browsersessions.NewService(store.BrowserSessions()).ChangePassword(callercontext.WithCaller(ctx, passwordCaller), browsersessions.PasswordInput{
+	if _, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).ChangePassword(callercontext.WithCaller(ctx, passwordCaller), browsersessions.PasswordInput{
 		RequestID: "rotate-secondary-password", ActorPrincipalID: secondaryUser.User.ID,
 		UserID: secondaryUser.User.ID, CurrentPassword: "secondary correct password",
 		NewPassword: "rotated secondary password",

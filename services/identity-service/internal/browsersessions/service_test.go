@@ -76,7 +76,7 @@ func TestBrowserServiceRejectsUntrustedScopeBeforeStorage(t *testing.T) {
 	for _, name := range []string{"missing-caller", "actor-echo", "self-other-user", "member-admin-scope", "scope", "empty-user", "bad-cursor", "low-limit", "high-limit"} {
 		t.Run(name, func(t *testing.T) {
 			r := &recordingRepository{}
-			s := NewService(r)
+			s := NewService(r, testPasswordEngine(t))
 			ctx := browserCaller(t, domain.OrganizationRoleMember, domain.SystemRoleUser)
 			input := ListInput{ActorPrincipalID: "user-1", UserID: "user-1", Scope: "self", Limit: 10}
 			want := domain.ErrInvalidArgument
@@ -119,7 +119,7 @@ func TestBrowserServiceRestrictsModesAndRequiresCorrelation(t *testing.T) {
 		{ActorPrincipalID: "user-1", UserID: "user-1", Scope: "self", Mode: "all"},
 	} {
 		r := &recordingRepository{}
-		if _, err := NewService(r).Revoke(ctx, input); !errors.Is(err, domain.ErrInvalidArgument) || r.revokes != 0 {
+		if _, err := NewService(r, testPasswordEngine(t)).Revoke(ctx, input); !errors.Is(err, domain.ErrInvalidArgument) || r.revokes != 0 {
 			t.Fatalf("invalid revocation reached storage: %v", err)
 		}
 	}
@@ -127,7 +127,7 @@ func TestBrowserServiceRestrictsModesAndRequiresCorrelation(t *testing.T) {
 
 func TestBrowserServiceAllowsOnlySignedActorAndBoundedFeed(t *testing.T) {
 	r := &recordingRepository{}
-	s := NewService(r)
+	s := NewService(r, testPasswordEngine(t))
 	ctx := browserCaller(t, domain.OrganizationRoleMember, domain.SystemRoleAdmin)
 	if _, err := s.List(ctx, ListInput{ActorPrincipalID: "user-1", UserID: "user-2", Scope: "organization", Limit: 100}); err != nil || r.lists != 1 {
 		t.Fatalf("system admin inventory: %v", err)

@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
@@ -15,12 +14,12 @@ func TestLocalAuthPreservesOrganizationMetadata(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"user_id":"user-1","organization_id":"org-1","organization_slug":"engineering","organization_name":"Engineering","membership_id":"member-1","system_role":"user","organization_role":"member","active":true}`), &expected); err != nil {
 		t.Fatal(err)
 	}
-	hash, err := credentials.HashPassword("correct horse battery staple")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
 	repository := &authRepositoryStub{credential: LocalCredential{PasswordHash: hash, Principal: expected}, resolved: expected}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}

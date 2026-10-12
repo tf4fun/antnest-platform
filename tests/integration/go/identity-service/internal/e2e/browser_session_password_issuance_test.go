@@ -37,7 +37,7 @@ func TestBrowserPasswordAndIssuanceShareParentOrder(t *testing.T) {
 				} else {
 					f = newBrowserControlsFixture(t)
 					loginOperation = func(ctx context.Context, store *repository.Store) loginOutcome {
-						auth, err := localauth.NewService(store.LocalAuth(), f.newID, f.clock, time.Hour)
+						auth, err := localauth.NewService(t.Context(), store.LocalAuth(), f.newID, f.clock, time.Hour, testPasswordEngine(t))
 						if err != nil {
 							return loginOutcome{err: err}
 						}
@@ -86,7 +86,7 @@ func TestBrowserPasswordAndIssuanceShareParentOrder(t *testing.T) {
 				startLogin := func() { workers.Go(func() { loginDone <- loginOperation(ctx, loginStore) }) }
 				startPassword := func() {
 					workers.Go(func() {
-						result, err := browsersessions.NewService(passwordStore.BrowserSessions()).ChangePassword(ctx, browserPasswordInput(f))
+						result, err := browsersessions.NewService(passwordStore.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 						passwordDone <- passwordOutcome{result, err}
 					})
 				}

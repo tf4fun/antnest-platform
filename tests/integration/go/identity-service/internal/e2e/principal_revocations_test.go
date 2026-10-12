@@ -27,7 +27,7 @@ func revocationFixture(t *testing.T) localAdmissionFixture {
 
 func TestPrincipalRevocationsLocalTransitionsAndReplay(t *testing.T) {
 	f := revocationFixture(t)
-	service := directory.NewService(f.store.Directory(), f.newID, time.Now)
+	service := directory.NewService(f.store.Directory(), f.newID, time.Now, testPasswordEngine(t))
 	ctx := trace.ContextWithSpanContext(t.Context(), trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: trace.FlagsSampled,
 	}))

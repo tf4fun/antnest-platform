@@ -60,6 +60,38 @@ values to be empty in the service environment. Removing them from the root
 [deployment runbook](../../../docs/docker-single-node-operations.md) describes
 the explicit override and credential/data ownership precautions.
 
+## Password resource admission
+
+Identity creates one password engine per process and shares it across bootstrap,
+dummy preparation, local login, administrator user creation and browser password
+changes. The following optional variables control new hashes and local capacity:
+
+| Variable | Default | Accepted values |
+| --- | --- | --- |
+| `ANTNEST_IDENTITY_ARGON2_MEMORY_KIB` | `65536` | 8–1048576 KiB; at least eight times parallelism |
+| `ANTNEST_IDENTITY_ARGON2_ITERATIONS` | `3` | 1–10 |
+| `ANTNEST_IDENTITY_ARGON2_PARALLELISM` | `2` | 1–16 |
+| `ANTNEST_IDENTITY_ARGON2_MEMORY_BUDGET_KIB` | `131072` | 8–4194304 KiB; must fit the configured new hash |
+| `ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT` | `min(64, max(2, GOMAXPROCS))` | 1–64 |
+
+Startup rejects invalid or incoherent settings without echoing their values.
+Memory and operation permits are acquired together in FIFO order. At most 32
+requests wait for up to two seconds, shortened by their request deadline. A
+valid stored hash larger than the process budget is rejected immediately.
+Capacity exhaustion returns `503 credential_busy`, the fixed message
+`Password verification is busy`, `retryable: true`, `Retry-After: 1` and
+`Cache-Control: no-store`, without a credential or Cookie mutation. It does not
+mean the supplied password was wrong. Gateway and Console handling is a pending
+consumer batch; this Identity batch does not yet complete the browser workflow.
+
+Stored Argon2id v19 hashes are verified with their original bounded parameters,
+including the original memory value. Malformed or noncanonical encodings fail
+before KDF work. Changing configuration affects newly generated hashes; automatic
+login rehash and persistent account/Organization attempt limits remain the next
+Identity batch of the [password policy](../../../contracts/identity/password-verification.md).
+The memory budget bounds active Argon2 work, not total process RSS or garbage
+collector retention. Container pressure and recovery require separate evidence.
+
 ## Secret Handling
 
 - Database URLs and URL credentials are redacted from diagnostics.
@@ -330,9 +362,13 @@ claiming offboarding coverage.
 
 ## Shutdown
 
-SIGINT/SIGTERM clears readiness, stops accepting new requests, drains HTTP,
-closes PostgreSQL, and flushes telemetry within the shutdown deadline. An
-incomplete shutdown exits non-zero for platform replacement.
+SIGINT/SIGTERM clears readiness, stops password admission, cancels request
+contexts and drains HTTP requests. A running Argon2 computation keeps both
+permits until its synchronous workers finish; a cancelled or stopped operation
+discards its result. The HTTP shutdown deadline can close connections, but does
+not release KDF permits early. Identity joins admitted password work before
+closing PostgreSQL and flushing telemetry. An incomplete HTTP shutdown exits
+non-zero for platform replacement.
 OIDC callback failure finalization ignores caller cancellation so it can write
 the terminal fact, but has its own five-second deadline and stores only a
 stable stage summary.

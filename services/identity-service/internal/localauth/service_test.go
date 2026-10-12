@@ -14,7 +14,7 @@ import (
 func TestLocalLoginIssuesMembershipScopedToken(t *testing.T) {
 	t.Parallel()
 
-	passwordHash, err := credentials.HashPassword("correct horse battery staple")
+	passwordHash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatalf("hash fixture password: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestLocalLoginIssuesMembershipScopedToken(t *testing.T) {
 			SystemRole: domain.SystemRoleUser, OrganizationRole: domain.OrganizationRoleMember, Active: true,
 		},
 	}}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, 12*time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, 12*time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestLocalLoginIssuesMembershipScopedToken(t *testing.T) {
 func TestLocalLoginCollapsesUnknownWrongAndInactiveAccounts(t *testing.T) {
 	t.Parallel()
 
-	passwordHash, err := credentials.HashPassword("correct horse battery staple")
+	passwordHash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatalf("hash fixture password: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestLocalLoginCollapsesUnknownWrongAndInactiveAccounts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &authRepositoryStub{credential: test.credential, lookupErr: test.lookupErr}
-			service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+			service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 			if err != nil {
 				t.Fatalf("new auth service: %v", err)
 			}
@@ -90,7 +90,7 @@ func TestResolveHashesRawCredential(t *testing.T) {
 	t.Parallel()
 
 	repository := &authRepositoryStub{resolved: activePrincipal()}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRevokeByAccessTokenIsOpaqueAndIdempotent(t *testing.T) {
 	t.Parallel()
 
 	repository := &authRepositoryStub{revokeStatus: RevokeStatusRevoked}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}

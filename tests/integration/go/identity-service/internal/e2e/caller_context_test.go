@@ -20,7 +20,7 @@ func TestCallerContextSessionUsesLiveDatabaseFacts(t *testing.T) {
 				t.Skip("ANTNEST_IDENTITY_TEST_DATABASE_URL is not set")
 			}
 			fixture := newLocalAdmissionFixture(t, databaseURL, time.Now)
-			auth, err := localauth.NewService(fixture.store.LocalAuth(), fixture.newID, time.Now, time.Hour)
+			auth, err := localauth.NewService(t.Context(), fixture.store.LocalAuth(), fixture.newID, time.Now, time.Hour, testPasswordEngine(t))
 			if err != nil {
 				t.Fatal(err)
 			}

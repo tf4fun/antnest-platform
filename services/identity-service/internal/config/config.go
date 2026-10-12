@@ -8,6 +8,7 @@ import (
 
 	secretencryption "github.com/tf4fun/antnest-platform/modules/secret-encryption"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 )
 
 type Bootstrap struct {
@@ -37,6 +38,7 @@ type Config struct {
 	ListenAddress             string
 	DatabaseURL               string
 	Encryption                secretencryption.Config
+	Passwords                 credentials.PasswordConfig
 	PublicBaseURL             string
 	SessionIdleTTL            time.Duration
 	SessionAbsoluteTTL        time.Duration
@@ -99,6 +101,10 @@ func Load(lookup func(string) string) (Config, error) {
 			AdminPassword:         lookup("ANTNEST_BOOTSTRAP_ADMIN_PASSWORD"),
 			allowPublicDevSecrets: lookup(devsecrets.OptInVariable) == "true",
 		},
+	}
+	config.Passwords, err = loadPasswordConfig(lookup)
+	if err != nil {
+		return Config{}, err
 	}
 	if config.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_IDENTITY_DATABASE_URL is required")

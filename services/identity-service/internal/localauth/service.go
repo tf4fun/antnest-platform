@@ -71,21 +71,24 @@ type Service struct {
 	now        func() time.Time
 	tokenTTL   time.Duration
 	dummyHash  string
+	passwords  credentials.Passwords
 }
 
 func NewService(
+	ctx context.Context,
 	repository Repository,
 	newID func(string) string,
 	now func() time.Time,
 	tokenTTL time.Duration,
+	passwords credentials.Passwords,
 ) (*Service, error) {
-	if repository == nil || newID == nil || now == nil {
-		return nil, fmt.Errorf("local auth requires repository, id generator, and clock")
+	if repository == nil || newID == nil || now == nil || passwords == nil {
+		return nil, fmt.Errorf("local auth requires repository, id generator, clock, and password engine")
 	}
 	if tokenTTL <= 0 {
 		return nil, fmt.Errorf("access token TTL must be positive")
 	}
-	dummyHash, err := credentials.HashPassword("antnest-invalid-account-password")
+	dummyHash, err := passwords.HashPassword(ctx, "antnest-invalid-account-password")
 	if err != nil {
 		return nil, fmt.Errorf("prepare password timing defense: %w", err)
 	}
@@ -95,6 +98,7 @@ func NewService(
 		now:        now,
 		tokenTTL:   tokenTTL,
 		dummyHash:  dummyHash,
+		passwords:  passwords,
 	}, nil
 }
 
@@ -105,17 +109,18 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 	slug, email, validInput := normalizeLoginIdentity(input.OrganizationSlug, input.Email)
 	credential, lookupErr := s.lookupCredential(ctx, slug, email, validInput)
 	encoded := credential.PasswordHash
-	if lookupErr != nil || !validInput {
+	realCredential := lookupErr == nil && validInput && credential.Principal.Active && encoded != ""
+	if !realCredential {
 		encoded = s.dummyHash
 	}
-	passwordMatches, verifyErr := credentials.VerifyPassword(encoded, input.Password)
-	if verifyErr != nil && lookupErr == nil && validInput {
-		return LoginResult{}, fmt.Errorf("verify stored password: %w", verifyErr)
+	passwordMatches, verifyErr := s.passwords.VerifyPassword(ctx, encoded, input.Password)
+	if verifyErr != nil {
+		return LoginResult{}, fmt.Errorf("verify local password: %w", verifyErr)
 	}
 	if lookupErr != nil && !errors.Is(lookupErr, domain.ErrNotFound) {
 		return LoginResult{}, fmt.Errorf("find local credential: %w", lookupErr)
 	}
-	if !validInput || lookupErr != nil || !passwordMatches || !credential.Principal.Active {
+	if !realCredential || !passwordMatches {
 		return LoginResult{}, domain.ErrUnauthenticated
 	}
 

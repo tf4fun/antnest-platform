@@ -21,7 +21,7 @@ func browserDeadlineFixture(t *testing.T) (localAdmissionFixture, *localauth.Ser
 	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
 	fixture := newLocalAdmissionFixture(t, databaseURL, clock)
-	auth, err := localauth.NewService(fixture.store.LocalAuth(), fixture.newID, clock, time.Hour)
+	auth, err := localauth.NewService(t.Context(), fixture.store.LocalAuth(), fixture.newID, clock, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}

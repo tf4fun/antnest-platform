@@ -2,10 +2,13 @@
 
 This is the shared policy for [#60](https://github.com/tf4fun/antnest-platform/issues/60).
 The [machine-readable policy](password-verification-policy.json) has its own
-revision. Identity revision 16 and Gateway version 21 remain the current wire
-baseline during this shared batch. Identity publishes its new error catalog
-with its owning implementation at revision 17; Gateway publishes its consumer
-mapping at version 22. A policy reference alone does not activate either service.
+revision. Its historical wire baseline is Identity revision 16 and Gateway
+version 21. The Identity resource batch activates `credential_busy` at revision
+17; persistent attempts, `credential_rate_limited` and transactional rehash are
+still pending within the Identity delivery. Gateway remains at version 21 until
+its version-22 consumer implementation. Console adoption and cross-service
+integration also remain pending. A policy reference alone does not activate a
+service or establish completion of this policy.
 
 Identity owns password attempt state, Argon2 capacity and stored-hash migration.
 Gateway retains its cheap login admission filter. Gateway table pressure and

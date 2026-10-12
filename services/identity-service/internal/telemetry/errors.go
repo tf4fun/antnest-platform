@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
@@ -45,6 +46,7 @@ var safeErrorMessages = map[string]string{
 	"actor_mismatch":                    "Body actor does not match authenticated caller",
 	"unsupported_media_type":            "RPC content type is unsupported",
 	"identity_dependency_unavailable":   "Identity authorization dependency is unavailable",
+	"credential_busy":                   "Password verification is busy",
 }
 
 func ErrorSummary(err error) (string, string) {
@@ -117,6 +119,13 @@ func recordError(span trace.Span, phase string, err error, failure bool) {
 	var postgres *pgconn.PgError
 	if errors.As(err, &postgres) && validSQLState(postgres.Code) {
 		attrs = append(attrs, attribute.String("db.response.status_code", postgres.Code))
+	}
+	var admission *credentials.PasswordAdmissionError
+	if errors.As(err, &admission) {
+		switch admission.Reason {
+		case "queue_full", "wait_expired", "weight_exceeds_budget", "shutdown":
+			attrs = append(attrs, attribute.String("antnest.password.admission_reason", admission.Reason))
+		}
 	}
 	span.SetAttributes(attrs...)
 	span.AddEvent("antnest.error", trace.WithAttributes(attrs...))

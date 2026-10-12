@@ -65,7 +65,7 @@ func TestBrowserOIDCAndRoleChangeShareParentLockOrder(t *testing.T) {
 			})
 			roleDone := make(chan error, 1)
 			workers.Go(func() {
-				_, err := directory.NewService(roleStore.Directory(), f.newID, f.time).UpdateMembership(ctx, directory.UpdateMembershipInput{
+				_, err := directory.NewService(roleStore.Directory(), f.newID, f.time, testPasswordEngine(t)).UpdateMembership(ctx, directory.UpdateMembershipInput{
 					RequestID: "role-while-login", ActorPrincipalID: f.admin.User.ID,
 					OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID,
 					Email: f.user.Membership.Email, DisplayName: f.user.Membership.DisplayName,
@@ -146,7 +146,7 @@ func TestBrowserOIDCAndRoleChangeShareParentLockOrder(t *testing.T) {
 
 func TestBrowserConcurrentRoleChangesDoNotUpgradeSharedOrganizationLocks(t *testing.T) {
 	f := browserOIDCFixture(t)
-	second, err := directory.NewService(f.store.Directory(), f.newID, f.time).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{
+	second, err := directory.NewService(f.store.Directory(), f.newID, f.time, testPasswordEngine(t)).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{
 		RequestID: "second-member", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID,
 		Email: "second@example.com", DisplayName: "Second", Password: "another correct password", Role: domain.OrganizationRoleMember,
 	})
@@ -173,7 +173,7 @@ func TestBrowserConcurrentRoleChangesDoNotUpgradeSharedOrganizationLocks(t *test
 			}
 		})
 		workers.Go(func() {
-			_, err := directory.NewService(store.Directory(), f.newID, f.time).UpdateMembership(ctx, directory.UpdateMembershipInput{
+			_, err := directory.NewService(store.Directory(), f.newID, f.time, testPasswordEngine(t)).UpdateMembership(ctx, directory.UpdateMembershipInput{
 				RequestID: "promote-" + member.ID, ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID,
 				MembershipID: member.ID, Email: member.Email, DisplayName: member.DisplayName, Role: domain.OrganizationRoleAdmin, Active: true,
 			})
@@ -228,7 +228,7 @@ func TestBrowserLocalLoginAndSCIMReplacementShareParentLockOrder(t *testing.T) {
 			})
 		}
 	})
-	auth, err := localauth.NewService(loginStore.LocalAuth(), f.newID, f.time, time.Hour)
+	auth, err := localauth.NewService(t.Context(), loginStore.LocalAuth(), f.newID, f.time, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}

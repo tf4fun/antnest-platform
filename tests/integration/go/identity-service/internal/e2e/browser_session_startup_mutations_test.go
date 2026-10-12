@@ -66,7 +66,7 @@ func TestBrowserStartupAndSessionMutationsUseOneTokenLockOrder(t *testing.T) {
 				startMutation := func() {
 					workers.Go(func() {
 						var err error
-						service := browsersessions.NewService(changing.BrowserSessions())
+						service := browsersessions.NewService(changing.BrowserSessions(), testPasswordEngine(t))
 						if mutation == "password" {
 							replacement, err = service.ChangePassword(ctx, browserPasswordInput(f))
 						} else {

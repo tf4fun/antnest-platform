@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
@@ -94,13 +95,16 @@ type Repository interface {
 	ListRevocations(context.Context, RevocationQuery) (domain.SessionRevocationPage, error)
 }
 
-type Service struct{ repository Repository }
+type Service struct {
+	repository Repository
+	passwords  credentials.Passwords
+}
 
-func NewService(repository Repository) *Service {
-	if repository == nil {
-		panic("browser sessions require repository")
+func NewService(repository Repository, passwords credentials.Passwords) *Service {
+	if repository == nil || passwords == nil {
+		panic("browser sessions require repository and password engine")
 	}
-	return &Service{repository: repository}
+	return &Service{repository: repository, passwords: passwords}
 }
 
 func authenticatedActor(ctx context.Context, actor string) (*callercontext.Caller, error) {
