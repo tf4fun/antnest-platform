@@ -1,135 +1,147 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
-import { startPasswordPressure } from "./password-pressure.mjs";
+import { withPasswordHolder } from "./password-pressure.mjs";
 
-test("pressure bounds active requests and stop joins every started request", async () => {
-  const gates = [],
-    launched = Promise.withResolvers();
-  const pressure = startPasswordPressure({
-    concurrency: 3,
-    maximum: 100,
-    intervalMS: 1,
+function fixture(overrides = {}) {
+  const holder = Promise.withResolvers();
+  const target = Promise.withResolvers();
+  const events = [];
+  const options = {
     timeoutMS: 1000,
-    run: async () => {
-      const gate = Promise.withResolvers();
-      gates.push(gate);
-      if (gates.length === 3) launched.resolve();
-      await gate.promise;
+    throttle: async () => {
+      events.push("throttle");
     },
-  });
-  await launched.promise;
-  assert.equal(gates.length, 3);
-  let closed = false;
-  const stopped = pressure.stop().then(() => {
-    closed = true;
-  });
-  await Promise.resolve();
-  assert.equal(closed, false);
-  gates.forEach((gate) => gate.resolve());
-  await stopped;
-  assert.deepEqual(pressure.state(), {
-    started: 3,
-    peak: 3,
-    active: 0,
-    stopped: true,
-    exhausted: false,
-  });
-});
-
-test("one failed pressure request still joins its pending siblings", async () => {
-  const gate = Promise.withResolvers(),
-    entered = Promise.withResolvers();
-  const pressure = startPasswordPressure({
-    concurrency: 2,
-    maximum: 100,
-    intervalMS: 1,
-    timeoutMS: 1000,
-    run: async (index) => {
-      if (index === 0) {
-        await entered.promise;
-        throw new Error("controlled request failure");
-      }
-      entered.resolve();
-      await gate.promise;
+    start: async () => {
+      events.push("start");
+      await holder.promise;
+      events.push("holder-joined");
     },
-  });
-  await entered.promise;
-  await Promise.resolve();
-  let finished = false;
-  const close = pressure.stop().catch((error) => {
-    finished = true;
-    assert(
-      error.errors.some((e) => e.message === "controlled request failure"),
-    );
-  });
-  await Promise.resolve();
-  assert.equal(finished, false);
-  gate.resolve();
-  await close;
-  assert.equal(finished, true);
-  assert.equal(pressure.state().active, 0);
+    exercise: async (assertHeld) => {
+      assertHeld();
+      events.push("target");
+      return "receipt";
+    },
+    restore: async () => {
+      events.push("restore");
+      holder.resolve();
+      target.resolve();
+    },
+    drain: async () => {
+      assert(events.includes("holder-joined"));
+      events.push("server-drained");
+    },
+    ...overrides,
+  };
+  return { holder, target, events, options };
+}
+
+test("one real holder stays pending until CPU restoration, then both HTTP and server join", async () => {
+  const f = fixture();
+  assert.equal(await withPasswordHolder(f.options), "receipt");
+  assert.deepEqual(f.events, [
+    "throttle",
+    "start",
+    "target",
+    "restore",
+    "holder-joined",
+    "server-drained",
+  ]);
 });
 
-test("exhausting the fixed request budget fails instead of silently draining before targets", async () => {
-  const pressure = startPasswordPressure({
-    concurrency: 2,
-    maximum: 3,
-    intervalMS: 0,
-    timeoutMS: 1000,
-    run: async () => {},
-  });
-  await pressure.completed;
-  await assert.rejects(pressure.stop(), /pressure/i);
-  assert.equal(pressure.state().started, 3);
-  assert.equal(pressure.state().exhausted, true);
+test("a phase deadline restores CPU while target and noninterruptible holder are still pending", async () => {
+  const f = fixture({ timeoutMS: 10 });
+  f.options.exercise = async (assertHeld) => {
+    f.events.push("target");
+    await f.target.promise;
+    assertHeld();
+  };
+  await assert.rejects(withPasswordHolder(f.options), /holder phase failed/u);
+  assert.equal(f.events.filter((s) => s === "start").length, 1);
+  assert.equal(f.events.filter((s) => s === "restore").length, 1);
+  assert.equal(f.events.at(-1), "server-drained");
 });
 
-test("stop retains an AbortError from an already-started request", async () => {
-  const gate = Promise.withResolvers();
-  const failure = new DOMException(
-    "request aborted independently",
-    "AbortError",
+test("caller cancellation restores CPU before joining existing work and prevents later targets", async () => {
+  const controller = new AbortController();
+  const f = fixture({ signal: controller.signal });
+  f.options.exercise = async (assertHeld) => {
+    controller.abort(new Error("caller cancelled"));
+    await f.target.promise;
+    assertHeld();
+    f.events.push("forbidden-target");
+  };
+  await assert.rejects(withPasswordHolder(f.options), (error) =>
+    error.errors.some((cause) => cause.message === "caller cancelled"),
   );
-  const pressure = startPasswordPressure({
-    concurrency: 1,
-    run: () => gate.promise,
-  });
-  const stopped = pressure.stop();
-  gate.reject(failure);
-  await assert.rejects(stopped, (error) => error.errors.includes(failure));
-  assert.equal(pressure.state().active, 0);
+  assert(!f.events.includes("forbidden-target"));
+  assert.equal(f.events.at(-1), "server-drained");
 });
 
-test("the time budget expires while requests are held and still joins them", async () => {
-  const gate = Promise.withResolvers();
-  const pressure = startPasswordPressure({
-    concurrency: 1,
-    timeoutMS: 10,
-    run: () => gate.promise,
-  });
-  await delay(25);
-  const stopped = pressure.stop();
-  gate.resolve();
-  await assert.rejects(stopped, /pressure/i);
-  assert.equal(pressure.state().exhausted, true);
-  assert.equal(pressure.state().active, 0);
+test("a completed holder cannot be treated as continuing pressure or restarted", async () => {
+  const f = fixture();
+  f.holder.resolve();
+  f.options.exercise = async (assertHeld) => {
+    await new Promise((resolve) => setImmediate(resolve));
+    assertHeld();
+    f.events.push("forbidden-target");
+  };
+  await assert.rejects(withPasswordHolder(f.options), /holder phase failed/u);
+  assert(!f.events.includes("forbidden-target"));
+  assert.equal(f.events.filter((s) => s === "start").length, 1);
+  assert.equal(f.events.at(-1), "server-drained");
 });
 
-test("stop observes an elapsed budget before the deadline timer can run", async () => {
-  const gate = Promise.withResolvers();
-  const pressure = startPasswordPressure({
-    concurrency: 1,
-    timeoutMS: 2,
-    run: () => gate.promise,
+test("target and restore errors both survive cleanup and actual server join", async () => {
+  const targetError = new Error("target failure"),
+    restoreError = new Error("restore failure");
+  const f = fixture();
+  f.options.exercise = async () => {
+    throw targetError;
+  };
+  f.options.restore = async () => {
+    f.holder.resolve();
+    throw restoreError;
+  };
+  await assert.rejects(
+    withPasswordHolder(f.options),
+    (error) =>
+      error.errors.includes(targetError) && error.errors.includes(restoreError),
+  );
+  assert.equal(f.events.at(-1), "server-drained");
+});
+
+test("failed CPU setup still restores the original quota without starting a holder", async () => {
+  const f = fixture({
+    throttle: async () => {
+      throw new Error("partial update");
+    },
+    drain: async () => {},
   });
-  const started = performance.now();
-  while (performance.now() - started < 10) {
-    // Hold this call stack so the timer cannot classify the elapsed deadline.
-  }
-  const stopped = pressure.stop();
-  gate.resolve();
-  await assert.rejects(stopped, /pressure/i);
-  assert.equal(pressure.state().exhausted, true);
-  assert.equal(pressure.state().active, 0);
+  await assert.rejects(withPasswordHolder(f.options), /holder phase failed/u);
+  assert.deepEqual(f.events, ["restore"]);
+});
+
+test("an HTTP result is insufficient when the actual server transaction did not drain", async () => {
+  const failure = new Error("server still active");
+  const f = fixture({
+    drain: async () => {
+      throw failure;
+    },
+  });
+  await assert.rejects(withPasswordHolder(f.options), (error) =>
+    error.errors.includes(failure),
+  );
+  assert.equal(f.events.at(-1), "holder-joined");
+});
+
+test("completion after a blocked event loop deadline cannot bypass the timer", async () => {
+  const f = fixture({ timeoutMS: 5 });
+  f.options.exercise = async () => {
+    const end = performance.now() + 15;
+    while (performance.now() < end) {
+      /* Hold the event loop past the deadline. */
+    }
+  };
+  await assert.rejects(withPasswordHolder(f.options), /holder phase failed/u);
+  assert.equal(f.events.at(-1), "server-drained");
 });

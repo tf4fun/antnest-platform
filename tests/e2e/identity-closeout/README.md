@@ -87,12 +87,22 @@ sharing PostgreSQL and the same immutable candidate image. An external database
 transaction controls fifth/sixth attempts and legacy-login/password-rotation
 ordering; admission requires the actual PostgreSQL blocking graph. Browser
 requests check canonical 429/503 responses, retry hints, unchanged Cookies and
-durable state, followed by explicit recovery. A temporary CPU quota and bounded
-independent login pressure exercise the real KDF queue; each public login,
-password change and Console user creation must have exactly one owning RPC with
-a KDF busy reason. That scheduling phase is separate from Identity's normal-CPU
-200-request/RSS admission. The fixture restores the quota, joins requests and
-closes its database connections and peer before the existing session flows.
+durable state, followed by explicit recovery. An isolated account's valid
+128 MiB, 10-pass historical PHC occupies the entire unchanged KDF memory budget
+under a temporary 0.1 CPU quota. A single invalid-namespace dummy probe must
+return typed KDF `wait_expired`; each public login, password change and Console
+user creation is then sent once and must receive the same KDF refusal. PostgreSQL
+and same-instance raw Trace evidence must place every target response between
+the holder's credential read and its first post-verification SQL. A past queue-full
+observation is insufficient. Only the holder's two counters may record its one
+deliberate wrong password, with their shared first-failure window bounded by
+actual PostgreSQL timestamps; target counters, credentials, sessions and Cookies
+remain unchanged. This 12-second fault phase is separate from normal-CPU
+200-request/RSS admission. The fixture restores CPU before joining HTTP requests
+and the actual server transaction, including on timeout or cancellation. Closed
+response diagnostics are recorded before assertions without copying credentials,
+Cookie values or arbitrary response text. The peer and database connections close
+before the existing session flows.
 
 The core client is invoked by the parent as:
 

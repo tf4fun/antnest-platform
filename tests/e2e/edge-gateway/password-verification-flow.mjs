@@ -6,11 +6,17 @@ import { passwordFixture } from "./password-verification-fixture.mjs";
 import {
   assertPasswordRejection,
   assertFifthCommit,
+  passwordResponseObservation,
+  assertPasswordHolderWindow,
+  passwordIdentityServer,
+  assertHolderFailureCommit,
 } from "./password-verification-evidence.mjs";
 import { assertNoStore } from "../identity-closeout/support.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
-import { startPasswordPressure } from "./password-pressure.mjs";
+import { withPasswordHolder } from "./password-pressure.mjs";
+import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
+import { inspectLoginRefusalTransaction } from "./resolve-cache-recovery-http.mjs";
 
 const originalAdmin = {
   organization_slug: "stage3",
@@ -23,18 +29,21 @@ const attemptMap = (rows) => new Map(rows.map((row) => [keyOf(row), row]));
 
 // Only fixture inputs use a legacy policy. Both deployed Identity engines keep
 // their admitted production Argon2 policy and verify this historical PHC.
-function legacyHash(password) {
+function legacyHash(
+  password,
+  { memory = 8192, passes = 1, parallelism = 1 } = {},
+) {
   const salt = randomBytes(16);
   const key = argon2Sync("argon2id", {
     message: password,
     nonce: salt,
-    memory: 8192,
-    passes: 1,
-    parallelism: 1,
+    memory,
+    passes,
+    parallelism,
     tagLength: 32,
   });
   const b64 = (value) => value.toString("base64").replaceAll("=", "");
-  return `$argon2id$v=19$m=8192,t=1,p=1$${b64(salt)}$${b64(key)}`;
+  return `$argon2id$v=19$m=${memory},t=${passes},p=${parallelism}$${b64(salt)}$${b64(key)}`;
 }
 
 export async function verifyPasswordVerification({
@@ -55,6 +64,8 @@ export async function verifyPasswordVerification({
     checks: [],
     concurrency: [],
     public_responses: [],
+    response_observations: [],
+    transport_failures: [],
   };
   const checkpoint = (name) => {
     evidence.checks.push(name);
@@ -109,22 +120,40 @@ export async function verifyPasswordVerification({
       ),
     ]);
     for (const result of settled)
-      if (result.status === "rejected") throw result.reason;
+      if (result.status === "rejected") {
+        evidence.transport_failures.push({
+          route: path,
+          kind:
+            result.reason?.name === "TimeoutError"
+              ? "timeout"
+              : result.reason?.name === "AbortError"
+                ? "aborted"
+                : "transport_failed",
+        });
+        record(evidence);
+        throw result.reason;
+      }
     const response = settled[0].value;
-    assert.equal(
-      response.status(),
-      status,
-      `${path}: unexpected public status`,
-    );
     const headers = new Headers();
     for (const { name, value } of await response.headersArray())
       headers.append(name, value);
+    let responseBody, bodyError;
+    try {
+      responseBody = await response.json();
+    } catch (error) {
+      bodyError = error;
+    }
     const result = {
-      status,
-      body: await response.json(),
+      status: response.status(),
+      body: responseBody,
       headers,
       traceID: headers.get("x-antnest-trace-id"),
     };
+    result.observation = passwordResponseObservation(path, result);
+    evidence.response_observations.push(result.observation);
+    record(evidence);
+    if (bodyError) throw bodyError;
+    assert.equal(result.status, status, `${path}: unexpected public status`);
     assertNoStore(headers);
     return result;
   };
@@ -153,20 +182,20 @@ export async function verifyPasswordVerification({
     const cookies = await cookieSnapshot(session.context);
     const before = await facts();
     const response = await operation();
-    evidence.public_responses.push({
-      ...assertPasswordRejection(response, code),
-      trace_id: response.traceID,
-    });
+    const receipt = assertPasswordRejection(response, code);
+    response.observation.rejection_valid = true;
     assert.deepEqual(
       await cookieSnapshot(session.context),
       cookies,
       "password failure changed real browser Cookies",
     );
+    response.observation.cookies_preserved = true;
     assert.deepEqual(
       await facts(),
       before,
       "password failure changed durable credentials, sessions, directory or events",
     );
+    response.observation.database_preserved = true;
     const old = await browserClient(session.context, config.gateway);
     const live = await old.request("/api/session");
     assert.equal(
@@ -174,6 +203,9 @@ export async function verifyPasswordVerification({
       session.initial.principal.user_id,
     );
     assert.equal(live.headers.getSetCookie().length, 0);
+    response.observation.old_session_live = true;
+    evidence.public_responses.push({ ...receipt, trace_id: response.traceID });
+    record(evidence);
     return response;
   };
   try {
@@ -506,6 +538,7 @@ export async function verifyPasswordVerification({
       config,
       signal,
       evidence,
+      output,
     });
     checkpoint("real-kdf-busy-through-https-and-console-recovery");
     // This includes every direct request and checks its actual target container.
@@ -586,6 +619,7 @@ async function verifyBusy({
   config,
   signal,
   evidence,
+  output,
 }) {
   const loginOrg = await makeOrganization("busy-login"),
     passwordOrg = await makeOrganization("busy-change"),
@@ -626,159 +660,300 @@ async function verifyBusy({
       body: newUser,
     },
   ];
+  // The holder has its own two pre-existing counters, so its deliberate wrong
+  // password cannot contend with or change the three target accounts.
+  const beforeHolderOrg = attemptMap(await f.attempts());
+  const holderOrg = await makeOrganization("busy-holder");
+  const holderUser = await makeUser(holderOrg, "busy-holder");
+  const orgKeys = (await f.attempts()).filter(
+    (r) => r.scope === "organization" && !beforeHolderOrg.has(keyOf(r)),
+  );
+  assert.equal(orgKeys.length, 1);
+  const beforeHolderLogin = attemptMap(await f.attempts());
+  await f.signIn("a", holderUser.account);
+  const accountKeys = (await f.attempts()).filter(
+    (r) => !beforeHolderLogin.has(keyOf(r)),
+  );
+  assert.equal(accountKeys.length, 1);
+  const holderKeys = new Set([...orgKeys, ...accountKeys].map(keyOf));
+  const holderPolicy = { memory: 131072, passes: 10, parallelism: 1 };
+  assert.equal(holderPolicy.memory, f.configuration.memory_budget_kib);
+  const holderHash = legacyHash(holderUser.account.password, holderPolicy);
+  assert.equal(
+    (
+      await f.query(
+        "UPDATE local_credentials SET password_hash=$2 WHERE user_id=$1 RETURNING user_id",
+        [holderUser.user.id, holderHash],
+      )
+    ).length,
+    1,
+  );
+  for (const r of requests) {
+    const client = await browserClient(r.session.context, config.gateway);
+    await client.request("/api/session");
+  }
   const beforeProcess = await f.process();
   const protectedAttempts = await f.attempts();
   const before = await facts();
-  const pressureOffset = f.requests.length;
-  let pressure;
-  // CPU quota is an explicit, temporary scheduling control for this fault phase;
-  // it never lowers Argon2 cost/budget and is not RSS/default-deployment evidence.
   const originalCPU = await f.cpu();
   assert.deepEqual(
     originalCPU,
     { period: 100000, quota: -1, nano_cpus: 0 },
     "normal deployment must begin without a CPU quota",
   );
-  let phaseError;
-  try {
-    await docker(["update", "--cpu-quota", "50000", f.mainID]);
-    evidence.cpu_quota = { original: originalCPU, pressure: await f.cpu() };
-    assert.deepEqual(evidence.cpu_quota.pressure, {
-      ...originalCPU,
-      quota: 50000,
-    });
-    const tag = randomUUID().replaceAll("-", "");
-    pressure = startPasswordPressure({
-      signal,
-      run: (n) =>
-        f.signIn(
-          "a",
-          {
-            organization_slug: `pressure-${tag}-${n}`,
-            email: `pressure-${n}@password.example.test`,
-            password: "unknown-pressure-password",
-          },
-          [401, 503],
-        ),
-    });
-    const deadline = performance.now() + 6000;
-    while (true) {
-      const logs = await f.logs("a");
-      const traces = new Set(
-        f.requests.slice(pressureOffset).map((row) => row.trace_id),
-      );
-      const witness = logs.find(
-        (row) =>
-          row.password_admission_reason === "queue_full" &&
-          traces.has(row.trace_id),
-      );
-      if (witness) {
-        evidence.saturation_trace_id = witness.trace_id;
-        break;
-      }
-      assert(
-        performance.now() < deadline,
-        "KDF queue saturation was not observed",
-      );
-      await delay(25, undefined, { signal });
-    }
-    // Each target is sent once, without searching/retrying until it gets a 503.
-    const targets = await Promise.allSettled(
-      requests.map((r) =>
-        preserve(
-          r.session,
-          () => post(r.session, r.path, r.body, 503),
-          "credential_busy",
-        ),
-      ),
+  const clean = dockerClient(config.env, undefined, 30000);
+  const query = async () =>
+    (
+      await f.pool.query(
+        "SELECT pid,backend_start::text,xact_start::text,state,wait_event_type,query,pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE datname=current_database() AND application_name='issue60-a' AND xact_start IS NOT NULL",
+      )
+    ).rows;
+  const verifying = (rows) =>
+    rows.filter(
+      (row) =>
+        row.state === "idle in transaction" &&
+        row.blockers.length === 0 &&
+        row.query.replace(/\s+/gu, " ").trim() ===
+          "SELECT password_hash FROM local_credentials WHERE user_id=$1 FOR UPDATE",
     );
-    const targetErrors = targets
-      .filter((result) => result.status === "rejected")
-      .map((result) => result.reason);
-    if (targetErrors.length)
-      throw new AggregateError(
-        targetErrors,
-        "public password pressure targets failed",
+  const actualBusy = async (response, method) => {
+    const matches = (await f.logs("a", clean)).filter(
+      (row) =>
+        row.trace_id === response.traceID &&
+        row.route === `/rpc/identity/${method}`,
+    );
+    assert.equal(
+      matches.length,
+      1,
+      "password target must call its actual owner once",
+    );
+    assert.equal(matches[0].status_code, 503);
+    assert.equal(
+      matches[0].password_admission_reason,
+      "wait_expired",
+      "database admission or a past queue-full event cannot prove held KDF capacity",
+    );
+    return { trace_id: response.traceID, reason: "wait_expired", calls: 1 };
+  };
+  let holderResponse, probeResponse, holderTransaction, responses;
+  evidence.holder = {
+    policy: holderPolicy,
+    started: 0,
+    http_joined: false,
+    server_drained: false,
+  };
+  const attemptsStartedAt = (
+    await f.query("SELECT clock_timestamp() AS value")
+  )[0].value;
+  await withPasswordHolder({
+    signal,
+    throttle: async () => {
+      // Only this bounded scheduling fault uses a CPU quota. Current Argon2
+      // policy and resource budgets stay unchanged; this is not RSS evidence.
+      await docker(["update", "--cpu-quota", "10000", f.mainID]);
+      evidence.cpu_quota = { original: originalCPU, pressure: await f.cpu() };
+      assert.deepEqual(evidence.cpu_quota.pressure, {
+        ...originalCPU,
+        quota: 10000,
+      });
+    },
+    start: async () => {
+      evidence.holder.started++;
+      holderResponse = await f.signIn(
+        "a",
+        { ...holderUser.account, password: "incorrect-full-budget-holder" },
+        401,
+        { traceRoot: true },
       );
-    const responses = targets.map((result) => result.value);
-    const logs = await f.logs("a");
-    evidence.busy = responses.map((response, n) => {
-      const matches = logs.filter(
-        (row) =>
-          row.trace_id === response.traceID &&
-          row.route === `/rpc/identity/${requests[n].method}`,
+      evidence.holder.http_joined = true;
+      evidence.holder.trace_id = holderResponse.traceID;
+    },
+    exercise: async (assertHeld) => {
+      while (true) {
+        assertHeld();
+        const rows = verifying(await query());
+        assert(rows.length <= 1, "ambiguous password holder transaction");
+        if (rows.length === 1) {
+          holderTransaction = rows[0];
+          break;
+        }
+        await delay(25, undefined, { signal });
+      }
+      evidence.holder.before = holderTransaction;
+      assertHeld();
+      // A nonempty invalid namespace takes the actual no-database dummy KDF.
+      // One wait_expired receipt corroborates admission; it is never retried.
+      probeResponse = await f.signIn(
+        "a",
+        {
+          organization_slug: "Invalid namespace!",
+          email: "holder-probe@password.example.test",
+          password: "invalid-namespace-probe",
+        },
+        503,
+        { traceRoot: true },
       );
-      assert.equal(
-        matches.length,
-        1,
-        "public busy request must call its owner exactly once",
-      );
-      assert(
-        ["queue_full", "wait_expired"].includes(
-          matches[0].password_admission_reason,
+      assertPasswordRejection(probeResponse, "credential_busy");
+      evidence.holder.probe = await actualBusy(probeResponse, "local-login");
+      assertHeld();
+      const targets = await Promise.allSettled(
+        requests.map((r) =>
+          preserve(
+            r.session,
+            () => post(r.session, r.path, r.body, 503),
+            "credential_busy",
+          ),
         ),
-        "database busy cannot prove KDF pressure",
       );
-      return {
-        route: requests[n].path,
-        trace_id: response.traceID,
-        reason: matches[0].password_admission_reason,
-        calls: 1,
-      };
-    });
-    assert.deepEqual(await facts(), before);
-  } catch (error) {
-    phaseError = error;
-  } finally {
-    const stopped = pressure
-      ? pressure.stop().then(
-          () => ({}),
-          (error) => ({ error }),
-        )
-      : Promise.resolve({});
-    // Restore the quota before joining expensive kernels; same process drains.
-    const clean = (
-      await import("../lifecycle-closeout/docker.mjs")
-    ).dockerClient(config.env, undefined, 30000);
-    let restoreError;
-    try {
+      const errors = targets
+        .filter((r) => r.status === "rejected")
+        .map((r) => r.reason);
+      if (errors.length)
+        throw new AggregateError(
+          errors,
+          "one-shot public password targets failed",
+        );
+      responses = targets.map((r) => r.value);
+      assertHeld();
+      const after = verifying(await query());
+      assert.equal(
+        after.length,
+        1,
+        "holder left Verify before target completion",
+      );
+      assert.deepEqual(
+        after[0],
+        holderTransaction,
+        "holder transaction advanced during targets",
+      );
+      evidence.holder.after = after[0];
+      evidence.busy = [];
+      for (let n = 0; n < responses.length; n++)
+        evidence.busy.push({
+          route: requests[n].path,
+          ...(await actualBusy(responses[n], requests[n].method)),
+        });
+      assertHeld();
+      assert.deepEqual(await facts(), before);
+    },
+    restore: async () => {
       await clean(["update", "--cpu-quota", "-1", f.mainID]);
-      const restoredCPU = await f.cpu(clean);
-      assert.deepEqual(restoredCPU, originalCPU);
-      if (evidence.cpu_quota) evidence.cpu_quota.restored = restoredCPU;
-    } catch (error) {
-      restoreError = error;
-    }
-    const { error: pressureError } = await stopped;
-    evidence.pressure = pressure?.state();
-    const errors = [phaseError, restoreError, pressureError].filter(Boolean);
-    if (errors.length)
-      throw new AggregateError(
-        errors,
-        "password pressure phase failed after all requests joined",
-      );
-  }
+      const restored = await f.cpu(clean);
+      assert.deepEqual(restored, originalCPU);
+      if (evidence.cpu_quota) evidence.cpu_quota.restored = restored;
+    },
+    drain: async () => {
+      const deadline = performance.now() + 5000;
+      while ((await query()).length) {
+        assert(
+          performance.now() < deadline,
+          "actual Identity transactions did not drain",
+        );
+        await delay(25);
+      }
+      if (evidence.holder.started) {
+        assert(
+          holderResponse,
+          "actual holder HTTP completion was not captured",
+        );
+        const matches = (await f.logs("a", clean)).filter(
+          (r) =>
+            r.trace_id === holderResponse.traceID &&
+            r.route === "/rpc/identity/local-login",
+        );
+        assert.equal(matches.length, 1);
+        assert.equal(matches[0].status_code, 401);
+      }
+      evidence.holder.server_drained = true;
+    },
+  });
   assert.deepEqual(
     await f.process(),
     beforeProcess,
     "capacity recovery restarted or replaced Identity",
   );
-  const afterAttempts = attemptMap(await f.attempts());
-  // Unknown-login pressure can add account/organization rows, never User
-  // password-change rows. Preserve absence as well as pre-existing counters.
-  assert.deepEqual(
-    [...afterAttempts.values()].filter(
-      (row) => row.scope === "password_change_user",
+  const afterAttempts = await f.attempts();
+  const attemptBounds = {
+    started_at: attemptsStartedAt,
+    completed_at: (await f.query("SELECT clock_timestamp() AS value"))[0].value,
+  };
+  writeEvidenceFile(
+    output,
+    "password-holder-attempts.private.json",
+    JSON.stringify(
+      {
+        before: protectedAttempts,
+        after: afterAttempts,
+        holder_keys: [...holderKeys],
+        bounds: attemptBounds,
+      },
+      null,
+      2,
     ),
-    protectedAttempts.filter((row) => row.scope === "password_change_user"),
   );
-  for (const row of protectedAttempts)
-    assert.deepEqual(
-      afterAttempts.get(keyOf(row)),
-      row,
-      "busy incremented a protected attempt bucket",
-    );
+  evidence.holder.attempts = assertHolderFailureCommit(
+    protectedAttempts,
+    afterAttempts,
+    holderKeys,
+    attemptBounds,
+  );
   assert.deepEqual(await facts(), before);
+  const expectations = [
+    {
+      traceID: holderResponse.traceID,
+      method: "local-login",
+      status: 401,
+      kind: "holder",
+    },
+    {
+      traceID: probeResponse.traceID,
+      method: "local-login",
+      status: 503,
+      kind: "probe",
+    },
+    ...responses.map((r, n) => ({
+      traceID: r.traceID,
+      method: requests[n].method,
+      status: 503,
+      kind: "target",
+    })),
+  ];
+  const traces = new Map();
+  evidence.holder.trace_reports = await collectResolveTraceEvidence(
+    config.jaeger,
+    expectations,
+    [
+      holderHash,
+      holderUser.account.password,
+      ...requests.map((r) => r.session.account.password),
+      changePassword,
+      newUser.password,
+    ],
+    {
+      signal,
+      directory: `${output}/password-holder-traces`,
+      inspect: (trace, expected) => {
+        const server = passwordIdentityServer(
+          trace,
+          expected.method,
+          expected.status,
+        );
+        if (expected.kind === "holder")
+          inspectLoginRefusalTransaction(trace, server);
+        if (expected.kind === "probe") assert.equal(trace.spans.length, 1);
+        traces.set(trace.traceID, trace);
+        return { status: "passed", scope: "password-holder-window" };
+      },
+    },
+  );
+  evidence.holder.window = assertPasswordHolderWindow({
+    holder: traces.get(holderResponse.traceID),
+    probe: traces.get(probeResponse.traceID),
+    targets: responses.map((r, n) => ({
+      method: requests[n].method,
+      trace: traces.get(r.traceID),
+    })),
+  });
   for (const r of requests) {
     const result = await post(r.session, r.path, r.body, 200);
     if (r.method === "change-local-password") {

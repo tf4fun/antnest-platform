@@ -211,9 +211,19 @@ export async function passwordFixture({ config, docker, compose, signal }) {
       side,
       method,
       body,
-      { caller = "edge-gateway", context, status = 200 } = {},
+      {
+        caller = "edge-gateway",
+        context,
+        status = 200,
+        traceRoot = false,
+      } = {},
     ) => {
       const traceID = randomBytes(16).toString("hex");
+      // Selected isolated probes use a real Identity SERVER root. Discover its
+      // identity from the actual completion log; never fabricate a CLIENT span.
+      const prior = traceRoot
+        ? new Set((await logs(side)).map((r) => r.trace_id))
+        : undefined;
       const response = await fetch(
         `${endpoints[side]}/rpc/identity/${method}`,
         {
@@ -224,7 +234,11 @@ export async function passwordFixture({ config, docker, compose, signal }) {
             "content-type": "application/json",
             "Antnest-Service-Authorization": `Bearer ${tokens[caller]}`,
             ...(context ? { "Antnest-Caller-Context": context } : {}),
-            traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
+            ...(!traceRoot
+              ? {
+                  traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
+                }
+              : {}),
           },
           body: JSON.stringify(body),
         },
@@ -235,10 +249,34 @@ export async function passwordFixture({ config, docker, compose, signal }) {
         body: await response.json(),
         traceID,
       };
+      if (traceRoot) {
+        await until(
+          async () => {
+            const matches = (await logs(side)).filter(
+              (row) =>
+                !prior.has(row.trace_id) &&
+                row.route === `/rpc/identity/${method}` &&
+                row.method === "POST" &&
+                row.status_code === response.status,
+            );
+            assert(
+              matches.length <= 1,
+              "isolated root RPC completion is ambiguous",
+            );
+            if (!matches.length) return false;
+            assert.match(matches[0].trace_id, /^[a-f0-9]{32}$/u);
+            result.traceID = matches[0].trace_id;
+            return true;
+          },
+          "isolated root RPC completion",
+          signal,
+          5000,
+        );
+      }
       requests.push({
         side,
         route: `/rpc/identity/${method}`,
-        trace_id: traceID,
+        trace_id: result.traceID,
         status: response.status,
       });
       assert(
@@ -247,12 +285,12 @@ export async function passwordFixture({ config, docker, compose, signal }) {
       );
       return result;
     };
-    const signIn = (side, account, status = 200) =>
+    const signIn = (side, account, status = 200, options = {}) =>
       rpc(
         side,
         "local-login",
         { request_id: randomUUID(), ...account },
-        { status },
+        { ...options, status },
       );
     const context = async (side, token) =>
       (

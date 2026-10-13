@@ -1,90 +1,97 @@
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
 
-// Own a bounded number of independent requests until the target assertions
-// finish. Stopping cancels only scheduling; already-started operations are joined.
-export function startPasswordPressure({
-  run,
+// A single admitted, noninterruptible KDF owns the full memory budget. The
+// deadline stops the fault phase, restores CPU, and joins both HTTP work and
+// its actual server transaction. A completed holder is never restarted.
+export async function withPasswordHolder({
   signal,
-  concurrency = 40,
-  maximum = 1500,
-  intervalMS = 25,
-  timeoutMS = 15000,
+  timeoutMS = 12000,
+  throttle,
+  start,
+  exercise,
+  restore,
+  drain,
 }) {
-  for (const value of [concurrency, maximum, timeoutMS])
-    assert(Number.isSafeInteger(value) && value > 0);
-  assert(Number.isSafeInteger(intervalMS) && intervalMS >= 0);
+  assert(Number.isSafeInteger(timeoutMS) && timeoutMS > 0);
   signal?.throwIfAborted();
-  const controller = new AbortController();
+  const failure = Promise.withResolvers();
+  // Setup may still be awaiting Docker when an interruption arrives.
+  failure.promise.catch(() => {});
   const errors = [];
-  let started = 0,
-    active = 0,
-    peak = 0,
-    stopped = false,
-    exhausted = false;
-  const deadline = performance.now() + timeoutMS;
-  let timer;
-  const halt = () => {
-    stopped = true;
-    clearTimeout(timer);
-    controller.abort();
+  let holder,
+    targets,
+    timer,
+    finished = false,
+    holderFinished = false,
+    result;
+  let deadline = Infinity,
+    stopped;
+  const halt = (error) => {
+    if (!finished) {
+      stopped ??= error;
+      failure.reject(error);
+    }
   };
-  const exhaust = () => {
-    if (stopped) return;
-    exhausted = true;
-    errors.push(
-      new Error("password pressure exhausted its bounded request/time budget"),
+  const abort = () => halt(signal.reason);
+  const assertHeld = () => {
+    signal?.throwIfAborted();
+    if (stopped) throw stopped;
+    assert(
+      performance.now() < deadline,
+      "password holder phase deadline exceeded",
     );
-    halt();
+    assert(!finished, "password holder phase already ended");
+    assert(
+      !holderFinished,
+      "password holder finished before target completion",
+    );
   };
-  const abort = () => {
-    errors.push(signal.reason);
-    halt();
-  };
-  timer = setTimeout(exhaust, timeoutMS);
   signal?.addEventListener("abort", abort, { once: true });
-  const workers = Array.from({ length: concurrency }, async () => {
+  try {
+    await throttle();
+    signal?.throwIfAborted();
+    deadline = performance.now() + timeoutMS;
+    timer = setTimeout(
+      () => halt(new Error("password holder phase deadline exceeded")),
+      timeoutMS,
+    );
+    holder = Promise.resolve().then(start);
+    holder.then(
+      () => {
+        holderFinished = true;
+        halt(new Error("password holder finished before target completion"));
+      },
+      (error) => {
+        holderFinished = true;
+        halt(error);
+      },
+    );
+    targets = Promise.resolve().then(() => exercise(assertHeld));
+    result = await Promise.race([targets, failure.promise]);
+    assertHeld();
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    finished = true;
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
     try {
-      while (!stopped) {
-        if (started >= maximum || performance.now() >= deadline) {
-          exhaust();
-          break;
-        }
-        const index = started++;
-        peak = Math.max(peak, ++active);
-        try {
-          await run(index);
-        } finally {
-          active--;
-        }
-        if (!stopped) {
-          try {
-            await delay(intervalMS, undefined, { signal: controller.signal });
-          } catch (error) {
-            if (!(controller.signal.aborted && error.name === "AbortError"))
-              throw error;
-          }
-        }
-      }
+      await restore();
     } catch (error) {
       errors.push(error);
-      halt();
     }
-  });
-  const completed = Promise.allSettled(workers).then(() => {
-    signal?.removeEventListener("abort", abort);
-  });
-  const state = () => ({ started, peak, active, stopped, exhausted });
-  const stop = async () => {
-    if (performance.now() >= deadline) exhaust();
-    halt();
-    await completed;
-    if (errors.length)
-      throw new AggregateError(
-        errors,
-        "password pressure requests failed after joining",
-      );
-    return state();
-  };
-  return { completed, state, stop };
+    for (const row of await Promise.allSettled([holder, targets]))
+      if (row.status === "rejected") errors.push(row.reason);
+    try {
+      await drain();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length)
+    throw new AggregateError(
+      [...new Set(errors)],
+      "password holder phase failed after joining",
+    );
+  return result;
 }

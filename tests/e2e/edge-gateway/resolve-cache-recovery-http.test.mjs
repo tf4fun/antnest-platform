@@ -52,6 +52,130 @@ test("session revocation count follows actual affected rows, not a recorded Dock
   );
 });
 
+test("password recovery binds both attempt locks and the committed User reset", () => {
+  const f = recoveryHTTPFixture();
+  const receipt = inspect(f).mutations.find((r) => r.action === "password");
+  assert.equal(receipt.attempt_upserts, 2);
+  assert.equal(receipt.attempt_writes, 1);
+});
+
+for (const name of ["password", "deactivate"]) {
+  test(`${name} login refusal commits its two failure counters before returning 401`, () => {
+    const f = recoveryHTTPFixture();
+    const c = f.evidence.recovery.cases.find((c) => c.name === name);
+    const row = c.old_password ?? c.deactivated_login;
+    const receipt = inspect(f).rejections.find(
+      (r) => r.trace_id === row.trace_id,
+    );
+    const part = f.parts.find((p) => p.row === row);
+    assert.equal(receipt.transaction_span_id, part.transaction.spanID);
+    assert.equal(receipt.sql_span_ids.length, 15);
+    assert.equal(receipt.sql_span_id, part.database.spanID);
+  });
+}
+
+for (const kind of ["password", "login"]) {
+  for (const [name, change] of [
+    ["missing attempt upsert", (p) => remove(p, p.attemptUpserts[0])],
+    ["missing attempt write", (p) => remove(p, p.attemptWrites[0])],
+    [
+      "wrong attempt upsert rows",
+      (p) => setTag(p.attemptUpserts[0], "pgx.rows_affected", 0),
+    ],
+    [
+      "wrong attempt write rows",
+      (p) => setTag(p.attemptWrites[0], "pgx.rows_affected", 2),
+    ],
+    ["attempt SQL error", (p) => setTag(p.attemptWrites[0], "error", true)],
+    [
+      "attempt outside transaction",
+      (p) => {
+        p.attemptUpserts[0].references[0].spanID = p.server.spanID;
+      },
+    ],
+    [
+      "attempt after COMMIT",
+      (p) => {
+        p.attemptWrites[0].startTime = p.commit.startTime + p.commit.duration;
+      },
+    ],
+    [
+      "attempt from another Identity process",
+      (p) => {
+        p.trace.processes.foreignIdentity = { serviceName: "identity-service" };
+        p.attemptWrites[0].processID = "foreignIdentity";
+      },
+    ],
+    [
+      "transaction from another Identity process",
+      (p) => {
+        p.trace.processes.foreignIdentity = { serviceName: "identity-service" };
+        p.transaction.processID = "foreignIdentity";
+      },
+    ],
+    [
+      "extra attempt write",
+      (p) => {
+        const extra = structuredClone(p.attemptWrites[0]);
+        extra.spanID = "duplicate-attempt-write";
+        p.trace.spans.push(extra);
+      },
+    ],
+  ]) {
+    test(`${kind} recovery rejects ${name}`, () => {
+      const f = recoveryHTTPFixture();
+      change(kind === "password" ? action(f) : rejected(f, "login"));
+      assert.throws(() => inspect(f));
+    });
+  }
+}
+
+for (const [name, change] of [
+  ["missing COMMIT", (p) => remove(p, p.commit)],
+  [
+    "rolled back transaction",
+    (p) => setTag(p.transaction, "antnest.transaction.outcome", "rolled_back"),
+  ],
+  ["SQL ERROR", (p) => setTag(p.database, "otel.status_code", "ERROR")],
+  [
+    "credential write",
+    (p) =>
+      setTag(
+        p.database,
+        "db.query.text",
+        "UPDATE local_credentials SET password_hash=$1 WHERE user_id=$2",
+      ),
+  ],
+  [
+    "unexpected SELECT",
+    (p) =>
+      setTag(
+        p.database,
+        "db.query.text",
+        "SELECT password_hash FROM local_credentials",
+      ),
+  ],
+  [
+    "reordered attempt locks",
+    (p) => {
+      const first = p.attemptUpserts[0];
+      first.startTime = p.attemptUpserts[1].startTime + 1;
+    },
+  ],
+  [
+    "transaction ends after refusal",
+    (p) => {
+      p.transaction.duration = p.server.duration + 1;
+    },
+  ],
+]) {
+  test(`login refusal rejects ${name}`, () => {
+    const f = recoveryHTTPFixture();
+    change(rejected(f, "login"));
+    assert.throws(() => inspect(f));
+  });
+}
+
 for (const [name, change] of [
   [
     "COMMIT after owning response",
