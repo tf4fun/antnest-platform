@@ -2,6 +2,7 @@
   "contract": "antnest.identity",
   "revision": 17,
   "password_verification_policy": "password-verification-policy.json",
+  "scim_lifecycle_policy": "scim-lifecycle-policy.json",
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "base_path": "/rpc/identity",

@@ -8,6 +8,12 @@ JSON. Admin Console owns no durable records and therefore has no persistence
 contract. Skill source discovery and promotion are specified separately in
 [skill-discovery.md](skill-discovery.md).
 
+The planned [SCIM lifecycle contract](../identity/scim-lifecycle.md) defines
+expiry metadata, issuer review, a 14-day warning and overlap rotation for #66.
+The shared policy does not activate these fields in version 53; the Console
+implementation and its request/response allowlists activate version 54 after the
+Identity producer batch. Real HTTPS integration remains a separate delivery gate.
+
 ## Response allowlists
 
 Responses use explicit browser allowlists. Internal credential references,

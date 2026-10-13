@@ -12,6 +12,12 @@ stable error codes callers may branch on. `$ref` values address definitions in
 the same JSON document. `error.http_status_by_code` records non-default HTTP
 status mappings; listed error codes without an entry use HTTP 500.
 
+The planned [SCIM lifecycle contract](scim-lifecycle.md) defines expiry, issuer
+authority, overlap rotation and conditional User/Group writes for #66. Its shared
+policy and extension schemas do not change the revision-17 wire shape. Identity
+revision 18 activates the fields and ETag support with the owning implementation;
+Console version 54 and real HTTPS integration follow as separate batches.
+
 The versioned [password verification policy](password-verification.md) defines
 the pending #60 attempt store, shared Argon2 budget, stored-parameter migration
 and retryable failures. Its [machine-readable contract](password-verification-policy.json)
