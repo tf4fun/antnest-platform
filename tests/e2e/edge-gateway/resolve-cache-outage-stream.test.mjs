@@ -9,6 +9,8 @@ import {
 } from "../observability/gateway-resolution-fixtures.mjs";
 import { fields } from "../observability/trace-fixtures.mjs";
 
+import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
+
 const epoch = 1791786600000;
 const end = (s) => s.startTime + s.duration;
 const operationMessage =
@@ -1074,3 +1076,130 @@ for (const [name, change] of [
     change(f);
     assert.throws(() => checkOffboarding(f));
   });
+
+function completedViewRead(transport) {
+  const f = fixture(),
+    p = f.parts["prep-view"];
+  const initialize = {
+    ...structuredClone(p.ui),
+    spanID: "initialize",
+    references: [
+      { refType: "CHILD_OF", traceID: p.trace.traceID, spanID: p.ui.spanID },
+    ],
+    logs: [],
+  };
+  p.trace.spans.push(initialize);
+  return {
+    ...f,
+    ...addCompletedRead(p.trace, initialize, transport, f.evidence.agent_id),
+  };
+}
+const setEvent = (event, key, value) => {
+  event.fields = event.fields.filter((field) => field.key !== key);
+  event.fields.push({ key, value });
+};
+for (const transport of ["ws", "http"]) {
+  test(`stream retains ${transport} completed read disconnect without an error claim`, () => {
+    const f = completedViewRead(transport),
+      before = structuredClone({ traces: f.traces, evidence: f.evidence }),
+      result = check(f);
+    assert.equal(result.owned_error_spans.length, 19);
+    assert.deepEqual({ traces: f.traces, evidence: f.evidence }, before);
+  });
+  for (const [name, change] of [
+    [
+      "wrong initialize method",
+      (f) => setTag(f.root, "rpc.method", "session/prompt"),
+    ],
+    [
+      "wrong initialize Agent",
+      (f) => setTag(f.root, "antnest.agent.id", "other"),
+    ],
+    ["failed HTTP", (f) => setTag(f.server, "http.response.status_code", 503)],
+    [
+      "failed operation",
+      (f) => setTag(f.operation, "antnest.operation.outcome", "error"),
+    ],
+    [
+      "failed protocol",
+      (f) => setTag(f.server, "antnest.protocol.outcome", "error"),
+    ],
+    [
+      "wrong execution",
+      (f) => setTag(f.operation, "antnest.runtime.execution.id", "other"),
+    ],
+    [
+      "missing cancellation",
+      (f) => {
+        f.server.logs = [f.completion];
+      },
+    ],
+    [
+      "missing completion",
+      (f) => {
+        f.server.logs = [f.cancelled];
+      },
+    ],
+    [
+      "extra server exception",
+      (f) => setTag(f.server, "exception.type", "StorageError"),
+    ],
+    [
+      "extra completion exception",
+      (f) => setEvent(f.completion, "exception.type", "StorageError"),
+    ],
+    [
+      "extra failed outcome",
+      (f) => setEvent(f.completion, "executor.outcome", "error"),
+    ],
+    [
+      "wrong completion span",
+      (f) => setEvent(f.completion, "span_id", "foreign"),
+    ],
+    [
+      "completion before operation",
+      (f) => {
+        f.completion.timestamp = f.operation.startTime;
+      },
+    ],
+    [
+      "duplicate completion diagnostic",
+      (f) => {
+        f.completion.fields.push({
+          key: "error.type",
+          value: "client_disconnected",
+        });
+      },
+    ],
+  ])
+    test(`stream ${transport} completed read rejects ${name}`, () => {
+      const f = completedViewRead(transport);
+      change(f);
+      assert.throws(() => check(f));
+    });
+}
+for (const [key, value] of [
+  ["http.request.method", "GET"],
+  ["http.route", "/v2/acp"],
+  ["http.response.status_code", 503],
+])
+  test(`stream HTTP initialize rejects wrong ${key}`, () => {
+    const f = completedViewRead("http");
+    setTag(f.root, key, value);
+    assert.throws(() => check(f));
+  });
+
+for (const transport of ["ws", "http"])
+  for (const [key, value] of [
+    ["antnest.result", "rejected"],
+    ["db.response.status_code", "XX001"],
+    ["antnest.stream.termination", "access-denied"],
+    ["antnest.http.request_cancelled", true],
+  ])
+    for (const where of ["span", "event"])
+      test(`neutral ${transport} stream does not hide ${where} ${key}`, () => {
+        const f = completedViewRead(transport);
+        if (where === "span") setTag(f.server, key, value);
+        else setEvent(f.completion, key, value);
+        assert.throws(() => check(f));
+      });

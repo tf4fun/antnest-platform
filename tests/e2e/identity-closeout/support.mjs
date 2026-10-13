@@ -1,5 +1,6 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
+import { responseFailure } from "./request-failure.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import {
@@ -42,8 +43,9 @@ export class GatewayClient {
   cookies = new Map();
   requests = 0;
 
-  constructor(base) {
+  constructor(base, { onStatusFailure } = {}) {
     this.base = new URL(base).origin;
+    this.onStatusFailure = onStatusFailure;
   }
 
   get cookie() {
@@ -113,6 +115,11 @@ export class GatewayClient {
           `${label}: HTTP ${response.status}, expected ${status}`,
         );
     } catch (error) {
+      try {
+        await this.onStatusFailure?.(responseFailure(response, text, status));
+      } catch {
+        // Diagnostic collection must not replace the failed HTTP assertion.
+      }
       throw annotateFailure(error, {
         request_phase: "http-status",
         http_status: response.status,

@@ -321,6 +321,16 @@ organizations and ordinary organization administrators (not system
 administrators). All access assertions go through the Gateway; no database rows
 or clocks are modified.
 
+Unexpected access HTTP statuses retain a private receipt containing the status,
+expected status, actual response Trace ID and an allowlisted error code before
+the original assertion fails. A bounded 20-second collector archives the actual
+Resolve closure under `traces/request-failure-traces/`; its reports are failure
+diagnostics, never admission. Missing Trace IDs and collection failures remain
+explicit. Requests are not retried and failed responses do not update the Cookie
+jar. The disposable parent keeps Gateway, Console and Identity service logs in
+`services.private.log` before teardown. Raw response bodies, headers and arbitrary
+error messages are excluded from the receipt.
+
 The same email is provisioned with separate identities and passwords in each
 organization. Tests compare directory and SCIM projections, reject foreign
 resource mutation and forged scope headers or body fields, and exercise password

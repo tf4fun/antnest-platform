@@ -12,6 +12,7 @@ import {
 } from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import { inspectRecoveryHTTP } from "./resolve-cache-recovery-http.mjs";
+import { completedInitializeRead } from "./resolve-cache-outage-diagnostics.mjs";
 
 const one = (rows, message) => {
   assert.equal(rows.length, 1, message);
@@ -60,9 +61,16 @@ function diagnostics(span, expected, event) {
     ...event,
   });
 }
-function clean(span, service) {
+function clean(span, service, trace) {
   assert(!hasError(span), "unrelated stream trace error");
   const tags = values(span.tags ?? []);
+  if (
+    service === "antnest-runtime" &&
+    tags["http.transport.outcome"] === "canceled"
+  ) {
+    completedInitializeRead(trace, span);
+    return;
+  }
   // These existing non-error producer records remain raw observations, never
   // error claims. Preserve their exact shape instead of inventing a failure.
   if (
@@ -362,7 +370,7 @@ export function inspectOutageStreams(
         server,
         ...databaseChildrenTopology(source, server),
       ])
-        clean(span, sourceTree.service(span));
+        clean(span, sourceTree.service(span), source);
     }
     return { trace, tree, root, upstream, ui, interval, resolution };
   };
@@ -455,7 +463,7 @@ export function inspectOutageStreams(
     claim(b.trace, b.upstream, "public-sse-revoked-response");
     for (const span of b.trace.spans)
       if (span !== b.root && span !== b.upstream)
-        clean(span, b.tree.service(span));
+        clean(span, b.tree.service(span), b.trace);
     return { name: item.name, trace_id: s.trace_id, ...b.resolution };
   });
   const acp = transition(
@@ -600,7 +608,7 @@ export function inspectOutageStreams(
     const b = boundary(row.trace_id, row, row.at);
     for (const span of b.trace.spans) {
       if (b.tree.service(span) !== "agent-acp-service" || !hasError(span)) {
-        clean(span, b.tree.service(span));
+        clean(span, b.tree.service(span), b.trace);
         continue;
       }
       assert.equal(b.tree.parent(span), b.ui, "watch not owned by actual view");

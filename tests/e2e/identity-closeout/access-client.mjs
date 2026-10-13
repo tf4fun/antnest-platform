@@ -4,6 +4,7 @@ import { evidenceDirectory } from "../../support/storage.mjs";
 import { assertNoStore, GatewayClient } from "./support.mjs";
 import { assertOrganizationSession } from "./organization-session.mjs";
 import { observePrincipalRevocation } from "./principal-revocation.mjs";
+import { createRequestFailureRecorder } from "./request-failure.mjs";
 import {
   verifyIdentityEvidence as verifyIdentityTraces,
   identityEvidenceExitCode,
@@ -12,17 +13,23 @@ import {
 evidenceDirectory(process.env.ANTNEST_IDENTITY_EVIDENCE_DIR);
 const [gateway, jaeger, seedPath] = process.argv.slice(2);
 const seed = JSON.parse(await readFile(seedPath, "utf8"));
-const root = new GatewayClient(gateway);
-const a = new GatewayClient(gateway);
-const a2 = new GatewayClient(gateway);
-const b = new GatewayClient(gateway);
-const shared = new GatewayClient(gateway);
 const secrets = [
   "stage3-admin-password",
   "synthetic-access-password-a",
   "synthetic-access-password-b",
   "synthetic-access-password-updated",
 ];
+const onStatusFailure = createRequestFailureRecorder({
+  directory: process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+  jaeger,
+  secrets,
+});
+const newClient = () => new GatewayClient(gateway, { onStatusFailure });
+const root = newClient();
+const a = newClient();
+const a2 = newClient();
+const b = newClient();
+const shared = newClient();
 const traces = [];
 const checks = [];
 const resolveTTLMS = Number(process.env.ANTNEST_E2E_RESOLVE_TTL_MS);
@@ -107,19 +114,13 @@ await shared.request("/api/admin/directory", {
   },
 });
 await login(
-  new GatewayClient(gateway),
+  newClient(),
   "access-b",
   "access-admin@example.com",
   secrets[1],
   401,
 );
-await login(
-  new GatewayClient(gateway),
-  "stage3",
-  "access-admin@example.com",
-  secrets[2],
-  401,
-);
+await login(newClient(), "stage3", "access-admin@example.com", secrets[2], 401);
 checks.push("organization-role-scope-and-same-email-isolation");
 
 const tokens = [];
@@ -139,7 +140,7 @@ for (const browser of [a, b]) {
   });
   secrets.push(issued.body.credential);
   const index = tokens.length;
-  tokens.push({ ...issued.body, client: new GatewayClient(gateway) });
+  tokens.push({ ...issued.body, client: newClient() });
   scimUsers.push(
     (
       await scim(index, "Users", {
@@ -215,7 +216,7 @@ checks.push("scim-cross-organization-resource-reference-and-revoke-isolation");
 
 async function unrelatedIdentityStillWorks() {
   assert.equal((await state(b)).user_id, pb.user_id);
-  const fresh = new GatewayClient(gateway);
+  const fresh = newClient();
   assert.equal(
     (await login(fresh, "access-b", "access-admin@example.com", secrets[2]))
       .body.principal.user_id,
@@ -284,7 +285,7 @@ for (const [slug, email] of [
   ["stage3", "access-admin@example.com"],
   ["access-b", "shared-member@example.com"],
 ]) {
-  const fresh = new GatewayClient(gateway);
+  const fresh = newClient();
   await login(fresh, slug, email, secrets[1], 401);
   assert.equal(
     (await login(fresh, slug, email, secrets[3])).body.principal.user_id,
@@ -365,7 +366,7 @@ for (const active of [false, true]) {
       ["stage3", "access-admin@example.com"],
       ["access-b", "shared-member@example.com"],
     ])
-      await login(new GatewayClient(gateway), slug, email, secrets[3], 401);
+      await login(newClient(), slug, email, secrets[3], 401);
   }
   await unrelatedIdentityStillWorks();
   for (const [browser, cookie] of [

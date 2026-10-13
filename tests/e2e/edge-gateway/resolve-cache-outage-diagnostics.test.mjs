@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectOutageDiagnostics } from "./resolve-cache-outage-diagnostics.mjs";
+import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
 const names = [
   "authority",
   "http_rejections",
@@ -64,108 +65,10 @@ function fixture() {
   return { traces, archivedTraceIDs: new Set(traces.keys()), gates, claims };
 }
 const check = (f) => inspectOutageDiagnostics(f, f.gates);
-function completedRead() {
+function completedRead(transport = "ws") {
   const f = fixture(),
-    trace = [...f.traces.values()][2],
-    root = trace.spans[0];
-  const fields = (values) =>
-    Object.entries(values).map(([key, value]) => ({ key, value }));
-  trace.processes.acp = { serviceName: "agent-acp-service" };
-  trace.processes.runtime = { serviceName: "antnest-runtime" };
-  root.processID = "acp";
-  root.operationName = "acp initialize";
-  root.tags = fields({
-    "span.kind": "server",
-    "rpc.method": "initialize",
-    "antnest.agent.id": "agent_test",
-  });
-  const add = (id, parent, processID, operationName, tags) => {
-    const span = {
-      traceID: trace.traceID,
-      spanID: id.repeat(16),
-      processID,
-      operationName,
-      startTime: 1010,
-      duration: 60,
-      references: [
-        { refType: "CHILD_OF", traceID: trace.traceID, spanID: parent.spanID },
-      ],
-      tags: fields(tags),
-      logs: [],
-    };
-    trace.spans.push(span);
-    return span;
-  };
-  const client = add("b", root, "acp", "HTTP POST antnest-runtime", {
-    "span.kind": "client",
-    "http.request.method": "POST",
-    "http.response.status_code": 200,
-    "antnest.outcome": "cancelled",
-    "antnest.cancellation.type": "AbortError",
-  });
-  client.logs = [
-    {
-      timestamp: 1070,
-      fields: fields({
-        event: "antnest.cancelled",
-        "antnest.cancellation.type": "AbortError",
-      }),
-    },
-  ];
-  const server = add("c", client, "runtime", "HTTP POST /mcp", {
-    "span.kind": "server",
-    "http.request.method": "POST",
-    "http.route": "/mcp",
-    "http.response.status_code": 200,
-    "rpc.method": "resources/read",
-    "antnest.agent.id": "agent_test",
-    "antnest.protocol.outcome": "success",
-    "http.transport.outcome": "canceled",
-    "http.transport.error.type": "client_disconnected",
-  });
-  const operation = add("d", server, "runtime", "runtime.mcp.operation", {
-    "rpc.method": "resources/read",
-    "antnest.agent.id": "agent_test",
-    "otel.status_code": "OK",
-    "mcp.operation.outcome": "success",
-    "antnest.operation.outcome": "success",
-    "error.type": "",
-  });
-  operation.startTime = 1020;
-  operation.duration = 20;
-  for (const span of [server, operation])
-    for (const [key, value] of Object.entries({
-      "antnest.runtime.execution.id": "execution_test",
-      "antnest.runtime.generation": "1",
-    }))
-      span.tags.push({ key, value });
-  const completion = {
-    timestamp: 1070,
-    fields: fields({
-      event: "Runtime HTTP request completed",
-      level: "WARN",
-      "service.name": "antnest-runtime",
-      "http.request.method": "POST",
-      "http.response.status_code": 200,
-      "url.path": "/mcp",
-      "antnest.agent.id": "agent_test",
-      trace_id: server.traceID,
-      span_id: server.spanID,
-      "error.type": "client_disconnected",
-      "http.transport.outcome": "canceled",
-    }),
-  };
-  const cancelled = {
-    timestamp: 1060,
-    fields: fields({
-      event: "antnest.cancelled",
-      "antnest.phase": "http",
-      "antnest.cancellation.type": "client_disconnected",
-      "antnest.protocol.outcome": "success",
-    }),
-  };
-  server.logs = [completion, cancelled];
-  return { ...f, root, client, server, operation, completion, cancelled };
+    trace = [...f.traces.values()][2];
+  return { ...f, ...addCompletedRead(trace, trace.spans[0], transport) };
 }
 const changeTag = (span, key, value) => {
   const field = span.tags.find((f) => f.key === key);
@@ -409,3 +312,56 @@ for (const n of claimNames)
     delete f.gates[n].owned_error_spans;
     assert.throws(() => check(f));
   });
+
+test("HTTP initialize completed read disconnect is the same neutral transport evidence", () => {
+  const f = completedRead("http"),
+    before = structuredClone(f);
+  const result = check(f);
+  assert.equal(result.owned_error_count, 2);
+  assert.equal(result.non_error_diagnostics.length, 1);
+  assert.equal(result.non_error_diagnostics[0].span_id, f.server.spanID);
+  assert.deepEqual(f, before);
+});
+for (const [name, change] of [
+  ["wrong HTTP route", (f) => changeTag(f.root, "http.route", "/v2/acp")],
+  ["wrong HTTP method", (f) => changeTag(f.root, "http.request.method", "GET")],
+  [
+    "failed initialize HTTP",
+    (f) => changeTag(f.root, "http.response.status_code", 503),
+  ],
+  [
+    "wrong HTTP operation name",
+    (f) => {
+      f.root.operationName = "HTTP GET /v1/acp";
+    },
+  ],
+  ["wrong HTTP Agent", (f) => changeTag(f.root, "antnest.agent.id", "other")],
+  [
+    "failed MCP operation",
+    (f) => changeTag(f.operation, "mcp.operation.outcome", "error"),
+  ],
+  [
+    "missing HTTP completion",
+    (f) => {
+      f.server.logs = [f.cancelled];
+    },
+  ],
+  [
+    "extra transport exception",
+    (f) => changeEvent(f.completion, "exception.type", "StorageError"),
+  ],
+])
+  test(`HTTP initialize neutral disconnect rejects ${name}`, () => {
+    const f = completedRead("http");
+    change(f);
+    assert.throws(() => check(f));
+  });
+
+for (const transport of ["ws", "http"])
+  for (const where of ["span", "event"])
+    test(`neutral ${transport} archive rejects ${where} ant nest result`, () => {
+      const f = completedRead(transport);
+      if (where === "span") changeTag(f.server, "antnest.result", "rejected");
+      else changeEvent(f.completion, "antnest.result", "rejected");
+      assert.throws(() => check(f));
+    });
