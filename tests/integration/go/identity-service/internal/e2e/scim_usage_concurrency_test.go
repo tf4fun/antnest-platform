@@ -79,6 +79,7 @@ func TestSCIMUsageSameTokenWritersDoNotUpgradeLocks(t *testing.T) {
 		for _, kind := range []string{"user", "group"} {
 			t.Run(mode+"/"+kind, func(t *testing.T) {
 				f := newBindingFixture(t)
+				useNanosecondSCIMUsageClock(f)
 				s := pairingService(t, f)
 				auth := pairingAuthorization(t, f, s, nil)
 				other, err := s.CreateUser(t.Context(), auth, pairedUserInput())
@@ -185,8 +186,9 @@ func TestSCIMUsageSameTokenWritersDoNotUpgradeLocks(t *testing.T) {
 					}
 				}
 				var usedAt *time.Time
-				if err := f.pool.QueryRow(ctx, `SELECT last_used_at FROM scim_tokens WHERE id=$1`, auth.TokenID).Scan(&usedAt); err != nil || usedAt == nil || !usedAt.Equal(f.clock()) {
-					t.Fatalf("committed token usage=%v err=%v", usedAt, err)
+				wantUsedAt := f.clock().Truncate(time.Microsecond)
+				if err := f.pool.QueryRow(ctx, `SELECT last_used_at FROM scim_tokens WHERE id=$1`, auth.TokenID).Scan(&usedAt); err != nil || usedAt == nil || !usedAt.Equal(wantUsedAt) {
+					t.Fatalf("committed token usage=%v want=%s err=%v", usedAt, wantUsedAt, err)
 				}
 			})
 		}

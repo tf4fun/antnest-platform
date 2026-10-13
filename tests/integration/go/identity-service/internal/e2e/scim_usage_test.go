@@ -14,6 +14,12 @@ import (
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/scim"
 )
 
+func useNanosecondSCIMUsageClock(f bindingFixture) {
+	// Exercise PostgreSQL's microsecond persistence even on hosts whose clock
+	// only supplies microseconds. A remainder above 500ns also detects rounding.
+	f.advance(time.Microsecond + 731*time.Nanosecond - time.Duration(f.clock().Nanosecond()%1_000))
+}
+
 func (f scimVersionFixture) usageRequest(t *testing.T, kind, method, condition string) *httptest.ResponseRecorder {
 	t.Helper()
 	path := "/scim/v2/" + kind
@@ -110,6 +116,7 @@ func TestSCIMUsageSuccessfulHTTPWritesAndAuditRollback(t *testing.T) {
 			for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 				t.Run(mode+"/"+kind+"/"+method, func(t *testing.T) {
 					f := newSCIMVersionFixture(t)
+					useNanosecondSCIMUsageClock(f.bindingFixture)
 					if _, err := f.pool.Exec(t.Context(), `UPDATE scim_tokens SET last_used_at=NULL WHERE id=$1`, f.auth.TokenID); err != nil {
 						t.Fatal(err)
 					}
@@ -135,8 +142,9 @@ func TestSCIMUsageSuccessfulHTTPWritesAndAuditRollback(t *testing.T) {
 					if err := f.pool.QueryRow(t.Context(), `SELECT last_used_at FROM scim_tokens WHERE id=$1`, f.auth.TokenID).Scan(&lastUsedAt); err != nil {
 						t.Fatal(err)
 					}
-					if response.Code >= 300 || lastUsedAt == nil || !lastUsedAt.Equal(f.clock()) {
-						t.Fatalf("successful usage status=%d body=%s timestamp=%v want=%s", response.Code, response.Body.String(), lastUsedAt, f.clock())
+					wantUsedAt := f.clock().Truncate(time.Microsecond)
+					if response.Code >= 300 || lastUsedAt == nil || !lastUsedAt.Equal(wantUsedAt) {
+						t.Fatalf("successful usage status=%d body=%s timestamp=%v want=%s", response.Code, response.Body.String(), lastUsedAt, wantUsedAt)
 					}
 				})
 			}
@@ -146,6 +154,7 @@ func TestSCIMUsageSuccessfulHTTPWritesAndAuditRollback(t *testing.T) {
 
 func TestSCIMUsageSuccessfulReadRecordsAndThrottlesWithoutRowWrite(t *testing.T) {
 	f := newSCIMVersionFixture(t)
+	useNanosecondSCIMUsageClock(f.bindingFixture)
 	if _, err := f.pool.Exec(t.Context(), `UPDATE scim_tokens SET last_used_at=NULL WHERE id=$1`, f.auth.TokenID); err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +163,9 @@ func TestSCIMUsageSuccessfulReadRecordsAndThrottlesWithoutRowWrite(t *testing.T)
 	if err := f.pool.QueryRow(t.Context(), `SELECT last_used_at FROM scim_tokens WHERE id=$1`, f.auth.TokenID).Scan(&usedAt); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || !usedAt.Equal(f.clock()) {
-		t.Fatalf("read status=%d timestamp=%s want=%s", response.Code, usedAt, f.clock())
+	wantUsedAt := f.clock().Truncate(time.Microsecond)
+	if response.Code != http.StatusOK || !usedAt.Equal(wantUsedAt) {
+		t.Fatalf("read status=%d timestamp=%s want=%s", response.Code, usedAt, wantUsedAt)
 	}
 	before := f.versionSnapshot(t)
 	f.advance(time.Minute)
@@ -168,8 +178,9 @@ func TestSCIMUsageSuccessfulReadRecordsAndThrottlesWithoutRowWrite(t *testing.T)
 	if err := f.pool.QueryRow(t.Context(), `SELECT last_used_at FROM scim_tokens WHERE id=$1`, f.auth.TokenID).Scan(&usedAt); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || !usedAt.Equal(f.clock()) {
-		t.Fatalf("renewed usage status=%d timestamp=%s want=%s", response.Code, usedAt, f.clock())
+	wantUsedAt = f.clock().Truncate(time.Microsecond)
+	if response.Code != http.StatusOK || !usedAt.Equal(wantUsedAt) {
+		t.Fatalf("renewed usage status=%d timestamp=%s want=%s", response.Code, usedAt, wantUsedAt)
 	}
 }
 
