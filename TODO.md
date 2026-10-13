@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-14：136 个 issue，77 个已关闭，59 个开放；开放项包含 5 个 Epic 和 54 个执行项。下列队列保留 70 个执行项，其中 16 个已交付。
+Issue 状态最后核对于 2026-10-14：136 个 issue，78 个已关闭，58 个开放；开放项包含 5 个 Epic 和 53 个执行项。下列队列保留 70 个执行项，其中 17 个已交付。
 
 ## 执行约定
 
@@ -18,19 +18,17 @@ Issue 状态最后核对于 2026-10-14：136 个 issue，77 个已关闭，59 �
 ## 当前批次
 
 - 当前按用户指定顺序推进 Epic [#81](https://github.com/tf4fun/antnest-platform/issues/81)：**#10 → #62 → #63 → #58 → #61 → #59 → #60 → #2 → #66 → #64**。本顺序优先于下方按主题组织的队列；#67 保留为后续共享契约工作。
-- 当前执行 [#66](https://github.com/tf4fun/antnest-platform/issues/66)：共享契约、Identity 18、Console 54、消费方引用与显式真实 HTTPS 集成均已完成本地准入，交付到 [PR #260](https://github.com/tf4fun/antnest-platform/pull/260)。原候选 `e399c41e` 的完整 CI 发现三项失败，修复已通过本地业务复验与完整仓库测试，等待新候选完整 CI；#66 保持开放，暂不合并。
-- #66 最新复验（2026-10-14 06:45）：HTTPS Docker 第二轮通过，339.1 秒完成原有认证/会话回归及 51 次 SCIM 响应、657 spans、15 次拒绝状态不变检查；30 个错误均有预期归属，零告警/未归属错误。先前观察器错误读取 Console 公共响应缺少的组织字段，现以持久 Token ID 关联组织，并核对实际 SERVER 的授权 Token ID；原失败记录保留。Gateway Docker 442.2 秒完成业务与清理准入，八项门禁和 80 个错误的精确归属通过，原始 strict failed 保留。两轮源码输入均未变，0 容器/0 卷/3 网络基线恢复，独立 review 无新增业务 blocker。
-- #66 Identity 已实现 ETag/If-Match、独立 CAS、持久精度/单调版本、Group 一致快照、成功请求 usage、90 天默认/1–365 天 TTL、签发者元数据、0010 创建时间回填迁移，以及监听前的签发者权限核对。管理员降权/停用按策略撤销或标记复核；SystemAdmin/其他组织权限保留，恢复不复活 Token。失权联动、自撤销与浏览器会话最终复核均受原始期限约束，使用权限父行 → SCIM Token → caller/target SID → feeds 锁顺序。
-- #66 最新验证（2026-10-14）：完整 RPC 契约先复现失败后修复，39 项相关契约测试通过；unit/race 272 项、745 个子用例通过。无过滤的完整 PostgreSQL 组件/race 门禁通过 482 项、1,213 个子用例、18 个包（包含 unit），零失败/跳过。生产 Identity 镜像 Docker 验收通过 547 项检查，含 89 次 SCIM 检查和 23 次签名 OIDC 回调；验证 TTL/持久 metadata、到期拒绝、User/Group 条件写、同配置重叠轮换、旧凭据撤销，以及签发者自降权后恢复不复活凭据。
-- #66 验证记录：完整组件首次运行的两份旧测试等待 Organization query，但新锁顺序在 User 行上更早阻塞。仅适配观察点，保留原业务断言、时限和真实 blocker 验证；2 项、6 个子用例先定向通过，再通过完整门禁。失败/中断原始记录保留，后续成功不覆盖它们。独立 review、格式/链接/存储检查通过；本轮容器与卷清零，网络回到三项基线，无残留 Go 测试进程。
-- #66 Console 本地准入（2026-10-14）：TTL 1–365 天、默认 90 天，期限/签发者/复核状态和保留旧凭据的轮换流程已实现。Go unit/race 209 项、657 个子用例，component/race 218 项、659 个子用例（包含 unit），6 项 Console 契约、前端 117 项 unit 与 409 项 component、lint 和生产构建通过。桌面/移动端构建产物浏览器流程零错误；服务 Docker 238 项检查通过，包含 member 零 RPC、legacy null issuer、默认/1/365 天及精确库存投影。本轮清理后为 0 容器、0 卷、3 网络、29 镜像，与运行前一致。
-- #66 前一轮 Draft CI（2026-10-14 04:30，head `3cb6d2aa`，提交于 03:49）：26 项 SUCCESS、4 项 SKIPPED，全部终态且无失败；其中 `Integration checks (not run)` 是占位结果，不计作完整集成验收。最终候选仍需转 Ready 后的完整 CI。先前 head `541ff16b` 的三项旧 Identity 17 消费方引用失败已修复，原始失败证据保留。
-- #66 HTTPS 本地准入（2026-10-14）：第三轮完整套件在 330.6 秒内通过，包含原有密码、OIDC、会话撤销与空闲过期回归。真实 Console 完成签发、重叠轮换与显式撤销；HTTPS 验证 User/Group 条件写、单凭据受控到期、组织隔离、管理员失权及恢复不复活。51 次响应、51 份报告和最终 Trace envelope 一一对应，共 657 spans；15 次拒绝均通过全量 Identity 状态前后不变检查，30 个错误 span 精确归属预期拒绝，原始 15 份 strict failed 保留，零告警/未归属错误。运行前后 3,625 个源码输入未变，清理恢复 0 容器、0 卷、3 网络，镜像无变化。证据位于 `artifacts/verification/issue-66/https/docker-run-3/`。
-- #66 回归与 review：真实 Chromium 导航先复现响应体丢失，再以有界 CDP 存储读取同一请求修复，保留原始 HSTS/Cookie 断言；导航/失败边界、撤销观察与 SCIM Trace 相关 42 项测试通过。Identity 412 安全诊断映射先失败后修复，telemetry/race 17 项/19 子用例和 lint 通过。新增 SCIM 证据测试已接入仓库门禁；完整 `make test-repo` 通过 4,822 Node/61 Python，5 个既有条件跳过不计通过，格式、链接与存储检查通过。首次仓库运行选中 Xcode Python 3.9，保留环境失败后以已安装的 3.14.8 原样重跑通过。导航修复与完整 HTTPS 证据的独立只读 review 均无剩余 blocker；前两轮 Docker 失败/中断及 fixture 修正记录保留。
-- #66 最终 CI 失败记录（2026-10-14）：[run 38467172501](https://github.com/tf4fun/antnest-platform/actions/runs/38467172501) 的 21 分片/84 套件全部终态，70 passed、11 warning、3 failed，无缺失/超时/中断。Identity PostgreSQL 的用量时间断言错误比较纳秒输入与微秒持久值；Resolve 停机诊断在 Go 错误事件的 1µs 导出量化边界误拒；SCIM DELETE 后合法异步 Controller receipt 的 Jaeger 时间包含警告未被精确归属。不属于暂缓的 Node SDK 亚毫秒调查；原失败及 raw strict 诊断保留于 `artifacts/verification/issue-66/final-ci-e399c41e/`。
-- #66 CI 修复（2026-10-14）：`5c4fd64f` 已提交 PostgreSQL 精度断言修正，固定 731ns 输入先复现失败，按微秒严格比较后完整 race 通过 484 项、1,215 子用例、18 包，零失败/跳过；lint、独立 review、3,625 个源码输入一致及资源清理通过。两个 Trace 验收修复已先失败后通过 154 项定向测试；Go 事件例外仅限唯一 Go 来源、安全整数和结束后 1µs。SCIM 以实际删除对应的唯一源 feed、已提交 Controller receipt 和完整 SQL 归属异步警告，等待回执及三次完整快照收敛，保留 raw strict 与最终全对象比较。完整 `make test-repo` 通过 4,865 Node/61 Python，5 项既有条件跳过不计通过；两项真实 Docker 业务复验通过。Gateway 原始 253 份 Trace 的 568 条 ≥1ms 告警仍单独保留，不属于 Node SDK 亚毫秒暂缓范围，不宣称 strict 全绿；#246/#247/#252 保持开放。新候选完整 CI 尚待完成，暂不合并。
-- #66 尚未达到合并条件：Console 日期、基础字段、凭据校验、schema 一致性及 catalog 定义指向均经失败先行修复，三项独立 review 已关闭。消费方当前 Identity 18/Console 54 引用已同步，密码策略与 SCIM 历史 baseline 保留；123 项相关契约及 Controller Identity 客户端 12 项/22 子用例（包含真实 HTTP）通过，lint/格式/链接检查通过。Console doubles 不证明真实 Identity overlap；下一 issue 为 #64，已完成只读依赖调查、尚未实现。#165–#169 保持开放，本批次无对应服务所有权重叠；#64 的测试消费者迁移与 #167/#169 存在交集，不能据兼容通过直接关闭它们。
-- 已完成：[#2](https://github.com/tf4fun/antnest-platform/issues/2) 随 [PR #258](https://github.com/tf4fun/antnest-platform/pull/258) 合并并关闭，merge commit `f702676c`，验收 head `f88660c5`；九项 admission 与 Epic #81 的 #2 已勾选，main 代码树与验收候选一致。用户指定的十项队列已完成八项，余下 #66 → #64。
+- 当前执行 [#64](https://github.com/tf4fun/antnest-platform/issues/64)：#66 已合并，依赖、Gateway 移除地图与 Agent UI 容量只读调查完成，尚未开始实现。采用 issue 建议的 A：移除无人使用的旧浏览器 bootstrap/state/ACP 入口，保留 `/api/app/workspace/v1/*` Bridge。接下来依次交付共享契约与架构决定、Gateway、Agent UI 容量、消费者迁移、显式跨服务集成。
+- #64 容量调查：旧四槽未限制 shipped Bridge；Agent UI 的共享 Node 事件循环存在附件接收完成后的重复严格解析、序列化和哈希工作。16 owner、16 subscriber 和 Gateway 64 SSE 槽均不限制大 body 的接收/解析；静态调查不能证明已超过一秒。下一批以两个真实用户、独立客户端/服务进程和实际执行终止为准，分别在上传未完与 EOF 阶段验证另一用户 cancel ≤1 秒。只读准备位于 `artifacts/verification/issue-64/`。
+- 已完成：[#66](https://github.com/tf4fun/antnest-platform/issues/66) 随 [PR #260](https://github.com/tf4fun/antnest-platform/pull/260) 于 2026-10-14 07:39 合并并关闭，merge commit `5214a8bb`，验收 head `aa3b2b01`；五项 admission 与 Epic #81 的 #66 已勾选，main 代码树与验收候选一致。用户指定的十项队列已完成九项，余下 #64。
+- #66 行为：Identity 18 提供默认 90 天、1–365 天 TTL、签发者与复核元数据、权限丢失时原子撤销/标记，以及 User/Group ETag、If-Match 和独立 CAS；权限恢复不复活凭据。Console 54 展示到期/14 天预警和签发者状态，支持保留旧凭据的同配置独立轮换。共享契约、两服务、消费方与真实 HTTPS 集成分批交付；0010 以创建时间加一个日历年回填旧 Token，未知签发者标记复核，监听前核对权限；升级须退役旧 Identity 实例，单独回退二进制不受支持。
+- #66 服务验收：Identity 完整 PostgreSQL/race 通过 484 项、1,215 子用例、18 包，零失败/跳过；生产容器 547 项检查含 89 次 SCIM、23 次签名 OIDC 回调。Console Go unit/race 209/657、component/race 218/659，6 项契约、117 前端 unit、409 component、桌面/移动浏览器和 238 项服务容器检查通过。消费方 123 项相关契约与 Controller Identity 客户端 12 项/22 子用例通过；Console doubles 不代替真实 Identity overlap 验收。
+- #66 最终 CI：[run 38480401214](https://github.com/tf4fun/antnest-platform/actions/runs/38480401214) 的 21 分片/84 套件全部终态，72 passed、12 已复核 warning，零失败/缺失/重复/超时/中断；55 项 PR 检查全部成功。完整仓库通过 4,865 Node、61 项不同 Python 测试，5 项既有 PostgreSQL 条件跳过不计通过；154 项定向 Trace 回归、969 个 JavaScript 模块语法、格式/链接/存储检查通过，3,626 个源码输入未变。
+- #66 最终 HTTPS：286.9 秒完成回归，51 次 SCIM 响应/报告/raw/final envelope 一一对应，657 spans；15 次拒绝的 Identity 全量状态不变，30 个错误精确归属。实际命中修复后的异步撤销边界：10 条警告只属于唯一源 feed 及已提交 Controller receipt 的八项 driver 操作；raw strict 35 passed/16 failed 保留，初次/最终全对象一致。同配置重叠轮换、旧凭据撤销、签发者降权/恢复和六种陈旧 User/Group 写入均实际执行；清理恢复 0 容器/0 卷/3 网络且镜像无变化。
+- #66 最终 Gateway：100 次 ACP 调用 5.594 秒；Identity 停止 5.012 秒期间，新输出 70 ms、同一 Run 实际取消/终止 149 ms。八项门禁与 80 个错误的精确归属通过，实际命中唯一 Go SDK 的结束后 1µs 导出边界。原始 strict failed 与 outage 的 587 条 ≥1ms 告警保留；它们独立于暂缓的 Node SDK 亚毫秒调查，Jaeger calculated delta 不等于实际钟偏。
+- #66 历史失败与修复：[原 run 38467172501](https://github.com/tf4fun/antnest-platform/actions/runs/38467172501) 为 70 passed、11 warning、3 failed，未改写为成功。固定 731ns 输入先复现 PostgreSQL 纳秒/微秒比较错误后按持久精度修正；Go 1µs 事件和 SCIM 异步 receipt 验收先失败后修复。HTTPS 观察器读取不存在的公共组织字段、Chromium 导航响应体丢失、旧消费者 revision 和首次 Python 3.9 环境失败等原始记录均保留；后续真实复验及新完整 CI 通过不追溯改变失败记录。
+- #66 证据与边界：21 个套件产物和四个 Go owner 产物共 1,896 个原始文件完成 SHA-256 校验；连同压缩包、日志、review 和准入共 2,017 个文件已校验保存在主工作区，清单位于 `artifacts/verification/issue-66/final-ci-preservation.json`，准入位于 `final-pr-admission.json`。部分无 raw 的摘要、未归档异步目标和只覆盖所属项目的清理不宣称完整；#246/#247/#252 保持开放。#165–#169 也保持开放，#64 的消费者迁移与 #167/#169 有交集，但兼容通过不能直接关闭它们。
+- 已完成：[#2](https://github.com/tf4fun/antnest-platform/issues/2) 随 [PR #258](https://github.com/tf4fun/antnest-platform/pull/258) 合并并关闭，merge commit `f702676c`，验收 head `f88660c5`；九项 admission 与 Epic #81 的 #2 已勾选，main 代码树与验收候选一致。
 - #2 行为与本地验收：Gateway revision 23 将密码来源、密码账户和 OIDC 来源分为三表，使用固定窗口 FIFO 淘汰、IPv6 /64、可配置容量及指标。共享契约、Gateway、消费方引用和 HTTPS 集成分别交付；保留 #60 的密码错误、Retry-After、no-store、Cookie 边界及历史 activation 22。先复现 12 类行为失败，unit/race 311 项/1,860 子测试、component/race 335/1,955、121 契约测试、服务容器 191 项检查通过；43 项新工具测试及相关契约/TLS/Provider 共 62 项通过。
 - #2 HTTPS 验收：本地完整浏览器套件在 257.7 秒内通过，包含密码验证恢复、OIDC 绑定、会话过期与撤销。最终 CI 的两个实际客户端 IP 在 0.666 秒内完成 35 次请求：A 第 31 次 start 受限，B 完成真实签名 SSO 并获得正确普通用户 Principal，随后 A 仍受限；精确 31 次 start RPC，两次拒绝零上游。35 条 Trace、312 spans 均零警告/错误，最终备份完整；该套件清理后库存与基线一致。
 - #2 最终 CI：[run 38396630271](https://github.com/tf4fun/antnest-platform/actions/runs/38396630271) 的 29 个 job、21 分片/84 套件完成：72 passed、12 已复核 warning，零失败/缺失/超时/中断；53 项成功 PR 检查包含两个必需门禁，已被 Ready 运行替代的 Draft 作业不计通过。仓库检查通过 4,775 Node/61 Python，5 个既有 PostgreSQL 条件跳过不计通过。21 份产物压缩包与 GitHub SHA-256 一致，1,775 个原始文件及复核/交接已校验保存在主工作区；准入与清单位于 `artifacts/verification/issue-2/final-pr-admission.json`、`final-ci-preservation.json`。
@@ -131,7 +129,7 @@ Issue 状态最后核对于 2026-10-14：136 个 issue，77 个已关闭，59 �
 - [x] [#60](https://github.com/tf4fun/antnest-platform/issues/60) Password verification: no limit inside Identity, unbounded concurrent Argon2 work, and hash parameters that can never change
 - [x] [#58](https://github.com/tf4fun/antnest-platform/issues/58) Browser sessions: fixed 12h tokens with no idle timeout or rotation, password change keeps other sessions, no sign-out-everywhere, admin streams revalidated only every 5 minutes
 - [x] [#59](https://github.com/tf4fun/antnest-platform/issues/59) Identity is a synchronous dependency of every request and every ACP message, with no resolve cache
-- [ ] [#66](https://github.com/tf4fun/antnest-platform/issues/66) SCIM tokens never expire, survive the issuing administrator's removal, and SCIM writes have no client-visible version (ETag unsupported)
+- [x] [#66](https://github.com/tf4fun/antnest-platform/issues/66) SCIM tokens never expire, survive the issuing administrator's removal, and SCIM writes have no client-visible version (ETag unsupported)
 - [ ] [#65](https://github.com/tf4fun/antnest-platform/issues/65) Admin Console contract: 56 of 59 routes have no request or response schema, no error-code list, and the directory route returns every member unpaginated
 
 ### 5 Runtime平面正确性
@@ -223,7 +221,7 @@ Issue 状态最后核对于 2026-10-14：136 个 issue，77 个已关闭，59 �
 ## 基线校正与范围说明
 
 - #80 已关闭；#219 等已关闭问题保留回归覆盖，不重新实现。
-- #83 的 #38、#47、#48、#53 存在 Epic 已勾选而 issue 仍开放的历史不一致；逐项按 admission 校正。#81 的 #57、#10、#62、#63、#58、#61、#59、#60、#2 已实际交付，HTTPS、会话撤销与身份缓存条件完成；#66、#64 仍待交付，Epic 保持开放。
+- #83 的 #38、#47、#48、#53 存在 Epic 已勾选而 issue 仍开放的历史不一致；逐项按 admission 校正。#81 的 #57、#10、#62、#63、#58、#61、#59、#60、#2、#66 已实际交付，HTTPS、会话撤销与身份缓存条件完成；#64 仍待交付，Epic 保持开放。
 - #193 利用 PR #194 的后续失败诊断确认 ACK 延迟，并由 PR #227 修复。#197 在 PR #198 诊断后未再出现同类 CI 失败；本批以真实 gate 固定健康读取竞争并修复，历史单次 503 的归因限制保留在验收记录中。
 - #112 已把当前 Tier C 纳入 `Integration checks` 并补齐现有入口和证据；#165–#168 仍随服务补齐替代测试，#169 随 UI 收口。移出 CI 或门禁完成均不代表这些替代测试已交付。
 - #18 的旧八动作设计已过时，当前 signer 为 `install`、`digest`、`temporary_install`、`temporary_release`，契约应与当前行为一致。
@@ -235,7 +233,7 @@ Issue 状态最后核对于 2026-10-14：136 个 issue，77 个已关闭，59 �
 ## Epic 收口
 
 - [x] [#80](https://github.com/tf4fun/antnest-platform/issues/80) P0 服务信任与秘密。已完成；后续批次保持安全回归。
-- [ ] [#81](https://github.com/tf4fun/antnest-platform/issues/81) HTTPS 浏览器工作流、会话撤销时限与身份缓存失效边界已通过集成验收；#66、#64 仍待交付。
+- [ ] [#81](https://github.com/tf4fun/antnest-platform/issues/81) HTTPS 浏览器工作流、会话撤销时限与身份缓存失效边界已通过集成验收；#66 已交付，#64 仍待交付。
 - [ ] [#82](https://github.com/tf4fun/antnest-platform/issues/82) 瞬态故障不丢事实；双 ACP 副本恢复通过 E2E；资源、预算和重试有明确上限。
 - [ ] [#83](https://github.com/tf4fun/antnest-platform/issues/83) 所有服务采用共同契约；真实生产/消费响应、N-1 兼容和 router parity 纳入 CI。
 - [ ] [#84](https://github.com/tf4fun/antnest-platform/issues/84) 服务依赖准确，领域默认值归属 Controller，平台接口中立，产品子项验收完成。
@@ -258,3 +256,4 @@ Issue 状态最后核对于 2026-10-14：136 个 issue，77 个已关闭，59 �
 | 2026-10-13 | #59        | [PR #254](https://github.com/tf4fun/antnest-platform/pull/254)、`1fcf37ab` | 完整 Principal 缓存、撤销/活动边界与 Identity 停机降级交付；61 项 PR 检查、84 套件/21 分片准入，4,419 Node/61 Python 通过，最终 CI 1,686 个文件校验归档。原始失败、Node SDK 延后调查及 #246/#247 限制保留。下一项 #60。                     |
 | 2026-10-13 | #60        | [PR #256](https://github.com/tf4fun/antnest-platform/pull/256)、`85f6a65f` | 密码资源预算、持久失败计数、rehash/原子轮换、规范 429/503 及双实例 HTTPS 验收完成；56 项 PR 检查、84 套件/21 分片，72 passed/12 已复核 warning，零失败。保留原始严格诊断、历史归因与 #246/#247/#252 限制。下一项 #2。                       |
 | 2026-10-13 | #2 | [PR #258](https://github.com/tf4fun/antnest-platform/pull/258)、`f702676c` | 三表独立限流、IPv6 /64 与有界 FIFO 淘汰交付；双实际来源签名 SSO、35 条零告警 Trace 通过。53 项成功 PR 检查、84 套件/21 分片准入，1,775 个原始文件已校验归档；原始诊断与 #246/#247/#252 限制保留。下一项 #66。 |
+| 2026-10-14 | #66 | [PR #260](https://github.com/tf4fun/antnest-platform/pull/260)、`5214a8bb` | SCIM 到期/签发者联动、独立轮换与 ETag 条件写交付；55 项 PR 检查、84 套件/21 分片准入，72 passed/12 已复核 warning，零失败。真实 HTTPS 51 次响应、15 次拒绝无写入，2,017 个最终 CI/准入文件已校验归档；历史失败、raw strict 与 #246/#247/#252 边界保留。下一项 #64。 |
