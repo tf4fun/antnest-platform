@@ -446,9 +446,14 @@ The service has no database, migration, backup, or persistent volume.
 Login admission is deliberately replica-local and bounded to 4096 source and
 4096 account keys per replica. When a table is full and pruning expired windows
 frees no space, new keys are refused with `429` instead of evicting existing
-windows. It protects Argon2 work before Identity is called; a shared limiter is
-justified only if deployment-scale measurements require cross-replica
-enforcement. Event streams retain their maximum lease and independently check
+windows. This is a cheap prefilter before Identity is called. Identity enforces
+the shared password-attempt policy in PostgreSQL across replicas and separately
+bounds Argon2 memory, concurrency and queue waits in each process; internal
+callers receive the same admission checks. See Identity's
+[password resource admission](../../identity-service/docs/operations.md#password-resource-admission).
+Gateway table eviction and capacity behavior remain the scope of
+[#2](https://github.com/tf4fun/antnest-platform/issues/2).
+Event streams retain their maximum lease and independently check
 Identity even without incoming events. Checks run at the smaller of 10 seconds
 and Identity's activity hint. The 30-second stale-output bound includes time
 spent in the RPC and at most one second for closing sockets. Initial resolution

@@ -220,9 +220,9 @@ header value. It is not a new application envelope.
 | credential_rate_limited | 429  | Too many password attempts    | true      | Remaining longest bucket lock, rounded up to seconds, 1–900 |
 | credential_busy         | 503  | Password verification is busy | true      | 1                                                           |
 
-Both owning services publish these exact fields for these new errors.
-Identity's active error catalog and status mapping change in its implementation
-batch; Gateway's catalog and metadata parsing change in its consumer batch.
+Identity revision 17 publishes these exact fields in its active error catalog
+and status mapping. Gateway version 22 validates and preserves them in its
+public failure projection.
 Busy covers process capacity and bounded credential-admission lock waits. It
 does not disguise corruption, general database failure or invalid authorization.
 
@@ -237,17 +237,15 @@ login_rate_limited.
 
 Admin Console's POST /api/admin/directory/users calls Identity create-local-user,
 which also uses the shared hashing engine and can return credential_busy.
-Its existing generic response-header projection drops Retry-After. A separate
-Console batch must preserve the validated busy status, flat body and single
+Console revision 53 preserves the validated busy status, flat body and single
 Retry-After: 1 header on this route, with no-store, no Cookie mutation and no
 automatic replay. Malformed busy metadata becomes 503 identity_unavailable
-without a retry hint. Limit this handling to the create-user response rather
-than forwarding arbitrary upstream headers for every Console route. Console
-runtime compatibility remains pending until that owning batch passes.
+without a retry hint. This handling is specific to the create-user response;
+other Console routes retain their existing response-header policies.
 
 ## Delivery and evidence
 
-Deliver and review these batches in order:
+Changes to this policy are delivered and reviewed in these batches, in order:
 
 1. This versioned shared policy and contract checks.
 2. Identity configuration, strict hash agility and all-entry resource admission,
