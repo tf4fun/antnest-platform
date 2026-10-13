@@ -168,3 +168,41 @@ test("uploaded evidence excludes generated fixture credentials but retains suite
   ])
     assert(!filtered(path), `${path} is required verification evidence`);
 });
+
+test("Go service failures retain lint and integration diagnostics without private inputs", () => {
+  const service = parse(
+    readFileSync(
+      new URL("../../.github/workflows/_go-service.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  const upload = service.jobs.check.steps.find(
+    ({ name }) => name === "Upload Go integration evidence",
+  );
+  assert.equal(upload.if, "always()");
+  const patterns = upload.with.path.split(/\r?\n/u).filter(Boolean);
+  const includes = patterns.filter((pattern) => !pattern.startsWith("!"));
+  const excludes = patterns
+    .filter((pattern) => pattern.startsWith("!"))
+    .map((pattern) => pattern.slice(1));
+  const retained = (path) =>
+    includes.some((pattern) => matchesGlob(path, pattern)) &&
+    !excludes.some((pattern) => matchesGlob(path, pattern));
+  for (const directory of ["go-lint", "go-integration"]) {
+    const root = `artifacts/verification/${directory}`;
+    for (const name of ["failed-command.log", "failed-command.result.json"])
+      assert(
+        retained(`${root}/${name}`),
+        `missing failure evidence: ${directory}/${name}`,
+      );
+    for (const name of [
+      "failed-command.private.log",
+      "failed-command.private.result.json",
+      "go-overlay-identity-service.json",
+    ])
+      assert(
+        !retained(`${root}/${name}`),
+        `private input selected: ${directory}/${name}`,
+      );
+  }
+});
