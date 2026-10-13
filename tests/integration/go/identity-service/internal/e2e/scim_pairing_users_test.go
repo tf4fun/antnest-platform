@@ -97,7 +97,7 @@ func TestSCIMPairingReprovisionRespectsStoredPairingAndRevokedFacts(t *testing.T
 				if err := f.pool.QueryRow(t.Context(), `SELECT jsonb_agg(to_jsonb(n) ORDER BY id)::text FROM external_identity_notices n WHERE binding_id=$1`, binding.ID).Scan(&originalNotice); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.DeleteUser(t.Context(), oldAuth, user.Membership.ID); err != nil {
+				if err := s.DeleteUser(t.Context(), oldAuth, user.Membership.ID, nil); err != nil {
 					t.Fatal(err)
 				}
 				f.advance(time.Second)
@@ -143,7 +143,7 @@ func TestSCIMPairingRepointsOnlyTheConfirmedOldMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteUser(t.Context(), auth, user.Membership.ID); err != nil {
+	if err := s.DeleteUser(t.Context(), auth, user.Membership.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	otherID := f.newID("membership")
@@ -156,7 +156,7 @@ func TestSCIMPairingRepointsOnlyTheConfirmedOldMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteUser(t.Context(), auth, otherID); err != nil {
+	if err := s.DeleteUser(t.Context(), auth, otherID, nil); err != nil {
 		t.Fatal(err)
 	}
 	newUser, err := s.CreateUser(t.Context(), auth, pairedUserInput())
@@ -265,7 +265,7 @@ func TestSCIMPairingCreateReturnsPersistedResource(t *testing.T) {
 					t.Fatalf("%s response differs from persisted timestamp: %s != %s", label, timestamps[0], timestamps[1])
 				}
 			}
-			command := scim.ReplaceUserCommand{OrganizationID: auth.OrganizationID, ActorTokenID: auth.TokenID, User: created.User, Membership: created.Membership, ExpectedUpdatedAt: created.Membership.UpdatedAt}
+			command := scim.ReplaceUserCommand{OrganizationID: auth.OrganizationID, ActorTokenID: auth.TokenID, ActorOIDCProviderID: auth.OIDCProviderID, User: created.User, Membership: created.Membership, ExpectedUpdatedAt: created.Membership.UpdatedAt}
 			command.Membership.DisplayName = "Replacement"
 			command.Membership.UpdatedAt = domain.NextUpdatedAt(f.clock(), created.Membership.UpdatedAt)
 			updated, err := f.store.SCIM().ReplaceUser(t.Context(), command)
@@ -292,7 +292,7 @@ func TestSCIMPairingRepositoryProtectsStoredSubjectAndPairing(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			command := scim.ReplaceUserCommand{OrganizationID: auth.OrganizationID, ActorTokenID: auth.TokenID, User: user.User, Membership: user.Membership, ExpectedUpdatedAt: user.Membership.UpdatedAt}
+			command := scim.ReplaceUserCommand{OrganizationID: auth.OrganizationID, ActorTokenID: auth.TokenID, ActorOIDCProviderID: auth.OIDCProviderID, User: user.User, Membership: user.Membership, ExpectedUpdatedAt: user.Membership.UpdatedAt}
 			command.Membership.UpdatedAt = domain.NextUpdatedAt(f.clock(), user.Membership.UpdatedAt)
 			if change == "subject" {
 				command.Membership.SCIMExternalID = "different"
@@ -326,7 +326,7 @@ func TestSCIMPairingActiveReprovisionPreservesMethodAndRevokesOldSession(t *test
 	if err := f.pool.QueryRow(t.Context(), `SELECT (to_jsonb(e)-'{membership_id,updated_at}'::text[])::text FROM external_identities e WHERE user_id=$1`, user.User.ID).Scan(&activation); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteUser(t.Context(), auth, user.Membership.ID); err != nil {
+	if err := s.DeleteUser(t.Context(), auth, user.Membership.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	f.advance(time.Second)

@@ -574,7 +574,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if reconciliationEvents != 0 {
 		t.Fatalf("SCIM reconciliation event count = %d, want 0", reconciliationEvents)
 	}
-	if err := scimService.DeleteGroup(ctx, authorization, group.Group.ID); err != nil {
+	if err := scimService.DeleteGroup(ctx, authorization, group.Group.ID, nil); err != nil {
 		t.Fatalf("delete SCIM group: %v", err)
 	}
 	if _, err := scimService.GetGroup(ctx, authorization, group.Group.ID); !errors.Is(err, domain.ErrNotFound) {
@@ -1175,7 +1175,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load SCIM user before deletion: %v", err)
 	}
-	if err := scimService.DeleteUser(ctx, authorization, user.Membership.ID); err != nil {
+	if err := scimService.DeleteUser(ctx, authorization, user.Membership.ID, nil); err != nil {
 		t.Fatalf("delete SCIM user: %v", err)
 	}
 	var tombstoneUpdatedAt, tombstoneDeletedAt time.Time

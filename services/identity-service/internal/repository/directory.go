@@ -263,6 +263,14 @@ func (a *DirectoryAdapter) UpdateMembership(
 ) (domain.OrganizationMembership, error) {
 	membership := command.Membership
 	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
+		var targetUserID string
+		if err := tx.QueryRow(ctx, `SELECT user_id FROM organization_memberships
+			WHERE id=$1 AND organization_id=$2 AND scim_deleted_at IS NULL`, membership.ID, membership.OrganizationID).Scan(&targetUserID); err != nil {
+			return err
+		}
+		if err := lockDirectoryLifecycleUsers(ctx, tx, command.ActorPrincipalID, targetUserID, false); err != nil {
+			return err
+		}
 		if err := a.store.requireOrganizationAdminWithLock(
 			ctx,
 			tx,
@@ -286,6 +294,9 @@ func (a *DirectoryAdapter) UpdateMembership(
 		}
 		if source != domain.SourceLocal {
 			return domain.ErrConflict
+		}
+		if membership.UserID != targetUserID {
+			return domain.ErrVersionConflict
 		}
 		if !updatedAt.Equal(command.ExpectedUpdatedAt) {
 			return domain.ErrVersionConflict
@@ -313,6 +324,19 @@ func (a *DirectoryAdapter) UpdateMembership(
 				return domain.ErrLastOrganizationAdmin
 			}
 		}
+		var issuerTokens []string
+		if removesAdministrator {
+			principal, err := a.store.getPrincipal(ctx, tx, targetUserID, membership.OrganizationID)
+			if err != nil {
+				return err
+			}
+			if principal.CanAdminister(membership.OrganizationID) && principal.SystemRole != domain.SystemRoleAdmin {
+				issuerTokens, err = lockSCIMIssuerTokens(ctx, tx, targetUserID, membership.OrganizationID)
+				if err != nil {
+					return err
+				}
+			}
+		}
 		reason := ""
 		if currentActive && !membership.Active {
 			reason = "membership_deactivated"
@@ -323,15 +347,8 @@ func (a *DirectoryAdapter) UpdateMembership(
 		} else if currentRole != membership.Role {
 			reason = "role_changed"
 		}
-		var ids []string
-		if reason != "" {
-			var err error
-			ids, err = lockBrowserSessionIDs(ctx, tx, membership.UserID)
-			if err != nil {
-				return err
-			}
-		}
-		if err := a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, membership.OrganizationID); err != nil {
+		admission, ids, err := a.store.admitDirectoryMutation(ctx, tx, command.ActorPrincipalID, membership.OrganizationID, membership.UserID, reason != "")
+		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -347,6 +364,9 @@ func (a *DirectoryAdapter) UpdateMembership(
 			membership.UpdatedAt,
 		); err != nil {
 			return fmt.Errorf("update organization membership: %w", err)
+		}
+		if _, err := a.store.applySCIMIssuerLoss(ctx, tx, issuerTokens, a.store.scimRevokeOnIssuerLoss.Load(), command.ActorPrincipalID, "", command.RequestID); err != nil {
+			return err
 		}
 		var sessionEvents []domain.SessionRevocation
 		if reason != "" {
@@ -375,7 +395,10 @@ func (a *DirectoryAdapter) UpdateMembership(
 				return err
 			}
 		}
-		return appendSessionRevocations(ctx, tx, sessionEvents)
+		if err := appendSessionRevocations(ctx, tx, sessionEvents); err != nil {
+			return err
+		}
+		return a.store.finishDirectoryMutation(ctx, tx, admission, sessionEvents)
 	})
 	return membership, err
 }
@@ -387,6 +410,9 @@ func (a *DirectoryAdapter) SetUserActive(
 	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, systemAdminLifecycleLock); err != nil {
 			return fmt.Errorf("lock system administrator lifecycle: %w", err)
+		}
+		if err := lockDirectoryLifecycleUsers(ctx, tx, command.ActorPrincipalID, command.UserID, true); err != nil {
+			return err
 		}
 		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
 			return err
@@ -400,22 +426,35 @@ func (a *DirectoryAdapter) SetUserActive(
 			return err
 		}
 		if active == command.Active {
-			return a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, "")
+			admission, _, err := a.store.admitDirectoryMutation(ctx, tx, command.ActorPrincipalID, "", command.UserID, false)
+			if err != nil {
+				return err
+			}
+			return a.store.finishDirectoryMutation(ctx, tx, admission, nil)
 		}
 		if !command.Active {
 			if err := retainActiveOrganizationAdministrators(ctx, tx, command.UserID); err != nil {
 				return err
 			}
 		}
-		var ids []string
+		// A SCIM User includes global User.Active, so that change must advance
+		// every live SCIM representation before taking any browser-session lock.
+		if _, err := tx.Exec(ctx, `UPDATE organization_memberships
+			SET updated_at = GREATEST($2::timestamptz, updated_at + interval '1 microsecond')
+			WHERE user_id = $1 AND source = 'scim' AND scim_deleted_at IS NULL`,
+			command.UserID, command.UpdatedAt); err != nil {
+			return fmt.Errorf("advance SCIM user versions after global activity change: %w", err)
+		}
+		var issuerTokens []string
 		if !command.Active {
 			var err error
-			ids, err = lockBrowserSessionIDs(ctx, tx, command.UserID)
+			issuerTokens, err = lockSCIMIssuerTokens(ctx, tx, command.UserID, "")
 			if err != nil {
 				return err
 			}
 		}
-		if err := a.store.revalidateDirectoryCaller(ctx, tx, command.ActorPrincipalID, ""); err != nil {
+		admission, ids, err := a.store.admitDirectoryMutation(ctx, tx, command.ActorPrincipalID, "", command.UserID, !command.Active)
+		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -424,6 +463,9 @@ func (a *DirectoryAdapter) SetUserActive(
 			WHERE id = $1`, command.UserID, command.Active, command.UpdatedAt,
 		); err != nil {
 			return fmt.Errorf("set user active: %w", err)
+		}
+		if _, err := a.store.applySCIMIssuerLoss(ctx, tx, issuerTokens, a.store.scimRevokeOnIssuerLoss.Load(), command.ActorPrincipalID, "", command.RequestID); err != nil {
+			return err
 		}
 		var sessionEvents []domain.SessionRevocation
 		if !command.Active {
@@ -447,15 +489,17 @@ func (a *DirectoryAdapter) SetUserActive(
 		}); err != nil {
 			return err
 		}
-		if command.Active {
-			return nil
+		if !command.Active {
+			if err := a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+				UserID: command.UserID, Reason: "user_deactivated", OccurredAt: command.UpdatedAt,
+			}); err != nil {
+				return err
+			}
 		}
-		if err := a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
-			UserID: command.UserID, Reason: "user_deactivated", OccurredAt: command.UpdatedAt,
-		}); err != nil {
+		if err := appendSessionRevocations(ctx, tx, sessionEvents); err != nil {
 			return err
 		}
-		return appendSessionRevocations(ctx, tx, sessionEvents)
+		return a.store.finishDirectoryMutation(ctx, tx, admission, sessionEvents)
 	})
 }
 

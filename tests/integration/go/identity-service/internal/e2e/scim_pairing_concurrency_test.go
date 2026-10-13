@@ -146,7 +146,7 @@ func TestSCIMPairingReprovisionLocksRevokedProvidersBeforeParentsAndToken(t *tes
 			if _, err := f.controls.Unbind(f.adminCtx, externalidentities.UnbindInput{RequestID: "revoke-method", ActorPrincipalID: f.admin.User.ID, Scope: "organization", MembershipID: user.Membership.ID, BindingID: bound.ID}); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.DeleteUser(t.Context(), auth, user.Membership.ID); err != nil {
+			if err := s.DeleteUser(t.Context(), auth, user.Membership.ID, nil); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)

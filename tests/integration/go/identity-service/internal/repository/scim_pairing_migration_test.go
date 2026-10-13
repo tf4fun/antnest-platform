@@ -44,9 +44,11 @@ func TestSCIMPairingMigrationKeepsLegacyDirectoryOnlyAndEnforcesOrganization(t *
 	snapshot := func() string {
 		t.Helper()
 		var state string
+		// Later lifecycle columns have their own migration/backfill gate. Keep
+		// this historical assertion strict about every pre-pairing token field.
 		if err := pool.QueryRow(ctx, `SELECT jsonb_build_object(
 			'membership',(SELECT to_jsonb(m)-'scim_oidc_provider_id' FROM organization_memberships m WHERE id='member-1'),
-			'token',(SELECT to_jsonb(t)-'oidc_provider_id' FROM scim_tokens t WHERE id='token-1'),
+			'token',(SELECT to_jsonb(t)-ARRAY['oidc_provider_id','expires_at','issued_by','issuer_review_required'] FROM scim_tokens t WHERE id='token-1'),
 			'bindings',(SELECT jsonb_agg(to_jsonb(e)) FROM external_identities e),
 			'notices',(SELECT jsonb_agg(to_jsonb(n)) FROM external_identity_notices n),
 			'events',(SELECT jsonb_agg(to_jsonb(e)) FROM identity_events e))::text`).Scan(&state); err != nil {

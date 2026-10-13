@@ -337,6 +337,7 @@ export async function exerciseOIDCPolicy({
     restart,
     administrator,
     organizationAdminPassword,
+    administer,
     identityURL,
     serviceToken,
     signal,

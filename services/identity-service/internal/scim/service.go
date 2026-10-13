@@ -19,6 +19,7 @@ type Repository interface {
 	RevokeToken(context.Context, string, string, time.Time) error
 	ListTokens(context.Context, string) ([]Token, error)
 	ResolveToken(context.Context, string, time.Time) (Authorization, error)
+	RecordTokenUse(context.Context, Authorization, time.Time) error
 	CreateUser(context.Context, CreateUserCommand) (UserResource, error)
 	GetUser(context.Context, string, string) (UserResource, error)
 	ListUsers(context.Context, ListQuery) (UserPage, error)
@@ -32,13 +33,16 @@ type Repository interface {
 }
 
 type Token struct {
-	ID             string     `json:"id"`
-	OrganizationID string     `json:"organization_id"`
-	OIDCProviderID *string    `json:"oidc_provider_id"`
-	Name           string     `json:"name"`
-	Scopes         []string   `json:"scopes"`
-	CreatedAt      time.Time  `json:"created_at"`
-	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+	ID                   string     `json:"id"`
+	OrganizationID       string     `json:"organization_id"`
+	OIDCProviderID       *string    `json:"oidc_provider_id"`
+	Name                 string     `json:"name"`
+	Scopes               []string   `json:"scopes"`
+	CreatedAt            time.Time  `json:"created_at"`
+	RevokedAt            *time.Time `json:"revoked_at,omitempty"`
+	ExpiresAt            time.Time  `json:"expires_at"`
+	IssuedBy             *string    `json:"issued_by"`
+	IssuerReviewRequired bool       `json:"issuer_review_required"`
 }
 
 type Authorization struct {
@@ -55,6 +59,7 @@ type IssueTokenInput struct {
 	OIDCProviderID   *string
 	Name             string
 	Scopes           []string
+	ExpiresInDays    *int
 }
 
 type IssueTokenCommand struct {
@@ -67,6 +72,7 @@ type IssueTokenCommand struct {
 	Name             string
 	Scopes           []string
 	CreatedAt        time.Time
+	ExpiresInDays    int
 }
 
 type IssueTokenResult struct {
@@ -91,30 +97,36 @@ type UserResource struct {
 }
 
 type CreateUserCommand struct {
-	OrganizationID string
-	ActorTokenID   string
-	User           domain.User
-	Membership     domain.OrganizationMembership
+	OrganizationID      string
+	ActorTokenID        string
+	ActorOIDCProviderID *string
+	User                domain.User
+	Membership          domain.OrganizationMembership
 }
 
 type ReplaceUserCommand struct {
-	OrganizationID    string
-	ActorTokenID      string
-	User              domain.User
-	Membership        domain.OrganizationMembership
-	ExpectedUpdatedAt time.Time
+	OrganizationID      string
+	ActorTokenID        string
+	ActorOIDCProviderID *string
+	User                domain.User
+	Membership          domain.OrganizationMembership
+	ExpectedUpdatedAt   time.Time
+	IfMatch             *IfMatchCondition
 }
 
 type ReplaceUserInput struct {
 	UserInput
 	ExpectedUpdatedAt time.Time
+	IfMatch           *IfMatchCondition
 }
 
 type DeleteUserCommand struct {
-	OrganizationID string
-	ActorTokenID   string
-	MembershipID   string
-	DeletedAt      time.Time
+	OrganizationID      string
+	ActorTokenID        string
+	ActorOIDCProviderID *string
+	MembershipID        string
+	DeletedAt           time.Time
+	IfMatch             *IfMatchCondition
 }
 
 type GroupInput struct {
@@ -129,30 +141,36 @@ type GroupResource struct {
 }
 
 type CreateGroupCommand struct {
-	OrganizationID string
-	ActorTokenID   string
-	Group          domain.Group
-	MemberIDs      []string
+	OrganizationID      string
+	ActorTokenID        string
+	ActorOIDCProviderID *string
+	Group               domain.Group
+	MemberIDs           []string
 }
 
 type ReplaceGroupCommand struct {
-	OrganizationID    string
-	ActorTokenID      string
-	Group             domain.Group
-	MemberIDs         []string
-	ExpectedUpdatedAt time.Time
+	OrganizationID      string
+	ActorTokenID        string
+	ActorOIDCProviderID *string
+	Group               domain.Group
+	MemberIDs           []string
+	ExpectedUpdatedAt   time.Time
+	IfMatch             *IfMatchCondition
 }
 
 type ReplaceGroupInput struct {
 	GroupInput
 	ExpectedUpdatedAt time.Time
+	IfMatch           *IfMatchCondition
 }
 
 type DeleteGroupCommand struct {
-	OrganizationID string
-	ActorTokenID   string
-	GroupID        string
-	DeletedAt      time.Time
+	OrganizationID      string
+	ActorTokenID        string
+	ActorOIDCProviderID *string
+	GroupID             string
+	DeletedAt           time.Time
+	IfMatch             *IfMatchCondition
 }
 
 type ListQuery struct {
@@ -200,6 +218,10 @@ func NewService(config Config) (*Service, error) {
 }
 
 func (s *Service) IssueToken(ctx context.Context, input IssueTokenInput) (IssueTokenResult, error) {
+	days, err := TokenLifetimeDays(input.ExpiresInDays)
+	if err != nil {
+		return IssueTokenResult{}, err
+	}
 	if input.OIDCProviderID != nil && !domain.ValidID(*input.OIDCProviderID) {
 		return IssueTokenResult{}, domain.InvalidArgument("oidc_provider_id must be a public Provider ID")
 	}
@@ -225,8 +247,8 @@ func (s *Service) IssueToken(ctx context.Context, input IssueTokenInput) (IssueT
 	command := IssueTokenCommand{
 		RequestID: input.RequestID, ActorPrincipalID: input.ActorPrincipalID,
 		TokenID: s.newID("scimtoken"), TokenHash: digest, OrganizationID: input.OrganizationID,
-		OIDCProviderID: input.OIDCProviderID,
-		Name:           name, Scopes: scopes, CreatedAt: s.now().UTC(),
+		OIDCProviderID: input.OIDCProviderID, ExpiresInDays: days,
+		Name: name, Scopes: scopes, CreatedAt: s.now().UTC(),
 	}
 	token, err := s.repository.IssueToken(ctx, command)
 	if err != nil {
@@ -277,6 +299,12 @@ func (s *Service) Authorize(ctx context.Context, rawToken, requiredScope string)
 	return authorization, nil
 }
 
+// Read handlers record successful use explicitly. Resource reads are also used
+// by mutation preconditions and must not write outside the mutation transaction.
+func (s *Service) RecordTokenUse(ctx context.Context, authorization Authorization) error {
+	return s.repository.RecordTokenUse(ctx, authorization, s.now().UTC())
+}
+
 func (s *Service) CreateUser(ctx context.Context, authorization Authorization, input UserInput) (UserResource, error) {
 	externalID, err := input.externalID(authorization.OIDCProviderID != nil)
 	if err != nil {
@@ -299,7 +327,7 @@ func (s *Service) CreateUser(ctx context.Context, authorization Authorization, i
 		CreatedAt: now, UpdatedAt: now,
 	}
 	return s.repository.CreateUser(ctx, CreateUserCommand{
-		OrganizationID: authorization.OrganizationID, ActorTokenID: authorization.TokenID,
+		OrganizationID: authorization.OrganizationID, ActorTokenID: authorization.TokenID, ActorOIDCProviderID: copyProviderID(authorization.OIDCProviderID),
 		User: user, Membership: membership,
 	})
 }
@@ -344,9 +372,9 @@ func (s *Service) ReplaceUser(
 	current.Membership.SCIMUserName = userName
 	current.Membership.UpdatedAt = now
 	return s.repository.ReplaceUser(ctx, ReplaceUserCommand{
-		OrganizationID: authorization.OrganizationID, ActorTokenID: authorization.TokenID,
+		OrganizationID: authorization.OrganizationID, ActorTokenID: authorization.TokenID, ActorOIDCProviderID: copyProviderID(authorization.OIDCProviderID),
 		User: current.User, Membership: current.Membership,
-		ExpectedUpdatedAt: expectedUpdatedAt,
+		ExpectedUpdatedAt: expectedUpdatedAt, IfMatch: input.IfMatch,
 	})
 }
 
@@ -361,16 +389,17 @@ func (s *Service) DeactivateUser(ctx context.Context, authorization Authorizatio
 	}, ExpectedUpdatedAt: current.Membership.UpdatedAt})
 }
 
-func (s *Service) DeleteUser(ctx context.Context, authorization Authorization, resourceID string) error {
+func (s *Service) DeleteUser(ctx context.Context, authorization Authorization, resourceID string, condition *IfMatchCondition) error {
 	membershipID := strings.TrimSpace(resourceID)
 	if membershipID == "" {
 		return domain.ErrNotFound
 	}
 	return s.repository.DeleteUser(ctx, DeleteUserCommand{
 		OrganizationID: authorization.OrganizationID,
-		ActorTokenID:   authorization.TokenID,
-		MembershipID:   membershipID,
-		DeletedAt:      s.now().UTC(),
+		ActorTokenID:   authorization.TokenID, ActorOIDCProviderID: copyProviderID(authorization.OIDCProviderID),
+		MembershipID: membershipID,
+		DeletedAt:    s.now().UTC(),
+		IfMatch:      condition,
 	})
 }
 
@@ -390,7 +419,7 @@ func (s *Service) CreateGroup(ctx context.Context, authorization Authorization, 
 		CreatedAt: now, UpdatedAt: now,
 	}
 	return s.repository.CreateGroup(ctx, CreateGroupCommand{
-		OrganizationID: authorization.OrganizationID, ActorTokenID: authorization.TokenID,
+		OrganizationID: authorization.OrganizationID, ActorTokenID: authorization.TokenID, ActorOIDCProviderID: copyProviderID(authorization.OIDCProviderID),
 		Group: group, MemberIDs: memberIDs,
 	})
 }
@@ -433,9 +462,9 @@ func (s *Service) ReplaceGroup(
 	current.Group.UpdatedAt = domain.NextUpdatedAt(s.now(), current.Group.UpdatedAt)
 	return s.repository.ReplaceGroup(ctx, ReplaceGroupCommand{
 		OrganizationID: authorization.OrganizationID,
-		ActorTokenID:   authorization.TokenID,
-		Group:          current.Group, MemberIDs: memberIDs,
-		ExpectedUpdatedAt: expectedUpdatedAt,
+		ActorTokenID:   authorization.TokenID, ActorOIDCProviderID: copyProviderID(authorization.OIDCProviderID),
+		Group: current.Group, MemberIDs: memberIDs,
+		ExpectedUpdatedAt: expectedUpdatedAt, IfMatch: input.IfMatch,
 	})
 }
 
@@ -446,16 +475,17 @@ func chooseExpectedVersion(requested, current time.Time) time.Time {
 	return requested
 }
 
-func (s *Service) DeleteGroup(ctx context.Context, authorization Authorization, resourceID string) error {
+func (s *Service) DeleteGroup(ctx context.Context, authorization Authorization, resourceID string, condition *IfMatchCondition) error {
 	groupID := strings.TrimSpace(resourceID)
 	if groupID == "" {
 		return domain.ErrNotFound
 	}
 	return s.repository.DeleteGroup(ctx, DeleteGroupCommand{
 		OrganizationID: authorization.OrganizationID,
-		ActorTokenID:   authorization.TokenID,
-		GroupID:        groupID,
-		DeletedAt:      s.now().UTC(),
+		ActorTokenID:   authorization.TokenID, ActorOIDCProviderID: copyProviderID(authorization.OIDCProviderID),
+		GroupID:   groupID,
+		DeletedAt: s.now().UTC(),
+		IfMatch:   condition,
 	})
 }
 
@@ -516,4 +546,12 @@ func containsScope(scopes []string, required string) bool {
 		}
 	}
 	return false
+}
+
+func copyProviderID(id *string) *string {
+	if id == nil {
+		return nil
+	}
+	value := *id
+	return &value
 }

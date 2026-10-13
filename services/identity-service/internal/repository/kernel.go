@@ -23,6 +23,9 @@ type Store struct {
 	browserInitialization    sync.Mutex
 	browserIdleTTL           atomic.Int64
 	browserPolicyInitialized bool
+	scimInitialization       sync.Mutex
+	scimRevokeOnIssuerLoss   atomic.Bool
+	scimPolicyInitialized    bool
 }
 
 // ParsePoolConfig instruments every connection before the caller creates its pool.
@@ -41,6 +44,7 @@ func New(pool *pgxpool.Pool, newID func(string) string, now func() time.Time) (*
 	}
 	store := &Store{pool: &databasePool{pool}, newID: newID, now: now}
 	store.browserIdleTTL.Store(int64(30 * time.Minute))
+	store.scimRevokeOnIssuerLoss.Store(true)
 	return store, nil
 }
 

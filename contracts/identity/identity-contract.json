@@ -1,6 +1,6 @@
 {
   "contract": "antnest.identity",
-  "revision": 17,
+  "revision": 18,
   "password_verification_policy": "password-verification-policy.json",
   "scim_lifecycle_policy": "scim-lifecycle-policy.json",
   "transport": "json-over-http",
@@ -366,7 +366,10 @@
         "name",
         "scopes",
         "created_at",
-        "oidc_provider_id"
+        "oidc_provider_id",
+        "expires_at",
+        "issued_by",
+        "issuer_review_required"
       ],
       "properties": {
         "id": {
@@ -400,6 +403,38 @@
               "type": "null"
             }
           ]
+        },
+        "expires_at": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "issued_by": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "issuer_review_required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "issued_by": {
+            "type": "null"
+          }
+        },
+        "required": ["issued_by"]
+      },
+      "then": {
+        "properties": {
+          "issuer_review_required": {
+            "const": true
+          }
         }
       }
     },
@@ -1721,6 +1756,12 @@
           },
           "oidc_provider_id": {
             "$ref": "#/definitions/id"
+          },
+          "expires_in_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365,
+            "default": 90
           }
         },
         "type": "object",
@@ -1737,7 +1778,9 @@
             "minLength": 1,
             "secret": true
           }
-        }
+        },
+        "type": "object",
+        "additionalProperties": false
       },
       "oidc_pairing": "Optional immutable same-organization Provider in token authorization. Omission creates an unpaired directory-only credential; existing tokens remain unpaired. The response represents no pairing as null."
     },
@@ -1788,7 +1831,9 @@
               "$ref": "#/definitions/scim_token"
             }
           }
-        }
+        },
+        "type": "object",
+        "additionalProperties": false
       }
     },
     "upsert_oidc_provider": {
@@ -2711,7 +2756,16 @@
         "create_semantics": "POST is create-only and conflicts with an active resource ID or organization-scoped externalId"
       },
       "authority": "one logical directory authority per organization; bearer tokens are rotating credentials",
-      "unsupported": ["bulk", "sort", "etag", "changePassword"]
+      "unsupported": ["bulk", "sort", "changePassword"],
+      "versioning": {
+        "policy": "scim-lifecycle-policy.json",
+        "etag_supported": true,
+        "header": "ETag",
+        "representation_field": "meta.version",
+        "list_rows_have_version": true,
+        "response_methods": ["GET", "POST", "PUT", "PATCH"],
+        "if_match_methods": ["PUT", "PATCH", "DELETE"]
+      }
     }
   },
   "browser_session_contract": "browser-sessions.md",

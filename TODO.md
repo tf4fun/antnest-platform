@@ -2,7 +2,7 @@
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
-Issue 状态最后核对于 2026-10-13：136 个 issue，77 个已关闭，59 个开放；开放项包含 5 个 Epic 和 54 个执行项。下列队列保留 70 个执行项，其中 16 个已交付。
+Issue 状态最后核对于 2026-10-14：136 个 issue，77 个已关闭，59 个开放；开放项包含 5 个 Epic 和 54 个执行项。下列队列保留 70 个执行项，其中 16 个已交付。
 
 ## 执行约定
 
@@ -18,7 +18,11 @@ Issue 状态最后核对于 2026-10-13：136 个 issue，77 个已关闭，59 �
 ## 当前批次
 
 - 当前按用户指定顺序推进 Epic [#81](https://github.com/tf4fun/antnest-platform/issues/81)：**#10 → #62 → #63 → #58 → #61 → #59 → #60 → #2 → #66 → #64**。本顺序优先于下方按主题组织的队列；#67 保留为后续共享契约工作。
-- 当前执行 [#66](https://github.com/tf4fun/antnest-platform/issues/66)：共享契约已先 red 后 green 并通过独立 review；11 项新契约测试及全部 189 项平台测试通过。契约明确默认 90 天/最多 365 天有效期、历史 Token 迁移、签发者失权撤销/复核、轮换重叠期和 ETag/If-Match；Identity 17/Console 53 的现行字段保持不变，18/54 仅在所属服务实现时激活。下一批为 Identity 的失败测试与实现，再推进 Console → 消费方引用 → 显式 HTTPS 集成，服务行为尚未交付。锁顺序、等待后重新授权、全局停用推进版本及 Group 快照属于 Identity 待验证项；交接位于 `artifacts/verification/issue-66/current-handoff.json`。下一项仍为 #64，#165–#169 暂无该批次的服务所有权重叠，继续保持开放。
+- 当前执行 [#66](https://github.com/tf4fun/antnest-platform/issues/66)：共享契约之后的 Identity 18 服务批次已完成本地准入，交付至 Draft [PR #260](https://github.com/tf4fun/antnest-platform/pull/260)。Console 54、消费方引用和显式 HTTPS 集成仍待交付；#66 保持开放。共享契约 head `04986e7f` 的旧 CI（26 项成功、4 项跳过）不能代表新增实现已通过远端验收。
+- #66 Identity 已实现 ETag/If-Match、独立 CAS、持久精度/单调版本、Group 一致快照、成功请求 usage、90 天默认/1–365 天 TTL、签发者元数据、0010 创建时间回填迁移，以及监听前的签发者权限核对。管理员降权/停用按策略撤销或标记复核；SystemAdmin/其他组织权限保留，恢复不复活 Token。失权联动、自撤销与浏览器会话最终复核均受原始期限约束，使用权限父行 → SCIM Token → caller/target SID → feeds 锁顺序。
+- #66 最新验证（2026-10-14）：完整 RPC 契约先复现失败后修复，39 项相关契约测试通过；unit/race 272 项、745 个子用例通过。无过滤的完整 PostgreSQL 组件/race 门禁通过 482 项、1,213 个子用例、18 个包（包含 unit），零失败/跳过。生产 Identity 镜像 Docker 验收通过 547 项检查，含 89 次 SCIM 检查和 23 次签名 OIDC 回调；验证 TTL/持久 metadata、到期拒绝、User/Group 条件写、同配置重叠轮换、旧凭据撤销，以及签发者自降权后恢复不复活凭据。
+- #66 验证记录：完整组件首次运行的两份旧测试等待 Organization query，但新锁顺序在 User 行上更早阻塞。仅适配观察点，保留原业务断言、时限和真实 blocker 验证；2 项、6 个子用例先定向通过，再通过完整门禁。失败/中断原始记录保留，后续成功不覆盖它们。独立 review、格式/链接/存储检查通过；本轮容器与卷清零，网络回到三项基线，无残留 Go 测试进程。
+- #66 尚未达到合并条件：下一批为 Console 54（当前仍为 53），然后更新消费方引用、执行真实 HTTPS 集成和最终 CI/review。私有交接与源码备份位于 `artifacts/verification/issue-66/current-handoff.json` 和 `artifacts/verification/issue-66/identity/identity18-checkpoint/`，服务准入在 `identity/service-admission.json`；局部服务通过不等于完整业务工作流。下一 issue 为 #64；#165–#169 暂无该批次服务所有权重叠，保持开放。
 - 已完成：[#2](https://github.com/tf4fun/antnest-platform/issues/2) 随 [PR #258](https://github.com/tf4fun/antnest-platform/pull/258) 合并并关闭，merge commit `f702676c`，验收 head `f88660c5`；九项 admission 与 Epic #81 的 #2 已勾选，main 代码树与验收候选一致。用户指定的十项队列已完成八项，余下 #66 → #64。
 - #2 行为与本地验收：Gateway revision 23 将密码来源、密码账户和 OIDC 来源分为三表，使用固定窗口 FIFO 淘汰、IPv6 /64、可配置容量及指标。共享契约、Gateway、消费方引用和 HTTPS 集成分别交付；保留 #60 的密码错误、Retry-After、no-store、Cookie 边界及历史 activation 22。先复现 12 类行为失败，unit/race 311 项/1,860 子测试、component/race 335/1,955、121 契约测试、服务容器 191 项检查通过；43 项新工具测试及相关契约/TLS/Provider 共 62 项通过。
 - #2 HTTPS 验收：本地完整浏览器套件在 257.7 秒内通过，包含密码验证恢复、OIDC 绑定、会话过期与撤销。最终 CI 的两个实际客户端 IP 在 0.666 秒内完成 35 次请求：A 第 31 次 start 受限，B 完成真实签名 SSO 并获得正确普通用户 Principal，随后 A 仍受限；精确 31 次 start RPC，两次拒绝零上游。35 条 Trace、312 spans 均零警告/错误，最终备份完整；该套件清理后库存与基线一致。

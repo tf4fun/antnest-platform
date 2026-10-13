@@ -2,13 +2,13 @@
 
 This is the shared contract for [issue #66](https://github.com/tf4fun/antnest-platform/issues/66).
 The [policy](scim-lifecycle-policy.json) and
-[extension schemas](scim-lifecycle.schema.json) define the pending behavior.
-They do not activate it: the current Identity revision 17 and Console version 53
-keep their existing wire shapes. Identity revision 18 and Console version 54
-activate their own fields and behavior only with the corresponding implementation,
-documentation and passing service gates. Consumer references and a separate HTTPS
-integration batch follow. The schema definitions validate extension projections,
-not entire existing RPC envelopes.
+[extension schemas](scim-lifecycle.schema.json) define the shared behavior.
+Identity revision 18 implements its token lifecycle and resource versions; the
+complete RPC request and response shapes are in the active
+[Identity catalog](identity-contract.json). Console remains at version 53 until
+its version-54 implementation, documentation and service gates pass. Consumer
+references and a separate HTTPS integration batch follow. The extension schema
+definitions validate field projections, not entire RPC envelopes.
 
 ## Issuance, expiry and rotation
 
@@ -62,7 +62,9 @@ effective authority using the configured policy. Migration warnings report
 aggregate counts without credentials, hashes or user/token identifiers. An old
 binary does not enforce the new policy merely because columns exist: deployment
 must retire old Identity instances before declaring lifecycle enforcement active.
-Rolling back to an old binary also removes that enforcement.
+An already-running old instance continues without that enforcement. Starting an
+old binary against the upgraded migration journal normally fails its unknown-
+migration check, so a binary-only rollback is not a supported recovery path.
 
 For every User and Group mutation, middleware authorization is only an initial
 check. The write transaction locks and rereads the token and relevant authority
@@ -72,6 +74,29 @@ Issuance and manual revocation likewise recheck the verified caller after waits.
 No business lock is acquired after a revocation-feed writer lock; existing
 principal-feed-before-session-feed ordering is preserved. Audit failure rolls
 back the business mutation and lifecycle effects together.
+
+Mutation commands retain the acting token's own Provider pairing separately
+from the target resource. The locked token must match that authorization
+snapshot; another pairing does not partition the organization's existing
+directory. Group writes lock incoming User and Membership parents before the
+Group, and User deletion locks affected Groups before the Token. This prevents
+a concurrent Group write from adding a reference to a deleted Membership.
+For a historical SCIM-managed administrator, User deactivation or deletion also
+locks the acting token and all affected issuer tokens as one ordered set. Expiry
+is rechecked after the whole set is locked, before evaluating `If-Match`.
+An admitted request may intentionally revoke its own token in the same
+transaction; this does not extend its original expiry or skip the final check.
+The admitted expiry is checked again after all audit and revocation-feed waits,
+so a late refusal rolls back resources, usage, browser revocations and both
+feeds in the same transaction.
+
+Directory administrator changes likewise lock the caller and target browser
+sessions as one ordered set after the authority parents and issuer tokens.
+They recheck the signed CCT and session deadlines after the final audit and feed
+writes, including activation and idempotent calls. Intentional self-demotion or
+Membership deactivation may revoke the caller's own session, but still uses its
+original idle/absolute deadlines and signed CCT validity. Global self-disable
+retains its existing conflict response.
 
 ## ETag representation
 

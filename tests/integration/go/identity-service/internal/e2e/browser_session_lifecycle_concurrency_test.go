@@ -123,7 +123,7 @@ func TestBrowserPasswordAndRoleChangeSerializeWithoutRevivingSessions(t *testing
 			waiting := make(chan uint32, 1)
 			var waiterCaptured sync.Once
 			secondStore := f.tracedStore(t, func(_ context.Context, conn *pgx.Conn, sql string) {
-				if strings.Contains(sql, "FROM organizations") && strings.Contains(sql, "FOR ") {
+				if strings.Contains(sql, "FROM users") && strings.Contains(sql, "FOR ") {
 					waiterCaptured.Do(func() { waiting <- conn.PgConn().PID() })
 				}
 			})

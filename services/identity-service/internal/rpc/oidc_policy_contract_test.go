@@ -84,10 +84,16 @@ func TestUnpairedSCIMTokenRealRPCResponsesMatchCompleteContract(t *testing.T) {
 	if err := compiler.AddResource(schemaID, document); err != nil {
 		t.Fatal(err)
 	}
-	token := scim.Token{ID: "token-1", OrganizationID: "org-1", Name: "directory", Scopes: []string{"scim:read", "scim:write"}, CreatedAt: time.Now().UTC()}
+	createdAt := time.Now().UTC()
+	issuerID := "admin"
+	token := scim.Token{ID: "token-1", OrganizationID: "org-1", Name: "directory", Scopes: []string{"scim:read", "scim:write"}, CreatedAt: createdAt,
+		ExpiresAt: createdAt.Add(90 * 24 * time.Hour), IssuedBy: &issuerID, IssuerReviewRequired: false}
+	legacyToken := scim.Token{ID: "token-legacy", OrganizationID: "org-1", Name: "legacy directory", Scopes: []string{"scim:read", "scim:write"}, CreatedAt: createdAt,
+		ExpiresAt: createdAt.Add(365 * 24 * time.Hour), IssuedBy: nil, IssuerReviewRequired: true}
+	tokens := []scim.Token{token, legacyToken}
 	for _, method := range []string{"issue_scim_token", "list_scim_tokens"} {
 		t.Run(method, func(t *testing.T) {
-			services := &rpcServicesStub{scimTokens: []scim.Token{token}}
+			services := &rpcServicesStub{scimTokens: tokens}
 			body := `{"actor_principal_id":"admin","organization_id":"org-1"}`
 			if method == "issue_scim_token" {
 				body = `{"request_id":"scim-token","actor_principal_id":"admin","organization_id":"org-1","name":"directory","scopes":["scim:read","scim:write"]}`
@@ -108,10 +114,30 @@ func TestUnpairedSCIMTokenRealRPCResponsesMatchCompleteContract(t *testing.T) {
 			if err := schema.Validate(value); err != nil {
 				t.Fatalf("actual SCIM response violates contract: %v", err)
 			}
+			object := value.(map[string]any)
+			returned := []any{object["token"]}
+			want := tokens[:1]
+			if method == "list_scim_tokens" {
+				returned = object["tokens"].([]any)
+				want = tokens
+			}
+			if len(returned) != len(want) {
+				t.Fatalf("SCIM response tokens=%d want=%d", len(returned), len(want))
+			}
+			for i, expected := range want {
+				actual := returned[i].(map[string]any)
+				if actual["id"] != expected.ID || actual["expires_at"] != expected.ExpiresAt.Format(time.RFC3339Nano) || actual["issuer_review_required"] != expected.IssuerReviewRequired {
+					t.Fatalf("SCIM lifecycle metadata mismatch for token %q", expected.ID)
+				}
+				issuedBy, present := actual["issued_by"]
+				if !present || expected.IssuedBy == nil && issuedBy != nil || expected.IssuedBy != nil && issuedBy != *expected.IssuedBy {
+					t.Fatalf("SCIM issuer metadata mismatch for token %q", expected.ID)
+				}
+			}
 			if !strings.Contains(response.Body.String(), `"oidc_provider_id":null`) {
 				t.Fatal("unpaired token must explicitly return null")
 			}
-			if method == "list_scim_tokens" && strings.Contains(response.Body.String(), "test-scim-credential") {
+			if method == "list_scim_tokens" && (strings.Contains(response.Body.String(), `"credential"`) || strings.Contains(response.Body.String(), "test-scim-credential")) {
 				t.Fatal("token list exposed credential")
 			}
 		})

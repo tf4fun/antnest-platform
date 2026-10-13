@@ -12,9 +12,15 @@ const read = (path) =>
     readFileSync(new URL(`../../../contracts/${path}`, import.meta.url)),
   );
 const policy = () => read("identity/scim-lifecycle-policy.json");
-const schema = (name) => {
-  const document = read("identity/scim-lifecycle.schema.json");
-  const ajv = new Ajv2020({ strict: true });
+const compiler = (catalog = false) => {
+  const ajv = new Ajv2020({
+    strict: true,
+    ...(catalog ? { strictRequired: false, strictTypes: false } : {}),
+  });
+  if (catalog) {
+    ajv.addKeyword({ keyword: "secret", schemaType: "boolean" });
+    for (const format of ["uri", "email"]) ajv.addFormat(format, true);
+  }
   // Match the existing browser-session/OIDC timestamp profile. Calendar syntax
   // is a contract gate; production clocks and persisted precision need PG gates.
   ajv.addFormat("date-time", {
@@ -53,11 +59,137 @@ const schema = (name) => {
       );
     },
   });
-  return ajv.compile({
+  return ajv;
+};
+const schema = (name) => {
+  const document = read("identity/scim-lifecycle.schema.json");
+  return compiler().compile({
     $defs: document.$defs,
     $ref: `#/$defs/${name}`,
   });
 };
+const rpcSchema = (name, direction) => {
+  const document = read("identity/identity-contract.json");
+  return compiler(true).compile({
+    definitions: document.definitions,
+    ...document.methods[name][direction],
+  });
+};
+const accepts = (validate, value) =>
+  assert.equal(validate(value), true, JSON.stringify(validate.errors));
+const rejects = (validate, value) =>
+  assert.equal(validate(value), false, JSON.stringify(value));
+
+test("active issuance RPC validates the complete request including optional bounded TTL", () => {
+  const validate = rpcSchema("issue_scim_token", "request");
+  const request = {
+    request_id: "request-1",
+    actor_principal_id: "user-admin",
+    organization_id: "org-1",
+    name: "directory",
+    scopes: ["scim:read", "scim:write"],
+    oidc_provider_id: "provider-1",
+  };
+  accepts(validate, request);
+  for (const expires_in_days of [1, 90, 365])
+    accepts(validate, { ...request, expires_in_days });
+  const unpaired = { ...request };
+  delete unpaired.oidc_provider_id;
+  accepts(validate, unpaired);
+  for (const expires_in_days of [null, 0, -1, 366, 1.5, "90", true, [], {}])
+    rejects(validate, { ...request, expires_in_days });
+  for (const field of ["expires_at", "issued_by", "issuer_review_required"])
+    rejects(validate, { ...request, [field]: "caller-controlled" });
+  for (const field of [
+    "request_id",
+    "actor_principal_id",
+    "organization_id",
+    "name",
+    "scopes",
+  ]) {
+    const missing = { ...request };
+    delete missing[field];
+    rejects(validate, missing);
+  }
+  for (const value of [null, [], "request", 18]) rejects(validate, value);
+});
+
+test("complete issuance and inventory responses require lifecycle metadata and contain no nested secrets", () => {
+  const issue = rpcSchema("issue_scim_token", "response");
+  const list = rpcSchema("list_scim_tokens", "response");
+  const token = {
+    id: "token-1",
+    organization_id: "org-1",
+    name: "directory",
+    scopes: ["scim:read", "scim:write"],
+    oidc_provider_id: null,
+    created_at: "2026-10-14T00:00:00Z",
+    expires_at: "2027-01-12T00:00:00Z",
+    issued_by: "user-admin",
+    issuer_review_required: false,
+  };
+  const responses = [
+    [issue, (row) => ({ token: row, credential: "one-time-secret" })],
+    [list, (row) => ({ tokens: [row] })],
+  ];
+  for (const [validate, response] of responses) {
+    for (const row of [
+      token,
+      { ...token, oidc_provider_id: "provider-1" },
+      { ...token, issuer_review_required: true },
+      { ...token, issued_by: null, issuer_review_required: true },
+      { ...token, revoked_at: "2026-10-15T00:00:00Z" },
+    ])
+      accepts(validate, response(row));
+    for (const field of Object.keys(token)) {
+      const missing = { ...token };
+      delete missing[field];
+      rejects(validate, response(missing));
+    }
+    for (const fields of [
+      { issued_by: null },
+      { issued_by: "" },
+      { issued_by: false },
+      { issuer_review_required: "true" },
+      { expires_at: null },
+      { expires_at: "2027-02-29T00:00:00Z" },
+      { expires_at: "2027-01-12T00:00:00" },
+      { credential: "private" },
+      { token_hash: "private" },
+      { hash: "private" },
+    ])
+      rejects(validate, response({ ...token, ...fields }));
+    for (const value of [null, [], "response", 18]) {
+      rejects(validate, value);
+      rejects(validate, response(value));
+    }
+    rejects(validate, { ...response(token), token_hash: "private" });
+  }
+  accepts(list, { tokens: [] });
+  rejects(list, { tokens: [token], credential: "private" });
+  rejects(issue, { token });
+});
+
+test("active Identity catalog advertises SCIM versions under the shared lifecycle policy", () => {
+  const document = read("identity/identity-contract.json");
+  const value = policy();
+  assert.equal(document.revision, value.activation.identity_revision);
+  assert.equal(document.revision, 18);
+  assert.equal(document.protocols.scim.unsupported.includes("etag"), false);
+  assert.deepEqual(document.protocols.scim.versioning, {
+    policy: "scim-lifecycle-policy.json",
+    etag_supported: true,
+    header: "ETag",
+    representation_field: "meta.version",
+    list_rows_have_version: true,
+    response_methods: value.etag.response_methods,
+    if_match_methods: value.if_match.methods,
+  });
+  const ttl =
+    document.methods.issue_scim_token.request.properties.expires_in_days;
+  assert.equal(ttl.default, value.expiry.default_days);
+  assert.equal(ttl.maximum, value.expiry.maximum_days);
+});
 
 test("Identity and Console share SCIM lifecycle semantics with separate activation batches", () => {
   const value = policy();

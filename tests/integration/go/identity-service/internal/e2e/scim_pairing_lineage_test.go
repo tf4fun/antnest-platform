@@ -130,7 +130,7 @@ func TestSCIMPairingNoLineageCannotBecomeForeignTombstoneDuringProviderWait(t *t
 							return
 						}
 					}
-					doneB <- b.DeleteUser(ctx, authB, userB.Membership.ID)
+					doneB <- b.DeleteUser(ctx, authB, userB.Membership.ID, nil)
 				})
 				var pidB uint32
 				select {
@@ -183,7 +183,7 @@ func TestSCIMPairingLatestLineageCannotChangeBeforeMembershipInsert(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteUser(t.Context(), auth, first.Membership.ID); err != nil {
+	if err := s.DeleteUser(t.Context(), auth, first.Membership.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	second, err := s.CreateUser(t.Context(), auth, pairedUserInput())
@@ -221,7 +221,7 @@ func TestSCIMPairingLatestLineageCannotChangeBeforeMembershipInsert(t *testing.T
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	workers.Go(func() { doneB <- b.DeleteUser(ctx, auth, second.Membership.ID) })
+	workers.Go(func() { doneB <- b.DeleteUser(ctx, auth, second.Membership.ID, nil) })
 	var pidB uint32
 	select {
 	case pidB = <-readyB:
@@ -294,7 +294,7 @@ func TestSCIMPairingRepeatedReprovisionPreservesLineageAcrossClockRegression(t *
 				}
 				current := first
 				for cycle := 0; cycle < 2; cycle++ {
-					if err := s.DeleteUser(t.Context(), auth, current.Membership.ID); err != nil {
+					if err := s.DeleteUser(t.Context(), auth, current.Membership.ID, nil); err != nil {
 						t.Fatal(err)
 					}
 					f.advance(regression)
@@ -321,7 +321,7 @@ func TestSCIMPairingAmbiguousHistoricalLineageIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteUser(t.Context(), auth, first.Membership.ID); err != nil {
+	if err := s.DeleteUser(t.Context(), auth, first.Membership.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Older versions did not advance creation time beyond the deleted

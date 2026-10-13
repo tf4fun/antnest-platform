@@ -57,10 +57,14 @@ func (h *HTTPHandler) patchUser(response http.ResponseWriter, request *http.Requ
 		writeServiceError(response, err)
 		return
 	}
+	condition, ok := ifMatchFromRequest(response, request)
+	if !ok {
+		return
+	}
 	input := UserInput{
 		ExternalID: current.Membership.SCIMExternalID, UserName: current.Membership.SCIMUserName,
 		Email: current.Membership.Email, DisplayName: current.Membership.DisplayName,
-		Active: current.User.Active && current.Membership.Active,
+		Active: current.Membership.Active,
 	}
 	for _, operation := range body.Operations {
 		if err := applyUserPatch(&input, operation); err != nil {
@@ -73,12 +77,13 @@ func (h *HTTPHandler) patchUser(response http.ResponseWriter, request *http.Requ
 		}
 	}
 	resource, err := h.service.ReplaceUser(request.Context(), authorization, request.PathValue("id"), ReplaceUserInput{
-		UserInput: input, ExpectedUpdatedAt: current.Membership.UpdatedAt,
+		UserInput: input, ExpectedUpdatedAt: current.Membership.UpdatedAt, IfMatch: condition,
 	})
 	if err != nil {
 		writeServiceError(response, err)
 		return
 	}
+	response.Header().Set("ETag", ResourceVersion(resource.Membership.UpdatedAt))
 	writeSCIM(response, http.StatusOK, h.userResponse(resource))
 }
 
@@ -100,6 +105,10 @@ func (h *HTTPHandler) patchGroup(response http.ResponseWriter, request *http.Req
 		writeServiceError(response, err)
 		return
 	}
+	condition, ok := ifMatchFromRequest(response, request)
+	if !ok {
+		return
+	}
 	input := GroupInput{
 		ExternalID: current.Group.SCIMExternalID, DisplayName: current.Group.DisplayName,
 		MemberIDs: append([]string(nil), current.MemberIDs...),
@@ -111,12 +120,13 @@ func (h *HTTPHandler) patchGroup(response http.ResponseWriter, request *http.Req
 		}
 	}
 	resource, err := h.service.ReplaceGroup(request.Context(), authorization, request.PathValue("id"), ReplaceGroupInput{
-		GroupInput: input, ExpectedUpdatedAt: current.Group.UpdatedAt,
+		GroupInput: input, ExpectedUpdatedAt: current.Group.UpdatedAt, IfMatch: condition,
 	})
 	if err != nil {
 		writeServiceError(response, err)
 		return
 	}
+	response.Header().Set("ETag", ResourceVersion(resource.Group.UpdatedAt))
 	writeSCIM(response, http.StatusOK, h.groupResponse(resource))
 }
 
