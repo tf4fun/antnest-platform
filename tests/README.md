@@ -230,6 +230,17 @@ after that evidence and waits for the actual socket close, even on failure.
 Fixture tests hold a real upgraded socket's close handshake to prove that HTTP
 101 cannot substitute for completed cleanup.
 
+The same HTTPS suite checks OIDC admission with two Node client containers on
+the TLS ingress network. A exhausts the deployed 30-start budget; B uses an
+independent Cookie jar and a prebound ordinary user to complete a real signed
+OIDC callback and read its exact Principal. A remains refused afterward, within
+the same 10-minute window. Every response Trace ID is matched to the Gateway's
+actual client address and the exact Identity request inventory, including zero
+upstream requests for refusals. The private evidence preserves complete raw
+traces, partial receipts and logs before teardown; authorization URLs, Cookies,
+state, nonce and codes never enter client receipts. Both clients verify the
+private CA and TLS proxy hostname, and expose no host ports.
+
 The password flow records both the Chromium fetch/body-consumption result and
 Playwright's response observation for each single POST. Their shared request ID
 prevents an unrelated response from satisfying the observer. The private progress

@@ -66,7 +66,7 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
-The browser consumes Gateway revision 22 and Identity revision 17 under the
+The browser consumes Gateway revision 23 and Identity revision 17 under the
 [browser session contract](../../contracts/identity/browser-sessions.md).
 Identity's browser-session schemas are unchanged. Gateway 22 adds validated
 password admission errors while preserving existing cookies. Console user
@@ -123,7 +123,7 @@ semantics are described in [Architecture](docs/architecture.md#bridge-capacity-a
 - Edge Gateway: the only supported caller; supplies verified identity.
 - Identity: CCT keys fetched only from its authenticated configured origin;
   cached trust expires after 30 seconds and fails closed during an outage.
-- Organization display: Gateway revision 22 supplies verified slug/name as
+- Organization display: Gateway revision 23 supplies verified slug/name as
   canonical UTF-8 Base64URL headers. Node decodes and validates the same
   principal for bootstrap and SSR; both frontend bootstrap mappings require
   these labels. The chooser and account footer render the real name with the

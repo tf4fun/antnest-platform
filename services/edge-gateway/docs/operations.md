@@ -66,8 +66,10 @@ KDF capacity returns.
 | `ANTNEST_EDGE_SHUTDOWN_TIMEOUT`           | no                             | `15s`                 | ordinary HTTP graceful-drain budget                                                                         |
 | `ANTNEST_EDGE_STREAM_LEASE`               | no                             | `5m`                  | maximum authenticated SSE lifetime                                                                          |
 | `ANTNEST_EDGE_LOGIN_WINDOW`               | no                             | `5m`                  | in-memory login admission window                                                                            |
-| `ANTNEST_EDGE_LOGIN_SOURCE_MAX`           | no                             | `30`                  | attempts per source per window                                                                              |
-| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX`          | no                             | `10`                  | attempts per normalized account per window                                                                  |
+| `ANTNEST_EDGE_LOGIN_SOURCE_MAX`           | no                             | `30`                  | password attempts per source per window                                                                     |
+| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX`          | no                             | `10`                  | password attempts per normalized organization/account per window                                            |
+| `ANTNEST_EDGE_OIDC_START_SOURCE_MAX`      | no                             | `30`                  | OIDC starts per source per window, independent of password limits                                           |
+| `ANTNEST_EDGE_LOGIN_MAX_KEYS`             | no                             | `65536`               | entry capacity of each of the three independent login admission tables                                      |
 | `ANTNEST_ENVIRONMENT`                     | no                             | empty                 | deployment environment telemetry attribute                                                                  |
 | `OTEL_*`                                  | no                             | -                     | standard OTLP HTTP/protobuf signal configuration                                                            |
 | `OTEL_METRICS_EXPORTER`                   | no                             | `none`                | Gateway metrics opt-in: `otlp` or `none`; independent of traces                                             |
@@ -360,6 +362,16 @@ does not disable metrics; `OTEL_SDK_DISABLED=true` disables both. Endpoint and
 protocol settings alone do not opt Gateway into metrics. Compose forwards the
 metrics endpoint/protocol and periodic interval/timeout settings.
 
+The counter `antnest_edge_login_admission_total` records one decision per
+request that reaches login admission after Origin and payload validation. Its
+only attributes are `flow=password|oidc_start` and
+`outcome=admitted|source_limited|account_limited|evicted`. An admitted request
+that evicts from one or both tables records only `evicted`; expired-window
+pruning alone does not count as eviction. When both password limits are exhausted,
+`source_limited` wins. OIDC cannot emit `account_limited`. An Identity failure
+does not add a second decision. No source, account, organization, provider or
+digest is exported as a metric label.
+
 Metrics under `antnest.gateway.identity.resolve.` are:
 
 | Suffix                                       | Meaning                                                                                                                                |
@@ -443,16 +455,41 @@ network. No database, model Provider or retained deployment is used.
 ## State, Limits And Capacity
 
 The service has no database, migration, backup, or persistent volume.
-Login admission is deliberately replica-local and bounded to 4096 source and
-4096 account keys per replica. When a table is full and pruning expired windows
-frees no space, new keys are refused with `429` instead of evicting existing
-windows. This is a cheap prefilter before Identity is called. Identity enforces
+Login admission is replica-local, with three independent fixed-window tables:
+password source, password organization/account and OIDC-start source. Each
+table defaults to 65,536 entries, controlled by `ANTNEST_EDGE_LOGIN_MAX_KEYS`;
+this is a retained-entry limit, not an RSS guarantee. The window defaults to
+five minutes, with password limits of 30 per source and 10 per normalized
+organization/account, and an independent OIDC source limit of 30. OIDC has no
+shared organization/provider budget, and the two flows cannot consume each
+other's allowances. Empty or whitespace-only admission environment settings
+select defaults; explicit zero, negative, malformed or overflowing values
+prevent startup.
+
+Trusted-proxy selection already normalizes IPv4-mapped addresses. The limiter
+also accepts mapped addresses and applies IPv6 `/64` aggregation only to its
+keys. Forwarded headers and diagnostics retain the actual selected canonical
+address. Invalid or zoned limiter inputs share one unknown
+limiter key. Keys occupy 32 bytes; account keys hash length-prefixed normalized
+organization and email with a password-specific domain, without retaining raw
+identifiers.
+
+An exhausted retained key returns `429 login_rate_limited` before Identity is
+called, with `no-store`, no Cookie writes and one `Retry-After` equal to the
+whole configured window rounded up to seconds. Rejection changes no table,
+including expired entries. On admission, expired windows are pruned first;
+if a new key still needs space in a full table, its earliest-expiring live
+window is evicted. Hits do not evict another key, extend expiry or move FIFO order. Eviction can
+reset an old key's allowance under high cardinality, so this is a best-effort
+prefilter, not a distributed quota. Identity enforces
 the shared password-attempt policy in PostgreSQL across replicas and separately
 bounds Argon2 memory, concurrency and queue waits in each process; internal
 callers receive the same admission checks. See Identity's
 [password resource admission](../../identity-service/docs/operations.md#password-resource-admission).
-Gateway table eviction and capacity behavior remain the scope of
-[#2](https://github.com/tf4fun/antnest-platform/issues/2).
+The exact Gateway policy is in the
+[login admission contract](../../../contracts/edge-gateway/login-admission.md).
+The #2 consumer and real two-source HTTPS/OIDC admissions remain separate
+delivery gates until recorded complete in the global TODO.
 Event streams retain their maximum lease and independently check
 Identity even without incoming events. Checks run at the smaller of 10 seconds
 and Identity's activity hint. The 30-second stale-output bound includes time

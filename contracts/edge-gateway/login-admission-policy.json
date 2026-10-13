@@ -1,0 +1,135 @@
+{
+  "contract": "antnest.edge-gateway.login-admission",
+  "revision": 1,
+  "wire_baseline": { "gateway_version": 22 },
+  "activation": {
+    "gateway_version": 23,
+    "active_catalog_changes_with_owning_implementation": true
+  },
+  "semantics": "login-admission.md",
+  "owner": "edge-gateway-process",
+  "distributed_quota": false,
+  "identity_password_policy": "../identity/password-verification-policy.json",
+  "password_request_replay": false,
+  "configuration": {
+    "window": {
+      "env": "ANTNEST_EDGE_LOGIN_WINDOW",
+      "default": 300000,
+      "unit": "milliseconds"
+    },
+    "password_source_max": {
+      "env": "ANTNEST_EDGE_LOGIN_SOURCE_MAX",
+      "default": 30
+    },
+    "password_account_max": {
+      "env": "ANTNEST_EDGE_LOGIN_ACCOUNT_MAX",
+      "default": 10
+    },
+    "oidc_start_source_max": {
+      "env": "ANTNEST_EDGE_OIDC_START_SOURCE_MAX",
+      "default": 30
+    },
+    "max_keys_per_table": {
+      "env": "ANTNEST_EDGE_LOGIN_MAX_KEYS",
+      "default": 65536
+    },
+    "unset_or_blank_environment": "use-default",
+    "explicit_nonpositive_environment": "startup-error",
+    "invalid_or_overflow_environment": "startup-error",
+    "constructor_zero": "use-default"
+  },
+  "flows": {
+    "password": {
+      "route": "/api/session/login",
+      "tables": ["password_sources", "password_accounts"],
+      "consume_before_upstream": true,
+      "downstream_failure_refunds_admission": false
+    },
+    "oidc_start": {
+      "route": "/api/session/oidc/start",
+      "tables": ["oidc_sources"],
+      "consume_before_upstream": true,
+      "downstream_failure_refunds_admission": false
+    }
+  },
+  "tables": {
+    "password_sources": { "key": "source", "limit": "password_source_max" },
+    "password_accounts": {
+      "key": "password_account",
+      "limit": "password_account_max"
+    },
+    "oidc_sources": { "key": "source", "limit": "oidc_start_source_max" }
+  },
+  "keys": {
+    "source": {
+      "trust_contract": "public-entry.md",
+      "input": "trusted-selected-client-address",
+      "normalization": [
+        "unmap-ipv4-mapped-ipv6",
+        "ipv4-address-or-ipv6-masked-64-prefix"
+      ],
+      "invalid_or_missing": "one-shared-unknown-key",
+      "zone_allowed": false,
+      "changes_diagnostics_or_forwarding": false,
+      "maximum_retained_key_bytes": 32
+    },
+    "password_account": {
+      "components": ["organization_slug", "email"],
+      "normalization": ["trim-space", "unicode-lowercase"],
+      "encoding": "sha256-of-domain-separated-length-prefixed-utf8",
+      "domain": "antnest.edge-gateway.login-admission/password/v1",
+      "length_prefix": "uint64-big-endian-byte-length",
+      "digest_bytes": 32,
+      "retain_original_identifiers": false,
+      "oidc_uses_account_key": false
+    }
+  },
+  "admission": {
+    "clock": "once-after-acquiring-admission-mutex",
+    "window": "fixed-from-first-admitted-use",
+    "expiry_equality": "expired",
+    "hit_extends_expiry": false,
+    "rejection_mutates_tables": false,
+    "refusal_precedence": ["source_limited", "account_limited"],
+    "allowed_request_updates": [
+      "prune-expired-heads-of-relevant-tables",
+      "evict-oldest-live-head-only-if-new-key-still-needs-space",
+      "insert-new-window-at-tail-without-stale-node",
+      "increment-each-relevant-budget-once"
+    ],
+    "existing_limited_key_can_trigger_eviction": false,
+    "max_entries_per_table": "configuration.max_keys_per_table",
+    "evicted_key_can_start_new_window": true,
+    "process_rss_guarantee": false
+  },
+  "metrics": {
+    "counter": "antnest_edge_login_admission_total",
+    "attributes": {
+      "flow": ["password", "oidc_start"],
+      "outcome": ["admitted", "source_limited", "account_limited", "evicted"]
+    },
+    "oidc_start_outcomes": ["admitted", "source_limited", "evicted"],
+    "increments_per_admission": 1,
+    "both_tables_evict": "one-evicted-decision",
+    "expired_pruning_is_eviction": false,
+    "downstream_failure_adds_decision": false,
+    "other_attributes_allowed": false,
+    "identifiers_or_hashes_allowed": false
+  },
+  "rejection": {
+    "status": 429,
+    "body": {
+      "code": "login_rate_limited",
+      "message": "Too many login attempts"
+    },
+    "cache_control": "no-store",
+    "cookie_mutation": false,
+    "upstream_calls": 0,
+    "retry_after": {
+      "source": "full-configured-window",
+      "unit": "integer-seconds",
+      "rounding": "ceiling",
+      "minimum": 1
+    }
+  }
+}

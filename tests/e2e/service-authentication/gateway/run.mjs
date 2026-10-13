@@ -15,6 +15,12 @@ import {
   passwordFailures,
   assertPasswordCaseCounts,
 } from "./password-admission.mjs";
+import {
+  admissionConfiguration,
+  assertAdmissionSources,
+  loginAdmissionChecks,
+  requestAdmission,
+} from "./login-admission.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-gateway-auth-${randomUUID()}`;
@@ -337,6 +343,150 @@ try {
   const passwordEvidence = await readPasswordEvidence();
   assertPasswordCaseCounts(passwordEvidence);
   recordEvidence("password-admission-after-stop.json", passwordEvidence);
+  checks++;
+  // Recreate only Gateway with small explicit limits. This isolates the new
+  // fixed windows from the preceding browser/password regression matrix.
+  const admissionEnv = {
+    ...env,
+    GATEWAY_TEST_LOGIN_WINDOW: admissionConfiguration.ANTNEST_EDGE_LOGIN_WINDOW,
+    GATEWAY_TEST_LOGIN_SOURCE_MAX:
+      admissionConfiguration.ANTNEST_EDGE_LOGIN_SOURCE_MAX,
+    GATEWAY_TEST_LOGIN_ACCOUNT_MAX:
+      admissionConfiguration.ANTNEST_EDGE_LOGIN_ACCOUNT_MAX,
+    GATEWAY_TEST_LOGIN_MAX_KEYS:
+      admissionConfiguration.ANTNEST_EDGE_LOGIN_MAX_KEYS,
+    GATEWAY_TEST_OIDC_START_SOURCE_MAX:
+      admissionConfiguration.ANTNEST_EDGE_OIDC_START_SOURCE_MAX,
+  };
+  await docker(
+    [
+      ...compose,
+      "up",
+      "-d",
+      "--no-build",
+      "--no-deps",
+      "--force-recreate",
+      "--wait",
+      "--wait-timeout",
+      "120",
+      "edge-gateway",
+    ],
+    true,
+    { env: admissionEnv },
+  );
+  const admissionID = await docker([...compose, "ps", "-q", "edge-gateway"]);
+  const dependenciesID = await docker([...compose, "ps", "-q", "dependencies"]);
+  const [admissionGateway, dependencies] = JSON.parse(
+    await docker(["inspect", admissionID, dependenciesID]),
+  );
+  assert.equal(
+    admissionGateway.Image,
+    gateway.Image,
+    "same built candidate required",
+  );
+  assert.notEqual(admissionID, dependenciesID);
+  const actualConfiguration = Object.fromEntries(
+    admissionGateway.Config.Env.map((entry) => {
+      const split = entry.indexOf("=");
+      return [entry.slice(0, split), entry.slice(split + 1)];
+    }),
+  );
+  for (const [key, value] of Object.entries(admissionConfiguration))
+    assert.equal(actualConfiguration[key], value, key + " was not applied");
+  const network = Object.keys(admissionGateway.NetworkSettings.Networks);
+  assert.equal(network.length, 1);
+  const sourceB = dependencies.NetworkSettings.Networks[network[0]]?.IPAddress;
+  assert(sourceB, "dependency client must share the Gateway network");
+  const admissionBinding =
+    admissionGateway.NetworkSettings.Ports["8080/tcp"][0];
+  assert.equal(admissionBinding.HostIp, "127.0.0.1");
+  const admissionURL = `http://127.0.0.1:${admissionBinding.HostPort}`;
+  const readAdmissionEvidence = async () =>
+    JSON.parse(
+      await docker([
+        ...compose,
+        "exec",
+        "-T",
+        "dependencies",
+        "node",
+        "--input-type=module",
+        "-e",
+        "import {readFileSync} from 'node:fs'; const token=readFileSync('/run/auth/outgoing/identity-service','utf8'); const r=await fetch('http://127.0.0.1:8101/__fixture/login-admission-evidence',{headers:{'Antnest-Service-Authorization':'Bearer '+token},signal:AbortSignal.timeout(5000)}); if(!r.ok) throw Error('admission evidence unavailable'); console.log(JSON.stringify(await r.json()));",
+      ]),
+    );
+  const admission = await loginAdmissionChecks({
+    request: async (source, flow, body) => {
+      if (source === "A")
+        return requestAdmission({
+          url: admissionURL,
+          origin: publicOrigin,
+          flow,
+          body,
+          signal: controller.signal,
+        });
+      assert.equal(source, "B");
+      return JSON.parse(
+        await docker([
+          ...compose,
+          "exec",
+          "-T",
+          "dependencies",
+          "node",
+          "/fixture/login-admission.mjs",
+          JSON.stringify({
+            url: "http://edge-gateway:8080",
+            origin: publicOrigin,
+            flow,
+            body,
+          }),
+        ]),
+      );
+    },
+    readEvidence: readAdmissionEvidence,
+    recordEvidence,
+  });
+  checks += admission.checks;
+  await docker(["stop", "--time", "10", admissionID], true);
+  const [admissionStopped] = JSON.parse(await docker(["inspect", admissionID]));
+  assert.equal(admissionStopped.State.ExitCode, 0);
+  assert.deepEqual(
+    await readAdmissionEvidence(),
+    admission.final,
+    "late admission RPC",
+  );
+  assertPasswordCaseCounts(await readPasswordEvidence());
+  const logs = await docker(["logs", admissionID]);
+  writeFileSync(
+    resolve(evidence, "login-admission-runtime.private.log"),
+    logs,
+    { mode: 0o600 },
+  );
+  const events = logs.split("\n").flatMap((line) => {
+    if (!line.trim()) return [];
+    const row = JSON.parse(line);
+    if (
+      ![
+        "Edge Gateway request completed",
+        "Edge Gateway request failed",
+      ].includes(row.msg)
+    )
+      return [];
+    return [row];
+  });
+  const sources = assertAdmissionSources(events, sourceB);
+  recordEvidence("login-admission-container.json", {
+    configuration: admissionConfiguration,
+    image: admissionGateway.Image,
+    gatewayContainer: admissionID,
+    clientBContainer: dependenciesID,
+    sources,
+    checks: admission.checks,
+    timing: admission.timing,
+    afterStop: admission.final,
+    gatewayExitCode: admissionStopped.State.ExitCode,
+    boundary:
+      "Gateway image with authenticated Identity double; real signed SSO is a separate integration gate",
+  });
   checks++;
   complete = true;
 } finally {

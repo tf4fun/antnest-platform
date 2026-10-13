@@ -129,6 +129,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/service-authentication/identity/*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/service-authentication/gateway/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs tests/e2e/skill-learning/service-calls.test.mjs tests/e2e/skill-learning/client-container.test.mjs tests/e2e/skill-learning/source-projection-check.test.mjs tests/e2e/skill-learning/maintenance-response-gate.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/key-removal-probe.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/discovery-tools-client.test.mjs
@@ -160,7 +161,7 @@ test-repo:
 	$(MAKE) test-resolve-cache-fixtures
 	node --test --test-concurrency=1 tests/e2e/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs tests/e2e/edge-gateway/browser-session-revocation.test.mjs tests/e2e/edge-gateway/password-verification-evidence.test.mjs tests/e2e/edge-gateway/password-pressure.test.mjs tests/e2e/edge-gateway/password-browser-request.test.mjs
+	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs tests/e2e/edge-gateway/browser-session-revocation.test.mjs tests/e2e/edge-gateway/password-verification-evidence.test.mjs tests/e2e/edge-gateway/password-pressure.test.mjs tests/e2e/edge-gateway/password-browser-request.test.mjs tests/e2e/edge-gateway/login-admission-client.test.mjs tests/e2e/edge-gateway/login-admission-evidence.test.mjs tests/e2e/edge-gateway/login-admission-process.test.mjs
 
 .PHONY: test-resolve-cache-fixtures
 test-resolve-cache-fixtures:

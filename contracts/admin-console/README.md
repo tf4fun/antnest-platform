@@ -39,7 +39,7 @@ lockout confirmation, and acknowledge immutable notice IDs independently of bind
 
 ## Browser sessions and password
 
-The Console consumes Gateway revision 22 and Identity revision 17 under the
+The Console consumes Gateway revision 23 and Identity revision 17 under the
 [browser session contract](../identity/browser-sessions.md). Account reads,
 activity, password rotation and cross-organization self session controls use
 Gateway `/api/session/...` routes. The old Console `/api/admin/account/password`

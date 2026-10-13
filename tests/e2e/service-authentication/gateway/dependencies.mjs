@@ -39,6 +39,7 @@ const sessions = new Map();
 const revocations = [];
 const passwordCalls = { "local-login": 0, "change-local-password": 0 };
 const passwordCases = {};
+let oidcStarts = 0;
 let rotations = 0,
   revocationCalls = 0;
 
@@ -290,6 +291,21 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           revocations: revocations.length,
         });
       }
+      if (
+        service === "identity-service" &&
+        path === "/__fixture/login-admission-evidence"
+      ) {
+        return json(response, {
+          calls: {
+            password: passwordCalls["local-login"],
+            oidc_start: oidcStarts,
+          },
+          issued: sessions.size,
+          rotations,
+          revocationCalls,
+          revocations: revocations.length,
+        });
+      }
       let body = "";
       for await (const part of request) {
         body += part;
@@ -313,6 +329,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         if (
           [
             "local-login",
+            "start-oidc-login",
             "resolve-access-token",
             "revoke-access-token",
             "list-session-revocations",
@@ -325,6 +342,25 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           if (input.password !== password)
             return json(response, { code: "unauthenticated" }, 401);
           return json(response, credential(issue(input.user_agent_hint)));
+        }
+        if (path.endsWith("start-oidc-login")) {
+          externalFields(
+            input,
+            ["request_id", "organization_slug", "provider_name"],
+            ["user_agent_hint"],
+          );
+          if (
+            !input.request_id ||
+            input.organization_slug !== "auth-test" ||
+            input.provider_name !== "workforce"
+          )
+            throw Error("invalid_oidc_start_fixture_request");
+          oidcStarts++;
+          return json(response, {
+            authorization_url:
+              "https://provider.example.test/authorize?state=" + randomUUID(),
+            expires_at: new Date(Date.now() + 60000).toISOString(),
+          });
         }
         if (path.endsWith("resolve-access-token")) {
           const session = sessions.get(input.access_token);

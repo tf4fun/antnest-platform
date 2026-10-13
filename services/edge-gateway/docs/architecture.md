@@ -490,13 +490,35 @@ connection expiry.
 
 ## Login, Logout and Protocol Routes
 
-Login admission consumes bounded per-source and normalized-account windows
-before Identity performs Argon2 verification. Each table holds at most 4096
-keys per replica. When a table is full, expired windows are pruned; if it is
-still full, a login for a new key is refused with `429` rather than evicting an
-existing window. Logout follows the explicit outcome matrix above, including
-clearing invalid browser state without promising token revocation. Agent event watches have a bounded stream
-lease; reconnect repeats normal token resolution.
+Password login consumes a source window and a normalized organization/account
+window before Identity performs Argon2 verification. OIDC start consumes only
+its own source window; it has no organization/provider account bucket. The
+three tables are independent and each defaults to 65,536 entries. After trusted
+client selection, the limiter unmaps IPv4 and groups IPv6 by `/64` without
+rewriting forwarded addresses. Account keys are fixed 32-byte SHA-256 digests
+of a domain and length-prefixed normalized organization/email components.
+
+One mutex covers the decision, a single clock sample and all involved table
+changes. Exhausted retained source keys take precedence over account keys.
+Rejection leaves all maps and FIFO lists unchanged, including expired entries,
+and returns `429 login_rate_limited` with the whole window rounded up in
+`Retry-After`, `no-store` and no Cookie writes. Admitted requests prune expired
+FIFO heads and, only if a new key still needs space in a full table, evict its
+earliest-expiring live window, then consume each applicable budget once.
+Windows have fixed expiry; a hit
+neither extends it nor moves the node. Each key owns one map entry and one FIFO
+node, both removed together.
+
+Each admission decision records one fixed-label counter outcome after releasing
+the mutex; two table evictions still produce one `evicted` decision. Eviction
+can reset an old key's local allowance. Identity's persistent password backoff
+and bounded KDF admission remain authoritative and independent. See the
+[login admission contract](../../../contracts/edge-gateway/login-admission.md)
+for configuration, metrics and the separate consumer/integration gates.
+
+Logout follows the explicit outcome matrix above, including clearing invalid
+browser state without promising token revocation. Agent event watches have a
+bounded stream lease; reconnect repeats normal token resolution.
 
 Unknown `/protocol/oidc` paths return JSON `404`; route matching cannot send
 protocol traffic to the Console SPA. A SCIM transport failure returns a

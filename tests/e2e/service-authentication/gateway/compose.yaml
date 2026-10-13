@@ -5,6 +5,7 @@ services:
     command: [node, /fixture/dependencies.mjs]
     volumes:
       - ./dependencies.mjs:/fixture/dependencies.mjs:ro
+      - ./login-admission.mjs:/fixture/login-admission.mjs:ro
       - ${GATEWAY_TEST_AUTH_DIRECTORY:?}:/run/auth:ro
     healthcheck:
       test:
@@ -33,6 +34,11 @@ services:
       ANTNEST_EDGE_CSRF_KEY_FILE: /run/auth/csrf.key
       ANTNEST_EDGE_PUBLIC_ORIGIN: http://127.0.0.1
       ANTNEST_EDGE_STREAM_LEASE: 15s
+      ANTNEST_EDGE_LOGIN_WINDOW: ${GATEWAY_TEST_LOGIN_WINDOW:-5m}
+      ANTNEST_EDGE_LOGIN_SOURCE_MAX: "${GATEWAY_TEST_LOGIN_SOURCE_MAX:-30}"
+      ANTNEST_EDGE_LOGIN_ACCOUNT_MAX: "${GATEWAY_TEST_LOGIN_ACCOUNT_MAX:-10}"
+      ANTNEST_EDGE_LOGIN_MAX_KEYS: "${GATEWAY_TEST_LOGIN_MAX_KEYS:-65536}"
+      ANTNEST_EDGE_OIDC_START_SOURCE_MAX: "${GATEWAY_TEST_OIDC_START_SOURCE_MAX:-30}"
       ANTNEST_SERVICE_AUTH_MODE: token
       ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT: "true"
       ANTNEST_SERVICE_AUTH_CALLERS_FILE: /run/auth/callers.json

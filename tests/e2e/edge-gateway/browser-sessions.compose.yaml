@@ -13,3 +13,31 @@ services:
     environment:
       ANTNEST_EDGE_LOGIN_SOURCE_MAX: "100"
       ANTNEST_EDGE_LOGIN_ACCOUNT_MAX: "100"
+      ANTNEST_EDGE_OIDC_START_SOURCE_MAX: "30"
+  login-client-a: &login-client
+    profiles: [stage3]
+    image: node:24.21.0-bookworm-slim
+    user: "${ANTNEST_SERVICE_AUTH_UID:?}:${ANTNEST_SERVICE_AUTH_GID:?}"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    command:
+      [
+        node,
+        -e,
+        "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)",
+      ]
+    stop_grace_period: 5s
+    environment:
+      NODE_EXTRA_CA_CERTS: /tls/ca.pem
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./tests/e2e/edge-gateway/login-admission-client.mjs:/login-admission-client.mjs:ro
+      - ./tests/e2e/edge-gateway/login-admission-process.mjs:/login-admission-process.mjs:ro
+      - ${ANTNEST_EDGE_TLS_DIRECTORY:?required disposable TLS directory}/ca.pem:/tls/ca.pem:ro
+    networks: [tls-ingress]
+  login-client-b:
+    <<: *login-client

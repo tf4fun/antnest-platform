@@ -40,7 +40,7 @@ reads, cached views, idempotency hits and SSE resumes repeat scope checks. A
 scope is `(organization, principal, agent)`; a Session adds its Session ID.
 
 `GET /bootstrap` and Workspace SSR additionally require the verified
-Organization slug/name supplied by Gateway revision 22. Their transport is one
+Organization slug/name supplied by Gateway revision 23. Their transport is one
 canonical, unpadded Base64URL UTF-8 value in each of
 `X-Antnest-Organization-Slug` and `X-Antnest-Organization-Name`. Missing,
 duplicate or malformed values return `401` before discovery. The browser-safe

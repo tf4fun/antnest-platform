@@ -7,6 +7,8 @@ revision 3. The `resolve-access-token` and `list-session-revocations` wire
 schemas from Identity revision 16 remain unchanged in revision 17. Gateway
 session revision 22 retains this cache policy and adds the separately scoped
 [password failure consumer](../identity/password-verification.md).
+Revision 23 preserves both and activates independent
+[login admission](login-admission.md) budgets and bounded tables.
 
 ## Scope and authority
 

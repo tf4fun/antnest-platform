@@ -14,6 +14,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -30,24 +31,25 @@ import (
 )
 
 const (
-	HeaderUserID             = "X-Antnest-User-ID"
-	HeaderOrganizationID     = "X-Antnest-Organization-ID"
-	HeaderOrganizationSlug   = "X-Antnest-Organization-Slug"
-	HeaderOrganizationName   = "X-Antnest-Organization-Name"
-	HeaderMembershipID       = "X-Antnest-Membership-ID"
-	HeaderSystemRole         = "X-Antnest-System-Role"
-	HeaderOrganizationRole   = "X-Antnest-Organization-Role"
-	HeaderAdministrator      = "X-Antnest-Administrator"
-	HeaderPrincipalID        = "X-Antnest-Principal-ID"
-	HeaderAgentID            = "X-Antnest-Agent-ID"
-	HeaderTraceID            = "X-Antnest-Trace-ID"
-	HeaderAgentAccessSubject = "X-Antnest-Agent-Access-Subject"
-	maximumLoginBytes        = 64 << 10
-	defaultStreamLease       = 5 * time.Minute
-	defaultLoginWindow       = 5 * time.Minute
-	defaultLoginSourceMax    = 30
-	defaultLoginAccountMax   = 10
-	defaultLoginMaxKeys      = 4096
+	HeaderUserID              = "X-Antnest-User-ID"
+	HeaderOrganizationID      = "X-Antnest-Organization-ID"
+	HeaderOrganizationSlug    = "X-Antnest-Organization-Slug"
+	HeaderOrganizationName    = "X-Antnest-Organization-Name"
+	HeaderMembershipID        = "X-Antnest-Membership-ID"
+	HeaderSystemRole          = "X-Antnest-System-Role"
+	HeaderOrganizationRole    = "X-Antnest-Organization-Role"
+	HeaderAdministrator       = "X-Antnest-Administrator"
+	HeaderPrincipalID         = "X-Antnest-Principal-ID"
+	HeaderAgentID             = "X-Antnest-Agent-ID"
+	HeaderTraceID             = "X-Antnest-Trace-ID"
+	HeaderAgentAccessSubject  = "X-Antnest-Agent-Access-Subject"
+	maximumLoginBytes         = 64 << 10
+	defaultStreamLease        = 5 * time.Minute
+	defaultLoginWindow        = 5 * time.Minute
+	defaultLoginSourceMax     = 30
+	defaultLoginAccountMax    = 10
+	defaultLoginMaxKeys       = 65536
+	defaultOIDCStartSourceMax = 30
 )
 
 var errInvalidSession = errors.New("browser session is invalid or missing")
@@ -82,6 +84,8 @@ type Config struct {
 	LoginWindow              time.Duration
 	LoginSourceMax           int
 	LoginAccountMax          int
+	LoginMaxKeys             int
+	OIDCStartSourceMax       int
 	Now                      func() time.Time
 	NewRequestID             func() string
 }
@@ -178,11 +182,21 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	if config.LoginAccountMax <= 0 {
 		config.LoginAccountMax = defaultLoginAccountMax
 	}
+	if config.LoginMaxKeys <= 0 {
+		config.LoginMaxKeys = defaultLoginMaxKeys
+	}
+	if config.OIDCStartSourceMax <= 0 {
+		config.OIDCStartSourceMax = defaultOIDCStartSourceMax
+	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
 	if config.NewRequestID == nil {
 		config.NewRequestID = randomRequestID
+	}
+	observeAdmission, err := newLoginAdmissionRecorder()
+	if err != nil {
+		return nil, fmt.Errorf("create login admission counter: %w", err)
 	}
 	h := &handler{
 		allowOriginlessMutations: config.AllowOriginlessMutations,
@@ -193,7 +207,8 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		loginWindow: config.LoginWindow,
 		loginAdmission: newLoginAdmission(loginAdmissionConfig{
 			Window: config.LoginWindow, SourceLimit: config.LoginSourceMax,
-			AccountLimit: config.LoginAccountMax, MaxKeys: defaultLoginMaxKeys, Now: config.Now,
+			AccountLimit: config.LoginAccountMax, OIDCSourceLimit: config.OIDCStartSourceMax,
+			MaxKeys: config.LoginMaxKeys, Now: config.Now, Observe: observeAdmission,
 		}),
 		newRequestID: config.NewRequestID,
 		now:          config.Now,
@@ -310,7 +325,7 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) err
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required login field is empty")
 		return nil
 	}
-	if !h.admitLogin(response, request, payload.OrganizationSlug, payload.Email) {
+	if !h.admitPasswordLogin(response, request, payload.OrganizationSlug, payload.Email) {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
@@ -381,7 +396,7 @@ func (h *handler) startOIDCLogin(response http.ResponseWriter, request *http.Req
 		writeError(response, http.StatusBadRequest, "invalid_request", "Organization and login method are required")
 		return nil
 	}
-	if !h.admitLogin(response, request, organizationSlug, "oidc:"+providerName) {
+	if !h.admitOIDCStart(response, request) {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
@@ -872,15 +887,31 @@ func (h *handler) writeIdentityError(response http.ResponseWriter, err error) {
 	}
 }
 
-func (h *handler) admitLogin(
+func (h *handler) admitPasswordLogin(
 	response http.ResponseWriter, request *http.Request, organization, account string,
 ) bool {
-	if h.loginAdmission.Allow(clientAddress(request), organization, account) {
+	if h.loginAdmission.AllowPassword(clientAddress(request), organization, account) {
 		return true
 	}
-	response.Header().Set("Retry-After", fmt.Sprintf("%.0f", h.loginWindow.Seconds()))
-	writeError(response, http.StatusTooManyRequests, "login_rate_limited", "Too many login attempts")
+	h.writeLoginAdmissionRefusal(response)
 	return false
+}
+
+func (h *handler) admitOIDCStart(response http.ResponseWriter, request *http.Request) bool {
+	if h.loginAdmission.AllowOIDCStart(clientAddress(request)) {
+		return true
+	}
+	h.writeLoginAdmissionRefusal(response)
+	return false
+}
+
+func (h *handler) writeLoginAdmissionRefusal(response http.ResponseWriter) {
+	seconds := int64(h.loginWindow / time.Second)
+	if h.loginWindow%time.Second != 0 {
+		seconds++
+	}
+	response.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	writeError(response, http.StatusTooManyRequests, "login_rate_limited", "Too many login attempts")
 }
 
 func (h *handler) writePublicOIDCError(response http.ResponseWriter, err error) {
