@@ -749,6 +749,37 @@ test("a revoked Agent watch blocks later Agent reads", async () => {
   }
 });
 
+test("only a typed Agent watch revocation closes subscribed journals with its cause", async () => {
+  for (const cause of [new AgentAccessRevokedError(), new Error("access denied"),
+    Object.assign(new Error("access denied"), { name: "AgentAccessRevokedError" })]) {
+    const f = fixture();
+    let rejectWatch!: (cause: Error) => void;
+    const watch = new Promise<never>((_, reject) => { rejectWatch = reject; });
+    const owner = await AgentBridgeOwner.open({ scope, retainWork: f.retainWork,
+      connect: async (identity, callbacks) => ({ ...await f.connect(identity, callbacks),
+        async watchAgentExecutionState() { return watch; },
+      }),
+    });
+    const journals = [owner.agentJournal(null), owner.streamJournal("session-1")];
+    const observers = journals.map(journal => journal.subscribe(null, () => ({})));
+    try {
+      for (const observer of observers) await observer.next();
+      rejectWatch(cause);
+      await watch.catch(() => {});
+      await Promise.resolve();
+      await Promise.resolve();
+      if (!(cause instanceof AgentAccessRevokedError)) {
+        assert(journals.every(journal => journal.subscriberCount === 1), "an untyped failure must reconnect without claiming access denial");
+        owner.close();
+      }
+      for (const observer of observers) assert.deepEqual(await observer.next(), {
+        done: true, value: cause instanceof AgentAccessRevokedError
+          ? { reason: "access_denied", source: "agent-execution-state", ...scope } : undefined,
+      });
+    } finally { owner.close(); }
+  }
+});
+
 test("receipt-only checks do not retain Session view bookkeeping", async () => {
   const f = fixture();
   const changed: string[] = [];

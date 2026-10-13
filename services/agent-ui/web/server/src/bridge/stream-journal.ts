@@ -45,10 +45,16 @@ export type StreamEvent<View> = {
   [key: string]: unknown;
 };
 
+export type StreamTerminationCause = Readonly<{
+  reason: "access_denied";
+  source: "agent-execution-state";
+}>;
+export type StreamTermination = StreamTerminationCause & Readonly<BridgeScope>;
+
 type Subscriber<View> = {
   push(event: StreamEvent<View>): void;
   reset(): void;
-  close(): void;
+  close(termination?: StreamTermination): void;
   queuedBytes(): number;
 };
 
@@ -201,24 +207,26 @@ export class StreamJournal<View> {
   public subscribe(
     cursor: string | null,
     makeView: (cursor: string) => View,
-  ): AsyncIterableIterator<StreamEvent<View>> {
+  ): AsyncIterableIterator<StreamEvent<View>, StreamTermination | undefined> {
     if (this.subscribers.size >= this.maxSubscribers)
       throw new StreamCapacityError();
     const queue: StreamEvent<View>[] = [];
     let queuedBytes = 0;
     let waiter:
-      ((result: IteratorResult<StreamEvent<View>>) => void) | undefined;
+      ((result: IteratorResult<StreamEvent<View>, StreamTermination | undefined>) => void) | undefined;
     let closed = false;
+    let termination: StreamTermination | undefined;
     let resetPending = false;
-    const close = () => {
+    const close = (cause?: StreamTermination) => {
       if (closed) return;
       closed = true;
+      termination = cause;
       resetPending = false;
       this.subscribers.delete(subscriber);
       this.observersChanged();
       queue.length = 0;
       queuedBytes = 0;
-      waiter?.({ done: true, value: undefined });
+      waiter?.({ done: true, value: termination });
       waiter = undefined;
     };
     const enqueue = (event: StreamEvent<View>) => {
@@ -295,7 +303,7 @@ export class StreamJournal<View> {
           const event = latestReset();
           return Promise.resolve(
             event === undefined
-              ? { done: true as const, value: undefined }
+              ? { done: true as const, value: termination }
               : { done: false as const, value: event },
           );
         }
@@ -305,20 +313,25 @@ export class StreamJournal<View> {
           return Promise.resolve({ done: false as const, value: event });
         }
         if (closed)
-          return Promise.resolve({ done: true as const, value: undefined });
+          return Promise.resolve({ done: true as const, value: termination });
         return new Promise((resolve) => {
           waiter = resolve;
         });
       },
       return: async () => {
         close();
-        return { done: true as const, value: undefined };
+        return { done: true as const, value: termination };
       },
     };
   }
 
-  public close(): void {
-    for (const subscriber of [...this.subscribers]) subscriber.close();
+  public close(cause?: StreamTerminationCause): void {
+    const termination = cause === undefined ? undefined : Object.freeze({
+      reason: cause.reason, source: cause.source,
+      organizationId: this.scope.organizationId,
+      principalId: this.scope.principalId, agentId: this.scope.agentId,
+    });
+    for (const subscriber of [...this.subscribers]) subscriber.close(termination);
     this.retained.length = 0;
     this.retainedBytes = 0;
   }

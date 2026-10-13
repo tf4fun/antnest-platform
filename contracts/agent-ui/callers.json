@@ -300,7 +300,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/event-routes.ts": {
-      "sha256": "ea8ab4f13d5bfb5814d9169128422b453e04884becdc2502b8be2b982fd23be9",
+      "sha256": "bac39f23d26e5ce62bf314389d8135a6cbe5a8297368fb59d26268c3c1a83997",
       "routes": [
         "GET /api/app/workspace/v1/agents/{agentId}/events"
       ]
@@ -315,7 +315,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/node-server.ts": {
-      "sha256": "e601beee6c71f961406feeb369fbd8fdb32de738839e7bd5d8b297a2448251a1",
+      "sha256": "421938d4d176393122802cb1d6af13a35f68fb73574bbfccdc698eb2dd6452f5",
       "routes": [
         "GET /status",
         "GET /live",

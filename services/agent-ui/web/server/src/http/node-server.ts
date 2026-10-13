@@ -15,6 +15,7 @@ import { readWorkspacePrincipal } from "./workspace-principal.ts";
 import type { RequestAuthentication } from "./request-authentication.ts";
 import { bindAuthenticatedRequest, copyAuthenticatedRequest } from "./trusted-identity.ts";
 import { HttpInputError, requireJsonMedia, validateJsonRequest } from "./json-request.ts";
+import { recordEventStreamCompletion } from "./event-routes.ts";
 
 type WorkspaceHandler = { handle(request: Request): Promise<Response | null> };
 type DocumentOptions = {
@@ -271,7 +272,13 @@ async function serveEventStream(
       for (;;) {
         const part = await Promise.race([reader.read(), interrupted]);
         assertOpen();
-        if (part.done) { finished = true; break; }
+        if (part.done) {
+          finished = true;
+          if (!output.destroyed && output.headersSent && response.status === 200 &&
+            response.headers.get("content-type")?.startsWith("text/event-stream"))
+            recordEventStreamCompletion(response);
+          break;
+        }
         if (!output.write(part.value)) await Promise.race([waitForDrainOrClose(output), interrupted]);
       }
     }

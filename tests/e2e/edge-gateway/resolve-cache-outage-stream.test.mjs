@@ -10,6 +10,8 @@ import {
 import { fields } from "../observability/trace-fixtures.mjs";
 
 import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
+import { recoveryHTTPFixture } from "./resolve-cache-recovery-http-fixtures.mjs";
+import { inspectRecoveryHTTP } from "./resolve-cache-recovery-http.mjs";
 
 const epoch = 1791786600000;
 const end = (s) => s.startTime + s.duration;
@@ -1075,6 +1077,425 @@ for (const [name, change] of [
     const f = offboardingFixture();
     change(f);
     assert.throws(() => checkOffboarding(f));
+  });
+
+function neutralPublicStream(f = offboardingFixture()) {
+  const p = f.parts["deactivate-stream"];
+  for (const span of [p.root, p.upstream]) {
+    span.tags = span.tags.filter(
+      ({ key }) => !/^(error($|\.)|otel\.status_|antnest\.error\.)/u.test(key),
+    );
+    span.logs = [];
+  }
+  f.evidence.recovery.cases[3].stream.closure.kind = "remote-end";
+  p.ui.logs = [
+    {
+      timestamp: end(p.ui) - 1,
+      fields: fields({
+        event: "antnest.stream.termination",
+        reason: "access_denied",
+        source: "agent-execution-state",
+        "antnest.organization.id": "org",
+        "antnest.principal.id": "user",
+        "antnest.agent.id": "agent",
+      }),
+    },
+  ];
+  f.public = p;
+  return f;
+}
+
+test("normal public EOF requires its direct scoped witness and does not invent two errors", () => {
+  const f = neutralPublicStream(),
+    before = structuredClone({ evidence: f.evidence, traces: f.traces });
+  const result = checkOffboarding(f);
+  assert.equal(result.status, "passed");
+  assert.equal(result.owned_error_spans.length, 17);
+  assert.equal(result.error_spans, 18);
+  assert.equal(f.proofCalls, 1);
+  assert.deepEqual(
+    result.streams.find((row) => row.name === "deactivate").termination,
+    {
+      reason: "access_denied",
+      source: "agent-execution-state",
+      span_id: f.public.ui.spanID,
+    },
+  );
+  assert(
+    !result.owned_error_spans.some(
+      (row) => row.trace_id === f.public.trace.traceID,
+    ),
+  );
+  assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+});
+
+const neutralField = (f, key, value) => {
+  f.public.ui.logs[0].fields.find((field) => field.key === key).value = value;
+};
+for (const [name, change] of [
+  [
+    "missing direct witness",
+    (f) => {
+      f.public.ui.logs = [];
+    },
+  ],
+  ["different event", (f) => neutralField(f, "event", "unrelated")],
+  ["different reason", (f) => neutralField(f, "reason", "shutdown")],
+  ["different source", (f) => neutralField(f, "source", "learning-notice")],
+  ...["organization", "principal", "agent"].map((key) => [
+    `foreign ${key}`,
+    (f) => neutralField(f, `antnest.${key}.id`, "foreign"),
+  ]),
+  [
+    "duplicate witness",
+    (f) => f.public.ui.logs.push(structuredClone(f.public.ui.logs[0])),
+  ],
+  [
+    "extra field",
+    (f) =>
+      f.public.ui.logs[0].fields.push({
+        key: "detail",
+        value: "private-canary",
+      }),
+  ],
+  [
+    "duplicate field",
+    (f) =>
+      f.public.ui.logs[0].fields.push({
+        key: "reason",
+        value: "access_denied",
+      }),
+  ],
+  [
+    "before owning span",
+    (f) => {
+      f.public.ui.logs[0].timestamp = f.public.ui.startTime - 1;
+    },
+  ],
+  [
+    "after owning span",
+    (f) => {
+      f.public.ui.logs[0].timestamp = end(f.public.ui) + 1;
+    },
+  ],
+  [
+    "before actual mutation",
+    (f) => {
+      f.public.ui.logs[0].timestamp = (epoch + 24000) * 1000;
+    },
+  ],
+  [
+    "after public EOF",
+    (f) => {
+      f.public.ui.logs[0].timestamp =
+        (epoch + f.evidence.recovery.cases[3].stream.closure.at + 1500) * 1000;
+    },
+  ],
+  [
+    "transport failure instead of EOF",
+    (f) => {
+      f.evidence.recovery.cases[3].stream.closure.kind = "transport-end";
+    },
+  ],
+  [
+    "wrong parent",
+    (f) => {
+      f.public.ui.references[0].spanID = f.public.root.spanID;
+    },
+  ],
+  ["wrong route", (f) => setTag(f.public.ui, "http.route", "/other")],
+  [
+    "wrong status",
+    (f) => setTag(f.public.ui, "http.response.status_code", 403),
+  ],
+  ["error on UI", (f) => setTag(f.public.ui, "error", true)],
+  ["only root error", (f) => setTag(f.public.root, "error", true)],
+  ["only upstream error", (f) => setTag(f.public.upstream, "error", true)],
+  [
+    "unrelated SQL error",
+    (f) =>
+      setTag(
+        f.public.trace.spans.find((span) => span.spanID === "sql"),
+        "error",
+        true,
+      ),
+  ],
+  [
+    "unproved recovery",
+    (f) => {
+      f.proof.status = "pending";
+    },
+  ],
+  [
+    "missing commit proof",
+    (f) => {
+      f.proof.mutations = [];
+    },
+  ],
+  [
+    "rolled back mutation",
+    (f) => setTag(f.transaction, "antnest.transaction.outcome", "rolled_back"),
+  ],
+  [
+    "missing disabled readback",
+    (f) => {
+      f.evidence.http = f.evidence.http.filter(
+        (row) => row !== f.evidence.recovery.cases[3].disabled_agent,
+      );
+    },
+  ],
+  [
+    "still active Agent",
+    (f) => {
+      f.evidence.recovery.cases[3].disabled_agent.body.activation_state =
+        "enabled";
+    },
+  ],
+  [
+    "witness on another request",
+    (f) => {
+      f.parts["deactivate-view"].ui.logs = f.public.ui.logs;
+      f.public.ui.logs = [];
+    },
+  ],
+])
+  test(`normal public EOF rejects ${name}`, () => {
+    const f = neutralPublicStream();
+    change(f);
+    assert.throws(() => checkOffboarding(f));
+  });
+
+function concurrentGatewayRetirement(f = neutralPublicStream()) {
+  const original = fixture().parts["deactivate-stream"];
+  for (const key of ["root", "upstream"]) {
+    f.public[key].tags = original[key].tags;
+    f.public[key].logs = original[key].logs;
+  }
+  f.evidence.recovery.cases[3].stream.closure.kind = "transport-end";
+  return f;
+}
+
+test("concurrent Gateway retirement preserves its two errors and validates the UI witness", () => {
+  const f = concurrentGatewayRetirement(),
+    before = structuredClone({ evidence: f.evidence, traces: f.traces });
+  const result = checkOffboarding(f);
+  assert.equal(result.status, "passed");
+  assert.equal(result.owned_error_spans.length, 19);
+  assert.equal(result.error_spans, 20);
+  assert.equal(f.proofCalls, 1);
+  assert.deepEqual(
+    result.owned_error_spans
+      .filter((row) => row.trace_id === f.public.trace.traceID)
+      .map((row) => row.span_id)
+      .sort(),
+    [f.public.root.spanID, f.public.upstream.spanID].sort(),
+  );
+  assert.equal(
+    result.streams.find((row) => row.name === "deactivate").termination.span_id,
+    f.public.ui.spanID,
+  );
+  assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+});
+
+for (const [name, change] of [
+  ["foreign scope", (f) => neutralField(f, "antnest.principal.id", "foreign")],
+  ["wrong reason", (f) => neutralField(f, "reason", "shutdown")],
+  ["wrong source", (f) => neutralField(f, "source", "learning-notice")],
+  [
+    "duplicate witness",
+    (f) => f.public.ui.logs.push(structuredClone(f.public.ui.logs[0])),
+  ],
+  [
+    "extra witness field",
+    (f) =>
+      f.public.ui.logs[0].fields.push({
+        key: "detail",
+        value: "private-canary",
+      }),
+  ],
+  [
+    "witness outside owning span",
+    (f) => {
+      f.public.ui.logs[0].timestamp = end(f.public.ui) + 1;
+    },
+  ],
+  [
+    "witness before mutation",
+    (f) => {
+      f.public.ui.logs[0].timestamp = (epoch + 24000) * 1000;
+    },
+  ],
+  [
+    "unproved recovery",
+    (f) => {
+      f.proof.status = "pending";
+    },
+  ],
+  [
+    "rolled back mutation",
+    (f) => setTag(f.transaction, "antnest.transaction.outcome", "rolled_back"),
+  ],
+  ["UI error", (f) => setTag(f.public.ui, "error", true)],
+  [
+    "different Gateway handler error",
+    (f) => setTag(f.public.root, "otel.status_description", "other"),
+  ],
+  [
+    "missing Gateway response error",
+    (f) => {
+      f.public.upstream.logs = [];
+    },
+  ],
+])
+  test(`concurrent Gateway retirement rejects ${name}`, () => {
+    const f = concurrentGatewayRetirement();
+    change(f);
+    assert.throws(() => checkOffboarding(f));
+  });
+
+// Compose the independently validated recovery observations/SQL with the
+// stream fixture. Explicitly namespace Trace IDs and map synthetic observation
+// times; no production evidence is modified and no recovery verdict is stubbed.
+function fullRecoveryStreamFixture() {
+  const f = fixture(),
+    recovery = recoveryHTTPFixture();
+  const visited = new WeakSet();
+  const namespace = (value) => {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    for (const [key, child] of Object.entries(value)) {
+      if (["trace_id", "traceID"].includes(key) && typeof child === "string")
+        value[key] = (BigInt("0x" + child) + 0x1000n)
+          .toString(16)
+          .padStart(32, "0");
+      else namespace(child);
+    }
+  };
+  namespace(recovery.evidence);
+  for (const trace of recovery.traces.values()) namespace(trace);
+  const replaced = new Set();
+  for (const [index, source] of recovery.evidence.recovery.cases.entries()) {
+    const target = f.evidence.recovery.cases[index],
+      start = source.login.at,
+      base = target.login.at,
+      session = source.session_id,
+      oldScope = source.login.issued_credential_scope;
+    const seen = new WeakSet();
+    const move = (value) => {
+      if (!value || typeof value !== "object" || seen.has(value)) return;
+      seen.add(value);
+      for (const [key, child] of Object.entries(value)) {
+        if (
+          typeof child === "number" &&
+          [
+            "at",
+            "started_at",
+            "headers_at",
+            "observed_at",
+            "observed_at_ms",
+            "received_at_ms",
+            "released_at_ms",
+            "disconnected_at_ms",
+          ].includes(key)
+        )
+          value[key] = base + (child - start) * 40;
+        else if (typeof child === "string")
+          value[key] =
+            child === oldScope
+              ? target.login.issued_credential_scope
+              : child === "membership"
+                ? "member"
+                : child
+                    .replaceAll(session, target.session_id)
+                    .replaceAll(
+                      "/memberships/membership",
+                      "/memberships/member",
+                    );
+        else move(child);
+      }
+    };
+    move(source);
+    source.trigger.observed_at_ms = epoch + source.trigger.at;
+    source.wss_close.at = epoch + source.wss_close.observed_at;
+    replaced.add(source.login);
+    replaced.add(source.mutation);
+    Object.assign(target.login, source.login);
+    Object.assign(target.mutation, source.mutation);
+    target.stream.records = source.stream.records;
+    Object.assign(target, source, {
+      login: target.login,
+      mutation: target.mutation,
+      stream: target.stream,
+      session_id: target.session_id,
+      initial_view: target.initial_view,
+    });
+  }
+  f.evidence.http.push(
+    ...recovery.evidence.http.filter((row) => !replaced.has(row)),
+  );
+  f.evidence.model_observations = recovery.evidence.model_observations;
+  Object.assign(f.evidence.identity.healthy, {
+    running: true,
+    health: "healthy",
+  });
+  for (const trace of recovery.traces.values()) {
+    assert(!f.traces.has(trace.traceID));
+    f.traces.set(trace.traceID, trace);
+    f.archivedTraceIDs.add(trace.traceID);
+  }
+  f.recoveryParts = recovery.parts;
+  return neutralPublicStream(f);
+}
+
+test("combined stream fixture supplies complete real-inspector recovery prerequisites", () => {
+  const f = fullRecoveryStreamFixture();
+  assert.equal(inspectRecoveryHTTP(f.evidence, f).status, "passed");
+});
+
+test("normal EOF passes the default recovery inspector with committed SQL and final denials", () => {
+  const f = fullRecoveryStreamFixture(),
+    before = structuredClone({ evidence: f.evidence, traces: f.traces });
+  assert.equal(check(f).status, "passed");
+  assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+});
+test("concurrent Gateway retirement also requires the complete default recovery inspector", () => {
+  const f = concurrentGatewayRetirement(fullRecoveryStreamFixture());
+  assert.equal(check(f).status, "passed");
+  f.evidence.recovery.cases[3].disabled_agent.status = 503;
+  assert.throws(() => check(f));
+});
+for (const [name, change] of [
+  [
+    "missing final denial",
+    (f) => {
+      f.evidence.recovery.cases[3].old_session.status = 200;
+    },
+  ],
+  [
+    "failed disabled readback",
+    (f) => {
+      f.evidence.recovery.cases[3].disabled_agent.status = 503;
+    },
+  ],
+  [
+    "missing actual commit",
+    (f) => {
+      const p = f.recoveryParts.find((p) => p.action === "deactivate");
+      p.trace.spans = p.trace.spans.filter((span) => span !== p.commit);
+    },
+  ],
+  [
+    "missing principal invalidation",
+    (f) => {
+      const p = f.recoveryParts.find((p) => p.action === "deactivate");
+      p.trace.spans = p.trace.spans.filter((span) => span !== p.principalFeed);
+    },
+  ],
+])
+  test(`default normal EOF proof rejects ${name}`, () => {
+    const f = fullRecoveryStreamFixture();
+    change(f);
+    assert.throws(() => check(f));
   });
 
 function completedViewRead(transport) {

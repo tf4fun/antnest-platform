@@ -216,6 +216,21 @@ Controller and ACP calls within the active HTTP request continue that context.
 Background work deliberately omits an ended HTTP parent; it does not yet carry
 independent span links.
 
+An opened Workspace SSE that finishes because the Agent execution-state watch
+reports revoked access records one `antnest.stream.termination` event on that
+SSE's Node HTTP SERVER span. The event has `reason=access_denied`,
+`source=agent-execution-state`, and `antnest.organization.id`,
+`antnest.principal.id`, and `antnest.agent.id` from the authenticated scope.
+The journal preserves each subscriber's first close reason; cancellation,
+capacity retirement, ordinary EOF, and later revocation cannot replace it.
+The HTTP adapter records the event only after sending the 200 SSE headers and
+observing normal EOF while the original delegation is still valid. It captures
+the owning HTTP span before subscribing, so background closure cannot attach
+the event to another request or an ended span. A foreign journal scope is not
+accepted as evidence. This is a non-error diagnostic: HTTP status, span status,
+public SSE frames, and Run lifecycle are unchanged, and the event contains no
+credentials, Session content, or exception message.
+
 If React fails before producing its SSR shell, Node sends a safe loading shell
 with no serialized bootstrap. The browser mounts with `createRoot` for that
 response and fetches a fresh authorized bootstrap; successfully rendered pages

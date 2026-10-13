@@ -61,7 +61,7 @@ function diagnostics(span, expected, event) {
     ...event,
   });
 }
-function clean(span, service, trace) {
+function clean(span, service, trace, validatedTermination) {
   assert(!hasError(span), "unrelated stream trace error");
   const tags = values(span.tags ?? []);
   if (
@@ -118,14 +118,20 @@ function clean(span, service, trace) {
       "unrelated successful span diagnostic",
     );
   }
-  for (const log of span.logs ?? [])
+  for (const log of span.logs ?? []) {
+    if (log === validatedTermination) continue;
     for (const field of log.fields ?? [])
       assert(
         (!errorKey.test(field.key) ||
           (field.key === "error.type" && field.value === "")) &&
-          field.value !== "antnest.error",
+          field.value !== "antnest.error" &&
+          !(
+            field.key === "event" &&
+            field.value === "antnest.stream.termination"
+          ),
         "unrelated successful span event",
       );
+  }
 }
 const error = { error: true, "otel.status_code": "ERROR" };
 const operationMessage =
@@ -395,77 +401,6 @@ export function inspectOutageStreams(
     streamItems.length,
     "reused public stream",
   );
-  const streams = streamItems.map((item) => {
-    const { stream: s, mutation: c } = item,
-      closure = s.closure;
-    assert.equal(
-      s.path,
-      `${base}/events?sessionId=${encodeURIComponent(item.session_id)}`,
-    );
-    assert.equal(s.credential_scope, item.scope);
-    assert.equal(s.status, 200);
-    assert.equal(s.set_cookie_count, 0);
-    assert(
-      ["transport-end", "remote-end"].includes(closure?.kind),
-      "actual remote stream retirement missing",
-    );
-    assert.equal(closure.trace_id, s.trace_id, "foreign stream closure");
-    [s.started_at, s.headers_at, closure.at, c.trigger.at].forEach(finite);
-    assert(
-      Number.isSafeInteger(closure.observed_at_ms) &&
-        Number.isSafeInteger(c.trigger.observed_at_ms),
-    );
-    assert(
-      s.started_at <= s.headers_at &&
-        s.headers_at < c.trigger.at &&
-        closure.at >= c.trigger.at &&
-        closure.at <= c.trigger.at + 30000,
-      "stream closed outside mutation window",
-    );
-    assert(
-      closure.observed_at_ms >= c.trigger.observed_at_ms &&
-        closure.observed_at_ms <= c.trigger.observed_at_ms + 30000,
-    );
-    sameHTTP(c.mutation);
-    const path =
-      c.name === "logout"
-        ? "/api/session"
-        : c.name === "password"
-          ? "/api/session/password"
-          : `/api/admin/directory/memberships/${encodeURIComponent(c.login.body.principal.membership_id)}`;
-    assert.equal(c.mutation.path, path);
-    assert.equal(c.mutation.method, c.name === "logout" ? "DELETE" : "POST");
-    assert.equal(c.mutation.status, c.name === "logout" ? 204 : 200);
-    if (["logout", "password"].includes(c.name))
-      assert.equal(
-        c.mutation.credential_scope,
-        c.login.issued_credential_scope,
-      );
-    assert(
-      c.trigger.at <= c.mutation.started_at &&
-        c.mutation.started_at <= c.mutation.at &&
-        c.mutation.started_at <= closure.at,
-    );
-    const b = boundary(s.trace_id, s, s.headers_at);
-    if (end(b.root) - b.root.startTime > evidence.settings.resolveTTLMS * 1000)
-      assert(
-        b.resolution.gateway_revalidations.length > 0,
-        "long stream lacks actual successful revalidation",
-      );
-    for (const span of [b.root, b.upstream, b.ui])
-      assert(
-        end(span) >= b.interval.lower(c.trigger.at) &&
-          end(span) < b.interval.upper(closure.at),
-        "stream span ended outside actual closure interval",
-      );
-    sseDiagnostics(b.root, b.upstream);
-    claim(b.trace, b.root, "public-sse-revoked-handler");
-    claim(b.trace, b.upstream, "public-sse-revoked-response");
-    for (const span of b.trace.spans)
-      if (span !== b.root && span !== b.upstream)
-        clean(span, b.tree.service(span), b.trace);
-    return { name: item.name, trace_id: s.trace_id, ...b.resolution };
-  });
   const acp = transition(
     evidence,
     one(
@@ -557,6 +492,148 @@ export function inspectOutageStreams(
     offboarding = c;
     return c;
   };
+  const streams = streamItems.map((item) => {
+    const { stream: s, mutation: c } = item,
+      closure = s.closure;
+    assert.equal(
+      s.path,
+      `${base}/events?sessionId=${encodeURIComponent(item.session_id)}`,
+    );
+    assert.equal(s.credential_scope, item.scope);
+    assert.equal(s.status, 200);
+    assert.equal(s.set_cookie_count, 0);
+    assert(
+      ["transport-end", "remote-end"].includes(closure?.kind),
+      "actual remote stream retirement missing",
+    );
+    assert.equal(closure.trace_id, s.trace_id, "foreign stream closure");
+    [s.started_at, s.headers_at, closure.at, c.trigger.at].forEach(finite);
+    assert(
+      Number.isSafeInteger(closure.observed_at_ms) &&
+        Number.isSafeInteger(c.trigger.observed_at_ms),
+    );
+    assert(
+      s.started_at <= s.headers_at &&
+        s.headers_at < c.trigger.at &&
+        closure.at >= c.trigger.at &&
+        closure.at <= c.trigger.at + 30000,
+      "stream closed outside mutation window",
+    );
+    assert(
+      closure.observed_at_ms >= c.trigger.observed_at_ms &&
+        closure.observed_at_ms <= c.trigger.observed_at_ms + 30000,
+    );
+    sameHTTP(c.mutation);
+    const path =
+      c.name === "logout"
+        ? "/api/session"
+        : c.name === "password"
+          ? "/api/session/password"
+          : `/api/admin/directory/memberships/${encodeURIComponent(c.login.body.principal.membership_id)}`;
+    assert.equal(c.mutation.path, path);
+    assert.equal(c.mutation.method, c.name === "logout" ? "DELETE" : "POST");
+    assert.equal(c.mutation.status, c.name === "logout" ? 204 : 200);
+    if (["logout", "password"].includes(c.name))
+      assert.equal(
+        c.mutation.credential_scope,
+        c.login.issued_credential_scope,
+      );
+    assert(
+      c.trigger.at <= c.mutation.started_at &&
+        c.mutation.started_at <= c.mutation.at &&
+        c.mutation.started_at <= closure.at,
+    );
+    const b = boundary(s.trace_id, s, s.headers_at);
+    if (end(b.root) - b.root.startTime > evidence.settings.resolveTTLMS * 1000)
+      assert(
+        b.resolution.gateway_revalidations.length > 0,
+        "long stream lacks actual successful revalidation",
+      );
+    for (const span of [b.root, b.upstream, b.ui])
+      assert(
+        end(span) >= b.interval.lower(c.trigger.at) &&
+          end(span) < b.interval.upper(closure.at),
+        "stream span ended outside actual closure interval",
+      );
+    const failedTransport = hasError(b.root) || hasError(b.upstream);
+    const hasTermination = (b.ui.logs ?? []).some((log) =>
+      (log.fields ?? []).some(
+        (field) =>
+          field.key === "event" && field.value === "antnest.stream.termination",
+      ),
+    );
+    let marker, termination;
+    if (!failedTransport)
+      assert.equal(
+        closure.kind,
+        "remote-end",
+        "normal stream requires actual EOF",
+      );
+    // UI EOF and Gateway revocation can race across processes. Validate any
+    // direct witness independently; a Gateway error still needs its exact
+    // diagnostics, and a normal public EOF cannot pass without a witness.
+    if (!failedTransport || hasTermination) {
+      const offboarded = offboardingCase();
+      assert.equal(
+        c.mutation.trace_id,
+        offboarded.mutation.trace_id,
+        "normal close lacks its actual offboarding mutation",
+      );
+      for (const key of ["user_id", "membership_id", "organization_id"])
+        assert.equal(
+          c.login.body.principal[key],
+          offboarded.login.body.principal[key],
+          "normal close belongs to another principal",
+        );
+      marker = one(
+        b.ui.logs ?? [],
+        "one direct UI termination witness required",
+      );
+      assert.deepEqual(values(marker.fields ?? []), {
+        event: "antnest.stream.termination",
+        reason: "access_denied",
+        source: "agent-execution-state",
+        "antnest.organization.id":
+          offboarded.login.body.principal.organization_id,
+        "antnest.principal.id": offboarded.login.body.principal.user_id,
+        "antnest.agent.id": evidence.agent_id,
+      });
+      finite(marker.timestamp);
+      assert(
+        marker.timestamp >= b.ui.startTime && marker.timestamp <= end(b.ui),
+        "UI termination witness outside owning span",
+      );
+      assert(
+        marker.timestamp >= b.interval.lower(c.mutation.started_at) &&
+          marker.timestamp < b.interval.upper(closure.at),
+        "UI termination witness outside actual mutation/closure window",
+      );
+      termination = {
+        reason: "access_denied",
+        source: "agent-execution-state",
+        span_id: b.ui.spanID,
+      };
+    }
+    if (failedTransport) {
+      sseDiagnostics(b.root, b.upstream);
+      claim(b.trace, b.root, "public-sse-revoked-handler");
+      claim(b.trace, b.upstream, "public-sse-revoked-response");
+    }
+    for (const span of b.trace.spans)
+      if (!failedTransport || (span !== b.root && span !== b.upstream))
+        clean(
+          span,
+          b.tree.service(span),
+          b.trace,
+          span === b.ui ? marker : undefined,
+        );
+    return {
+      name: item.name,
+      trace_id: s.trace_id,
+      ...b.resolution,
+      ...(termination ? { termination } : {}),
+    };
+  });
   const views = [
     {
       row: byLabel("prep-view"),

@@ -125,6 +125,8 @@ test(
     process.once("SIGTERM", onTerminate);
     const seen = [];
     const telemetryRequests = [];
+    const revocationTraceId = "0987654321abcdef0987654321abcdef";
+    let revocationWatch;
     const gatewayTraceId = "0123456789abcdef0123456789abcdef";
     const gatewayParentSpanId = "1111111111111111";
     const controllerCalls = [];
@@ -393,6 +395,24 @@ test(
         requestPrincipal.run(verifiedScopes.get(request)?.sub, () => {
           acpHandler(request, response);
         });
+        return;
+      }
+      if (
+        request.url === "/rpc/agent-acp/watch-agent-execution-state" &&
+        verifiedScopes.get(request)?.sub === "user-9876"
+      ) {
+        revocationWatch = response;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(
+          `event: workspace_state\ndata: ${JSON.stringify({
+            agent_id: "agent-1",
+            access_allowed: true,
+            availability: "ready",
+            active_session_id: null,
+            configuration_revision: "a".repeat(64),
+            unavailable_reason: null,
+          })}\n\n`,
+        );
         return;
       }
       response.setHeader("content-type", "application/json");
@@ -2004,6 +2024,53 @@ test(
       } finally {
         accountOnly = false;
       }
+      const revocationAbort = new AbortController();
+      const revocationSignal = AbortSignal.any([
+        revocationAbort.signal,
+        AbortSignal.timeout(10_000),
+        interrupted.signal,
+      ]);
+      let revocationReader;
+      try {
+        const response = await fetch(
+          `${base}/api/app/workspace/v1/agents/agent-1/events`,
+          {
+            headers: {
+              "x-antnest-organization-id": "org-1",
+              "x-antnest-principal-id": "user-9876",
+              "x-antnest-agent-id": "agent-1",
+              traceparent: `00-${revocationTraceId}-${gatewayParentSpanId}-01`,
+            },
+            signal: revocationSignal,
+          },
+        );
+        assert.equal(response.status, 200);
+        revocationReader = response.body.getReader();
+        assert.equal(
+          (await revocationReader.read()).done,
+          false,
+          "revocation must follow a real opened SSE",
+        );
+        for (let attempt = 0; !revocationWatch && attempt < 100; attempt++) {
+          revocationSignal.throwIfAborted();
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert(
+          revocationWatch,
+          "production owner must establish its authenticated execution-state watch",
+        );
+        revocationWatch.write(
+          `event: workspace_state\ndata: ${JSON.stringify({ agent_id: "agent-1", access_allowed: false })}\n\n`,
+        );
+        while (!(await revocationReader.read()).done)
+          revocationSignal.throwIfAborted();
+        revocationSignal.throwIfAborted();
+      } finally {
+        revocationAbort.abort();
+        await revocationReader?.cancel().catch(() => {});
+        revocationReader?.releaseLock();
+        revocationWatch?.end();
+      }
       const stopStartedAt = performance.now();
       await docker(["stop", "-t", "30", container], 45_000);
       const stopDurationMs = performance.now() - stopStartedAt;
@@ -2057,6 +2124,59 @@ test(
             span.parentSpanId === gatewayParentSpanId,
         ),
         "Production Bridge HTTP span must continue the incoming Gateway trace context",
+      );
+      const revocationSpans = exportedSpans.filter(
+        (span) =>
+          span.traceId === revocationTraceId &&
+          span.parentSpanId === gatewayParentSpanId,
+      );
+      assert.equal(revocationSpans.length, 1);
+      const revocationSpan = revocationSpans[0];
+      const attributes = (entries) =>
+        Object.fromEntries(
+          entries.map((entry) => [
+            entry.key,
+            entry.value.stringValue ?? entry.value.intValue,
+          ]),
+        );
+      assert.equal(revocationSpan.kind, 2);
+      assert.equal(
+        Number(
+          attributes(revocationSpan.attributes)["http.response.status_code"],
+        ),
+        200,
+      );
+      assert.notEqual(revocationSpan.status?.code, 2);
+      const terminations = (revocationSpan.events ?? []).filter(
+        (event) => event.name === "antnest.stream.termination",
+      );
+      assert.equal(terminations.length, 1);
+      assert.deepEqual(attributes(terminations[0].attributes), {
+        reason: "access_denied",
+        source: "agent-execution-state",
+        "antnest.organization.id": "org-1",
+        "antnest.principal.id": "user-9876",
+        "antnest.agent.id": "agent-1",
+      });
+      assert(
+        BigInt(terminations[0].timeUnixNano) >=
+          BigInt(revocationSpan.startTimeUnixNano),
+      );
+      assert(
+        BigInt(terminations[0].timeUnixNano) <=
+          BigInt(revocationSpan.endTimeUnixNano),
+      );
+      await writeFile(
+        `${evidenceRoot}/stream-access-revocation.json`,
+        JSON.stringify(
+          {
+            transport: "normal-eof",
+            delegation_active: true,
+            span: revocationSpan,
+          },
+          null,
+          2,
+        ) + "\n",
       );
       const exportedMetrics = telemetryRequests
         .filter((item) => item.path === "/v1/metrics")

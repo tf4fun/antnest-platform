@@ -11,6 +11,7 @@ const scope = {
   agentId: "agent-1",
 };
 const key = Buffer.alloc(32, 3);
+const accessDenied = { reason: "access_denied" as const, source: "agent-execution-state" as const };
 
 function journal(overrides?: {
   principalId?: string;
@@ -35,6 +36,47 @@ function journal(overrides?: {
     maxSubscribers: overrides?.maxSubscribers,
   });
 }
+
+test("access revocation preserves the scoped first close for waiting and buffered subscribers", async () => {
+  for (const waiting of [false, true]) {
+    const stream = journal();
+    const observer = stream.subscribe(null, (cursor) => ({ streamCursor: cursor }));
+    if (waiting) await observer.next();
+    const pending = waiting ? observer.next() : undefined;
+    stream.close(accessDenied);
+    const expected = { done: true, value: { ...accessDenied, ...scope } };
+    assert.deepEqual(await (pending ?? observer.next()), expected);
+    stream.close();
+    assert.deepEqual(await observer.next(), expected);
+    assert.deepEqual(await observer.return(), expected);
+    assert.equal(stream.subscriberCount, 0);
+  }
+  const foreign = journal({ principalId: "user-2" });
+  const observer = foreign.subscribe(null, () => ({}));
+  foreign.close(accessDenied);
+  assert.deepEqual(await observer.next(), {
+    done: true, value: { ...accessDenied, ...scope, principalId: "user-2" },
+  });
+});
+
+test("later access revocation cannot relabel return, ordinary close, or capacity retirement", async () => {
+  for (const first of ["return", "ordinary", "capacity"] as const) {
+    const stream = journal({ maxSubscriberBytes: 700 });
+    const observer = stream.subscribe(null, (cursor) => ({ streamCursor: cursor }));
+    await observer.next();
+    const pending = observer.next();
+    if (first === "return") await observer.return({ ...accessDenied, ...scope });
+    if (first === "ordinary") stream.close();
+    if (first === "capacity") assert.throws(() => stream.publishReset(() => ({ payload: "x".repeat(900) })), StreamCapacityError);
+    stream.close(accessDenied);
+    assert.deepEqual(await pending, { done: true, value: undefined }, first);
+    assert.deepEqual(await observer.next(), { done: true, value: undefined }, first);
+    assert.deepEqual(await observer.return({ ...accessDenied, ...scope }), { done: true, value: undefined }, first);
+    const resumed = stream.subscribe(null, () => ({}));
+    assert.equal((await resumed.next()).done, false, "a closed subscription must not permanently close the journal");
+    await resumed.return();
+  }
+});
 
 test("subscriber admission is bounded and releases capacity on disconnect", async () => {
   const stream = journal({ maxSubscribers: 2 });
