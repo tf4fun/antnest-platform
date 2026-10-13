@@ -8,16 +8,17 @@ import (
 )
 
 type resolveFlight struct {
-	key         resolveKey
-	ctx         context.Context
-	cancel      context.CancelFunc
-	done        chan struct{}
-	epoch       uint64
-	knownSID    string
-	waiters     int
-	background  bool
-	completed   bool
-	invalidated bool
+	key             resolveKey
+	ctx             context.Context
+	cancel          context.CancelFunc
+	done            chan struct{}
+	epoch           uint64
+	revocationCount uint64
+	knownSID        string
+	waiters         int
+	background      bool
+	completed       bool
+	invalidated     bool
 	// Activity retires reuse without revoking already-attached live readers.
 	activityObsolete bool
 	principal        Principal
@@ -28,7 +29,7 @@ type resolveFlight struct {
 
 func (cache *resolveCache) joinable(key resolveKey) *resolveFlight {
 	flight := cache.flights[key]
-	if flight == nil || flight.completed || flight.invalidated || flight.activityObsolete || flight.epoch != cache.epoch || flight.ctx.Err() != nil {
+	if flight == nil || flight.completed || flight.invalidated || flight.activityObsolete || flight.epoch != cache.epoch || flight.ctx.Err() != nil || cache.sessionRevokedSince(flight.revocationCount, flight.knownSID) {
 		return nil
 	}
 	return flight
@@ -56,7 +57,7 @@ func (client *Client) startResolveLocked(trigger context.Context, key resolveKey
 	}
 	ctx, cancel := context.WithTimeout(parent, min(5*time.Second, cache.config.RequestTimeout, cache.config.TTL))
 	flight := &resolveFlight{key: key, ctx: ctx, cancel: cancel, done: make(chan struct{}), epoch: cache.epoch,
-		knownSID: knownSID, background: background}
+		revocationCount: cache.revocationCount, knownSID: knownSID, background: background}
 	if background {
 		flight.triggerSpan = trace.SpanContextFromContext(trigger)
 	}
@@ -86,7 +87,10 @@ func (client *Client) runResolve(flight *resolveFlight, token string) {
 		principal, err = Principal{}, flight.ctx.Err()
 	} else if err == nil {
 		principal.ResolveValidUntil = earliestTime(principal.ResolveValidUntil, principal.ResolveStartedAt.Add(cache.config.TTL))
-		if cache.closed || flight.invalidated || flight.epoch != cache.epoch || !principal.ResolveValidUntil.After(time.Now()) {
+		if cache.closed || flight.invalidated || flight.epoch != cache.epoch ||
+			flight.knownSID != "" && flight.knownSID != principal.SessionID ||
+			cache.sessionRevokedSince(flight.revocationCount, principal.SessionID) ||
+			!principal.ResolveValidUntil.After(time.Now()) {
 			principal, err = Principal{}, resolveUnavailable()
 		} else if !flight.activityObsolete {
 			cache.store(flight.key, principal)
@@ -131,7 +135,9 @@ func (cache *resolveCache) wait(ctx context.Context, flight *resolveFlight, deci
 	}
 	// A ready result does not authorize a late waiter after an intervening
 	// revocation or deadline. Coalesced live replies need no cache/feed proof.
-	if flight.invalidated || flight.epoch != cache.epoch || !flight.principal.ResolveValidUntil.After(time.Now()) {
+	if flight.invalidated || flight.epoch != cache.epoch ||
+		cache.sessionRevokedSince(flight.revocationCount, flight.principal.SessionID) ||
+		!flight.principal.ResolveValidUntil.After(time.Now()) {
 		return Principal{}, resolveUnavailable()
 	}
 	return flight.principal, nil

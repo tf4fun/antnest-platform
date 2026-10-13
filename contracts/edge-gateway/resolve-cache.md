@@ -3,7 +3,7 @@
 Gateway session revision 21 defines the positive Resolve cache for
 [#59](https://github.com/tf4fun/antnest-platform/issues/59). The machine-readable
 limits are in [resolve-cache-policy.json](resolve-cache-policy.json), policy
-revision 2. The `resolve-access-token` and `list-session-revocations` wire
+revision 3. The `resolve-access-token` and `list-session-revocations` wire
 schemas from Identity revision 16 remain unchanged in revision 17. Gateway
 session revision 22 retains this cache policy and adds the separately scoped
 [password failure consumer](../identity/password-verification.md).
@@ -47,9 +47,10 @@ includes background refresh; simply declining to cache an inactive reply would
 leave old active authority reusable. These denials are not negatively cached.
 Revocation also invalidates
 work already in flight: a result begun before the invalidation cannot refill
-the cache or escape to a late waiter as old authority. A conservative process
-generation barrier is permitted when an in-flight result's SID is not known.
-Any bounded retry remains within the caller and shared-work deadlines.
+the cache or escape to a late waiter as old authority. Session-feed events use
+the bounded SID window below, including work whose SID was unknown when it
+started. Local User mutations retain their conservative generation barrier.
+Neither path automatically retries Resolve.
 
 Cache lookup is an admission point, not a distributed transaction with an
 upstream business effect. Already admitted Runs keep their documented lifetime;
@@ -114,6 +115,28 @@ and cache. Invalidation is by private SID across every profile/Agent entry.
 The events already cover logout, password changes, role changes, User and
 Membership deactivation/deletion, and OIDC unbinding's session revocations.
 There is no implemented Organization-disable command to claim as new coverage.
+
+Keep the most recent 128 applied session SIDs as SHA-256 digests in a fixed
+4096-byte window, plus a process-local application counter. This fixed metadata
+is separate from the accounted entry budget and retains no raw SID strings.
+The counter counts applied events, not Identity sequence values: legal producer
+sequence gaps do not consume window space. Each flight records the counter at
+creation; joining, completing and delivering that work never reset its anchor.
+Before storing a positive result and at final waiter delivery, compare its
+validated CCT SID with every event applied since that anchor, under the cache
+lock. A matching SID rejects the result. An unrelated SID preserves the same
+live result and its original deadlines, without another RPC. A previously known
+SID must also agree with the returned SID. These checks cover background
+refresh, activity-obsolete work and completed results with pending waiters.
+
+Exactly 128 intervening events remain inspectable. More than 128 reject old
+work without retry because its history is incomplete; new work starts at the
+current counter. Before a counter wrap, invalidate all retained work under the
+same lock, then reset the counter and window. Invalidated work keeps its capacity
+until cleanup and delivery finish. Cached entries still receive immediate
+SID-scoped eviction on each event. This window neither negatively caches a SID
+nor denies work started after an event, and does not change caught-up proof,
+local token/User invalidation, TTL-zero behavior or any capacity/deadline limit.
 
 The current producer locks the writer before allocating a sequence and holds
 that lock until transaction completion. Reads are a fresh single-statement

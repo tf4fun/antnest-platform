@@ -254,6 +254,12 @@ The shared RPC timeout is `min(5s, request timeout, TTL)`. At half TTL, valid hi
 may initiate bounded refresh. Failures do not extend the old snapshot, and
 attempts for that entry remain spaced by at least half TTL. Revocation and
 validated local security mutations evict/fence old authority before later delivery.
+Concurrent live results also check a fixed 128-event session-revocation window
+against their actual SID. Unrelated events preserve valid results. More than 128
+events during one retained flight return 503 for that old work because its
+history is incomplete; no automatic Resolve retry occurs. The next new live
+request starts with current history. This window stores only 4096 bytes of SID
+digests plus its counter; it does not retain an unbounded session denylist.
 Validated activity evicts same-session entries and prevents identified old work
 from accepting new readers or refilling the cache. Readers already attached may
 finish with their original live result, subject to the original deadlines and

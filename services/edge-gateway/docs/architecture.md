@@ -127,6 +127,16 @@ Revocations fence in-flight completion and late delivery. Authoritative denial
 or a complete inactive response evicts every cached scope for the token,
 including denial from background refresh.
 
+Session-feed invalidation uses a fixed window of 128 applied SID digests. Each
+flight keeps its creation counter through completion and delivery. Both checks
+use the actual validated response SID, so unrelated session revocations do not
+discard a valid live response or trigger a retry. A known SID must agree with
+that response. More than 128 intervening events fail closed for old work; a
+counter reset first invalidates all retained work. The window retains 4096 bytes
+of digests plus its counter, independently of the entry budget. Local User
+mutation generations, immediate SID eviction and every work/deadline bound stay
+in force. See the shared policy for overflow and late-delivery requirements.
+
 Validated local logout evicts the token. Password changes, self revocation and
 OIDC unbinding evict the trusted User across organizations, even when the current
 session survives. A validated activity response evicts the trusted SID's cached

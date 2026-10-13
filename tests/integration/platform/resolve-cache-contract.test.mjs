@@ -18,7 +18,7 @@ test("Gateway cache revision reuses the issued Identity wire contract", () => {
   assert.equal(gateway.identity_resolve_cache, "resolve-cache-policy.json");
   const value = policy();
   assert.equal(value.contract, "antnest.edge-gateway.resolve-cache");
-  assert.equal(value.revision, 2);
+  assert.equal(value.revision, 3);
   assert.equal(value.identity_revision, identity.revision);
   assert.equal(identity.revision, 17);
   assert.equal(
@@ -59,6 +59,24 @@ test("only active complete positive authority can be reused without extending de
   assert.equal(authority.feed_proof_extends_deadline, false);
   assert.equal(authority.inflight_revocation_barrier, true);
   assert.equal(authority.late_waiter_recheck, true);
+});
+
+test("session revocations preserve unrelated live authority within a fixed private window", () => {
+  assert.deepEqual(policy().session_revocations, {
+    retained_sid_hashes: 128,
+    sid_hash: "sha256",
+    window_bytes: 4096,
+    sequence: "process-local-application-count",
+    flight_anchor: "work-creation-never-reset",
+    match: "validated-response-sid",
+    checks: ["before-cache-store", "final-waiter-delivery"],
+    unrelated_sid: "preserve-original-valid-live-result",
+    overflow: "reject-old-work-without-retry",
+    counter_wrap: "invalidate-retained-work-before-reset",
+    known_sid_mismatch: "reject",
+    local_user_mutation_epoch: "unchanged",
+    automatic_resolve_retry: false,
+  });
 });
 
 test("TTL zero preserves direct behavior and positive TTL has a fixed maximum", () => {
