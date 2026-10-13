@@ -230,6 +230,14 @@ after that evidence and waits for the actual socket close, even on failure.
 Fixture tests hold a real upgraded socket's close handshake to prove that HTTP
 101 cannot substitute for completed cleanup.
 
+The password flow records both the Chromium fetch/body-consumption result and
+Playwright's response observation for each single POST. Their shared request ID
+prevents an unrelated response from satisfying the observer. The private progress
+evidence keeps status, validated Trace ID, bounded network failure kinds and
+elapsed time, without passwords, CSRF values, Cookies or exception messages.
+Both sides must complete consistently; the existing 25-second fetch and
+30-second observer deadlines remain failures without retry or fallback.
+
 `e2e-agent-ui-receipt-contract` also uses the local model fixture and needs
 Playwright Chromium and the standard local stack images. Its captured receipt
 evidence defaults to `artifacts/verification/`; override its directory with

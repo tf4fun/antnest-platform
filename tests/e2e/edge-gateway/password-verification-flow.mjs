@@ -17,6 +17,7 @@ import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { withPasswordHolder } from "./password-pressure.mjs";
 import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
 import { inspectLoginRefusalTransaction } from "./resolve-cache-recovery-http.mjs";
+import { passwordBrowserRequest } from "./password-browser-request.mjs";
 
 const originalAdmin = {
   organization_slug: "stage3",
@@ -66,6 +67,7 @@ export async function verifyPasswordVerification({
     public_responses: [],
     response_observations: [],
     transport_failures: [],
+    browser_requests: [],
   };
   const checkpoint = (name) => {
     evidence.checks.push(name);
@@ -96,44 +98,31 @@ export async function verifyPasswordVerification({
     const csrf =
       (await cookieSnapshot(context)).find((c) => c.name.endsWith("_csrf"))
         ?.value ?? "";
-    const settled = await Promise.allSettled([
-      page.waitForResponse(
-        (r) =>
-          new URL(r.url()).pathname === path && r.request().method() === "POST",
-        { timeout: 30000 },
-      ),
-      page.evaluate(
-        async ({ path, body, csrf }) => {
-          const r = await fetch(path, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "X-Antnest-CSRF-Token": csrf,
-              "Idempotency-Key": crypto.randomUUID(),
-            },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(25000),
-          });
-          await r.arrayBuffer();
+    let response;
+    try {
+      response = await passwordBrowserRequest({
+        page,
+        gateway: config.gateway,
+        path,
+        body,
+        csrf,
+        record: (receipt) => {
+          const index = evidence.browser_requests.findIndex(
+            (row) => row.call_id === receipt.call_id,
+          );
+          if (index < 0) evidence.browser_requests.push(receipt);
+          else evidence.browser_requests[index] = receipt;
+          record(evidence);
         },
-        { path, body, csrf },
-      ),
-    ]);
-    for (const result of settled)
-      if (result.status === "rejected") {
-        evidence.transport_failures.push({
-          route: path,
-          kind:
-            result.reason?.name === "TimeoutError"
-              ? "timeout"
-              : result.reason?.name === "AbortError"
-                ? "aborted"
-                : "transport_failed",
-        });
-        record(evidence);
-        throw result.reason;
-      }
-    const response = settled[0].value;
+      });
+    } catch (error) {
+      evidence.transport_failures.push({
+        route: path,
+        kind: error?.name === "TimeoutError" ? "timeout" : "transport_failed",
+      });
+      record(evidence);
+      throw error;
+    }
     const headers = new Headers();
     for (const { name, value } of await response.headersArray())
       headers.append(name, value);
