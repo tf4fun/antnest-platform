@@ -17,6 +17,7 @@ import { runCommand } from "../../../support/run-command.mjs";
 import { rotateIdentityFixture } from "./rekey-flow.mjs";
 import { exerciseBrowserSessions } from "./browser-sessions-flow.mjs";
 import { exerciseOIDCPolicy } from "./oidc-policy-flow.mjs";
+import { exercisePasswordResources } from "./password-resource-flow.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = `antnest-identity-auth-${randomUUID()}`;
@@ -128,9 +129,8 @@ try {
     [...compose, "up", "-d", "--build", "--wait", "--wait-timeout", "120"],
     true,
   );
-  stage = "authentication";
-  const id = await docker([...compose, "ps", "-q", "identity-service"]);
-  const [identity] = JSON.parse(await docker(["inspect", id]));
+  let id = await docker([...compose, "ps", "-q", "identity-service"]);
+  let [identity] = JSON.parse(await docker(["inspect", id]));
   const binding = identity.NetworkSettings.Ports["8080/tcp"][0];
   assert.equal(binding.HostIp, "127.0.0.1");
   const port = binding.HostPort;
@@ -157,12 +157,94 @@ try {
     if (status !== 200) assert.equal(result.retryable, false);
     return result;
   };
+  // Measure a fresh process before this runner sends any business request.
+  // Bootstrap and dummy preparation are part of its startup RSS and remain
+  // visible in the kernel high-water mark; no GC or memory tuning is applied.
+  stage = "password-resources";
+  let pressurePrincipal;
+  const resources = await exercisePasswordResources({
+    env,
+    docker,
+    compose,
+    project,
+    id,
+    url,
+    token: tokens["edge-gateway"],
+    signal: controller.signal,
+    evidence,
+    recover: async () => {
+      const fresh = await rpc("local-login", {
+        request_id: randomUUID(),
+        organization_slug: "auth-test",
+        email: "admin@example.test",
+        password: env.IDENTITY_TEST_ADMIN_PASSWORD,
+      });
+      pressurePrincipal = fresh.principal;
+      const resolved = await rpc("resolve-access-token", {
+        access_token: fresh.access_token,
+        profile: "console",
+      });
+      assert.deepEqual(resolved.principal, fresh.principal);
+      await rpc("revoke-access-token", { access_token: fresh.access_token });
+      return { login: true, resolve: true, revoke: true };
+    },
+  });
+  checks += resources.requests;
+  stage = "password-resource-restart";
+  const measured = {
+    id,
+    image: identity.Image,
+    started_at: identity.State.StartedAt,
+  };
+  await docker(
+    [
+      ...compose,
+      "up",
+      "-d",
+      "--no-deps",
+      "--no-build",
+      "--force-recreate",
+      "--wait",
+      "--wait-timeout",
+      "90",
+      "identity-service",
+    ],
+    true,
+  );
+  id = await docker([...compose, "ps", "-q", "identity-service"]);
+  [identity] = JSON.parse(await docker(["inspect", id]));
+  assert.notEqual(identity.Id, measured.id);
+  assert.equal(identity.Image, measured.image);
+  assert.equal(identity.Config.Labels["com.docker.compose.project"], project);
+  assert.equal(
+    identity.Config.Labels["com.docker.compose.service"],
+    "identity-service",
+  );
+  assert.equal(identity.State.Running, true);
+  const rebound = identity.NetworkSettings.Ports["8080/tcp"][0];
+  assert.equal(rebound.HostIp, "127.0.0.1");
+  url = `http://127.0.0.1:${rebound.HostPort}`;
+  writeFileSync(
+    resolve(evidence, "password-resource-restart.json"),
+    JSON.stringify({
+      measured,
+      subsequent: {
+        id,
+        image: identity.Image,
+        started_at: identity.State.StartedAt,
+        binding: rebound,
+      },
+    }) + "\n",
+    { mode: 0o600 },
+  );
+  stage = "authentication";
   const login = await rpc("local-login", {
     request_id: randomUUID(),
     organization_slug: "auth-test",
     email: "admin@example.test",
     password: env.IDENTITY_TEST_ADMIN_PASSWORD,
   });
+  assert.deepEqual(login.principal, pressurePrincipal);
   const resolved = await rpc("resolve-access-token", {
     access_token: login.access_token,
     profile: "console",
@@ -471,6 +553,7 @@ try {
           "identity-service",
           "postgres",
           "purpose-health",
+          "password-rss-probe",
           "oidc-fixture",
         ].includes(service),
       );

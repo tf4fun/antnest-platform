@@ -60,6 +60,73 @@ values to be empty in the service environment. Removing them from the root
 [deployment runbook](../../../docs/docker-single-node-operations.md) describes
 the explicit override and credential/data ownership precautions.
 
+## Password resource admission
+
+Identity creates one password engine per process and shares it across bootstrap,
+dummy preparation, local login, administrator user creation and browser password
+changes. The following optional variables control new hashes and local capacity:
+
+| Variable                                    | Default                       | Accepted values                                 |
+| ------------------------------------------- | ----------------------------- | ----------------------------------------------- |
+| `ANTNEST_IDENTITY_ARGON2_MEMORY_KIB`        | `65536`                       | 8–1048576 KiB; at least eight times parallelism |
+| `ANTNEST_IDENTITY_ARGON2_ITERATIONS`        | `3`                           | 1–10                                            |
+| `ANTNEST_IDENTITY_ARGON2_PARALLELISM`       | `2`                           | 1–16                                            |
+| `ANTNEST_IDENTITY_ARGON2_MEMORY_BUDGET_KIB` | `131072`                      | 8–4194304 KiB; must fit the configured new hash |
+| `ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT`    | `min(64, max(2, GOMAXPROCS))` | 1–64                                            |
+
+Startup rejects invalid or incoherent settings without echoing their values.
+Memory and operation permits are acquired together in FIFO order. At most 32
+requests wait for up to two seconds, shortened by their request deadline. A
+valid stored hash larger than the process budget is rejected immediately.
+Capacity exhaustion returns `503 credential_busy`, the fixed message
+`Password verification is busy`, `retryable: true`, `Retry-After: 1` and
+`Cache-Control: no-store`, without a credential or Cookie mutation. It does not
+mean the supplied password was wrong. Gateway login/password change and Console
+user creation preserve the typed busy response without automatically replaying
+the request. The user can explicitly retry after capacity recovers.
+
+Stored Argon2id v19 hashes are verified with their original bounded parameters,
+including the original memory value. Malformed or noncanonical encodings fail
+before KDF work. Successful local login upgrades a different valid stored policy
+in the same transaction as issuance and account-counter reset. Persisted login
+backoff returns `credential_rate_limited`/429 before KDF work, with Retry-After
+rounded up and bounded to 1–900 seconds. Organization failures are not reset by
+a successful login. Password changes use the same organization bucket and a
+global User bucket shared across Organizations. Verification, failed-guess
+counters, password replacement, all-session revocation and User-counter reset
+are one transaction. The fifth wrong current password commits the first backoff;
+the sixth attempt returns 429 before KDF work. A successful rotation resets only
+the User bucket. Both operations share a cumulative two-second database wait
+budget, separate from KDF admission and the original request deadline.
+
+Password changes revalidate the original signed Caller after admission and
+authority waits, between verification and replacement hashing, and before
+committing an outcome. Before commit, detecting an expired or revoked caller,
+missing local credential, busy/cancelled operation or failed rotation rolls back
+the attempt changes. An ambiguous commit returns no credentials and is never
+retried or compensated. Caller expiry observed after a successful commit also
+withholds the result without compensating durable counters or rotation.
+Each instance runs one serial cleanup worker: the first pass waits one minute,
+and each completed pass starts a new one-minute wait. One pass removes at most
+500 rows whose 15-minute window and backoff have both expired, skipping rows
+locked by admission. A full batch or error waits until the next interval; there
+is no immediate retry or catch-up. Multiple instances have independent schedules.
+Shutdown cancels and joins the worker, including database rollback, before
+closing the pool. Failures emit only the fixed `credential_cleanup_failure`
+class; expected shutdown cancellation is silent.
+The [password policy](../../../contracts/identity/password-verification.md)
+defines Gateway/Console handling and the cross-service admission boundary.
+The memory budget bounds active Argon2 work, not total process RSS or garbage
+collector retention. Container pressure and recovery require separate evidence.
+
+HTTP completion logs attach `password_admission_reason` only to a typed KDF
+admission error: `queue_full`, `wait_expired`, `weight_exceeds_budget` or
+`shutdown`. A database lock timeout is not reported as a KDF rejection. The
+`Identity password resources drained` shutdown event is emitted after all
+started KDFs have joined, before the database pool and telemetry are closed. It
+contains numeric policy, active/queued work, reserved memory, peak admission
+and rejection counters; it contains no account or credential values.
+
 ## Secret Handling
 
 - Database URLs and URL credentials are redacted from diagnostics.
@@ -227,7 +294,7 @@ There is no per-field filtering or bespoke payload size limit. See
   transaction. The replacement retains the original absolute deadline. A lost
   successful response requires login with the new password; retrying an old
   SID or request ID never recovers a raw token. Wrong current password returns
-  `invalid_argument` (`400`) and preserves the session. Expiry during the feed
+  `invalid_current_password` (`400`) and preserves the session. Expiry during the feed
   writer wait rolls back the entire password transaction. Expiry observed only
   after successful commit suppresses the credential response; the new password
   remains committed and the user must log in again.
@@ -330,9 +397,13 @@ claiming offboarding coverage.
 
 ## Shutdown
 
-SIGINT/SIGTERM clears readiness, stops accepting new requests, drains HTTP,
-closes PostgreSQL, and flushes telemetry within the shutdown deadline. An
-incomplete shutdown exits non-zero for platform replacement.
+SIGINT/SIGTERM clears readiness, stops password admission, cancels request
+contexts and drains HTTP requests. A running Argon2 computation keeps both
+permits until its synchronous workers finish; a cancelled or stopped operation
+discards its result. The HTTP shutdown deadline can close connections, but does
+not release KDF permits early. Identity joins admitted password work before
+closing PostgreSQL and flushing telemetry. An incomplete HTTP shutdown exits
+non-zero for platform replacement.
 OIDC callback failure finalization ignores caller cancellation so it can write
 the terminal fact, but has its own five-second deadline and stores only a
 stable stage summary.

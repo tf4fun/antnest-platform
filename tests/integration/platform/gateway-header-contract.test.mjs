@@ -14,7 +14,7 @@ const headers = read("request-headers.json");
 const sorted = (values) => [...values].sort();
 
 test("session contract adopts the reserved namespace and browser input registry", () => {
-  assert.equal(session.version, 21);
+  assert.equal(session.version, 22);
   assert.equal(session.header_boundary_contract, "request-headers.json");
   assert.deepEqual(headers.reserved_prefixes, ["X-Antnest-", "Antnest-"]);
   assert.deepEqual(session.browser_headers, headers.browser_headers);

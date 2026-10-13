@@ -19,7 +19,7 @@ Do not restart into an intermediate configuration or change receiver origins
 through browser inputs. Public listener TLS uses a separate certificate and key;
 it does not reuse internal workload credentials.
 
-Deploy Identity revision 16 before Gateway revision 21. Its required session
+Deploy Identity revision 17 before Gateway revision 22. Its required session
 metadata, account/session RPCs, external identity list/unbind/notice RPCs and
 private revocation feed must be available. The three new self routes preserve
 cookies on success and failure; after unbinding the current session, the next
@@ -31,6 +31,18 @@ the reference proxy, including session retirement without Agent offboarding.
 Identity policy defaults to a
 30-minute idle deadline and a 12-hour absolute deadline; ordinary traffic does
 not renew either. See the [session lifecycle contract](../../../contracts/identity/browser-sessions.md).
+
+For login and password changes, `429 credential_rate_limited` means Identity's
+persisted attempt backoff applies; `503 credential_busy` means its bounded
+password capacity could not admit work. Both preserve the browser session and
+carry one validated seconds value in `Retry-After`, with `retryable: true` and
+`Cache-Control: no-store`. Gateway does not retry the operation. Malformed
+upstream failure metadata returns generic `503 identity_unavailable` without
+a retry hint. The existing edge `login_rate_limited` is a separate prefilter.
+Console user creation also preserves the typed busy response. The real HTTPS
+suite verifies all three routes against Identity, including one owning RPC per
+rejection, unchanged Cookies and durable state, and explicit recovery after
+KDF capacity returns.
 
 | Variable                                  | Required                       | Default               | Description                                                                                                 |
 | ----------------------------------------- | ------------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -242,6 +254,12 @@ The shared RPC timeout is `min(5s, request timeout, TTL)`. At half TTL, valid hi
 may initiate bounded refresh. Failures do not extend the old snapshot, and
 attempts for that entry remain spaced by at least half TTL. Revocation and
 validated local security mutations evict/fence old authority before later delivery.
+Concurrent live results also check a fixed 128-event session-revocation window
+against their actual SID. Unrelated events preserve valid results. More than 128
+events during one retained flight return 503 for that old work because its
+history is incomplete; no automatic Resolve retry occurs. The next new live
+request starts with current history. This window stores only 4096 bytes of SID
+digests plus its counter; it does not retain an unbounded session denylist.
 Validated activity evicts same-session entries and prevents identified old work
 from accepting new readers or refilling the cache. Readers already attached may
 finish with their original live result, subject to the original deadlines and
@@ -428,9 +446,14 @@ The service has no database, migration, backup, or persistent volume.
 Login admission is deliberately replica-local and bounded to 4096 source and
 4096 account keys per replica. When a table is full and pruning expired windows
 frees no space, new keys are refused with `429` instead of evicting existing
-windows. It protects Argon2 work before Identity is called; a shared limiter is
-justified only if deployment-scale measurements require cross-replica
-enforcement. Event streams retain their maximum lease and independently check
+windows. This is a cheap prefilter before Identity is called. Identity enforces
+the shared password-attempt policy in PostgreSQL across replicas and separately
+bounds Argon2 memory, concurrency and queue waits in each process; internal
+callers receive the same admission checks. See Identity's
+[password resource admission](../../identity-service/docs/operations.md#password-resource-admission).
+Gateway table eviction and capacity behavior remain the scope of
+[#2](https://github.com/tf4fun/antnest-platform/issues/2).
+Event streams retain their maximum lease and independently check
 Identity even without incoming events. Checks run at the smaller of 10 seconds
 and Identity's activity hint. The 30-second stale-output bound includes time
 spent in the RPC and at most one second for closing sockets. Initial resolution

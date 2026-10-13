@@ -15,13 +15,16 @@ type browserAuthRepository struct {
 	token Token
 }
 
-func (r *browserAuthRepository) IssueToken(_ context.Context, command IssueTokenCommand) (Token, error) {
-	r.issued = command
-	return r.token, nil
+func (r *browserAuthRepository) Login(ctx context.Context, attempt LoginAttempt, prepare PrepareLogin) (LoginOutcome, error) {
+	outcome, err := r.authRepositoryStub.Login(ctx, attempt, prepare)
+	if err == nil && outcome.Authenticated {
+		outcome.Token = r.token
+	}
+	return outcome, err
 }
 
 func TestBrowserLoginReturnsPersistedDeadlinesAndForwardsDisplayHint(t *testing.T) {
-	hash, err := credentials.HashPassword("correct horse battery staple")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +32,7 @@ func TestBrowserLoginReturnsPersistedDeadlinesAndForwardsDisplayHint(t *testing.
 		authRepositoryStub: authRepositoryStub{credential: LocalCredential{PasswordHash: hash, Principal: activePrincipal()}},
 		token:              Token{ID: "stored-id", ExpiresAt: fixedNow().Add(57 * time.Minute), IdleExpiresAt: fixedNow().Add(5 * time.Second), ActivityIntervalMS: 1666},
 	}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,12 +54,12 @@ func TestBrowserLoginReturnsPersistedDeadlinesAndForwardsDisplayHint(t *testing.
 }
 
 func TestBrowserLoginRejectsOversizedDisplayHintWithoutIssuance(t *testing.T) {
-	hash, err := credentials.HashPassword("correct horse battery staple")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
 	repository := &authRepositoryStub{credential: LocalCredential{PasswordHash: hash, Principal: activePrincipal()}}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}

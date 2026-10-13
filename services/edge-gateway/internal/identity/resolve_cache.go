@@ -19,6 +19,7 @@ const (
 	resolveCacheScopes       = 32
 	resolveCacheScopeWaiters = 128
 	resolveCacheWaiters      = 1024
+	resolveCacheRevocations  = 128
 )
 
 type ResolveCacheConfig struct {
@@ -62,6 +63,9 @@ type resolveCache struct {
 	waiters  int
 	epoch    uint64
 	proof    time.Time
+
+	revocationCount uint64
+	revocations     [resolveCacheRevocations][sha256.Size]byte
 }
 
 // NewCachedClient owns one issuer's cache and shared RPCs. Construction starts

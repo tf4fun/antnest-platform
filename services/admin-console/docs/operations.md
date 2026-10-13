@@ -62,7 +62,7 @@ browser and route `/protocol/oidc/callback` and `/scim/v2` to Edge Gateway.
 
 Local password rotation has no service-side configuration. Credential fields
 are request-only and must not be added to access logs, traces, environment
-variables, or retry storage. Gateway revision 21 owns `/api/session/password`;
+variables, or retry storage. Gateway revision 22 owns `/api/session/password`;
 the old Console password route is denied. Identity atomically changes the
 password, revokes all browser sessions across organizations, and issues a
 replacement bounded by the original absolute deadline. The browser validates
@@ -73,6 +73,15 @@ browser must sign in again, including when changing its password. Unknown or
 malformed `401` responses are not exempted. Dependency `503` failures keep the
 session and allow an explicit retry; no password command is retried automatically.
 
+Console revision 53 also consumes Identity revision 17 password admission when
+creating a local user. A valid `503 credential_busy` retains `retryable: true`
+and the single `Retry-After: 1` header. Malformed metadata or an unavailable
+transport yields `503 identity_unavailable` without a retry hint. Existing
+parameter, authority and conflict errors retain their status/code with bounded
+messages. Responses are `no-store` and write no Cookies; the form keeps its
+input and only a new explicit click submits again. This hint never schedules a
+retry or stores a password. See the [wire policy](../../../contracts/identity/password-verification.md).
+
 The [browser session policy](../../../contracts/identity/browser-sessions.md)
 defines the default 30-minute idle and 12-hour absolute limits. Only genuine
 input triggers `/api/session/activity`; background reads, event recovery,
@@ -82,8 +91,8 @@ input waits for completion or cancellation; failures do not retry without input.
 Self session controls cover all organizations. Directory session controls use
 only the current signed organization, including for system administrators.
 
-[External login administration](oidc-linking.md) requires Identity revision 16
-and Gateway revision 21. Review historical Provider warnings explicitly before
+[External login administration](oidc-linking.md) requires Identity revision 17
+and Gateway revision 22. Review historical Provider warnings explicitly before
 treating their email-linking policy as approved. SCIM pairing is chosen at
 credential issuance and cannot be edited. Personal notices load without Agent
 inventory; 503 failures keep visible data and never replay binding, unbinding

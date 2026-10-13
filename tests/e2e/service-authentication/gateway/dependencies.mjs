@@ -37,6 +37,42 @@ const profiles = {
 };
 const sessions = new Map();
 const revocations = [];
+const passwordCalls = { "local-login": 0, "change-local-password": 0 };
+const passwordCases = {};
+let rotations = 0,
+  revocationCalls = 0;
+
+function passwordFailure(response, rpc, input) {
+  passwordCalls[rpc]++;
+  const row = fixture.passwordFailures.find(({ name }) =>
+    rpc === "local-login"
+      ? input.email === `password-admission-${name}@example.test`
+      : input.new_password === `admission-case-${name}-replacement`,
+  );
+  if (!row) return false;
+  const key = `${rpc}/${row.name}`;
+  passwordCases[key] = (passwordCases[key] ?? 0) + 1;
+  if (row.retry.length) response.setHeader("Retry-After", row.retry);
+  response.setHeader(
+    "Set-Cookie",
+    "private-upstream=private-password-canary; Path=/",
+  );
+  response.setHeader("Cache-Control", "public, max-age=3600");
+  let body = row.body;
+  if (row.mixedSuccess) {
+    const existing = [...sessions.values()].find(live);
+    if (!existing) throw Error("mixed_success_fixture_requires_live_session");
+    body = {
+      ...credential(existing),
+      status: "changed",
+      token_id: "mixed-private-sid",
+      access_token: "mixed-private-token",
+      ...body,
+    };
+  }
+  json(response, body, row.status);
+  return true;
+}
 const externalBindings = [1, 2, 3].map((number) => ({
   id: `binding-${number}`,
   provider_id: `provider-${number}`,
@@ -121,6 +157,7 @@ function credential(session) {
   };
 }
 function revoke(session, reason = "session_revoked") {
+  revocationCalls++;
   if (!live(session)) return false;
   session.revoked = true;
   revocations.push({
@@ -240,6 +277,19 @@ for (const [service, port] of Object.entries(fixture.ports)) {
       )
         throw Error("browser_credential_leaked");
       const path = new URL(request.url, "http://fixture").pathname;
+      if (
+        service === "identity-service" &&
+        path === "/__fixture/password-evidence"
+      ) {
+        return json(response, {
+          calls: passwordCalls,
+          cases: passwordCases,
+          issued: sessions.size,
+          rotations,
+          revocationCalls,
+          revocations: revocations.length,
+        });
+      }
       let body = "";
       for await (const part of request) {
         body += part;
@@ -271,6 +321,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         )
           throw Error("workload_operation_received_browser_context");
         if (path.endsWith("local-login")) {
+          if (passwordFailure(response, "local-login", input)) return;
           if (input.password !== password)
             return json(response, { code: "unauthenticated" }, 401);
           return json(response, credential(issue(input.user_agent_hint)));
@@ -483,6 +534,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           });
         }
         if (path.endsWith("change-local-password")) {
+          if (passwordFailure(response, "change-local-password", input)) return;
           if (input.current_password !== password)
             return json(
               response,
@@ -490,6 +542,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
               400,
             );
           password = input.new_password;
+          rotations++;
           for (const session of sessions.values())
             revoke(session, "password_changed");
           return json(response, {

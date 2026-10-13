@@ -100,6 +100,22 @@ separate from the subsequent online key rotation. See
 
 ### Changed
 
+Identity revision 17 shares one bounded Argon2 memory/concurrency budget across
+password verification, user creation, password changes and bootstrap (#60).
+Resource exhaustion returns `credential_busy`/503 with `Retry-After: 1`; queued
+cancellation and shutdown retain ownership until started work joins. Dummy
+initialization uses a random rejection target without a startup KDF, while
+unknown-account logins still perform one complete current-policy verification.
+Migration `0009` adds private hashed attempt counters. Local login now holds
+ordered attempt and authority locks through verification: wrong passwords commit
+counters, while successful legacy-password rehash, account reset and token/event
+issuance commit together. Persisted backoff returns `credential_rate_limited`/429
+before KDF work, with a bounded Retry-After and no cookie writes. Rehash preserves
+existing sessions; ambiguous commits return no credentials or automatic replay.
+Password-change attempt integration, periodic cleanup, Gateway/Console
+consumption and final integration remain pending in this draft. See the
+[password verification policy](contracts/identity/password-verification.md).
+
 Gateway caches validated Identity resolution for up to ten seconds by default,
 scoped to the exact session token, request profile and Agent (#59). Established
 HTTP, ACP and Workspace traffic can survive a brief Identity outage without

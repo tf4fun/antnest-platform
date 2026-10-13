@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 )
 
@@ -14,40 +13,48 @@ type passwordRepository struct {
 	credential       domain.LocalCredential
 	loadErr          error
 	loads, rotations int
-	command          PasswordCommand
+	attempt          PasswordAttempt
+	prepared         PasswordPreparation
 }
 
-func (r *passwordRepository) GetLocalCredential(_ context.Context, user string) (domain.LocalCredential, error) {
+func (r *passwordRepository) ChangePassword(ctx context.Context, attempt PasswordAttempt, prepare PreparePassword) (PasswordOutcome, error) {
 	r.loads++
-	if user != "user-1" {
-		return domain.LocalCredential{}, domain.ErrForbidden
+	if attempt.Caller.Claims().Subject != "user-1" {
+		return PasswordOutcome{}, domain.ErrForbidden
 	}
-	return r.credential, r.loadErr
-}
-func (r *passwordRepository) ChangePassword(_ context.Context, command PasswordCommand) (PasswordResult, error) {
+	if errors.Is(r.loadErr, domain.ErrNotFound) {
+		return PasswordOutcome{}, domain.InvalidArgument("Local password is not available for this account")
+	}
+	if r.loadErr != nil {
+		return PasswordOutcome{}, r.loadErr
+	}
+	prepared, err := prepare(ctx, r.credential, func() error { return nil })
+	if err != nil || !prepared.Matched {
+		return PasswordOutcome{}, err
+	}
 	r.rotations++
-	r.command = command
-	return PasswordResult{}, nil
+	r.attempt, r.prepared = attempt, prepared
+	return PasswordOutcome{Changed: true}, nil
 }
 
 func TestBrowserPasswordPreparesAnAtomicSelfRotation(t *testing.T) {
-	hash, err := credentials.HashPassword("current password value")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "current password value")
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := &passwordRepository{credential: domain.LocalCredential{UserID: "user-1", PasswordHash: hash}}
 	ctx := browserCaller(t, domain.OrganizationRoleMember, domain.SystemRoleUser)
-	_, err = NewService(r).ChangePassword(ctx, PasswordInput{RequestID: "rotate-1", ActorPrincipalID: "user-1", UserID: "user-1", CurrentPassword: "current password value", NewPassword: "replacement password value"})
-	if err != nil || r.loads != 1 || r.rotations != 1 || r.command.Caller == nil || r.command.Caller.Claims().Subject != "user-1" || r.command.ExpectedPasswordHash != hash || r.command.RequestID != "rotate-1" {
+	_, err = NewService(r, testPasswordEngine(t)).ChangePassword(ctx, PasswordInput{RequestID: "rotate-1", ActorPrincipalID: "user-1", UserID: "user-1", CurrentPassword: "current password value", NewPassword: "replacement password value"})
+	if err != nil || r.loads != 1 || r.rotations != 1 || r.attempt.Caller == nil || r.attempt.Caller.Claims().Subject != "user-1" || r.prepared.ExpectedPasswordHash != hash || r.attempt.RequestID != "rotate-1" {
 		t.Fatalf("rotation did not preserve signed authority and expected credential: %v", err)
 	}
-	if valid, err := credentials.VerifyPassword(r.command.PasswordHash, "replacement password value"); err != nil || !valid || r.command.PasswordHash == hash {
+	if valid, err := testPasswordEngine(t).VerifyPassword(t.Context(), r.prepared.PasswordHash, "replacement password value"); err != nil || !valid || r.prepared.PasswordHash == hash {
 		t.Fatal("rotation command did not contain a newly hashed password")
 	}
 }
 
 func TestBrowserWrongCurrentPasswordIsABusinessErrorAndNeverRotates(t *testing.T) {
-	hash, err := credentials.HashPassword("current password value")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "current password value")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +81,7 @@ func TestBrowserWrongCurrentPasswordIsABusinessErrorAndNeverRotates(t *testing.T
 			case "missing-request":
 				input.RequestID = ""
 			}
-			result, err := NewService(r).ChangePassword(browserCaller(t, domain.OrganizationRoleMember, domain.SystemRoleUser), input)
+			result, err := NewService(r, testPasswordEngine(t)).ChangePassword(browserCaller(t, domain.OrganizationRoleMember, domain.SystemRoleUser), input)
 			if !errors.Is(err, want) || r.rotations != 0 || result.AccessToken != "" {
 				t.Fatalf("invalid password mutation reached storage or signed out caller: %v", err)
 			}

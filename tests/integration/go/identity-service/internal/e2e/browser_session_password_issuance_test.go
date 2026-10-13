@@ -37,7 +37,7 @@ func TestBrowserPasswordAndIssuanceShareParentOrder(t *testing.T) {
 				} else {
 					f = newBrowserControlsFixture(t)
 					loginOperation = func(ctx context.Context, store *repository.Store) loginOutcome {
-						auth, err := localauth.NewService(store.LocalAuth(), f.newID, f.clock, time.Hour)
+						auth, err := localauth.NewService(t.Context(), store.LocalAuth(), f.newID, f.clock, time.Hour, testPasswordEngine(t))
 						if err != nil {
 							return loginOutcome{err: err}
 						}
@@ -65,18 +65,28 @@ func TestBrowserPasswordAndIssuanceShareParentOrder(t *testing.T) {
 					pid := make(chan uint32, 1)
 					var captured sync.Once
 					store := f.tracedStore(t, func(_ context.Context, c *pgx.Conn, sql string) {
-						if strings.Contains(sql, marker) && (strings.Contains(sql, "FOR UPDATE") || strings.Contains(sql, "FOR SHARE")) {
+						if strings.Contains(sql, marker) && (strings.Contains(sql, "FOR UPDATE") || strings.Contains(sql, "FOR SHARE") || strings.Contains(sql, "INSERT INTO credential_attempts")) {
 							captured.Do(func() { pid <- c.PgConn().PID() })
 						}
 					})
 					return store, pid
 				}
 				loginMarker := "FROM users"
+				passwordMarker := "FROM users"
 				if ordering == "login-first" {
 					loginMarker = "FROM organizations"
 				}
+				if kind == "local" {
+					// Local login and password change share the organization bucket
+					// before either reaches its User lock.
+					if ordering == "login-first" {
+						passwordMarker = "INSERT INTO credential_attempts"
+					} else {
+						loginMarker = "INSERT INTO credential_attempts"
+					}
+				}
 				loginStore, loginPID := traced(loginMarker)
-				passwordStore, passwordPID := traced("FROM users")
+				passwordStore, passwordPID := traced(passwordMarker)
 				loginDone := make(chan loginOutcome, 1)
 				type passwordOutcome struct {
 					result browsersessions.PasswordResult
@@ -86,7 +96,7 @@ func TestBrowserPasswordAndIssuanceShareParentOrder(t *testing.T) {
 				startLogin := func() { workers.Go(func() { loginDone <- loginOperation(ctx, loginStore) }) }
 				startPassword := func() {
 					workers.Go(func() {
-						result, err := browsersessions.NewService(passwordStore.BrowserSessions()).ChangePassword(ctx, browserPasswordInput(f))
+						result, err := browsersessions.NewService(passwordStore.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 						passwordDone <- passwordOutcome{result, err}
 					})
 				}
@@ -115,10 +125,10 @@ func TestBrowserPasswordAndIssuanceShareParentOrder(t *testing.T) {
 					var actual bool
 					if ordering == "login-first" {
 						if err := f.pool.QueryRow(ctx, `SELECT $1::integer = ANY(pg_blocking_pids($2))`, first, second).Scan(&actual); err != nil || !actual {
-							t.Fatalf("password did not wait on login's held User: %v", err)
+							t.Fatalf("password did not wait on login's held admission or User lock: %v", err)
 						}
 					} else if err := f.pool.QueryRow(ctx, `SELECT $1::integer = ANY(pg_blocking_pids($3)) OR $2::integer = ANY(pg_blocking_pids($3))`, blocker.Conn().PgConn().PID(), first, second).Scan(&actual); err != nil || !actual {
-						t.Fatalf("login did not queue after password on target User: %v", err)
+						t.Fatalf("login did not queue after password on target admission or User lock: %v", err)
 					}
 				case <-ctx.Done():
 					t.Fatal(ctx.Err())

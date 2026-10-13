@@ -8,8 +8,10 @@ import { fields } from "../observability/trace-fixtures.mjs";
 
 const tokenRead =
   "SELECT t.id, t.expires_at, t.idle_expires_at, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM api_tokens t JOIN users u ON u.id = t.user_id JOIN organization_memberships m ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id JOIN organizations o ON o.id = t.organization_id WHERE t.token_hash = $1 AND t.kind = 'browser' AND t.revoked_at IS NULL AND t.expires_at > $2 AND t.idle_expires_at > $2 AND m.scim_deleted_at IS NULL";
-const credentialRead =
-  "SELECT c.password_hash, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM users u JOIN local_credentials c ON c.user_id = u.id JOIN organization_memberships m ON m.user_id = u.id JOIN organizations o ON o.id = m.organization_id WHERE o.slug = $1 AND m.email = $2 AND m.scim_deleted_at IS NULL";
+const attemptUpsert =
+  "INSERT INTO credential_attempts (scope,key_hash,window_start,failures) VALUES ($1,$2,clock_timestamp(),0) ON CONFLICT (scope,key_hash) DO UPDATE SET scope=EXCLUDED.scope RETURNING window_start,failures,locked_until";
+const attemptWrite =
+  "UPDATE credential_attempts SET window_start=$3,failures=$4,locked_until=$5 WHERE scope=$1 AND key_hash=$2";
 const tokenUpdate =
   "UPDATE api_tokens SET revoked_at = $2 WHERE id = ANY($1::text[]) AND kind = 'browser' AND revoked_at IS NULL AND ($3 = '' OR organization_id = $3) AND ($4 = '' OR membership_id = $4) AND id <> $5 RETURNING id, user_id, organization_id";
 const audit =
@@ -150,6 +152,16 @@ export function recoveryHTTPFixture() {
       "postgresql transaction",
     );
     f.begin = f.sql("begin", f.transaction, "begin", 0);
+    if (action === "password") {
+      f.attemptUpserts = [
+        f.sql("attempt-organization", f.transaction, attemptUpsert),
+      ];
+      f.sql("clock-organization", f.transaction, "SELECT clock_timestamp()");
+      f.attemptUpserts.push(
+        f.sql("attempt-user", f.transaction, attemptUpsert),
+      );
+      f.sql("clock-user", f.transaction, "SELECT clock_timestamp()");
+    }
     if (console)
       f.membership = f.sql(
         "membership",
@@ -202,6 +214,10 @@ export function recoveryHTTPFixture() {
       );
     }
     f.sql("audit", f.transaction, audit);
+    if (action === "password") {
+      f.sql("clock-reset", f.transaction, "SELECT clock_timestamp()");
+      f.attemptWrites = [f.sql("attempt-reset", f.transaction, attemptWrite)];
+    }
     f.commit = f.sql("commit", f.transaction, "commit", 0);
     f.transaction.duration =
       f.commit.startTime + f.commit.duration - f.transaction.startTime + 1;
@@ -209,6 +225,9 @@ export function recoveryHTTPFixture() {
       f.transaction.startTime + f.transaction.duration - f.server.startTime + 1;
     f.client.duration =
       f.server.startTime + f.server.duration - f.client.startTime + 1;
+    if (action === "password")
+      f.root.duration =
+        f.client.startTime + f.client.duration - f.root.startTime + 1;
   }
   const event = (span, values) => {
     span.logs = [
@@ -226,11 +245,80 @@ export function recoveryHTTPFixture() {
     f.server = f.trace.spans.find((s) => s.spanID === "resolve-server");
     f.database = f.trace.spans.find((s) => s.spanID === "sql");
     if (login) {
-      f.trace.spans = f.trace.spans.filter((s) => s !== f.decision);
+      f.trace.spans = f.trace.spans.filter(
+        (s) => s !== f.decision && s !== f.database,
+      );
+      f.server.operationName = "HTTP POST /rpc/identity/local-login";
       setTag(f.server, "http.route", "/rpc/identity/local-login");
       setTag(f.server, "rpc.method", "local_login");
       setTag(f.server, "antnest.identity.authentication_method", "local");
-      setTag(f.database, "db.query.text", credentialRead);
+      f.transaction = f.add(
+        "transaction",
+        "identity",
+        f.server,
+        {
+          "span.kind": "internal",
+          "db.system.name": "postgresql",
+          "antnest.transaction.outcome": "committed",
+        },
+        "postgresql transaction",
+      );
+      f.begin = f.sql("begin", f.transaction, "begin", 0);
+      f.sql(
+        "organization-discovery",
+        f.transaction,
+        "SELECT id FROM organizations WHERE slug=$1",
+      );
+      f.attemptUpserts = [
+        f.sql("attempt-organization", f.transaction, attemptUpsert),
+      ];
+      f.sql("clock-organization", f.transaction, "SELECT clock_timestamp()");
+      f.attemptUpserts.push(
+        f.sql("attempt-account", f.transaction, attemptUpsert),
+      );
+      f.sql("clock-account", f.transaction, "SELECT clock_timestamp()");
+      f.sql(
+        "membership-discovery",
+        f.transaction,
+        "SELECT user_id,id FROM organization_memberships WHERE organization_id=$1 AND email=$2 AND scim_deleted_at IS NULL",
+      );
+      f.sql(
+        "user-lock",
+        f.transaction,
+        "SELECT system_role,active FROM users WHERE id=$1 FOR SHARE",
+      );
+      f.sql(
+        "organization-lock",
+        f.transaction,
+        "SELECT slug,name,active FROM organizations WHERE id=$1 FOR SHARE",
+      );
+      f.sql(
+        "membership-lock",
+        f.transaction,
+        "SELECT role,active FROM organization_memberships WHERE id=$1 AND organization_id=$2 AND user_id=$3 AND email=$4 AND scim_deleted_at IS NULL FOR SHARE",
+      );
+      f.database = f.sql(
+        "sql",
+        f.transaction,
+        "SELECT password_hash FROM local_credentials WHERE user_id=$1 FOR UPDATE",
+      );
+      f.sql("clock-failure", f.transaction, "SELECT clock_timestamp()");
+      f.attemptWrites = [
+        f.sql("attempt-organization-failure", f.transaction, attemptWrite),
+        f.sql("attempt-account-failure", f.transaction, attemptWrite),
+      ];
+      f.commit = f.sql("commit", f.transaction, "commit", 0);
+      f.transaction.duration =
+        f.commit.startTime + f.commit.duration - f.transaction.startTime + 1;
+      f.server.duration =
+        f.transaction.startTime +
+        f.transaction.duration -
+        f.server.startTime +
+        1;
+      f.client.duration =
+        f.server.startTime + f.server.duration - f.client.startTime + 1;
+      f.root.duration =
+        f.client.startTime + f.client.duration - f.root.startTime + 1;
     } else {
       setTag(f.decision, resolvePrefix + "outcome", "rejected");
       setTag(f.decision, "otel.status_code", "ERROR");
@@ -267,6 +355,10 @@ export function recoveryHTTPFixture() {
     setTag(f.server, "antnest.outcome", "rejected");
     setTag(f.server, "antnest.result", "rejected");
     event(f.server, failure);
+    if (login) {
+      f.server.logs[0].timestamp = f.server.startTime + f.server.duration - 1;
+      f.root.logs[0].timestamp = f.root.startTime + f.root.duration - 1;
+    }
   }
   for (const c of evidence.recovery.cases) {
     mutation(c);

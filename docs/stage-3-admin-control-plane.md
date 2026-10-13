@@ -12,8 +12,10 @@ The administrator control plane consists of two services:
 - **Edge Gateway** is the sole externally reachable application service. It
   terminates browser trust, resolves Identity credentials, enforces coarse
   administrator access, removes spoofable identity headers, and propagates
-  trace context. Replica-local source/account login limits protect password
-  verification; general-purpose and shared rate limiting remain deferred.
+  trace context. Replica-local source/account login limits provide a cheap
+  prefilter. Identity enforces shared password-attempt backoff in PostgreSQL
+  and bounds Argon2 resources in each process. General-purpose Gateway rate
+  limiting remains deferred.
 - **Admin Console** serves the React administrator application and a thin BFF.
   The BFF translates page commands into existing Identity Service and Agent
   Controller management RPCs and ACP audit reads. It owns no durable business records.
@@ -85,23 +87,23 @@ Console is reachable only from the trusted deployment network.
 
 ## Public Route Surface
 
-| Route | Authentication | Owner |
-| --- | --- | --- |
-| `GET /status` | none | Edge Gateway readiness |
-| `POST /api/session/login` | none | Edge Gateway + Identity RPC |
-| `POST /api/session/login-methods` | none | Edge Gateway + Identity RPC |
-| `POST /api/session/oidc/start` | none | Edge Gateway + Identity RPC |
-| `GET /protocol/oidc/callback` | OIDC state and authorization result | Edge Gateway + Identity protocol |
-| `/scim/v2/*` | SCIM Bearer credential | Identity protocol through Edge Gateway |
-| `GET /api/session` | browser session | Edge Gateway |
-| `DELETE /api/session` | browser session when resolvable | Edge Gateway + Identity RPC |
-| `/api/admin/*` | administrator session | Admin Console BFF through Edge Gateway |
-| `GET /api/app/bootstrap` | browser session | Edge Gateway + Agent Controller |
-| `GET /api/app/agents/{agent_id}/state` and `/state/watch` | browser session and Agent access | ACP snapshot/SSE through Edge Gateway |
-| `/api/app/agents/{agent_id}/v1/acp` and `/acp` | browser session and Agent access | ACP v1 WebSocket or POST/GET SSE/DELETE HTTP |
-| `/api/app/agents/{agent_id}/v2/acp` | browser session and Agent access | ACP v2 WebSocket |
-| `/workspace/` and application assets | static entry; data requests require session | Agent UI through Edge Gateway |
-| unmatched non-API/non-protocol `GET`/`HEAD` paths | none | Admin Console application/assets |
+| Route                                                     | Authentication                              | Owner                                        |
+| --------------------------------------------------------- | ------------------------------------------- | -------------------------------------------- |
+| `GET /status`                                             | none                                        | Edge Gateway readiness                       |
+| `POST /api/session/login`                                 | none                                        | Edge Gateway + Identity RPC                  |
+| `POST /api/session/login-methods`                         | none                                        | Edge Gateway + Identity RPC                  |
+| `POST /api/session/oidc/start`                            | none                                        | Edge Gateway + Identity RPC                  |
+| `GET /protocol/oidc/callback`                             | OIDC state and authorization result         | Edge Gateway + Identity protocol             |
+| `/scim/v2/*`                                              | SCIM Bearer credential                      | Identity protocol through Edge Gateway       |
+| `GET /api/session`                                        | browser session                             | Edge Gateway                                 |
+| `DELETE /api/session`                                     | browser session when resolvable             | Edge Gateway + Identity RPC                  |
+| `/api/admin/*`                                            | administrator session                       | Admin Console BFF through Edge Gateway       |
+| `GET /api/app/bootstrap`                                  | browser session                             | Edge Gateway + Agent Controller              |
+| `GET /api/app/agents/{agent_id}/state` and `/state/watch` | browser session and Agent access            | ACP snapshot/SSE through Edge Gateway        |
+| `/api/app/agents/{agent_id}/v1/acp` and `/acp`            | browser session and Agent access            | ACP v1 WebSocket or POST/GET SSE/DELETE HTTP |
+| `/api/app/agents/{agent_id}/v2/acp`                       | browser session and Agent access            | ACP v2 WebSocket                             |
+| `/workspace/` and application assets                      | static entry; data requests require session | Agent UI through Edge Gateway                |
+| unmatched non-API/non-protocol `GET`/`HEAD` paths         | none                                        | Admin Console application/assets             |
 
 The public surface is a product API for the Console, not the future stable
 third-party OpenAPI. OIDC callback and SCIM ingress remain Identity-owned
@@ -345,11 +347,11 @@ phase that emitted them, but Jaeger is the authoritative detailed trace view.
 
 For create, the required phase evidence is explicit:
 
-| Phase | Required services in that phase trace |
-| --- | --- |
-| `network_ensure` | `agent-controller`, `antnest-runtime-egress` |
-| `runtime_initialize` | `agent-controller`, `runtime-controller` |
-| `publish` | `agent-controller`, `antnest-runtime-egress` |
+| Phase                | Required services in that phase trace        |
+| -------------------- | -------------------------------------------- |
+| `network_ensure`     | `agent-controller`, `antnest-runtime-egress` |
+| `runtime_initialize` | `agent-controller`, `runtime-controller`     |
+| `publish`            | `agent-controller`, `antnest-runtime-egress` |
 
 Every returned phase trace has exactly one parentless lifecycle root carrying
 the operation request ID, lifecycle kind, and phase. All roots after the first
@@ -387,7 +389,7 @@ empty volumes. It must prove, in order:
 8. create one Template referencing the stable Model Profile identity;
 9. create one ordinary organization member and one Agent owned by that member;
 10. wait for the lifecycle operation and Agent to become ready and inspect its
-   ordered events;
+    ordered events;
 11. disable, enable, and rebuild the Agent, waiting for each operation to reach
     its terminal state;
 12. query Jaeger for the lifecycle command and Temporal workflow/activity chain

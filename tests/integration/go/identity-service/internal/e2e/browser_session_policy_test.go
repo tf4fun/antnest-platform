@@ -16,7 +16,7 @@ import (
 
 func browserPolicyLogin(t *testing.T, store *repository.Store, fixture localAdmissionFixture) localauth.LoginResult {
 	t.Helper()
-	auth, err := localauth.NewService(store.LocalAuth(), fixture.newID, fixture.clock, time.Hour)
+	auth, err := localauth.NewService(t.Context(), store.LocalAuth(), fixture.newID, fixture.clock, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}

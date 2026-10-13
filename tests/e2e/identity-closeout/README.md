@@ -82,6 +82,28 @@ saves each response before validation, and joins both observations before
 checking stream and private-UI retirement. Its password and self-revocation
 checks still require immediate rejection.
 
+The same HTTPS suite runs password admission against two real Identity containers
+sharing PostgreSQL and the same immutable candidate image. An external database
+transaction controls fifth/sixth attempts and legacy-login/password-rotation
+ordering; admission requires the actual PostgreSQL blocking graph. Browser
+requests check canonical 429/503 responses, retry hints, unchanged Cookies and
+durable state, followed by explicit recovery. An isolated account's valid
+128 MiB, 10-pass historical PHC occupies the entire unchanged KDF memory budget
+under a temporary 0.1 CPU quota. A single invalid-namespace dummy probe must
+return typed KDF `wait_expired`; each public login, password change and Console
+user creation is then sent once and must receive the same KDF refusal. PostgreSQL
+and same-instance raw Trace evidence must place every target response between
+the holder's credential read and its first post-verification SQL. A past queue-full
+observation is insufficient. Only the holder's two counters may record its one
+deliberate wrong password, with their shared first-failure window bounded by
+actual PostgreSQL timestamps; target counters, credentials, sessions and Cookies
+remain unchanged. This 12-second fault phase is separate from normal-CPU
+200-request/RSS admission. The fixture restores CPU before joining HTTP requests
+and the actual server transaction, including on timeout or cancellation. Closed
+response diagnostics are recorded before assertions without copying credentials,
+Cookie values or arbitrary response text. The peer and database connections close
+before the existing session flows.
+
 The core client is invoked by the parent as:
 
 ```sh
@@ -298,6 +320,16 @@ profiles and does not change login limits. Identity's private RPC prepares two
 organizations and ordinary organization administrators (not system
 administrators). All access assertions go through the Gateway; no database rows
 or clocks are modified.
+
+Unexpected access HTTP statuses retain a private receipt containing the status,
+expected status, actual response Trace ID and an allowlisted error code before
+the original assertion fails. A bounded 20-second collector archives the actual
+Resolve closure under `traces/request-failure-traces/`; its reports are failure
+diagnostics, never admission. Missing Trace IDs and collection failures remain
+explicit. Requests are not retried and failed responses do not update the Cookie
+jar. The disposable parent keeps Gateway, Console and Identity service logs in
+`services.private.log` before teardown. Raw response bodies, headers and arbitrary
+error messages are excluded from the receipt.
 
 The same email is provisioned with separate identities and passwords in each
 organization. Tests compare directory and SCIM projections, reject foreign

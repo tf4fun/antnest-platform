@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 52,
+  "version": 53,
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
   "authenticated_actor": "identity_signed_cct_verified_by_console",
@@ -133,7 +133,10 @@
     },
     "create_local_user": {
       "method": "POST",
-      "path": "/directory/users"
+      "path": "/directory/users",
+      "password_failure_schema": "password-failure.schema.json",
+      "error_status_by_code": { "credential_busy": 503 },
+      "retry_after_policy": "../identity/password-verification-policy.json#/wire"
     },
     "update_membership": {
       "method": "POST",
@@ -570,8 +573,8 @@
     },
     "account_security": {
       "browser_session_contract": "../identity/browser-sessions.md",
-      "gateway_revision": 21,
-      "identity_revision": 16,
+      "gateway_revision": 22,
+      "identity_revision": 17,
       "password_owner": "edge_gateway_POST_/api/session/password",
       "retired_console_password_route": "deny_without_dependency_effect",
       "profile_fields": [

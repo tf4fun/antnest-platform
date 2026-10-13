@@ -44,7 +44,7 @@ func TestLocalLoginOverlapsAdministratorDeactivation(t *testing.T) {
 	})
 	disabled := make(chan error, 1)
 	workers.Go(func() {
-		disabled <- directory.NewService(disableStore.Directory(), f.newID, time.Now).SetUserActive(ctx, directory.SetUserActiveInput{
+		disabled <- directory.NewService(disableStore.Directory(), f.newID, time.Now, testPasswordEngine(t)).SetUserActive(ctx, directory.SetUserActiveInput{
 			RequestID: "disable-during-login", ActorPrincipalID: f.admin.User.ID, UserID: f.user.User.ID, Active: false,
 		})
 	})
@@ -62,7 +62,7 @@ func TestLocalLoginOverlapsAdministratorDeactivation(t *testing.T) {
 			captured.Do(func() { loginPID <- conn.PgConn().PID() })
 		}
 	})
-	auth, err := localauth.NewService(loginStore.LocalAuth(), f.newID, time.Now, time.Hour)
+	auth, err := localauth.NewService(t.Context(), loginStore.LocalAuth(), f.newID, time.Now, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}

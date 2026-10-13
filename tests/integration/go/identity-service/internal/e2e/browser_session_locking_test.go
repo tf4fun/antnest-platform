@@ -60,7 +60,7 @@ func TestBrowserStartupAndUserDeactivationUseOneTokenLockOrder(t *testing.T) {
 	disabling, disablePID := newStore()
 	disabled := make(chan error, 1)
 	workers.Go(func() {
-		disabled <- directory.NewService(disabling.Directory(), f.newID, f.clock).SetUserActive(ctx, directory.SetUserActiveInput{
+		disabled <- directory.NewService(disabling.Directory(), f.newID, f.clock, testPasswordEngine(t)).SetUserActive(ctx, directory.SetUserActiveInput{
 			RequestID: "startup-overlap-disable", ActorPrincipalID: f.admin.User.ID, UserID: f.user.User.ID, Active: false,
 		})
 	})

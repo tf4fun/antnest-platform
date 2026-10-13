@@ -14,10 +14,16 @@ const claimNames = outageGateNames.filter(
 );
 const key = (row) => `${row.trace_id}:${row.span_id}`;
 const eventTag = (event, name) => tag({ tags: event.fields }, name);
-function completedInitializeRead(trace, server, completion) {
+export function completedInitializeRead(trace, server, completion) {
   const tree = traceTopology(trace),
     client = tree.parent(server),
     initialize = tree.parent(client);
+  const completions = (server.logs ?? []).filter(
+    (event) => eventTag(event, "event") === "Runtime HTTP request completed",
+  );
+  assert.equal(completions.length, 1, "missing or duplicate MCP completion");
+  completion ??= completions[0];
+  assert.equal(completion, completions[0], "foreign MCP completion");
   const requireTags = (span, expected) => {
     assert(span, "missing initialize MCP parent");
     for (const fields of [
@@ -53,6 +59,8 @@ function completedInitializeRead(trace, server, completion) {
     "span.kind": "client",
     "http.request.method": "POST",
     "http.response.status_code": 200,
+    "peer.service": "antnest-runtime",
+    "antnest.operation.phase": "http.send_or_read",
     "antnest.outcome": "cancelled",
     "antnest.cancellation.type": "AbortError",
   });
@@ -62,8 +70,30 @@ function completedInitializeRead(trace, server, completion) {
     eventTag(client.logs[0], "antnest.cancellation.type"),
     "AbortError",
   );
+  assert.equal(
+    eventTag(client.logs[0], "antnest.cancellation.phase"),
+    "http.send_or_read",
+  );
   assert.equal(tree.service(initialize), "agent-acp-service");
-  assert.equal(initialize.operationName, "acp initialize");
+  if (initialize.operationName === "HTTP POST /v1/acp") {
+    requireTags(initialize, {
+      "http.request.method": "POST",
+      "http.route": "/v1/acp",
+      "http.response.status_code": 200,
+    });
+  } else {
+    assert.equal(initialize.operationName, "acp initialize");
+    for (const name of [
+      "http.request.method",
+      "http.route",
+      "http.response.status_code",
+    ])
+      assert.equal(
+        tag(initialize, name),
+        undefined,
+        "HTTP initialize mislabeled as WS",
+      );
+  }
   requireTags(initialize, {
     "span.kind": "server",
     "rpc.method": "initialize",
@@ -128,6 +158,79 @@ function completedInitializeRead(trace, server, completion) {
         event.timestamp >= operation.startTime + operation.duration &&
         event.timestamp <= server.startTime + server.duration,
     );
+  // This is a completed handler followed by transport cancellation, not proof
+  // of client receipt. Only its exact diagnostics are neutral; unrelated errors
+  // and failed outcomes still fail both the stream and archive inspectors.
+  for (const span of [server, client, initialize, operation]) {
+    const groups = [
+      {
+        fields: span.tags ?? [],
+        allowed:
+          span === server
+            ? {
+                "http.transport.outcome": "canceled",
+                "http.transport.error.type": "client_disconnected",
+              }
+            : span === client
+              ? {
+                  "antnest.outcome": "cancelled",
+                  "antnest.cancellation.type": "AbortError",
+                }
+              : {},
+      },
+      ...(span.logs ?? []).map((event) => ({
+        fields: event.fields ?? [],
+        allowed:
+          event === completion
+            ? {
+                "error.type": "client_disconnected",
+                "http.transport.outcome": "canceled",
+              }
+            : event === cancelled
+              ? { "antnest.cancellation.type": "client_disconnected" }
+              : span === client
+                ? {
+                    "antnest.cancellation.type": "AbortError",
+                    "antnest.cancellation.phase": "http.send_or_read",
+                  }
+                : {},
+      })),
+    ];
+    for (const { fields, allowed } of groups)
+      for (const { key, value } of fields) {
+        if (Object.hasOwn(allowed, key)) {
+          assert.equal(
+            value,
+            allowed[key],
+            "contradictory MCP disconnect diagnostic",
+          );
+        } else if (key === "outcome" || key.endsWith(".outcome")) {
+          assert(
+            ["success", "ok", "completed", "committed", "admitted"].includes(
+              value,
+            ),
+            "unrelated MCP disconnect outcome",
+          );
+        } else if (
+          /^(error($|\.)|exception\.|db\.response\.status_code$|antnest\.(error\.|cancellation\.|result$|stream\.termination$|http\.request_cancelled$)|otel\.status_|http\.transport\.error\.)/u.test(
+            key,
+          )
+        ) {
+          assert(
+            (key === "error.type" && value === "") ||
+              (key === "error" && value === false) ||
+              (key === "otel.status_code" && ["OK", "UNSET"].includes(value)) ||
+              (key === "antnest.error.class" && value === "none"),
+            "unrelated MCP disconnect error diagnostic",
+          );
+        } else if (key === "event") {
+          assert(
+            !["antnest.error", "error", "exception"].includes(value),
+            "unrelated MCP disconnect error event",
+          );
+        }
+      }
+  }
 }
 export function inspectOutageDiagnostics(collection, gates, secrets = []) {
   assert(
@@ -162,6 +265,8 @@ export function inspectOutageDiagnostics(collection, gates, secrets = []) {
         "unfinished raw span",
       );
       warning(span.warnings ?? []);
+      if (!hasError(span) && tag(span, "http.transport.outcome") === "canceled")
+        completedInitializeRead(trace, span);
       if (hasError(span))
         errors.set(
           key({ trace_id: trace.traceID, span_id: span.spanID }),

@@ -125,6 +125,28 @@ for the failure behavior when components are upgraded out of order.
 
 ## Configuration
 
+Password hashing and verification share one process engine. Optional
+`ANTNEST_IDENTITY_ARGON2_MEMORY_KIB` (65536),
+`ANTNEST_IDENTITY_ARGON2_ITERATIONS` (3),
+`ANTNEST_IDENTITY_ARGON2_PARALLELISM` (2),
+`ANTNEST_IDENTITY_ARGON2_MEMORY_BUDGET_KIB` (131072), and
+`ANTNEST_IDENTITY_ARGON2_MAX_CONCURRENT` (bounded GOMAXPROCS default)
+are validated at startup. See [password resource admission](docs/operations.md#password-resource-admission)
+for bounds, queue limits, stored-hash compatibility and cancellation behavior.
+Identity revision 17 returns `credential_busy`/503 for resource admission and
+`credential_rate_limited`/429 for persisted login and password-change backoff, with bounded
+`Retry-After` and `Cache-Control: no-store`. Migration `0009` stores private
+attempt keys. Login holds ordered attempt and authority locks through password
+verification, optional policy rehash, account reset and token/event commit.
+Password changes use the global User counter across Organizations and commit
+verification, rotation, all-session revocation and User-counter reset atomically.
+The original signed Caller is revalidated after waits and KDF work. Each instance
+cleans at most 500 expired attempt rows after an initial minute and waits another
+minute after each pass. Shutdown cancels and joins that worker before closing
+the database. Gateway 22 and Console 53 consume the typed password failures.
+The HTTPS integration suite verifies two Identity instances, competing attempts,
+transactional rehash/rotation, browser Cookie preservation and explicit recovery.
+
 | Variable                                                                                                        | Required         | Default            | Description                                                                                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ANTNEST_SERVICE_AUTH_MODE`                                                                                     | Yes              | None               | Exact `token` or `mtls`; no fallback.                                                                                                                                                               |
@@ -222,8 +244,47 @@ Real handler responses are validated against the central principal JSON
 Schema. PostgreSQL tests check every principal builder, both OIDC callback
 paths, fresh organization metadata on token resolution, and organization
 renames during local login without weakening password/role/status checks.
+Password resource component tests share one real engine across bootstrap,
+dummy preparation, login, user creation and password change. They exercise
+200 independent unknown-account RPCs, reconcile busy responses with KDF
+rejections, and verify budget drain and subsequent successful login. The local
+fixture warms 48 PostgreSQL connections (above two active plus 32 queued KDFs),
+leaving schema administration room under the diagnostic relay's 64-connection
+ceiling. Historical/malformed hashes and stopped admission are covered; full-row
+snapshots check that rejected work preserves credentials, tokens and revocation
+feeds. Production-container RSS requires its separate Docker pressure gate.
+Attempt-state PostgreSQL tests cover migration preservation, shared counters
+across Store instances, fifth/sixth serialization, blocked-Organization row
+growth, fresh time after lock waits, bounded cleanup and transaction rollback.
+They also verify pool/row wait exhaustion and release when BEGIN has succeeded
+but its caller's admission expires.
+The real service startup test holds a cleanup query behind a PostgreSQL table
+lock, then verifies shutdown returns with its connection closed and preserves
+the held state. Unit tests cover first-pass delay, completion-based scheduling,
+no overlap or catch-up, bounded failure logs, and cancel/join with a live parent.
+Service-entry tests separately exercise
+login and password-change fifth/sixth races across Stores, global User counters
+across Organizations, Caller expiry/logout during verification and lock waits,
+and complete rollback of counters with failed issuance or rotation. Real
+PostgreSQL COMMIT acknowledgements are dropped to verify zero credentials,
+one attempt and no compensation of durable outcomes. These component checks
+do not replace final container or browser-consumer integration admission.
+Dummy preparation reserves the same configured capacity but generates a random
+salt and rejection target without computing a startup hash. Unknown-account
+verification still runs one full-cost Argon2 operation and always rejects.
 `node tests/e2e/service-authentication/identity/run.mjs` checks this owning service
 in an isolated Identity/PostgreSQL stack with a test-only HTTPS IdP. It checks
+200 concurrent independent unknown-account logins at the default Argon2 cost,
+attributing every busy response to an actual KDF queue rejection. A nonroot
+sampler shares the original Identity PID namespace, reads raw `/proc` high-water
+and current RSS through pressure and real-login recovery, and rejects missing
+sources, restarts or an exceeded memory allowance. Numeric shutdown receipts
+prove that work joined and all permits drained before the original container is
+replaced. The baseline is sampled before any business password RPC, after normal
+bootstrap and dummy preparation. A fresh container using the same immutable
+image then runs the remaining authentication and key-rotation checks.
+These measurements are evidence for this run, not a
+universal or byte-exact RSS bound. The suite also checks
 real policy-gated callbacks and review persistence through rotation, toggles
 and service restart. The broader `make e2e-identity-core`
 is an integration gate after Gateway/Console adoption; it checks token

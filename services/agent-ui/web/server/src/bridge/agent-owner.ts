@@ -1183,8 +1183,9 @@ export class AgentBridgeOwner {
       } catch (error) {
         if (error instanceof AgentAccessRevokedError) {
           this.accessRevoked = true;
-          for (const journal of this.agentJournals.values()) journal.close();
-          for (const journal of this.journals.values()) journal.close();
+          const cause = { reason: "access_denied", source: "agent-execution-state" } as const;
+          for (const journal of this.agentJournals.values()) journal.close(cause);
+          for (const journal of this.journals.values()) journal.close(cause);
           return;
         }
       }

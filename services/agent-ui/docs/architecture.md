@@ -57,7 +57,7 @@ validation remains enabled; the document's CSP does not allow `unsafe-eval`.
 Server-side parsing keeps its existing configuration.
 
 Bootstrap and SSR share `readWorkspacePrincipal`: it requires private verified
-CCT claims and the two display headers from Gateway revision 21. Signed claims
+CCT claims and the two display headers from Gateway revision 22. Signed claims
 determine Organization/Principal IDs and administrator status; raw identity and
 administrator hints grant nothing. Each label must be canonical unpadded Base64URL over
 valid UTF-8 and decode to a non-whitespace string. Invalid or missing metadata
@@ -215,6 +215,21 @@ Gateway's W3C trace context becomes the parent of each Node HTTP span;
 Controller and ACP calls within the active HTTP request continue that context.
 Background work deliberately omits an ended HTTP parent; it does not yet carry
 independent span links.
+
+An opened Workspace SSE that finishes because the Agent execution-state watch
+reports revoked access records one `antnest.stream.termination` event on that
+SSE's Node HTTP SERVER span. The event has `reason=access_denied`,
+`source=agent-execution-state`, and `antnest.organization.id`,
+`antnest.principal.id`, and `antnest.agent.id` from the authenticated scope.
+The journal preserves each subscriber's first close reason; cancellation,
+capacity retirement, ordinary EOF, and later revocation cannot replace it.
+The HTTP adapter records the event only after sending the 200 SSE headers and
+observing normal EOF while the original delegation is still valid. It captures
+the owning HTTP span before subscribing, so background closure cannot attach
+the event to another request or an ended span. A foreign journal scope is not
+accepted as evidence. This is a non-error diagnostic: HTTP status, span status,
+public SSE frames, and Run lifecycle are unchanged, and the event contains no
+credentials, Session content, or exception message.
 
 If React fails before producing its SSR shell, Node sends a safe loading shell
 with no serialized bootstrap. The browser mounts with `createRoot` for that

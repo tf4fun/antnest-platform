@@ -310,26 +310,63 @@ subject binding. Existing external mappings are locked and compared after those
 parents, matching SCIM reprovisioning. SCIM replacement locks User before
 Membership. Role mutations acquire the Organization update lock during initial
 authorization, after actor User, without upgrading a shared lock.
-Local password verification runs outside a database transaction. Token issuance
-must then revalidate the verified password hash and authorization facts against
-active Organization, User, and Membership records inside the issuance
-transaction: User, Organization and Membership IDs, both roles, and active
-state. Organization slug/name are excluded from this comparison, so a rename
-between verification and issuance does not reject an otherwise authorized
-login. Changed credentials, role bindings, or inactive/deleted membership
-reject that login with `unauthenticated`, without an issued-token row or event.
-The caller starts a fresh login rather than silently accepting a stale snapshot.
-The lock order is User, Organization, then Membership/credential, matching
-directory authorization and global deactivation. The relevant rows remain
-locked through token/event commit, so a concurrent
-disable or password change orders before or after issuance, not between its
-authorization check and write. Password rotation revokes the User's existing
+Local login freezes the Organization namespace, locks its attempt bucket and
+the normalized account bucket, then reads authority under User, Organization,
+Membership and credential locks in that order. The credential's first locking
+read takes update intent, including concurrent logins to different Organizations
+for the same User. Verification uses the locked active principal and current
+password hash. A rename cannot redirect the frozen Organization ID; returned
+display labels come from the locked Organization row. Changed email/User
+bindings or inactive/deleted membership cannot authenticate.
+
+The transaction retains those locks during verification with the original
+request context. A confirmed wrong password commits both failure counters before
+returning `unauthenticated`. A successful old-policy password is rehashed and
+replaced with an expected-hash CAS; token/event issuance and only the account
+counter reset share that commit. Rehash preserves prior sessions. A failed or
+ambiguous commit returns no credentials and triggers no retry or compensation.
+The original issuance time remains the basis for stored deadlines, which are
+checked after waits, writes and commit acknowledgment. A concurrent disable or
+password change therefore orders before or after issuance. Password rotation revokes the User's existing
 browser sessions, as does global User disable. Session revocation does not
 cancel already-admitted Agent work or change Agent ownership.
 Administrative SCIM lists retain active and revoked metadata for audit and
 rotation, but never select the token hash. Listing and revocation require
 organization administration; Provider administration requires a system
 administrator.
+
+## Password resource ownership
+
+The composition root creates one `credentials.Engine` from validated Argon2
+configuration and injects that same instance into local authentication,
+directory commands, browser password changes and bootstrap. No production
+hash/verify function can create a private fallback engine. The engine admits
+memory KiB and operation count atomically, maintains a bounded FIFO queue, and
+retains both permits until synchronous Argon2 work has finished, even after
+cancellation. Shutdown prevents new admission before HTTP drain and joins KDF
+work before closing the database.
+
+The parser accepts canonical Argon2id v19 PHC strings of at most 256 bytes,
+with exactly `m,t,p`, a 16-byte salt and 32-byte key. It rejects invalid bounds
+or noncanonical decimal/base64 before admission. Verification uses the original
+stored memory parameter without rounding its encoded value; `NeedsRehash`
+compares a valid stored policy to the configured new-hash policy.
+
+Unknown, inactive, unavailable-local-credential and syntactically invalid local
+logins each use one current-policy dummy verification. A dummy match never
+authenticates. Resource, cancellation and internal errors retain their types
+across these paths; administrator creation and password changes also preserve
+them. Missing local credentials on the password-change path retain the existing
+`invalid_argument` behavior and do not invoke a dummy.
+
+Identity revision 17 projects `credential_busy` as 503 and
+`credential_rate_limited` as 429 with canonical messages, bounded Retry-After,
+no-store and no cookie writes. Local login now uses persistent admission and
+transactional rehash; password changes use the global User attempt bucket with
+atomic session rotation. Each process owns one bounded cleanup worker.
+Gateway 22 and Console 53 consume these failures without replay. The HTTPS
+integration suite exercises two Identity instances sharing PostgreSQL and
+checks each public rejection against its owning RPC before explicit recovery.
 
 ## Application Modules
 
@@ -412,6 +449,40 @@ Within the private schema, composite foreign keys enforce Organization
 coherence. An ExternalIdentity must join a Provider and Membership from the
 same Organization and User; a completed AuthSession must reference a Token
 whose Organization, User, and Membership match the session result.
+
+Migration `0009` introduces private `credential_attempts` state, keyed by
+`(scope, key_hash)`, with `window_start`, a bounded failure counter and nullable
+`locked_until`. Its length-prefixed SHA-256 keys distinguish Organization IDs,
+unknown slugs, login accounts and global password-change Users; raw identifiers
+are not stored in this table. Repository admission locks the Organization bucket
+before the account/User bucket, retains those locks until outcome commit, and
+uses fresh database time after waits and verification. Its cumulative two-second
+database allowance excludes KDF work and preserves caller cancellation.
+Classified capacity errors retain `credential_busy` even when their private
+database cause would otherwise normalize to `not_found` or `conflict`.
+
+Cleanup removes at most 500 expired, unlocked rows per invocation and skips
+rows held by admission. A single admission upsert prevents cleanup from deleting
+a bucket between its creation and locking read. Login and password changes use
+these primitives. After the listener opens, the process starts one serial worker
+with the request lifetime. It waits one minute before its first pass and after
+each completion; errors and full batches do not trigger retries or catch-up.
+This is a per-instance schedule, not a cluster-wide row quota. All server exit
+paths cancel and join the worker before closing the password engine and database
+pool, including a Serve error with a live parent context.
+
+Password changes validate the signed Caller before allocating attempt buckets,
+then acquire User, Organization, Membership and credential locks in order.
+The Service verifies the locked hash with the original request context and
+rechecks Caller before hashing a replacement. Both failed guesses and successful
+rotations acquire sorted browser SID locks and revalidate again, so logout during
+KDF work prevents either outcome from committing. Failure counting commits before
+the Service returns its business rejection. Rotation changes the hash, revokes
+all previous User sessions, issues a replacement with the original absolute
+deadline and resets only the User counter in one transaction. After its own
+revocation, final checks use the locked live session and the original signed CCT;
+they do not resolve the now-revoked SID or extend the CCT. Commit errors and
+postcommit expiry return no credential and never retry or compensate the outcome.
 
 ## Failure Semantics
 

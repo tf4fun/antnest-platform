@@ -165,7 +165,7 @@ func TestExternalIdentityRestoreCannotTransferOwnershipOrReplaceActiveSubject(t 
 	if _, err := f.controls.Unbind(f.adminCtx, f.unbindInput(bound.ID)); err != nil {
 		t.Fatal(err)
 	}
-	other, err := directory.NewService(f.store.Directory(), f.newID, f.clock).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{RequestID: "other-owner", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, Email: "other@example.com", DisplayName: "Other", Password: "correct horse battery staple", Role: domain.OrganizationRoleMember})
+	other, err := directory.NewService(f.store.Directory(), f.newID, f.clock, testPasswordEngine(t)).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{RequestID: "other-owner", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, Email: "other@example.com", DisplayName: "Other", Password: "correct horse battery staple", Role: domain.OrganizationRoleMember})
 	if err != nil {
 		t.Fatal(err)
 	}

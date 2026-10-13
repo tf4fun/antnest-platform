@@ -50,6 +50,14 @@ and strict typed bodies. Password rotation replaces cookies only after a live
 replacement is received; a lost reply requires fresh login with the new
 password. Only a wrong current password returns `invalid_current_password`;
 generic input failures return `invalid_request`, both without cookie changes.
+Login and password change separately validate Identity revision 17's admission
+errors. Closed, duplicate-free JSON and the exact status/code/message/retryable
+tuple must agree with one canonical `Retry-After`: 1–900 seconds for
+`credential_rate_limited` (429), exactly 1 for `credential_busy` (503).
+Only the validated private error type reaches the public three-field writer.
+Malformed responses use `503 identity_unavailable` without retry metadata;
+all these failures use `no-store`, preserve cookies and never repeat the RPC.
+Other Identity RPCs retain their existing error handling.
 See the [shared lifecycle contract](../../../contracts/identity/browser-sessions.md)
 for the Console, Agent UI and script consumers and their HTTPS integration.
 
@@ -118,6 +126,16 @@ Missing proof at startup or proof age reaching TTL requires live resolution.
 Revocations fence in-flight completion and late delivery. Authoritative denial
 or a complete inactive response evicts every cached scope for the token,
 including denial from background refresh.
+
+Session-feed invalidation uses a fixed window of 128 applied SID digests. Each
+flight keeps its creation counter through completion and delivery. Both checks
+use the actual validated response SID, so unrelated session revocations do not
+discard a valid live response or trigger a retry. A known SID must agree with
+that response. More than 128 intervening events fail closed for old work; a
+counter reset first invalidates all retained work. The window retains 4096 bytes
+of digests plus its counter, independently of the entry budget. Local User
+mutation generations, immediate SID eviction and every work/deadline bound stay
+in force. See the shared policy for overflow and late-delivery requirements.
 
 Validated local logout evicts the token. Password changes, self revocation and
 OIDC unbinding evict the trusted User across organizations, even when the current

@@ -84,7 +84,8 @@ Ordinary 401 responses, SSR rejection, activity and revocation preserve cookies.
 See the [browser lifecycle contract](../../contracts/identity/browser-sessions.md)
 for the logout matrix, password recovery and consumer integration.
 
-Gateway revision 21 consumes Identity revision 16's external identity controls
+Gateway revision 22 consumes Identity revision 17's password admission failures,
+external identity controls
 and existing private revocation feed. Its bounded Resolve cache defaults to
 10 seconds, clips every snapshot to the original session and CCT deadlines,
 and bypasses cached authority until the feed proves catch-up. Scope includes
@@ -94,6 +95,16 @@ and [operations guide](docs/operations.md) for capacity, outages and diagnostics
 Successful activity retires old cache observations while preserving already
 attached live readers within their original deadlines and security checks.
 Subsequent reads resolve again; obsolete results cannot refill the cache.
+
+Login and password change validate Identity's complete status, body and single
+`Retry-After` value before returning `429 credential_rate_limited` (1–900
+seconds) or `503 credential_busy` (1 second). Both responses have the fixed
+public message, `retryable: true`, `no-store` and no Cookie writes. Invalid
+metadata produces `503 identity_unavailable` without a retry hint; neither path
+replays the password request. The existing edge `login_rate_limited` admission
+is unchanged. Console user creation also consumes Identity's typed busy response.
+The HTTPS integration suite verifies real KDF rejection, unchanged browser
+Cookies and durable state, and explicit recovery through all three routes.
 
 Periodic stream checks discard a cache hit that was valid when the check
 started but crossed only its TTL during delivery. They may resolve once more

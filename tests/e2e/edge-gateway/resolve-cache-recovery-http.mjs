@@ -42,11 +42,32 @@ const statements = {
     "INSERT INTO principal_revocations (user_id, organization_id, reason, occurred_at, traceparent) VALUES ($1, NULLIF($2, ''), $3, $4, $5)",
   sessionLock: "LOCK TABLE session_revocations IN SHARE ROW EXCLUSIVE MODE",
   principalLock: "LOCK TABLE principal_revocations IN SHARE ROW EXCLUSIVE MODE",
+  attemptUpsert:
+    "INSERT INTO credential_attempts (scope,key_hash,window_start,failures) VALUES ($1,$2,clock_timestamp(),0) ON CONFLICT (scope,key_hash) DO UPDATE SET scope=EXCLUDED.scope RETURNING window_start,failures,locked_until",
+  attemptWrite:
+    "UPDATE credential_attempts SET window_start=$3,failures=$4,locked_until=$5 WHERE scope=$1 AND key_hash=$2",
 };
 const tokenRead =
   "SELECT t.id, t.expires_at, t.idle_expires_at, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM api_tokens t JOIN users u ON u.id = t.user_id JOIN organization_memberships m ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id JOIN organizations o ON o.id = t.organization_id WHERE t.token_hash = $1 AND t.kind = 'browser' AND t.revoked_at IS NULL AND t.expires_at > $2 AND t.idle_expires_at > $2 AND m.scim_deleted_at IS NULL";
 const credentialRead =
-  "SELECT c.password_hash, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM users u JOIN local_credentials c ON c.user_id = u.id JOIN organization_memberships m ON m.user_id = u.id JOIN organizations o ON o.id = m.organization_id WHERE o.slug = $1 AND m.email = $2 AND m.scim_deleted_at IS NULL";
+  "SELECT password_hash FROM local_credentials WHERE user_id=$1 FOR UPDATE";
+const loginRefusalSQL = [
+  statements.begin,
+  "SELECT id FROM organizations WHERE slug=$1",
+  statements.attemptUpsert,
+  "SELECT clock_timestamp()",
+  statements.attemptUpsert,
+  "SELECT clock_timestamp()",
+  "SELECT user_id,id FROM organization_memberships WHERE organization_id=$1 AND email=$2 AND scim_deleted_at IS NULL",
+  "SELECT system_role,active FROM users WHERE id=$1 FOR SHARE",
+  "SELECT slug,name,active FROM organizations WHERE id=$1 FOR SHARE",
+  "SELECT role,active FROM organization_memberships WHERE id=$1 AND organization_id=$2 AND user_id=$3 AND email=$4 AND scim_deleted_at IS NULL FOR SHARE",
+  credentialRead,
+  "SELECT clock_timestamp()",
+  statements.attemptWrite,
+  statements.attemptWrite,
+  statements.commit,
+];
 const fields = (row) => {
   const result = Object.fromEntries(row.map((f) => [f.key, f.value]));
   assert.equal(
@@ -166,6 +187,78 @@ function rejectionTags(span, allowed) {
       assert(Object.hasOwn(allowed, key), "unrelated refusal error metadata");
       assert.equal(value, allowed[key], "unrelated refusal error metadata");
     }
+}
+
+function committedTransaction(trace, tree, server, database) {
+  const transaction = one(
+    trace.spans.filter(
+      (s) =>
+        s.operationName === "postgresql transaction" &&
+        tree.parent(s) === server,
+    ),
+    "one owning Identity transaction required",
+  );
+  assert.equal(tree.service(transaction), "identity-service");
+  assert.equal(
+    transaction.processID,
+    server.processID,
+    "foreign transaction process",
+  );
+  assert.equal(tag(transaction, "span.kind"), "internal");
+  assert.equal(tag(transaction, "db.system.name"), "postgresql");
+  assert.equal(tag(transaction, "antnest.transaction.outcome"), "committed");
+  successful(transaction, trace);
+  assert(
+    server.startTime <= transaction.startTime &&
+      end(transaction) <= end(server),
+    "transaction outside owning Identity response",
+  );
+  const sql = database
+    .filter((s) => tree.parent(s) === transaction)
+    .sort((a, b) => a.startTime - b.startTime);
+  assert(sql.length >= 2, "committed transaction SQL missing");
+  assert.equal(query(sql[0]), statements.begin);
+  assert.equal(query(sql.at(-1)), statements.commit);
+  let previousEnd = transaction.startTime;
+  for (const span of sql) {
+    assert.equal(span.processID, server.processID, "foreign SQL process");
+    assert(
+      previousEnd <= span.startTime && end(span) <= end(transaction),
+      "SQL outside serial transaction lifetime",
+    );
+    previousEnd = end(span);
+    successful(span, trace);
+  }
+  return { transaction, sql };
+}
+
+export function inspectLoginRefusalTransaction(trace, server) {
+  assert(trace.spans.includes(server), "login SERVER not in raw trace");
+  const tree = traceTopology(trace),
+    database = databaseChildrenTopology(trace, server);
+  const { transaction, sql } = committedTransaction(
+    trace,
+    tree,
+    server,
+    database,
+  );
+  assert.equal(
+    sql.length,
+    database.length,
+    "refusal SQL outside owning transaction",
+  );
+  assert.deepEqual(
+    sql.map(query),
+    loginRefusalSQL,
+    "wrong committed login refusal SQL",
+  );
+  for (let n = 0; n < sql.length; n++)
+    assert.equal(rows(sql[n]), n === 0 || n === sql.length - 1 ? 0 : 1);
+  const credential = one(
+    sql.filter((s) => query(s) === credentialRead),
+    "one locked refusal credential required",
+  );
+  return { transaction, sql, credential };
 }
 
 // Business receipts establish credential/Principal identity and ordering. This
@@ -315,19 +408,8 @@ export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
         successful(s, source);
     }
     trace.spans.forEach((s) => successful(s, trace, action === "deactivate"));
-    const transaction = one(
-      trace.spans.filter(
-        (s) =>
-          s.operationName === "postgresql transaction" &&
-          tree.parent(s) === server,
-      ),
-      "one owning Identity transaction required",
-    );
-    assert.equal(tree.service(transaction), "identity-service");
-    assert.equal(tag(transaction, "span.kind"), "internal");
-    assert.equal(tag(transaction, "db.system.name"), "postgresql");
-    assert.equal(tag(transaction, "antnest.transaction.outcome"), "committed");
     const db = databaseChildrenTopology(trace, server),
+      { transaction } = committedTransaction(trace, tree, server, db),
       groups = Object.fromEntries(
         Object.keys(statements).map((key) => [key, []]),
       );
@@ -367,6 +449,19 @@ export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
     );
     exactly("password", action === "password" ? 1 : 0, 1);
     exactly("replacement", action === "password" ? 1 : 0, 1);
+    exactly("attemptUpsert", action === "password" ? 2 : 0, 1);
+    exactly("attemptWrite", action === "password" ? 1 : 0, 1);
+    if (action === "password") {
+      for (const upsert of groups.attemptUpsert)
+        assert(
+          end(upsert) <= groups.password[0].startTime,
+          "attempt admission follows password mutation",
+        );
+      assert(
+        end(groups.replacement[0]) <= groups.attemptWrite[0].startTime,
+        "account reset precedes completed rotation",
+      );
+    }
     exactly("membership", console ? 1 : 0, 1);
     exactly("revoke", action === "restore" ? 0 : 1);
     const revoked = groups.revoke.length ? rows(groups.revoke[0]) : 0;
@@ -394,6 +489,8 @@ export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
       revoked_sessions: revoked,
       session_feed_rows: groups.session.length,
       principal_feed_rows: groups.principal.length,
+      attempt_upserts: groups.attemptUpsert.length,
+      attempt_writes: groups.attemptWrite.length,
       resolution,
     });
   }
@@ -437,11 +534,23 @@ export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
       );
     }
     const database = databaseChildrenTopology(trace, server);
-    const sql = one(database, "one refusal SELECT required");
-    assert.equal(tree.parent(sql), server);
-    assert.equal(query(sql), login ? credentialRead : tokenRead);
-    assert.equal(rows(sql), login ? 1 : 0);
-    successful(sql, trace);
+    let sql,
+      transaction,
+      ordered = database;
+    if (login) {
+      ({
+        transaction,
+        sql: ordered,
+        credential: sql,
+      } = inspectLoginRefusalTransaction(trace, server));
+    } else {
+      sql = one(database, "one refusal SELECT required");
+      assert.equal(tree.parent(sql), server);
+      assert.equal(sql.processID, server.processID);
+      assert.equal(query(sql), tokenRead);
+      assert.equal(rows(sql), 0);
+      successful(sql, trace);
+    }
     const gatewayEvent = {
       "antnest.error.cause_types": JSON.stringify([
         login ? "*identity.RemoteError" : "*errors.errorString",
@@ -497,7 +606,11 @@ export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
         "otel.status_description": "rejected",
       });
     const failures = [root, client, server, ...(decision ? [decision] : [])];
-    const ownedSpans = new Set([...failures, sql]);
+    const ownedSpans = new Set([
+      ...failures,
+      ...database,
+      ...(transaction ? [transaction] : []),
+    ]);
     assert(
       trace.spans.every((span) => ownedSpans.has(span)),
       "refusal contains unexpected forwarding or work",
@@ -518,6 +631,8 @@ export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
       status: 401,
       identity_server_span_id: server.spanID,
       sql_span_id: sql.spanID,
+      sql_span_ids: ordered.map((span) => span.spanID),
+      ...(transaction ? { transaction_span_id: transaction.spanID } : {}),
     });
   }
   for (const c of evidence.recovery.cases) {

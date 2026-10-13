@@ -46,7 +46,7 @@ func TestBrowserDirectoryMutationsRevalidateActorAfterTokenWait(t *testing.T) {
 						captured.Do(func() { pid <- conn.PgConn().PID() })
 					}
 				})
-				d := directory.NewService(store.Directory(), f.newID, f.clock)
+				d := directory.NewService(store.Directory(), f.newID, f.clock, testPasswordEngine(t))
 				done := make(chan error, 1)
 				workers.Go(func() {
 					if operation == "role" {
@@ -100,7 +100,7 @@ func TestBrowserReactivationCannotReviveLegacyUnrevokedSessions(t *testing.T) {
 				t.Fatal("legacy fixture is not inactive")
 			}
 			if source == "local" {
-				_, err := directory.NewService(f.store.Directory(), f.newID, f.clock).UpdateMembership(t.Context(), directory.UpdateMembershipInput{RequestID: "reactivate-legacy", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID, Email: f.user.Membership.Email, DisplayName: f.user.Membership.DisplayName, Role: domain.OrganizationRoleMember, Active: true})
+				_, err := directory.NewService(f.store.Directory(), f.newID, f.clock, testPasswordEngine(t)).UpdateMembership(t.Context(), directory.UpdateMembershipInput{RequestID: "reactivate-legacy", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID, Email: f.user.Membership.Email, DisplayName: f.user.Membership.DisplayName, Role: domain.OrganizationRoleMember, Active: true})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -140,7 +140,7 @@ func TestBrowserReactivationCannotReviveLegacyUnrevokedSessions(t *testing.T) {
 
 func TestBrowserAdministratorCanDemoteOwnMembershipAndLosesSession(t *testing.T) {
 	f := newBrowserControlsFixture(t)
-	d := directory.NewService(f.store.Directory(), f.newID, f.clock)
+	d := directory.NewService(f.store.Directory(), f.newID, f.clock, testPasswordEngine(t))
 	input := directory.UpdateMembershipInput{RequestID: "promote-for-self-demotion", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID, Email: f.user.Membership.Email, DisplayName: f.user.Membership.DisplayName, Role: domain.OrganizationRoleAdmin, Active: true}
 	if _, err := d.UpdateMembership(t.Context(), input); err != nil {
 		t.Fatal(err)

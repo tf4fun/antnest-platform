@@ -60,7 +60,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	passwordHash, err := credentials.HashPassword("correct horse battery staple")
+	passwordHash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +86,8 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	directoryService := directory.NewService(store.Directory(), newID, time.Now)
-	localAuthService, err := localauth.NewService(store.LocalAuth(), newID, time.Now, time.Hour)
+	directoryService := directory.NewService(store.Directory(), newID, time.Now, testPasswordEngine(t))
+	localAuthService, err := localauth.NewService(t.Context(), store.LocalAuth(), newID, time.Now, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	authentication, authority, tokens := identityTestAuthentication(t, store)
 	rpcHandler, err := rpc.NewHandler(rpc.Dependencies{
 		Directory: directoryService, LocalAuth: localAuthService, OIDC: oidcService, SCIM: scimService,
-		BrowserSessions:    browsersessions.NewService(store.BrowserSessions()),
+		BrowserSessions:    browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)),
 		ExternalIdentities: externalidentities.NewService(store.ExternalIdentities()),
 		Authentication:     authentication, CallerContext: authority,
 	})

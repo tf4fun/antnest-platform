@@ -4,10 +4,19 @@ import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
 import { encodedStreamFrame, StreamCapacityError, type StreamEvent } from "../bridge/stream-journal.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
 import { bridgeCapacityResponse, error, missingSessionResponse, trustedScope } from "./command-routes.ts";
+import { captureStreamTermination } from "../telemetry.ts";
 
 const prefix = "/api/app/workspace/v1/agents/";
 const heartbeatMs = 15_000;
 const encoder = new TextEncoder();
+const completedStreams = new WeakMap<Response, () => void>();
+
+// Called only by the native adapter after a live 200 SSE reaches normal EOF.
+export function recordEventStreamCompletion(response: Response): void {
+  const record = completedStreams.get(response);
+  completedStreams.delete(response);
+  record?.();
+}
 
 type Subscription = {
   events: AsyncIterableIterator<StreamEvent<unknown>>;
@@ -49,6 +58,7 @@ export function createEventHandler(dependencies: {
       );
     if (scope.agentId !== agentId)
       return error(403, "access_denied", "Agent access denied", "none");
+    const recordTermination = captureStreamTermination(scope);
     const sessions = url.searchParams.getAll("sessionId");
     const queryCursors = url.searchParams.getAll("cursor");
     const sessionId = sessions[0] ?? null;
@@ -95,6 +105,7 @@ export function createEventHandler(dependencies: {
     }
     const { events, release } = subscription;
     let closed = false;
+    let termination: unknown;
     let pending = events.next();
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
     const close = () => {
@@ -137,6 +148,7 @@ export function createEventHandler(dependencies: {
           return;
         }
         if (result.event.done) {
+          termination = result.event.value;
           close();
           value.close();
           return;
@@ -149,12 +161,16 @@ export function createEventHandler(dependencies: {
         close();
       },
     });
-    return new Response(body, {
+    const response = new Response(body, {
       headers: {
         "content-type": "text/event-stream; charset=utf-8",
         "cache-control": "no-store, no-transform",
         "x-accel-buffering": "no",
       },
     });
+    completedStreams.set(response, () => {
+      if (!request.signal.aborted) recordTermination(termination);
+    });
+    return response;
   };
 }

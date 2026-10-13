@@ -188,7 +188,12 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err := store.InitializeBrowserSessions(ctx, cfg.SessionIdleTTL); err != nil {
 		return classifyFailure("browser_session_initialization", err)
 	}
-	if err := initializeIdentityFacts(ctx, cfg, store, logger); err != nil {
+	passwords, err := credentials.NewEngine(cfg.Passwords)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
+	defer drainPasswordResources(passwords, cfg.Passwords, logger)
+	if err := initializeIdentityFacts(ctx, cfg, store, logger, passwords); err != nil {
 		return classifyFailure("identity_bootstrap", err)
 	}
 	interrupted, err := store.FailExpiredOIDCSessions(ctx, time.Now().UTC())
@@ -211,8 +216,8 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	directoryService := directory.NewService(store.Directory(), identityid.MustNew, time.Now)
-	localAuthService, err := localauth.NewService(store.LocalAuth(), identityid.MustNew, time.Now, cfg.SessionAbsoluteTTL)
+	directoryService := directory.NewService(store.Directory(), identityid.MustNew, time.Now, passwords)
+	localAuthService, err := localauth.NewService(ctx, store.LocalAuth(), identityid.MustNew, time.Now, cfg.SessionAbsoluteTTL, passwords)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
@@ -238,7 +243,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	}
 	rpcHandler, err := rpc.NewHandler(rpc.Dependencies{
 		Directory: directoryService, LocalAuth: localAuthService, OIDC: oidcService, SCIM: scimService,
-		BrowserSessions:    browsersessions.NewService(store.BrowserSessions()),
+		BrowserSessions:    browsersessions.NewService(store.BrowserSessions(), passwords),
 		ExternalIdentities: externalidentities.NewService(store.ExternalIdentities()),
 		Authentication:     authentication.Receiver, CallerContext: authority,
 	})
@@ -253,17 +258,22 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	requestCtx, cancelRequests := context.WithCancel(ctx)
+	defer cancelRequests()
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddress, Handler: telemetry.HTTPHandler(handler, logger),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 2 * time.Minute, IdleTimeout: 90 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 		TLSConfig:      authentication.ServerTLS,
+		BaseContext:    func(net.Listener) context.Context { return requestCtx },
 	}
 	listener, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
 		return classifyFailure("listener", err)
 	}
+	stopCleanup := startCredentialCleanup(requestCtx, store.CleanupCredentialAttempts, logger)
+	defer stopCleanup()
 	readiness.Set(true)
 	logger.Info("Identity Service is ready", "listen_address", cfg.ListenAddress)
 	serverErrors := make(chan error, 1)
@@ -282,6 +292,8 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		}
 	}
 	readiness.Set(false)
+	passwords.Stop()
+	cancelRequests()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -295,7 +307,24 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	return resultErr
 }
 
-func initializeIdentityFacts(ctx context.Context, cfg config.Config, store *repository.Store, logger *slog.Logger) error {
+type passwordResources interface {
+	Close()
+	Stats() credentials.PasswordStats
+}
+
+func drainPasswordResources(resources passwordResources, config credentials.PasswordConfig, logger *slog.Logger) {
+	resources.Close()
+	stats := resources.Stats()
+	logger.Info("Identity password resources drained",
+		"memory_budget_kib", config.MemoryBudgetKiB, "max_concurrent", config.MaxConcurrent,
+		"policy_memory_kib", config.Policy.MemoryKiB, "policy_iterations", config.Policy.Iterations, "policy_parallelism", config.Policy.Parallelism,
+		"active", stats.Active, "memory_kib", stats.MemoryKiB, "queued", stats.Queued,
+		"peak_active", stats.PeakActive, "peak_memory_kib", stats.PeakMemoryKiB,
+		"queue_rejected", stats.QueueRejected, "wait_expired", stats.WaitExpired, "over_budget", stats.OverBudget,
+	)
+}
+
+func initializeIdentityFacts(ctx context.Context, cfg config.Config, store *repository.Store, logger *slog.Logger, passwords credentials.Passwords) error {
 	if !cfg.Bootstrap.Enabled() {
 		return nil
 	}
@@ -311,7 +340,7 @@ func initializeIdentityFacts(ctx context.Context, cfg config.Config, store *repo
 	if err != nil {
 		return fmt.Errorf("bootstrap administrator email: %w", err)
 	}
-	passwordHash, err := credentials.HashPassword(cfg.Bootstrap.AdminPassword)
+	passwordHash, err := passwords.HashPassword(ctx, cfg.Bootstrap.AdminPassword)
 	if err != nil {
 		return fmt.Errorf("bootstrap administrator password: %w", err)
 	}

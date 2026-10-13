@@ -23,7 +23,13 @@ compose() {
     -f "$root/tests/e2e/identity-closeout/oidc-compose.yaml" -f "$root/tests/e2e/identity-closeout/compose.yaml" \
     --profile stage3 --profile observability "$@"
 }
-cleanup() { status=$?; trap - EXIT INT TERM; rm -rf -- "${temporary:?}"; exit "$status"; }
+cleanup() {
+  status=$?
+  trap - EXIT INT TERM
+  compose logs --no-color edge-gateway admin-console identity-service >"$evidence/services.private.log" 2>&1 || true
+  rm -rf -- "${temporary:?}"
+  exit "$status"
+}
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM

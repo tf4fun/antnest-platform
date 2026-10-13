@@ -441,8 +441,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
-	if contract.Revision != 16 {
-		t.Fatalf("identity contract revision=%d want=16", contract.Revision)
+	if contract.Revision != 17 {
+		t.Fatalf("identity contract revision=%d want=17", contract.Revision)
 	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
@@ -501,7 +501,7 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 		t.Fatal("organization role contract must enumerate member and admin")
 	}
 	for _, code := range []string{
-		"invalid_argument", "invalid_current_password", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
+		"invalid_argument", "invalid_current_password", "credential_busy", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
 		"last_organization_admin",
 		"version_conflict",
 		"oidc_provider_client_id_immutable",
@@ -514,7 +514,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	}
 	for code, status := range map[string]int{
 		"invalid_argument": 400, "invalid_current_password": 400, "invalid_reference": 400, "unauthenticated": 401,
-		"forbidden": 403, "not_found": 404, "conflict": 409, "last_organization_admin": 409,
+		"credential_busy": 503,
+		"forbidden":       403, "not_found": 404, "conflict": 409, "last_organization_admin": 409,
 		"version_conflict":                  409,
 		"oidc_session_expired":              410,
 		"oidc_provider_client_id_immutable": 409,

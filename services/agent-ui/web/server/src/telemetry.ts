@@ -1,10 +1,12 @@
 import { context, createContextKey, metrics, propagation, ROOT_CONTEXT,
-  SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
+  SpanKind, SpanStatusCode, trace, type Span } from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { core, NodeSDK, tracing } from "@opentelemetry/sdk-node";
 import type { BridgeRuntimeMetrics } from "./workspace-runtime.ts";
+import type { BridgeScope } from "./bridge/registry.ts";
+import type { StreamTermination } from "./bridge/stream-journal.ts";
 
 export type BridgeTelemetry = {
   observeHttp(method: string, route: string, work: () => Promise<number>,
@@ -16,7 +18,27 @@ export type BridgeTelemetry = {
 };
 
 const HTTP_BOUNDARY = createContextKey("antnest.ui.active-http-boundary");
-type HttpBoundary = { active: boolean };
+type HttpBoundary = { active: boolean; span: Span };
+
+export function captureStreamTermination(scope: BridgeScope): (value: unknown) => void {
+  const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
+  const { organizationId, principalId, agentId } = scope;
+  let recorded = false;
+  return value => {
+    if (recorded || boundary?.active !== true || !boundary.span.isRecording() ||
+      value === null || typeof value !== "object") return;
+    const cause = value as Partial<StreamTermination>;
+    if (cause.reason !== "access_denied" || cause.source !== "agent-execution-state" ||
+      cause.organizationId !== organizationId || cause.principalId !== principalId ||
+      cause.agentId !== agentId) return;
+    recorded = true;
+    boundary.span.addEvent("antnest.stream.termination", {
+      reason: "access_denied", source: "agent-execution-state",
+      "antnest.organization.id": organizationId,
+      "antnest.principal.id": principalId, "antnest.agent.id": agentId,
+    });
+  };
+}
 
 export function withActiveHttpTrace(fetchImpl: typeof fetch): typeof fetch {
   return (input, init) => {
@@ -120,7 +142,7 @@ export async function startBridgeTelemetry(config: {
         kind: SpanKind.SERVER,
         attributes: { "http.request.method": method, "http.route": route },
       }, parent, async (span) => {
-        const boundary: HttpBoundary = { active: true };
+        const boundary: HttpBoundary = { active: true, span };
         return context.with(context.active().setValue(HTTP_BOUNDARY, boundary), async () => {
           const startedAt = performance.now();
           let status = 503;

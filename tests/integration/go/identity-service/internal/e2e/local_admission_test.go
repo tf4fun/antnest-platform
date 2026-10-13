@@ -5,22 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/repository"
 )
 
-// The hook deterministically commits a competing mutation after password
-// verification, before the real PostgreSQL adapter can issue the credential.
-func TestLocalLoginRevalidatesBeforeIssuingToken(t *testing.T) {
+// Mutations that commit before the first authority lock must be read as the
+// authoritative credential. Later mutations are covered by the held-verifier
+// serialization tests, rather than a synchronous write inside the locked KDF.
+func TestLocalLoginReadsMutationsBeforeCredentialLocks(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_IDENTITY_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_IDENTITY_TEST_DATABASE_URL is not set")
@@ -40,22 +42,25 @@ func TestLocalLoginRevalidatesBeforeIssuingToken(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newLocalAdmissionFixture(t, databaseURL, time.Now)
-			adapter := &beforeIssuanceRepository{Repository: fixture.store.LocalAuth(), before: func() {
-				if test.mutate != "" {
-					arguments := []any{fixture.user.User.ID}
-					if test.name == "password_rotated" {
-						hash, err := credentials.HashPassword("rotated member password")
-						if err != nil {
-							t.Fatal(err)
-						}
-						arguments = append(arguments, hash)
-					}
-					if _, err := fixture.pool.Exec(t.Context(), test.mutate, arguments...); err != nil {
-						t.Fatalf("commit competing mutation: %v", err)
+			arguments := []any{fixture.user.User.ID}
+			if test.name == "password_rotated" {
+				hash, err := testPasswordEngine(t).HashPassword(t.Context(), "rotated member password")
+				if err != nil {
+					t.Fatal(err)
+				}
+				arguments = append(arguments, hash)
+			}
+			var calls int
+			var mutationErr error
+			adapter := fixture.tracedStore(t, func(ctx context.Context, _ *pgx.Conn, sql string) {
+				if strings.Contains(sql, "FROM users") && strings.Contains(sql, "FOR SHARE") {
+					calls++
+					if test.mutate != "" {
+						_, mutationErr = fixture.pool.Exec(ctx, test.mutate, arguments...)
 					}
 				}
-			}}
-			auth, err := localauth.NewService(adapter, fixture.newID, time.Now, time.Hour)
+			})
+			auth, err := localauth.NewService(t.Context(), adapter.LocalAuth(), fixture.newID, time.Now, time.Hour, testPasswordEngine(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -63,37 +68,28 @@ func TestLocalLoginRevalidatesBeforeIssuingToken(t *testing.T) {
 				RequestID: "admission-race", OrganizationSlug: "admission",
 				Email: "member@example.com", Password: "correct horse battery staple",
 			})
-			if adapter.calls != 1 {
-				t.Fatalf("issuance attempts = %d, want exactly one", adapter.calls)
+			if calls != 1 || mutationErr != nil {
+				t.Fatalf("authority lock barrier: calls=%d mutation=%v", calls, mutationErr)
 			}
 			wantCount := 0
-			if test.mutate == "" {
+			if test.mutate == "" || test.name == "role_changed" {
 				wantCount = 1
 				if err != nil || result.AccessToken == "" {
-					t.Fatalf("unchanged login: %v", err)
+					t.Fatalf("current credential login: %v", err)
+				}
+				if test.name == "role_changed" && result.Principal.OrganizationRole != domain.OrganizationRoleAdmin {
+					t.Fatal("login did not read the committed current role")
 				}
 				principal, resolveErr := auth.Resolve(t.Context(), result.AccessToken)
 				if resolveErr != nil || principal != result.Principal {
 					t.Fatalf("issued principal does not resolve: %v", resolveErr)
 				}
 			} else if !errors.Is(err, domain.ErrUnauthenticated) || result.AccessToken != "" {
-				t.Fatalf("stale login issued credential=%t, error=%v; want unauthenticated", result.AccessToken != "", err)
+				t.Fatalf("stale login issued credential=%t, error=%v", result.AccessToken != "", err)
 			}
 			fixture.assertIssuanceCount(t, wantCount)
 		})
 	}
-}
-
-type beforeIssuanceRepository struct {
-	localauth.Repository
-	before func()
-	calls  int
-}
-
-func (r *beforeIssuanceRepository) IssueToken(ctx context.Context, command localauth.IssueTokenCommand) (localauth.Token, error) {
-	r.calls++
-	r.before()
-	return r.Repository.IssueToken(ctx, command)
 }
 
 type localAdmissionFixture struct {
@@ -125,7 +121,7 @@ func newLocalAdmissionFixture(t *testing.T, databaseURL string, clock func() tim
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := credentials.HashPassword("correct horse battery staple")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +133,7 @@ func newLocalAdmissionFixture(t *testing.T, databaseURL string, clock func() tim
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := directory.NewService(store.Directory(), newID, storedNow).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{
+	user, err := directory.NewService(store.Directory(), newID, storedNow, testPasswordEngine(t)).CreateLocalUser(t.Context(), directory.CreateLocalUserInput{
 		RequestID: "create-member", ActorPrincipalID: bootstrap.User.ID, OrganizationID: bootstrap.Organization.ID,
 		Email: "member@example.com", DisplayName: "Member", Password: "correct horse battery staple", Role: domain.OrganizationRoleMember,
 	})

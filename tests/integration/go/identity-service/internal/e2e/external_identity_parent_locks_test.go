@@ -27,7 +27,7 @@ func TestExternalIdentityExistingWritersLockParentsBeforeMembership(t *testing.T
 				if _, err := f.pool.Exec(ctx, `UPDATE organization_memberships SET role='admin' WHERE id=$1`, f.user.Membership.ID); err != nil {
 					t.Fatal(err)
 				}
-				other, err := directory.NewService(f.store.Directory(), f.newID, f.clock).CreateLocalUser(ctx, directory.CreateLocalUserInput{RequestID: "other-member", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, Email: "other@example.com", DisplayName: "Other", Password: "correct horse battery staple", Role: domain.OrganizationRoleMember})
+				other, err := directory.NewService(f.store.Directory(), f.newID, f.clock, testPasswordEngine(t)).CreateLocalUser(ctx, directory.CreateLocalUserInput{RequestID: "other-member", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, Email: "other@example.com", DisplayName: "Other", Password: "correct horse battery staple", Role: domain.OrganizationRoleMember})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -62,7 +62,7 @@ func TestExternalIdentityExistingWritersLockParentsBeforeMembership(t *testing.T
 			done := make(chan error, 1)
 			workers.Go(func() {
 				if operation == "add-membership" {
-					_, err := directory.NewService(store.Directory(), f.newID, f.clock).AddOrganizationMembership(ctx, add)
+					_, err := directory.NewService(store.Directory(), f.newID, f.clock, testPasswordEngine(t)).AddOrganizationMembership(ctx, add)
 					done <- err
 					return
 				}

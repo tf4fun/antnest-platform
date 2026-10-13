@@ -89,6 +89,51 @@ function expectRowActionsDisabled(disabled: boolean) {
   }
 }
 
+it("keeps a busy user creation in its dialog and retries only after another explicit click", async () => {
+  const workflow = workflows[0]!;
+  const expired = vi.fn();
+  const validation = vi.fn();
+  window.addEventListener("antnest:session-expired", expired);
+  window.addEventListener("antnest:session-validation-required", validation);
+  let reads = 0;
+  let writes = 0;
+  const created = { user: { ...member.user, id: "user-new" }, membership: { ...member.membership, id: "membership-new", user_id: "user-new", display_name: "Alex Updated" } };
+  directoryMock(() => ++writes === 1
+    ? Response.json({ code: "credential_busy", message: "Password verification is busy", retryable: true }, { status: 503, headers: { "Retry-After": "1", "Cache-Control": "no-store" } })
+    : Response.json(created), () => { reads++; return Response.json({ users: reads === 1 ? [member] : [member, created], groups: [] }); });
+  try {
+    const dialog = await openWorkflow(workflow);
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(dialog.getByRole("button", { name: workflow.submit }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(dialog.getByRole("alert").textContent).toContain("Password verification is busy");
+    expect(screen.queryByText(workflow.success)).toBeNull();
+    expect((dialog.getByLabelText("Display name") as HTMLInputElement).value).toBe("Alex Updated");
+    expect((dialog.getByLabelText("Initial password") as HTMLInputElement).value).toBe("test-password-12345");
+    expect(JSON.stringify({ ...sessionStorage })).not.toContain("test-password-12345");
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(writes).toBe(1);
+    expect(reads).toBe(1);
+    expect(expired).not.toHaveBeenCalled();
+    expect(validation).not.toHaveBeenCalled();
+    vi.useRealTimers();
+    fireEvent.click(dialog.getByRole("button", { name: workflow.submit }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText(workflow.success)).toBeTruthy();
+    expect(writes).toBe(2);
+    expect(reads).toBe(2);
+    const commands = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(commands).toHaveLength(2);
+    expect(new Headers(commands[1]![1]?.headers).get("Idempotency-Key")).toBe(new Headers(commands[0]![1]?.headers).get("Idempotency-Key"));
+  } finally {
+    vi.useRealTimers();
+    window.removeEventListener("antnest:session-expired", expired);
+    window.removeEventListener("antnest:session-validation-required", validation);
+  }
+});
+
 describe.each(workflows)("Directory $name", (workflow) => {
   it.each([403, 503])("acknowledges the command but requires fresh records after a %i refresh failure", async (status) => {
     let resolveCommand!: (response: Response) => void;

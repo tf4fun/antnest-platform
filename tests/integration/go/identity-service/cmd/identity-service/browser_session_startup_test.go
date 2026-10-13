@@ -25,7 +25,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	protocol "github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
-	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/identityid"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/localauth"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/repository"
@@ -80,7 +79,7 @@ func newBrowserStartupFixture(t *testing.T) browserStartupFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := credentials.HashPassword("browser startup test password")
+	hash, err := testPasswordEngine(t).HashPassword(t.Context(), "browser startup test password")
 	if err != nil {
 		t.Fatal(err)
 	}

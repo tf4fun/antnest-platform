@@ -90,7 +90,7 @@ func TestBrowserLocalIssuanceDeadlineIncludesCredentialLockWait(t *testing.T) {
 			} else if err := store.InitializeBrowserSessions(ctx, time.Second); err != nil {
 				t.Fatal(err)
 			}
-			auth, err := localauth.NewService(store.LocalAuth(), f.newID, f.clock, absoluteTTL)
+			auth, err := localauth.NewService(t.Context(), store.LocalAuth(), f.newID, f.clock, absoluteTTL, testPasswordEngine(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestBrowserLoginAdmitsOnlyLivePersistedTimestampPrecision(t *testing.T) {
 				if err := f.store.InitializeBrowserSessions(t.Context(), idleTTL); err != nil {
 					t.Fatal(err)
 				}
-				auth, err := localauth.NewService(f.store.LocalAuth(), f.newID, f.clock, absoluteTTL)
+				auth, err := localauth.NewService(t.Context(), f.store.LocalAuth(), f.newID, f.clock, absoluteTTL, testPasswordEngine(t))
 				if err != nil {
 					t.Fatal(err)
 				}

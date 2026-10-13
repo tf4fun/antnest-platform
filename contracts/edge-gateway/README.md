@@ -6,6 +6,16 @@ workspace routes plus the trusted headers Edge Gateway may inject into internal
 services. It is a product-facing browser contract, not a public third-party
 OpenAPI.
 
+The shared [password verification policy](../identity/password-verification.md)
+defines Identity's persisted attempt limits and Argon2 resource failures.
+Gateway version 22 validates the complete password failure tuple on login and
+password change, then publishes `credential_rate_limited` (429) or
+`credential_busy` (503), with one bounded `Retry-After` and `retryable: true`.
+Both errors preserve cookies and use `no-store`; malformed metadata returns
+`503 identity_unavailable` without a retry hint. Gateway never replays a
+password request. The existing `login_rate_limited` prefilter remains separate.
+Console user creation and final cross-service #60 admission remain pending.
+
 Revision 21 defines [bounded Identity resolution](resolve-cache.md) and its
 [machine-readable policy](resolve-cache-policy.json): scoped positive caching,
 private session-feed invalidation, resource limits and unchanged hard stream

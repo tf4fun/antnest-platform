@@ -27,7 +27,7 @@ var browserLifecycleOperations = []struct {
 
 func browserLifecycleMutation(t *testing.T, f browserControlsFixture, operation string, login localauth.LoginResult) (func(context.Context) error, func(context.Context) error) {
 	t.Helper()
-	d := directory.NewService(f.store.Directory(), f.newID, f.clock)
+	d := directory.NewService(f.store.Directory(), f.newID, f.clock, testPasswordEngine(t))
 	localMembership := func(ctx context.Context, role domain.OrganizationRole, active bool) error {
 		_, err := d.UpdateMembership(ctx, directory.UpdateMembershipInput{RequestID: "lifecycle-membership", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID, Email: f.user.Membership.Email, DisplayName: f.user.Membership.DisplayName, Role: role, Active: active})
 		return err
@@ -183,7 +183,7 @@ func TestBrowserLifecycleSessionFeedFailureRollsBackBusinessAndPrincipalFeed(t *
 func TestBrowserMembershipProfileUpdateDoesNotRevoke(t *testing.T) {
 	f := newBrowserControlsFixture(t)
 	login := f.login(t, "admission", "member@example.com")
-	_, err := directory.NewService(f.store.Directory(), f.newID, f.clock).UpdateMembership(t.Context(), directory.UpdateMembershipInput{RequestID: "profile-only", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID, Email: "renamed@example.com", DisplayName: "Renamed", Role: domain.OrganizationRoleMember, Active: true})
+	_, err := directory.NewService(f.store.Directory(), f.newID, f.clock, testPasswordEngine(t)).UpdateMembership(t.Context(), directory.UpdateMembershipInput{RequestID: "profile-only", ActorPrincipalID: f.admin.User.ID, OrganizationID: f.admin.Organization.ID, MembershipID: f.user.Membership.ID, Email: "renamed@example.com", DisplayName: "Renamed", Role: domain.OrganizationRoleMember, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}

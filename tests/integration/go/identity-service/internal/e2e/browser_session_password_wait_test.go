@@ -17,7 +17,7 @@ import (
 )
 
 func TestBrowserPasswordFeedWaitCannotReturnExpiredReplacement(t *testing.T) {
-	for _, deadline := range []string{"idle", "absolute"} {
+	for _, deadline := range []string{"idle", "absolute", "caller-context"} {
 		t.Run(deadline, func(t *testing.T) {
 			f := newBrowserControlsFixture(t)
 			idleTTL := 30 * time.Minute
@@ -35,6 +35,13 @@ func TestBrowserPasswordFeedWaitCannotReturnExpiredReplacement(t *testing.T) {
 				}
 			}
 			ctx, cancel := context.WithTimeout(f.caller(t, login), 12*time.Second)
+			if deadline == "caller-context" {
+				caller, err := callercontext.CallerFromContext(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				expires = time.Unix(caller.Claims().ExpiresAt+31, 0)
+			}
 			var workers sync.WaitGroup
 			defer func() { cancel(); workers.Wait() }()
 			blocker, err := f.pool.Begin(ctx)
@@ -65,7 +72,7 @@ func TestBrowserPasswordFeedWaitCannotReturnExpiredReplacement(t *testing.T) {
 			}
 			finished := make(chan outcome, 1)
 			workers.Go(func() {
-				result, err := browsersessions.NewService(store.BrowserSessions()).ChangePassword(ctx, browserPasswordInput(f))
+				result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 				finished <- outcome{result, err}
 			})
 			select {
@@ -128,7 +135,7 @@ func TestBrowserPasswordResponseChecksDeadlineAfterSuccessfulCommit(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := browsersessions.NewService(store.BrowserSessions()).ChangePassword(ctx, browserPasswordInput(f))
+	result, err := browsersessions.NewService(store.BrowserSessions(), testPasswordEngine(t)).ChangePassword(ctx, browserPasswordInput(f))
 	if commits != 1 {
 		t.Fatal("deadline probe did not run after the real password transaction committed")
 	}

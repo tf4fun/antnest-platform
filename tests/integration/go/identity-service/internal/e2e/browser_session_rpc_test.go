@@ -35,7 +35,7 @@ func TestBrowserSessionRPCUsesRealAuthorityApplicationAndPostgres(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := rpc.NewHandler(rpc.Dependencies{Directory: directory.NewService(f.store.Directory(), f.newID, f.clock), LocalAuth: f.auth, OIDC: oidc.flow, SCIM: scimService, BrowserSessions: f.service, ExternalIdentities: externalidentities.NewService(f.store.ExternalIdentities()), Authentication: authentication, CallerContext: f.authority})
+	h, err := rpc.NewHandler(rpc.Dependencies{Directory: directory.NewService(f.store.Directory(), f.newID, f.clock, testPasswordEngine(t)), LocalAuth: f.auth, OIDC: oidc.flow, SCIM: scimService, BrowserSessions: f.service, ExternalIdentities: externalidentities.NewService(f.store.ExternalIdentities()), Authentication: authentication, CallerContext: f.authority})
 	if err != nil {
 		t.Fatal(err)
 	}

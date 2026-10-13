@@ -112,6 +112,78 @@ test("HTTP status failures never echo sensitive response bodies", async (t) => {
   );
 });
 
+test("unexpected status retains only safe response diagnostics before throwing", async (t) => {
+  let calls = 0;
+  const traceID = "d".repeat(32),
+    observed = [];
+  const base = await fixture(t, (_, response) => {
+    calls++;
+    response.setHeader("X-Antnest-Trace-ID", traceID);
+    response.setHeader("Set-Cookie", "antnest_session=private-new-cookie");
+    response.writeHead(503).end(
+      JSON.stringify({
+        code: "identity_unavailable",
+        message: "private-body",
+      }),
+    );
+  });
+  const client = new GatewayClient(base, {
+    onStatusFailure: async (failure) => observed.push(failure),
+  });
+  client.cookies.set("antnest_session", "private-original-cookie");
+  await assert.rejects(
+    client.request("/api/admin/directory?token=private-query"),
+    (error) => {
+      assert.match(error.message, /HTTP 503, expected 200/);
+      assert(!inspect(error).includes("private-"));
+      return true;
+    },
+  );
+  assert.deepEqual(observed, [
+    {
+      http_status: 503,
+      expected_status: 200,
+      trace_id: traceID,
+      response_code: "identity_unavailable",
+    },
+  ]);
+  assert.equal(calls, 1);
+  assert.equal(client.accessToken, "private-original-cookie");
+});
+
+test("failure recorder rejection cannot replace the original HTTP assertion", async (t) => {
+  let called = false;
+  const base = await fixture(t, (_, response) =>
+    response.writeHead(503).end("{}"),
+  );
+  const client = new GatewayClient(base, {
+    onStatusFailure: async () => {
+      called = true;
+      throw new Error("private-diagnostic-error");
+    },
+  });
+  await assert.rejects(client.request("/api/admin/directory"), (error) => {
+    assert.equal(error.code, "ERR_ASSERTION");
+    assert.equal(summarizeFailure(error).http_status, 503);
+    assert(!inspect(error).includes("private-diagnostic-error"));
+    return true;
+  });
+  assert.equal(called, true);
+});
+
+test("expected refusals do not start failure diagnostics", async (t) => {
+  const base = await fixture(t, (_, response) =>
+    response.writeHead(401).end("{}"),
+  );
+  const client = new GatewayClient(base, {
+    onStatusFailure: async () => assert.fail("not unexpected"),
+  });
+  assert.equal(
+    (await client.request("/api/session", { status: 401 })).status,
+    401,
+  );
+});
+
 for (const status of [204, 401])
   test(`explicit logout accepts ${status} and exposes its cookie clearing`, async (t) => {
     const base = await fixture(t, (_, response) => {

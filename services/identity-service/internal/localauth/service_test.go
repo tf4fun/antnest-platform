@@ -14,7 +14,7 @@ import (
 func TestLocalLoginIssuesMembershipScopedToken(t *testing.T) {
 	t.Parallel()
 
-	passwordHash, err := credentials.HashPassword("correct horse battery staple")
+	passwordHash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatalf("hash fixture password: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestLocalLoginIssuesMembershipScopedToken(t *testing.T) {
 			SystemRole: domain.SystemRoleUser, OrganizationRole: domain.OrganizationRoleMember, Active: true,
 		},
 	}}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, 12*time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, 12*time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestLocalLoginIssuesMembershipScopedToken(t *testing.T) {
 func TestLocalLoginCollapsesUnknownWrongAndInactiveAccounts(t *testing.T) {
 	t.Parallel()
 
-	passwordHash, err := credentials.HashPassword("correct horse battery staple")
+	passwordHash, err := testPasswordEngine(t).HashPassword(t.Context(), "correct horse battery staple")
 	if err != nil {
 		t.Fatalf("hash fixture password: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestLocalLoginCollapsesUnknownWrongAndInactiveAccounts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &authRepositoryStub{credential: test.credential, lookupErr: test.lookupErr}
-			service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+			service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 			if err != nil {
 				t.Fatalf("new auth service: %v", err)
 			}
@@ -90,7 +90,7 @@ func TestResolveHashesRawCredential(t *testing.T) {
 	t.Parallel()
 
 	repository := &authRepositoryStub{resolved: activePrincipal()}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRevokeByAccessTokenIsOpaqueAndIdempotent(t *testing.T) {
 	t.Parallel()
 
 	repository := &authRepositoryStub{revokeStatus: RevokeStatusRevoked}
-	service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+	service, err := NewService(t.Context(), repository, sequentialIDs(), fixedNow, time.Hour, testPasswordEngine(t))
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -135,13 +135,21 @@ type authRepositoryStub struct {
 	revokeStatus RevokeStatus
 }
 
-func (r *authRepositoryStub) FindLocalCredential(context.Context, string, string) (LocalCredential, error) {
-	return r.credential, r.lookupErr
-}
-
-func (r *authRepositoryStub) IssueToken(_ context.Context, command IssueTokenCommand) (Token, error) {
-	r.issued = command
-	return Token{ID: command.TokenID, ExpiresAt: command.ExpiresAt}, nil
+func (r *authRepositoryStub) Login(ctx context.Context, _ LoginAttempt, prepare PrepareLogin) (LoginOutcome, error) {
+	credential := r.credential
+	if r.lookupErr != nil {
+		if !errors.Is(r.lookupErr, domain.ErrNotFound) {
+			return LoginOutcome{}, r.lookupErr
+		}
+		credential = LocalCredential{}
+	}
+	prepared, err := prepare(ctx, credential)
+	if err != nil || !prepared.Matched {
+		return LoginOutcome{}, err
+	}
+	r.issued = prepared.IssueToken
+	return LoginOutcome{Authenticated: true, Principal: credential.Principal,
+		Token: Token{ID: r.issued.TokenID, ExpiresAt: r.issued.ExpiresAt}}, nil
 }
 
 func (r *authRepositoryStub) ResolveToken(_ context.Context, digest string, _ time.Time) (domain.Principal, error) {

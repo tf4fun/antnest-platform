@@ -103,6 +103,8 @@ function lifecycle(evidence) {
     stopped_end: stoppedEnd,
     after,
     healthy,
+    stop_started_at: stopAt,
+    stop_started_at_ms: stopMS,
     restart_started_at: restartAt,
     restart_started_at_ms: restartMS,
   } = evidence.identity;
@@ -131,9 +133,11 @@ function lifecycle(evidence) {
   assert.notEqual(after.started_at, before.started_at);
   assert.equal(after.finished_at, stopped.finished_at);
   assert.equal(healthy.finished_at, stopped.finished_at);
+  assert(Number.isFinite(stopAt) && Number.isSafeInteger(stopMS));
   assert(Number.isFinite(restartAt) && Number.isSafeInteger(restartMS));
   assert(
-    before.at <= stopped.at &&
+    before.at <= stopAt &&
+      stopAt <= stopped.at &&
       stoppedEnd.at >= stopped.at + 5000 &&
       restartAt >= stoppedEnd.at &&
       after.at >= restartAt &&
@@ -143,7 +147,8 @@ function lifecycle(evidence) {
     started = Date.parse(after.started_at);
   assert(Number.isFinite(finished) && Number.isFinite(started));
   assert(
-    before.observed_at_ms <= finished &&
+    before.observed_at_ms <= stopMS &&
+      stopMS <= finished &&
       finished <= stopped.observed_at_ms &&
       stopped.observed_at_ms <= stoppedEnd.observed_at_ms &&
       stoppedEnd.observed_at_ms <= restartMS &&
@@ -154,6 +159,7 @@ function lifecycle(evidence) {
   );
   return {
     before: before.observed_at_ms * 1000,
+    stopping: stopMS * 1000,
     stopped: finished * 1000,
     restart: restartMS * 1000,
     started: started * 1000,
@@ -440,13 +446,18 @@ export function inspectOutageFeed(evidence, collection, secrets = []) {
         "feed failure predates controlled lifecycle",
       );
       const finished = end(f.client);
-      if (finished >= window.stopped && finished <= window.restart)
+      // A graceful stop closes the listener before the container exits.
+      // Attribute that interval to the observed stop invocation, not to an
+      // arbitrary allowance around Docker's final exit timestamp.
+      if (finished >= window.stopping && finished < window.stopped)
+        phase = "stopping";
+      else if (finished >= window.stopped && finished <= window.restart)
         phase = "stopped";
       else if (finished > window.restart && finished < ready)
         phase = "restart-not-ready";
       else
         assert.fail(
-          "feed failure outside stopped or restart-not-ready boundary",
+          "feed failure outside stopping, stopped or restart-not-ready boundary",
         );
       owned.push({
         trace_id: f.trace.traceID,
@@ -461,7 +472,12 @@ export function inspectOutageFeed(evidence, collection, secrets = []) {
     });
   }
   const successfulOutageRequests = [];
-  if (!owned.length) {
+  if (
+    !attempts.some(
+      ({ phase }) => phase === "stopped" || phase === "restart-not-ready",
+    )
+  ) {
+    // A stopping-only failure does not prove a stopped-period feed attempt.
     // A five-second outage can end before a feed's five-second deadline. Keep
     // its real successful receiver as evidence instead of inventing an error.
     for (const f of passed) {
