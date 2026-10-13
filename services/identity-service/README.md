@@ -75,10 +75,14 @@ Issuance accepts optional `expires_in_days` (1–365, default 90); issuance and
 inventory return `expires_at`, `issued_by` and `issuer_review_required` without
 exposing stored hashes. Expired credentials are rejected, issuer authority loss
 revokes or flags tokens, and User/Group responses expose ETag and `meta.version`
-with conditional PUT/PATCH/DELETE. Rotation issues an independent credential;
-the original remains usable until expiry or explicit revocation. Console 54
+with conditional PUT/PATCH/DELETE. Stale conditions return 412 and retain the safe
+`precondition_failed` code in request spans, error events and completion logs
+without exporting credentials. Rotation issues an independent credential; the
+original remains usable until expiry or explicit revocation. Console 54
 provides lifecycle display and rotation controls; current consumer references
-are aligned. Cross-service HTTPS acceptance remains a separate pending batch.
+are aligned. The separate HTTPS acceptance batch exercises real Console issuance,
+overlapping credentials, conditional writes, expiry, issuer loss and organization
+isolation against the production Identity image.
 
 The revision-16 Provider policy batch defaults new OIDC registrations to no
 automatic email linking. Explicit domain/email trust and an additional
