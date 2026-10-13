@@ -62,7 +62,7 @@ browser and route `/protocol/oidc/callback` and `/scim/v2` to Edge Gateway.
 
 Local password rotation has no service-side configuration. Credential fields
 are request-only and must not be added to access logs, traces, environment
-variables, or retry storage. Gateway revision 22 owns `/api/session/password`;
+variables, or retry storage. Gateway revision 23 owns `/api/session/password`;
 the old Console password route is denied. Identity atomically changes the
 password, revokes all browser sessions across organizations, and issues a
 replacement bounded by the original absolute deadline. The browser validates
@@ -92,7 +92,7 @@ Self session controls cover all organizations. Directory session controls use
 only the current signed organization, including for system administrators.
 
 [External login administration](oidc-linking.md) requires Identity revision 17
-and Gateway revision 22. Review historical Provider warnings explicitly before
+and Gateway revision 23. Review historical Provider warnings explicitly before
 treating their email-linking policy as approved. SCIM pairing is chosen at
 credential issuance and cannot be edited. Personal notices load without Agent
 inventory; 503 failures keep visible data and never replay binding, unbinding

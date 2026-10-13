@@ -1,6 +1,6 @@
 # Verified Organization display metadata
 
-Gateway session contract revision 22 consumes the unchanged Organization
+Gateway session contract revision 23 consumes the unchanged Organization
 projection in Identity contract revision 17. Revision 22 adds Gateway password
 admission errors; the Organization display schema and consumer behavior remain
 unchanged.
@@ -37,7 +37,7 @@ as a bootstrap refresh. React renders the name as text with the existing styles.
 
 ## Freshness and failure
 
-Gateway revision 22 reuses a complete authenticated Principal only within the
+Gateway revision 23 reuses a complete authenticated Principal only within the
 [bounded Resolve policy](../edge-gateway/resolve-cache.md#organization-display).
 Its snapshot age is at most the configured TTL (default 10 seconds), anchored to
 the actual Resolve RPC start. Neither cache hits nor healthy empty feed pages

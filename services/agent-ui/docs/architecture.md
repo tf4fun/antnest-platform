@@ -57,7 +57,7 @@ validation remains enabled; the document's CSP does not allow `unsafe-eval`.
 Server-side parsing keeps its existing configuration.
 
 Bootstrap and SSR share `readWorkspacePrincipal`: it requires private verified
-CCT claims and the two display headers from Gateway revision 22. Signed claims
+CCT claims and the two display headers from Gateway revision 23. Signed claims
 determine Organization/Principal IDs and administrator status; raw identity and
 administrator hints grant nothing. Each label must be canonical unpadded Base64URL over
 valid UTF-8 and decode to a non-whitespace string. Invalid or missing metadata

@@ -114,8 +114,9 @@ capacity. Retained exhausted keys still reject without changing any table.
 One counter records each admission decision with only flow/outcome labels.
 See the [login admission contract](../../contracts/edge-gateway/login-admission.md)
 and [operations guide](docs/operations.md#state-limits-and-capacity) for defaults,
-eviction tradeoffs and the independent Identity password controls. The #2
-consumer and real two-source HTTPS/OIDC gates remain pending until admitted.
+eviction tradeoffs and the independent Identity password controls. Consumer
+catalog references are synchronized; the #2 real two-client HTTPS/OIDC gate
+remains pending until its separate integration admission.
 
 Periodic stream checks discard a cache hit that was valid when the check
 started but crossed only its TTL during delivery. They may resolve once more
