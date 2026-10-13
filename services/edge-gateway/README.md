@@ -84,7 +84,7 @@ Ordinary 401 responses, SSR rejection, activity and revocation preserve cookies.
 See the [browser lifecycle contract](../../contracts/identity/browser-sessions.md)
 for the logout matrix, password recovery and consumer integration.
 
-Gateway consumes Identity revision 17's password admission failures, external
+Gateway consumes Identity revision 18's password admission failures, external
 identity controls and existing private revocation feed. Its bounded Resolve cache defaults to
 10 seconds, clips every snapshot to the original session and CCT deadlines,
 and bypasses cached authority until the feed proves catch-up. Scope includes
@@ -115,8 +115,9 @@ One counter records each admission decision with only flow/outcome labels.
 See the [login admission contract](../../contracts/edge-gateway/login-admission.md)
 and [operations guide](docs/operations.md#state-limits-and-capacity) for defaults,
 eviction tradeoffs and the independent Identity password controls. Consumer
-catalog references are synchronized; the #2 real two-client HTTPS/OIDC gate
-remains pending until its separate integration admission.
+catalog references are synchronized; #2 completed the real two-client
+HTTPS/OIDC gate. Its admission and evidence limits are recorded in the
+[global TODO](../../TODO.md).
 
 Periodic stream checks discard a cache hit that was valid when the check
 started but crossed only its TTL during delivery. They may resolve once more
@@ -134,7 +135,8 @@ It does not offer browser binding creation or a Provider chooser. See the
 [OIDC linking contract](../../contracts/identity/oidc-linking.md).
 Console and Agent UI consumption and the real HTTPS linking workflow were
 delivered with #61. The #59 Trace/display consumer batch and real HTTPS
-outage/load integration remain separate pending admissions in the global TODO.
+outage/load integration are also admitted; the [global TODO](../../TODO.md)
+records their evidence and retained diagnostic limits.
 
 Browser login and session principals preserve Identity's required Organization
 slug/name. Gateway projects these display facts to the active Node Workspace
@@ -279,8 +281,9 @@ including handshake, connection probes and refresh, with a maximum of three
 each. Full raw trace closure and warnings remain in private evidence. Set
 `ANTNEST_RESOLVE_CACHE_E2E_OUTPUT` to select an unused directory under
 `artifacts/verification/`. Cleanup verifies the retained environment and removes
-owned candidates. This batch currently reports Identity outage/recovery as
-pending; it does not establish the complete #59 acceptance gate.
+owned candidates. This standalone load batch does not establish outage/recovery;
+the separate outage/recovery gate was admitted under #59, with evidence and
+limitations recorded in the [global TODO](../../TODO.md).
 
 ## Documentation
 

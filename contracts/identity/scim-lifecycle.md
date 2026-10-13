@@ -5,9 +5,10 @@ The [policy](scim-lifecycle-policy.json) and
 [extension schemas](scim-lifecycle.schema.json) define the shared behavior.
 Identity revision 18 implements its token lifecycle and resource versions; the
 complete RPC request and response shapes are in the active
-[Identity catalog](identity-contract.json). Console remains at version 53 until
-its version-54 implementation, documentation and service gates pass. Consumer
-references and a separate HTTPS integration batch follow. The extension schema
+[Identity catalog](identity-contract.json). Console version 54 implements expiry,
+issuer review and rotation controls with its own service admission. Current
+consumer references align with Identity 18 and Console 54; a separate real HTTPS
+integration batch remains pending. The extension schema
 definitions validate field projections, not entire RPC envelopes.
 
 ## Issuance, expiry and rotation

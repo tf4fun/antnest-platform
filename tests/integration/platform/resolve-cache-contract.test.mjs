@@ -20,7 +20,7 @@ test("Gateway cache revision reuses the issued Identity wire contract", () => {
   assert.equal(value.contract, "antnest.edge-gateway.resolve-cache");
   assert.equal(value.revision, 3);
   assert.equal(value.identity_revision, identity.revision);
-  assert.equal(identity.revision, 17);
+  assert.equal(identity.revision, 18);
   assert.equal(
     identity.methods[value.resolve_method].path,
     "/resolve-access-token",

@@ -66,11 +66,11 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
-The browser consumes Gateway revision 23 and Identity revision 17 under the
+The browser consumes Gateway revision 23 and Identity revision 18 under the
 [browser session contract](../../contracts/identity/browser-sessions.md).
-Identity's browser-session schemas are unchanged. Gateway 22 adds validated
-password admission errors while preserving existing cookies. Console user
-creation and final #60 cross-service admission remain separate pending batches.
+Identity's browser-session schemas are unchanged. Gateway 22 introduced validated
+password admission errors while preserving existing cookies; #60 completed
+Console user creation and cross-service password admission.
 Hydrated SSR content stays inert until a fresh Gateway session read succeeds.
 Only genuine input reports activity; background reads, SSE and reconnection do
 not extend idle time. Account controls remain available without an Agent and

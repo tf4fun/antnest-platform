@@ -76,8 +76,9 @@ inventory return `expires_at`, `issued_by` and `issuer_review_required` without
 exposing stored hashes. Expired credentials are rejected, issuer authority loss
 revokes or flags tokens, and User/Group responses expose ETag and `meta.version`
 with conditional PUT/PATCH/DELETE. Rotation issues an independent credential;
-the original remains usable until expiry or explicit revocation. Console 54,
-consumer references and cross-service HTTPS acceptance remain separate batches.
+the original remains usable until expiry or explicit revocation. Console 54
+provides lifecycle display and rotation controls; current consumer references
+are aligned. Cross-service HTTPS acceptance remains a separate pending batch.
 
 The revision-16 Provider policy batch defaults new OIDC registrations to no
 automatic email linking. Explicit domain/email trust and an additional

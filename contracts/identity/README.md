@@ -16,8 +16,9 @@ Identity revision 18 implements the [SCIM lifecycle contract](scim-lifecycle.md)
 bounded token expiry, issuer metadata and authority-loss policy, overlap rotation,
 and conditional User/Group writes. The complete RPC schemas require lifecycle
 metadata; single-resource responses expose ETag and `meta.version`. Console
-version 54, consumer references and real HTTPS integration follow as separate
-batches; Identity delivery alone does not complete #66.
+version 54 exposes expiry, issuer review and independent rotation controls.
+The owning-service batches and current consumer references are delivered;
+real HTTPS integration remains pending before #66 can close.
 
 Revision 17 delivered the [password verification policy](password-verification.md)
 and its [machine-readable contract](password-verification-policy.json) under #60.

@@ -505,8 +505,8 @@ test("Console user creation has an explicit bounded busy-error consumer batch", 
   });
 });
 
-test("Console revision 53 activates busy admission only on user creation", () => {
-  assert.equal(consoleContract.version, 53);
+test("active Console retains busy admission only on user creation", () => {
+  assert.equal(consoleContract.version, 54);
   const route = consoleContract.routes.create_local_user;
   assert.equal(route.password_failure_schema, "password-failure.schema.json");
   assert.deepEqual(route.error_status_by_code, { credential_busy: 503 });

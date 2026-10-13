@@ -537,7 +537,7 @@ test("Console declares the active Gateway and Identity browser session revisions
 });
 
 test("Gateway owns session mutations and records cookie concurrency and stream bounds", () => {
-  assert.equal(identity.revision, 17);
+  assert.equal(identity.revision, 18);
   assert.equal(gateway.version, 23);
   assert.equal(
     gateway.browser_session_contract,

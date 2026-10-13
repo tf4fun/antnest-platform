@@ -8,7 +8,7 @@
   "browser_session_consumer": {
     "browser_session_contract": "../identity/browser-sessions.md",
     "gateway_revision": 23,
-    "identity_revision": 17,
+    "identity_revision": 18,
     "gateway_routes": [
       "get_session",
       "get_account",
