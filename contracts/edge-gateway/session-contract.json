@@ -1,6 +1,7 @@
 {
   "contract": "antnest.edge-gateway.session",
   "version": 22,
+  "login_admission_policy": "login-admission-policy.json",
   "password_verification_policy": "../identity/password-verification-policy.json",
   "session_security": {
     "contract": "session-security.md",

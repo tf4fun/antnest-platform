@@ -6,6 +6,13 @@ workspace routes plus the trusted headers Edge Gateway may inject into internal
 services. It is a product-facing browser contract, not a public third-party
 OpenAPI.
 
+The shared [login admission contract](login-admission.md) and its
+[policy](login-admission-policy.json) define independent password/OIDC budgets,
+IPv6 `/64` aggregation and bounded FIFO eviction for #2. Activation is staged
+for the owning Gateway version 23 implementation; the active session catalog
+stays at version 22 in the shared batch. Gateway, consumer references and real
+two-source HTTPS/OIDC integration remain pending.
+
 The shared [password verification policy](../identity/password-verification.md)
 defines Identity's persisted attempt limits and Argon2 resource failures.
 Gateway version 22 validates the complete password failure tuple on login and
@@ -14,7 +21,8 @@ password change, then publishes `credential_rate_limited` (429) or
 Both errors preserve cookies and use `no-store`; malformed metadata returns
 `503 identity_unavailable` without a retry hint. Gateway never replays a
 password request. The existing `login_rate_limited` prefilter remains separate.
-Console user creation and final cross-service #60 admission remain pending.
+Console user creation and final cross-service HTTPS admission were delivered
+with [#60](https://github.com/tf4fun/antnest-platform/issues/60).
 
 Revision 21 defines [bounded Identity resolution](resolve-cache.md) and its
 [machine-readable policy](resolve-cache-policy.json): scoped positive caching,
