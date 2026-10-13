@@ -102,7 +102,9 @@ seconds) or `503 credential_busy` (1 second). Both responses have the fixed
 public message, `retryable: true`, `no-store` and no Cookie writes. Invalid
 metadata produces `503 identity_unavailable` without a retry hint; neither path
 replays the password request. The existing edge `login_rate_limited` admission
-is unchanged. Console user creation and final #60 integration remain pending.
+is unchanged. Console user creation also consumes Identity's typed busy response.
+The HTTPS integration suite verifies real KDF rejection, unchanged browser
+Cookies and durable state, and explicit recovery through all three routes.
 
 Periodic stream checks discard a cache hit that was valid when the check
 started but crossed only its TTL during delivery. They may resolve once more

@@ -364,8 +364,9 @@ Identity revision 17 projects `credential_busy` as 503 and
 no-store and no cookie writes. Local login now uses persistent admission and
 transactional rehash; password changes use the global User attempt bucket with
 atomic session rotation. Each process owns one bounded cleanup worker.
-Gateway/Console consumption and final cross-service pressure
-admission remain pending.
+Gateway 22 and Console 53 consume these failures without replay. The HTTPS
+integration suite exercises two Identity instances sharing PostgreSQL and
+checks each public rejection against its owning RPC before explicit recovery.
 
 ## Application Modules
 

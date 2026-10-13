@@ -7,10 +7,12 @@ version 21. The candidate Identity revision-17 catalog declares
 `credential_busy`/503 and `credential_rate_limited`/429. Identity implements both
 projections, persisted login/password-change attempts and transactional
 rehash/rotation, with one bounded cleanup worker per instance.
-Gateway remains at version 21 until its version-22 consumer implementation.
-Console adoption and cross-service
-integration also remain pending. A policy reference alone does not activate a
-service or establish completion of this policy.
+Gateway version 22 and Console revision 53 consume the typed failures without
+automatic replay. The [HTTPS integration suite](../../tests/e2e/identity-closeout/README.md)
+uses two real Identity instances sharing PostgreSQL, checks competing attempts
+and password rotation, and verifies browser rejection and explicit recovery.
+Owning-service resource admission separately measures normal-CPU KDF pressure
+and RSS; the browser fault phase does not replace that measurement.
 
 Identity owns password attempt state, Argon2 capacity and stored-hash migration.
 Gateway retains its cheap login admission filter. Gateway table pressure and

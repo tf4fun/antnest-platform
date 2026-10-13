@@ -25,6 +25,7 @@ import { certificates } from "./tls-certificates.mjs";
 import { verifyBrowserSessions } from "./browser-sessions-flow.mjs";
 import { startLinkingProvider } from "./oidc-linking-fixture.mjs";
 import { verifyOIDCLinking } from "./oidc-linking-flow.mjs";
+import { verifyPasswordVerification } from "./password-verification-flow.mjs";
 import { resolveObservationConfig } from "../observability/resolve-config.mjs";
 
 const ownerLabel = "io.antnest.verification.project";
@@ -125,6 +126,8 @@ test(
           "tests/e2e/edge-gateway/tls.compose.yaml",
           "-f",
           "tests/e2e/edge-gateway/browser-sessions.compose.yaml",
+          "-f",
+          "tests/e2e/edge-gateway/password-verification.compose.yaml",
           ...args,
         ]);
       for (const [service, variable] of [
@@ -263,6 +266,25 @@ test(
           true,
         );
       };
+      const passwordEvidence = await verifyPasswordVerification({
+        browser,
+        config,
+        docker,
+        compose,
+        signal,
+        output,
+        record: (evidence) =>
+          writeEvidenceFile(
+            output,
+            "password-verification-progress.json",
+            JSON.stringify(evidence, null, 2),
+          ),
+      });
+      writeEvidenceFile(
+        output,
+        "password-verification.json",
+        JSON.stringify(passwordEvidence, null, 2),
+      );
       const linkingEvidence = await verifyOIDCLinking({
         browser,
         config,

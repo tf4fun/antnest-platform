@@ -39,8 +39,10 @@ carry one validated seconds value in `Retry-After`, with `retryable: true` and
 `Cache-Control: no-store`. Gateway does not retry the operation. Malformed
 upstream failure metadata returns generic `503 identity_unavailable` without
 a retry hint. The existing edge `login_rate_limited` is a separate prefilter.
-Console user creation and the final coordinated #60 deployment gate remain
-pending; the Gateway consumer alone does not establish that workflow.
+Console user creation also preserves the typed busy response. The real HTTPS
+suite verifies all three routes against Identity, including one owning RPC per
+rejection, unchanged Cookies and durable state, and explicit recovery after
+KDF capacity returns.
 
 | Variable                                  | Required                       | Default               | Description                                                                                                 |
 | ----------------------------------------- | ------------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------- |

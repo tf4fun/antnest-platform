@@ -143,8 +143,9 @@ verification, rotation, all-session revocation and User-counter reset atomically
 The original signed Caller is revalidated after waits and KDF work. Each instance
 cleans at most 500 expired attempt rows after an initial minute and waits another
 minute after each pass. Shutdown cancels and joins that worker before closing
-the database. Gateway/Console adoption and final cross-service admission
-remain pending #60 work.
+the database. Gateway 22 and Console 53 consume the typed password failures.
+The HTTPS integration suite verifies two Identity instances, competing attempts,
+transactional rehash/rotation, browser Cookie preservation and explicit recovery.
 
 | Variable                                                                                                        | Required         | Default            | Description                                                                                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

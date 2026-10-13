@@ -82,6 +82,18 @@ saves each response before validation, and joins both observations before
 checking stream and private-UI retirement. Its password and self-revocation
 checks still require immediate rejection.
 
+The same HTTPS suite runs password admission against two real Identity containers
+sharing PostgreSQL and the same immutable candidate image. An external database
+transaction controls fifth/sixth attempts and legacy-login/password-rotation
+ordering; admission requires the actual PostgreSQL blocking graph. Browser
+requests check canonical 429/503 responses, retry hints, unchanged Cookies and
+durable state, followed by explicit recovery. A temporary CPU quota and bounded
+independent login pressure exercise the real KDF queue; each public login,
+password change and Console user creation must have exactly one owning RPC with
+a KDF busy reason. That scheduling phase is separate from Identity's normal-CPU
+200-request/RSS admission. The fixture restores the quota, joins requests and
+closes its database connections and peer before the existing session flows.
+
 The core client is invoked by the parent as:
 
 ```sh

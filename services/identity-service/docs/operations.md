@@ -81,8 +81,9 @@ valid stored hash larger than the process budget is rejected immediately.
 Capacity exhaustion returns `503 credential_busy`, the fixed message
 `Password verification is busy`, `retryable: true`, `Retry-After: 1` and
 `Cache-Control: no-store`, without a credential or Cookie mutation. It does not
-mean the supplied password was wrong. Gateway and Console handling is a pending
-consumer batch; this Identity batch does not yet complete the browser workflow.
+mean the supplied password was wrong. Gateway login/password change and Console
+user creation preserve the typed busy response without automatically replaying
+the request. The user can explicitly retry after capacity recovers.
 
 Stored Argon2id v19 hashes are verified with their original bounded parameters,
 including the original memory value. Malformed or noncanonical encodings fail
@@ -113,8 +114,8 @@ is no immediate retry or catch-up. Multiple instances have independent schedules
 Shutdown cancels and joins the worker, including database rollback, before
 closing the pool. Failures emit only the fixed `credential_cleanup_failure`
 class; expected shutdown cancellation is silent.
-Gateway/Console adoption and cross-service admission remain pending under the
-[password policy](../../../contracts/identity/password-verification.md).
+The [password policy](../../../contracts/identity/password-verification.md)
+defines Gateway/Console handling and the cross-service admission boundary.
 The memory budget bounds active Argon2 work, not total process RSS or garbage
 collector retention. Container pressure and recovery require separate evidence.
 
