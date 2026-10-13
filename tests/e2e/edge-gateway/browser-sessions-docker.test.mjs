@@ -26,6 +26,7 @@ import { verifyBrowserSessions } from "./browser-sessions-flow.mjs";
 import { startLinkingProvider } from "./oidc-linking-fixture.mjs";
 import { verifyOIDCLinking } from "./oidc-linking-flow.mjs";
 import { verifyPasswordVerification } from "./password-verification-flow.mjs";
+import { verifyLoginAdmission } from "./login-admission-flow.mjs";
 import { resolveObservationConfig } from "../observability/resolve-config.mjs";
 
 const ownerLabel = "io.antnest.verification.project";
@@ -50,6 +51,7 @@ test(
       config,
       browser,
       linkingProvider,
+      admissionProvider,
       certificateDirectory,
       credentialsDirectory,
       failure,
@@ -95,6 +97,11 @@ test(
       });
       config.gateway = config.gateway.replace("http:", "https:");
       linkingProvider = await startLinkingProvider({
+        directory: certificateDirectory,
+        callback: `${config.gateway}/protocol/oidc/callback`,
+        signal,
+      });
+      admissionProvider = await startLinkingProvider({
         directory: certificateDirectory,
         callback: `${config.gateway}/protocol/oidc/callback`,
         signal,
@@ -232,6 +239,25 @@ test(
       );
       const fixture = await setup(config, signal);
       console.log(
+        JSON.stringify({ phase: "verify", scope: "two-source-oidc-admission" }),
+      );
+      const admissionEvidence = await verifyLoginAdmission({
+        config,
+        fixture,
+        provider: admissionProvider,
+        certificateDirectory,
+        docker,
+        compose,
+        gatewayContainer,
+        output,
+        signal,
+      });
+      writeEvidenceFile(
+        output,
+        "login-admission.json",
+        JSON.stringify(admissionEvidence, null, 2),
+      );
+      console.log(
         JSON.stringify({ phase: "ready", topology: "reference-proxy" }),
       );
       browser = await chromium.launch({
@@ -353,6 +379,7 @@ test(
       };
       await attempt(async () => browser?.close());
       await attempt(async () => linkingProvider?.close());
+      await attempt(async () => admissionProvider?.close());
       setDefaultCACertificates(roots);
       if (config) {
         await attempt(() => cleanup(config));
