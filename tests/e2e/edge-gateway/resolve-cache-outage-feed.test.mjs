@@ -29,6 +29,8 @@ function fixture() {
     settings: { resolveTTLMS: 10000, captureRpcContent: false },
     identity: {
       before: state(true, -10000, -20000, 0, "healthy"),
+      stop_started_at: 950,
+      stop_started_at_ms: epoch + 950,
       stopped: state(false, -10000, 1000, 1100, "unhealthy"),
       stopped_end: state(false, -10000, 1000, 6200, "unhealthy"),
       restart_started_at: 6300,
@@ -529,6 +531,89 @@ test("an in-flight feed can fail after Docker stops Identity", () => {
   move(f.parts.stopped, 900);
   assert.equal(check(f).owned_error_spans[0].reason, "identity-feed-stopped");
 });
+for (const [name, start, duration] of [
+  ["new connection", 994, 0.78],
+  ["already in-flight request", 900, 94.78],
+  ["exact stop invocation", 950, 0],
+])
+  test(`feed failure during controlled stop retains its stopping phase: ${name}`, () => {
+    const f = fixture();
+    move(f.parts.restarting, start);
+    f.parts.restarting.client.duration = duration * 1000;
+    f.parts.restarting.client.logs[0].timestamp =
+      f.parts.restarting.client.startTime + duration * 1000;
+    const before = structuredClone(f),
+      result = check(f);
+    assert(
+      result.owned_error_spans.some(
+        (row) =>
+          row.trace_id === f.parts.restarting.trace.traceID &&
+          row.reason === "identity-feed-stopping",
+      ),
+    );
+    assert.equal(result.strict_trace, "failed");
+    assert.deepEqual(f, before);
+  });
+for (const [name, change] of [
+  ["missing wall time", (f) => delete f.evidence.identity.stop_started_at_ms],
+  ["missing monotonic time", (f) => delete f.evidence.identity.stop_started_at],
+  [
+    "noninteger wall time",
+    (f) => (f.evidence.identity.stop_started_at_ms += 0.5),
+  ],
+  [
+    "invalid monotonic time",
+    (f) => (f.evidence.identity.stop_started_at = NaN),
+  ],
+  [
+    "wall time before healthy observation",
+    (f) => (f.evidence.identity.stop_started_at_ms = epoch - 1),
+  ],
+  [
+    "monotonic time before healthy observation",
+    (f) => (f.evidence.identity.stop_started_at = -1),
+  ],
+  [
+    "wall time after container exit",
+    (f) => (f.evidence.identity.stop_started_at_ms = epoch + 1001),
+  ],
+  [
+    "monotonic time after stop receipt",
+    (f) => (f.evidence.identity.stop_started_at = 1101),
+  ],
+])
+  test(`feed lifecycle rejects invalid stop invocation: ${name}`, () => {
+    const f = fixture();
+    change(f);
+    assert.throws(() => check(f));
+  });
+test("a feed failure immediately before stop invocation remains unowned", () => {
+  const f = fixture();
+  move(f.parts.restarting, 949.999);
+  f.parts.restarting.client.duration = 0;
+  f.parts.restarting.client.logs[0].timestamp =
+    f.parts.restarting.client.startTime;
+  assert.throws(
+    () => check(f),
+    /outside stopping, stopped or restart-not-ready/,
+  );
+});
+test("a stopping-only error cannot substitute for a stopped-period feed attempt", () => {
+  const f = fixture();
+  move(f.parts.restarting, 994);
+  f.parts.restarting.client.duration = 780;
+  f.parts.restarting.client.logs[0].timestamp =
+    f.parts.restarting.client.startTime + 780;
+  const id = f.parts.stopped.trace.traceID;
+  f.collection.traces.delete(id);
+  f.collection.archivedTraceIDs.delete(id);
+  f.collection.feedAttemptTraceIDs.delete(id);
+  f.collection.feedSearch.feed_attempt_searches =
+    f.collection.feedSearch.feed_attempt_searches.map((round) =>
+      round.filter((row) => row.traceID !== id),
+    );
+  assert.throws(() => check(f), /actual stopped-period feed attempt missing/);
+});
 test("a stopped feed retains the Go socket deadline cause", () => {
   const f = fixture();
   eventField(
@@ -701,7 +786,7 @@ for (const [name, change] of [
     (f) => setTag(f.parts.stopped.client, "antnest.request.timeout_ms", 5001),
   ],
   [
-    "failure before Docker stopped",
+    "failure before stop was invoked",
     (f) => {
       const p = f.parts.stopped;
       move(p, 900);

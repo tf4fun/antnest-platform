@@ -445,8 +445,10 @@ export async function verifyWarmOutage({
     await http(client, `${sessionPath}/view`, { label: "warm-workspace-hit" });
     stream.assertOpen();
     assert.equal(owner.closeCode, undefined);
-    evidence.identity.stop_started_at = performance.now();
     console.log(JSON.stringify({ phase: "outage", check: "stop-identity" }));
+    const stopMark = mark();
+    evidence.identity.stop_started_at = stopMark.at;
+    evidence.identity.stop_started_at_ms = stopMark.observed_at_ms;
     await docker(["stop", "--time", "1", identityID]);
     stopped = true;
     evidence.identity.stopped = await inspectIdentity();
