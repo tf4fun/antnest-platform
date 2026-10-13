@@ -22,9 +22,10 @@ func directoryLifecycleChange(ctx context.Context, service *directory.Service, f
 	}
 	member := f.members[0]
 	role, active := domain.OrganizationRoleAdmin, true
-	if operation == "demote" {
+	switch operation {
+	case "demote":
 		role = domain.OrganizationRoleMember
-	} else if operation == "membership-inactive" {
+	case "membership-inactive":
 		active = false
 	}
 	_, err := service.UpdateMembership(ctx, directory.UpdateMembershipInput{RequestID: "directory-final-authority", ActorPrincipalID: actorID,
