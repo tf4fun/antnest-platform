@@ -27,6 +27,7 @@ import { startLinkingProvider } from "./oidc-linking-fixture.mjs";
 import { verifyOIDCLinking } from "./oidc-linking-flow.mjs";
 import { verifyPasswordVerification } from "./password-verification-flow.mjs";
 import { verifyLoginAdmission } from "./login-admission-flow.mjs";
+import { verifySCIMLifecycle } from "./scim-lifecycle-flow.mjs";
 import { resolveObservationConfig } from "../observability/resolve-config.mjs";
 
 const ownerLabel = "io.antnest.verification.project";
@@ -329,6 +330,25 @@ test(
         output,
         "oidc-linking.json",
         JSON.stringify({ complete: true, ...linkingEvidence }, null, 2),
+      );
+      const scimEvidence = await verifySCIMLifecycle({
+        browser,
+        config,
+        docker,
+        compose,
+        signal,
+        output,
+        record: (evidence) =>
+          writeEvidenceFile(
+            output,
+            "scim-lifecycle-progress.json",
+            JSON.stringify(evidence, null, 2),
+          ),
+      });
+      writeEvidenceFile(
+        output,
+        "scim-lifecycle.json",
+        JSON.stringify(scimEvidence, null, 2),
       );
       const evidence = await verifyBrowserSessions({
         browser,

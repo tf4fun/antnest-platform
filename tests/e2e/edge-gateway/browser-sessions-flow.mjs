@@ -5,6 +5,7 @@ import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
 import { observePrincipalRevocation } from "../identity-closeout/principal-revocation.mjs";
 import { withSessionRevocationObserver } from "./browser-session-revocation.mjs";
+import { captureNavigationResponse } from "../../support/browser-navigation-response.mjs";
 
 const admin = {
   organization_slug: "stage3",
@@ -151,36 +152,24 @@ export async function login(context, gateway, credentials, path) {
   const page = await context.newPage();
   page.setDefaultTimeout(30_000);
   // All password-login fixtures here are administrators. Authenticate on the
-  // Console first so its document remains alive while we inspect the real
-  // response, then open the requested Workspace after that inspection.
+  // Console, inspect that exact response, then open the requested Workspace.
   await page.goto(new URL("/", gateway).href);
   for (const [name, value] of Object.entries(credentials))
     await page.locator(`[name="${name}"]`).fill(value);
-  const [{ metadata, hsts, cookieHeaders }] = await Promise.all([
-    page
-      .waitForResponse(
-        (value) =>
-          new URL(value.url()).pathname === "/api/session/login" &&
-          value.request().method() === "POST",
-      )
-      .then((response) =>
-        bounded(
-          (async () => {
-            assert.equal(response.status(), 200, "real browser login failed");
-            // Response reads have their own deadline; page action timeouts do
-            // not cover Chromium's response-body lifecycle.
-            const metadata = await response.json();
-            return {
-              metadata,
-              hsts: await response.headerValue("strict-transport-security"),
-              cookieHeaders: await response.headerValues("set-cookie"),
-            };
-          })(),
-          "browser login response capture",
-        ),
-      ),
-    page.getByRole("button", { name: "Sign in", exact: true }).click(),
-  ]);
+  const { response, body } = await captureNavigationResponse(
+    page,
+    { url: new URL("/api/session/login", gateway).href },
+    () => page.getByRole("button", { name: "Sign in", exact: true }).click(),
+  );
+  assert.equal(response.status(), 200, "real browser login failed");
+  const metadata = JSON.parse(body.toString("utf8"));
+  const [hsts, cookieHeaders] = await bounded(
+    Promise.all([
+      response.headerValue("strict-transport-security"),
+      response.headerValues("set-cookie"),
+    ]),
+    "browser login headers",
+  );
   await page.locator('[name="password"]').waitFor({ state: "hidden" });
   assert(
     metadata.principal.system_role === "admin" ||
