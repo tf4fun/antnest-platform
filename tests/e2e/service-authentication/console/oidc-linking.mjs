@@ -77,6 +77,20 @@ export async function verifyOIDCLinking({ request, state, fixture }) {
       ...write({ name: "Directory", scopes: ["scim:read"], oidc_provider_id }),
       status: 400,
     });
+  for (const expires_in_days of [null, 0, 366, 1.5, "90", true])
+    await safe(tokens, {
+      ...write({ name: "Directory", scopes: ["scim:read"], expires_in_days }),
+      status: 400,
+    });
+  for (const metadata of [
+    { issued_by: "forged" },
+    { expires_at: "2099-01-01T00:00:00Z" },
+    { issuer_review_required: false },
+  ])
+    await safe(tokens, {
+      ...write({ name: "Directory", scopes: ["scim:read"], ...metadata }),
+      status: 400,
+    });
   for (const query of [
     "",
     "?limit=01",
@@ -99,6 +113,13 @@ export async function verifyOIDCLinking({ request, state, fixture }) {
   });
   await safe(chooser + "?limit=1", {
     context: callerContext(fixture, { org_role: "member" }),
+    status: 403,
+  });
+  const memberContext = callerContext(fixture, { org_role: "member" });
+  await safe(tokens, { context: memberContext, status: 403 });
+  await safe(tokens, {
+    ...write({ name: "Directory", scopes: ["scim:read"], expires_in_days: 1 }),
+    context: memberContext,
     status: 403,
   });
   assert.equal(
@@ -176,6 +197,20 @@ export async function verifyOIDCLinking({ request, state, fixture }) {
     second.providers.map((row) => row.id),
     ["provider-2"],
   );
+  const legacyInventory = (await safe(tokens)).tokens;
+  assert.deepEqual(legacyInventory, [
+    {
+      id: "legacy-token",
+      name: "Legacy directory",
+      scopes: ["scim:read"],
+      created_at: "2026-10-11T00:00:00Z",
+      expires_at: "2027-01-09T00:00:00.000Z",
+      issued_by: null,
+      issuer_review_required: true,
+      oidc_provider_id: null,
+    },
+  ]);
+  const expectedTokens = new Map(legacyInventory.map((row) => [row.id, row]));
   for (const pairing of [undefined, "provider-1"]) {
     const result = await safe(
       tokens,
@@ -186,11 +221,48 @@ export async function verifyOIDCLinking({ request, state, fixture }) {
       }),
     );
     assert.equal(result.token.oidc_provider_id, pairing ?? null);
+    assert.equal(result.token.expires_at, "2027-01-09T00:00:00.000Z");
+    assert.equal(result.token.issued_by, "user-admin");
+    assert.equal(result.token.issuer_review_required, false);
     assert.equal(result.credential, "one-time-synthetic-credential");
+    expectedTokens.set(result.token.id, structuredClone(result.token));
   }
   assert.deepEqual(
     (await safe(tokens)).tokens.map((row) => row.oidc_provider_id),
-    [null, "provider-1"],
+    [null, null, "provider-1"],
+  );
+  for (const expires_in_days of [1, 365]) {
+    const result = await safe(
+      tokens,
+      write({
+        name: "Bounded directory",
+        scopes: ["scim:read"],
+        expires_in_days,
+      }),
+    );
+    assert.equal(
+      Date.parse(result.token.expires_at) - Date.parse(result.token.created_at),
+      expires_in_days * 86400000,
+    );
+    assert.equal(result.token.issued_by, "user-admin");
+    assert.equal(result.token.issuer_review_required, false);
+    expectedTokens.set(result.token.id, structuredClone(result.token));
+  }
+  const tokenInventory = (await safe(tokens)).tokens;
+  assert.deepEqual(
+    tokenInventory.map((row) => row.id).sort(),
+    [...expectedTokens.keys()].sort(),
+  );
+  for (const token of tokenInventory) {
+    assert.deepEqual(token, expectedTokens.get(token.id));
+    assert.equal(Object.hasOwn(token, "credential"), false);
+    assert.equal(Object.hasOwn(token, "token_hash"), false);
+  }
+  assert.deepEqual(
+    (await state()).externalIdentities
+      .filter((call) => call.operation === "issue-scim-token")
+      .map((call) => call.expires_in_days),
+    [undefined, undefined, 1, 365],
   );
   checks++;
   const bindings = await safe(path("target-member") + "?limit=1");

@@ -129,5 +129,5 @@ func (source *oidcProviderSource) UnmarshalJSON(payload []byte) error {
 
 func (source *scimTokenSource) UnmarshalJSON(payload []byte) error {
 	type wire scimTokenSource
-	return decodeProvisioningMetadata(payload, (*wire)(source), "oidc_provider_id")
+	return decodeProvisioningMetadata(payload, (*wire)(source), "id", "name", "scopes", "created_at", "revoked_at", "oidc_provider_id", "expires_at", "issued_by", "issuer_review_required")
 }

@@ -14,7 +14,7 @@ organization-scoped. The signed subject, organization, membership and roles
 construct the principal; X-Antnest headers never authenticate or select it.
 Existing system/organization administrator checks remain mandatory.
 
-Browser session list/revoke operations use Identity revision 17 and always fix
+Browser session list/revoke operations use Identity revision 18 and always fix
 scope to the signed organization, even for system administrators. Target User
 membership and live `sid` admission are validated by Identity. Public session
 references are unrelated to private `sid` claims; neither may be selected in a

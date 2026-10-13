@@ -176,6 +176,7 @@ func TestProvisioningListsOnlySafeMetadata(t *testing.T) {
 	backend.enqueue(http.StatusOK, `{
 		"tokens":[{"id":"token-1","organization_id":"org-1","name":"Workday",
 		"scopes":["scim:read"],"created_at":"2026-09-03T08:00:00Z",
+		"expires_at":"2027-01-09T00:00:00Z","issued_by":"user-admin","issuer_review_required":false,
 		"oidc_provider_id":null,
 		"credential":"must-not-reach-browser"}]}`)
 	handler := newTestHandler(t, backend)
@@ -221,7 +222,8 @@ func TestIssueSCIMTokenDisclosesCredentialOnceWithoutCaching(t *testing.T) {
 	backend := newBackendStub()
 	backend.enqueue(http.StatusCreated, `{
 		"token":{"id":"token-1","organization_id":"org-1","name":"Workday",
-		"scopes":["scim:read","scim:write"],"created_at":"2026-09-03T08:00:00Z","oidc_provider_id":null},
+		"scopes":["scim:read","scim:write"],"created_at":"2026-09-03T08:00:00Z","oidc_provider_id":null,
+		"expires_at":"2027-01-09T00:00:00Z","issued_by":"user-admin","issuer_review_required":false},
 		"credential":"ant_scim_one_time_secret","token_hash":"must-not-reach-browser"}`)
 	handler := newTestHandler(t, backend)
 	response := requestAdmin(t, handler, http.MethodPost, "/api/admin/provisioning/scim-tokens", `{
@@ -806,7 +808,8 @@ func TestBrowserProjectionsDoNotExposeControlPlaneFields(t *testing.T) {
 			"updated_at":"2026-09-02T00:00:00Z"}]}`},
 		{name: "scim", projector: projectSCIMTokenList, payload: `{"tokens":[{
 			"id":"token-action-id","organization_id":"org-1","name":"HR directory",
-			"scopes":["scim:read","scim:write"],"created_at":"2026-09-02T00:00:00Z","oidc_provider_id":null}]}`},
+			"scopes":["scim:read","scim:write"],"created_at":"2026-09-02T00:00:00Z","oidc_provider_id":null,
+			"expires_at":"2027-01-09T00:00:00Z","issued_by":"user-admin","issuer_review_required":false}]}`},
 		{name: "model", projector: projectModelProfile, payload: `{
 			"model_profile_id":"model-1","organization_id":"org-1","profile_key":"deepseek",
 			"display_name":"DeepSeek","revision_id":"revision-1","revision":1,"enabled":true,

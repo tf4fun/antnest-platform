@@ -1,6 +1,6 @@
 # External login administration
 
-Console revision 53 consumes Identity revision 17 and Gateway revision 23 under
+Console revision 54 consumes Identity revision 18 and Gateway revision 23 under
 the shared [OIDC linking contract](../../../contracts/identity/oidc-linking.md).
 Identity owns policy, binding transactions, SCIM pairing, notices and session
 revocation. Console supplies management forms and strict public projections.
@@ -36,6 +36,21 @@ always contains its public ID or explicit null. An omitted input leaves the
 grant directory-only; explicit input null is invalid. The one-time credential
 stays in page memory and is never stored in browser persistence. Its paired
 Provider is displayed in the inventory and issuance receipt.
+
+SCIM issuance accepts an integer lifetime of 1–365 days; the form starts at 90.
+The API can omit the value to use Identity's default. Expiry and the issuing User
+are read-only metadata. Inventory and receipts show an independent issuer-review
+warning; an unknown legacy issuer is never inferred from the current administrator.
+Status distinguishes revoked, expired, expiring within 14 days and active tokens.
+
+Rotate copies the selected token's name, scopes and Provider pairing, including a
+Provider absent from the chooser. Only the new lifetime is editable. Install and
+exercise the new credential in the external directory, then explicitly revoke
+the original. Issuance does not revoke or extend the original. Neither the BFF
+nor browser retries a failed or ambiguous issuance automatically. Failed refresh
+or clipboard operations retain the displayed secret; closing its dialog clears
+it. Console fixture tests verify these consumer boundaries; real credential
+overlap and Gateway ETag enforcement require the separate HTTPS integration gate.
 
 ## Organization membership controls
 

@@ -45,10 +45,12 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
   const [providerDialogError, setProviderDialogError] = useState("");
   const [providerActionError, setProviderActionError] = useState("");
   const [tokenDialog, setTokenDialog] = useState(false);
+  const [rotationTarget, setRotationTarget] = useState<SCIMToken>();
   const [tokenDialogError, setTokenDialogError] = useState("");
   const [revokeTarget, setRevokeTarget] = useState<SCIMToken>();
   const [revokeError, setRevokeError] = useState("");
   const [issued, setIssued] = useState<SCIMTokenIssue>();
+  const [issuedRotation, setIssuedRotation] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState("");
 	const [successMessage, setSuccessMessage] = useState("");
@@ -130,8 +132,14 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
 
   async function issueToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const input = new FormData(event.currentTarget);
-    const providerID = String(input.get("oidc_provider_id") ?? "");
+    const expiresInDays = Number(input.get("expires_in_days"));
+    if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365) {
+      setTokenDialogError("Choose a lifetime from 1 to 365 whole days.");
+      return;
+    }
+    const providerID = rotationTarget ? rotationTarget.oidc_provider_id : String(input.get("oidc_provider_id") ?? "");
     const scopes: Array<"scim:read" | "scim:write"> = [];
     if (input.get("read") === "on") scopes.push("scim:read");
     if (input.get("write") === "on") scopes.push("scim:write");
@@ -140,12 +148,15 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
     setSuccessMessage("");
     try {
       const result = await api.issueSCIMToken({
-        name: String(input.get("name") ?? "").trim(),
-        scopes,
+        name: rotationTarget ? rotationTarget.name : String(input.get("name") ?? "").trim(),
+        scopes: rotationTarget ? [...rotationTarget.scopes] : scopes,
+        expires_in_days: expiresInDays,
         ...(providerID ? { oidc_provider_id: providerID } : {}),
       });
       setTokenDialog(false);
       setIssued(result);
+      setIssuedRotation(Boolean(rotationTarget));
+      setRotationTarget(undefined);
       setCopied(false);
       setCopyError("");
       await loadTokens();
@@ -218,6 +229,7 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
               setProviderDialog(null);
             } else {
               setTokenDialogError("");
+              setRotationTarget(undefined);
               setTokenDialog(true);
             }
           }}
@@ -253,6 +265,12 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
           state={tokens}
           pending={pending}
           onRetry={loadTokens}
+          onRotate={(token) => {
+            setRotationTarget(token);
+            setTokenDialogError("");
+            setSuccessMessage("");
+            setTokenDialog(true);
+          }}
           onRevoke={(token) => {
             setRevokeError("");
             setSuccessMessage("");
@@ -272,15 +290,16 @@ export function ProvisioningPage({ systemAdministrator }: { systemAdministrator:
 			onCopy={() => void copyEndpoint("oidc")}
 			onSubmit={saveProvider}
 		/>
-      <TokenDialog open={tokenDialog} error={tokenDialogError} pending={pending} onClose={() => { setTokenDialog(false); setTokenDialogError(""); }} onSubmit={issueToken} />
+      <TokenDialog open={tokenDialog} rotationTarget={rotationTarget} error={tokenDialogError} pending={pending} onClose={() => { setTokenDialog(false); setRotationTarget(undefined); setTokenDialogError(""); }} onSubmit={issueToken} />
       <RevokeDialog token={revokeTarget} error={revokeError} pending={pending} onClose={() => { setRevokeTarget(undefined); setRevokeError(""); }} onConfirm={revokeToken} />
       <CredentialDialog
 			issued={issued}
+      rotation={issuedRotation}
 			baseURL={endpoints.scimBaseURL}
 			copied={copied}
 			endpointCopied={copiedEndpoint === "scim"}
 			error={copyError || endpointCopyError}
-			onClose={() => { setIssued(undefined); setCopied(false); setCopyError(""); setEndpointCopyError(""); }}
+			onClose={() => { setIssued(undefined); setIssuedRotation(false); setCopied(false); setCopyError(""); setEndpointCopyError(""); }}
 			onCopy={copyCredential}
 			onCopyEndpoint={() => void copyEndpoint("scim")}
 		/>
@@ -373,11 +392,12 @@ function ProviderSection({ state, knownProviders, actionError, pending, onRetry,
   );
 }
 
-function TokenSection({ state, pending, onRetry, onRevoke }: {
+function TokenSection({ state, pending, onRetry, onRevoke, onRotate }: {
   state: ResourceState<SCIMToken[]>;
   pending: boolean;
   onRetry: () => Promise<void>;
   onRevoke: (token: SCIMToken) => void;
+  onRotate: (token: SCIMToken) => void;
 }) {
   if (state.status === "loading") return <Loading label="Loading SCIM credentials" />;
   if (state.status === "error") {
@@ -386,7 +406,7 @@ function TokenSection({ state, pending, onRetry, onRevoke }: {
   return state.data.length === 0 ? (
     <Empty title="No SCIM credentials" detail="Issue a credential when an external directory is ready to provision people and groups." />
   ) : (
-    <TokenTable tokens={state.data} pending={pending} onRevoke={onRevoke} />
+    <TokenTable tokens={state.data} pending={pending} onRevoke={onRevoke} onRotate={onRotate} />
   );
 }
 
@@ -470,11 +490,52 @@ function ProviderTable({ providers, pending, onEdit, onToggle }: {
   );
 }
 
-function TokenTable({ tokens, pending, onRevoke }: {
+const scimExpiryWarning = 14 * 24 * 60 * 60 * 1000;
+
+function tokenStatus(token: SCIMToken, now: number) {
+  if (token.revoked_at) return "revoked";
+  const remaining = Date.parse(token.expires_at) - now;
+  if (!Number.isFinite(remaining)) return "unknown";
+  if (remaining <= 0) return "expired";
+  return remaining <= scimExpiryWarning ? "expiring soon" : "active";
+}
+
+function TokenLifecycle({ token }: { token: SCIMToken }) {
+  return <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+    <p>Expires {dateTime(token.expires_at)}</p>
+    <p className="break-all">{token.issued_by ? `Issued by ${token.issued_by}` : "Issuer unknown"}</p>
+    {token.issuer_review_required ? <p className="font-medium text-destructive">Issuer review required</p> : null}
+  </div>;
+}
+
+function TokenTable({ tokens, pending, onRevoke, onRotate }: {
   tokens: SCIMToken[];
   pending: boolean;
   onRevoke: (token: SCIMToken) => void;
+  onRotate: (token: SCIMToken) => void;
 }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const update = () => {
+      clearTimeout(timer);
+      const current = Date.now();
+      setNow(current);
+      const transitions = tokens.filter(token => !token.revoked_at).flatMap(token => {
+        const expires = Date.parse(token.expires_at);
+        return [expires - scimExpiryWarning, expires];
+      }).filter(time => time > current);
+      // Wake at the next state boundary; cap long sleeps for browser timer limits.
+      timer = setTimeout(update, Math.min(24 * 60 * 60 * 1000, ...transitions.map(time => time - current)));
+    };
+    update();
+    window.addEventListener("focus", update);
+    return () => { clearTimeout(timer); window.removeEventListener("focus", update); };
+  }, [tokens]);
+  const actions = (token: SCIMToken) => <>
+    <Button size="sm" variant="ghost" disabled={pending} onClick={() => onRotate(token)}><RefreshCw className="h-4 w-4" />Rotate</Button>
+    {!token.revoked_at ? <Button size="sm" variant="ghost" disabled={pending} onClick={() => onRevoke(token)}><Power className="h-4 w-4" />Revoke</Button> : null}
+  </>;
   return (
     <>
     <MobileResourceList label="SCIM credentials">
@@ -484,8 +545,9 @@ function TokenTable({ tokens, pending, onRevoke }: {
             <div className="min-w-0">
               <p className="truncate font-medium">{token.name}</p>
               <TokenPairing token={token} />
+              <TokenLifecycle token={token} />
             </div>
-            <Badge value={token.revoked_at ? "revoked" : "active"} />
+            <Badge value={tokenStatus(token, now)} />
           </div>
           <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3 text-sm">
             <div>
@@ -497,14 +559,7 @@ function TokenTable({ tokens, pending, onRevoke }: {
               <dd className="mt-1 text-xs text-muted-foreground">{dateTime(token.created_at)}</dd>
             </div>
           </dl>
-          {!token.revoked_at ? (
-            <div className="mt-4 flex justify-end border-t border-border pt-3">
-              <Button size="sm" variant="ghost" disabled={pending} onClick={() => onRevoke(token)}>
-                <Power className="h-4 w-4" />
-                Revoke
-              </Button>
-            </div>
-          ) : null}
+          <div className="mt-4 flex justify-end gap-2 border-t border-border pt-3">{actions(token)}</div>
         </MobileResourceItem>
       ))}
     </MobileResourceList>
@@ -515,13 +570,11 @@ function TokenTable({ tokens, pending, onRevoke }: {
       </tr></thead>
       <tbody className="divide-y divide-border">{tokens.map((token) => (
         <tr className="hover:bg-muted/35" key={token.id}>
-          <td className="px-3 py-3.5"><p className="font-medium">{token.name}</p><TokenPairing token={token} /></td>
+          <td className="px-3 py-3.5"><p className="font-medium">{token.name}</p><TokenPairing token={token} /><TokenLifecycle token={token} /></td>
           <td className="px-3 py-3 text-muted-foreground">{token.scopes.map((scope) => scope.replace("scim:", "")).join(", ")}</td>
           <td className="px-3 py-3 text-muted-foreground">{dateTime(token.created_at)}</td>
-          <td className="px-3 py-3"><Badge value={token.revoked_at ? "revoked" : "active"} /></td>
-          <td className="px-3 py-3 text-right">{!token.revoked_at ? (
-            <Button size="sm" variant="ghost" disabled={pending} onClick={() => onRevoke(token)}><Power className="h-4 w-4" />Revoke</Button>
-          ) : null}</td>
+          <td className="px-3 py-3"><Badge value={tokenStatus(token, now)} /></td>
+          <td className="px-3 py-3 text-right"><div className="flex justify-end gap-2">{actions(token)}</div></td>
         </tr>
       ))}</tbody>
     </table></DataTable>
@@ -569,24 +622,32 @@ function ProviderDialog({ provider, error, copyError, callbackURL, copied, pendi
   );
 }
 
-function TokenDialog({ open, error, pending, onClose, onSubmit }: {
+function TokenDialog({ open, rotationTarget, error, pending, onClose, onSubmit }: {
   open: boolean;
+  rotationTarget: SCIMToken | undefined;
   error: string;
   pending: boolean;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
-    <Dialog dismissible={!pending} open={open} onOpenChange={(next) => { if (!next) onClose(); }} title="Issue SCIM token" description="The credential is displayed once after issuance.">
+    <Dialog dismissible={!pending} open={open} onOpenChange={(next) => { if (!next) onClose(); }} title={rotationTarget ? "Rotate SCIM token" : "Issue SCIM token"} description={rotationTarget ? "Create an independent credential with the same configuration. The original remains unchanged." : "The credential is displayed once after issuance."}>
       <form className="grid gap-5" onSubmit={onSubmit}>
         {error ? <ErrorNotice message={error} /> : null}
+        {rotationTarget ? <div className="rounded-md border border-border p-4 text-sm">
+          <p className="font-medium">{rotationTarget.name}</p>
+          <p className="mt-1">Permissions: {rotationTarget.scopes.map(scope => scope.replace("scim:", "")).join(", ")}</p>
+          <TokenPairing token={rotationTarget} />
+        </div> : <>
         <Field label="Credential name" hint="Use the external directory name, such as Workday or Okta."><Input name="name" required /></Field>
         <IdentityProviderSelect name="oidc_provider_id" optional disabled={pending} />
         <fieldset className="grid gap-2"><legend className="mb-1 text-sm font-medium">Permissions</legend>
           <CheckboxField defaultChecked hint="Users and groups" label="Read directory" name="read" />
           <CheckboxField defaultChecked hint="Create and update resources" label="Provision directory" name="write" />
         </fieldset>
-        <div className="flex justify-end gap-2"><Button disabled={pending} type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button aria-busy={pending} disabled={pending} type="submit">{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}Issue credential</Button></div>
+        </>}
+        <Field label="Lifetime (days)" hint="Choose 1–365 days. Using a credential does not extend its lifetime."><Input name="expires_in_days" type="number" min={1} max={365} step={1} required defaultValue={90} disabled={pending} /></Field>
+        <div className="flex justify-end gap-2"><Button disabled={pending} type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button aria-busy={pending} disabled={pending} type="submit">{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}{rotationTarget ? "Issue replacement" : "Issue credential"}</Button></div>
       </form>
     </Dialog>
   );
@@ -609,8 +670,9 @@ function RevokeDialog({ token, error, pending, onClose, onConfirm }: {
   );
 }
 
-function CredentialDialog({ issued, baseURL, copied, endpointCopied, error, onClose, onCopy, onCopyEndpoint }: {
+function CredentialDialog({ issued, rotation, baseURL, copied, endpointCopied, error, onClose, onCopy, onCopyEndpoint }: {
   issued: SCIMTokenIssue | undefined;
+  rotation: boolean;
 	baseURL: string;
   copied: boolean;
 	endpointCopied: boolean;
@@ -624,6 +686,8 @@ function CredentialDialog({ issued, baseURL, copied, endpointCopied, error, onCl
       <div className="grid gap-5">
 		<div><p className="mb-2 text-sm font-medium">SCIM base URL</p><EndpointValue value={baseURL} copied={endpointCopied} onCopy={onCopyEndpoint} /></div>
         {issued ? <TokenPairing token={issued.token} /> : null}
+        {issued ? <TokenLifecycle token={issued.token} /> : null}
+        {rotation ? <p className="text-sm text-muted-foreground">The original credential remains unchanged. Install and test this new credential in your directory, then explicitly revoke the original.</p> : null}
         <div className="rounded-md border border-[#cfd8ad] bg-[#f3f9d9] p-4"><div className="flex items-center gap-2 text-sm font-medium text-[#536700]"><ShieldCheck className="h-4 w-4" />One-time secret</div><code className="mt-3 block break-all rounded-md bg-white p-3 text-xs text-foreground">{issued?.credential}</code></div>
         {error ? <ErrorNotice message={error} /> : null}
         <div className="flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>Done</Button><Button onClick={() => void onCopy()}>{copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy credential"}</Button></div>

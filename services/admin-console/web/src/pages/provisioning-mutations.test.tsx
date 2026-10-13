@@ -12,7 +12,8 @@ const provider: OIDCProvider = {
   token_endpoint_auth_method: "client_secret_basic", id_token_signing_algs: ["RS256"], jwks_uri: "https://idp.example.com/jwks",
   created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
 };
-const token: SCIMToken = { id: "token-1", name: "HR sync", scopes: ["scim:read", "scim:write"], created_at: provider.created_at, oidc_provider_id: null };
+const token: SCIMToken = { id: "token-1", name: "HR sync", scopes: ["scim:read", "scim:write"], created_at: provider.created_at, oidc_provider_id: null,
+  expires_at: "2027-01-01T00:00:00Z", issued_by: "user-admin", issuer_review_required: false };
 const providerPath = "/api/admin/provisioning/oidc-providers";
 const tokenPath = "/api/admin/provisioning/scim-tokens";
 
@@ -92,7 +93,7 @@ it("issues an immutable SCIM Provider pairing using the organization chooser", a
   fireEvent.change(dialog.getByLabelText("Login provider"),{target:{value:"provider-1"}});
   fireEvent.click(dialog.getByRole("button",{name:"Issue credential"}));
   const issued=within(await screen.findByRole("dialog",{name:"SCIM credential issued"}));
-  expect(sent).toEqual({name:"Paired directory",scopes:["scim:read","scim:write"],oidc_provider_id:"provider-1"});
+  expect(sent).toEqual({name:"Paired directory",scopes:["scim:read","scim:write"],oidc_provider_id:"provider-1",expires_in_days:90});
   expect(issued.getByText("provider-1")).toBeTruthy();
   expect(issued.queryByRole("combobox")).toBeNull();
 });
@@ -244,7 +245,7 @@ it("preserves an issued SCIM credential across refresh and clipboard failures, t
   let reads = 0;
   let writes = 0;
   mockProvisioning({
-    write: (path, body) => { expect(path).toBe(tokenPath); expect(JSON.parse(body)).toEqual({ name: token.name, scopes: token.scopes }); writes++; return Response.json({ token, credential }); },
+    write: (path, body) => { expect(path).toBe(tokenPath); expect(JSON.parse(body)).toEqual({ name: token.name, scopes: token.scopes, expires_in_days: 90 }); writes++; return Response.json({ token, credential }); },
     tokens: () => ++reads === 2 ? Response.json({ message: "Token inventory unavailable" }, { status: 503 }) : Response.json({ tokens: reads > 2 ? [token] : [] }),
   });
   render(<ProvisioningPage systemAdministrator={false} />);

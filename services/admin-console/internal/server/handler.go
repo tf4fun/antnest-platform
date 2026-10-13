@@ -443,6 +443,7 @@ type issueSCIMTokenInput struct {
 	Name           string          `json:"name"`
 	Scopes         []string        `json:"scopes"`
 	OIDCProviderID json.RawMessage `json:"oidc_provider_id"`
+	ExpiresInDays  json.RawMessage `json:"expires_in_days"`
 }
 
 func (h *handler) issueSCIMToken(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
@@ -459,6 +460,11 @@ func (h *handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 		writeError(response, http.StatusBadRequest, "invalid_request", "OIDC Provider reference is invalid")
 		return
 	}
+	var expiresInDays *int
+	if len(input.ExpiresInDays) != 0 && (json.Unmarshal(input.ExpiresInDays, &expiresInDays) != nil || expiresInDays == nil || *expiresInDays < 1 || *expiresInDays > 365) {
+		writeError(response, http.StatusBadRequest, "invalid_request", "SCIM token lifetime must be an integer from 1 to 365 days")
+		return
+	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
 	if !ok {
 		return
@@ -469,6 +475,9 @@ func (h *handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 	}
 	if len(input.OIDCProviderID) != 0 {
 		payload["oidc_provider_id"] = providerID
+	}
+	if expiresInDays != nil {
+		payload["expires_in_days"] = *expiresInDays
 	}
 	h.forwardProjectedJSONNoStore(response, request, upstream.Identity, http.MethodPost,
 		"/rpc/identity/issue-scim-token", "", payload, projectSCIMTokenIssue)
