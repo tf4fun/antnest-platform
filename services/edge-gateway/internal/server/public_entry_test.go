@@ -110,7 +110,8 @@ func TestProxyClientAddressControlsLoginSourceAdmission(t *testing.T) {
 		{"empty nearest hop", "10.1.0.2:8080", "192.0.2.10,", "192.0.2.11,", false},
 		{"all trusted", "10.1.0.2:8080", "10.1.0.3", "10.1.0.4", false},
 		{"IPv4 mapped", "[::ffff:10.1.0.2]:8080", "::ffff:192.0.2.10", "192.0.2.10", false},
-		{"IPv6 clients", "[fd00::2]:8080", "2001:db8::10", "2001:db8::11", true},
+		{"same IPv6 prefix", "[fd00::2]:8080", "2001:db8::10", "2001:db8::11", false},
+		{"different IPv6 prefixes", "[fd00::2]:8080", "2001:db8:1::10", "2001:db8:2::11", true},
 		{"zone rejected", "10.1.0.2:8080", "fe80::1%eth0", "fe80::2%eth0", false},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -146,6 +147,50 @@ func TestPublicEntryRejectsDuplicateOrigin(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("duplicate Origin status=%d", w.Code)
+	}
+}
+
+func TestLoginAdmissionIPv6AggregationPreservesForwardedAddress(t *testing.T) {
+	var forwarded string
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = r.Header.Get("X-Forwarded-For")
+		w.WriteHeader(http.StatusOK)
+	})
+	stub := &identityServiceStub{resolvePrincipal: administratorPrincipal()}
+	h := newTestHandlerWithConfig(t, stub, upstream, time.Now(), Config{
+		PublicOrigin:   "https://antnest.example",
+		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("fd00::/64")},
+		LoginSourceMax: 1, LoginAccountMax: 100,
+	})
+	for index, source := range []string{"2001:db8:1:2::10", "2001:db8:1:2::11"} {
+		request := httptest.NewRequest(http.MethodPost, "http://edge.internal/api/session/login",
+			strings.NewReader(fmt.Sprintf(`{"organization_slug":"engineering","email":"user%d@example.com","password":"wrong"}`, index)))
+		request.RemoteAddr = "[fd00::2]:43100"
+		request.Header.Set("Origin", "https://antnest.example")
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Forwarded-For", source)
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		want := http.StatusUnauthorized
+		if index == 1 {
+			want = http.StatusTooManyRequests
+		}
+		if response.Code != want {
+			t.Fatalf("IPv6 admission status=%d want=%d", response.Code, want)
+		}
+		request = httptest.NewRequest(http.MethodGet, "http://edge.internal/", nil)
+		request.RemoteAddr = "[fd00::2]:43100"
+		request.Header.Set("Origin", "https://antnest.example")
+		request.Header.Set("X-Forwarded-For", source)
+		addSessionCookies(request, "token-1", testCSRFToken)
+		response = httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || forwarded != source {
+			t.Fatalf("proxy status=%d source=%q want actual %q", response.Code, forwarded, source)
+		}
+	}
+	if stub.loginCalls != 1 {
+		t.Fatalf("shared IPv6 prefix made %d Identity login calls", stub.loginCalls)
 	}
 }
 

@@ -11,7 +11,7 @@ const read = (name) =>
   );
 const policy = () => read("edge-gateway/login-admission-policy.json");
 
-test("login admission has its own policy and a staged Gateway activation", () => {
+test("login admission has its own policy and active Gateway implementation", () => {
   const value = policy();
   const gateway = read("edge-gateway/session-contract.json");
   assert.equal(value.contract, "antnest.edge-gateway.login-admission");
@@ -22,6 +22,7 @@ test("login admission has its own policy and a staged Gateway activation", () =>
     gateway_version: 23,
     active_catalog_changes_with_owning_implementation: true,
   });
+  assert.equal(gateway.version, value.activation.gateway_version);
   assert.equal(value.owner, "edge-gateway-process");
   assert.equal(value.distributed_quota, false);
 });

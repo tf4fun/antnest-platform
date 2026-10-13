@@ -8,10 +8,10 @@ OpenAPI.
 
 The shared [login admission contract](login-admission.md) and its
 [policy](login-admission-policy.json) define independent password/OIDC budgets,
-IPv6 `/64` aggregation and bounded FIFO eviction for #2. Activation is staged
-for the owning Gateway version 23 implementation; the active session catalog
-stays at version 22 in the shared batch. Gateway, consumer references and real
-two-source HTTPS/OIDC integration remain pending.
+IPv6 `/64` aggregation and bounded FIFO eviction for #2. Gateway version 23
+activates the implementation with its service documentation, unit, component
+and authenticated owning-container evidence. Consumer references and real
+two-source HTTPS/OIDC integration follow as separate delivery batches.
 
 The shared [password verification policy](../identity/password-verification.md)
 defines Identity's persisted attempt limits and Argon2 resource failures.

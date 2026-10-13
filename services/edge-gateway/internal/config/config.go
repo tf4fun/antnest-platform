@@ -30,6 +30,8 @@ type Config struct {
 	LoginWindow              time.Duration
 	LoginSourceMax           int
 	LoginAccountMax          int
+	LoginMaxKeys             int
+	OIDCStartSourceMax       int
 	ShutdownTimeout          time.Duration
 }
 
@@ -65,6 +67,14 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	loginMaxKeys, err := positiveInteger(lookup, "ANTNEST_EDGE_LOGIN_MAX_KEYS", 65536)
+	if err != nil {
+		return Config{}, err
+	}
+	oidcStartSourceMax, err := positiveInteger(lookup, "ANTNEST_EDGE_OIDC_START_SOURCE_MAX", 30)
+	if err != nil {
+		return Config{}, err
+	}
 	shutdownTimeout, err := duration(lookup, "ANTNEST_EDGE_SHUTDOWN_TIMEOUT", 15*time.Second)
 	if err != nil {
 		return Config{}, err
@@ -97,6 +107,8 @@ func Load(lookup func(string) string) (Config, error) {
 		LoginWindow:              loginWindow,
 		LoginSourceMax:           loginSourceMax,
 		LoginAccountMax:          loginAccountMax,
+		LoginMaxKeys:             loginMaxKeys,
+		OIDCStartSourceMax:       oidcStartSourceMax,
 		ShutdownTimeout:          shutdownTimeout,
 	}
 	if err := serviceURL("ANTNEST_IDENTITY_SERVICE_URL", config.IdentityURL); err != nil {

@@ -267,32 +267,30 @@ func TestLoginAdmissionRejectsBeforeAnotherIdentityPasswordCheck(t *testing.T) {
 	}
 }
 
-func TestOIDCStartUsesThePublicLoginAdmissionWindow(t *testing.T) {
+func TestOIDCStartDoesNotShareAnOrganizationProviderAccountWindow(t *testing.T) {
 	identityStub := &identityServiceStub{startOIDCResult: identity.StartOIDCLoginResult{
 		AuthorizationURL: "https://id.example.test/authorize?state=opaque-state", ExpiresAt: time.Now().Add(time.Minute),
 	}}
 	handler := newTestHandlerWithConfig(
 		t, identityStub, http.NotFoundHandler(), time.Now(),
-		Config{LoginWindow: time.Minute, LoginSourceMax: 1, LoginAccountMax: 1},
+		Config{LoginWindow: time.Minute, LoginSourceMax: 30, LoginAccountMax: 10},
 	)
-	for attempt := 1; attempt <= 2; attempt++ {
+	for attempt := 1; attempt <= 12; attempt++ {
 		request := newBrowserRequest(http.MethodPost, "/api/session/oidc/start",
 			strings.NewReader(`{"organization_slug":"engineering","provider_name":"workforce"}`))
 		request.Header.Set("Content-Type", "application/json")
 		request.RemoteAddr = "192.0.2.20:1234"
+		if attempt == 12 {
+			request.RemoteAddr = "192.0.2.21:1234"
+		}
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		if attempt == 1 && response.Code != http.StatusOK {
-			t.Fatalf("initial OIDC start status=%d body=%s", response.Code, response.Body.String())
-		}
-		if attempt == 2 && (response.Code != http.StatusTooManyRequests ||
-			response.Header().Get("Retry-After") == "") {
-			t.Fatalf("limited OIDC start status=%d headers=%v body=%s",
-				response.Code, response.Header(), response.Body.String())
+		if response.Code != http.StatusOK {
+			t.Errorf("OIDC start %d status=%d want=200 body=%s", attempt, response.Code, response.Body.String())
 		}
 	}
-	if identityStub.startOIDCCalls != 1 {
-		t.Fatalf("Identity OIDC start calls=%d want=1", identityStub.startOIDCCalls)
+	if identityStub.startOIDCCalls != 12 {
+		t.Fatalf("Identity OIDC start calls=%d want=12", identityStub.startOIDCCalls)
 	}
 }
 

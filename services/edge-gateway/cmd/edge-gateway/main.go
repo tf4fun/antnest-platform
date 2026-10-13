@@ -119,6 +119,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		AgentACPURL: cfg.AgentACPURL, IdentityURL: cfg.IdentityURL, RequestTimeout: cfg.RequestTimeout,
 		StreamLease: cfg.StreamLease, LoginWindow: cfg.LoginWindow,
 		LoginSourceMax: cfg.LoginSourceMax, LoginAccountMax: cfg.LoginAccountMax,
+		LoginMaxKeys: cfg.LoginMaxKeys, OIDCStartSourceMax: cfg.OIDCStartSourceMax,
 	}, server.Dependencies{
 		Identity: identityClient, Agents: agentClient, Execution: executionClient, Sessions: sessions,
 		HTTPClient: httpClient, Logger: logger, BrowserStreams: browserStreams,

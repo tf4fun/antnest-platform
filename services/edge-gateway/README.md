@@ -29,7 +29,7 @@ Gateway still owns browser credential stripping and route authorization.
 - Browser cookie and CSRF policy.
 - Current-account, password rotation, explicit activity and self-session controls.
 - Access-token resolution and administrator admission.
-- Bounded login admission before Identity performs password verification.
+- Separate bounded password and OIDC-source admission before calling Identity.
 - Browser OIDC discovery, start and callback, and transparent SCIM protocol
   ingress to Identity.
 - Metadata-only Agent workspace discovery (`GET /api/app/bootstrap`); ACP owns
@@ -84,9 +84,8 @@ Ordinary 401 responses, SSR rejection, activity and revocation preserve cookies.
 See the [browser lifecycle contract](../../contracts/identity/browser-sessions.md)
 for the logout matrix, password recovery and consumer integration.
 
-Gateway revision 22 consumes Identity revision 17's password admission failures,
-external identity controls
-and existing private revocation feed. Its bounded Resolve cache defaults to
+Gateway consumes Identity revision 17's password admission failures, external
+identity controls and existing private revocation feed. Its bounded Resolve cache defaults to
 10 seconds, clips every snapshot to the original session and CCT deadlines,
 and bypasses cached authority until the feed proves catch-up. Scope includes
 the exact token hash, server-owned audience profile and Agent. TTL zero restores
@@ -101,10 +100,22 @@ Login and password change validate Identity's complete status, body and single
 seconds) or `503 credential_busy` (1 second). Both responses have the fixed
 public message, `retryable: true`, `no-store` and no Cookie writes. Invalid
 metadata produces `503 identity_unavailable` without a retry hint; neither path
-replays the password request. The existing edge `login_rate_limited` admission
-is unchanged. Console user creation also consumes Identity's typed busy response.
+replays the password request. Edge `login_rate_limited` keeps its separate
+429 response contract. Console user creation also consumes Identity's typed busy response.
 The HTTPS integration suite verifies real KDF rejection, unchanged browser
 Cookies and durable state, and explicit recovery through all three routes.
+
+Gateway revision 23 login admission uses independent password-source,
+password-account and OIDC-source tables, each configurable with a default
+capacity of 65,536 keys.
+OIDC has no organization/provider account bucket. The limiter groups IPv6 by
+`/64`, retains fixed-size digests and evicts the earliest fixed window at
+capacity. Retained exhausted keys still reject without changing any table.
+One counter records each admission decision with only flow/outcome labels.
+See the [login admission contract](../../contracts/edge-gateway/login-admission.md)
+and [operations guide](docs/operations.md#state-limits-and-capacity) for defaults,
+eviction tradeoffs and the independent Identity password controls. The #2
+consumer and real two-source HTTPS/OIDC gates remain pending until admitted.
 
 Periodic stream checks discard a cache hit that was valid when the check
 started but crossed only its TTL during delivery. They may resolve once more
@@ -175,8 +186,10 @@ context are sent directly to the configured service origin.
 | `ANTNEST_EDGE_RESOLVE_CACHE_SIZE`                          | no                          | `50000`      | cache entry limit, 1–50,000                                                                                                                                                 |
 | `ANTNEST_EDGE_STREAM_LEASE`                                | no                          | `5m`         | Maximum lifetime of an authenticated SSE observation                                                                                                                        |
 | `ANTNEST_EDGE_LOGIN_WINDOW`                                | no                          | `5m`         | In-memory login admission window                                                                                                                                            |
-| `ANTNEST_EDGE_LOGIN_SOURCE_MAX`                            | no                          | `30`         | Login attempts per source per window                                                                                                                                        |
-| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX`                           | no                          | `10`         | Login attempts per normalized account per window                                                                                                                            |
+| `ANTNEST_EDGE_LOGIN_SOURCE_MAX`                            | no                          | `30`         | Password attempts per source per window                                                                                                                                     |
+| `ANTNEST_EDGE_LOGIN_ACCOUNT_MAX`                           | no                          | `10`         | Password attempts per normalized organization/account per window                                                                                                            |
+| `ANTNEST_EDGE_OIDC_START_SOURCE_MAX`                       | no                          | `30`         | OIDC starts per source per window, independent of password limits                                                                                                           |
+| `ANTNEST_EDGE_LOGIN_MAX_KEYS`                              | no                          | `65536`      | Entry capacity of each of the three independent login admission tables                                                                                                      |
 | `ANTNEST_EDGE_SHUTDOWN_TIMEOUT`                            | no                          | `15s`        | Graceful drain budget for ordinary HTTP requests                                                                                                                            |
 | `ANTNEST_ENVIRONMENT`                                      | no                          | empty        | Deployment environment resource attribute for telemetry                                                                                                                     |
 | `OTEL_*`                                                   | no                          | -            | Standard OpenTelemetry SDK settings (`OTEL_SERVICE_NAME`, `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) |

@@ -22,6 +22,24 @@ fixture control endpoint has no published port. The original edge login limit
 remains enabled. Real Identity accounting and final #60 HTTPS integration are
 separate admissions.
 
+The #2 login admission phase recreates only Gateway from the same built image,
+with table capacity 1, password source/account limits 2/1 and OIDC source limit 2.
+Sixteen requests prove independent flows, the `oidc:workforce` account boundary,
+retained source/account refusals, atomic refusal at full capacity and restart of
+evicted windows. The complete sequence must finish strictly within the five-minute
+window, measured with a monotonic clock, so natural expiry cannot substitute for
+eviction. Source A uses the published host port; source B runs inside the
+dependency container and reaches Gateway directly. Private Gateway receipts must
+show two distinct actual selected IPs, including B's inspected container IP.
+Authenticated before/after counters prove one owning RPC per admission and zero
+on refusal, with unchanged issuance/rotation/revocation counts through shutdown.
+OIDC success writes only its secure binding Cookie; 401/429 write no Cookies.
+Receipts omit authorization URLs, state and Cookie values, and project arbitrary
+response headers or JSON parse failures to fixed non-sensitive values. OTel is disabled in
+this owning Docker fixture; metric counts/labels have separate Go evidence.
+This phase does not perform real signed SSO or satisfy the final two-client
+container HTTPS/OIDC admission.
+
 The external identity flow covers independent binding/notice pagination,
 cross-organization self entries, immutable historical notice fields, exact opaque
 subjects, explicit per-ID acknowledgment and idempotent zero counts. It checks

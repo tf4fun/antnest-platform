@@ -2,10 +2,10 @@
 
 The [policy](login-admission-policy.json) defines the Gateway's cheap login
 prefilter for [#2](https://github.com/tf4fun/antnest-platform/issues/2). Its
-baseline is Gateway session version 22; activation belongs to the owning
-Gateway version 23 implementation. This shared batch leaves the active catalog
-at version 22. Gateway implementation, consumer reference updates and real
-HTTPS/OIDC integration remain pending; this document alone enables no behavior.
+baseline is Gateway session version 22; Gateway version 23 activates the owning
+implementation. Its unit, component and authenticated Docker acceptance cover
+the Gateway boundary. Consumer references and real two-client HTTPS/OIDC
+integration are separate batches; the owning fixture does not complete SSO.
 
 Identity's [password policy](../identity/password-verification.md) remains the
 authority for persistent credential attempt limits and bounded Argon2 work.
