@@ -20,6 +20,21 @@ import {
 
 const providerName = "admission-acceptance";
 const password = "synthetic-admission-local-password";
+export function archiveAdmissionSnapshot(
+  directory,
+  traceID,
+  status,
+  text,
+  secrets,
+) {
+  writeEvidenceFile(
+    join(directory, "final-traces"),
+    `${traceID}.private.json`,
+    text,
+  );
+  assert.equal(status, 200);
+  assertAdmissionArchive(JSON.parse(text), traceID, secrets);
+}
 const rows = (text) =>
   text.split("\n").flatMap((line) => {
     try {
@@ -288,7 +303,7 @@ export async function verifyLoginAdmission({
       ),
       "login admission raw trace diagnostics require review",
     );
-    evidence.complete = true;
+    evidence.business_complete = true;
     save();
   } catch (error) {
     failure = error;
@@ -372,18 +387,20 @@ export async function verifyLoginAdmission({
           ]),
         });
         const text = await response.text();
-        writeEvidenceFile(
+        archiveAdmissionSnapshot(
           directory,
-          `final-traces/${traceID}.private.json`,
+          traceID,
+          response.status,
           text,
+          secrets,
         );
-        assert.equal(response.status, 200);
-        assertAdmissionArchive(JSON.parse(text), traceID, secrets);
       });
     evidence.diagnostics = { complete: errors.length === 0, failed: errors };
     await attempt("progress", save);
     failure = admissionFailure(failure, errors);
   }
   if (failure) throw failure;
+  evidence.complete = true;
+  save();
   return evidence;
 }

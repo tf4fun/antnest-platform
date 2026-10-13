@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { randomUUID } from "node:crypto";
+import { readFileSync, statSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { durablePath } from "../../support/storage.mjs";
+import { archiveAdmissionSnapshot } from "./login-admission-flow.mjs";
 import {
   assertAdmissionReceipts,
   inspectAdmissionTrace,
@@ -220,6 +225,25 @@ test("a 200 diagnostic response must contain the requested, capture-free, closed
     { refType: "CHILD_OF", traceID: trace.traceID, spanID: "f".repeat(16) },
   ];
   assert.throws(() => assertAdmissionArchive(detached, trace.traceID, []));
+});
+
+test("final diagnostic snapshots create a private child directory and preserve rejected raw responses", (t) => {
+  const directory = durablePath(
+    `artifacts/verification/login-admission-archive/${randomUUID()}`,
+  );
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const trace = refusalTrace();
+  const text = JSON.stringify({ data: [trace], errors: [] });
+  archiveAdmissionSnapshot(directory, trace.traceID, 200, text, []);
+  const file = join(directory, "final-traces", `${trace.traceID}.private.json`);
+  assert.equal(readFileSync(file, "utf8"), text);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.equal(statSync(join(directory, "final-traces")).mode & 0o777, 0o700);
+  const failed = JSON.stringify({ data: [], errors: ["backend failure"] });
+  assert.throws(() =>
+    archiveAdmissionSnapshot(directory, trace.traceID, 200, failed, []),
+  );
+  assert.equal(readFileSync(file, "utf8"), failed);
 });
 test("429 raw trace must prove zero upstream spans, even without an Identity SERVER export", () => {
   const trace = refusalTrace();
