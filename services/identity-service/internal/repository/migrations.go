@@ -25,7 +25,24 @@ type migration struct {
 	body     []byte
 }
 
+type MigrationSummary struct {
+	SCIMTokens, UnknownSCIMIssuers int
+}
+
+func ApplyMigrationsWithSummary(ctx context.Context, pool *pgxpool.Pool) (MigrationSummary, error) {
+	var summary MigrationSummary
+	if err := applyMigrations(ctx, pool, &summary); err != nil {
+		return MigrationSummary{}, err
+	}
+	return summary, nil
+}
+
 func ApplyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := ApplyMigrationsWithSummary(ctx, pool)
+	return err
+}
+
+func applyMigrations(ctx context.Context, pool *pgxpool.Pool, summary *MigrationSummary) error {
 	plan, err := loadMigrationPlan()
 	if err != nil {
 		return err
@@ -59,6 +76,14 @@ func ApplyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 		if _, err := tx.Exec(ctx, string(candidate.body)); err != nil {
 			return fmt.Errorf("apply identity migration %s: %w", candidate.name, err)
+		}
+		if candidate.name == "0010_scim_lifecycle.sql" {
+			// The ALTER transaction still owns the table lock. These are exactly
+			// the backfilled rows, not a later guess based on wall-clock dates.
+			if err := tx.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE issued_by IS NULL) FROM scim_tokens`).
+				Scan(&summary.SCIMTokens, &summary.UnknownSCIMIssuers); err != nil {
+				return fmt.Errorf("summarize SCIM lifecycle migration: %w", err)
+			}
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)`,

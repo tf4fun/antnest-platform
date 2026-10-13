@@ -42,12 +42,26 @@ function errorTags(span, expected) {
       assert.equal(value, expected[key], "unrelated refusal error metadata");
     }
 }
-function errorEvent(span, expected) {
+function errorEvent(span, expected, process) {
   const event = one(span.logs ?? [], "one exact refusal event required");
+  const finish = end(span),
+    languages = (process?.tags ?? []).filter(
+      (field) => field.key === "telemetry.sdk.language",
+    );
+  // Go records these events before ending the span. Jaeger independently
+  // exports start, duration and event in integer microseconds, so their sums
+  // can differ by one quantum. Keep raw timestamps and the lower bound intact.
+  const quantizedGoEnd =
+    languages.length === 1 &&
+    languages[0].value === "go" &&
+    [span.startTime, span.duration, event.timestamp, finish, finish + 1].every(
+      Number.isSafeInteger,
+    ) &&
+    event.timestamp === finish + 1;
   assert(
     Number.isFinite(event.timestamp) &&
       event.timestamp >= span.startTime &&
-      event.timestamp <= end(span),
+      (event.timestamp <= finish || quantizedGoEnd),
     "refusal event outside owning span",
   );
   const actual = fields(event.fields ?? []);
@@ -86,7 +100,7 @@ const transportFailures = {
     causes: [["*net.OpError", "*net.DNSError"]],
   },
 };
-function transportFailure(span, stage, profile) {
+function transportFailure(span, stage, profile, process) {
   const type = tag(span, "error.type"),
     expected = transportFailures[type];
   assert(expected, "unrelated stopped transport failure");
@@ -117,12 +131,16 @@ function transportFailure(span, stage, profile) {
     "otel.status_code": "ERROR",
     "otel.status_description": expected.message,
   });
-  errorEvent(span, {
-    "error.type": type,
-    "antnest.error.stage": stage,
-    "antnest.error.message": expected.message,
-    "antnest.error.cause_types": value,
-  });
+  errorEvent(
+    span,
+    {
+      "error.type": type,
+      "antnest.error.stage": stage,
+      "antnest.error.message": expected.message,
+      "antnest.error.cause_types": value,
+    },
+    process,
+  );
   return { type, causes: JSON.parse(value) };
 }
 const end = (s) => {
@@ -377,7 +395,12 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     const markers = trace.spans.filter(
       (s) => s.operationName === "gateway.identity.resolve",
     );
-    const rootFailure = transportFailure(root, "request", profile);
+    const rootFailure = transportFailure(
+      root,
+      "request",
+      profile,
+      trace.processes[root.processID],
+    );
     let decision;
     if (profile) {
       decision = one(markers, "one failed Resolve decision required");
@@ -415,7 +438,12 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       "actual Identity request deadline missing or exceeds fixture budget",
     );
     assert.equal(tag(client, "http.response.status_code"), undefined);
-    const clientFailure = transportFailure(client, "send", profile);
+    const clientFailure = transportFailure(
+      client,
+      "send",
+      profile,
+      trace.processes[client.processID],
+    );
     const waiterDeadline =
       profile &&
       rootFailure.type === "deadline_exceeded" &&
@@ -566,12 +594,16 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     "otel.status_code": "ERROR",
     "otel.status_description": gatewayMessage,
   });
-  errorEvent(root, {
-    "error.type": "operation_failed",
-    "antnest.error.stage": "request",
-    "antnest.error.message": gatewayMessage,
-    "antnest.error.cause_types": '["*errors.errorString"]',
-  });
+  errorEvent(
+    root,
+    {
+      "error.type": "operation_failed",
+      "antnest.error.stage": "request",
+      "antnest.error.message": gatewayMessage,
+      "antnest.error.cause_types": '["*errors.errorString"]',
+    },
+    trace.processes[root.processID],
+  );
   errorTags(client, {
     error: true,
     "error.type": "401",
@@ -592,7 +624,7 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     "antnest.outcome": "rejected",
     "antnest.result": "rejected",
   });
-  errorEvent(server, protocolError);
+  errorEvent(server, protocolError, trace.processes[server.processID]);
   const database = databaseChildrenTopology(trace, server);
   const sql = one(database, "one actual expired browser token SELECT required");
   assert.equal(tag(sql, "db.operation.name"), "SELECT");

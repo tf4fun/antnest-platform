@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/identity/scim-lifecycle.schema.json",
+  "title": "SCIM lifecycle extension fields and server resource versions",
+  "description": "Planned extension-field projections, not complete RPC request or response schemas. Owning catalogs activate them with their service implementations.",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+    },
+    "issue_parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expires_in_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365,
+          "default": 90
+        }
+      }
+    },
+    "token_lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expires_at", "issued_by", "issuer_review_required"],
+      "properties": {
+        "expires_at": { "type": "string", "format": "date-time" },
+        "issued_by": {
+          "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "issuer_review_required": { "type": "boolean" }
+      },
+      "if": {
+        "properties": { "issued_by": { "type": "null" } },
+        "required": ["issued_by"]
+      },
+      "then": {
+        "properties": { "issuer_review_required": { "const": true } }
+      }
+    },
+    "etag": {
+      "type": "string",
+      "description": "Generated server version only. Incoming If-Match accepts opaque entity-tags and must not parse them as timestamps.",
+      "pattern": "^W/\"(?:0|-?[1-9][0-9]*)\"$"
+    }
+  }
+}

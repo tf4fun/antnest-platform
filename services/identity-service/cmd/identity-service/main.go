@@ -178,12 +178,24 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		return classifyFailure("database_startup", err)
 	}
 	defer pool.Close()
-	if err := repository.ApplyMigrations(ctx, pool); err != nil {
+	migrated, err := repository.ApplyMigrationsWithSummary(ctx, pool)
+	if err != nil {
 		return classifyFailure("database_migration", err)
+	}
+	if migrated.SCIMTokens > 0 {
+		logger.Warn("SCIM token lifecycle metadata was backfilled", "token_count", migrated.SCIMTokens, "unknown_issuer_count", migrated.UnknownSCIMIssuers)
 	}
 	store, err := repository.New(pool, identityid.MustNew, time.Now)
 	if err != nil {
 		return classifyFailure("service_composition", err)
+	}
+	scimSummary, err := store.InitializeSCIMTokens(ctx, cfg.SCIMRevokeOnIssuerLoss)
+	if err != nil {
+		return classifyFailure("scim_lifecycle_initialization", err)
+	}
+	if scimSummary.Revoked > 0 || scimSummary.Flagged > 0 || scimSummary.UnknownIssuers > 0 || scimSummary.Expired > 0 {
+		logger.Warn("SCIM tokens require lifecycle attention", "revoked_count", scimSummary.Revoked,
+			"review_flagged_count", scimSummary.Flagged, "unknown_issuer_count", scimSummary.UnknownIssuers, "expired_count", scimSummary.Expired)
 	}
 	if err := store.InitializeBrowserSessions(ctx, cfg.SessionIdleTTL); err != nil {
 		return classifyFailure("browser_session_initialization", err)

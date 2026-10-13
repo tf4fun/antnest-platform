@@ -1,0 +1,135 @@
+{
+  "contract": "antnest.identity.scim-lifecycle",
+  "revision": 1,
+  "wire_baseline": {
+    "identity_revision": 17,
+    "admin_version": 53
+  },
+  "activation": {
+    "identity_revision": 18,
+    "admin_version": 54,
+    "active_catalog_changes_with_owning_implementation": true
+  },
+  "delivery_order": [
+    "shared-contract",
+    "identity-service",
+    "admin-console",
+    "consumer-references",
+    "https-integration"
+  ],
+  "expiry": {
+    "default_days": 90,
+    "maximum_days": 365,
+    "day_seconds": 86400,
+    "equal_to_now": "expired",
+    "use_extends_expiry": false,
+    "issuance_clock": "authoritative-transaction-clock-after-lock-waits"
+  },
+  "issuer": {
+    "identity": "verified-global-user-id",
+    "client_supplied": false,
+    "configuration": {
+      "env": "ANTNEST_IDENTITY_SCIM_REVOKE_ON_ISSUER_LOSS",
+      "default": true,
+      "false_action": "persist-review-required",
+      "invalid": "startup-error"
+    },
+    "organization_authority_loss": "same-organization-tokens",
+    "global_user_inactive": "all-organizations",
+    "system_admin_membership_loss": "recheck-effective-authority",
+    "restore_reactivates_tokens": false,
+    "restore_clears_review": false,
+    "side_effects": "same-transaction-as-authority-change-and-audit"
+  },
+  "migration": {
+    "name": "0010_scim_lifecycle.sql",
+    "expiry": "created_at-plus-one-calendar-year",
+    "expiry_based_on_deployment": false,
+    "past_expiry": "immediately-invalid",
+    "revoked_rows_reactivated": false,
+    "issuer_evidence": "one-distinct-existing-user-from-same-org-token-issued-audit",
+    "unknown_issuer": "null-and-review-required",
+    "pre_readiness_reconciliation": "configured-issuer-loss-policy",
+    "warning_payload": "aggregate-counts-without-credentials-or-identifiers",
+    "old_binary_enforces_policy": false
+  },
+  "rotation": {
+    "copy": ["name", "scopes", "oidc_provider_id"],
+    "fresh": ["id", "credential", "issued_by", "expires_at"],
+    "original_changed": false,
+    "revoke": "explicit-after-new-credential-adoption",
+    "authority": "current-verified-administrator"
+  },
+  "authorization": {
+    "conditions": [
+      "active-organization",
+      "unrevoked-token",
+      "expires_at-after-now",
+      "required-scope"
+    ],
+    "clock": "fresh-authoritative-clock-after-lock-waits",
+    "middleware_snapshot_is_sufficient": false,
+    "mutations": [
+      "create-user",
+      "replace-user",
+      "patch-user",
+      "delete-user",
+      "create-group",
+      "replace-group",
+      "patch-group",
+      "delete-group"
+    ],
+    "business_locks_before_feed_writer": true,
+    "audit_failure_rolls_back": true
+  },
+  "etag": {
+    "resources": ["User", "Group"],
+    "response_methods": ["GET", "POST", "PUT", "PATCH"],
+    "source": "persisted-updated_at-unix-nanoseconds",
+    "header_equals_meta_version": true,
+    "list_rows_have_meta_version": true,
+    "atomic_representation_snapshot": true,
+    "global_active_updates_scim_user_versions": true,
+    "user_deletion_updates_affected_group_versions": true,
+    "mutation_clock": "monotonic-persisted-microseconds"
+  },
+  "if_match": {
+    "methods": ["PUT", "PATCH", "DELETE"],
+    "repeated_fields": "combine-as-list",
+    "comparison": "scim-opaque-version-equality",
+    "weak_and_strong_same_opaque_match": true,
+    "wildcard": "existing-resource",
+    "wildcard_mixed_with_list": "invalid-syntax",
+    "unknown_valid_opaque": "no-match",
+    "present_empty_list": "no-match",
+    "limits": {
+      "bytes": 8192,
+      "tags": 64,
+      "empty_elements": 64
+    },
+    "check": "inside-write-transaction-before-side-effects",
+    "stale": { "status": 412, "scim_type": "mutability" },
+    "malformed": { "status": 400, "scim_type": "invalidSyntax" },
+    "absent": "existing-internal-cas",
+    "matched_but_internal_snapshot_changed": "409-version-conflict",
+    "missing_resource": "existing-404",
+    "refusal_writes_or_emits_audit": false
+  },
+  "console": {
+    "required_token_fields": [
+      "expires_at",
+      "issued_by",
+      "issuer_review_required"
+    ],
+    "expiring_soon_days": 14,
+    "expiry_equality": "expired",
+    "status_precedence": ["revoked", "expired", "expiring-soon", "active"],
+    "review_independent_of_expiry_status": true,
+    "credential": "one-time-response-and-current-modal-only",
+    "close_clears_credential": true,
+    "copy_or_refresh_failure_discards_credential": false,
+    "mutation_replay": false,
+    "cache_control": "no-store",
+    "cookie_mutation": false
+  }
+}

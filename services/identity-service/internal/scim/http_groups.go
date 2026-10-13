@@ -35,6 +35,9 @@ func (h *HTTPHandler) listGroups(response http.ResponseWriter, request *http.Req
 	for _, item := range page.Items {
 		resources = append(resources, h.groupResponse(item))
 	}
+	if !h.recordReadUse(response, request, authorization) {
+		return
+	}
 	writeSCIM(response, http.StatusOK, listResponse(resources, page.TotalResults, query.StartIndex))
 }
 
@@ -53,6 +56,7 @@ func (h *HTTPHandler) createGroup(response http.ResponseWriter, request *http.Re
 		return
 	}
 	response.Header().Set("Location", h.location("Groups", resource.Group.ID))
+	response.Header().Set("ETag", ResourceVersion(resource.Group.UpdatedAt))
 	writeSCIM(response, http.StatusCreated, h.groupResponse(resource))
 }
 
@@ -62,6 +66,10 @@ func (h *HTTPHandler) getGroup(response http.ResponseWriter, request *http.Reque
 		writeServiceError(response, err)
 		return
 	}
+	if !h.recordReadUse(response, request, authorization) {
+		return
+	}
+	response.Header().Set("ETag", ResourceVersion(resource.Group.UpdatedAt))
 	writeSCIM(response, http.StatusOK, h.groupResponse(resource))
 }
 
@@ -74,18 +82,38 @@ func (h *HTTPHandler) replaceGroup(response http.ResponseWriter, request *http.R
 		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
 		return
 	}
+	current, err := h.service.GetGroup(request.Context(), authorization, request.PathValue("id"))
+	if err != nil {
+		writeServiceError(response, err)
+		return
+	}
+	condition, ok := ifMatchFromRequest(response, request)
+	if !ok {
+		return
+	}
 	resource, err := h.service.ReplaceGroup(
-		request.Context(), authorization, request.PathValue("id"), ReplaceGroupInput{GroupInput: body.input()},
+		request.Context(), authorization, request.PathValue("id"), ReplaceGroupInput{
+			GroupInput: body.input(), ExpectedUpdatedAt: current.Group.UpdatedAt, IfMatch: condition,
+		},
 	)
 	if err != nil {
 		writeServiceError(response, err)
 		return
 	}
+	response.Header().Set("ETag", ResourceVersion(resource.Group.UpdatedAt))
 	writeSCIM(response, http.StatusOK, h.groupResponse(resource))
 }
 
 func (h *HTTPHandler) deleteGroup(response http.ResponseWriter, request *http.Request, authorization Authorization) {
-	if err := h.service.DeleteGroup(request.Context(), authorization, request.PathValue("id")); err != nil {
+	if _, err := h.service.GetGroup(request.Context(), authorization, request.PathValue("id")); err != nil {
+		writeServiceError(response, err)
+		return
+	}
+	condition, ok := ifMatchFromRequest(response, request)
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteGroup(request.Context(), authorization, request.PathValue("id"), condition); err != nil {
 		writeServiceError(response, err)
 		return
 	}
@@ -117,6 +145,7 @@ func (h *HTTPHandler) groupResponse(resource GroupResource) map[string]any {
 		"meta": map[string]any{
 			"resourceType": "Group", "created": resource.Group.CreatedAt,
 			"lastModified": resource.Group.UpdatedAt,
+			"version":      ResourceVersion(resource.Group.UpdatedAt),
 			"location":     h.location("Groups", resource.Group.ID),
 		},
 	}

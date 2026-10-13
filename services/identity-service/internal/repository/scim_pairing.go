@@ -54,34 +54,6 @@ func lockSCIMUserDirectory(ctx context.Context, tx *databaseTransaction, organiz
 	return err
 }
 
-// Public SCIM commands carry the token selected by Bearer authentication. A
-// nonempty ID must resolve exactly: unknown, revoked or differently paired
-// credentials must never fall back to legacy directory-only authority.
-func lockSCIMCreateAuthorization(ctx context.Context, tx *databaseTransaction, command scim.CreateUserCommand) error {
-	if command.ActorTokenID == "" {
-		// Trusted in-process directory operations predate token pairing. They may
-		// retain the NULL directory path, but cannot invent a Provider grant.
-		if command.Membership.SCIMOIDCProviderID != nil {
-			return domain.ErrForbidden
-		}
-		return nil
-	}
-	var providerID *string
-	var scopes []string
-	err := tx.QueryRow(ctx, `SELECT oidc_provider_id,scopes FROM scim_tokens
-		WHERE id=$1 AND organization_id=$2 AND revoked_at IS NULL FOR SHARE`, command.ActorTokenID, command.OrganizationID).Scan(&providerID, &scopes)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.ErrUnauthenticated
-	}
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(scopes, domain.SCIMScopeWrite) || !sameSCIMPairing(providerID, command.Membership.SCIMOIDCProviderID) {
-		return domain.ErrForbidden
-	}
-	return nil
-}
-
 type scimReprovisionLineage struct {
 	userID, membershipID string
 	providerID           *string

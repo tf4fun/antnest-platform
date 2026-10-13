@@ -411,9 +411,9 @@ test("Console declares a limited Provider chooser and current-organization bindi
 });
 
 test("shared revisions and typed binding failures are explicit", () => {
-  assert.equal(identity.revision, 17);
+  assert.equal(identity.revision, 18);
   assert.equal(gateway.version, 23);
-  assert.equal(admin.version, 53);
+  assert.equal(admin.version, 54);
   assert.equal(identity.oidc_linking_contract, "oidc-linking.md");
   for (const code of [
     "external_identity_conflict",
@@ -644,6 +644,9 @@ test("SCIM token metadata distinguishes unpaired legacy credentials from a fixed
     scopes: ["scim:read", "scim:write"],
     created_at: "2026-10-11T00:00:00Z",
     oidc_provider_id: null,
+    expires_at: "2027-01-09T00:00:00Z",
+    issued_by: null,
+    issuer_review_required: true,
   };
   const validate = validator(identity.definitions.scim_token);
   valid(validate, token);

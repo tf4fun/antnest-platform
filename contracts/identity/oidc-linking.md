@@ -168,8 +168,9 @@ current generic trim behavior. Creation binds that subject transactionally
 with method `scim`. Paired User creation and reprovisioning require an
 `externalId` satisfying the subject rules above; missing or invalid values
 return SCIM `invalidValue` without Membership, binding, session, notice or
-audit business changes. Existing token `last_used_at` authentication accounting
-may still occur. Nonempty means the original string is nonempty, without
+audit business changes. The [SCIM lifecycle contract](scim-lifecycle.md) also
+leaves token usage unchanged on failed mutations; authentication alone does not
+record `last_used_at`. Nonempty means the original string is nonempty, without
 trimming. Legacy unpaired credentials retain the optional-field behavior.
 A paired subject cannot be replaced or cleared by ordinary
 PUT/PATCH. An omitted unchanged field does not remove it. Ordinary directory

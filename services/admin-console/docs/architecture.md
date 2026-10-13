@@ -283,6 +283,15 @@ are omitted from browser DTOs; the external identity chooser, binding and SCIM
 pairing expose their explicit public Provider references. A SCIM token ID is retained only for its revoke
 action and is not rendered as user-facing credential identity.
 
+Console 54 accepts an optional bounded SCIM lifetime and projects Identity 18's
+required expiry, issuer and review metadata. It rejects incomplete or ambiguous
+metadata and empty issuance credentials. Status uses explicit expiry boundaries;
+the local display clock does not renew token or browser-session authority.
+Rotation copies the original name, scopes and Provider pairing, then makes one
+issuance call with the selected TTL. Inventory refresh or clipboard failure does
+not erase the one-time secret, and closing its modal removes it from page state.
+The original credential is never revoked automatically.
+
 ### Account, sign-out and session expiry
 
 Console mutations and logout read `__Host-antnest_csrf` before the unprefixed

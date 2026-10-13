@@ -295,11 +295,16 @@ the terminal RPC's start and never renews an authority snapshot. The owning
 Gateway and cross-service integration batches remain separate from this
 Identity producer evidence.
 
-Directory role/lifecycle requests carrying a browser Caller revalidate it with
-the same transaction after the last business lock and before changing authority.
-The check therefore rejects a logged-out waiting administrator while permitting
-authorized self-demotion. Trusted internal directory calls may omit browser
-context; a present invalid context fails closed, and public RPCs require CCT.
+Directory role/lifecycle requests carrying a browser Caller lock the caller and
+target SID union once in sorted order, after authority parents and affected SCIM
+tokens. Only target sessions enter the revocation set. They revalidate the live
+Caller after waits and again after all audit and revocation-feed writes, including
+activation and idempotent operations. An intentional self-demotion/deactivation
+checks the original admitted session's deadlines and signed CCT after revoking
+that SID; its own authority change is not mistaken for an external denial.
+Global self-disable remains a conflict. Trusted internal directory calls may
+omit browser context; a present invalid context fails closed, and public RPCs
+require CCT.
 Reactivating a legacy inactive local/SCIM Membership retires any remaining
 unrevoked browser rows with `session_revoked`; it does not synthesize a new
 principal offboarding event or revoke another Organization's credentials.
@@ -334,6 +339,40 @@ Administrative SCIM lists retain active and revoked metadata for audit and
 rotation, but never select the token hash. Listing and revocation require
 organization administration; Provider administration requires a system
 administrator.
+
+## SCIM lifecycle ownership
+
+Identity revision 18 persists expiry, the verified global User issuer and a
+review flag on each SCIM token. New TTL uses the authoritative transaction clock
+after waits; migration `0010` instead preserves creation-based calendar-year
+expiry. Startup reconciles known issuers before opening the listener and
+publishes the configured policy only after its transaction commits. Inventory
+selects public metadata, never hashes. Rotation issues a separate token without
+rewriting the original.
+
+Authority changes acquire ordered User, Organization and Membership parents,
+then the affected SCIM Token union, then the caller/target browser-session union.
+SCIM User deletion also locks affected Groups before tokens; Group writes lock
+their incoming User/Membership parents before the Group. Principal and session
+feed writers follow the business locks. Issuer-policy effects, browser
+revocations, resource versions, usage and audits share the business transaction.
+The acting SCIM credential is revalidated after token waits and its original
+expiry is checked again after the final audit/feed writes. An intentional
+self-revocation is allowed without extending that expiry. Failure rolls back the
+entire transaction, including the usage row version.
+
+User and Group projections read their fields, memberships and persisted version
+from a consistent snapshot. Effective changes advance `updated_at` by at least
+one stored microsecond; global User status changes update affected SCIM User
+versions, and User deletion advances affected Group versions before removing
+edges. HTTP projects this version as the same opaque weak ETag in the header and
+`meta.version`. `If-Match` is checked under the resource lock; the internal
+read-snapshot CAS remains an independent lost-update guard.
+
+Bearer authentication alone does not update usage. Successful reads record
+`last_used_at` with the existing five-minute throttle; writes record it inside
+their transaction before browser-session/feed locks. Failed conditions, expired
+authority and audit failures therefore leave usage unchanged.
 
 ## Password resource ownership
 

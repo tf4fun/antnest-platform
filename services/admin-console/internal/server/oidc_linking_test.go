@@ -164,7 +164,8 @@ func TestOIDCLinkingProviderRejectsIncompletePolicyResponse(t *testing.T) {
 }
 
 func oidcLinkingSCIMToken(pairing any) map[string]any {
-	return map[string]any{"id": "token-1", "organization_id": "org-1", "name": "Workday", "scopes": []string{"scim:read", "scim:write"}, "created_at": "2026-10-11T00:00:00Z", "oidc_provider_id": pairing}
+	return map[string]any{"id": "token-1", "organization_id": "org-1", "name": "Workday", "scopes": []string{"scim:read", "scim:write"}, "created_at": "2026-10-11T00:00:00Z", "oidc_provider_id": pairing,
+		"expires_at": "2027-01-09T00:00:00Z", "issued_by": "user-admin", "issuer_review_required": false}
 }
 
 func TestOIDCLinkingSCIMPairingIsOptionalInputAndRequiredNullableMetadata(t *testing.T) {

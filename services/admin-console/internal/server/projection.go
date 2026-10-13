@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
+	"time"
 )
 
 // Browser projections are allowlists. Adding a field to an internal RPC
@@ -95,12 +97,15 @@ type oidcProviderResultSource struct {
 }
 
 type scimTokenSource struct {
-	OIDCProviderID json.RawMessage `json:"oidc_provider_id"`
-	ID             string          `json:"id"`
-	Name           string          `json:"name"`
-	Scopes         []string        `json:"scopes"`
-	CreatedAt      string          `json:"created_at"`
-	RevokedAt      string          `json:"revoked_at,omitempty"`
+	OIDCProviderID       json.RawMessage `json:"oidc_provider_id"`
+	ExpiresAt            string          `json:"expires_at"`
+	IssuedBy             json.RawMessage `json:"issued_by"`
+	IssuerReviewRequired *bool           `json:"issuer_review_required"`
+	ID                   string          `json:"id"`
+	Name                 string          `json:"name"`
+	Scopes               []string        `json:"scopes"`
+	CreatedAt            string          `json:"created_at"`
+	RevokedAt            json.RawMessage `json:"revoked_at,omitempty"`
 }
 
 type scimTokenListSource struct {
@@ -395,7 +400,7 @@ func projectSCIMTokenList(payload []byte) ([]byte, error) {
 		return nil, fmt.Errorf("SCIM token inventory is required")
 	}
 	for _, token := range result.Tokens {
-		if err := token.validatePairing(); err != nil {
+		if err := token.validate(); err != nil {
 			return nil, err
 		}
 	}
@@ -407,18 +412,52 @@ func projectSCIMTokenIssue(payload []byte) ([]byte, error) {
 	if err := decodeProvisioningMetadata(payload, &result, "token", "credential"); err != nil {
 		return nil, err
 	}
-	if err := result.Token.validatePairing(); err != nil {
+	if err := result.Token.validate(); err != nil {
 		return nil, err
+	}
+	if result.Credential == "" {
+		return nil, fmt.Errorf("SCIM issuance credential is required")
 	}
 	return json.Marshal(result)
 }
 
-func (source scimTokenSource) validatePairing() error {
+func (source scimTokenSource) validate() error {
+	if !browserSessionPublicID.MatchString(source.ID) || source.Name == "" || source.Scopes == nil {
+		return fmt.Errorf("invalid SCIM token identity metadata")
+	}
+	for _, scope := range source.Scopes {
+		if scope != "scim:read" && scope != "scim:write" {
+			return fmt.Errorf("invalid SCIM token scope metadata")
+		}
+	}
+	if !scimTokenDate(source.CreatedAt) || !scimTokenDate(source.ExpiresAt) {
+		return fmt.Errorf("invalid SCIM token timestamp metadata")
+	}
+	if len(source.RevokedAt) != 0 {
+		var revoked *string
+		if json.Unmarshal(source.RevokedAt, &revoked) != nil || revoked == nil || !scimTokenDate(*revoked) {
+			return fmt.Errorf("invalid SCIM token revocation metadata")
+		}
+	}
 	var id *string
 	if len(source.OIDCProviderID) == 0 || json.Unmarshal(source.OIDCProviderID, &id) != nil || id != nil && !browserSessionPublicID.MatchString(*id) {
 		return fmt.Errorf("invalid SCIM Provider pairing metadata")
 	}
+	var issuer *string
+	if len(source.IssuedBy) == 0 || json.Unmarshal(source.IssuedBy, &issuer) != nil ||
+		source.IssuerReviewRequired == nil || issuer == nil && !*source.IssuerReviewRequired ||
+		issuer != nil && !browserSessionPublicID.MatchString(*issuer) {
+		return fmt.Errorf("invalid SCIM token issuer metadata")
+	}
 	return nil
+}
+
+func scimTokenDate(value string) bool {
+	if !externalIdentityDatePattern.MatchString(value) {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, strings.ToUpper(value))
+	return err == nil
 }
 
 func projectModelProfile(payload []byte) ([]byte, error) {

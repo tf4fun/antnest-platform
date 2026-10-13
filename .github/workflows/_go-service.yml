@@ -83,5 +83,8 @@ jobs:
             artifacts/verification/go-integration/*.log
             artifacts/verification/go-integration/*.result.json
             !artifacts/verification/go-integration/*.private.*
+            artifacts/verification/go-lint/*.log
+            artifacts/verification/go-lint/*.result.json
+            !artifacts/verification/go-lint/*.private.*
           if-no-files-found: ignore
           retention-days: 14

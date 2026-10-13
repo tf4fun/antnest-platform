@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,7 @@ type Config struct {
 	OIDCSessionTTL            time.Duration
 	HTTPTimeout               time.Duration
 	ShutdownTimeout           time.Duration
+	SCIMRevokeOnIssuerLoss    bool
 	Bootstrap                 Bootstrap
 	DevelopmentSecretWarnings []string
 }
@@ -87,13 +89,20 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	revokeOnIssuerLoss := true
+	if raw := strings.TrimSpace(lookup("ANTNEST_IDENTITY_SCIM_REVOKE_ON_ISSUER_LOSS")); raw != "" {
+		revokeOnIssuerLoss, err = strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("ANTNEST_IDENTITY_SCIM_REVOKE_ON_ISSUER_LOSS must be a boolean")
+		}
+	}
 	config := Config{
 		ListenAddress:  valueOr(lookup, "ANTNEST_IDENTITY_LISTEN", ":8080"),
 		DatabaseURL:    strings.TrimSpace(lookup("ANTNEST_IDENTITY_DATABASE_URL")),
 		PublicBaseURL:  strings.TrimRight(strings.TrimSpace(lookup("ANTNEST_IDENTITY_PUBLIC_BASE_URL")), "/"),
 		SessionIdleTTL: idleTTL, SessionAbsoluteTTL: absoluteTTL,
 		OIDCSessionTTL: sessionTTL, HTTPTimeout: httpTimeout,
-		ShutdownTimeout: shutdownTimeout,
+		ShutdownTimeout: shutdownTimeout, SCIMRevokeOnIssuerLoss: revokeOnIssuerLoss,
 		Bootstrap: Bootstrap{
 			OrganizationSlug:      strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG")),
 			OrganizationName:      strings.TrimSpace(lookup("ANTNEST_BOOTSTRAP_ORGANIZATION_NAME")),

@@ -459,6 +459,7 @@ type issueSCIMTokenRequest struct {
 	OIDCProviderID   json.RawMessage `json:"oidc_provider_id"`
 	Name             string          `json:"name"`
 	Scopes           []string        `json:"scopes"`
+	ExpiresInDays    json.RawMessage `json:"expires_in_days"`
 }
 
 func (h *Handler) issueSCIMToken(response http.ResponseWriter, request *http.Request) {
@@ -471,6 +472,16 @@ func (h *Handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 	input := scim.IssueTokenInput{
 		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
 		OrganizationID: body.OrganizationID, Name: body.Name, Scopes: body.Scopes,
+	}
+	if body.ExpiresInDays != nil {
+		if err := json.Unmarshal(body.ExpiresInDays, &input.ExpiresInDays); err != nil || input.ExpiresInDays == nil {
+			writeResult(response, nil, domain.InvalidArgument("expires_in_days must be an integer from 1 to 365"))
+			return
+		}
+		if _, err := scim.TokenLifetimeDays(input.ExpiresInDays); err != nil {
+			writeResult(response, nil, err)
+			return
+		}
 	}
 	if body.OIDCProviderID != nil {
 		var providerID string

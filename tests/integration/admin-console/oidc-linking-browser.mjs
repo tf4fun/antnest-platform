@@ -113,6 +113,9 @@ export async function exerciseExternalIdentities(
       scopes: ["scim:read"],
       created_at: timestamp,
       oidc_provider_id: null,
+      expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+      issued_by: null,
+      issuer_review_required: true,
     },
   ];
   try {
@@ -319,10 +322,27 @@ export async function exerciseExternalIdentities(
           name: "Paired directory",
           scopes: ["scim:read", "scim:write"],
           oidc_provider_id: "provider-1",
+          expires_in_days: tokens.length === 1 ? 90 : 30,
         });
-        const token = { id: "token-2", ...body, created_at: timestamp };
+        const { expires_in_days, ...configuration } = body;
+        const token = {
+          id: `token-${tokens.length + 1}`,
+          ...configuration,
+          created_at: timestamp,
+          expires_at: new Date(
+            Date.parse(timestamp) + expires_in_days * 86400000,
+          ).toISOString(),
+          issued_by: "admin-1",
+          issuer_review_required: false,
+        };
         tokens = [...tokens, token];
-        return reply({ token, credential: "one-time-synthetic-credential" });
+        return reply({
+          token,
+          credential:
+            tokens.length === 2
+              ? "one-time-synthetic-credential"
+              : "one-time-rotation-credential",
+        });
       }
       unexpected.push(`${method} ${path}`);
       return reply({ code: "unexpected_route" }, 503);
@@ -485,11 +505,20 @@ export async function exerciseExternalIdentities(
       fullPage: true,
     });
     await page.getByRole("tab", { name: "Directory sync" }).click();
+    await page
+      .locator("span:visible")
+      .filter({ hasText: /^expiring soon$/ })
+      .waitFor();
+    await page
+      .locator("p:visible")
+      .filter({ hasText: /^Issuer review required$/ })
+      .waitFor();
     await page.getByRole("button", { name: "Issue SCIM token" }).click();
     dialog = page.getByRole("dialog", { name: "Issue SCIM token" });
     assert.equal(await dialog.getByLabel("Login provider").inputValue(), "");
     await dialog.getByLabel("Login provider").selectOption("provider-1");
     await dialog.getByLabel("Credential name").fill("Paired directory");
+    assert.equal(await dialog.getByLabel("Lifetime (days)").inputValue(), "90");
     await dialog.getByRole("button", { name: "Issue credential" }).click();
     dialog = page.getByRole("dialog", { name: "SCIM credential issued" });
     await dialog.getByText("provider-1", { exact: true }).waitFor();
@@ -500,6 +529,40 @@ export async function exerciseExternalIdentities(
       fullPage: true,
     });
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    const originalToken = structuredClone(tokens[1]);
+    await page
+      .getByRole("button", { name: "Rotate", exact: true })
+      .nth(1)
+      .click();
+    dialog = page.getByRole("dialog", { name: "Rotate SCIM token" });
+    await dialog.getByText("provider-1", { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("combobox").count(), 0);
+    await dialog.getByLabel("Lifetime (days)").fill("30");
+    await dialog.getByRole("button", { name: "Issue replacement" }).click();
+    dialog = page.getByRole("dialog", { name: "SCIM credential issued" });
+    await dialog
+      .getByText("one-time-rotation-credential", { exact: true })
+      .waitFor();
+    await dialog.getByText(/original credential remains unchanged/).waitFor();
+    assert.deepEqual(tokens[1], originalToken);
+    assert.notEqual(tokens[2].id, originalToken.id);
+    assert.equal(writes.filter((row) => row.path === tokenPath).length, 2);
+    assert.equal(
+      writes.some((row) => row.path.startsWith(tokenPath + "/")),
+      false,
+    );
+    await assertNoOverflow(page);
+    await page.screenshot({
+      path: resolve(output, `${label}-scim-rotation.png`),
+      fullPage: true,
+    });
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    assert.equal(
+      await page
+        .getByText("one-time-rotation-credential", { exact: true })
+        .count(),
+      0,
+    );
     await page
       .getByRole("button", { name: "Review external login notices" })
       .click();
@@ -532,6 +595,7 @@ export async function exerciseExternalIdentities(
       exact_subject_and_restore: true,
       review_acknowledgment: true,
       immutable_scim_pairing: true,
+      scim_lifecycle_rotation: true,
       current_revocation: true,
       browser_errors: errors.length,
     };

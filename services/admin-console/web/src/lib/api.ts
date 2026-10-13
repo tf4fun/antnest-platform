@@ -483,6 +483,7 @@ export const api = {
     ),
   scimTokens: () => request<SCIMTokenList>("/api/admin/provisioning/scim-tokens"),
   issueSCIMToken: (input: {
+    expires_in_days?: number;
     name: string;
     scopes: Array<"scim:read" | "scim:write">;
     oidc_provider_id?: string;

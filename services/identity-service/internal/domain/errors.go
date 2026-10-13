@@ -62,8 +62,9 @@ var (
 		"An organization must retain at least one active administrator",
 		false,
 	)
-	ErrVersionConflict  = NewError("version_conflict", "The identity resource changed concurrently", true)
-	ErrInvalidReference = NewError(
+	ErrVersionConflict    = NewError("version_conflict", "The identity resource changed concurrently", true)
+	ErrPreconditionFailed = NewError("precondition_failed", "The SCIM resource version does not match", false)
+	ErrInvalidReference   = NewError(
 		"invalid_reference",
 		"The referenced identity resource is invalid",
 		false,

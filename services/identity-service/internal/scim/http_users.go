@@ -52,6 +52,9 @@ func (h *HTTPHandler) listUsers(response http.ResponseWriter, request *http.Requ
 	for _, item := range page.Items {
 		resources = append(resources, h.userResponse(item))
 	}
+	if !h.recordReadUse(response, request, authorization) {
+		return
+	}
 	writeSCIM(response, http.StatusOK, listResponse(resources, page.TotalResults, query.StartIndex))
 }
 
@@ -75,6 +78,7 @@ func (h *HTTPHandler) createUser(response http.ResponseWriter, request *http.Req
 		return
 	}
 	response.Header().Set("Location", h.location("Users", resource.Membership.ID))
+	response.Header().Set("ETag", ResourceVersion(resource.Membership.UpdatedAt))
 	writeSCIM(response, http.StatusCreated, h.userResponse(resource))
 }
 
@@ -84,6 +88,10 @@ func (h *HTTPHandler) getUser(response http.ResponseWriter, request *http.Reques
 		writeServiceError(response, err)
 		return
 	}
+	if !h.recordReadUse(response, request, authorization) {
+		return
+	}
+	response.Header().Set("ETag", ResourceVersion(resource.Membership.UpdatedAt))
 	writeSCIM(response, http.StatusOK, h.userResponse(resource))
 }
 
@@ -101,18 +109,38 @@ func (h *HTTPHandler) replaceUser(response http.ResponseWriter, request *http.Re
 		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
 		return
 	}
+	current, err := h.service.GetUser(request.Context(), authorization, request.PathValue("id"))
+	if err != nil {
+		writeServiceError(response, err)
+		return
+	}
+	condition, ok := ifMatchFromRequest(response, request)
+	if !ok {
+		return
+	}
 	resource, err := h.service.ReplaceUser(
-		request.Context(), authorization, request.PathValue("id"), ReplaceUserInput{UserInput: input},
+		request.Context(), authorization, request.PathValue("id"), ReplaceUserInput{
+			UserInput: input, ExpectedUpdatedAt: current.Membership.UpdatedAt, IfMatch: condition,
+		},
 	)
 	if err != nil {
 		writeServiceError(response, err)
 		return
 	}
+	response.Header().Set("ETag", ResourceVersion(resource.Membership.UpdatedAt))
 	writeSCIM(response, http.StatusOK, h.userResponse(resource))
 }
 
 func (h *HTTPHandler) deleteUser(response http.ResponseWriter, request *http.Request, authorization Authorization) {
-	if err := h.service.DeleteUser(request.Context(), authorization, request.PathValue("id")); err != nil {
+	if _, err := h.service.GetUser(request.Context(), authorization, request.PathValue("id")); err != nil {
+		writeServiceError(response, err)
+		return
+	}
+	condition, ok := ifMatchFromRequest(response, request)
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteUser(request.Context(), authorization, request.PathValue("id"), condition); err != nil {
 		writeServiceError(response, err)
 		return
 	}
@@ -181,6 +209,7 @@ func (h *HTTPHandler) userResponse(resource UserResource) map[string]any {
 		"meta": map[string]any{
 			"resourceType": "User", "created": resource.Membership.CreatedAt,
 			"lastModified": resource.Membership.UpdatedAt,
+			"version":      ResourceVersion(resource.Membership.UpdatedAt),
 			"location":     h.location("Users", resource.Membership.ID),
 		},
 	}

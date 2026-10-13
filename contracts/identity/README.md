@@ -12,16 +12,21 @@ stable error codes callers may branch on. `$ref` values address definitions in
 the same JSON document. `error.http_status_by_code` records non-default HTTP
 status mappings; listed error codes without an entry use HTTP 500.
 
-The versioned [password verification policy](password-verification.md) defines
-the pending #60 attempt store, shared Argon2 budget, stored-parameter migration
-and retryable failures. Its [machine-readable contract](password-verification-policy.json)
-is shared first. Identity publishes the active error catalog with its owning
-implementation at revision 17; Gateway and Console consumer batches and real
-integration follow.
-The candidate revision-17 catalog declares `credential_busy`/503 and
-`credential_rate_limited`/429. Identity implements both projections, persistent
-login attempt limits and transactional login rehash. Password-change attempt
-integration, scheduled cleanup, consumers and final integration remain pending.
+Identity revision 18 implements the [SCIM lifecycle contract](scim-lifecycle.md):
+bounded token expiry, issuer metadata and authority-loss policy, overlap rotation,
+and conditional User/Group writes. The complete RPC schemas require lifecycle
+metadata; single-resource responses expose ETag and `meta.version`. Console
+version 54 exposes expiry, issuer review and independent rotation controls.
+The owning-service batches and current consumer references are delivered;
+real HTTPS integration remains pending before #66 can close.
+
+Revision 17 delivered the [password verification policy](password-verification.md)
+and its [machine-readable contract](password-verification-policy.json) under #60.
+It declares `credential_busy`/503 and `credential_rate_limited`/429, a shared
+Argon2 budget, persistent login/password-change attempt limits, transactional
+rehash and scheduled cleanup. Gateway, Console and HTTPS integration were
+delivered in their own batches; these historical activation revisions remain
+unchanged by SCIM lifecycle delivery.
 
 Revision 15 defines [browser session lifecycles](browser-sessions.md): separate
 idle and absolute deadlines, explicit activity, password rotation, session
@@ -34,8 +39,8 @@ Its method authorization declarations specify the required policy; active caller
 grants change with the owning service implementation. Identity's Provider policy
 and five binding/notice RPCs implement their producer grants. Identity also
 implements paired SCIM token issuance and exact-lineage reprovisioning.
-Gateway, Console, Agent UI and final HTTPS integration remain separate pending
-#61 batches; the shared contract alone does not deliver these consumers.
+Gateway, Console, Agent UI and final HTTPS integration were delivered by #61
+in separate batches after their owning-service gates passed.
 
 OIDC and SCIM payloads keep their standard field names and are not translated
 into this RPC envelope. `start_oidc_login.authorization_url` necessarily

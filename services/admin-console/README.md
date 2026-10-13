@@ -95,6 +95,14 @@ timeout. OIDC and SCIM setup addresses are derived from the browser's Edge
 origin, so there is no Console variable for them. See
 [Operations](docs/operations.md) for details.
 
+Console 54 displays SCIM expiry, issuing User and issuer-review warnings from
+Identity 18. Issuance offers a 1–365 day lifetime, initially 90 days. Rotation
+copies a token's configuration into an independent credential; install and test
+the new secret before explicitly revoking the original. Clipboard and inventory
+refresh failures retain the one-time display until its dialog closes. See the
+[lifecycle contract](../../contracts/identity/scim-lifecycle.md) and
+[administration guide](docs/oidc-linking.md).
+
 ## Dependencies
 
 - Edge Gateway: the only external caller; forwards signed caller context; Console verifies it.

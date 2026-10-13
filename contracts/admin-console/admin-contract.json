@@ -1,6 +1,7 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 53,
+  "version": 54,
+  "scim_lifecycle_policy": "../identity/scim-lifecycle-policy.json",
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
   "authenticated_actor": "identity_signed_cct_verified_by_console",
@@ -164,10 +165,13 @@
     },
     "list_scim_tokens": {
       "method": "GET",
+      "response_schema": "scim-lifecycle.schema.json#/$defs/list_response",
       "path": "/provisioning/scim-tokens"
     },
     "issue_scim_token": {
       "method": "POST",
+      "request_schema": "scim-lifecycle.schema.json#/$defs/issue_request",
+      "response_schema": "scim-lifecycle.schema.json#/$defs/issue_response",
       "path": "/provisioning/scim-tokens",
       "oidc_provider_id": "Optional exact Provider ID chosen from the signed-organization chooser; immutable after token issuance."
     },
@@ -574,7 +578,7 @@
     "account_security": {
       "browser_session_contract": "../identity/browser-sessions.md",
       "gateway_revision": 23,
-      "identity_revision": 17,
+      "identity_revision": 18,
       "password_owner": "edge_gateway_POST_/api/session/password",
       "retired_console_password_route": "deny_without_dependency_effect",
       "profile_fields": [

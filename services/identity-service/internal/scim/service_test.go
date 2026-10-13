@@ -163,7 +163,7 @@ func TestDeleteGroupRemovesTheSCIMResourceInsteadOfInventingAnActiveField(t *tes
 	service := newSCIMTestService(t, repository)
 	authorization := Authorization{TokenID: "scim-token-1", OrganizationID: "org-1"}
 
-	if err := service.DeleteGroup(context.Background(), authorization, "group-1"); err != nil {
+	if err := service.DeleteGroup(context.Background(), authorization, "group-1", nil); err != nil {
 		t.Fatal(err)
 	}
 	if repository.deletedGroup.GroupID != "group-1" ||
@@ -177,7 +177,7 @@ func TestDeleteUserTombstonesOnlyTheSCIMResource(t *testing.T) {
 	service := newSCIMTestService(t, repository)
 	authorization := Authorization{TokenID: "scim-token-1", OrganizationID: "org-1"}
 
-	if err := service.DeleteUser(context.Background(), authorization, "membership-1"); err != nil {
+	if err := service.DeleteUser(context.Background(), authorization, "membership-1", nil); err != nil {
 		t.Fatal(err)
 	}
 	if repository.deletedUser.MembershipID != "membership-1" ||
@@ -215,6 +215,8 @@ type scimRepositoryStub struct {
 	deletedGroup    DeleteGroupCommand
 	tokens          []Token
 	listTokensCalls int
+	usageCalls      int
+	usageError      error
 }
 
 func (r *scimRepositoryStub) GetPrincipal(context.Context, string, string) (domain.Principal, error) {
@@ -238,6 +240,11 @@ func (r *scimRepositoryStub) ListTokens(context.Context, string) ([]Token, error
 func (r *scimRepositoryStub) ResolveToken(_ context.Context, digest string, _ time.Time) (Authorization, error) {
 	r.resolvedHash = digest
 	return r.authorization, nil
+}
+
+func (r *scimRepositoryStub) RecordTokenUse(context.Context, Authorization, time.Time) error {
+	r.usageCalls++
+	return r.usageError
 }
 
 func (r *scimRepositoryStub) CreateUser(_ context.Context, command CreateUserCommand) (UserResource, error) {
@@ -286,7 +293,7 @@ func (r *scimRepositoryStub) DeleteGroup(_ context.Context, command DeleteGroupC
 	return nil
 }
 
-func newSCIMTestService(t *testing.T, repository *scimRepositoryStub) *Service {
+func newSCIMTestService(t *testing.T, repository Repository) *Service {
 	t.Helper()
 	next := 0
 	service, err := NewService(Config{

@@ -91,13 +91,19 @@ input waits for completion or cancellation; failures do not retry without input.
 Self session controls cover all organizations. Directory session controls use
 only the current signed organization, including for system administrators.
 
-[External login administration](oidc-linking.md) requires Identity revision 17
+[External login administration](oidc-linking.md) requires Identity revision 18
 and Gateway revision 23. Review historical Provider warnings explicitly before
 treating their email-linking policy as approved. SCIM pairing is chosen at
 credential issuance and cannot be edited. Personal notices load without Agent
 inventory; 503 failures keep visible data and never replay binding, unbinding
 or acknowledgment. A successful current-session unbind returns its committed
 result before the browser retires the page. It does not stop accepted Agent work.
+
+Review SCIM expiry and issuer warnings in Directory sync. Rotation issues a new
+credential while preserving the original configuration and deadline. Deploy and
+test the new secret in the provisioning client before explicitly revoking the old
+one. Unknown legacy issuers need operator review and rotation or revocation;
+restoring an administrator does not reactivate credentials revoked by Identity.
 
 Organization name/slug presentation uses the validated session Principal, which
 Gateway may cache within its bounded Resolve TTL (default 10 seconds). Hits and

@@ -36,7 +36,19 @@ export function createOIDCFixture(stats) {
     authoritative: false,
     link_policy_review_required: true,
   };
-  const tokens = [];
+  const tokens = [
+    {
+      id: "legacy-token",
+      name: "Legacy directory",
+      scopes: ["scim:read"],
+      created_at: time,
+      expires_at: "2027-01-09T00:00:00.000Z",
+      issued_by: null,
+      issuer_review_required: true,
+      oidc_provider_id: null,
+      token_hash: "private-scim-hash-canary",
+    },
+  ];
   const fields = {
     "list-oidc-providers": ["organization_id"],
     "upsert-oidc-provider": [
@@ -66,6 +78,7 @@ export function createOIDCFixture(stats) {
       "name",
       "scopes",
       "oidc_provider_id",
+      "expires_in_days",
     ],
     "list-external-identity-providers": ["limit", "after_id"],
     "list-external-identities": ["scope", "membership_id", "limit", "after_id"],
@@ -192,6 +205,11 @@ export function createOIDCFixture(stats) {
           name: body.name,
           scopes: body.scopes,
           created_at: time,
+          expires_at: new Date(
+            Date.parse(time) + (body.expires_in_days ?? 90) * 86400000,
+          ).toISOString(),
+          issued_by: claims.sub,
+          issuer_review_required: false,
           oidc_provider_id: body.oidc_provider_id ?? null,
           token_hash: "private-scim-hash-canary",
         };

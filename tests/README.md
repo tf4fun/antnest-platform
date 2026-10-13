@@ -241,6 +241,29 @@ traces, partial receipts and logs before teardown; authorization URLs, Cookies,
 state, nonce and codes never enter client receipts. Both clients verify the
 private CA and TLS proxy hostname, and expose no host ports.
 
+SCIM lifecycle acceptance uses actual Console browser commands to issue and
+rotate credentials, and HTTPS bearer requests to the real Identity service.
+It checks persisted User/Group versions, successful conditional mutations and
+stale PUT/PATCH/DELETE refusals; both credentials remain usable during rotation,
+and explicit revocation affects only the selected credential. Expiry uses one
+controlled database timestamp change on a minimum-lifetime credential. Separate
+organizations prove read, write and Group-member isolation. Administrator
+demotion revokes the issuer's credentials, and restoring authority requires a
+new credential rather than reviving a revoked one. Rejection snapshots cover
+Identity domain, token usage, audit and revocation state after browser mutations
+have drained. Every observed command has a complete HTTP parent chain, exact
+response-byte counts and a final raw Trace archive. Expected 4xx diagnostics keep
+their raw strict failure classification with explicit owning error attribution;
+unknown errors and warnings fail admission.
+
+Browser login inspection retains the original response in a bounded Chromium
+CDP buffer so an application navigation cannot discard it. It reads through the
+same CDP session and request ID, checks status and Trace ID against Playwright,
+and preserves the original HSTS and Cookie assertions. It never intercepts or
+replays login, or replaces the response with a later session read. A real Chromium
+regression verifies capture after a cross-process navigation, and covers duplicate
+requests, redirects, truncated/oversized bodies, closure and capture deadlines.
+
 The password flow records both the Chromium fetch/body-consumption result and
 Playwright's response observation for each single POST. Their shared request ID
 prevents an unrelated response from satisfying the observer. The private progress

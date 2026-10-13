@@ -10,6 +10,7 @@ export async function exerciseSCIMPairing({
   restart,
   administrator,
   organizationAdminPassword,
+  administer,
   identityURL,
   serviceToken,
   signal,
@@ -57,7 +58,7 @@ export async function exerciseSCIMPairing({
     sql(`SELECT md5(jsonb_build_object(
     'users',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM users r),
     'members',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM organization_memberships r),
-    'scim_tokens',(SELECT jsonb_agg(to_jsonb(r)-'last_used_at' ORDER BY id) FROM scim_tokens r),
+    'scim_tokens',(SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object('xmin',r.xmin::text) ORDER BY id) FROM scim_tokens r),
     'groups',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM groups r),
     'group_members',(SELECT jsonb_agg(to_jsonb(r) ORDER BY group_id,organization_membership_id) FROM group_memberships r),
     'bindings',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM external_identities r),
@@ -76,28 +77,73 @@ export async function exerciseSCIMPairing({
       "invalid pairing issued token or audit",
     );
   }
+  for (const fields of [
+    ...[null, 0, -1, 366, 1.5, "90", true].map((expires_in_days) => ({
+      expires_in_days,
+    })),
+    { expires_at: "2099-01-01T00:00:00Z" },
+    { issued_by: administrator.user.id },
+    { issuer_review_required: false },
+  ]) {
+    const before = await snapshot();
+    await issue(fields, 400);
+    assert.equal(
+      await snapshot(),
+      before,
+      "invalid lifecycle fields changed state",
+    );
+  }
   const tokens = [
     await issue({ oidc_provider_id: a.id }),
-    await issue({ oidc_provider_id: b.id }),
-    await issue(),
+    await issue({ oidc_provider_id: b.id, expires_in_days: 365 }),
+    await issue({ expires_in_days: 1 }),
   ];
   const pairing = [a.id, b.id, null];
-  tokens.forEach((result, index) => {
+  const assertTokenLifecycle = async (result, days) => {
+    const { token } = result;
+    assert.equal(token.issued_by, administrator.user.id);
+    assert.equal(token.issuer_review_required, false);
+    assert.equal(typeof token.expires_at, "string");
+    assert.equal(
+      await sql(`SELECT created_at=${quote(token.created_at)}::timestamptz
+        AND expires_at=${quote(token.expires_at)}::timestamptz
+        AND expires_at-created_at=interval '${days} days'
+        AND issued_by=${quote(administrator.user.id)} AND NOT issuer_review_required
+        FROM scim_tokens WHERE id=${quote(token.id)}`),
+      "t",
+      "RPC lifecycle metadata must match persisted expiry and issuer",
+    );
+  };
+  for (const [index, result] of tokens.entries()) {
     assert.equal(result.token.oidc_provider_id, pairing[index]);
     assert.equal(typeof result.credential, "string");
     assert(!("token_hash" in result.token));
-  });
+    await assertTokenLifecycle(result, [90, 365, 1][index]);
+  }
   const [tokenA, tokenB, legacy] = tokens;
   await restart();
   const listed = (await organization("list-scim-tokens", { organization_id }))
     .tokens;
   tokens.forEach((result, index) => {
     const metadata = listed.find((t) => t.id === result.token.id);
+    assert.deepEqual(
+      metadata,
+      result.token,
+      "restart changed public token metadata",
+    );
     assert.equal(metadata.oidc_provider_id, pairing[index]);
     assert(!("credential" in metadata) && !("token_hash" in metadata));
   });
   let checks = 0;
-  const request = async (token, method, path, body, status = 200, scimType) => {
+  const request = async (
+    token,
+    method,
+    path,
+    body,
+    status = 200,
+    scimType,
+    ifMatch,
+  ) => {
     const before = status >= 400 ? await snapshot() : undefined;
     const response = await fetch(`${identityURL()}/scim/v2/${path}`, {
       method,
@@ -107,6 +153,7 @@ export async function exerciseSCIMPairing({
         "content-type": "application/scim+json",
         "Antnest-Service-Authorization": `Bearer ${serviceToken}`,
         Authorization: `Bearer ${token.credential}`,
+        ...(ifMatch === undefined ? {} : { "If-Match": ifMatch }),
       },
       body:
         body === undefined
@@ -117,6 +164,30 @@ export async function exerciseSCIMPairing({
     });
     assert.equal(response.status, status, `SCIM ${method} ${path}`);
     const result = status === 204 ? undefined : await response.json();
+    const resourceRoute = /^(Users|Groups)(?:\/[^/?]+)?(?:\?.*)?$/u.exec(path);
+    const collectionRead =
+      method === "GET" && !path.split("?")[0].includes("/");
+    if (status < 400 && status !== 204 && resourceRoute && !collectionRead) {
+      assert.equal(
+        result.meta.resourceType,
+        resourceRoute[1] === "Users" ? "User" : "Group",
+      );
+      assert.match(result.meta.version, /^W\/"(?:0|-?[1-9][0-9]*)"$/u);
+      assert.equal(response.headers.get("etag"), result.meta.version);
+    }
+    if (status < 400 && resourceRoute && collectionRead) {
+      assert(
+        Array.isArray(result.Resources),
+        "SCIM list must return a Resources array",
+      );
+      for (const row of result.Resources) {
+        assert.equal(
+          row.meta.resourceType,
+          resourceRoute[1] === "Users" ? "User" : "Group",
+        );
+        assert.match(row.meta.version, /^W\/"(?:0|-?[1-9][0-9]*)"$/u);
+      }
+    }
     if (status >= 400) {
       assert.equal(result.status, String(status));
       if (scimType) assert.equal(result.scimType, scimType);
@@ -129,6 +200,18 @@ export async function exerciseSCIMPairing({
     checks++;
     return result;
   };
+  assert.equal(
+    (await request(legacy, "GET", "ServiceProviderConfig")).etag.supported,
+    true,
+  );
+  const expired = await issue({
+    name: "Expired credential acceptance",
+    expires_in_days: 1,
+  });
+  await assertTokenLifecycle(expired, 1);
+  await sql(`UPDATE scim_tokens SET expires_at=created_at+interval '1 microsecond'
+    WHERE id=${quote(expired.token.id)}`);
+  await request(expired, "GET", "Users", undefined, 401);
   const assertStoredUserMetadata = async (token, created) => {
     const stored = await request(token, "GET", `Users/${created.id}`);
     for (const field of ["created", "lastModified"]) {
@@ -469,8 +552,222 @@ export async function exerciseSCIMPairing({
     "scim-subject",
   );
   await complete("scim-pairing-a", "scim", denied);
+
+  // Exercise wire conditions against independent resources so the established
+  // binding/reprovision assertions above retain their original lineage.
+  const versionUser = await request(
+    legacy,
+    "POST",
+    "Users",
+    user({
+      userName: "scim-versions@example.test",
+      displayName: "Versioned user",
+    }),
+    201,
+  );
+  const groupBody = {
+    schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+    displayName: "Versioned group",
+    members: [{ value: versionUser.id }],
+  };
+  const versionGroup = await request(legacy, "POST", "Groups", groupBody, 201);
+  for (const [collection, created, body] of [
+    ["Groups", versionGroup, groupBody],
+    ["Users", versionUser, user({ userName: "scim-versions@example.test" })],
+  ]) {
+    const path = `${collection}/${created.id}`;
+    assert.equal(
+      (await request(legacy, "GET", path)).meta.version,
+      created.meta.version,
+    );
+    const page = await request(legacy, "GET", collection);
+    assert.equal(
+      page.Resources.find((row) => row.id === created.id).meta.version,
+      created.meta.version,
+    );
+    const replaced = await request(
+      legacy,
+      "PUT",
+      path,
+      { ...body, displayName: "Conditional replacement" },
+      200,
+      undefined,
+      created.meta.version,
+    );
+    assert.notEqual(replaced.meta.version, created.meta.version);
+    const change = patch({
+      op: "replace",
+      path: "displayName",
+      value: "Conditional patch",
+    });
+    await request(
+      legacy,
+      "PATCH",
+      path,
+      change,
+      412,
+      "mutability",
+      created.meta.version,
+    );
+    await request(
+      legacy,
+      "PUT",
+      path,
+      body,
+      400,
+      "invalidSyntax",
+      'W/"unterminated',
+    );
+    const patched = await request(
+      legacy,
+      "PATCH",
+      path,
+      change,
+      200,
+      undefined,
+      replaced.meta.version,
+    );
+    assert.equal(patched.displayName, "Conditional patch");
+    assert.notEqual(patched.meta.version, replaced.meta.version);
+    await request(
+      legacy,
+      "DELETE",
+      path,
+      undefined,
+      412,
+      "mutability",
+      created.meta.version,
+    );
+    const unconditional = await request(legacy, "PUT", path, body);
+    assert.notEqual(unconditional.meta.version, patched.meta.version);
+    await request(
+      legacy,
+      "DELETE",
+      path,
+      undefined,
+      204,
+      undefined,
+      unconditional.meta.version,
+    );
+    await request(legacy, "GET", path, undefined, 404);
+  }
+
+  const tokenRows = (ids) =>
+    sql(`SELECT md5(jsonb_agg(
+    to_jsonb(t)||jsonb_build_object('xmin',t.xmin::text) ORDER BY id)::text)
+    FROM scim_tokens t WHERE id IN (${ids.map(quote).join(",")})`);
+  const original = await tokenRows([tokenA.token.id]);
+  const rotated = await issue({
+    name: tokenA.token.name,
+    scopes: tokenA.token.scopes,
+    oidc_provider_id: tokenA.token.oidc_provider_id,
+    expires_in_days: 7,
+  });
+  await assertTokenLifecycle(rotated, 7);
+  assert.notEqual(rotated.token.id, tokenA.token.id);
+  assert(
+    rotated.credential !== tokenA.credential,
+    "rotation must return a new credential",
+  );
+  for (const field of ["name", "scopes", "oidc_provider_id"])
+    assert.deepEqual(
+      rotated.token[field],
+      tokenA.token[field],
+      `rotation changed ${field}`,
+    );
+  assert.equal(
+    await sql(`SELECT name=${quote(tokenA.token.name)}
+    AND to_jsonb(scopes)=${quote(JSON.stringify(tokenA.token.scopes))}::jsonb
+    AND oidc_provider_id=${quote(tokenA.token.oidc_provider_id)}
+    FROM scim_tokens WHERE id=${quote(rotated.token.id)}`),
+    "t",
+    "rotation did not persist the original configuration",
+  );
+  assert.equal(
+    await tokenRows([tokenA.token.id]),
+    original,
+    "rotation changed original token row",
+  );
+  await request(rotated, "GET", `Users/${resource.id}`);
+  assert.equal(
+    await tokenRows([tokenA.token.id]),
+    original,
+    "new credential use changed original token",
+  );
+  await request(tokenA, "GET", `Users/${resource.id}`);
   await organization("revoke-scim-token", { token_id: tokenA.token.id });
   await request(tokenA, "GET", "Users", undefined, 401);
+  const adopted = await request(
+    rotated,
+    "PATCH",
+    `Users/${resource.id}`,
+    patch({
+      op: "replace",
+      path: "displayName",
+      value: "Rotated credential adopted",
+    }),
+  );
+  assert.equal(adopted.displayName, "Rotated credential adopted");
+
+  // All remaining issuer credentials work before self-demotion. Its own
+  // session is deliberately revoked, so restoration uses the bootstrap actor.
+  const liveTokens = [tokenB, legacy, rotated];
+  for (const token of liveTokens) {
+    await request(token, "GET", "Users");
+    assert.equal(
+      await sql(`SELECT revoked_at IS NULL AND expires_at>now()
+      FROM scim_tokens WHERE id=${quote(token.token.id)}`),
+      "t",
+    );
+  }
+  const membership = {
+    organization_id,
+    membership_id: administrator.membership.id,
+    email: administrator.membership.email,
+    display_name: administrator.membership.display_name,
+    active: true,
+  };
+  await organization("update-membership", {
+    request_id: randomUUID(),
+    ...membership,
+    role: "member",
+  });
+  for (const token of liveTokens) {
+    await request(token, "GET", "Users", undefined, 401);
+    assert.equal(
+      await sql(`SELECT revoked_at IS NOT NULL FROM scim_tokens
+      WHERE id=${quote(token.token.id)}`),
+      "t",
+    );
+    assert.equal(
+      await sql(`SELECT count(*) FROM identity_events
+      WHERE subject_id=${quote(token.token.id)} AND event_type='scim_token.revoked'
+      AND actor_principal_id=${quote(administrator.user.id)}
+      AND metadata->>'reason'='issuer_authority_lost'`),
+      "1",
+    );
+  }
+  const revokedRows = await tokenRows(
+    liveTokens.map((token) => token.token.id),
+  );
+  await administer("update-membership", { ...membership, role: "admin" });
+  assert.equal(
+    await sql(`SELECT role FROM organization_memberships
+    WHERE id=${quote(administrator.membership.id)}`),
+    "admin",
+  );
+  assert.equal(
+    await tokenRows(liveTokens.map((token) => token.token.id)),
+    revokedRows,
+    "restoring issuer authority rewrote revoked credentials",
+  );
+  for (const token of liveTokens)
+    await request(token, "GET", "Users", undefined, 401);
+  await rpc(
+    "resolve-access-token",
+    { access_token: admin.access_token, profile: "console" },
+    { status: 401 },
+  );
   return {
     complete: true,
     checks,
@@ -482,6 +779,11 @@ export async function exerciseSCIMPairing({
       "ownership collisions",
       "exact-lineage reprovision and deletion offboarding",
       "reprovision preserves activation and revoked tombstones",
+      "bounded TTL and exact persisted issuer/expiry metadata",
+      "expired credential refusal with unchanged usage and token xmin",
+      "User/Group ETag, list versions and conditional mutation rollback",
+      "same-pairing overlap rotation with explicit old-credential revocation",
+      "issuer self-demotion revokes live credentials; restored authority does not revive them",
     ],
     scope:
       "Identity-owned SCIM HTTP, PostgreSQL and signed HTTPS IdP callbacks; browser consumers and cross-service acceptance remain pending",

@@ -117,7 +117,18 @@ func (h *HTTPHandler) withAuthorization(scope string, next authorizedHandler) ht
 	}
 }
 
-func (h *HTTPHandler) serviceProviderConfig(response http.ResponseWriter, _ *http.Request, _ Authorization) {
+func (h *HTTPHandler) recordReadUse(response http.ResponseWriter, request *http.Request, authorization Authorization) bool {
+	if err := h.service.RecordTokenUse(request.Context(), authorization); err != nil {
+		writeServiceError(response, err)
+		return false
+	}
+	return true
+}
+
+func (h *HTTPHandler) serviceProviderConfig(response http.ResponseWriter, request *http.Request, authorization Authorization) {
+	if !h.recordReadUse(response, request, authorization) {
+		return
+	}
 	writeSCIM(response, http.StatusOK, map[string]any{
 		"schemas":        []string{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"},
 		"patch":          map[string]bool{"supported": true},
@@ -125,7 +136,7 @@ func (h *HTTPHandler) serviceProviderConfig(response http.ResponseWriter, _ *htt
 		"filter":         map[string]any{"supported": true, "maxResults": 200},
 		"changePassword": map[string]bool{"supported": false},
 		"sort":           map[string]bool{"supported": false},
-		"etag":           map[string]bool{"supported": false},
+		"etag":           map[string]bool{"supported": true},
 		"authenticationSchemes": []map[string]any{{
 			"type": "oauthbearertoken", "name": "OAuth Bearer Token",
 			"description": "Organization-scoped Antnest SCIM Bearer token",
@@ -136,14 +147,20 @@ func (h *HTTPHandler) serviceProviderConfig(response http.ResponseWriter, _ *htt
 	})
 }
 
-func (h *HTTPHandler) resourceTypes(response http.ResponseWriter, _ *http.Request, _ Authorization) {
+func (h *HTTPHandler) resourceTypes(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	resources := h.resourceTypeDefinitions()
+	if !h.recordReadUse(response, request, authorization) {
+		return
+	}
 	writeSCIM(response, http.StatusOK, listResponse(resources, len(resources), 1))
 }
 
-func (h *HTTPHandler) resourceType(response http.ResponseWriter, request *http.Request, _ Authorization) {
+func (h *HTTPHandler) resourceType(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	for _, resource := range h.resourceTypeDefinitions() {
 		if resource["id"] == request.PathValue("id") {
+			if !h.recordReadUse(response, request, authorization) {
+				return
+			}
 			writeSCIM(response, http.StatusOK, resource)
 			return
 		}
@@ -160,14 +177,20 @@ func (h *HTTPHandler) resourceTypeDefinitions() []map[string]any {
 	}
 }
 
-func (h *HTTPHandler) schemas(response http.ResponseWriter, _ *http.Request, _ Authorization) {
+func (h *HTTPHandler) schemas(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	resources := h.schemaDefinitions()
+	if !h.recordReadUse(response, request, authorization) {
+		return
+	}
 	writeSCIM(response, http.StatusOK, listResponse(resources, len(resources), 1))
 }
 
-func (h *HTTPHandler) schema(response http.ResponseWriter, request *http.Request, _ Authorization) {
+func (h *HTTPHandler) schema(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	for _, schema := range h.schemaDefinitions() {
 		if schema["id"] == request.PathValue("id") {
+			if !h.recordReadUse(response, request, authorization) {
+				return
+			}
 			writeSCIM(response, http.StatusOK, schema)
 			return
 		}
@@ -353,6 +376,8 @@ func writeServiceError(response http.ResponseWriter, err error) {
 		writeSCIMError(response, http.StatusConflict, "uniqueness", "The SCIM resource conflicts with an existing resource")
 	case errors.Is(err, domain.ErrVersionConflict):
 		writeSCIMError(response, http.StatusConflict, "", "The SCIM resource changed concurrently")
+	case errors.Is(err, domain.ErrPreconditionFailed):
+		writeSCIMError(response, http.StatusPreconditionFailed, "mutability", "The SCIM resource version does not match")
 	case errors.Is(err, domain.ErrInvalidReference):
 		writeSCIMError(response, http.StatusBadRequest, "invalidValue", "A SCIM member reference is invalid")
 	default:

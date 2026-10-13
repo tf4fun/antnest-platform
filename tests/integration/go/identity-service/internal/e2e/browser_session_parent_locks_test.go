@@ -77,14 +77,14 @@ func TestBrowserOIDCAndRoleChangeShareParentLockOrder(t *testing.T) {
 			select {
 			case rolePID = <-roleAtMembership:
 			case err := <-roleDone:
-				t.Fatalf("role mutation did not acquire the organization: %v", err)
+				t.Fatalf("role mutation did not acquire the User authority parent: %v", err)
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
 			oidcPID := make(chan uint32, 1)
 			var loginCaptured sync.Once
 			f.repository.Repository = f.tracedStore(t, func(_ context.Context, conn *pgx.Conn, sql string) {
-				if strings.Contains(sql, "organizations") && strings.Contains(sql, "FOR UPDATE") {
+				if strings.Contains(sql, "users") && strings.Contains(sql, "FOR UPDATE") {
 					loginCaptured.Do(func() { oidcPID <- conn.PgConn().PID() })
 				}
 			}).OIDC()
@@ -102,7 +102,7 @@ func TestBrowserOIDCAndRoleChangeShareParentLockOrder(t *testing.T) {
 					t.Fatalf("OIDC did not wait on the role transaction: %v", err)
 				}
 			case result := <-loginDone:
-				t.Fatalf("OIDC bypassed organization lifecycle lock: %v", result.err)
+				t.Fatalf("OIDC bypassed User authority parent lock: %v", result.err)
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}

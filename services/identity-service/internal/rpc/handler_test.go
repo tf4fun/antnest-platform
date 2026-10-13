@@ -441,8 +441,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
-	if contract.Revision != 17 {
-		t.Fatalf("identity contract revision=%d want=17", contract.Revision)
+	if contract.Revision != 18 {
+		t.Fatalf("identity contract revision=%d want=18", contract.Revision)
 	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))

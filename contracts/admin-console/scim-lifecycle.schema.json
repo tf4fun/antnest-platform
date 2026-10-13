@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/admin-console/scim-lifecycle.schema.json",
+  "title": "Console 54 SCIM issuance and public token inventory",
+  "$defs": {
+    "id": { "$ref": "../identity/scim-lifecycle.schema.json#/$defs/id" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "scopes": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["scim:read", "scim:write"] }
+    },
+    "issue_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "scopes"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "scopes": {
+          "type": "array",
+          "$ref": "#/$defs/scopes",
+          "minItems": 1
+        },
+        "oidc_provider_id": { "$ref": "#/$defs/id" },
+        "expires_in_days": {
+          "$ref": "../identity/scim-lifecycle.schema.json#/$defs/issue_parameters/properties/expires_in_days"
+        }
+      }
+    },
+    "token": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "scopes",
+        "created_at",
+        "oidc_provider_id",
+        "expires_at",
+        "issued_by",
+        "issuer_review_required"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "scopes": { "$ref": "#/$defs/scopes" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "revoked_at": { "$ref": "#/$defs/timestamp" },
+        "oidc_provider_id": {
+          "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "expires_at": { "$ref": "#/$defs/timestamp" },
+        "issued_by": {
+          "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "issuer_review_required": { "type": "boolean" }
+      },
+      "if": {
+        "properties": { "issued_by": { "type": "null" } },
+        "required": ["issued_by"]
+      },
+      "then": { "properties": { "issuer_review_required": { "const": true } } }
+    },
+    "list_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tokens"],
+      "properties": {
+        "tokens": { "type": "array", "items": { "$ref": "#/$defs/token" } }
+      }
+    },
+    "issue_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token", "credential"],
+      "properties": {
+        "token": { "$ref": "#/$defs/token" },
+        "credential": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

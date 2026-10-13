@@ -70,6 +70,20 @@ and deployment adoption are separate pending batches. The internal RPC schema is
 
 ### Principal response contract
 
+Identity revision 18 implements [SCIM token lifecycle and resource versions](../../contracts/identity/scim-lifecycle.md).
+Issuance accepts optional `expires_in_days` (1–365, default 90); issuance and
+inventory return `expires_at`, `issued_by` and `issuer_review_required` without
+exposing stored hashes. Expired credentials are rejected, issuer authority loss
+revokes or flags tokens, and User/Group responses expose ETag and `meta.version`
+with conditional PUT/PATCH/DELETE. Stale conditions return 412 and retain the safe
+`precondition_failed` code in request spans, error events and completion logs
+without exporting credentials. Rotation issues an independent credential; the
+original remains usable until expiry or explicit revocation. Console 54
+provides lifecycle display and rotation controls; current consumer references
+are aligned. The separate HTTPS acceptance batch exercises real Console issuance,
+overlapping credentials, conditional writes, expiry, issuer loss and organization
+isolation against the production Identity image.
+
 The revision-16 Provider policy batch defaults new OIDC registrations to no
 automatic email linking. Explicit domain/email trust and an additional
 authoritative flag govern first-time administrator linking. Migration preserves
@@ -124,6 +138,12 @@ Agent UI (including #95). See the
 for the failure behavior when components are upgraded out of order.
 
 ## Configuration
+
+`ANTNEST_IDENTITY_SCIM_REVOKE_ON_ISSUER_LOSS` defaults to `true`. Setting it to
+`false` records a durable review flag instead of revoking tokens when their
+issuer loses effective administration authority; invalid Boolean values fail
+startup. All instances must use the same policy. See the
+[SCIM deployment and recovery procedure](docs/operations.md#scim-lifecycle-deployment).
 
 Password hashing and verification share one process engine. Optional
 `ANTNEST_IDENTITY_ARGON2_MEMORY_KIB` (65536),
@@ -221,6 +241,7 @@ Run these commands from the repository root:
 ```bash
 node tests/integration/go/run.mjs identity-service
 make test-identity-postgres
+node tests/e2e/service-authentication/identity/run.mjs
 docker compose --profile stage3 build identity-service
 ```
 
@@ -240,6 +261,12 @@ authentication, signed ID token, and JWKS). It also checks completion
 deadlines, immutable client registration, secret rotation, policy/domain/role
 admission, raw subject encoding, migration-review persistence and Provider-first
 locking. Role changes during actual database waits are revalidated before linking.
+SCIM lifecycle coverage includes migration and pre-listen reconciliation,
+issuer loss under both policies, expiry after actual row/audit/feed waits,
+atomic usage and rollback, ordered caller/target session locks, consistent
+User/Group versions and independent If-Match/CAS conflicts. The service-owned
+Docker fixture exercises the production Identity image, PostgreSQL and a signed
+HTTPS IdP; it is separate from the later cross-service HTTPS acceptance.
 Real handler responses are validated against the central principal JSON
 Schema. PostgreSQL tests check every principal builder, both OIDC callback
 paths, fresh organization metadata on token resolution, and organization

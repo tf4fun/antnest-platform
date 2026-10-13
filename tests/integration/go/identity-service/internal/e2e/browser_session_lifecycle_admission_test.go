@@ -24,6 +24,14 @@ func TestBrowserDirectoryMutationsRevalidateActorAfterTokenWait(t *testing.T) {
 				f := newBrowserControlsFixture(t)
 				target := f.login(t, "admission", "member@example.com")
 				actor := f.login(t, "admission", "admin@example.com")
+				if _, err := f.pool.Exec(t.Context(), `UPDATE api_tokens SET id=$2 WHERE id=$1`, target.TokenID, "token-a-target"); err != nil {
+					t.Fatal(err)
+				}
+				target.TokenID = "token-a-target"
+				if _, err := f.pool.Exec(t.Context(), `UPDATE api_tokens SET id=$2 WHERE id=$1`, actor.TokenID, "token-z-actor"); err != nil {
+					t.Fatal(err)
+				}
+				actor.TokenID = "token-z-actor"
 				expires := f.clock().Add(5 * time.Second)
 				if _, err := f.pool.Exec(t.Context(), `UPDATE api_tokens SET idle_expires_at=$2 WHERE id=$1`, actor.TokenID, expires); err != nil {
 					t.Fatal(err)
@@ -42,7 +50,7 @@ func TestBrowserDirectoryMutationsRevalidateActorAfterTokenWait(t *testing.T) {
 				pid := make(chan uint32, 1)
 				var captured sync.Once
 				store := f.tracedStore(t, func(_ context.Context, conn *pgx.Conn, sql string) {
-					if strings.Contains(sql, "SELECT id FROM api_tokens") && strings.Contains(sql, "ORDER BY id FOR UPDATE") {
+					if strings.Contains(sql, "FROM api_tokens") && strings.Contains(sql, "ORDER BY id FOR UPDATE") {
 						captured.Do(func() { pid <- conn.PgConn().PID() })
 					}
 				})

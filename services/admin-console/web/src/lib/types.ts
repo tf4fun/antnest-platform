@@ -150,6 +150,9 @@ export type OIDCProviderList = { providers: OIDCProvider[] };
 export type OIDCProviderResult = { provider: OIDCProvider };
 
 export type SCIMToken = {
+  expires_at: string;
+  issued_by: string | null;
+  issuer_review_required: boolean;
   oidc_provider_id: string | null;
   id: string;
   name: string;

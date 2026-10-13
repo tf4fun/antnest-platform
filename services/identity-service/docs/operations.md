@@ -17,6 +17,11 @@ lock and rejects a journal entry unknown to the running binary. Bootstrap is
 also serialized transactionally, so simultaneous replicas return the same
 canonical identity facts and create one audit event.
 
+Before opening the listener, startup reconciles existing SCIM issuers against
+current authority under the configured lifecycle policy. A failure rolls back
+that transaction and prevents readiness; repeating a successful reconciliation
+does not rewrite already revoked or review-flagged tokens.
+
 `GET /status` returns `ready` only after startup completes and a bounded
 database probe succeeds. External OIDC Providers are request-time dependencies
 and do not affect process readiness.
@@ -346,6 +351,55 @@ There is no per-field filtering or bespoke payload size limit. See
   extensibility.
 - SCIM mutations accept exactly one JSON object up to 1 MiB and reject empty
   Group member references instead of silently discarding them.
+
+## SCIM lifecycle deployment
+
+Identity revision 18 accepts `expires_in_days` as an optional integer from 1 to
+365 (default 90). New expiry uses the transaction clock after authority lock
+waits plus fixed 24-hour days. `expires_at <= now` is expired; requests never
+extend the deadline. Issuance and inventory include the server-owned
+`expires_at`, `issued_by` and `issuer_review_required` fields. Only the issuance
+response includes the one-time credential.
+
+`ANTNEST_IDENTITY_SCIM_REVOKE_ON_ISSUER_LOSS` is an optional Boolean, default
+`true`; invalid values fail startup. Configure the same value on every instance.
+The default revokes tokens when their known issuer loses effective administration
+authority. With `false`, those tokens retain ordinary bearer authorization and
+receive a persistent review flag and audit instead. Membership authority loss
+affects its Organization; global User disable affects all Organizations. A
+SystemAdmin retains authority despite an individual Membership demotion.
+Restoring a role or active state neither revives a revoked token nor clears a
+review flag.
+
+Migration `0010_scim_lifecycle.sql` preserves historical creation time and sets
+expiry to `created_at + interval '1 year'`, including immediately expired rows.
+It recovers an issuer only from unambiguous same-Organization issuance audit
+evidence naming an existing User. Other rows have a null issuer and require
+review; operators must rotate or revoke them. Migration and startup warnings
+contain aggregate counts, not credentials, hashes or identifiers. Failed
+migration transactions emit no committed backfill summary.
+
+Retire all old Identity instances before declaring enforcement active. An
+already-running old binary does not enforce the policy; starting it against the
+new journal normally rejects the unknown migration. Binary-only rollback is
+unsupported. Preserve a database backup with the matching service version for
+recovery, or roll forward with a compatible version.
+
+To rotate, issue a new token with the same name, scopes and immutable Provider
+pairing, set a bounded TTL, install and exercise the new credential, then
+explicitly revoke the old token. Issuance alone changes neither the old row nor
+its expiry. After a timeout or ambiguous response, inspect inventory before an
+explicit retry; never automatically replay issuance or revocation.
+
+User/Group single-resource GET/POST/PUT/PATCH return matching `ETag` and
+`meta.version`; list rows also carry versions. Conditional PUT/PATCH/DELETE
+compare `If-Match` inside the transaction: stale tags return `412 mutability`,
+malformed syntax `400 invalidSyntax`, and missing resources retain 404. A
+matching condition does not bypass the independent internal snapshot CAS (409).
+Absent conditions retain that CAS. Refusals roll back resource changes, token
+usage, audits and revocation feeds. See the
+[lifecycle contract](../../../contracts/identity/scim-lifecycle.md) for opaque
+tag comparison and bounded list syntax.
 
 ## Revocation Feed Recovery
 

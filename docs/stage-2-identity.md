@@ -242,8 +242,14 @@ then `userName`. Exact `eq` filters are supported for User `userName`,
 `externalId`, and `emails.value`, and Group `displayName` and `externalId`.
 PATCH supports the fields advertised by discovery, including primary email
 replacement and filtered Group member removal; unsupported paths fail with a
-SCIM error instead of being silently discarded. Bulk, sorting, ETags, and
-password mutation are explicitly unsupported.
+SCIM error instead of being silently discarded. Bulk, sorting and password
+mutation are explicitly unsupported. Identity revision 18 returns ETag and
+`meta.version` for User/Group resources, and accepts conditional PUT/PATCH/DELETE
+under the [SCIM lifecycle contract](../contracts/identity/scim-lifecycle.md).
+Token issuance has bounded expiry and verified issuer metadata; authority loss
+revokes or flags affected tokens according to the configured policy. Bearer
+authentication alone does not record usage: successful reads update it with a
+five-minute throttle, while writes commit it atomically with their effects.
 
 Mutation bodies contain exactly one JSON object and are limited to 1 MiB.
 User and PATCH objects reject duplicate keys, including case-folded aliases;
