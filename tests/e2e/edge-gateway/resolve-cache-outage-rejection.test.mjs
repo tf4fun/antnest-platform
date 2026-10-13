@@ -492,6 +492,91 @@ test("outage claims reject an error event outside its request lifetime", () => {
   assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
 });
 
+function quantizedGoEventFixture() {
+  const f = fixture(),
+    part = f.parts["stopped-new-login"],
+    client = part.trace.spans.find((s) => s.spanID === "resolve-client");
+  // Actual CI timestamps: Jaeger exports start, duration and event separately
+  // at microsecond precision; the Go transport records its event before End.
+  part.root.startTime = 1791925819795427;
+  part.root.duration = 2000544;
+  part.root.logs[0].timestamp = 1791925821795951;
+  client.startTime = 1791925819795523;
+  client.duration = 2000390;
+  client.logs[0].timestamp = 1791925821795914;
+  const process = part.trace.processes[client.processID];
+  process.tags = [{ key: "telemetry.sdk.language", value: "go" }];
+  return { ...f, client, process };
+}
+
+test("outage claims admit one integer microsecond of Go event export quantization without changing raw evidence", () => {
+  const f = quantizedGoEventFixture(),
+    original = structuredClone([...f.collection.traces]);
+  const result = inspectOutageRejections(f.evidence, f.collection);
+  assert.equal(result.status, "passed");
+  assert.equal(result.owned_error_spans.length, 18);
+  assert.equal(result.strict_trace, "failed");
+  assert.deepEqual([...f.collection.traces], original);
+});
+
+for (const [name, mutate] of [
+  ["two microseconds late", (f) => f.client.logs[0].timestamp++],
+  [
+    "before start",
+    (f) => (f.client.logs[0].timestamp = f.client.startTime - 1),
+  ],
+  ["fractional event", (f) => (f.client.logs[0].timestamp += 0.5)],
+  ["fractional start", (f) => (f.client.startTime += 0.5)],
+  ["fractional duration", (f) => (f.client.duration += 0.5)],
+  ["non-Go SDK", (f) => (f.process.tags[0].value = "nodejs")],
+  ["missing SDK", (f) => (f.process.tags = [])],
+  ["duplicate SDK", (f) => f.process.tags.push({ ...f.process.tags[0] })],
+])
+  test(`outage event quantization rejects ${name}`, () => {
+    const f = quantizedGoEventFixture();
+    mutate(f);
+    assert.throws(
+      () => inspectOutageRejections(f.evidence, f.collection),
+      /refusal event outside owning span/u,
+    );
+  });
+
+for (const [name, mutate] of [
+  [
+    "wrong stage",
+    (s) =>
+      (s.logs[0].fields.find((v) => v.key === "antnest.error.stage").value =
+        "request"),
+  ],
+  [
+    "unrelated cause",
+    (s) =>
+      (s.logs[0].fields.find(
+        (v) => v.key === "antnest.error.cause_types",
+      ).value = '["OtherError"]'),
+  ],
+  ["duplicate event", (s) => s.logs.push(structuredClone(s.logs[0]))],
+])
+  test(`quantized Go event still rejects ${name}`, () => {
+    const f = quantizedGoEventFixture();
+    mutate(f.client);
+    assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+  });
+
+test("in-span finite fractional timestamps retain their existing admission without SDK provenance", () => {
+  const f = fixture(),
+    client = f.parts["stopped-new-login"].trace.spans.find(
+      (s) => s.spanID === "resolve-client",
+    );
+  client.startTime += 0.5;
+  client.duration += 0.5;
+  client.logs[0].timestamp = client.startTime + client.duration - 0.5;
+  assert.equal(
+    inspectOutageRejections(f.evidence, f.collection).status,
+    "passed",
+  );
+});
+
 for (const [label, selection, mutate] of [
   [
     "unrelated root failure",

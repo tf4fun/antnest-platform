@@ -150,6 +150,31 @@ export async function scimLifecycleFixture({
       assert(row?.digest, "SCIM token snapshot absent");
       return row.digest;
     },
+    async principalRevocation({ traceID, membershipID, tokenID }) {
+      assert.match(traceID, /^[a-f0-9]{32}$/u);
+      assert.match(membershipID, /^[a-zA-Z0-9_-]{1,128}$/u);
+      assert.match(tokenID, /^[a-zA-Z0-9_-]{1,128}$/u);
+      // SCIM User IDs identify Memberships, not global Users. This unique JOIN
+      // binds the committed feed row to the requested Membership and the
+      // persisted Token's organization. Console omits organization_id from its
+      // public Token projection; raw Trace omits private SQL parameters.
+      const rows = await query(
+        `SELECT p.sequence::text, p.user_id, p.organization_id, p.reason,
+        p.traceparent, m.id AS membership_id
+        FROM organization_memberships m JOIN principal_revocations p
+        ON p.user_id=m.user_id AND p.organization_id=m.organization_id
+        JOIN scim_tokens t ON t.organization_id=m.organization_id
+        WHERE m.id=$1 AND t.id=$2
+        AND p.reason='membership_deleted' AND split_part(p.traceparent,'-',2)=$3`,
+        [membershipID, tokenID, traceID],
+      );
+      assert.equal(
+        rows.length,
+        1,
+        "one committed SCIM principal revocation required",
+      );
+      return rows[0];
+    },
     async assertLifecycle(token, days, issuer) {
       assert.equal(token.issued_by, issuer);
       assert.equal(token.issuer_review_required, false);

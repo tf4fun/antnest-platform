@@ -7,8 +7,10 @@ Identity revision 18 implements its token lifecycle and resource versions; the
 complete RPC request and response shapes are in the active
 [Identity catalog](identity-contract.json). Console version 54 implements expiry,
 issuer review and rotation controls with its own service admission. Current
-consumer references align with Identity 18 and Console 54; a separate real HTTPS
-integration batch remains pending. The extension schema
+consumer references align with Identity 18 and Console 54. The real HTTPS
+integration batch exercises the shipped Console and Gateway, including token
+rotation, conditional writes and issuer authority loss; current delivery and
+admission status is recorded in the [global TODO](../../TODO.md). The extension schema
 definitions validate field projections, not entire RPC envelopes.
 
 ## Issuance, expiry and rotation

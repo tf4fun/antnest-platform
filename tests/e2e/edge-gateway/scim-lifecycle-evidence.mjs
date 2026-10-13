@@ -9,6 +9,7 @@ import {
   owningServerTopology,
 } from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
+import { inspectSCIMRevocationReceipt } from "./scim-lifecycle-receipt.mjs";
 
 export function inspectLifecycleTrace(trace, expected, secrets, options = {}) {
   const result = inspectIdentityTraceTopology(
@@ -222,10 +223,34 @@ export function inspectLifecycleTrace(trace, expected, secrets, options = {}) {
   }
   // Raw warning/error counts and strict_trace remain the collector's results.
   // This additional classification never rewrites them into a strict pass.
+  const receipt = inspectSCIMRevocationReceipt(trace, expected, server);
+  const reviewedWarnings = [];
+  let unreviewedWarnings = 0;
+  for (const source of identityTraceSources(trace, secrets, options)) {
+    unreviewedWarnings += source.warnings?.length ?? 0;
+    for (const span of source.spans)
+      for (const warning of span.warnings ?? []) {
+        if (
+          source === trace &&
+          receipt?.owned.has(span) &&
+          receipt.warnings.has(warning)
+        )
+          reviewedWarnings.push({
+            trace_id: source.traceID,
+            span_id: span.spanID,
+            warning,
+            reason: "committed-async-principal-revocation-receipt",
+          });
+        else unreviewedWarnings++;
+      }
+  }
   return {
     ...result,
     http_hops: hops.length,
     expected_errors: expectedErrors,
     unexpected_errors: 0,
+    reviewed_warnings: reviewedWarnings,
+    unreviewed_warning_count: unreviewedWarnings,
+    ...(receipt ? { principal_revocation: receipt.summary } : {}),
   };
 }

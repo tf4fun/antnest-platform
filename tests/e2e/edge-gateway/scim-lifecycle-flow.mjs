@@ -43,6 +43,7 @@ export async function verifySCIMLifecycle({
     phases: [],
     responses: [],
     rejected_snapshots: [],
+    principal_revocations: [],
     trace_reports: [],
     archive_errors: [],
   };
@@ -274,6 +275,16 @@ export async function verifySCIMLifecycle({
         /^application\/scim\+json(?:;|$)/u,
       );
     const [collection, id] = path.split("?")[0].split("/");
+    let principalRevocation;
+    if (method === "DELETE" && status === 204 && collection === "Users" && id) {
+      principalRevocation = await fixture.principalRevocation({
+        traceID: receipt.trace_id,
+        membershipID: id,
+        tokenID: credential.token.id,
+      });
+      evidence.principal_revocations.push(principalRevocation);
+      save();
+    }
     expectations.push({
       traceID: receipt.trace_id,
       responseBytes: Buffer.byteLength(text),
@@ -282,6 +293,9 @@ export async function verifySCIMLifecycle({
       route: `/scim/v2/${collection}${id ? "/{id}" : ""}`,
       clientService: "edge-gateway",
       ...(errorCode ? { errorCode } : {}),
+      ...(principalRevocation
+        ? { principalRevocation, scimTokenID: credential.token.id }
+        : {}),
     });
     if (status >= 400) {
       assert(
@@ -692,7 +706,8 @@ export async function verifySCIMLifecycle({
     assert(
       evidence.trace_reports.every(
         (report) =>
-          report.warning_count === 0 && report.unexpected_errors === 0,
+          report.unreviewed_warning_count === 0 &&
+          report.unexpected_errors === 0,
       ),
       "SCIM trace diagnostics require review",
     );
