@@ -3,18 +3,20 @@
 Gateway session revision 21 defines the positive Resolve cache for
 [#59](https://github.com/tf4fun/antnest-platform/issues/59). The machine-readable
 limits are in [resolve-cache-policy.json](resolve-cache-policy.json), policy
-revision 3. The `resolve-access-token` and `list-session-revocations` wire
+revision 4. The `resolve-access-token` and `list-session-revocations` wire
 schemas from Identity revision 16 remain unchanged in revision 17. Gateway
 session revision 22 retains this cache policy and adds the separately scoped
 [password failure consumer](../identity/password-verification.md).
 Revision 23 preserves both and activates independent
 [login admission](login-admission.md) budgets and bounded tables.
-Gateway 24 updates only policy 3's catalog reference while retiring the direct
-browser ACP transport under the [retirement policy](workspace-entry-retirement.md).
-Cache authority and resource semantics stay unchanged. Policy 3's direct-ACP
-message/handshake clauses and historical WSS measurements do not describe the
-retained Bridge. A new Bridge measurement and cache policy revision remain
-part of the separate consumer/integration delivery.
+Gateway 24 retires the direct browser ACP transport under the
+[retirement policy](workspace-entry-retirement.md). Policy 4 defines the retained
+Bridge HTTP load and SSE/HTTP outage measurements without changing cache
+authority, resource limits, Identity revision 18 or Gateway revision 24.
+Policy 3's direct-ACP message/handshake clauses remain explicitly historical;
+their WSS evidence cannot admit the Bridge. This shared policy defines the new
+measurement. The test consumers and actual cross-service admission are separate,
+pending delivery batches.
 
 ## Scope and authority
 
@@ -257,7 +259,12 @@ cannot mutate an old snapshot or waive the current snapshot's expiry checks.
 
 Policy 3's original-handshake CCT cap applied specifically to the now-retired
 direct Gateway WebSocket. It does not impose that old socket lifetime on the
-retained SSE routes. Private ACP consumers continue to enforce their own
+Gateway's retained SSE guard, which checks the current CCT on revalidation while
+preserving the original SID, identities, roles and absolute session deadline.
+The Agent UI receiver separately terminates Workspace SSE at its originally
+verified delegation CCT expiry, as defined by the
+[Workspace API](../agent-ui/workspace-api.json). Gateway cache refresh cannot
+extend that Node stream. Private ACP consumers continue to enforce their own
 authenticated transport contract.
 
 ## Organization display
@@ -366,8 +373,7 @@ matching cancellation witness. This does not prove client receipt, claim an
 error, or excuse another failure; retain the original event and exact span ID.
 
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
-under the current HTTP request root (historically also the retired ACP-message
-root), ending before any resulting upstream
+under the current HTTP request root, ending before any resulting upstream
 admission. Its `antnest.identity.resolve.` attributes include `source` from
 `rpc | cache | shared`, the server-owned `profile`, and `outcome` from
 `admitted | rejected | unavailable`. An admitted cache hit also records numeric
@@ -455,13 +461,73 @@ feed tests include slow terminal pages, blocked application, a short fourth
 page and four full pages. Check both real and cached initial stream admission
 without authority renewal or timer spin.
 
+## Bridge load and outage admission
+
+Policy 4 measures 100 sequential actual `GET
+/api/app/workspace/v1/agents/{agentId}/sessions` requests with the same opaque
+token, route-selected `workspace` profile and Agent. Use the actual default
+10-second cache TTL. Begin a client-monotonic timer before sending the first
+request to a cold exact Resolve scope and a cold Bridge owner; end it only
+after receiving the hundredth complete response body. The whole interval must
+be at most eight seconds. Do not warm this scope or owner through bootstrap,
+view, SSE, private ACP initialization or any other request before timing, and
+do not report activity during the window. Setup may provision the Agent and
+browser credential through other scopes. The first measured HTTP request must
+include the real Bridge/ACP initialization it requires; initialization is not
+an extra public request outside the hundred or the timer.
+
+Every response must be HTTP 200 with the owning
+[`sessionPage` DTO](../agent-ui/workspace-api.schema.json): `items` and
+`nextCursor`, with each item carrying `sessionId`, `title`, `updatedAt` and
+`activeOperationId`. Preserve the schema's valid nulls and empty/partial pages;
+neither JSON-RPC `result.sessions` nor a required full page is this response.
+Record every request's actual Trace ID, send and complete-body observations.
+Hold the final request until after half of the original cache TTL, within the
+same eight-second window, and require its actual background-refresh trigger
+and completed source evidence.
+
+Count actual Gateway Resolve CLIENT attempts and Identity Resolve SERVER calls
+independently; each count must be at most three. Include initialization,
+foreground and background work, including failed attempts without a receiver.
+Refresh triggered by a measured request counts even when its RPC completes
+after the last HTTP body. Feed, activity and JWKS calls remain separate; a
+cache-hit metric is not a count of network calls. Collect the actual per-HTTP
+Gateway roots, direct Gateway CLIENT to Agent UI SERVER ancestry, workspace
+Resolve decisions and real ACP `session/list` receipts, including the first
+initialization. Preserve source links, both complete parent chains and
+non-Resolve SQL/business evidence. Independently search CLIENT and SERVER
+inventories, reject saturated searches and require complete closure stable for
+three consecutive rounds, including late refresh workers. Archive every raw
+source and retain its original strict diagnostic result.
+
+For the five-second outage, warm the exact browser `workspace` scope and retain
+an established Bridge SSE with enough original cache, idle, absolute, Node CCT
+and JWKS authority remaining. Hold accepted work in one identified
+organization/User/Agent/Session/Run and Runtime instance until the actual
+correlated cancellation. While the real Identity service is stopped, receive
+new real output through `/api/app/workspace/v1/agents/{agentId}/events` and send
+the real HTTP operation-cancel request. Prove that same Run's terminal outcome
+and that same Runtime execution's quiescence before restarting Identity.
+Unrelated idle work, natural completion, a replacement Run or local stream
+abort cannot establish this admission.
+
+Retain new-login, cold-token/profile/Agent and exhausted cache/session/CCT
+denials without Cookie loss or downstream effects. After recovery, retain
+logout/password/role/deactivation rejection, no resurrection and independently
+observed remote closure within the respective bounds. Preserve actual outage
+timestamps, authority budgets, raw traces, strict error ownership and cleanup
+receipts. Old WSS, a protocol double or a passing shared-contract test cannot
+substitute for these actual Bridge/Runtime results. Store the #64 evidence in
+`artifacts/verification/issue-64/`, outside `.cache`.
+
 ### Historical direct-ACP measurement
 
 The following policy-3 outage/load procedure records the #59 direct-ACP
 baseline. It does not admit Gateway 24 Bridge load or outage behavior. The
-replacement must preserve the 100-call/eight-second/three-Resolve budgets,
-actual initialization/refresh accounting and five-second outage with output
-and same-Run cancellation, using the retained Bridge and a new policy revision.
+policy-4 replacement above preserves the 100-call/eight-second/three-Resolve
+budgets, actual initialization/refresh accounting and five-second outage with
+output and same-Run cancellation. The retirement policy's wire baseline remains
+revision 3; it is not a current Bridge acceptance result.
 
 For the five-second Identity outage, first warm the **exact** token/profile/
 Agent scopes on established WSS/SSE connections with sufficient remaining

@@ -172,7 +172,7 @@ test("retirement cannot weaken cached authority, Origin, CSRF or header security
   assert.equal(value.security.identity_revision, 18);
   assert.deepEqual(value.cache_admission, {
     outage_seconds: cache.admission.outage_seconds,
-    load_calls: cache.admission.load_messages,
+    load_calls: cache.admission.load_calls,
     load_window_max_ms: cache.admission.load_window_max_ms,
     load_actual_resolve_calls_max:
       cache.admission.load_actual_resolve_calls_max,
@@ -184,6 +184,12 @@ test("retirement cannot weaken cached authority, Origin, CSRF or header security
     value.activation.changed_cache_measurement_requires_new_policy_revision,
     true,
   );
+  assert.equal(cache.revision, 4);
+  assert.equal(
+    cache.historical_measurement.revision,
+    value.wire_baseline.resolve_cache_revision,
+  );
+  assert.equal(cache.historical_measurement.admits_current_bridge, false);
   assert.equal(value.activation.header_registry_version, 2);
   const active = gateway.version >= value.activation.gateway_version;
   if (active)

@@ -38,6 +38,15 @@ boundaries. The shared batch precedes Gateway implementation, trace/display
 consumers and real HTTPS outage/load admission. It does not enable caching on
 its own or add an Identity RPC.
 
+Under Gateway 24, cache policy 4 defines the replacement Bridge measurement:
+100 real sequential HTTP session-list calls, including cold initialization and
+refresh, within eight seconds and at most three actual Resolve attempts per
+independently counted CLIENT/SERVER inventory. The five-second Identity outage
+requires real Bridge SSE output and HTTP cancellation of the same held
+Run/Runtime work. Cache authority and budgets remain unchanged; policy 3's WSS
+measurement remains historical. The shared policy does not complete the
+pending test-consumer migration or actual integration admission.
+
 Revision 20 adds the three self binding/notice routes defined by
 [OIDC account linking](../identity/oidc-linking.md), with closed browser schemas,
 the Identity-only session CCT profile, shared Origin/CSRF admission and no Cookie

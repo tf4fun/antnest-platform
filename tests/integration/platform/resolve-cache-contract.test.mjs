@@ -18,7 +18,7 @@ test("Gateway cache revision reuses the issued Identity wire contract", () => {
   assert.equal(gateway.identity_resolve_cache, "resolve-cache-policy.json");
   const value = policy();
   assert.equal(value.contract, "antnest.edge-gateway.resolve-cache");
-  assert.equal(value.revision, 3);
+  assert.equal(value.revision, 4);
   assert.equal(value.gateway_session_revision, gateway.version);
   assert.equal(value.identity_revision, identity.revision);
   assert.equal(identity.revision, 18);
@@ -218,7 +218,17 @@ test("stream provenance separates real authority age, RPC duration and probe sch
   ]);
   assert.equal(streams.probe_start_updates_authority_age, false);
   assert.equal(streams.cache_age_is_rpc_duration, false);
-  assert.equal(streams.original_handshake_cct_hard_cap, true);
+  assert.equal(
+    Object.hasOwn(streams, "original_handshake_cct_hard_cap"),
+    false,
+  );
+  const bridge = contract("agent-ui/workspace-api.json");
+  assert.deepEqual(streams.workspace_sse, {
+    gateway_revalidation: "current-cct-and-original-sid-identities-roles",
+    gateway_absolute_deadline: "original-session-expiry",
+    delegation_owner: "agent-ui",
+    delegation_deadline: bridge.sse_delegation_deadline,
+  });
   assert.equal(streams.accepted_run_cancelled_by_revocation, false);
   assert.equal(
     gateway.session_lifecycle.stream_revalidation.feed_dependency,
@@ -247,7 +257,7 @@ test("only a periodic cache hit crossing its reuse deadline permits one bounded 
       "all-resolve-trace-decisions",
     ],
     expired_result_admitted: false,
-    initial_or_message_retry: false,
+    initial_or_request_retry: false,
   });
   assert.equal(
     gateway.session_lifecycle.stream_revalidation.expired_hit_recheck,
@@ -302,12 +312,131 @@ test("outage and load admission have exact scope, deadlines and actual RPC count
     "cold-agent",
     "expired-cache-or-authority",
   ]);
-  assert.equal(admission.load_messages, 100);
+  assert.equal(admission.load_calls, 100);
   assert.equal(admission.load_window_max_ms, 8000);
   assert.equal(admission.load_actual_resolve_calls_max, 3);
-  assert.equal(admission.load_count_includes_handshake_and_refresh, true);
+  assert.equal(admission.load_count_includes_initialization_and_refresh, true);
   assert.equal(admission.load_count_excludes_feed_activity_and_jwks, true);
   assert.equal(admission.raw_evidence_required, true);
+});
+
+test("Bridge load measures cold sequential HTTP responses using the owning session DTO", () => {
+  const { admission, configuration } = policy();
+  const bridge = contract("agent-ui/workspace-api.json");
+  const route = bridge.routes.sessions;
+  const schema = contract("agent-ui/workspace-api.schema.json");
+  assert.deepEqual(admission.load_request, {
+    method: route.method,
+    path: bridge.base_path + route.path,
+    profile: "workspace",
+    response_contract: "../agent-ui/workspace-api.json",
+    response: route.response,
+  });
+  assert.equal(admission.load_request.method, "GET");
+  assert.equal(admission.load_request.response, "sessionPage");
+  assert.deepEqual(schema.$defs.sessionPage.required, ["items", "nextCursor"]);
+  assert.deepEqual(schema.$defs.sessionSummary.required, [
+    "sessionId",
+    "title",
+    "updatedAt",
+    "activeOperationId",
+  ]);
+  assert.deepEqual(admission.load_measurement, {
+    order: "sequential",
+    scope: "same-token-profile-and-agent",
+    initial_scope: "cold",
+    owner_prewarmed: false,
+    activity_during_window: false,
+    clock: "client-monotonic",
+    start: "before-first-http-request",
+    end: "after-final-complete-response-body",
+    initialization: "first-http-request-includes-real-bridge-acp-initialize",
+    initialization_is_extra_public_request: false,
+    ttl_ms: configuration.ttl.default_ms,
+    final_request_after_half_ttl: true,
+    final_request_refresh_required: true,
+  });
+  assert.equal(admission.load_measurement.ttl_ms, 10000);
+});
+
+test("Bridge load retains actual RPC attempts and the complete refresh source closure", () => {
+  const { admission } = policy();
+  assert.deepEqual(admission.load_resolve_count, {
+    independent_counters: [
+      "gateway-resolve-client-attempts",
+      "identity-resolve-server-calls",
+    ],
+    includes: [
+      "initialization",
+      "foreground",
+      "background-refresh",
+      "failed-attempts",
+    ],
+    refresh_completion_after_http_window_counted: true,
+    cache_hit_metric_is_rpc_count: false,
+  });
+  assert.deepEqual(admission.load_trace, {
+    requests: "each-actual-http-trace-id",
+    upstream: "gateway-client-to-agent-ui-server",
+    profile: "workspace",
+    business_receipt: "actual-acp-session-list",
+    include_first_initialize: true,
+    source_search: "independent-client-and-server-inventories",
+    closure_stable_rounds: 3,
+    reject_saturated_search: true,
+    include_late_refresh: true,
+    preserve_raw_strict_diagnostics: true,
+  });
+});
+
+test("Bridge outage cancels the same held Runtime work while Identity remains stopped", () => {
+  const { admission } = policy();
+  const bridge = contract("agent-ui/workspace-api.json");
+  assert.deepEqual(admission.outage_bridge, {
+    output: bridge.base_path + bridge.routes.events.path,
+    cancel_method: bridge.routes.cancel.method,
+    cancel_path: bridge.base_path + bridge.routes.cancel.path,
+    target: [
+      "organization",
+      "user",
+      "agent",
+      "session",
+      "run",
+      "runtime-instance",
+      "actual-runtime-work",
+    ],
+    work: "held-until-correlated-cancellation",
+    output_required: "new-real-output-during-identity-outage",
+    completion:
+      "same-run-terminal-and-runtime-quiescent-before-identity-restart",
+    local_abort_is_remote_close: false,
+    natural_completion_is_cancel: false,
+    preserve_cold_scope_deadline_and_recovery_checks: true,
+  });
+});
+
+test("retired WSS measurements remain historical and cannot admit the current Bridge", () => {
+  const value = policy();
+  const retirement = contract(
+    "edge-gateway/workspace-entry-retirement-policy.json",
+  );
+  assert.deepEqual(value.historical_measurement, {
+    revision: retirement.wire_baseline.resolve_cache_revision,
+    transport: "gateway-direct-acp-websocket",
+    load_messages: 100,
+    load_count_includes_handshake_and_refresh: true,
+    original_handshake_cct_hard_cap: true,
+    decision_parent: "current-http-or-acp-message-root",
+    semantics: "resolve-cache.md#historical-direct-acp-measurement",
+    admits_current_bridge: false,
+  });
+  assert.equal(value.historical_measurement.revision, 3);
+  assert(value.revision > value.historical_measurement.revision);
+  assert.equal(Object.hasOwn(value.admission, "load_messages"), false);
+  assert.equal(
+    Object.hasOwn(value.admission, "load_count_includes_handshake_and_refresh"),
+    false,
+  );
 });
 
 test("cache trace evidence cannot excuse a missing Gateway parent or unrelated SQL", () => {
@@ -315,7 +444,7 @@ test("cache trace evidence cannot excuse a missing Gateway parent or unrelated S
   assert(diagnostics, "resolution provenance must be a shared trace contract");
   assert.equal(diagnostics.decision_span, "gateway.identity.resolve");
   assert.deepEqual(diagnostics.sources, ["rpc", "cache", "shared"]);
-  assert.equal(diagnostics.parent, "current-http-or-acp-message-root");
+  assert.equal(diagnostics.parent, "current-http-request-root");
   assert.equal(diagnostics.preserve_actual_rpc_parent, true);
   assert.deepEqual(diagnostics.cache_required_facts, [
     "profile",
