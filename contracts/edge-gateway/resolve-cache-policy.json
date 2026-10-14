@@ -329,7 +329,72 @@
         "preserve_original_strict_errors": true
       }
     },
-    "raw_evidence_required": true
+    "raw_evidence_required": true,
+    "outage_owner_close": {
+      "owners": "actual-acp-initializations-and-initializing-http-origins",
+      "link": "exact-first-initialization-agent-ui-http-span",
+      "fixed_owner_count": false,
+      "independent_searches": ["agent-ui-close-roots", "acp-delete-servers"],
+      "source_archive_and_stability": "same-three-round-closure-as-http-and-refresh",
+      "private_streams": "all-actual-get-and-execution-state-watch-receipts",
+      "later_receipts_under_reused_owner": true,
+      "normal_close": "load-owner-close-complete-delete-202",
+      "no_target_is_admission": false,
+      "failed_shutdown": {
+        "trigger": "transport_failure",
+        "outcome": "failed",
+        "witness": "same-owner-process-shutdown-watch-and-normal-old-acp-process-exit",
+        "clock_correlation": "same-service-clock-and-observed-lifecycle",
+        "receipt": {
+          "target_observed": true,
+          "delete_attempts": 1,
+          "delete_responses": 0,
+          "delete_completed": 0,
+          "delete_status": 0,
+          "pending_requests": 0,
+          "stream_joined": true,
+          "failures": 1,
+          "diagnostics_truncated": false
+        },
+        "failure_event": {
+          "count": 1,
+          "stage": "delete_request",
+          "supported_leaf_causes": [
+            "connection_refused",
+            "connection_reset",
+            "broken_pipe",
+            "socket_closed"
+          ],
+          "leaf_count": 1,
+          "leading_unknown_wrapper_max": 1,
+          "unknown_only_allowed": false,
+          "other_causes_allowed": false,
+          "truncated": false
+        },
+        "delete_server_count": 0,
+        "retain_error_and_drain_warning": true,
+        "shutdown_acknowledgement_added": false
+      }
+    },
+    "outage_terminal_rejection": {
+      "initial_resolution": "admitted",
+      "source": "rpc",
+      "terminal": true,
+      "mutation": "complete-recovery-http-admission-for-this-mutation",
+      "credential": "actual-stream-dispatch-and-mutation-observations",
+      "principal": ["organization_id", "user_id", "membership_id"],
+      "identity_process": ["service.instance.id", "host.name", "process.pid"],
+      "identity_order": "committed-mutation-before-zero-row-original-token-select",
+      "gateway_window": "http-date-and-observed-mutation-to-remote-closure",
+      "error_claims": [
+        "rejected-resolve-decision",
+        "resolve-client-401",
+        "identity-unauthenticated-server"
+      ],
+      "unrelated_errors_allowed": false,
+      "shared_or_unavailable_admitted_by_this_rule": false,
+      "preserve_original_strict_errors": true
+    }
   },
   "diagnostics": {
     "feed_client": {

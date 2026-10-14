@@ -451,6 +451,95 @@ test("Bridge load archives the exact owner close root and real DELETE receipt", 
   });
 });
 
+test("Bridge outage inventories actual owners and every reused-owner stream", () => {
+  const close = policy().admission.outage_owner_close;
+  assert(close, "outage owner cleanup needs its own admission contract");
+  assert.equal(
+    close.owners,
+    "actual-acp-initializations-and-initializing-http-origins",
+  );
+  assert.equal(close.link, "exact-first-initialization-agent-ui-http-span");
+  assert.equal(close.fixed_owner_count, false);
+  assert.deepEqual(close.independent_searches, [
+    "agent-ui-close-roots",
+    "acp-delete-servers",
+  ]);
+  assert.equal(
+    close.source_archive_and_stability,
+    "same-three-round-closure-as-http-and-refresh",
+  );
+  assert.equal(
+    close.private_streams,
+    "all-actual-get-and-execution-state-watch-receipts",
+  );
+  assert.equal(close.later_receipts_under_reused_owner, true);
+  assert.equal(close.normal_close, "load-owner-close-complete-delete-202");
+  assert.equal(close.no_target_is_admission, false);
+});
+
+test("Bridge outage shutdown failure requires an attempted and fully joined cleanup", () => {
+  assert.deepEqual(policy().admission.outage_owner_close?.failed_shutdown, {
+    trigger: "transport_failure",
+    outcome: "failed",
+    witness:
+      "same-owner-process-shutdown-watch-and-normal-old-acp-process-exit",
+    clock_correlation: "same-service-clock-and-observed-lifecycle",
+    receipt: {
+      target_observed: true,
+      delete_attempts: 1,
+      delete_responses: 0,
+      delete_completed: 0,
+      delete_status: 0,
+      pending_requests: 0,
+      stream_joined: true,
+      failures: 1,
+      diagnostics_truncated: false,
+    },
+    failure_event: {
+      count: 1,
+      stage: "delete_request",
+      supported_leaf_causes: [
+        "connection_refused",
+        "connection_reset",
+        "broken_pipe",
+        "socket_closed",
+      ],
+      leaf_count: 1,
+      leading_unknown_wrapper_max: 1,
+      unknown_only_allowed: false,
+      other_causes_allowed: false,
+      truncated: false,
+    },
+    delete_server_count: 0,
+    retain_error_and_drain_warning: true,
+    shutdown_acknowledgement_added: false,
+  });
+  assert.equal(policy().admission.load_owner_close.outcome, "closed");
+  assert.equal(policy().admission.load_owner_close.delete.status, 202);
+});
+
+test("Bridge outage terminal revalidation rejection requires the real committed revocation", () => {
+  assert.deepEqual(policy().admission.outage_terminal_rejection, {
+    initial_resolution: "admitted",
+    source: "rpc",
+    terminal: true,
+    mutation: "complete-recovery-http-admission-for-this-mutation",
+    credential: "actual-stream-dispatch-and-mutation-observations",
+    principal: ["organization_id", "user_id", "membership_id"],
+    identity_process: ["service.instance.id", "host.name", "process.pid"],
+    identity_order: "committed-mutation-before-zero-row-original-token-select",
+    gateway_window: "http-date-and-observed-mutation-to-remote-closure",
+    error_claims: [
+      "rejected-resolve-decision",
+      "resolve-client-401",
+      "identity-unauthenticated-server",
+    ],
+    unrelated_errors_allowed: false,
+    shared_or_unavailable_admitted_by_this_rule: false,
+    preserve_original_strict_errors: true,
+  });
+});
+
 test("Bridge outage cancels the same held Runtime work while Identity remains stopped", () => {
   const { admission } = policy();
   const bridge = contract("agent-ui/workspace-api.json");

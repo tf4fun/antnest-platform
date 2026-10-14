@@ -336,11 +336,29 @@ Claims never change the original strict result or cover other inventory errors.
 The outage stream consumer binds public SSE retirement to the actual Agent,
 Session, credential observation and remote closure after its recorded mutation.
 The warm SSE is retired by that member's password change; successful intervening
-Resolve revalidation remains valid. HTTP Date and observed request/closure
+Resolve revalidation remains valid. An actual final RPC revalidation may instead
+receive 401 after the committed revocation. Require the complete recovery HTTP
+admission for that exact mutation, the actual stream and mutation credential
+observations, and the same organization, User and Membership. Initial admission
+must still succeed; the rejected decision is terminal with no later Resolve.
+Retain the exact rejected decision, CLIENT 401 and Identity unauthenticated
+protocol diagnostics, including the producer's actual status rather than adding
+an OTel ERROR requirement to the Identity SERVER. Require its sole original
+browser-token SELECT to return zero rows without errors or writes. Zero rows
+alone do not identify a session: the real dispatch, Principal and validated
+mutation semantics supply that binding. Compare the mutation's completed COMMIT
+with that SELECT only after matching both Identity processes by service instance,
+host and PID. Bound the decision and CLIENT using Gateway HTTP Date and the
+observed mutation-to-remote-closure window; do not compare a Gateway timestamp
+directly with an Identity timestamp. This rule does not admit shared-source or
+unavailable decisions, unrelated errors, or a mutation marker without its full
+transaction/feed evidence.
+
+HTTP Date and observed request/closure
 intervals bound the Gateway end time without assuming identical host and service
 clocks. A claimed root handler abort and forwarding read failure require their
 exact fields/events and successful response with the original Agent UI receiver.
-Internal ACP watches retain the actual view as their causal parent and may
+Internal ACP watches retain their actual HTTP origin as their causal parent and may
 outlive that HTTP response. Only an observed normal same-container ACP restart
 or final UI drain may explain their precise disconnect diagnostics. A separate
 offboarding claim requires the original GET's fixed access-denial close event,
@@ -348,12 +366,42 @@ its trusted Agent/organization, the actual committed membership deactivation,
 and the same disabled Agent readback within the observed recovery window. A
 generic disconnect near a membership mutation is insufficient. The ACP
 execution-state watch additionally requires the producer's `process-shutdown`
-witness. Scan actual view traces rather than assigning a fixed number of watches
-to each view, because a view may reuse an existing connection. Each observed
+witness. Scan actual HTTP origins and ACP initializations rather than assigning
+a fixed number of watches to each view, because later requests may reuse an
+existing connection. Each observed
 post-restart watch needs its own offboarding or final-drain evidence; all may
 close on proved offboarding before the UI drain begins. Extra errors,
 missing ancestry or archives, local closure and unrelated shutdowns are not
 covered. Every claim names one original trace/span; raw diagnostics stay strict.
+
+The outage owner inventory includes successful POST/session creation, GET/view
+requests and any denied HTTP origin that actually initialized an owner. A denied
+origin needs its exact independently verified denial; its status alone does not
+admit its errors. Bind each close root through its unique initialization Link
+and enumerate all GET and execution-state watch receipts, including later GETs
+under a reused owner. Reconcile independent close-root and DELETE-receiver
+searches with the complete raw archive over the same three stable rounds.
+Normal owner retirement still requires a complete DELETE 202. Missing owners,
+duplicate origins, foreign Links, unbound later streams and no-target closes
+cannot establish completion.
+
+The deliberate ACP process restart has one separate failed-cleanup admission.
+Require a `transport_failure` / `failed` owner-close root, its exact initialized
+owner, that owner's `process-shutdown` execution-state watch, and the observed
+normal exit of the old ACP process. Relate each service's spans to its own process
+and observed lifecycle; an unrelated restart or the later UI drain is not a
+witness. The actual close receipt must show a target, exactly one DELETE attempt,
+zero response headers, completed bodies and status, no pending requests, a joined
+SDK stream, exactly one failure and no truncated diagnostics. Require one
+`delete_request` failure event containing exactly one of `connection_refused`,
+`connection_reset`, `broken_pipe` or `socket_closed`, optionally preceded by one
+`unknown` wrapper. Unknown-only, DNS, timeout, abort, body/stream cleanup, extra
+events or contradictory counts fail admission, as does any DELETE receiver for
+this failed close. Preserve its original ERROR and any drain warning as failed
+cleanup evidence. This does not turn the attempt into a successful DELETE or add
+a shutdown acknowledgement protocol; online DELETE 404 and missing receipts
+remain failures. Historical traces without these producer receipts cannot be
+retrofitted into this admission.
 
 Final outage admission reconciles the entire archived Trace map, including
 shared sources and triggers, against the exact error claims from all passed
