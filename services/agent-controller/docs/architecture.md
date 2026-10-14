@@ -25,6 +25,14 @@ The [workspace metadata reader](workspace-state.md) does not read execution
 state. Controller has no Run application or persistence code, so it is never a
 second execution authority.
 
+The reader accepts only Agent UI's verified workload and an Organization-scoped
+Identity CCT. Gateway's unused direct-reader grant is retired at both the
+Controller entry boundary and route policy; old valid credentials are denied
+before body parsing, JWKS lookup or business queries. Agent UI still delegates
+the original signed user scope, and Identity's workspace CCT audience continues
+to include Controller. The reader, pagination and management projection remain
+unchanged; deployment credential/network cleanup is a separate consumer batch.
+
 A small Runtime-observation consumer is intentionally not a general event bus.
 It polls Runtime Controller's authoritative ordered journal with a persisted
 cursor. Initial startup and expired-cursor recovery reconcile current Runtime
