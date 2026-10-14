@@ -297,7 +297,86 @@ Two separate container addresses verify independent login source limits despite
 forged forwarding headers. `ANTNEST_GATEWAY_TLS_E2E_OUTPUT` selects the private
 evidence directory. Cleanup removes the fixture keys, candidates and deployment.
 
-`node tests/e2e/edge-gateway/resolve-cache-docker.mjs` runs the separate #59
+The #64 migration of `node tests/e2e/edge-gateway/resolve-cache-docker.mjs`
+is still in progress. Its policy revision 4 load measurer and Trace collector
+use 100 sequential HTTP workspace sessions requests, including cold ACP
+initialization and complete response bodies within eight seconds. The last
+request must trigger a completed half-TTL refresh; actual Gateway attempts and
+Identity receipts have independent budgets. The SQL verifier binds queries to
+the actual list operation and process, and excludes connection/transaction
+observations from query counts. The private ACP HTTP receipts require a 200
+Initialize connection response and 202 session-list acceptance on the existing
+connection stream; the browser must still receive each complete 200 JSON page.
+Runtime catalog completion logs keep their empty `error.type` placeholders
+only with exact Trace/span/Agent binding and successful HTTP, MCP or Executor
+outcomes. Duplicate fields and additional failure diagnostics remain failures;
+raw logs are never removed. These tools have unit regression coverage;
+their current real Docker admission is pending.
+
+The Docker runner builds seven current candidates, including Agent Controller,
+and checks their actual container references, immutable IDs and ownership;
+the RC preparer must use the same selected RC image. An explicit
+`ANTNEST_E2E_RUNTIME_IMAGE` is captured before fixture environment filtering.
+The final Compose image choices are recorded before startup, and the eight
+load participants are checked against independently selected image IDs.
+
+The load flow captures the original participants before the first request and
+waits for all 100 complete bodies before invoking its owner lifecycle helper.
+The helper stops only the fixture's Agent UI, checks complete stdout/stderr
+for forced shutdown, preserves peer processes, and restores the same container,
+image and configuration after collection, including on collection failure.
+The flow waits for restoration before archiving its final lifecycle receipt;
+measurement and archive failures retain both original errors.
+Container configuration fingerprints sort object keys and only the observed
+mount list; all mount fields and the order of configuration arrays remain
+significant. Duplicate mount destinations fail. Baseline and pre-stop failures
+retain per-field digests and serialized/canonical fingerprints without copying
+Docker environment values or other credentials. A failed comparison or archive
+before the stop command does not restart any participant; both failures survive
+when the comparison and its diagnostic archive fail together.
+Before the first measured request, a read-only Node probe in the original ACP
+container reads the control listener's exact `GET /status`. Its ready/command
+handshake excludes child startup from the host interval while retaining all
+IPC and HTTP uncertainty; it consumes the full body, archives its actual Date
+and hash, and joins the child. Cancellation first closes the remote request;
+an unresponsive Docker process fails the run and still requires outer container
+cleanup. The original clock receipt is passed through the owner lifecycle.
+The clock verifier requires one unambiguous independent health SERVER root,
+the same ACP instance, and an intersecting offset interval across all 100 actual
+list-request starts. It keeps the SDK's sub-millisecond anchor model separate
+from transport uncertainty. The collector now includes the independent control
+health, Agent UI close and ACP DELETE searches in the same three-round raw
+closure as the 100 HTTP requests and refreshes. Each search uses the same
+per-round cutoff through the actual Jaeger v3 adapter; one failed search still
+archives the other available sources, while global cancellation stops dispatch.
+Query and archive failures are both retained.
+
+The inspector requires one independent requested/closed Agent UI root with an
+exact Link to the first actual UI HTTP receiver, and one directly parented
+workspace DELETE SERVER with status 202. DELETE start/end and every private
+GET/watch completion must fall wholly inside the actual UI stop interval using
+the original ACP clock. It enumerates every private stream, checks the actual
+login's organization and Agent on watch receipts, and classifies only the exact
+plain stream-interrupted/disconnected errors; unrelated diagnostics remain
+failures. All original ERRORs and warnings remain in raw evidence and strict
+status. The container receipt alone does not prove protocol cleanup.
+
+The HTTP load's final admission checks a body-free measurement projection
+with normalized JSON/no-store metadata rather than arbitrary remote header text,
+all 100 ordered HTTP/ACP receipts, the final request's actual refresh Link and
+both independent Resolve inventories. Raw error identities must correspond
+exactly to the classified private streams, with no duplicate or unowned claim.
+Three consecutive collector rounds retain the full raw snapshot hash, archive
+inventory and independent causal query inventories. Final admission also
+rechecks the original eight participants and the complete healthy restoration
+receipt, including its 30-second deadline, before writing `load-completed.json`.
+It binds the cleanup scope to the actual login and retains all strict findings.
+This admits only the HTTP load sub-scenario. The historical completion reader
+rejects policy 4 reports instead of combining new HTTP load with old WSS outage;
+current Bridge outage and explicit Runtime integration remain pending.
+
+The following paragraphs describe historical #59 policy revision 3 evidence,
+not admission for the current Bridge workflow. That runner used separate
 HTTPS/WSS load and warm-outage batches with the same local stack, Node and TLS prerequisites.
 It includes the real upgrade, initialize and 100 sequential `session/list`
 exchanges in an eight-second window, crossing half of the default 10-second

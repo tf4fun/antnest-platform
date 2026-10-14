@@ -264,3 +264,35 @@ test("a Docker call can run with its own environment under the client deadline",
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("explicit log collection preserves both streams without truncating early shutdown warnings", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "docker-client-log-"));
+  try {
+    writeFileSync(
+      join(directory, "stderr.txt"),
+      "Bridge drain did not close cleanly\n" + "x".repeat(70000),
+    );
+    writeFileSync(
+      join(directory, "docker"),
+      '#!/bin/sh\necho "Agent UI Bridge listening"\ncat "$LOG_FIXTURE" >&2\n',
+      { mode: 0o700 },
+    );
+    const docker = dockerClient(
+      {
+        PATH: `${directory}:${process.env.PATH}`,
+        LOG_FIXTURE: join(directory, "stderr.txt"),
+      },
+      undefined,
+      60000,
+    );
+    assert.equal(await docker(["logs", "owned"]), "Agent UI Bridge listening");
+    const logs = await docker(["logs", "owned"], false, {
+      captureStderr: true,
+    });
+    assert(logs.includes("Agent UI Bridge listening"));
+    assert(logs.includes("Bridge drain did not close cleanly"));
+    assert(logs.endsWith("x".repeat(70000)));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
