@@ -58,6 +58,25 @@ const environment = {
   ANTNEST_E2E_RUN_ID: "overlay-contract",
 };
 
+test("HTTPS workspace consumers can select the current Controller candidate", () => {
+  const image = "antnest/agent-controller:current-browser-contract";
+  const config = composeConfig(
+    [
+      "compose.yaml",
+      "compose.debug.yaml",
+      "tests/e2e/lifecycle-closeout/compose.yaml",
+      "tests/e2e/workspace-closeout/c4.compose.yaml",
+    ],
+    {
+      ...environment,
+      ANTNEST_C4_CONTROL_DYNAMIC_RANGE: "10.242.187.128/25",
+      ANTNEST_C4_RUNTIME_DYNAMIC_RANGE: "10.243.187.128/25",
+      ANTNEST_C4_AGENT_CONTROLLER_IMAGE: image,
+    },
+  );
+  assert.equal(config.services["agent-controller"].image, image);
+});
+
 function dispatch(selection, action) {
   const result = spawnSync(
     "/bin/sh",

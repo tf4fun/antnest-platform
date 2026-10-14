@@ -15,7 +15,7 @@ import {
   candidateCommand,
   candidateEnvironment,
 } from "../../support/candidate-images.mjs";
-import { GatewayClient } from "../identity-closeout/support.mjs";
+import { assertNoStore, GatewayClient } from "../identity-closeout/support.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import {
   configuration,
@@ -23,7 +23,6 @@ import {
   composeArgs,
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
-import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { member, setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { certificates } from "./tls-certificates.mjs";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
@@ -213,6 +212,16 @@ async function assertAPIOriginAdmission(gateway, cookies, agentID, signal) {
     ["DELETE", `/api/app/agents/${agentID}/v1/acp`],
   ])
     await request(method, path, {}, 403, "forbidden");
+  // Retired routes still pass through the outer Origin boundary. With valid
+  // Origin they must be absent, rather than expose the old ACP transport.
+  for (const method of ["GET", "POST", "DELETE"])
+    await request(
+      method,
+      `/api/app/agents/${agentID}/v1/acp`,
+      { Origin: origin },
+      404,
+      "not_found",
+    );
   for (const evidence of [
     { Origin: "https://foreign.example" },
     { Origin: "null", "Sec-Fetch-Site": "same-origin" },
@@ -341,7 +350,7 @@ async function assertSessionSecurityAdmission(
 }
 
 test(
-  "reference HTTPS proxy serves login, Console, Workspace and WSS with independent client admission",
+  "reference HTTPS proxy serves login, Console and Workspace Bridge with independent client admission",
   {
     timeout: 900000,
     skip: process.env.ANTNEST_GATEWAY_TLS_E2E !== "1",
@@ -358,7 +367,6 @@ test(
     let before,
       config,
       browser,
-      connection,
       certificateDirectory,
       failure,
       workspacePage,
@@ -403,6 +411,7 @@ test(
         ]);
       for (const [service, variable] of [
         ["admin-console", "ANTNEST_TLS_E2E_CONSOLE_IMAGE"],
+        ["agent-controller", "ANTNEST_C4_AGENT_CONTROLLER_IMAGE"],
         ["agent-acp-service", "ANTNEST_C4_AGENT_ACP_IMAGE"],
         ["agent-ui", "ANTNEST_C4_AGENT_UI_IMAGE"],
         ["edge-gateway", "ANTNEST_C4_EDGE_GATEWAY_IMAGE"],
@@ -711,32 +720,36 @@ test(
         JSON.stringify({ phase: "browser-verified", sseFrames: frames.length }),
       );
       const cookies = await workspaceContext.cookies();
-      const cookie = cookies
-        .map(({ name, value }) => `${name}=${value}`)
-        .join("; ");
-      connection = connectOwner(
-        config.gateway,
-        fixture.agentID,
-        cookie,
-        signal,
-      );
-      const initialized = await connection.initialize();
-      assert(initialized.agentCapabilities);
-      const session = await connection.request("new", {
-        cwd: "/workspace",
-        mcpServers: [],
-      });
-      assert(session.sessionId, "authenticated WSS session/new failed");
-      await connection.request("list", {});
-      console.log(JSON.stringify({ phase: "wss-verified" }));
-      connection.close();
-      connection = undefined;
       const client = new GatewayClient(config.gateway);
       client.cookies = new Map(cookies.map(({ name, value }) => [name, value]));
-      await client.request(`/api/app/agents/${fixture.agentID}/v1/acp`, {
+      const sessionsPath = `/api/app/workspace/v1/agents/${fixture.agentID}/sessions`;
+      const created = await client.request(sessionsPath, {
+        body: {},
+        status: 201,
+      });
+      assert.equal(typeof created.body.sessionId, "string");
+      assert(created.body.sessionId.length > 0);
+      const listed = await client.request(sessionsPath);
+      assert(
+        listed.body.items.some(
+          (session) => session.sessionId === created.body.sessionId,
+        ),
+        "authenticated Bridge list must contain the newly created session",
+      );
+      for (const response of [created, listed]) {
+        assertNoStore(response.headers);
+        assert.equal(response.headers.getSetCookie().length, 0);
+        assert.equal(
+          response.headers.get("strict-transport-security"),
+          "max-age=31536000",
+        );
+      }
+      console.log(JSON.stringify({ phase: "bridge-sessions-verified" }));
+      const denied = await client.request(sessionsPath, {
         status: 403,
         headers: { Origin: "https://forged.example" },
       });
+      assert.equal(denied.body.code, "forbidden");
       const consoleRevoker = new GatewayClient(config.gateway);
       consoleRevoker.cookies = new Map(
         (await consoleContext.cookies()).map(({ name, value }) => [
@@ -840,7 +853,8 @@ test(
           "console-invalid-session-logout-clears-private-page",
           "workspace-confirmed-logout-clears-private-page",
           "coop-and-corp",
-          "authenticated-wss-initialize-and-session",
+          "authenticated-bridge-session-create-and-list",
+          "retired-public-acp-404",
           "wrong-origin-rejected",
           "api-origin-admission-before-routing",
           "same-origin-fetch-metadata",
@@ -893,7 +907,6 @@ test(
           errors.push(error);
         }
       };
-      await attempt(async () => connection?.close());
       await attempt(async () => browser?.close());
       setDefaultCACertificates(roots);
       if (config) {

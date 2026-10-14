@@ -62,6 +62,7 @@ test(
         signal,
         images: [
           "admin-console",
+          "agent-controller",
           "agent-acp-service",
           "agent-ui",
           "edge-gateway",
@@ -140,6 +141,7 @@ test(
         ]);
       for (const [service, variable] of [
         ["admin-console", "ANTNEST_TLS_E2E_CONSOLE_IMAGE"],
+        ["agent-controller", "ANTNEST_C4_AGENT_CONTROLLER_IMAGE"],
         ["agent-acp-service", "ANTNEST_C4_AGENT_ACP_IMAGE"],
         ["agent-ui", "ANTNEST_C4_AGENT_UI_IMAGE"],
         ["edge-gateway", "ANTNEST_C4_EDGE_GATEWAY_IMAGE"],
