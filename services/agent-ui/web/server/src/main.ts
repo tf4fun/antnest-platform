@@ -23,11 +23,12 @@ const runtime = createWorkspaceRuntime({
         scope,
         fetchImpl: config.dependencyFetchers.controller!,
       }),
-  connect: (scope, callbacks) =>
+  connect: (scope, callbacks, signal) =>
     AcpHttpBridge.open({
       baseUrl: config.acpBaseUrl,
       scope,
       callbacks,
+      signal,
       fetchImpl: config.dependencyFetchers.acp,
     }),
 });

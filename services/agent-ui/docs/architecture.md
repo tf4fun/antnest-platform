@@ -200,8 +200,19 @@ same-identity bootstrap arriving after creation merges discovery without
 discarding the new Session.
 
 Node drain first rejects new requests with retryable 503 and marks `/status`
-unready while `/live` remains available; then it closes observers and flushes
-telemetry without cancelling ACP Runs. Single-replica deployment is the current model. Multi-replica
+unready while `/live` remains available. It aborts pending owner initialization,
+closes observers and execution-state watches, and gives accepted work up to
+15 seconds to settle without cancelling ACP Runs. Owner retirement then joins
+the actual ACP transport cleanup, including the full DELETE response body,
+before telemetry and authenticated dependency clients shut down. Cleanup has
+a separate 5-second deadline: expiry aborts outstanding transport requests and
+still joins their termination before reporting failure. An initializing ACP
+connection also has a 10-second deadline; cancellation joins any late-created
+connection's cleanup before initialization fails. Repeated close calls share
+the same completion and retain the same failure.
+The forced-drain warning covers either accepted work left for ACP to continue
+or unsuccessful resource cleanup. Exit status alone therefore does not prove
+clean connection retirement. Single-replica deployment is the current model. Multi-replica
 ownership needs a separate lease and fencing design.
 The Node process starts OTLP/HTTP tracing and metrics when configured, records
 bounded route names and final status for each HTTP request, and awaits SDK
@@ -214,7 +225,13 @@ reuse. These metrics contain no Agent, Session or principal labels.
 Gateway's W3C trace context becomes the parent of each Node HTTP span;
 Controller and ACP calls within the active HTTP request continue that context.
 Background work deliberately omits an ended HTTP parent; it does not yet carry
-independent span links.
+independent span links except for owned ACP cleanup. That cleanup records one
+`agent_ui.acp.close` root span, links it to the HTTP span that initialized the
+owner when available, and parents the actual DELETE request. Its bounded
+`antnest.ui.acp.close.trigger` and `antnest.ui.acp.close.outcome` attributes
+distinguish requested or failed initialization/transport closure and
+`closed`, `no_target`, or `failed` results. The span contains no connection,
+Agent, Session, or principal identifiers and no credentials or remote errors.
 
 An opened Workspace SSE that finishes because the Agent execution-state watch
 reports revoked access records one `antnest.stream.termination` event on that

@@ -228,8 +228,8 @@ test("owner may retain work during synchronous initialization", async () => {
   finished();
 });
 
-test("owner creation receives its epoch and incarnation before connecting", async () => {
-  let identity: { epoch: string; incarnation: string } | undefined;
+test("owner creation receives its identity and initialization signal before connecting", async () => {
+  let identity: { epoch: string; incarnation: string; signal: AbortSignal } | undefined;
   const registry = new BridgeRegistry({
     create: (_scope, _retain, value) => {
       identity = value;
@@ -241,9 +241,12 @@ test("owner creation receives its epoch and incarnation before connecting", asyn
     incarnation: () => "incarnation-1",
   });
   const lease = await registry.observe(scope);
+  assert(identity?.signal instanceof AbortSignal);
+  assert.equal(identity.signal.aborted, false);
   assert.deepEqual(identity, {
     epoch: lease.epoch,
     incarnation: lease.incarnation,
+    signal: identity.signal,
   });
   lease.release();
 });

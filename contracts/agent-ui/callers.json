@@ -291,7 +291,7 @@
       "routes": []
     },
     "services/agent-ui/web/server/src/workspace-runtime.ts": {
-      "sha256": "512828ff94c0bc381159f1d002f48575670627663863ce1e6c71c10893b5a7e3",
+      "sha256": "59017c945b881c383800b21caf0c079ec338ed090b7ac474c467d90762362482",
       "routes": []
     },
     "services/agent-ui/web/server/src/http/request-authentication.ts": {

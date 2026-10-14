@@ -20,6 +20,7 @@ import {
   type LearningChangePage,
 } from "../adapters/acp-http.ts";
 import { parseDeliveryMark } from "./delivery.ts";
+import { HttpBodyCleanupError } from "../adapters/owned-http-response.ts";
 import { ConfigurationConflictError } from "./configuration-token.ts";
 import {
   CompactTranscript,
@@ -69,7 +70,7 @@ export type AcpBridgePort = {
     value: string | boolean,
     expectedRevision: string,
   ): Promise<{ configOptions: SessionConfigOption[] }>;
-  close(): void;
+  close(): void | Promise<void>;
 };
 
 type ConditionReplay = SessionReplay<
@@ -173,6 +174,8 @@ export class AgentBridgeOwner {
   private acp: AcpBridgePort | undefined;
   private currentSkillCommands: WorkspaceCommand[] = [];
   private retired = false;
+  private closing: Promise<void> | undefined;
+  private watchTask: Promise<void> = Promise.resolve();
   private draining = false;
   private readonly scope: BridgeScope;
   private readonly streamEpoch: string;
@@ -282,6 +285,7 @@ export class AgentBridgeOwner {
 
   public static async open(input: {
     scope: BridgeScope;
+    signal?: AbortSignal;
     retainWork(): () => void;
     stream?: { epoch: string; key: Buffer };
     maxQueuedLoads?: number;
@@ -305,6 +309,7 @@ export class AgentBridgeOwner {
     connect(
       scope: BridgeScope,
       callbacks: AcpBridgeCallbacks,
+      signal?: AbortSignal,
     ): Promise<AcpBridgePort>;
   }): Promise<AgentBridgeOwner> {
     const owner = new AgentBridgeOwner(
@@ -326,17 +331,26 @@ export class AgentBridgeOwner {
         incarnation: input.incarnation ?? randomUUID,
         replayRetryBackoffMs: input.replayRetryBackoffMs ?? 500 },
     );
-    owner.acp = await input.connect(input.scope, {
-      update: (params) => owner.onUpdate(params),
-      requestPermission: (params, signal) =>
-        owner.retired ? Promise.resolve({ outcome: { outcome: "cancelled" as const } })
-          : owner.inbox.request(params, signal),
-    });
-    owner.currentSkillCommands = projectSkillCommands(owner.acp.skillCommands ?? []);
-    if (owner.acp.closed !== undefined)
-      void owner.acp.closed.then(() => owner.close(), () => owner.close());
-    void owner.watchAgentState();
-    return owner;
+    try {
+      input.signal?.throwIfAborted();
+      owner.acp = await input.connect(input.scope, {
+        update: (params) => owner.onUpdate(params),
+        requestPermission: (params, signal) =>
+          owner.retired ? Promise.resolve({ outcome: { outcome: "cancelled" as const } })
+            : owner.inbox.request(params, signal),
+      }, input.signal);
+      input.signal?.throwIfAborted();
+      owner.currentSkillCommands = projectSkillCommands(owner.acp.skillCommands ?? []);
+      if (owner.acp.closed !== undefined)
+        void owner.acp.closed.then(() => owner.close(), () => owner.close()).catch(() => {});
+      owner.watchTask = owner.watchAgentState();
+      void owner.watchTask.catch(() => owner.close()).catch(() => {});
+      return owner;
+    } catch (error) {
+      try { await owner.close(); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], "ACP Bridge setup and cleanup failed"); }
+      throw error;
+    }
   }
 
   public get isClosed(): boolean {
@@ -1117,41 +1131,52 @@ export class AgentBridgeOwner {
     }
   }
 
-  public close(): void {
-    if (this.retired) return;
-    this.beginDrain();
+  public close(): Promise<void> {
+    if (this.closing) return this.closing;
+    let complete!: () => void;
+    let fail!: (error: unknown) => void;
+    this.closing = new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
+    void this.closing.catch(() => {});
     this.retired = true;
-    this.currentSkillCommands = [];
-    this.watchAbort.abort();
-    this.inbox.clear();
-    this.acp?.close();
-    for (const journal of this.journals.values()) journal.close();
-    this.journals.clear();
-    for (const journal of this.agentJournals.values()) journal.close();
-    this.agentJournals.clear();
-    for (const replay of this.sessions.values()) replay.invalidate(new Error("Bridge owner is retired"));
-    this.sessions.clear();
-    this.pagers.clear();
-    this.idleSince.clear();
-    this.incarnations.clear();
-    for (const release of this.activeRunWork.values()) release();
-    this.activeRunWork.clear();
-    this.activeRunSessions.clear();
-    this.viewRevisions.clear();
-    this.receiptDigests.clear();
-    this.executionObservations.clear();
-    this.recentSystemNotices.clear();
-    this.closed(this);
+    const failures: unknown[] = [];
+    try {
+      this.beginDrain();
+      this.currentSkillCommands = [];
+      this.inbox.clear();
+      for (const replay of this.sessions.values()) replay.invalidate(new Error("Bridge owner is retired"));
+      this.sessions.clear();
+      this.pagers.clear();
+      this.idleSince.clear();
+      this.incarnations.clear();
+      for (const release of this.activeRunWork.values()) release();
+      this.activeRunWork.clear();
+      this.activeRunSessions.clear();
+      this.viewRevisions.clear();
+      this.receiptDigests.clear();
+      this.executionObservations.clear();
+      this.recentSystemNotices.clear();
+    } catch (error) { failures.push(error); }
+    let cleanup: Promise<void>;
+    try { cleanup = Promise.resolve(this.acp?.close()); }
+    catch (error) { cleanup = Promise.reject(error); }
+    void Promise.allSettled([cleanup, this.watchTask]).then((results) => {
+      for (const result of results) if (result.status === "rejected") failures.push(result.reason);
+      try { this.closed(this); } catch (error) { failures.push(error); }
+      if (failures.length) fail(new AggregateError(failures, "Bridge owner cleanup failed"));
+      else complete();
+    });
+    return this.closing;
   }
 
-  public beginDrain(): void {
-    if (this.draining) return;
+  public beginDrain(): Promise<void> {
+    if (this.draining) return this.watchTask;
     this.draining = true;
     this.watchAbort.abort();
     for (const journal of this.journals.values()) journal.close();
     this.journals.clear();
     for (const journal of this.agentJournals.values()) journal.close();
     this.agentJournals.clear();
+    return this.watchTask;
   }
 
   private connection(): AcpBridgePort {
@@ -1181,13 +1206,16 @@ export class AgentBridgeOwner {
         );
         retryMs = 1_000;
       } catch (error) {
-        if (error instanceof AgentAccessRevokedError) {
+        const failures: unknown[] = error instanceof AggregateError ? error.errors : [error];
+        const revoked = failures.some((failure) => failure instanceof AgentAccessRevokedError);
+        if (revoked) {
           this.accessRevoked = true;
           const cause = { reason: "access_denied", source: "agent-execution-state" } as const;
           for (const journal of this.agentJournals.values()) journal.close(cause);
           for (const journal of this.journals.values()) journal.close(cause);
-          return;
         }
+        if (failures.some((failure) => failure instanceof HttpBodyCleanupError)) throw error;
+        if (revoked) return;
       }
       if (this.watchAbort.signal.aborted) return;
       await new Promise<void>((resolve) => {

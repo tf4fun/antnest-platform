@@ -45,6 +45,7 @@ export function createWorkspaceRuntime(input: {
   connect(
     scope: BridgeScope,
     callbacks: AcpBridgeCallbacks,
+    signal?: AbortSignal,
   ): Promise<AcpBridgePort>;
   tokenKey?: Buffer;
   now?: () => number;
@@ -81,6 +82,7 @@ export function createWorkspaceRuntime(input: {
     create: async (scope, retainWork, identity) => {
       const owner = await AgentBridgeOwner.open({
         scope,
+        signal: identity.signal,
         retainWork,
         now: input.now, idleMs: input.idleMs, incarnation: input.incarnation,
         connect: input.connect,
@@ -103,7 +105,7 @@ export function createWorkspaceRuntime(input: {
           latestAgentProjections.get(owner)?.delete(selectedSessionId ?? "");
         },
       });
-      owners.add(owner);
+      if (!owner.isClosed) owners.add(owner);
       return owner;
     },
     now: input.now ?? Date.now,

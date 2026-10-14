@@ -10,6 +10,7 @@ const authentication = await createAuthFixture({ built: true });
 async function heldFixture(t) {
   const cleanup = [];
   let expectedFailure = false;
+  let upstreamStoppedIntentionally = false;
   t.after(async () => {
     const unexpected = [];
     for (const close of cleanup.reverse()) {
@@ -72,8 +73,26 @@ async function heldFixture(t) {
   });
   const pending = [];
   cleanup.push(async () => {
-    connection.close();
-    await Promise.all(pending);
+    const results = await Promise.allSettled([connection.close(), ...pending]);
+    const closed = results[0];
+    if (closed.status === "rejected" && upstreamStoppedIntentionally) {
+      assert.equal(upstream.child.exitCode, 0);
+      assert.equal(upstream.child.connected, false);
+      const error = closed.reason;
+      assert(error instanceof AggregateError);
+      assert.equal(error.message, "ACP cleanup failed");
+      assert.equal(error.errors.length, 1);
+      assert.equal(error.errors[0]?.message, "ACP DELETE cleanup failed");
+      // These two negative tests have already joined the stopped upstream.
+      // Only its specific unavailable DELETE is expected; every other cleanup
+      // failure still fails the test, and all held prompts are joined above.
+      results.shift();
+    }
+    const failures = results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length)
+      throw new AggregateError(failures, "ACP capacity fixture cleanup failed");
   });
   const input = {
     sessionId: "session-b",
@@ -97,6 +116,11 @@ async function heldFixture(t) {
     expectFailure: () => {
       expectedFailure = true;
     },
+    expectStoppedUpstream: () => {
+      assert.equal(upstream.child.exitCode, 0);
+      assert.equal(upstream.child.connected, false);
+      upstreamStoppedIntentionally = true;
+    },
   };
 }
 
@@ -114,6 +138,7 @@ test(
     );
     const summary = await fixture.upstream.wait("fixture-summary");
     assert.equal(summary.states[0].promptAttempts, 2);
+    fixture.expectStoppedUpstream();
   },
 );
 
@@ -121,7 +146,8 @@ test(
   "capacity fixture SIGTERM releases held work and joins the child with closed stdio",
   { timeout: 15_000 },
   async (t) => {
-    const { upstream } = await heldFixture(t);
+    const fixture = await heldFixture(t);
+    const { upstream } = fixture;
     assert.ok(upstream.child.kill("SIGTERM"));
     await upstream.wait("stopped");
     await upstream.stop();
@@ -134,5 +160,6 @@ test(
     );
     assert.equal(upstream.child.exitCode, 0);
     assert.equal(upstream.child.connected, false);
+    fixture.expectStoppedUpstream();
   },
 );

@@ -117,6 +117,10 @@ replays, Node heap/RSS) with no Agent, Session or principal labels.
 Exporters have a 5-second timeout and are flushed after Bridge drain. A valid
 W3C `traceparent` from Gateway parents each HTTP span. Capacity and lifetime
 semantics are described in [Architecture](docs/architecture.md#bridge-capacity-and-lifetimes).
+ACP retirement waits for its complete DELETE response and execution-state
+watch cleanup before telemetry flush. A separate `agent_ui.acp.close` root
+span links to the owner's initialization HTTP span and parents DELETE; its
+outcome records actual cleanup success or failure without identity labels.
 
 Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
 16 requests per process and 64 MiB / 4 requests per signed user in an

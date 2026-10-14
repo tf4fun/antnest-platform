@@ -136,6 +136,18 @@ test(
     process.once("SIGTERM", onTerminate);
     const seen = [];
     const telemetryRequests = [];
+    const initializedConnections = new Map();
+    const cleanupReceipts = [];
+    let holdCleanup = false,
+      heldCleanup;
+    let cleanupStarted, releaseCleanup;
+    const cleanupHeld = new Promise((resolve) => {
+      cleanupStarted = resolve;
+    });
+    const cleanupRelease = new Promise((resolve) => {
+      releaseCleanup = resolve;
+    });
+    signal.addEventListener("abort", releaseCleanup, { once: true });
     const revocationTraceId = "0987654321abcdef0987654321abcdef";
     let revocationWatch;
     const gatewayTraceId = "0123456789abcdef0123456789abcdef";
@@ -378,6 +390,7 @@ test(
       }
       seen.push({
         path: request.url,
+        method: request.method,
         headers: request.headers,
         claims: verifiedScopes.get(request),
       });
@@ -409,6 +422,59 @@ test(
         return;
       }
       if (request.url === "/v1/acp") {
+        if (
+          request.method === "POST" &&
+          !request.headers["acp-connection-id"]
+        ) {
+          response.once("finish", () => {
+            const connectionId = response.getHeader("acp-connection-id");
+            if (typeof connectionId === "string")
+              initializedConnections.set(
+                connectionId,
+                request.headers.traceparent,
+              );
+          });
+        }
+        if (request.method === "DELETE") {
+          const receipt = {
+            connectionId: request.headers["acp-connection-id"],
+            traceparent: request.headers.traceparent,
+            complete: false,
+          };
+          cleanupReceipts.push(receipt);
+          response.once("finish", () => {
+            receipt.complete = true;
+          });
+          if (
+            holdCleanup &&
+            verifiedScopes.get(request)?.sub === "user-9876" &&
+            verifiedScopes.get(request)?.agt === "agent-1"
+          ) {
+            heldCleanup = receipt;
+            const flush = response.flushHeaders.bind(response);
+            response.flushHeaders = () => {
+              // The SDK flushes before calling end(), so framing must be set
+              // here, while headers are still mutable.
+              if (!response.headersSent) {
+                response.removeHeader("content-length");
+                response.setHeader("transfer-encoding", "chunked");
+              }
+              return flush();
+            };
+            const end = response.end.bind(response);
+            response.end = (...args) => {
+              response.end = end;
+              receipt.status = response.statusCode;
+              // The real SDK closes its connection and supplies the 202 status.
+              // Keep that response body open after headers reach the container.
+              response.flushHeaders();
+              response.write(" ");
+              cleanupStarted();
+              void cleanupRelease.then(() => end(...args));
+              return response;
+            };
+          }
+        }
         requestPrincipal.run(verifiedScopes.get(request)?.sub, () => {
           acpHandler(request, response);
         });
@@ -2036,7 +2102,61 @@ test(
           revocationWatch?.end();
         }
         const stopStartedAt = performance.now();
-        await docker(["stop", "-t", "30", container], 45_000);
+        holdCleanup = true;
+        let stopSettled = false;
+        const stopping = docker(
+          ["stop", "-t", "30", container],
+          45_000,
+        ).finally(() => {
+          stopSettled = true;
+        });
+        void stopping.catch(() => {});
+        await finishBridgeCase({
+          body: async () => {
+            let timer;
+            try {
+              await Promise.race([
+                cleanupHeld,
+                stopping.then(() => {
+                  throw new Error("Bridge stopped before DELETE cleanup");
+                }),
+                new Promise((_, reject) => {
+                  timer = setTimeout(
+                    () =>
+                      reject(
+                        new Error("Bridge did not reach held DELETE cleanup"),
+                      ),
+                    5000,
+                  );
+                }),
+              ]);
+            } finally {
+              clearTimeout(timer);
+            }
+            assert.equal(heldCleanup.complete, false);
+            assert.equal(heldCleanup.status, 202);
+            assert.equal(
+              (await fetch(`${base}/status`)).status,
+              503,
+              "Bridge remains draining while the DELETE body is unfinished",
+            );
+            assert.equal((await fetch(`${base}/live`)).status, 200);
+            const running = await docker([
+              "inspect",
+              "-f",
+              "{{.State.Running}}",
+              container,
+            ]);
+            assert.equal(running.stdout.trim(), "true");
+            assert.equal(stopSettled, false);
+          },
+          cleanup: [
+            async () => {
+              releaseCleanup();
+              await stopping;
+            },
+          ],
+        });
         const stopDurationMs = performance.now() - stopStartedAt;
         const { stdout: exitCode } = await docker([
           "inspect",
@@ -2062,6 +2182,12 @@ test(
           exitCode.trim(),
           "0",
           "Bridge must exit normally after flushing telemetry",
+        );
+        const finalLogs = await docker(["logs", container]);
+        assert.doesNotMatch(
+          finalLogs.stdout + finalLogs.stderr,
+          /Bridge (?:drain did not close cleanly|shutdown failed|owner sweep failed)/,
+          "a clean exit must also retain successful owner cleanup",
         );
         assert.ok(
           stopDurationMs < 30_000,
@@ -2103,6 +2229,78 @@ test(
               entry.value.stringValue ?? entry.value.intValue,
             ]),
           );
+        assert.equal(heldCleanup.complete, true);
+        assert.equal(
+          cleanupReceipts.filter(
+            (receipt) => receipt.connectionId === heldCleanup.connectionId,
+          ).length,
+          1,
+        );
+        assert.match(
+          heldCleanup.traceparent ?? "",
+          /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
+        );
+        const [, cleanupTraceId, cleanupSpanId] =
+          heldCleanup.traceparent.split("-");
+        const closeSpans = exportedSpans.filter(
+          (span) =>
+            span.name === "agent_ui.acp.close" &&
+            span.traceId === cleanupTraceId &&
+            span.spanId === cleanupSpanId,
+        );
+        assert.equal(closeSpans.length, 1);
+        const closeSpan = closeSpans[0];
+        assert(!closeSpan.parentSpanId, "ACP cleanup is a separate root");
+        assert.notEqual(closeSpan.status?.code, 2);
+        assert.deepEqual(attributes(closeSpan.attributes), {
+          "antnest.ui.acp.close.trigger": "requested",
+          "antnest.ui.acp.close.outcome": "closed",
+        });
+        const initialTraceparent = initializedConnections.get(
+          heldCleanup.connectionId,
+        );
+        assert.match(
+          initialTraceparent ?? "",
+          /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
+        );
+        const [, initialTraceId, initialSpanId] = initialTraceparent.split("-");
+        assert.equal(initialTraceId, revocationSpan.traceId);
+        assert.equal(initialSpanId, revocationSpan.spanId);
+        assert.notEqual(closeSpan.traceId, initialTraceId);
+        assert.deepEqual(
+          closeSpan.links.map((link) => ({
+            traceId: link.traceId,
+            spanId: link.spanId,
+          })),
+          [{ traceId: initialTraceId, spanId: initialSpanId }],
+        );
+        const initializationSpan = exportedSpans.find(
+          (span) =>
+            span.traceId === initialTraceId && span.spanId === initialSpanId,
+        );
+        assert(
+          initializationSpan,
+          "the exact linked initialization HTTP span was exported",
+        );
+        await writeFile(
+          `${evidenceRoot}/acp-owned-close.json`,
+          JSON.stringify(
+            {
+              scope:
+                "production Agent UI container with authenticated official ACP SDK fixture",
+              process_waited_for_delete_body: true,
+              readiness_while_waiting: 503,
+              liveness_while_waiting: 200,
+              actual_delete_body_completed: true,
+              duplicate_deletes: 0,
+              delete_traceparent: heldCleanup.traceparent,
+              close_span: closeSpan,
+              initialization_span: initializationSpan,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
         assert.equal(revocationSpan.kind, 2);
         assert.equal(
           Number(
@@ -2241,6 +2439,14 @@ test(
               capacityMemoryBytes,
               telemetryRequests,
               requestPaths: seen.map(({ path }) => path),
+              cleanupReceiptCount: cleanupReceipts.length,
+              heldCleanup: heldCleanup
+                ? {
+                    traceparent: heldCleanup.traceparent,
+                    status: heldCleanup.status,
+                    complete: heldCleanup.complete,
+                  }
+                : null,
             },
             null,
             2,
@@ -2249,6 +2455,7 @@ test(
       },
       cleanup: [
         async () => {
+          releaseCleanup();
           interrupted.abort();
         },
         () =>
@@ -2260,6 +2467,7 @@ test(
         closeTransport,
         ...fixtures.map((fixture) => fixture.close),
         async () => {
+          signal.removeEventListener("abort", releaseCleanup);
           signal.removeEventListener("abort", stopTransport);
           process.off("SIGINT", onInterrupt);
           process.off("SIGTERM", onTerminate);

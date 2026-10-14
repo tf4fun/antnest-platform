@@ -1,4 +1,4 @@
-import { context, createContextKey, metrics, propagation, ROOT_CONTEXT,
+import { context, createContextKey, isSpanContextValid, metrics, propagation, ROOT_CONTEXT,
   SpanKind, SpanStatusCode, trace, type Span } from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
@@ -19,6 +19,40 @@ export type BridgeTelemetry = {
 
 const HTTP_BOUNDARY = createContextKey("antnest.ui.active-http-boundary");
 type HttpBoundary = { active: boolean; span: Span };
+
+export type AcpCloseTrigger = "requested" | "transport_failure" | "initialization_failure";
+
+export function captureAcpCloseTrace() {
+  const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
+  const source = boundary?.active ? boundary.span.spanContext() : undefined;
+  return (trigger: AcpCloseTrigger) => {
+    const span = trace.getTracer("antnest-agent-ui-bridge").startSpan("agent_ui.acp.close", {
+      kind: SpanKind.INTERNAL,
+      links: source && isSpanContextValid(source) ? [{ context: source }] : [],
+      attributes: { "antnest.ui.acp.close.trigger": trigger },
+    }, ROOT_CONTEXT);
+    const closingContext = trace.setSpan(ROOT_CONTEXT, span);
+    return {
+      fetch(fetchImpl: typeof fetch, input: Parameters<typeof fetch>[0], init?: RequestInit) {
+        const headers = new Headers(input instanceof Request ? input.headers : undefined);
+        new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+        headers.delete("traceparent");
+        headers.delete("tracestate");
+        propagation.inject(closingContext, headers, {
+          set: (carrier, key, value) => carrier.set(key, value),
+        });
+        // ROOT_CONTEXT has no HTTP boundary: an old async callback or unrelated
+        // request cannot overwrite the actual cleanup parent in bridgeFetch.
+        return context.with(closingContext, () => fetchImpl(input, { ...init, headers }));
+      },
+      finish(outcome: "closed" | "no_target" | "failed") {
+        span.setAttribute("antnest.ui.acp.close.outcome", outcome);
+        if (outcome === "failed") span.setStatus({ code: SpanStatusCode.ERROR });
+        span.end();
+      },
+    };
+  };
+}
 
 export function captureStreamTermination(scope: BridgeScope): (value: unknown) => void {
   const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
