@@ -4,46 +4,41 @@
   "implementation_issues": [26, 27],
   "routes": {
     "DELETE /v1/acp": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "none"
     },
     "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "none"
     },
     "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-status": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "none"
     },
     "GET /rpc/agent-acp/workspace/sessions/{session_id}/execution": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "none"
     },
     "GET /rpc/agent-acp/workspace/sessions/{session_id}/intents/{intent_id}": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "none"
@@ -57,10 +52,9 @@
       "request_body": "none"
     },
     "GET /v1/acp": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "none"
@@ -90,10 +84,9 @@
       "request_body": "json"
     },
     "POST /rpc/agent-acp/get-agent-execution-state": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "json"
@@ -131,37 +124,33 @@
       "request_body": "json"
     },
     "POST /rpc/agent-acp/watch-agent-execution-state": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "json"
     },
     "POST /v1/acp": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "json"
     },
     "UPGRADE /v1/acp": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "none"
     },
     "UPGRADE /v2/acp": {
-      "callers": ["edge-gateway", "agent-ui"],
+      "callers": ["agent-ui"],
       "authentication": "workload",
       "caller_context": {
-        "edge-gateway": "required",
         "agent-ui": "required"
       },
       "request_body": "none"
@@ -230,7 +219,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/request-authentication.ts": {
-      "sha256": "6c66e44f616853b8831f89e02dbcd44e1336204c005049816e8b1484f56f31d1",
+      "sha256": "f307084f2df901124d323ebf30b271f3f3d0754e37d76203ab489dab32f9808c",
       "routes": [
         "DELETE /v1/acp",
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes",

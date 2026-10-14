@@ -17,7 +17,7 @@ UTF-8, duplicate keys and body limits before handing a request to that SDK.
 Antnest supplies the existing v1 Agent handler, bound to authorized platform
 identity. There is no second application API or stdio subprocess bridge.
 
-Every HTTP request requires verified Gateway/UI workload and an unchanged
+Every HTTP request requires verified Agent UI workload and an unchanged
 Identity-signed CCT with ACP audience and Agent scope. Signed claims supply the
 organization, principal and Agent; raw identity hints grant nothing. See the
 [authentication contract](../../../contracts/agent-acp/service-authentication.md).
@@ -52,13 +52,16 @@ Null metadata is supported, unrelated metadata is preserved, and an old
 traceparent/tracestate pair is replaced together rather than mixed with the
 receiving HTTP context.
 
-## Gateway Integration
+## Agent UI Integration
 
-Edge Gateway forwards authenticated POST/GET/DELETE requests on the v1 Agent
-route with unbuffered SSE, protocol headers, origin checks and revocation.
-Integration tests drive the real ACP Service through Gateway with the official
-HTTP client (initialize, new, prompt, cancel and load) alongside the WebSocket
-paths.
+Agent UI calls the private ACP transports with its own workload credential and
+the unchanged signed user context. Browser traffic reaches Agent UI through the
+retained Gateway workspace Bridge; the old direct Gateway ACP routes and its ACP
+caller grant are retired. The private v1 HTTP and v1/v2 WebSocket protocols remain
+available to Agent UI. Official SDK protocol tests continue to exercise those
+private transports. Browser business, cancellation and trace consumers must be
+migrated to the Bridge and admitted in the explicit cross-service batch; earlier
+direct-Gateway evidence does not establish that acceptance.
 
 The following are platform boundaries, not transport defects: identity and
 Provider authority stay outside ACP, the workspace is remote (Runtime-owned),

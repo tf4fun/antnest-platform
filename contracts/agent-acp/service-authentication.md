@@ -10,7 +10,18 @@ Console audit and Registry source reads. `ANTNEST_ACP_CONTROL_LISTEN` (default
 listener returns 404 for the two Controller paths, including unsupported methods
 and query variants, before reading their bodies. The control listener returns
 404 for every other path and denies WebSocket upgrades. State get/watch remain
-on the workspace listener because their callers are Gateway and Agent UI.
+on the workspace listener for Agent UI.
+
+The [unused Gateway caller retirement](../edge-gateway/workspace-entry-retirement.md)
+removes Gateway from all eleven workspace route grants: private ACP v1 HTTP,
+v1/v2 WebSocket, state, learning and Bridge observation. A configured valid old
+Gateway credential receives `403 caller_not_allowed` before CCT/JWKS verification
+or business work. The workload identity remains recognized; an unknown token is
+still a separate `401`. Agent UI retains its signed ordinary-member access and
+the Identity workspace CCT audience. Private protocol routes, Controller control,
+Console audit, Registry operations and public health remain. Purpose-listener
+isolation still returns 404 before authentication on the wrong listener.
+Deployment credential/network cleanup and browser integration are later batches.
 
 Control calls require verified `agent-controller` workload identity. There is
 no separate legacy control bearer, no user CCT, and no body-selected caller.

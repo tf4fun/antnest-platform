@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
@@ -17,16 +17,22 @@ import { z } from "../../../services/agent-acp-service/node_modules/zod/index.js
 import { executionConfiguration } from "../../../services/agent-acp-service/test/fixtures/execution-configuration.ts";
 import {
   createFixture,
-  headers as authenticatedHeaders,
+  headers as fixtureHeaders,
 } from "../service-authentication/acp/auth-fixture.mjs";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { providerPolicyChecks } from "../service-authentication/acp/provider-policy-docker.mjs";
+import {
+  inspectLogs,
+  redactFailure,
+  respondToJwks,
+} from "../service-authentication/acp/diagnostics.mjs";
 
 // Service-owned Docker E2E: the production image and its migrations execute
 // against isolated PostgreSQL, with controlled HTTP model/MCP dependencies.
 const execute = promisify(execFile);
 const prefix = `antnest-acp-sdk-${randomUUID().slice(0, 8)}`;
+const service = `${prefix}-service`;
 const credentials = resolve(
   "artifacts/verification/acp-authentication",
   prefix,
@@ -57,7 +63,19 @@ const runtimeReference = {
     token: randomBytes(32).toString("base64url"),
   },
 };
+const privateValues = new Set([
+  ...Object.values(authentication.tokens),
+  authentication.outgoing,
+  runtimeReference.credential.token,
+]);
+function authenticatedHeaders(fixture, caller, claims) {
+  const headers = fixtureHeaders(fixture, caller, claims);
+  const context = headers["Antnest-Caller-Context"];
+  if (context) privateValues.add(context);
+  return headers;
+}
 let runtimeChecks = 0;
+let keyRequests = 0;
 const toolStarted = Promise.withResolvers();
 const toolRelease = Promise.withResolvers();
 let toolCalls = 0;
@@ -65,6 +83,7 @@ let pool;
 let handler;
 let server;
 let result;
+let serviceCreated = false;
 const failures = [];
 
 async function docker(args, cleaning = false) {
@@ -97,6 +116,67 @@ async function waitFor(check) {
 }
 async function hostPort(name, port) {
   return (await docker(["port", name, `${port}/tcp`])).split(":").at(-1);
+}
+
+async function serviceLogs(cleaning = false) {
+  const { stdout, stderr } = await execute("docker", ["logs", service], {
+    timeout: 30_000,
+    maxBuffer: 2 * 1024 * 1024,
+    ...(cleaning ? {} : { signal: stop.signal }),
+  });
+  return `${stdout}\n${stderr}`;
+}
+
+async function retiredWorkspaceRequest(origin, method, path, headers, body) {
+  const upgrade = method === "UPGRADE";
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(origin + path, {
+      method: upgrade ? "GET" : method,
+      agent: false,
+      signal: AbortSignal.any([stop.signal, AbortSignal.timeout(5000)]),
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+        ...(upgrade
+          ? {
+              Connection: "Upgrade",
+              Upgrade: "websocket",
+              "Sec-WebSocket-Version": "13",
+              "Sec-WebSocket-Key": randomBytes(16).toString("base64"),
+            }
+          : {}),
+      },
+    });
+    request.once("error", reject);
+    request.once("upgrade", (_response, socket) => {
+      socket.destroy();
+      request.destroy();
+      reject(new Error("retired Gateway accepted a WebSocket upgrade"));
+    });
+    request.once("response", (response) => {
+      const chunks = [];
+      let bytes = 0;
+      response.once("error", reject);
+      response.on("data", (chunk) => {
+        bytes += chunk.length;
+        if (bytes > 4096) {
+          response.destroy(
+            new Error("retired Gateway response exceeded fixture bound"),
+          );
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.once("end", () =>
+        resolve({
+          status: response.statusCode,
+          headers: response.headers,
+          body: Buffer.concat(chunks).toString("utf8"),
+        }),
+      );
+    });
+    request.end(method === "POST" ? (body ?? "{}") : undefined);
+  });
 }
 
 try {
@@ -144,13 +224,8 @@ try {
   );
   server = createServer((request, response) => {
     if (request.url === "/rpc/identity/jwks") {
-      assert.equal(
-        request.headers["antnest-service-authorization"],
-        `Bearer ${authentication.outgoing}`,
-      );
-      assert.equal(request.headers["antnest-caller-context"], undefined);
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(authentication.jwks));
+      keyRequests++;
+      respondToJwks(request, response, authentication, failures);
       return;
     }
     if (request.url.startsWith("/mcp")) {
@@ -291,7 +366,6 @@ try {
     connectionString: `postgres://acp_audit:fixture@127.0.0.1:${await hostPort(postgres, 5432)}/acp_audit`,
     max: 2,
   });
-  const service = `${prefix}-service`;
   cleanup.push(["rm", "--force", "--volumes", service]);
   await docker([
     "run",
@@ -332,6 +406,7 @@ try {
     "ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS=true",
     image,
   ]);
+  serviceCreated = true;
   let origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
   let controlOrigin = `http://127.0.0.1:${await hostPort(service, 8081)}`;
   await waitFor(async () => {
@@ -341,6 +416,113 @@ try {
       return false;
     }
   });
+  const receiver = JSON.parse(
+    readFileSync(resolve(credentials, "callers.json"), "utf8"),
+  );
+  assert(
+    receiver["edge-gateway"].includes(
+      "sha256:" +
+        createHash("sha256")
+          .update(authentication.tokens["edge-gateway"])
+          .digest("hex"),
+    ),
+    "retired Gateway credential must remain configured",
+  );
+  assert.equal(keyRequests, 0, "retirement probes require a cold JWKS cache");
+  const retirement = [];
+  for (const [method, path, variant] of [
+    ["POST", "/v1/acp"],
+    ["GET", "/v1/acp"],
+    ["DELETE", "/v1/acp"],
+    ["UPGRADE", "/v1/acp"],
+    ["UPGRADE", "/v2/acp"],
+    ["POST", "/rpc/agent-acp/get-agent-execution-state"],
+    ["POST", "/rpc/agent-acp/watch-agent-execution-state"],
+    ["GET", "/rpc/agent-acp/workspace/agents/agent-1/learning-status"],
+    ["GET", "/rpc/agent-acp/workspace/agents/agent-1/learning-changes"],
+    ["GET", "/rpc/agent-acp/workspace/sessions/session-1/execution"],
+    ["GET", "/rpc/agent-acp/workspace/sessions/session-1/intents/intent-1"],
+    ["POST", "/rpc/agent-acp/get-agent-execution-state", "missing"],
+    ["POST", "/rpc/agent-acp/get-agent-execution-state", "forged"],
+    ["POST", "/rpc/agent-acp/get-agent-execution-state", "malformed body"],
+  ]) {
+    const headers = authenticatedHeaders(
+      authentication,
+      "edge-gateway",
+      variant === "missing"
+        ? undefined
+        : {
+            agt: "agent-1",
+            aud: ["agent-ui", "agent-acp-service", "agent-controller"],
+          },
+    );
+    if (variant === "forged") headers["Antnest-Caller-Context"] = "forged";
+    const response = await retiredWorkspaceRequest(
+      origin,
+      method,
+      path,
+      headers,
+      variant === "malformed body" ? "{" : undefined,
+    );
+    assert.equal(
+      response.status,
+      403,
+      "retired Gateway must be denied by caller policy",
+    );
+    for (const name of [
+      "antnest-caller-context",
+      "antnest-service-authorization",
+      "set-cookie",
+    ])
+      assert(
+        response.headers[name] === undefined,
+        "retired Gateway response included private authority",
+      );
+    let value;
+    try {
+      value = JSON.parse(response.body);
+    } catch {
+      throw new Error("retired Gateway response was not public JSON");
+    }
+    assert(
+      value?.code === "caller_not_allowed" && value.retryable === false,
+      "retired Gateway error changed",
+    );
+    const fields =
+      method === "UPGRADE" ? "code,retryable" : "code,message,retryable";
+    assert(
+      Object.keys(value).sort().join(",") === fields,
+      "retired Gateway error fields changed",
+    );
+    if (method !== "UPGRADE")
+      assert(
+        value.message === "Request authentication failed",
+        "retired Gateway public message changed",
+      );
+    assert(
+      (response.body.match(/"(?:[^"\\]|\\.)*"\s*:/g) ?? []).length ===
+        fields.split(",").length,
+      "retired Gateway error repeated a field",
+    );
+    retirement.push({
+      method,
+      path,
+      context: variant ?? "valid",
+      status: 403,
+      code: "caller_not_allowed",
+      retryable: false,
+    });
+  }
+  assert.equal(keyRequests, 0, "retired Gateway reached Identity keys");
+  const gatewayRetirement = {
+    image: await docker(["inspect", "--format", "{{.Image}}", service]),
+    knownCredentialConfigured: true,
+    cases: retirement,
+    jwksRequestsBefore: 0,
+    jwksRequestsAfter: keyRequests,
+    scope:
+      "Real ACP image denies configured Gateway before cold JWKS. Unit raw-listener tests separately assert zero readiness and business calls.",
+  };
   const provider = await providerPolicyChecks({
     docker,
     service,
@@ -391,12 +573,12 @@ try {
       "caller_not_allowed",
     ],
     [
-      authenticatedHeaders(authentication, "edge-gateway"),
+      authenticatedHeaders(authentication, "agent-ui"),
       401,
       "caller_context_required",
     ],
     [
-      authenticatedHeaders(authentication, "edge-gateway", {
+      authenticatedHeaders(authentication, "agent-ui", {
         agt: "agent-1",
         aud: ["agent-ui"],
       }),
@@ -404,7 +586,7 @@ try {
       "caller_context_invalid",
     ],
     [
-      authenticatedHeaders(authentication, "edge-gateway", {
+      authenticatedHeaders(authentication, "agent-ui", {
         agt: "agent-1",
         iat: 1,
         exp: 61,
@@ -482,7 +664,12 @@ try {
         signal: stop.signal,
       },
     );
-    assert.equal(response.status, status, await response.text());
+    await response.arrayBuffer();
+    assert.equal(
+      response.status,
+      status,
+      "execution publication status changed",
+    );
   }
   const missingConnection = structuredClone(config);
   delete missingConnection.agents[0].runtime.connection_id;
@@ -501,6 +688,7 @@ try {
     changedToken.revision = revision;
     changedToken.agents[0].runtime.credential.token =
       randomBytes(32).toString("base64url");
+    privateValues.add(changedToken.agents[0].runtime.credential.token);
     await publish(changedToken, 409);
     runtimeChecks++;
   }
@@ -571,8 +759,8 @@ try {
           .then((r) => r.rows),
       ).includes(runtimeReference.credential.token),
     );
-    const logs = await docker(["logs", service]);
-    assert(!logs.includes(runtimeReference.credential.token));
+    const logs = await serviceLogs();
+    inspectLogs(logs, runtimeReference.credential.token, privateValues);
     runtimeChecks++;
   }
   await assertPublicStorage();
@@ -942,6 +1130,7 @@ try {
     modelRequests: modelRequests.length,
     toolCalls,
     authenticationChecks,
+    gatewayRetirement,
     providerChecks: provider.checks,
     runtimeChecks,
     runtimeRequests: runtimeRequests.length,
@@ -975,6 +1164,17 @@ try {
       failures.push(error);
     }
   }
+  if (serviceCreated) {
+    try {
+      inspectLogs(
+        await serviceLogs(true),
+        runtimeReference.credential.token,
+        privateValues,
+      );
+    } catch (error) {
+      failures.push(error);
+    }
+  }
   for (const args of cleanup.reverse()) {
     try {
       await docker(args, true);
@@ -987,5 +1187,8 @@ try {
   process.removeListener("SIGTERM", interrupt);
 }
 if (failures.length)
-  throw new AggregateError(failures, "Docker SDK regression or cleanup failed");
+  throw redactFailure(
+    new AggregateError(failures, "Docker SDK regression or cleanup failed"),
+    privateValues,
+  );
 console.log(JSON.stringify({ ...result, cleanup: "completed" }));

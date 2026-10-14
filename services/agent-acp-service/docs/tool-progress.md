@@ -65,3 +65,9 @@ remains authoritative and follows the existing Tool result size policy.
 References: [Runtime contract](../../../runtimes/antnest-runtime/docs/tool-progress.md),
 [ACP Tool updates](https://agentclientprotocol.com/protocol/v1/tool-calls),
 [MCP progress](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress).
+
+Prior deployment evidence used the retired Gateway ACP/state routes. That
+recorded coverage remains historical. Gateway 24 requires a separate consumer
+migration: browser journeys through the retained Agent UI Bridge and protocol
+assertions through authenticated private ACP. This ACP owning batch does not
+admit that cross-service workflow or its capacity gate.

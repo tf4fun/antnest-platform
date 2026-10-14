@@ -81,3 +81,9 @@ budget/truncation, malformed resources and execution mismatch, cancellation,
 history exclusion, and official SDK resource transport. Docker integration proves
 Agent configuration to Runtime child invocation and Gateway-rooted Jaeger traces;
 unit tests alone do not establish that full workflow.
+
+Prior deployment evidence used the retired Gateway ACP/state routes. That
+recorded coverage remains historical. Gateway 24 requires a separate consumer
+migration: browser journeys through the retained Agent UI Bridge and protocol
+assertions through authenticated private ACP. This ACP owning batch does not
+admit that cross-service workflow or its capacity gate.

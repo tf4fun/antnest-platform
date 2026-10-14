@@ -68,7 +68,7 @@ Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP ke
 | Outbound  | Skill Registry discovery and projection routes                                  | Skill discovery and source metadata delivery, when configured                          |
 | Owned     | PostgreSQL                                                                      | Sessions, messages, checkpoints, Runs, Tool attempts, permissions and learning records |
 
-Gateway and Agent UI supply an unchanged Identity-signed CCT plus their own
+Agent UI supplies an unchanged Identity-signed CCT plus its own
 verified workload credentials. ACP derives organization, principal and Agent
 from signed claims, ignores unsigned identity hints, and authorizes each resource
 method against the locally applied snapshot. It advertises no ACP `authMethods`.

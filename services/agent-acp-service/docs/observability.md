@@ -140,10 +140,10 @@ model responses still retain error status and typed error events.
   `agent.run` inherits the submitting ACP request context, including asynchronous
   execution owned by RunSupervisor. Ending a request span does not cancel the Run
   or prevent later child spans. No business-name special case may reset context.
-  WebSocket messages receive W3C context through ACP `params._meta` from Gateway;
-  each Gateway message is a bounded root linked to the long-lived connection.
+  WebSocket messages receive actual W3C context through ACP `params._meta` from
+  the authenticated client.
   Thus a prompt, its model calls and Runtime tools form one trace without waiting
-  for the browser connection to close. Direct clients without message context
+  for the client connection to close. Clients without message context
   still create an ACP message root linked to their connection.
 - `acp.session.prompt` covers admission (`acceptPrompt`), not Run completion.
   The protocol boundary `acp session/prompt` waits for completion and output
@@ -155,8 +155,10 @@ model responses still retain error status and typed error events.
   differences can produce Jaeger clock-skew warnings without a broken parent.
 - These application spans expose `antnest.operation.phase=admit`
   for `acp.session.prompt` and `antnest.operation.phase=read` for
-  `acp.session.output`. Gateway message spans expose `relay` and `forward`;
-  the forwarding span is a PRODUCER because it ends after the WebSocket send.
+  `acp.session.output`. The retired Gateway ACP relay used bounded message roots
+  linked to the connection, with `relay` and `forward` phases and a PRODUCER send
+  span. Those names describe historical evidence; new Bridge traces must follow
+  actual causality and must not fabricate the retired relay spans.
   These low-cardinality labels clarify their existing lifetimes without changing
   request completion, Run ownership, context propagation or clock-skew evidence.
 - HTTP names are `HTTP METHOD /status`, `HTTP METHOD /v1/acp`, `HTTP METHOD /v2/acp`,

@@ -162,7 +162,7 @@ prevent a later explicit Run after the configuration/network is corrected.
 Both `/v1/acp` and `/v2/acp` accept WebSocket upgrades. `/v1/acp` additionally
 accepts SDK Streamable HTTP POST/GET SSE/DELETE; `/v2/acp` does not accept that
 HTTP transport. See the [HTTP transport contract](http-transport.md).
-The caller must be a verified Gateway/UI workload and supply Identity's unchanged
+The caller must be a verified Agent UI workload and supply Identity's unchanged
 signed CCT with ACP audience and Agent scope. ACP derives the tuple from verified
 claims; raw identity hints and the old opaque subject are not fallbacks. Both transports bind the same tuple;
 resource operations check the current local grant, not a Controller RPC or a
@@ -307,7 +307,7 @@ admission, and durable event persistence must not introduce the inverse order.
 The service is internal. Do not publish its port directly to the internet.
 Compose or Kubernetes network policy permits:
 
-- workspace inbound only from authenticated Gateway, Agent UI, Console and
+- workspace inbound only from authenticated Agent UI, Console and
   Registry on their documented routes; Controller uses its separate listener;
 - outbound to authenticated Identity for bounded JWKS verification;
 - outbound to its private PostgreSQL, configured model APIs,
