@@ -103,7 +103,7 @@ test("fresh credentials match every static receiver grant without a global Runti
   const output = join(fixture(t), "fresh");
   const manifest = provisionTokens({ output });
   const pairs = deriveStaticPairs(catalogs());
-  assert.equal(pairs.length, 25);
+  assert.equal(pairs.length, 23);
   assert.deepEqual(manifest.pairs, pairs);
   assert.equal(manifest.version, contract.version);
   assert.equal(manifest.skill_learning, false);
@@ -142,7 +142,14 @@ test("fresh credentials match every static receiver grant without a global Runti
       assert(!bytes(output, "deployment.env").includes(token));
     }
   }
-  assert.equal(tokens.size, 25);
+  assert.equal(tokens.size, 23);
+  for (const receiver of ["agent-controller", "agent-acp-service"]) {
+    assert(!existsSync(join(output, "edge-gateway/tokens", receiver)));
+    assert(existsSync(join(output, "agent-ui/tokens", receiver)));
+    const callers = JSON.parse(bytes(output, `${receiver}/callers.json`));
+    assert(!Object.hasOwn(callers, "edge-gateway"));
+    assert(Object.hasOwn(callers, "agent-ui"));
+  }
   assert(!existsSync(join(output, "antnest-runtime")));
   assert.deepEqual(JSON.parse(bytes(output, "edge-gateway/callers.json")), {});
 });
@@ -500,7 +507,7 @@ test("CLI works without npm or external binaries and prints only completion meta
   assert.deepEqual(JSON.parse(result.stdout), {
     complete: true,
     services: 9,
-    pairs: 25,
+    pairs: 23,
     skill_learning: true,
   });
   const manifest = JSON.parse(bytes(output, "manifest.json"));
