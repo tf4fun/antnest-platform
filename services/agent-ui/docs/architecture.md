@@ -57,7 +57,7 @@ validation remains enabled; the document's CSP does not allow `unsafe-eval`.
 Server-side parsing keeps its existing configuration.
 
 Bootstrap and SSR share `readWorkspacePrincipal`: it requires private verified
-CCT claims and the two display headers from Gateway revision 23. Signed claims
+CCT claims and the two display headers from Gateway revision 24. Signed claims
 determine Organization/Principal IDs and administrator status; raw identity and
 administrator hints grant nothing. Each label must be canonical unpadded Base64URL over
 valid UTF-8 and decode to a non-whitespace string. Invalid or missing metadata
@@ -370,6 +370,21 @@ local output and metadata updates do not trigger ACP observation GETs.
 
 ## Bridge capacity and lifetimes
 
+- Prompt reception and HTTP dispatch reserve at most 128 MiB / 16 requests
+  per process, with 64 MiB / 4 requests per signed `(organization, user)` across
+  Agents and login sessions. Unknown-length bodies reserve the full 64 MiB
+  maximum. Admission happens before body consumption; exhaustion returns
+  `429 upload_capacity_exceeded` with `Retry-After: 1` and no business dispatch.
+  Cancellation and other control requests bypass this pool, with a 16 KiB
+  native body ceiling and any smaller route bound still enforced. Reservations
+  last until dispatch settles, including body failures and disconnect/deadline
+  cleanup; accepted ACP work has its separate owner lifetime. These wire-byte
+  budgets are not a process RSS bound.
+- The native HTTP boundary validates UTF-8 and decoded duplicate JSON members
+  once. A private Request-bound record carries that result and its actual byte
+  count to route validation; clones and direct handler requests still parse
+  strictly. Payload strings use native boundary scanning, and routes retain
+  their Zod validation, byte limits and same-intent content digest comparison.
 - Each owner admits at most 16 live Agent SSE observers across selected
   Sessions, keeps at most 32 Agent and 32 Session journals, and retains up to
   256 KiB of replay suffix per journal. A slow observer has a 1 MiB
@@ -426,6 +441,21 @@ There is no browser ACP or Nginx compatibility mode.
   not a container memory limit. `test:bridge:runtime-memory` samples the
   Runtime HTTP View and SSE handler path with four observers; it does not
   include Node sockets or Docker RSS.
+- `test:bridge:capacity` runs the real authenticated Node HTTP boundary,
+  WorkspaceRuntime, operation coordinator and official ACP HTTP client in a
+  separate process from the client and the ACP execution double. Two signed
+  user/Agent scopes exercise operation cancellation and `/stop` during one and
+  four concurrent uploads. Every upload contains four valid text attachments
+  filling more than 99% of the default 16 MiB ACP envelope; all four uploads
+  remain admitted within the principal budget.
+  Native incoming EOF, handler entry and SDK request dispatch receipts distinguish
+  unfinished uploads from strict parsing, and bracketed monotonic clock samples
+  prove actual overlap. Each case requires the same held operation's cancelled
+  receipt and double-work release within one second. This component test is part
+  of `test:bridge:integration`; real Runtime termination remains a Docker gate.
+  The same integration command verifies the container gate's listener startup,
+  child-process exit, SSE cancellation and complete cleanup using real local
+  sockets/processes plus explicit Docker inventory failures.
 - `test:bridge:docker` uses the production image with an official ACP HTTP
   fixture for slow-observer reset, multi-owner history, 17 MiB content paging,
   and four-observer small updates beside a 1 MiB tool body with a

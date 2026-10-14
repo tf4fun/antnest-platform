@@ -1,14 +1,10 @@
 {
   "service": "agent-ui",
   "status": "enforced",
-  "implementation_issues": [
-    26
-  ],
+  "implementation_issues": [26],
   "routes": {
     "GET /api/app/workspace/v1/agents/{agentId}/events": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -16,9 +12,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/agents/{agentId}/sessions": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -26,9 +20,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -36,9 +28,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -46,9 +36,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/content": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -56,9 +44,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -66,9 +52,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process/{itemId}/content": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -76,9 +60,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/view": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -86,9 +68,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/agents/{agentId}/view": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -96,9 +76,7 @@
       "request_body": "none"
     },
     "GET /api/app/workspace/v1/bootstrap": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -106,9 +84,7 @@
       "request_body": "none"
     },
     "GET /live": {
-      "callers": [
-        "local-healthcheck"
-      ],
+      "callers": ["local-healthcheck"],
       "authentication": "health",
       "caller_context": {
         "local-healthcheck": "none"
@@ -116,9 +92,7 @@
       "request_body": "none"
     },
     "GET /status": {
-      "callers": [
-        "local-healthcheck"
-      ],
+      "callers": ["local-healthcheck"],
       "authentication": "health",
       "caller_context": {
         "local-healthcheck": "none"
@@ -126,9 +100,7 @@
       "request_body": "none"
     },
     "GET /workspace/": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -136,9 +108,7 @@
       "request_body": "none"
     },
     "GET /workspace/{agentId}/": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -146,9 +116,7 @@
       "request_body": "none"
     },
     "GET /workspace/{agentId}/sessions/{sessionId}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -156,9 +124,7 @@
       "request_body": "none"
     },
     "POST /api/app/workspace/v1/agents/{agentId}/commands": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -166,9 +132,7 @@
       "request_body": "json"
     },
     "POST /api/app/workspace/v1/agents/{agentId}/permissions/{permissionId}/decision": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -176,9 +140,7 @@
       "request_body": "json"
     },
     "POST /api/app/workspace/v1/agents/{agentId}/sessions": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -186,9 +148,7 @@
       "request_body": "json"
     },
     "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/configuration": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -196,9 +156,7 @@
       "request_body": "json"
     },
     "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}/cancel": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -206,9 +164,7 @@
       "request_body": "json"
     },
     "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -216,9 +172,7 @@
       "request_body": "json"
     },
     "HEAD /workspace/": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -226,9 +180,7 @@
       "request_body": "none"
     },
     "HEAD /workspace/{agentId}/": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -236,9 +188,7 @@
       "request_body": "none"
     },
     "HEAD /workspace/{agentId}/sessions/{sessionId}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "required"
@@ -246,9 +196,7 @@
       "request_body": "none"
     },
     "GET /workspace/assets/{asset_name}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "none"
@@ -256,9 +204,7 @@
       "request_body": "none"
     },
     "HEAD /workspace/assets/{asset_name}": {
-      "callers": [
-        "edge-gateway"
-      ],
+      "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {
         "edge-gateway": "none"
@@ -269,18 +215,14 @@
   "guarded_sources": {
     "services/agent-ui/web/server/src/http/agent-view-routes.ts": {
       "sha256": "5c8373bd13dd66ff50c1e3cf1f8f27abb7043687dd02a08e6d24af70f0324670",
-      "routes": [
-        "GET /api/app/workspace/v1/agents/{agentId}/view"
-      ]
+      "routes": ["GET /api/app/workspace/v1/agents/{agentId}/view"]
     },
     "services/agent-ui/web/server/src/http/bootstrap-routes.ts": {
       "sha256": "b406c2dbf55b6c2befeccf0282b0403b2866ad467f143c54836af1a53061ba7f",
-      "routes": [
-        "GET /api/app/workspace/v1/bootstrap"
-      ]
+      "routes": ["GET /api/app/workspace/v1/bootstrap"]
     },
     "services/agent-ui/web/server/src/http/command-routes.ts": {
-      "sha256": "0ddb461774a2713a85ff3c86d593a778a883442ed4a9af92fb51b289865ce1b4",
+      "sha256": "1c92880443c1b3edd2c1c9bf9a17b5ae294a240dc8e637cc5612414819e4adcc",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
@@ -295,15 +237,11 @@
     },
     "services/agent-ui/web/server/src/http/control-routes.ts": {
       "sha256": "e281907b30ada34595fe047e81042d185d2096921551ff6ca16e71d6f32c6d01",
-      "routes": [
-        "POST /api/app/workspace/v1/agents/{agentId}/commands"
-      ]
+      "routes": ["POST /api/app/workspace/v1/agents/{agentId}/commands"]
     },
     "services/agent-ui/web/server/src/http/event-routes.ts": {
       "sha256": "bac39f23d26e5ce62bf314389d8135a6cbe5a8297368fb59d26268c3c1a83997",
-      "routes": [
-        "GET /api/app/workspace/v1/agents/{agentId}/events"
-      ]
+      "routes": ["GET /api/app/workspace/v1/agents/{agentId}/events"]
     },
     "services/agent-ui/web/server/src/http/history-routes.ts": {
       "sha256": "0dacd292ca2747f03dfa22197272612b79e419939b7637bbc1587e240bc6f7ca",
@@ -315,7 +253,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/node-server.ts": {
-      "sha256": "421938d4d176393122802cb1d6af13a35f68fb73574bbfccdc698eb2dd6452f5",
+      "sha256": "e82631222ae87c1895541f021f0cf0562ecd95a3ce5d16857dcab99c3dd69791",
       "routes": [
         "GET /status",
         "GET /live",
@@ -386,7 +324,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/json-request.ts": {
-      "sha256": "9fe37f778559161e659d69db0378810b7730b22ab532f750e5b340acbdb159f3",
+      "sha256": "88100d4d677e917bde14ef6ffdd6757b389d87cfa6e211b516b1c8f1aefddb1c",
       "routes": []
     }
   }

@@ -16,6 +16,7 @@ import type { RequestAuthentication } from "./request-authentication.ts";
 import { bindAuthenticatedRequest, copyAuthenticatedRequest } from "./trusted-identity.ts";
 import { HttpInputError, requireJsonMedia, validateJsonRequest } from "./json-request.ts";
 import { recordEventStreamCompletion } from "./event-routes.ts";
+import { UploadAdmission, maximumControlRequestBytes, maximumJsonRequestBytes } from "./upload-admission.ts";
 
 type WorkspaceHandler = { handle(request: Request): Promise<Response | null> };
 type DocumentOptions = {
@@ -36,9 +37,10 @@ export function createWorkspaceHttpServer(runtime: WorkspaceHandler, options: Do
   const deadlineMs = options.requestDeadlineMs ?? 60_000;
   if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1)
     throw new RangeError("Invalid ordinary HTTP deadline");
+  const uploads = new UploadAdmission();
   const listener = (incoming: IncomingMessage, outgoing: ServerResponse) => {
     const work = async () => {
-      await serve(runtime, options, incoming, outgoing);
+      await serve(runtime, options, incoming, outgoing, uploads);
       return outgoing.statusCode;
     };
     const observed = options.telemetry
@@ -78,7 +80,9 @@ async function serve(
   options: DocumentOptions,
   incoming: IncomingMessage,
   outgoing: ServerResponse,
+  uploads: UploadAdmission,
 ): Promise<void> {
+  let releaseUpload: (() => void) | undefined;
   try {
     const url = incoming.url;
     if (url === undefined || !url.startsWith("/") || url.startsWith("//")) {
@@ -152,6 +156,10 @@ async function serve(
       return;
     }
     if (assetName) { outgoing.writeHead(404, { "cache-control": "no-store" }).end(); return; }
+    const promptUpload = admitted.policy.json && /\/prompts$/u.test(new URL(url, "http://workspace.internal").pathname);
+    if (promptUpload)
+      releaseUpload = uploads.acquire(admitted.context!.claims.org, admitted.context!.claims.sub,
+        incoming.headers["content-length"]);
     const headers = new Headers();
     for (const [name, value] of Object.entries(incoming.headers)) {
       if (name === "cookie" || name === "authorization" || value === undefined ||
@@ -190,7 +198,16 @@ async function serve(
       /^\/api\/app\/workspace\/v1\/agents\/[^/]+\/events$/u.test(new URL(request.url).pathname);
     if (!eventStream) {
       const dispatch = admitted.policy.json ? {
-        handle: async (request: Request) => runtime.handle(await validateJsonRequest(request)),
+        handle: async (request: Request) => {
+          // A client deadline may finish the HTTP response while authorization is
+          // still unwinding. The dispatch, not that response, owns the reservation.
+          const release = releaseUpload;
+          releaseUpload = undefined;
+          try {
+            return await runtime.handle(await validateJsonRequest(request,
+              promptUpload ? maximumJsonRequestBytes : maximumControlRequestBytes));
+          } finally { release?.(); }
+        },
       } : runtime;
       await serveOrdinary(dispatch, request, outgoing, disconnect, options.requestDeadlineMs ?? 60_000);
       return;
@@ -206,6 +223,8 @@ async function serve(
     }
     if (cause instanceof HttpInputError) {
       const failure = workspaceFailure(cause.status, cause.code);
+      if (cause.status === 413 || cause.status === 429) failure.headers.set("connection", "close");
+      if (cause.status === 429) failure.headers.set("retry-after", "1");
       outgoing.writeHead(failure.status, Object.fromEntries(failure.headers));
       outgoing.end(await failure.text()); return;
     }
@@ -222,7 +241,7 @@ async function serve(
         recovery: "retry_read",
       }),
     );
-  }
+  } finally { releaseUpload?.(); }
 }
 
 async function serveEventStream(
@@ -295,7 +314,8 @@ async function serveEventStream(
 
 function workspaceFailure(status: number, code: string): Response {
   return Response.json({ code, message: "Workspace request was rejected", requestId: randomUUID(),
-    retryable: status >= 500, recovery: status === 401 ? "login" : status >= 500 ? "retry_read" : "none" },
+    retryable: status >= 500 || status === 429,
+    recovery: status === 401 ? "login" : status === 429 ? "refresh" : status >= 500 ? "retry_read" : "none" },
     { status, headers: { "cache-control": "no-store" } });
 }
 

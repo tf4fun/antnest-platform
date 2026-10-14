@@ -27,6 +27,26 @@ function definition(relativePath, name) {
 const ui = "../../../contracts/agent-ui/workspace-api.schema.json";
 const acp = "../../../contracts/agent-acp/workspace-bridge.schema.json";
 
+test("prompt upload admission leaves control requests independent and retains dispatch ownership", () => {
+  const contract = json("../../../contracts/agent-ui/workspace-api.json");
+  assert.equal(contract.maximum_json_request_bytes, 64 * 1024 * 1024);
+  assert.equal(contract.maximum_control_request_bytes, 16 * 1024);
+  assert.deepEqual(contract.prompt_upload_admission, {
+    scope: "per-agent-ui-process",
+    maximum_inflight_bytes: 128 * 1024 * 1024,
+    maximum_inflight_requests: 16,
+    principal_key: ["organization", "user"],
+    maximum_principal_inflight_bytes: 64 * 1024 * 1024,
+    maximum_principal_inflight_requests: 4,
+    unknown_length_reservation_bytes: 64 * 1024 * 1024,
+    lifetime: "receive-through-dispatch-completion",
+    capacity_status: 429,
+    capacity_code: "upload_capacity_exceeded",
+    retry_after_seconds: 1,
+    control_requests_bypass_upload_budget: true,
+  });
+});
+
 test("Agent view keeps operation state visible without a selected Session", () => {
   const routes = json("../../../contracts/agent-ui/workspace-api.json").routes;
   assert.deepEqual(routes.agent_view, {
@@ -646,7 +666,7 @@ test("ACP 1.4.0 permits namespaced metadata in the four official wire shapes", (
 
 test("active Gateway contract describes the deployed Node Workspace routes", () => {
   const gateway = json("../../../contracts/edge-gateway/session-contract.json");
-  assert.equal(gateway.version, 23);
+  assert.equal(gateway.version, 24);
   assert.equal(
     gateway.routes.workspace_application.authentication,
     "browser_session_for_html; none_for_assets",
@@ -683,11 +703,39 @@ test("active Gateway contract describes the deployed Node Workspace routes", () 
     gateway.routes.workspace_bridge_events.replay,
     "scope_bound_cursor_or_reset",
   );
+  assert.equal(gateway.routes.workspace_bridge_events.transport, "SSE");
   assert.equal(
-    gateway.routes.workspace_state_watch.replay,
-    "none; reject query fields and Last-Event-ID",
+    gateway.routes.workspace_bridge_events.maximum_concurrent_streams,
+    64,
   );
-  assert.equal(gateway.routes.workspace_acp.transport, "websocket");
+  assert.equal(
+    gateway.routes.workspace_bridge_api.upstream,
+    "internal agent-ui Node, not ACP",
+  );
+  for (const retired of [
+    "workspace_bootstrap",
+    "workspace_state",
+    "workspace_state_watch",
+    "workspace_acp_http",
+    "workspace_acp",
+  ])
+    assert.equal(
+      Object.hasOwn(gateway.routes, retired),
+      false,
+      `${retired} must remain retired`,
+    );
+  const workspace = json("../../../contracts/agent-ui/workspace-api.json");
+  for (const preserved of [
+    "bootstrap",
+    "agent_view",
+    "events",
+    "prompt",
+    "cancel",
+  ])
+    assert.ok(
+      workspace.routes[preserved],
+      `${preserved} remains available through the Bridge`,
+    );
 });
 
 test("Workspace browser session consumer binds to the current Gateway and Identity contracts", () => {

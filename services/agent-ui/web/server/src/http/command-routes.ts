@@ -17,6 +17,7 @@ import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { BridgeCapacityError } from "../bridge/registry.ts";
 import { bindScopeContext, verifiedRequestContext } from "./trusted-identity.ts";
 import { strictObject } from "../adapters/strict-json.ts";
+import { takeValidatedJson } from "./json-request.ts";
 
 const prefix = ["api", "app", "workspace", "v1", "agents"];
 const id = z.string().min(1).max(200);
@@ -313,19 +314,40 @@ export async function readBody(
     Number(declaredLength) > limit
   )
     throw new BodyTooLargeError();
+  const validated = takeValidatedJson(request);
+  if (validated !== undefined) {
+    // Consume the already buffered body without copying or parsing it again.
+    // Cancelling a tee branch can wait for an unread Request.clone() forever.
+    const reader = request.body!.getReader();
+    try {
+      while (!(await readWhileConnected(reader, request.signal)).done) { /* drain */ }
+    } catch (cause) {
+      void reader.cancel().catch(() => {});
+      throw cause;
+    } finally { reader.releaseLock(); }
+    request.signal.throwIfAborted();
+    if (validated.byteLength > limit) throw new BodyTooLargeError();
+    return validated.value;
+  }
   const reader = request.body?.getReader();
   if (reader === undefined) throw new SyntaxError();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  while (true) {
-    const { done, value } = await readWhileConnected(reader, request.signal);
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      throw new BodyTooLargeError();
+  let complete = false;
+  try {
+    while (true) {
+      const { done, value } = await readWhileConnected(reader, request.signal);
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw new BodyTooLargeError();
+      chunks.push(value);
     }
-    chunks.push(value);
+    complete = true;
+  } finally {
+    // A Request clone's cancellation waits for its sibling. Reject this route
+    // immediately, while cancellation still propagates to its own stream branch.
+    if (!complete) void reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
   const bytes = new Uint8Array(size);
   let offset = 0;

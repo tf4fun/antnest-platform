@@ -66,7 +66,7 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
-The browser consumes Gateway revision 23 and Identity revision 18 under the
+The browser consumes Gateway revision 24 and Identity revision 18 under the
 [browser session contract](../../contracts/identity/browser-sessions.md).
 Identity's browser-session schemas are unchanged. Gateway 22 introduced validated
 password admission errors while preserving existing cookies; #60 completed
@@ -118,12 +118,18 @@ Exporters have a 5-second timeout and are flushed after Bridge drain. A valid
 W3C `traceparent` from Gateway parents each HTTP span. Capacity and lifetime
 semantics are described in [Architecture](docs/architecture.md#bridge-capacity-and-lifetimes).
 
+Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
+16 requests per process and 64 MiB / 4 requests per signed user in an
+organization. It preserves the configured single Prompt limit. Control requests
+use a separate 16 KiB body ceiling and bypass the upload pool. Capacity rejection
+is `429 upload_capacity_exceeded`; the browser does not replay a Prompt.
+
 ## Dependencies
 
 - Edge Gateway: the only supported caller; supplies verified identity.
 - Identity: CCT keys fetched only from its authenticated configured origin;
   cached trust expires after 30 seconds and fails closed during an outage.
-- Organization display: Gateway revision 23 supplies verified slug/name as
+- Organization display: Gateway revision 24 supplies verified slug/name as
   canonical UTF-8 Base64URL headers. Node decodes and validates the same
   principal for bootstrap and SSR; both frontend bootstrap mappings require
   these labels. The chooser and account footer render the real name with the

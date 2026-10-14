@@ -7,7 +7,7 @@
   "transport": "same-origin authenticated HTTP; SSE for observation",
   "browser_session_consumer": {
     "browser_session_contract": "../identity/browser-sessions.md",
-    "gateway_revision": 23,
+    "gateway_revision": 24,
     "identity_revision": 18,
     "gateway_routes": [
       "get_session",
@@ -113,6 +113,21 @@
   },
   "errors": "error",
   "maximum_json_request_bytes": 67108864,
+  "maximum_control_request_bytes": 16384,
+  "prompt_upload_admission": {
+    "scope": "per-agent-ui-process",
+    "maximum_inflight_bytes": 134217728,
+    "maximum_inflight_requests": 16,
+    "principal_key": ["organization", "user"],
+    "maximum_principal_inflight_bytes": 67108864,
+    "maximum_principal_inflight_requests": 4,
+    "unknown_length_reservation_bytes": 67108864,
+    "lifetime": "receive-through-dispatch-completion",
+    "capacity_status": 429,
+    "capacity_code": "upload_capacity_exceeded",
+    "retry_after_seconds": 1,
+    "control_requests_bypass_upload_budget": true
+  },
   "ordinary_browser_timeout_ms": 30000,
   "ordinary_node_timeout_ms": 60000,
   "sse_heartbeat_ms": 15000,

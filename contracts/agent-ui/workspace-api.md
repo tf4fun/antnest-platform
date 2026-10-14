@@ -288,6 +288,22 @@ The error envelope has stable `code`, non-secret `message`, `requestId`,
 capacity, 503 unavailable and 504 ordinary request deadline. An exhausted
 replay queue is `replay_capacity_exceeded`; a stream snapshot or live
 selection over budget is `stream_capacity_exceeded` and requires a fresh read.
+
+Prompt body admission is per Agent UI process, after workload and signed user
+authentication and before consuming or parsing the body. It reserves at most
+128 MiB / 16 concurrent requests globally and 64 MiB / 4 concurrent requests
+per `(organization, user)`, shared across Agents and login sessions. A known
+Content-Length reserves its declared bytes; a chunked/unknown length reserves
+the full 64 MiB request maximum. Reservations remain until the body and owning
+HTTP dispatch settle, including rejection, disconnect and deadline cleanup.
+This bounds admitted wire bytes, not the process RSS or accepted ACP Run state.
+Exhaustion returns `429 upload_capacity_exceeded`, `Retry-After: 1`, no-store,
+and refresh recovery before any business dispatch; requests are not replayed.
+Control requests, including both cancel paths, bypass this upload budget and
+have a 16 KiB native JSON body ceiling (smaller route limits still apply).
+The four concurrent legal near-16 MiB uploads used by capacity admission must
+remain admitted; the budget does not replace their cancellation deadline test.
+
 A new scope denied because every Bridge owner slot is busy receives
 `bridge_capacity_exceeded`; a cold owner may be retired to admit it.
 A missing/expired durable
