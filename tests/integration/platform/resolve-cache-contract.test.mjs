@@ -13,6 +13,93 @@ const gateway = contract("edge-gateway/session-contract.json");
 const identity = contract("identity/identity-contract.json");
 const policy = () => contract("edge-gateway/resolve-cache-policy.json");
 
+test("Runtime outage cancellation binds the actual single model and original held bash", () => {
+  const value = policy().admission.outage_runtime_cancellation;
+  assert(value, "held Runtime cancellation needs its own evidence contract");
+  assert.equal(value.phase, "c4-cache-runtime-outage");
+  assert.deepEqual(value.model, { requests: 1, stage: "tool", outcome: "ok" });
+  assert.deepEqual(value.tool, { calls: 1, name: "bash", source: "runtime" });
+  assert.deepEqual(value.binding, [
+    "actual-prompt-and-cancel-http",
+    "same-organization-user-agent-session-run",
+    "same-runtime-execution-generation-image-and-process-group",
+    "original-run-storage-and-terminal-audit",
+  ]);
+  assert.deepEqual(value.terminal, {
+    state: "unresolved",
+    executor: "quiescent",
+    effects: "unknown",
+    source: "runtime_mcp",
+    error_class: "cancelled_tool_outcome_unknown",
+  });
+  assert.equal(value.model_disconnect_is_runtime_cancellation, false);
+});
+
+test("Runtime outage cancellation owns exact errors and neutral transport receipts separately", () => {
+  const value = policy().admission.outage_runtime_cancellation?.diagnostics;
+  assert(value, "Runtime cancellation diagnostics must be explicit");
+  assert.deepEqual(value.error_spans, [
+    "agent.run",
+    "mcp.tools.call",
+    "runtime.mcp.operation",
+    "runtime.mcp.tool",
+    "runtime.executor",
+  ]);
+  assert.deepEqual(value.non_error_spans, [
+    "acp-http-client-abort",
+    "runtime-tools-call-http-disconnect",
+  ]);
+  assert.equal(value.require_exact_tags_events_and_causes, true);
+  assert.equal(value.duplicate_or_additional_diagnostics_allowed, false);
+  assert.equal(value.response_bytes, "positive-and-equal-on-both-ends");
+  assert.equal(value.claims, "exact-original-trace-and-span-identifiers");
+  assert.equal(value.preserve_raw_errors_warnings_and_strict_verdict, true);
+  assert.equal(value.initialize_read_exception_reused, false);
+});
+
+test("Runtime outage cancellation proves timing without extending Node quantization deferral", () => {
+  const value = policy().admission.outage_runtime_cancellation?.timing;
+  assert(value, "Runtime cancellation timing must have owning evidence");
+  assert.equal(value.cancel_span, "same-process-internal-acp-session-cancel");
+  assert.equal(value.terminal_sql_joined_run, true);
+  assert.equal(
+    value.runtime_event_precision,
+    "jaeger-microsecond-half-open-representation-intervals",
+  );
+  assert.deepEqual(value.acp_order, [
+    "same-process-model-end-before-tool-start",
+    "cancel-rpc-start-before-tool-end",
+    "tool-end-before-terminal-sql-start",
+    "terminal-sql-end-joined-before-run-end",
+    "run-and-terminal-sql-end-before-cancel-rpc-end",
+  ]);
+  assert.equal(
+    value.runtime_tree,
+    "same-process-server-operation-tool-executor",
+  );
+  assert.equal(
+    value.runtime_clock,
+    "completed-same-runtime-rpc-request-response-intervals",
+  );
+  assert.deepEqual(value.clock_samples, {
+    before_and_after_cancellation: true,
+    anchor: "runtime-server-start-within-acp-client-send-to-complete-eof",
+    successful_protocol_and_equal_positive_bytes: true,
+    client_cancellation_or_errors_allowed: false,
+    all_eligible_samples_required: true,
+    empty_intersection_allowed: false,
+    cancelled_tool_as_anchor_allowed: false,
+  });
+  assert.equal(
+    value.teardown,
+    "calibrated-cancel-window-and-actual-process-group-quiescence",
+  );
+  assert.equal(value.raw_cross_service_end_comparison, false);
+  assert.equal(value.runtime_end_interval, "entire-interval-inside-cancel-rpc");
+  assert.equal(value.blanket_clock_skew_or_end_tolerance, false);
+  assert.equal(value.node_sub_ms_deferral, "same-acp-integer-ms-anchor-only");
+});
+
 test("Gateway cache revision reuses the issued Identity wire contract", () => {
   assert.equal(gateway.version, 24);
   assert.equal(gateway.identity_resolve_cache, "resolve-cache-policy.json");

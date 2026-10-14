@@ -420,6 +420,67 @@ ACP initialize/HTTP parent chain, HTTP 200, successful Runtime MCP operation and
 matching cancellation witness. This does not prove client receipt, claim an
 error, or excuse another failure; retain the original event and exact span ID.
 
+The held Runtime outage uses one successful `c4-cache-runtime-outage` model
+request followed by exactly one Runtime `bash` call. The model is not the work
+being cancelled. Bind the actual prompt and cancellation HTTP observations,
+their complete Gateway/UI/ACP ancestry, original organization/User/Agent/
+Session/Run, stored execution snapshot, Runtime execution/generation/image and
+observed process group. The original Run must finish as `unresolved`, with
+`quiescent` executor, `unknown` tool effects, `runtime_mcp` source and
+`cancelled_tool_outcome_unknown` error class. Preserve the terminal SQL and
+actual audit; cancellation must not create a replacement Run.
+
+Its five exact ERROR spans are `agent.run` (`run_unresolved`), `mcp.tools.call`
+(`McpToolCallError`), and the Runtime operation, tool and executor
+(`outcome_unknown`). Require the unique Run/model/tool/Runtime parent chain,
+all original fixed error tags and events, bounded producer cause lists and the
+executor's actual process-group PID and `canceled` exit classification. The
+operation completion remains INFO with outcome `error`; the tool and executor
+completions remain WARN. Do not replace these errors with success or claim
+unrelated spans. An extra model, tool, error field, event or cause fails this
+admission.
+
+The corresponding ACP HTTP CLIENT and Runtime `tools/call` HTTP SERVER are
+separate non-ERROR transport receipts. The CLIENT requires its exact
+`AbortError`/`http.send_or_read` cancellation event. The SERVER requires HTTP
+200, protocol `error`, transport `canceled`, `client_disconnected`, the exact
+WARN HTTP completion and `antnest.error` event at stage `http`; the successful
+initialize-read exception does not apply. Both ends must record equal positive
+response bytes. Only the cancellation inspector, after proving this original
+Run and actual Runtime quiescence, may identify these exact non-error spans
+for final diagnostic reconciliation. Keep their raw fields and events.
+
+Direct execution ordering uses the same ACP process: the successful model ends
+before the ACP `mcp.tools.call` for bash begins, cancellation starts before that
+call ends, and terminal SQL
+follows bash and is joined by Run completion. The cancellation window is the
+same-process internal `acp session/cancel` span, not its early HTTP 202 or the
+public UI response. Only the Run end is inside that window; its start predates
+cancellation. Run and terminal SQL finish before that internal RPC ends, with
+only the separately recorded same-ACP Node anchor ambiguity below. Runtime
+SERVER/operation/tool/executor ancestry and event ordering use the same Runtime
+clock. Independently calibrate that clock using actual completed RPC
+request/response intervals from the same Runtime process, execution and
+generation. Require successful protocol operations, dual HTTP 200 and equal
+positive response bytes, with no CLIENT cancellation or error. The Runtime
+SERVER start must lie between ACP CLIENT send and complete EOF; its end is not
+an anchor. Include all eligible samples, with witnesses before and after
+cancellation, and reject an empty offset intersection. Never use the cancelled
+Tool request itself as a calibration sample. Bind each entire Runtime
+end interval to the same ACP cancellation RPC and actual process-group
+quiescence. A remote SERVER need not end before its
+cancelled CLIENT: their raw wall-clock ends are not a join bound. This is not a
+blanket clock-skew allowance. Preserve calculated warnings and measured bounds;
+the deferred Node sub-millisecond investigation applies only to independently
+integer-millisecond-anchored spans in the same ACP process. All other timing
+findings still need their own evidence. Jaeger's independently represented
+integer-microsecond start, duration and event timestamps are checked as half-open
+representation intervals: an event one microsecond beyond the summed raw end
+can still overlap its represented end, but two microseconds cannot. Record this
+representation ambiguity without claiming nanosecond ordering or treating Rust
+events as Node SDK findings. The consumer and fresh Docker
+integration must pass before this new admission is complete.
+
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
 under the current HTTP request root, ending before any resulting upstream
 admission. Its `antnest.identity.resolve.` attributes include `source` from
