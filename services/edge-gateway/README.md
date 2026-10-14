@@ -5,6 +5,12 @@ turns an Identity Service access credential into one trusted internal principal
 and routes the request to the owning service without owning the requested
 business operation. It is written in Go.
 
+The accepted [workspace entry decision](../../docs/architecture/browser-workspace-entry.md)
+retires the unused direct browser stack in the planned Gateway 24 owning batch.
+The current Gateway 23 route table below remains active until that batch.
+See the [shared retirement contract](../../contracts/edge-gateway/workspace-entry-retirement.md)
+for Bridge preservation, capacity admission and pending consumer integration.
+
 The Gateway owns the browser credential boundary: cookies, CSRF, same-origin
 checks and identity revalidation. Internal dependencies receive verified
 workload authentication and the unchanged Identity-signed caller context.

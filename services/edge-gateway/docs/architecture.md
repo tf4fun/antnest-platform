@@ -3,6 +3,13 @@
 This document describes how Edge Gateway admits browser requests, binds OIDC
 transactions, routes Admin Console, Agent UI and ACP traffic, and how it fails.
 
+For #64, the accepted [browser workspace entry decision](../../../docs/architecture/browser-workspace-entry.md)
+is option A: remove the unused direct browser stack and retain the Agent UI
+Bridge. The [shared retirement policy](../../../contracts/edge-gateway/workspace-entry-retirement.md)
+defines Gateway 24 activation, unchanged security boundaries, consumer migration
+and real two-user capacity admission. The initial shared batch leaves Gateway
+23 implementation and the existing route behavior below unchanged.
+
 ## Browser session boundary
 
 Secure mode accepts and emits only `__Host-antnest_session` and

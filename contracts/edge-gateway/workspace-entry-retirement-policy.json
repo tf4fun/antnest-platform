@@ -1,0 +1,172 @@
+{
+  "contract": "antnest.edge-gateway.workspace-entry-retirement",
+  "revision": 1,
+  "decision": "remove-unused-browser-stack",
+  "semantics": "workspace-entry-retirement.md",
+  "architecture_decision": "../../docs/architecture/browser-workspace-entry.md",
+  "wire_baseline": {
+    "gateway_version": 23,
+    "header_registry_version": 1,
+    "resolve_cache_revision": 3,
+    "identity_version": 18,
+    "console_version": 54
+  },
+  "activation": {
+    "gateway_version": 24,
+    "header_registry_version": 2,
+    "active_catalog_changes_with_owning_implementation": true,
+    "changed_cache_measurement_requires_new_policy_revision": true
+  },
+  "retirement": {
+    "catalog_keys": [
+      "workspace_bootstrap",
+      "workspace_state",
+      "workspace_state_watch",
+      "workspace_acp_http",
+      "workspace_acp"
+    ],
+    "registrations": [
+      "GET /api/app/bootstrap",
+      "GET /api/app/agents/{agent_id}/state",
+      "GET /api/app/agents/{agent_id}/state/watch",
+      "GET /api/app/agents/{agent_id}/acp",
+      "GET /api/app/agents/{agent_id}/v1/acp",
+      "GET /api/app/agents/{agent_id}/v2/acp",
+      "POST /api/app/agents/{agent_id}/acp",
+      "POST /api/app/agents/{agent_id}/v1/acp",
+      "DELETE /api/app/agents/{agent_id}/acp",
+      "DELETE /api/app/agents/{agent_id}/v1/acp"
+    ],
+    "status": 404,
+    "error_code": "not_found",
+    "downstream_calls": 0,
+    "implicit_head": "same-retired-path-404",
+    "websocket_upgrade": "404-before-upgrade",
+    "authentication_cases": ["anonymous", "valid-browser-session"],
+    "outer_origin_admission": "unchanged-before-routing",
+    "invalid_origin_may_reject_before_404": true,
+    "remove_limits": ["acpConnections", "acpMessages", "stateConnections"]
+  },
+  "preserve": {
+    "gateway_catalog_keys": [
+      "workspace_application",
+      "workspace_bridge_api",
+      "workspace_bridge_events"
+    ],
+    "browser_api_prefix": "/api/app/workspace/v1/",
+    "browser_capabilities": [
+      "bootstrap",
+      "state-and-events",
+      "prompt",
+      "cancel",
+      "permission-reply",
+      "session-load",
+      "reconnect-without-replay"
+    ],
+    "private_acp_versions": ["v1", "v2"],
+    "private_acp_authentication": "workload-and-identity-signed-caller-context",
+    "external_acp_endpoint": false,
+    "accepted_run_cancelled_by_observer_disconnect": false,
+    "accepted_run_cancelled_by_revocation": false
+  },
+  "security": {
+    "reserved_prefixes": ["X-Antnest-", "Antnest-"],
+    "browser_cookie_forwarding": false,
+    "original_idle_absolute_cct_deadlines": "preserved",
+    "origin_contract": "public-entry.md",
+    "csrf_contract": "session-security.md",
+    "identity_revision": 18
+  },
+  "cache_admission": {
+    "outage_seconds": 5,
+    "load_calls": 100,
+    "load_window_max_ms": 8000,
+    "load_actual_resolve_calls_max": 3,
+    "count_initialization_and_refresh": true,
+    "raw_evidence_required": true,
+    "authority_stale_max_ms": 30000
+  },
+  "capacity_admission": {
+    "distinct_users": 2,
+    "distinct_agents": 2,
+    "upload_phases": ["body-incomplete", "body-completion-and-parse"],
+    "attachment": "valid-near-negotiated-limit",
+    "deadline_ms": 1000,
+    "completion": [
+      "cancel-accepted",
+      "run-terminal",
+      "runtime-execution-quiescent"
+    ],
+    "cancel_paths": ["operation-cancel", "commands-stop"],
+    "clock": "independent-client-monotonic",
+    "client_shares_server_event_loop": false,
+    "synthetic_parser_delay": false,
+    "review_budgets": [
+      "gateway-global-sse",
+      "bridge-global-owners",
+      "owner-subscribers",
+      "inflight-body-bytes",
+      "per-principal-uploads",
+      "parse-hash-serialization"
+    ],
+    "full_sse_pool_must_not_block_existing_run_cancel": true,
+    "work": "held-until-correlated-cancellation",
+    "target_identity": [
+      "organization",
+      "user",
+      "agent",
+      "run",
+      "runtime-instance",
+      "actual-runtime-work"
+    ],
+    "completion_proof": "same-target-cancellation-specific-outcome-and-quiescence",
+    "rejected_proofs": [
+      "natural-completion",
+      "unrelated-idle-work",
+      "replacement-execution",
+      "cancel-starts-after-upload-processing-completes"
+    ],
+    "phase_receipts": {
+      "correlate_upload_and_cancel": true,
+      "upload_body_receive_interval": true,
+      "actual_eof_and_processing_complete": true,
+      "exclude_upstream_response_wait": true,
+      "cancellation_request_send": true,
+      "clock_domains_explicitly_correlated": true,
+      "require_actual_overlap": true
+    }
+  },
+  "evidence_migration": {
+    "preserve_business_assertions": true,
+    "bridge_dto_translation_required": true,
+    "private_protocol_tests_keep_workload_auth": true,
+    "actual_resolve_source_and_parent_chains": true,
+    "cleanup_receipts_required": true,
+    "raw_strict_results_preserved": true,
+    "ownership_compatibility_closes_other_issues": false
+  },
+  "delivery_batches": [
+    "shared-contract",
+    "edge-gateway",
+    "agent-controller-caller-retirement",
+    "agent-acp-caller-retirement",
+    "agent-ui-capacity",
+    "deployment-and-test-consumers",
+    "cross-service-integration"
+  ],
+  "receiver_caller_retirement": {
+    "pairs": [
+      "edge-gateway->agent-controller",
+      "edge-gateway->agent-acp-service"
+    ],
+    "activation": "separate-receiver-owning-batches",
+    "preserve_workload_callers": ["agent-ui"],
+    "preserve_workspace_cct_audiences": [
+      "agent-controller",
+      "agent-acp-service"
+    ],
+    "retired_gateway_credential": "rejected-without-business-effects",
+    "development_credential_pairs": "derive-from-updated-receiver-catalogs",
+    "agent_ui_urls_and_networks": "preserved"
+  }
+}

@@ -6,6 +6,12 @@ workspace routes plus the trusted headers Edge Gateway may inject into internal
 services. It is a product-facing browser contract, not a public third-party
 OpenAPI.
 
+The [workspace entry retirement contract](workspace-entry-retirement.md) and
+its [policy](workspace-entry-retirement-policy.json) select removal of the
+unused direct browser stack for #64. The shared policy targets Gateway 24;
+active Gateway 23 routes remain until the owning implementation is admitted.
+Bridge capacity, consumer migration and real integration have separate gates.
+
 The shared [login admission contract](login-admission.md) and its
 [policy](login-admission-policy.json) define independent password/OIDC budgets,
 IPv6 `/64` aggregation and bounded FIFO eviction for #2. Gateway version 23
