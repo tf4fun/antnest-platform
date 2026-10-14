@@ -145,7 +145,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs
 	node --test tests/e2e/observability/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs tests/e2e/agent-acp-service/http-close-receipt.test.mjs
 	$(MAKE) test-managed-mcp-fixtures
 	$(MAKE) test-rpc-response-loss-fixtures
 	$(MAKE) test-acp-persistence-fixtures

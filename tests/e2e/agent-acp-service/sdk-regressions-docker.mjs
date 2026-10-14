@@ -22,6 +22,7 @@ import {
 import { readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { providerPolicyChecks } from "../service-authentication/acp/provider-policy-docker.mjs";
+import { remoteCloseReceipt } from "./http-close-receipt.mjs";
 import {
   inspectLogs,
   redactFailure,
@@ -1096,6 +1097,41 @@ try {
     ).rows[0].n,
     1,
   );
+  const runtimeBeforeClose = await privateFiles();
+  const toolCallsBeforeClose = toolCalls;
+  const closeReceipt = await remoteCloseReceipt({
+    origin,
+    headersFor: (claims) =>
+      authenticatedHeaders(authentication, "agent-ui", claims),
+    claims: { org: "organization-1", sub: "principal-1", agt: "agent-1" },
+    configuration: config,
+    publish,
+    sessionId,
+    snapshot: async () => ({
+      sessions: (
+        await pool.query(
+          "SELECT to_jsonb(s) AS value FROM acp_sessions AS s ORDER BY id",
+        )
+      ).rows,
+      runs: (
+        await pool.query(
+          "SELECT to_jsonb(r) AS value FROM runs AS r ORDER BY id",
+        )
+      ).rows,
+    }),
+    signal: stop.signal,
+  });
+  assert.deepEqual(await privateFiles(), runtimeBeforeClose);
+  assert.equal(toolCalls, toolCallsBeforeClose);
+  assert.deepEqual(
+    (
+      await pool.query(
+        "SELECT state, tool_effect_state FROM runs WHERE error_class = 'cancelled_tool_outcome_unknown'",
+      )
+    ).rows,
+    unknown.rows,
+  );
+  runtimeChecks += 3;
   // The unresolved Run keeps its original authority until the owning process
   // closes. Normal shutdown must still delete those volatile sender files.
   for (const connection of connections) connection.close();
@@ -1126,6 +1162,7 @@ try {
       "close-all-observers-and-reload",
       "cancel-unknown-tool-with-runtime-protection",
       "concurrent-conditional-session-configuration-has-one-winner",
+      "server-initiated-close-keeps-authenticated-cleanup-receipt",
     ],
     modelRequests: modelRequests.length,
     toolCalls,
@@ -1134,6 +1171,7 @@ try {
     providerChecks: provider.checks,
     runtimeChecks,
     runtimeRequests: runtimeRequests.length,
+    closeReceipt,
   };
 } catch (error) {
   failures.push(error);

@@ -11,8 +11,8 @@ draft v2 HTTP/batch transport is not implemented. HTTP itself is an
 experimental ACP transport, not an additional stable v1 protocol requirement.
 Client MCP injection remains disabled.
 
-Connection IDs, POST message routing, GET SSE delivery and DELETE connection
-closure belong to the official SDK. The Node adapter validates JSON media type,
+Connection IDs, POST message routing and GET SSE delivery belong to the official
+SDK. The Node adapter validates JSON media type,
 UTF-8, duplicate keys and body limits before handing a request to that SDK.
 Antnest supplies the existing v1 Agent handler, bound to authorized platform
 identity. There is no second application API or stdio subprocess bridge.
@@ -29,17 +29,36 @@ is not a credential; another binding cannot read, write or close that connection
 does not replace application-level Session ownership checks.
 
 Connection state is process-local and bounded to 1024 entries, including pending
-initializations. Unused HTTP connections expire
+initializations, SDK cleanup and unacknowledged retired connections. Unused HTTP connections expire
 after five minutes without an active request. Open SSE receivers keep their
 connection alive. DELETE, failed initialization and shutdown release transport
 resources. Closing or expiring a transport never deletes a persisted Session
 or cancels a durable Run. Reconnect uses initialize followed by session/load
 or session/resume; SDK transport queues are not a durable replay journal.
-The SDK may close its connection before returning DELETE's 202 response. The
-outer transport waits for that HTTP response to finish or disconnect before
-releasing it; closure must not destroy its own acknowledgement.
+After validating a known connection's empty DELETE body, the adapter calls the
+SDK server's public `close()` once and joins its original result before sending
+an empty 202. It does not first invoke SDK DELETE: that route removes its index
+before asynchronous cleanup has completed. Concurrent admitted DELETE requests
+share the same cleanup result, and closing the other responses must not destroy
+their acknowledgements. A completed successful response releases the connection
+ID; a later request for the released ID receives 404. Already admitted responses
+remain owned and counted until they close, with the original fixed retirement
+deadline and shutdown still able to abort them.
 A rejected DELETE (for example, an oversized body) does not close the SDK
 connection and must leave it usable.
+
+When the SDK itself closes a known connection first, its original authorized
+binding and cleanup result remain available for a fixed five-minute deadline.
+Only a same-binding DELETE can acknowledge it; GET and POST return 404, another
+binding returns 403, and unknown or expired IDs return 404. The complete DELETE
+body is still checked: nonempty bodies return 400 and oversized bodies return
+413 without consuming the acknowledgement. Cleanup failure returns 503 and
+remains a failure on subsequent DELETE requests. The deadline does not restart
+on reads, rejected bodies or repeated DELETE requests. Expiry removes the ID,
+while pending cleanup continues to occupy capacity until it settles. Idle
+expiry, failed initialization and shutdown cannot create a fresh receipt.
+Shutdown rejects new work, aborts pending responses and joins SDK cleanup.
+See the [shared retirement contract](../../../contracts/agent-acp/service-authentication.md#private-http-transport-retirement).
 
 HTTP bodies use the existing ACP payload limit. Stream spans record metadata,
 not frames. Registered parsed ACP requests/responses follow the content switch in

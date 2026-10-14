@@ -30,6 +30,12 @@ HTTP fields. Runtime MCP still rejects an execution ID that its fence header
 cannot carry unchanged before dispatch. A storage representation failure does
 not publish or acknowledge a new snapshot.
 
+Private ACP HTTP transport retirement uses that same immutable tuple. A valid
+DELETE acknowledges completed SDK transport cleanup, including a bounded record
+when the server closed first; it does not alter execution configuration, Session
+history or Run state. Its authentication, failure and capacity rules are defined
+in [private HTTP transport retirement](service-authentication.md#private-http-transport-retirement).
+
 ## Apply Execution Snapshot
 
 `POST /rpc/agent-acp/apply-execution-snapshot`

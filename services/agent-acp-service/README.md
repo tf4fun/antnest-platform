@@ -184,6 +184,13 @@ dependencies. `test:integration` runs official ACP and MCP protocol peers,
 HTTP, WebSocket and SSE boundaries and trace propagation. `test:postgres`
 selects the real PostgreSQL cases.
 
+The service-owned `sdk-regressions-docker.mjs` runner also revokes access through
+an actual execution publication, holds the official client's automatic DELETE
+until its connection has closed, and verifies the complete authenticated 202.
+It checks foreign scopes, invalid bodies and retired IDs against that same
+production connection, plus unchanged full Session/Run database rows. This does
+not replace Agent UI shutdown tracing or the cross-service recovery admission.
+
 Test-only variables:
 
 - `test:audit:v1` runs the opt-in SDK method audit. It needs its own disposable

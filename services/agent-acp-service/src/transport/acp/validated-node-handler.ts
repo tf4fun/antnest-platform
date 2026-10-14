@@ -7,13 +7,16 @@ import { readRpcRequest, readRequestBytes, RpcRequestError, rpcJson } from "../r
 
 // Retain SDK ownership of ACP routing/connection IDs/SSE. This adapter validates
 // raw UTF-8 and duplicate JSON members before the SDK's text decoding boundary.
-export function createValidatedNodeHttpHandler(server: AcpServer, maximum: number) {
+export function createValidatedNodeHttpHandler(
+  server: Pick<AcpServer, "handleRequest">,
+  maximum: number,
+) {
   return (request: IncomingMessage, response: ServerResponse): void => {
     void handle(server, request, response, maximum);
   };
 }
 async function handle(
-  server: AcpServer,
+  server: Pick<AcpServer, "handleRequest">,
   request: IncomingMessage,
   response: ServerResponse,
   maximum: number,
