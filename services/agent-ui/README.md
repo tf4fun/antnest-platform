@@ -121,6 +121,19 @@ ACP retirement waits for its complete DELETE response and execution-state
 watch cleanup before telemetry flush. A separate `agent_ui.acp.close` root
 span links to the owner's initialization HTTP span and parents DELETE; its
 outcome records actual cleanup success or failure without identity labels.
+Its final receipt separately counts DELETE attempts, response headers and
+completed bodies, records the last status (zero when none), and reports whether
+the SDK stream and pending HTTP work were joined. At most 16 failure summaries
+identify fixed stages and bounded network/abort cause classifications; the total
+failure count and any truncation remain explicit. No exception messages, remote
+response contents, credentials or identity labels enter these summaries.
+An attempted DELETE with no receiver response remains a failed close. ACP
+process shutdown does not promise a new acknowledgement; a normal UI drain
+with ACP still online requires the complete DELETE 202 response.
+Failed Agent views add `antnest.ui.agent_view.failure` to the active HTTP span,
+distinguishing owner acquisition/retirement from view preparation. Its bounded
+cause list contains fixed classifications only, without exception messages,
+stacks, credentials or identity labels; HTTP failure semantics remain unchanged.
 
 Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
 16 requests per process and 64 MiB / 4 requests per signed user in an

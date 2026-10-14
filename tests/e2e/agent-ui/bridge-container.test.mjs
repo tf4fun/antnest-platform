@@ -2226,7 +2226,11 @@ test(
           Object.fromEntries(
             entries.map((entry) => [
               entry.key,
-              entry.value.stringValue ?? entry.value.intValue,
+              entry.value.stringValue ??
+                entry.value.boolValue ??
+                (entry.value.intValue === undefined
+                  ? undefined
+                  : Number(entry.value.intValue)),
             ]),
           );
         assert.equal(heldCleanup.complete, true);
@@ -2255,7 +2259,17 @@ test(
         assert.deepEqual(attributes(closeSpan.attributes), {
           "antnest.ui.acp.close.trigger": "requested",
           "antnest.ui.acp.close.outcome": "closed",
+          "antnest.ui.acp.close.target_observed": true,
+          "antnest.ui.acp.close.delete_attempts": 1,
+          "antnest.ui.acp.close.delete_responses": 1,
+          "antnest.ui.acp.close.delete_completed": 1,
+          "antnest.ui.acp.close.delete_status": 202,
+          "antnest.ui.acp.close.pending_requests": 0,
+          "antnest.ui.acp.close.stream_joined": true,
+          "antnest.ui.acp.close.failures": 0,
+          "antnest.ui.acp.close.diagnostics_truncated": false,
         });
+        assert.equal(closeSpan.events?.length ?? 0, 0);
         const initialTraceparent = initializedConnections.get(
           heldCleanup.connectionId,
         );

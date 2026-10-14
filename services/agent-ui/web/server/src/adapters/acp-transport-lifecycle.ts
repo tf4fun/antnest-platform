@@ -1,6 +1,7 @@
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { captureAcpCloseTrace, type AcpCloseTrigger } from "../telemetry.ts";
 import { OwnedHttpResponse } from "./owned-http-response.ts";
+import { AcpCloseFailures, type AcpCloseFailureStage } from "./acp-close-diagnostics.ts";
 
 type HttpStream = ReturnType<typeof createHttpStream>;
 
@@ -19,6 +20,11 @@ export class AcpTransportLifecycle {
   private initialized = false;
   private targetObserved = false;
   private deletes = 0;
+  private deleteResponses = 0;
+  private deleteCompleted = 0;
+  private deleteStatus = 0;
+  private streamJoined = false;
+  private readonly failures = new AcpCloseFailures();
   private readonly stopStream: () => Promise<void>;
   private cancelInitialization: (() => void) | undefined;
   private readonly parentSignal: AbortSignal | undefined;
@@ -101,6 +107,7 @@ export class AcpTransportLifecycle {
     this.detachInitialization();
     this.closeTrace = this.startTrace(trigger);
     this.cleanupTimer = setTimeout(() => {
+      this.failures.record("deadline");
       this.errors.push(new Error("ACP cleanup deadline exceeded"));
       this.cleanupAbort.abort(new Error("ACP cleanup deadline exceeded"));
       this.trafficAbort.abort();
@@ -114,17 +121,25 @@ export class AcpTransportLifecycle {
       try {
         const stopped = this.stopStream();
         this.trafficAbort.abort();
-        await stopped;
+        try { await stopped; this.streamJoined = true; }
+        catch (cause) { this.failures.record("stream_cleanup", cause); throw cause; }
         // SDK errorReadable() starts cleanup without awaiting it. Tasks can also
         // be added by a late initialize response, so drain to actual quiescence.
         while (this.pending.size) await Promise.allSettled([...this.pending]);
-        if (this.targetObserved && this.deletes !== 1)
+        if (this.targetObserved && this.deletes !== 1) {
+          this.failures.record("receipt_count");
           this.errors.push(new Error("ACP cleanup target has no unique DELETE receipt"));
+        }
         if (this.errors.length) throw new AggregateError(this.errors, "ACP cleanup failed");
       } finally {
         clearTimeout(this.cleanupTimer);
         this.detachInitialization();
-        this.closeTrace!.finish(this.errors.length ? "failed" : this.deletes ? "closed" : "no_target");
+        this.closeTrace!.finish(this.errors.length || !this.streamJoined ? "failed" : this.deletes ? "closed" : "no_target", {
+          targetObserved: this.targetObserved, deleteAttempts: this.deletes,
+          deleteResponses: this.deleteResponses, deleteCompleted: this.deleteCompleted,
+          deleteStatus: this.deleteStatus, pendingRequests: this.pending.size,
+          streamJoined: this.streamJoined, failures: this.failures,
+        });
       }
     });
     void this.closing.catch(() => {});
@@ -156,6 +171,7 @@ export class AcpTransportLifecycle {
       ...(originalSignal ? [originalSignal] : []),
       deleting ? this.cleanupAbort.signal : this.trafficAbort.signal,
     ]);
+    let phase: AcpCloseFailureStage = "delete_request";
     try {
       const response = await (deleting
         ? this.closeTrace!.fetch(fetchImpl, input, { ...init, signal })
@@ -165,13 +181,19 @@ export class AcpTransportLifecycle {
       if (initializing && response.ok && response.headers.has("acp-connection-id"))
         this.targetObserved = true;
       if (deleting) {
+        this.deleteResponses++;
+        this.deleteStatus = response.status;
+        phase = "delete_body";
         await discardCleanupBody(response);
+        this.deleteCompleted++;
+        phase = "delete_status";
         if (response.status !== 202) throw new Error("ACP DELETE was not accepted");
         return response;
       }
       return this.trackBody(response, signal);
     } catch (error) {
       if (!deleting) throw error;
+      this.failures.record(phase, error);
       // Never retain remote response contents, preparation errors or credentials.
       const failure = new Error("ACP DELETE cleanup failed");
       this.errors.push(failure);
@@ -182,6 +204,7 @@ export class AcpTransportLifecycle {
   private trackBody(response: Response, signal: AbortSignal): Response {
     const owned = new OwnedHttpResponse(response, signal);
     this.track(owned.closed.catch(() => {
+      this.failures.record("body_cleanup");
       this.errors.push(new Error("ACP response body cleanup failed"));
     }));
     return owned.response;

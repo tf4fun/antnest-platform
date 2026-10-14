@@ -52,11 +52,15 @@ async function fixture(mode = "hold", options = {}) {
     releaseHeaders = deferred(),
     threeStreams = deferred(),
     postHeld = deferred(),
-    postDisconnected = deferred();
+    postDisconnected = deferred(),
+    deleteAttempted = deferred(),
+    releaseDelete = deferred();
   const streams = [];
   const streamClosures = [];
   let sessions = 0,
-    holdPost;
+    holdPost,
+    deleteAttempts = 0,
+    deleteSettled = 0;
   const agent = acp
     .agent({ name: "close-receipt-fixture" })
     .onRequest(acp.methods.agent.initialize, () => ({
@@ -173,13 +177,15 @@ async function fixture(mode = "hold", options = {}) {
     release.resolve();
     releaseInitialize.resolve();
     releaseHeaders.resolve();
+    releaseDelete.resolve();
     await opening?.catch(() => {});
     await Promise.resolve(bridge?.close()).catch(() => {});
     await transport.close();
     listener.closeAllConnections();
-    await new Promise((resolve, reject) =>
-      listener.close((error) => (error ? reject(error) : resolve())),
-    );
+    if (listener.listening)
+      await new Promise((resolve, reject) =>
+        listener.close((error) => (error ? reject(error) : resolve())),
+      );
   };
   try {
     opening = AcpHttpBridge.open({
@@ -196,14 +202,24 @@ async function fixture(mode = "hold", options = {}) {
         },
       },
       fetchImpl: async (input, init) => {
-        const response = await fetch(input, init);
+        const method =
+          init?.method ?? (input instanceof Request ? input.method : "GET");
+        if (method === "DELETE") {
+          deleteAttempts++;
+          deleteAttempted.resolve();
+          if (options.holdDeleteBeforeFetch) await releaseDelete.promise;
+        }
+        let response;
+        try {
+          response = await fetch(input, init);
+        } finally {
+          if (method === "DELETE") deleteSettled++;
+        }
         if (
           options.initialize === "held-body" &&
           response.headers.has("acp-connection-id")
         )
           initializeHeaders.resolve();
-        const method =
-          init?.method ?? (input instanceof Request ? input.method : "GET");
         if (
           options.holdInitializeResponse &&
           method === "POST" &&
@@ -240,6 +256,21 @@ async function fixture(mode = "hold", options = {}) {
       },
       postHeld: postHeld.promise,
       postDisconnected: postDisconnected.promise,
+      deleteAttempted: deleteAttempted.promise,
+      releaseDelete: releaseDelete.resolve,
+      get deleteAttempts() {
+        return deleteAttempts;
+      },
+      get deleteSettled() {
+        return deleteSettled;
+      },
+      async stopListener() {
+        const stopped = new Promise((resolve, reject) =>
+          listener.close((error) => (error ? reject(error) : resolve())),
+        );
+        listener.closeAllConnections();
+        await stopped;
+      },
       endStream() {
         for (const response of streams) response.end();
       },
@@ -493,6 +524,90 @@ test("ACP cleanup has its own root trace linked to initialization and parents th
         traceparent: "00-22222222222222222222222222222222-2222222222222222-01",
       },
     );
+    const observations = [];
+    for (const [index, mode] of [
+      "peer-stopped",
+      "rejected",
+      "broken-body",
+      "no-target",
+      "deadline",
+    ].entries()) {
+      let peer;
+      const sourceTrace = (index + 3).toString(16).repeat(32);
+      try {
+        await telemetry.observeHttp(
+          "GET",
+          `/owner-${mode}`,
+          async () => {
+            peer = await fixture(
+              ["peer-stopped", "no-target", "deadline"].includes(mode)
+                ? "hold"
+                : mode,
+              {
+                ...(mode === "peer-stopped"
+                  ? { holdDeleteBeforeFetch: true }
+                  : {}),
+                ...(mode === "no-target"
+                  ? { initialize: "no-id", deferOpen: true }
+                  : {}),
+                ...(mode === "deadline" ? { closeTimeoutMs: 50 } : {}),
+              },
+            );
+            if (mode === "no-target")
+              await assert.rejects(bounded(peer.opening));
+            return mode === "no-target" ? 503 : 200;
+          },
+          { traceparent: `00-${sourceTrace}-1111111111111111-01` },
+        );
+        if (mode !== "no-target") {
+          await bounded(peer.connected);
+          if (mode === "peer-stopped") {
+            await bounded(peer.stopListener());
+            await bounded(peer.deleteAttempted);
+          } else peer.endStream();
+          let settled = false;
+          const closing = Promise.resolve(peer.bridge.close())
+            .then(
+              () => ({ ok: true }),
+              (error) => ({ ok: false, error }),
+            )
+            .finally(() => {
+              settled = true;
+            });
+          if (mode === "peer-stopped") {
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(
+              settled,
+              false,
+              "cleanup must join its attempted DELETE even after peer shutdown",
+            );
+            assert.equal(peer.deleteSettled, 0);
+            peer.releaseDelete();
+          } else {
+            await bounded(peer.deleted);
+            if (mode !== "deadline") peer.release();
+          }
+          const result = await bounded(closing);
+          assert.equal(result.ok, false, "failed cleanup must remain failed");
+          assert.match(result.error.message, /cleanup failed/);
+          assert.equal(peer.deleteAttempts, 1, "cleanup must not retry");
+          assert.equal(
+            peer.deleteSettled,
+            1,
+            "attempted request must finish before cleanup settles",
+          );
+          if (mode === "deadline") await bounded(peer.disconnected);
+          await bounded(Promise.all(peer.streamClosures));
+        }
+        observations.push({
+          mode,
+          sourceTrace,
+          receiverCount: peer.requests.length,
+        });
+      } finally {
+        await peer?.close();
+      }
+    }
     await telemetry.shutdown();
     const spans = received.flatMap((batch) =>
       batch.resourceSpans.flatMap((resource) =>
@@ -504,7 +619,11 @@ test("ACP cleanup has its own root trace linked to initialization and parents th
     const initial = spans.find(
       (span) => attribute(span, "http.route") === "/owner-initialization",
     );
-    const closing = spans.filter((span) => span.name === "agent_ui.acp.close");
+    const closing = spans.filter(
+      (span) =>
+        span.name === "agent_ui.acp.close" &&
+        span.links.some((link) => link.traceId === initial.traceId),
+    );
     assert.equal(
       closing.length,
       1,
@@ -536,6 +655,99 @@ test("ACP cleanup has its own root trace linked to initialization and parents th
       "closed",
     );
     assert(!JSON.stringify(closing).includes("fixture-connection"));
+    const rawAttributes = (span) =>
+      Object.fromEntries(
+        span.attributes.map(({ key, value }) => [
+          key,
+          value.stringValue ?? value.boolValue ?? Number(value.intValue),
+        ]),
+      );
+    const receipt = (span, expected) => {
+      const actual = rawAttributes(span);
+      for (const [name, value] of Object.entries(expected))
+        assert.equal(
+          actual[`antnest.ui.acp.close.${name}`],
+          value,
+          `missing actual cleanup receipt: ${name}`,
+        );
+      assert.equal(actual["antnest.ui.acp.close.pending_requests"], 0);
+      assert.equal(actual["antnest.ui.acp.close.stream_joined"], true);
+      assert.equal(actual["antnest.ui.acp.close.diagnostics_truncated"], false);
+    };
+    receipt(closing[0], {
+      target_observed: true,
+      delete_attempts: 1,
+      delete_responses: 1,
+      delete_completed: 1,
+      delete_status: 202,
+      failures: 0,
+    });
+    assert.equal(closing[0].events?.length ?? 0, 0);
+    for (const { mode, sourceTrace, receiverCount } of observations) {
+      const rows = spans.filter(
+        (span) =>
+          span.name === "agent_ui.acp.close" &&
+          span.links.some((link) => link.traceId === sourceTrace),
+      );
+      assert.equal(rows.length, 1);
+      const span = rows[0];
+      assert(!span.parentSpanId);
+      if (mode === "no-target") {
+        receipt(span, {
+          target_observed: false,
+          delete_attempts: 0,
+          delete_responses: 0,
+          delete_completed: 0,
+          delete_status: 0,
+          failures: 0,
+        });
+        assert.equal(
+          attribute(span, "antnest.ui.acp.close.outcome"),
+          "no_target",
+        );
+        assert.equal(receiverCount, 0);
+        assert.equal(span.events?.length ?? 0, 0);
+        continue;
+      }
+      receipt(span, {
+        target_observed: true,
+        delete_attempts: 1,
+        delete_responses: mode === "peer-stopped" ? 0 : 1,
+        delete_completed: mode === "rejected" ? 1 : 0,
+        delete_status:
+          mode === "peer-stopped" ? 0 : mode === "rejected" ? 503 : 202,
+        failures: mode === "deadline" ? 2 : 1,
+      });
+      assert.equal(attribute(span, "antnest.ui.acp.close.outcome"), "failed");
+      assert.equal(span.status.code, 2, "original ERROR status must remain");
+      assert.equal(receiverCount, mode === "peer-stopped" ? 0 : 1);
+      assert.equal(span.events?.length, mode === "deadline" ? 2 : 1);
+      for (const event of span.events)
+        assert.equal(event.name, "antnest.ui.acp.close.failure");
+      if (mode === "deadline")
+        assert.equal(rawAttributes(span.events[0]).stage, "deadline");
+      const failure = rawAttributes(span.events.at(-1));
+      assert.equal(
+        failure.stage,
+        mode === "peer-stopped"
+          ? "delete_request"
+          : mode === "rejected"
+            ? "delete_status"
+            : "delete_body",
+      );
+      if (mode === "peer-stopped") {
+        const causes = span.events[0].attributes
+          .find(({ key }) => key === "causes")
+          .value.arrayValue.values.map(({ stringValue }) => stringValue);
+        assert(causes.includes("connection_refused"), JSON.stringify(causes));
+      }
+      assert(!JSON.stringify(span).includes("fixture-connection"));
+      for (const value of ["org-1", "user-1", "agent-1"])
+        assert(
+          !JSON.stringify(span).includes(value),
+          "close diagnostics must not carry identity labels",
+        );
+    }
   } finally {
     await f?.close();
     await telemetry.shutdown();
