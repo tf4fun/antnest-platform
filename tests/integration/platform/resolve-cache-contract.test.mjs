@@ -385,7 +385,69 @@ test("Bridge load retains actual RPC attempts and the complete refresh source cl
     closure_stable_rounds: 3,
     reject_saturated_search: true,
     include_late_refresh: true,
+    owner_close_required: true,
     preserve_raw_strict_diagnostics: true,
+  });
+});
+
+test("Bridge load drains only its original UI after all responses and restores it before outage", () => {
+  assert.deepEqual(policy().admission.load_owner_lifecycle, {
+    baseline: "selected-image-and-container-process-before-first-request",
+    after: "all-100-complete-http-responses",
+    measured_window_ends_before_drain: true,
+    stopped_service: "agent-ui",
+    stop_deadline_ms: 30000,
+    require_exit_zero: true,
+    require_complete_stdout_stderr: true,
+    reject_forced_or_failed_cleanup: true,
+    collection: "after-clean-stop-before-restoration",
+    restore: {
+      target: "same-agent-ui-container",
+      image_and_configuration: "unchanged",
+      deadline_ms: 30000,
+      readiness: "healthy",
+      before: "outage-scenario",
+      on_collection_failure: true,
+    },
+    other_participants: "same-container-image-configuration-and-process",
+    exit_is_protocol_cleanup_receipt: false,
+  });
+});
+
+test("Bridge load archives the exact owner close root and real DELETE receipt", () => {
+  assert.deepEqual(policy().admission.load_owner_close, {
+    count: 1,
+    service: "agent-ui",
+    operation: "agent_ui.acp.close",
+    kind: "internal",
+    synchronous_parent: "none",
+    trigger: "requested",
+    outcome: "closed",
+    link: "exact-first-initialization-agent-ui-http-span",
+    delete: {
+      count: 1,
+      service: "agent-acp-service",
+      method: "DELETE",
+      route: "/v1/acp",
+      kind: "server",
+      parent: "owner-close-root",
+      status: 202,
+      complete_response_required: true,
+      synthetic_client_span_allowed: false,
+    },
+    independent_searches: ["agent-ui-close-roots", "acp-delete-servers"],
+    source_archive_and_stability:
+      "same-three-round-closure-as-http-and-refresh",
+    private_streams: {
+      require_complete: true,
+      normal_error_ownership: "exact-stream-scope-and-owner-close-lifecycle",
+      clock_correlation: "same-service-clock-and-actual-stop-interval",
+      enumerate_all_receipts: true,
+      fixed_stream_count: false,
+      watch_may_finish_before_close_root: true,
+      reject_early_eof_and_unclassified_errors: true,
+      preserve_original_strict_errors: true,
+    },
   });
 });
 

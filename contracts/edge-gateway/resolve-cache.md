@@ -500,6 +500,39 @@ inventories, reject saturated searches and require complete closure stable for
 three consecutive rounds, including late refresh workers. Archive every raw
 source and retain its original strict diagnostic result.
 
+Complete the measured response window before retiring its Bridge owner. Capture
+the selected images, original containers, configurations and process starts
+before the first request. Stop only that Agent UI container, require normal
+exit within 30 seconds, and inspect its complete stdout and stderr for forced
+drain or cleanup failures. Keep ACP, Identity, Gateway, Controller, Runtime and
+telemetry participants alive with their original processes. Collect and archive
+the completed traces before restarting the same UI container with its original
+image and configuration; require healthy readiness within 30 seconds before
+the outage scenario. Attempt this restoration even when collection fails and
+preserve both the original and restoration errors.
+
+A zero exit does not prove protocol cleanup. Require exactly one
+`agent-ui / agent_ui.acp.close` INTERNAL root without a synchronous parent,
+with `requested` trigger and `closed` outcome. Its unique Link must identify
+the exact Agent UI HTTP span that initialized this measured owner. Require
+one completed workspace ACP SERVER `DELETE /v1/acp`, HTTP 202, directly
+parented by that close root. Do not invent an outbound CLIENT. Independently
+search close roots and DELETE receivers and include their raw source closure
+in the same three stable rounds as the HTTP requests and refresh workers.
+
+Enumerate every actual private ACP GET and execution-state watch receipt for
+this owner; do not assume a fixed stream count. A normal UI-drain error claim
+requires the exact initial HTTP parent, matching protocol and signed scope
+where the producer records it, the complete stream, and same-service clock
+evidence relating its end to the observed stop interval. The watch can finish
+before the ACP close root because UI drain aborts the watch first. Do not
+equate host and service clocks or infer receiver timing from a different
+service's HTTP Date. Only the producer's exact `stream_interrupted` /
+`disconnected` diagnostics without extra error fields or events are eligible;
+early EOF, process shutdown, access denial and unrelated errors fail this
+claim. Keep every raw ERROR and warning, and preserve `strict_trace=failed`
+when present even when all errors have proved business ownership.
+
 For the five-second outage, warm the exact browser `workspace` scope and retain
 an established Bridge SSE with enough original cache, idle, absolute, Node CCT
 and JWKS authority remaining. Hold accepted work in one identified
