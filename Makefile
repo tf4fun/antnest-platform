@@ -526,7 +526,7 @@ e2e-skill-deployment:
 
 .PHONY: test-service-authentication-integration e2e-service-authentication-integration e2e-service-authentication-matrix
 test-service-authentication-integration:
-	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/security/run.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
+	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/support/service-grants.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/security/authenticated-peer.test.mjs tests/e2e/security/run.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
 
 .PHONY: e2e-acp-authentication
 e2e-acp-authentication:

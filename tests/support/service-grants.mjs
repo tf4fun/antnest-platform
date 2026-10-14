@@ -10,6 +10,7 @@ export const grants = {
   "acp-controller": ["agent-acp-service", "agent-controller"],
   "console-controller": ["admin-console", "agent-controller"],
   "console-identity": ["admin-console", "identity-service"],
+  "agent-ui-acp": ["agent-ui", "agent-acp-service"],
   "acp-registry": ["agent-acp-service", "skill-registry"],
   "console-registry": ["admin-console", "skill-registry"],
   "controller-runtime": ["agent-controller", "runtime-controller"],
@@ -19,6 +20,7 @@ const receiverNetworks = {
   "agent-controller": "controller-clients",
   "skill-registry": "registry-clients",
   "runtime-controller": "controller-runtime",
+  "agent-acp-service": "edge",
 };
 // Last octet of each receiver's listener in compose.yaml. A receiver can share
 // several networks with a client, and Docker DNS may answer with an address
@@ -28,6 +30,7 @@ const receiverListeners = {
   "agent-controller": 18,
   "skill-registry": 82,
   "runtime-controller": 50,
+  "agent-acp-service": 5,
 };
 const endpoints = {
   "identity-service": "http://identity-service:8080",
@@ -68,6 +71,7 @@ export function grantContainerArgs(config, wanted = []) {
 export function serviceClient({
   fetch = globalThis.fetch,
   readCredential = (grant) => readFileSync(`/run/auth/${grant}`, "utf8"),
+  identityEndpoint = endpoints["identity-service"],
 } = {}) {
   const credential = (grant) => {
     const value = readCredential(grant);
@@ -95,7 +99,7 @@ export function serviceClient({
       signal: AbortSignal.timeout(12000),
     });
   }
-  // Failures carry the path, status and error code only; never credentials.
+  // Legacy JSON callers retain the path, status and remote error code.
   async function json(url, grant, { status = 200, ...options } = {}) {
     const response = await send(url, grant, options);
     const text = await response.text();
@@ -115,7 +119,7 @@ export function serviceClient({
   // signed-in user; agentId scopes it to one Agent.
   async function callerContext(account, agentId) {
     const session = await json(
-      `${endpoints["identity-service"]}/rpc/identity/local-login`,
+      `${identityEndpoint}/rpc/identity/local-login`,
       "gateway-identity",
       { body: { request_id: randomUUID(), ...account } },
     );
@@ -126,7 +130,7 @@ export function serviceClient({
   // test browser can be turned into a Console caller context directly.
   async function sessionContext(accessToken, agentId) {
     const issued = await json(
-      `${endpoints["identity-service"]}/rpc/identity/resolve-access-token`,
+      `${identityEndpoint}/rpc/identity/resolve-access-token`,
       "gateway-identity",
       {
         body: {
@@ -138,8 +142,50 @@ export function serviceClient({
     );
     return { context: issued.caller_context, principal: issued.principal };
   }
+  // Private ACP consumers delegate the existing browser session with the
+  // route-selected workspace profile; no new login or test issuer is involved.
+  async function workspaceContext(accessToken, agentId) {
+    assert(
+      typeof agentId === "string" && agentId.trim().length > 0,
+      "workspace Agent scope is required",
+    );
+    let issued;
+    try {
+      issued = await json(
+        `${identityEndpoint}/rpc/identity/resolve-access-token`,
+        "gateway-identity",
+        {
+          body: {
+            access_token: accessToken,
+            profile: "workspace",
+            agent_id: agentId,
+          },
+        },
+      );
+    } catch {
+      throw new Error("Identity workspace Resolve request failed");
+    }
+    assert(
+      typeof issued?.caller_context === "string" &&
+        issued.caller_context.length > 0 &&
+        issued.caller_context.length <= 8192 &&
+        typeof issued.principal?.organization_id === "string" &&
+        issued.principal.organization_id.length > 0 &&
+        typeof issued.principal.user_id === "string" &&
+        issued.principal.user_id.length > 0,
+      "Identity did not issue a complete workspace context",
+    );
+    return { context: issued.caller_context, principal: issued.principal };
+  }
   const authorization = (grant) => ({
     "Antnest-Service-Authorization": `Bearer ${credential(grant)}`,
   });
-  return { send, json, callerContext, sessionContext, authorization };
+  return {
+    send,
+    json,
+    callerContext,
+    sessionContext,
+    workspaceContext,
+    authorization,
+  };
 }

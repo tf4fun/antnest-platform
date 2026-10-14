@@ -80,9 +80,10 @@ test("no grants means no user override and no mounts", () => {
   assert.throws(() => grantContainerArgs(config, ["admin-everything"]));
 });
 
-function harness(responses) {
+function harness(responses, options = {}) {
   const requests = [];
   const client = serviceClient({
+    ...options,
     readCredential: (grant) => grant[0].repeat(43),
     fetch: async (url, init) => {
       requests.push({ url, ...init });
@@ -180,4 +181,144 @@ test("credentials must be disposable token encodings", async () => {
     client.send("http://identity-service:8080/x", "gateway-identity"),
     /invalid disposable credential/u,
   );
+});
+
+test("private ACP grant uses the Agent UI credential and workspace listener", () => {
+  const { networks, args } = grantContainerArgs(config, ["agent-ui-acp"]);
+  assert.deepEqual(networks, ["edge"]);
+  assert.deepEqual(pins(args), ["--add-host=agent-acp-service:10.9.8.5"]);
+  assert(
+    args.includes(
+      "/work/credentials/agent-ui/tokens/agent-acp-service:/run/auth/agent-ui-acp:ro",
+    ),
+  );
+  assert(
+    !args.some((arg) => arg.includes("edge-gateway/tokens/agent-acp-service")),
+  );
+});
+
+test("workspace contexts reuse the exact session and scoped real Identity endpoint", async () => {
+  const principal = { organization_id: "org_1", user_id: "user_1" };
+  const { client, requests } = harness(
+    [
+      {
+        status: 200,
+        body: { caller_context: "unchanged.signed.context", principal },
+      },
+    ],
+    { identityEndpoint: "http://10.244.45.66:8080" },
+  );
+  assert.deepEqual(
+    await client.workspaceContext("browser-session", "agent_1"),
+    {
+      context: "unchanged.signed.context",
+      principal,
+    },
+  );
+  assert.equal(requests.length, 1);
+  assert.equal(
+    requests[0].url,
+    "http://10.244.45.66:8080/rpc/identity/resolve-access-token",
+  );
+  assert.equal(
+    requests[0].headers["Antnest-Service-Authorization"],
+    `Bearer ${"g".repeat(43)}`,
+  );
+  assert.deepEqual(JSON.parse(requests[0].body), {
+    access_token: "browser-session",
+    profile: "workspace",
+    agent_id: "agent_1",
+  });
+});
+
+test("workspace contexts reject missing Agent scope before reading credentials or sending", async () => {
+  const client = serviceClient({
+    readCredential: () => assert.fail("invalid scope must have no effects"),
+    fetch: () => assert.fail("invalid scope must not Resolve"),
+  });
+  for (const agent of [undefined, null, "", " ", 12])
+    await assert.rejects(
+      client.workspaceContext("session", agent),
+      /workspace Agent scope/u,
+    );
+});
+
+test("workspace contexts reject incomplete replies without including private values", async () => {
+  const secret = "private-browser-access-token";
+  for (const body of [
+    null,
+    {},
+    { caller_context: secret },
+    {
+      caller_context: { unexpected: secret },
+      principal: { organization_id: "org_1", user_id: "user_1" },
+    },
+  ]) {
+    const { client } = harness([{ status: 200, body }]);
+    await assert.rejects(
+      client.workspaceContext(secret, "agent_1"),
+      (error) => {
+        assert.match(error.message, /complete workspace context/u);
+        assert(!String(error.stack).includes(secret));
+        return true;
+      },
+    );
+  }
+});
+
+test("workspace malformed JSON reports a fixed failure without the token or response", async () => {
+  const secret = "private-access-token-in-untrusted-body";
+  const client = serviceClient({
+    readCredential: () => "g".repeat(43),
+    fetch: async () => new Response(`invalid ${secret}`, { status: 200 }),
+  });
+  await assert.rejects(client.workspaceContext(secret, "agent_1"), (error) => {
+    assert.match(error.message, /complete workspace context/u);
+    assert(!String(error.stack).includes(secret));
+    return true;
+  });
+});
+
+test("workspace failed Resolve never exposes a remote error code", async () => {
+  const secret = "private-session-in-error-code";
+  for (const body of [{ code: secret }, { error: { code: secret } }]) {
+    const { client } = harness([{ status: 503, body }]);
+    await assert.rejects(
+      client.workspaceContext(secret, "agent_1"),
+      (error) => {
+        assert.equal(
+          error.message,
+          "Identity workspace Resolve request failed",
+        );
+        assert(!String(error.stack).includes(secret));
+        assert.equal(error.cause, undefined);
+        return true;
+      },
+    );
+  }
+});
+
+test("workspace transport and body-read failures discard private exception details", async () => {
+  const secret = "private-session-in-transport-error";
+  const fail = async () => {
+    throw new Error(secret);
+  };
+  for (const fetch of [fail, async () => ({ status: 200, text: fail })]) {
+    const client = serviceClient({
+      readCredential: () => "g".repeat(43),
+      fetch,
+    });
+    await assert.rejects(
+      client.workspaceContext(secret, "agent_1"),
+      (error) => {
+        assert.equal(
+          error.message,
+          "Identity workspace Resolve request failed",
+        );
+        assert(!String(error.stack).includes(secret));
+        assert.equal(error.cause, undefined);
+        return true;
+      },
+    );
+  }
 });

@@ -25,7 +25,34 @@ make e2e-service-authentication-matrix
 ```
 
 CI provides all eleven `antnest/<image>:local` production images from the
-checkout's build inputs. The gate has a 15-minute budget, excluding image builds,
+checkout's build inputs. To preserve existing local tags, build the current
+checkout into separate candidate tags and select them through these variables:
+
+| Image              | Candidate variable                      |
+| ------------------ | --------------------------------------- |
+| agent-acp-service  | `ANTNEST_C4_AGENT_ACP_IMAGE`            |
+| agent-ui           | `ANTNEST_C4_AGENT_UI_IMAGE`             |
+| agent-controller   | `ANTNEST_E2E_AGENT_CONTROLLER_IMAGE`    |
+| edge-gateway       | `ANTNEST_E2E_GATEWAY_IMAGE`             |
+| identity-service   | `ANTNEST_E2E_IDENTITY_IMAGE`            |
+| skill-registry     | `ANTNEST_E2E_DISCOVERY_REGISTRY_IMAGE`  |
+| admin-console      | `ANTNEST_E2E_PROPAGATION_CONSOLE_IMAGE` |
+| runtime-controller | `ANTNEST_E2E_PROPAGATION_RC_IMAGE`      |
+| runtime-egress     | `ANTNEST_E2E_EGRESS_IMAGE`              |
+| temporal           | `ANTNEST_E2E_TEMPORAL_IMAGE`            |
+| antnest-runtime    | `ANTNEST_E2E_RUNTIME_IMAGE`             |
+
+The runner captures only these image selections before the fixture environment
+is isolated. Existing C4 Controller/Gateway and Runtime Controller aliases remain
+supported, but conflicting aliases fail before setup. The final Compose overlays
+and Runtime Controller preparer use the same selection. Before admission, the
+runner records selected image IDs and verifies the actual ten Compose service
+containers and fixture-owned native Runtime against them. The Runtime must also
+carry the expected Agent and managed-runtime ownership labels. A matching tag
+with a different image ID fails. The runner neither builds nor removes selected images;
+the caller owns candidate-image cleanup.
+
+The gate has a 15-minute budget, excluding image builds,
 and uses the existing ownership-checked cleanup on success, failure and normal
 interruption. It also compares retained container, running-container, network
 and volume IDs before and after cleanup.
@@ -64,17 +91,29 @@ wrong audience, actor substitution, session revocation and per-caller grants.
 It also tests the actual native Runtime's authenticated MCP/status/private
 routes and reduced anonymous liveness. Only the required sender files are
 mounted into the peer; retained credentials and decrypted model keys are unused.
+Workspace admission uses the Agent UI → ACP credential and obtains the exact
+`workspace` CCT from the owner's existing Identity session, scoped to the target
+Agent. The peer verifies its signature, owner, Agent and complete audience set,
+then forwards it unchanged. Missing and tampered CCTs fail; conflicting raw
+User/Principal/Organization/Agent hints cannot replace the signed identity.
+The success receipt must identify the expected Agent and allow its owner.
+Console and wrong-audience probes retain their original profiles. Failed
+workspace Resolve requests and peer diagnostics exclude untrusted response and
+exception details. Owner and administrator session cleanup run independently,
+and cleanup failures cannot erase the primary admission failure.
 The full flow's saved and draft model discovery both traverse Gateway → Console → Controller.
 
-The final admission passed 560 checks on all 24 created networks, 30 signed
-context/role/Runtime checks and the complete browser/lifecycle/Skill flow.
+The historical admission before Gateway 24 passed 560 checks on all 24 created
+networks, 30 signed context/role/Runtime checks and the complete
+browser/lifecycle/Skill flow. Those counts do not establish admission of the
+current Bridge consumers; each run records its actual checks and image receipts.
 `make e2e-skill-deployment` delegates to this same gate. Private bridges require
 Engine 28+ and explicit `isolated` mode; the separate production deployment gate
 passed all 51 checks after that option was added. This is token/HTTP development
 admission; it does not claim a full-platform mTLS deployment.
 
 Results, screenshots and failure diagnostics belong in the ignored
-`artifacts/verification/` tree. The matrix uses the provided local image tags
+`artifacts/verification/` tree. The matrix uses the selected image tags
 without changing them; the full integration run owns separate candidate tags.
 Both generate disposable credentials and labelled Docker resources; cleanup
 preserves retained resources.

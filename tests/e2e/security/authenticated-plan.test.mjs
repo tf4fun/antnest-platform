@@ -42,6 +42,20 @@ test("signed-context admission preserves the distinct control address and exact 
   const plan = authenticatedPlan({ ...fixture(), mode: "admission" });
   assert.equal(plan.endpoints.control, "http://10.244.45.34:8081");
   assert.equal(plan.endpoints.workspace, "http://10.244.45.5:8080");
+  assert(plan.networks.includes("antnest-lifecycle-1234abcd_edge"));
+  assert.deepEqual(
+    plan.mounts.find((mount) => mount.destination === "/run/auth/agent-ui-acp"),
+    {
+      source:
+        "/private/disposable-credentials/agent-ui/tokens/agent-acp-service",
+      destination: "/run/auth/agent-ui-acp",
+    },
+  );
+  assert(
+    !plan.mounts.some((mount) =>
+      mount.source.endsWith("edge-gateway/tokens/agent-acp-service"),
+    ),
+  );
   assert(plan.networks.includes("antnest-lifecycle-1234abcd_controller-acp"));
   assert(
     plan.mounts.some(
