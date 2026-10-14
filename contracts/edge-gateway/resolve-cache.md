@@ -9,6 +9,12 @@ session revision 22 retains this cache policy and adds the separately scoped
 [password failure consumer](../identity/password-verification.md).
 Revision 23 preserves both and activates independent
 [login admission](login-admission.md) budgets and bounded tables.
+Gateway 24 updates only policy 3's catalog reference while retiring the direct
+browser ACP transport under the [retirement policy](workspace-entry-retirement.md).
+Cache authority and resource semantics stay unchanged. Policy 3's direct-ACP
+message/handshake clauses and historical WSS measurements do not describe the
+retained Bridge. A new Bridge measurement and cache policy revision remain
+part of the separate consumer/integration delivery.
 
 ## Scope and authority
 
@@ -237,19 +243,22 @@ are still valid at delivery. This exception applies only to TTL reuse expiry;
 malformed provenance, changed authority, live/shared results, errors and any
 other expired bound keep their rejection behavior. The discarded hit cannot
 update authority age, the current principal or the next-probe schedule. Keep
-the independent stale/original CCT timers active while rechecking and joining
-cancelled workers. Preserve both real Resolve trace decisions and their source
-links. Initial HTTP/stream admission, ACP per-message admission and Activity
-retain their existing no-automatic-retry behavior.
+the independent stale/session deadlines and current returned CCT validity
+enforced while rechecking and joining cancelled workers. Preserve both real
+Resolve decisions and their source links. Initial HTTP/stream admission and
+Activity retain their existing no-automatic-retry behavior.
 
-Every stream remains bound to its original SID, identities and roles.
-Background checks and per-message admission use the same scoped resolver but
-cannot extend authority through hits. Silent output still stops within `R`;
-absolute session expiry and the original direct WebSocket handshake CCT are
-hard caps. Reconnection is required when that original CCT expires. An idle
-observation still schedules a fresh lookup/live resolution because genuine
-activity may have extended the session elsewhere. Polling availability cannot
-relax these rules.
+Every retained stream remains bound to its original SID, identities and roles.
+Background checks cannot extend authority through cache hits. Silent output
+still stops within `R`, and original absolute session expiry is a hard cap.
+An idle observation schedules fresh resolution because genuine activity may
+have extended the session elsewhere. A fresh RPC may supply a new CCT; it
+cannot mutate an old snapshot or waive the current snapshot's expiry checks.
+
+Policy 3's original-handshake CCT cap applied specifically to the now-retired
+direct Gateway WebSocket. It does not impose that old socket lifetime on the
+retained SSE routes. Private ACP consumers continue to enforce their own
+authenticated transport contract.
 
 ## Organization display
 
@@ -357,7 +366,8 @@ matching cancellation witness. This does not prove client receipt, claim an
 error, or excuse another failure; retain the original event and exact span ID.
 
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
-under the current HTTP or ACP-message root, ending before any resulting upstream
+under the current HTTP request root (historically also the retired ACP-message
+root), ending before any resulting upstream
 admission. Its `antnest.identity.resolve.` attributes include `source` from
 `rpc | cache | shared`, the server-owned `profile`, and `outcome` from
 `admitted | rejected | unavailable`. An admitted cache hit also records numeric
@@ -384,7 +394,7 @@ for a future RPC or invent a span merely to decorate a cancelled request.
 
 A half-TTL background refresh is process-owned work with its own root and a
 link to the triggering request-admission decision. It must not extend a
-finished request root or invent a current HTTP/ACP request. If a request later
+finished request root or invent a current request. If a request later
 joins that flight, its request-admission marker links to the background RPC's
 actual CLIENT span. The source Trace is validated from its process-owned root;
 the waiter's Trace still requires its actual Gateway request root. Background
@@ -422,7 +432,8 @@ in a linked source Trace, suppress raw errors/warnings or turn the original
 strict verdict into success. Final integration must reconcile the complete
 diagnostic set against the claims of all successful inspectors.
 
-Delivery order:
+Historical #59 delivery order (completed admissions are recorded in the
+[global TODO](../../TODO.md)):
 
 1. Shared policy, schemas already supplied by Identity, admission assertions
    and explicit consumer work. No owning-service implementation in this batch.
@@ -443,6 +454,14 @@ and late waiter arrival, and retry spacing after failed refresh. Fake-clock
 feed tests include slow terminal pages, blocked application, a short fourth
 page and four full pages. Check both real and cached initial stream admission
 without authority renewal or timer spin.
+
+### Historical direct-ACP measurement
+
+The following policy-3 outage/load procedure records the #59 direct-ACP
+baseline. It does not admit Gateway 24 Bridge load or outage behavior. The
+replacement must preserve the 100-call/eight-second/three-Resolve budgets,
+actual initialization/refresh accounting and five-second outage with output
+and same-Run cancellation, using the retained Bridge and a new policy revision.
 
 For the five-second Identity outage, first warm the **exact** token/profile/
 Agent scopes on established WSS/SSE connections with sufficient remaining

@@ -14,7 +14,7 @@ const headers = read("request-headers.json");
 const sorted = (values) => [...values].sort();
 
 test("session contract adopts the reserved namespace and browser input registry", () => {
-  assert.equal(session.version, 23);
+  assert.equal(session.version, 24);
   assert.equal(session.header_boundary_contract, "request-headers.json");
   assert.deepEqual(headers.reserved_prefixes, ["X-Antnest-", "Antnest-"]);
   assert.deepEqual(session.browser_headers, headers.browser_headers);
@@ -79,15 +79,11 @@ test("route allowlists separate ordinary browser fields from server identity", (
   );
 });
 
-test("declared WebSocket routes retain ACP protocols and signed caller authority", () => {
-  assert.deepEqual(headers.websocket.routes, [
-    "/api/app/agents/{agent_id}/acp",
-    "/api/app/agents/{agent_id}/v1/acp",
-    "/api/app/agents/{agent_id}/v2/acp",
-  ]);
-  assert.equal(headers.websocket.caller_context, "required");
-  assert.deepEqual(headers.websocket.browser_fields, [
-    "Sec-WebSocket-Protocol",
-  ]);
-  assert.equal(headers.websocket.hints.length, 3);
+test("Gateway header registry retires direct browser ACP transports", () => {
+  assert.equal(headers.version, 2);
+  assert.equal(Object.hasOwn(headers, "websocket"), false);
+  assert.equal(Object.hasOwn(headers.profiles, "acp-http"), false);
+  assert.equal(Object.hasOwn(headers.routes, "acp-http"), false);
+  assert.equal(headers.routes["workspace-api"].caller_context, "required");
+  assert.equal(headers.routes["workspace-events"].caller_context, "required");
 });

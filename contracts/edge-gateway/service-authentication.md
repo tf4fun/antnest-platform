@@ -7,15 +7,14 @@ complete token-profile Docker integration. The
 [rollout ledger](../platform/service-authentication-rollout.json) records both.
 
 The public Gateway listener and local `/status` retain their public catalog
-policy. Internal dependencies are Identity, Console, Agent UI, Controller and
-ACP. Startup requires the exact shared authentication mode and validates each
+policy. Gateway 24 internal dependencies are Identity, Console and Agent UI. Startup requires the exact shared authentication mode and validates each
 configured dependency's token file. Token mode also validates Gateway's receiver
 hash file (normally `{}`); Gateway exposes no internal workload business route.
 There is no legacy unauthenticated client configuration.
 
-All internal HTTP and WebSocket connections pin the configured receiver origin.
+All internal HTTP connections pin the configured receiver origin.
 Redirects are disabled. Credentials are selected from a server-owned service
-name and reloaded for each new request/connection. Missing or invalid replacement
+name and reloaded for each new request. Missing or invalid replacement
 files fail that request; a previously loaded token is never reused. TLS uses the
 platform CA, the dependency URL's DNS name and the receiver's exact service URI.
 Complete shared TLS configuration validates Gateway's own certificate identity;
@@ -26,16 +25,15 @@ limited to the explicit disposable-development token opt-in.
 The session cookie is resolved over the authenticated Identity connection for
 each initial operation. The actual server route selects the fixed profile:
 
-| Route                                   | Profile     | Agent scope                                                                                         |
-| --------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------- |
-| `/api/admin/{path...}`                  | `console`   | Agent from `/agents/{agent}/...`; other administration is organization-scoped                       |
-| Workspace bootstrap and `/api/session`  | `workspace` | None                                                                                                |
-| Workspace HTML `/workspace/{agent}/...` | `workspace` | None: SSR renders the organization discovery shell; Agent operations use separate scoped API routes |
-| Workspace bridge `agents/{agent}/...`   | `workspace` | Agent from the bridge path                                                                          |
-| Workspace execution state/watch         | `workspace` | Agent from the route                                                                                |
-| Direct ACP HTTP/WebSocket               | `acp`       | Agent from the route                                                                                |
+| Route                                         | Profile     | Agent scope                                                                   |
+| --------------------------------------------- | ----------- | ----------------------------------------------------------------------------- |
+| `/api/session` and protected session controls | `session`   | None                                                                          |
+| `/api/admin/{path...}`                        | `console`   | Agent from `/agents/{agent}/...`; other administration is organization-scoped |
+| Bridge bootstrap                              | `workspace` | None                                                                          |
+| Workspace HTML `/workspace/{agent}/...`       | `workspace` | None: SSR renders the discovery shell; operations use scoped API routes       |
+| Workspace Bridge `agents/{agent}/...`         | `workspace` | Agent from the Bridge path                                                    |
 
-Gateway requires Identity revision 14's nonempty bounded `caller_context`, keeps
+Gateway consumes Identity revision 18's nonempty bounded `caller_context`, keeps
 it in a private request context and forwards it unchanged in exactly one
 `Antnest-Caller-Context` field. Gateway trusts the authenticated issuer response;
 each consuming service verifies the CCT signature, audience and target scope.
@@ -65,9 +63,15 @@ SCIM's own `Authorization` bearer is preserved. Internal credential response
 headers are removed before writing browser responses. CCTs never enter browser
 JSON, URLs, logs or trace content.
 
-Existing bounded observation leases and per-message user-session revalidation
-remain. The direct WebSocket handshake CCT also bounds admission of new client
-messages: after its 60-second issuer lifetime the connection closes and must
-reconnect. This does not cancel accepted ACP work. In-place renewal and immediate
-long-lived stream revocation belong to #58; no custom `session/refresh` protocol
-is added here.
+Retained Bridge/admin SSE observers keep bounded leases, scoped non-touch
+Identity checks, source-age/cache/feed proof and original session identity and
+absolute expiry. A current returned CCT must remain valid; fresh live resolution
+can observe new idle eligibility and a new CCT without changing that original
+identity. Closing observation does not cancel accepted execution. Browser
+activity and account controls remain defined by the
+[session lifecycle](../identity/browser-sessions.md).
+
+The obsolete direct Gateway caller is retired separately at Controller and ACP.
+Agent UI still needs its workload callers and Identity workspace CCT audiences
+for those services. Removing Gateway URLs and outgoing files does not revoke
+receiver grants or complete deployment migration.

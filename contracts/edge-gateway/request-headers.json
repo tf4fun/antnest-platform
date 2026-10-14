@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "reserved_prefixes": ["X-Antnest-", "Antnest-"],
   "request_trailers": "discard",
   "browser_headers": ["X-Antnest-CSRF-Token", "X-Antnest-Expected-Principal"],
@@ -130,12 +130,6 @@
     "json": ["Accept", "Content-Type", "If-Match", "Idempotency-Key"],
     "events": ["Accept", "Last-Event-ID"],
     "workspace-document": ["Accept"],
-    "acp-http": [
-      "Accept",
-      "Content-Type",
-      "Acp-Connection-Id",
-      "Acp-Session-Id"
-    ],
     "scim": [
       "Accept",
       "Content-Type",
@@ -230,35 +224,11 @@
       "agent_id": "route",
       "caller_context": "required"
     },
-    "acp-http": {
-      "profile": "acp-http",
-      "hints": [
-        "X-Antnest-Organization-ID",
-        "X-Antnest-Principal-ID",
-        "X-Antnest-Agent-ID"
-      ],
-      "caller_context": "required"
-    },
     "scim": {
       "profile": "scim",
       "hints": [],
       "caller_context": "none"
     }
-  },
-  "websocket": {
-    "routes": [
-      "/api/app/agents/{agent_id}/acp",
-      "/api/app/agents/{agent_id}/v1/acp",
-      "/api/app/agents/{agent_id}/v2/acp"
-    ],
-    "browser_fields": ["Sec-WebSocket-Protocol"],
-    "hints": [
-      "X-Antnest-Organization-ID",
-      "X-Antnest-Principal-ID",
-      "X-Antnest-Agent-ID"
-    ],
-    "handshake": "library-generated; no generic proxy upgrade",
-    "caller_context": "required"
   },
   "local_handlers": "Typed clients construct downstream requests; raw browser headers and trailers are never passed to them.",
   "credentials": "Identity caller context comes from private authenticated context; workload transport adds service authentication. Only SCIM copies browser Authorization.",

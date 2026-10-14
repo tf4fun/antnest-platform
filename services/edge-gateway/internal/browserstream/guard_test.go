@@ -140,46 +140,39 @@ func TestCheckTimeoutStopsOutputBeforeJoiningSlowResolver(t *testing.T) {
 	})
 }
 
-func TestLiveIdleObservationCanExtendButAbsoluteAndHandshakeCapsCannot(t *testing.T) {
-	for _, websocket := range []bool{false, true} {
-		synctest.Test(t, func(t *testing.T) {
-			principal := streamPrincipal()
-			principal.ExpiresAt = time.Now().Add(100 * time.Millisecond)
-			principal.IdleExpiresAt = time.Now().Add(15 * time.Millisecond)
-			principal.ContextExpiresAt = time.Now().Add(80 * time.Millisecond)
-			principal.ActivityIntervalMS = 5
-			cfg := streamConfig(principal)
-			cfg.DirectWebSocket = websocket
-			cfg.Resolve = func(context.Context) (identity.Principal, error) {
-				current := principal
-				current.IdleExpiresAt = time.Now().Add(15 * time.Millisecond)
-				if current.IdleExpiresAt.After(current.ExpiresAt) {
-					current.IdleExpiresAt = current.ExpiresAt
-				}
-				current.ContextExpiresAt = time.Now().Add(time.Hour)
-				return current, nil
+func TestLiveIdleObservationCanExtendButOriginalAbsoluteCapCannot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		principal := streamPrincipal()
+		principal.ExpiresAt = time.Now().Add(100 * time.Millisecond)
+		principal.IdleExpiresAt = time.Now().Add(15 * time.Millisecond)
+		principal.ContextExpiresAt = time.Now().Add(80 * time.Millisecond)
+		principal.ActivityIntervalMS = 5
+		cfg := streamConfig(principal)
+		cfg.Resolve = func(context.Context) (identity.Principal, error) {
+			current := principal
+			current.IdleExpiresAt = time.Now().Add(15 * time.Millisecond)
+			if current.IdleExpiresAt.After(current.ExpiresAt) {
+				current.IdleExpiresAt = current.ExpiresAt
 			}
-			guard, err := Start(context.Background(), NewRegistry(), cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer guard.Close()
-			time.Sleep(20 * time.Millisecond)
-			synctest.Wait()
-			if guard.Context().Err() != nil {
-				t.Fatal("old idle observation became a permanent deadline")
-			}
-			remaining := 50 * time.Millisecond
-			if websocket {
-				remaining = 30 * time.Millisecond
-			}
-			time.Sleep(remaining)
-			synctest.Wait()
-			if guard.Context().Err() == nil {
-				t.Fatal("live checks extended an immutable hard cap")
-			}
-		})
-	}
+			current.ContextExpiresAt = time.Now().Add(time.Hour)
+			return current, nil
+		}
+		guard, err := Start(context.Background(), NewRegistry(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer guard.Close()
+		time.Sleep(20 * time.Millisecond)
+		synctest.Wait()
+		if guard.Context().Err() != nil {
+			t.Fatal("old idle observation became a permanent deadline")
+		}
+		time.Sleep(50 * time.Millisecond)
+		synctest.Wait()
+		if guard.Context().Err() == nil {
+			t.Fatal("live checks extended the original absolute hard cap")
+		}
+	})
 }
 
 func TestCloseCancelsAndJoinsLiveCheckAndRemovesRegistryEntry(t *testing.T) {

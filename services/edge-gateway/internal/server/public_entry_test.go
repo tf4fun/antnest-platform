@@ -52,7 +52,7 @@ func TestPublicOriginAdmissionUsesConfiguredBoundary(t *testing.T) {
 }
 
 func TestPublicEntryRebuildsForwardingHeaders(t *testing.T) {
-	for _, path := range []string{"/", "/scim/v2/Users", "/api/admin/overview", "/workspace/", "/api/app/workspace/v1/bootstrap", "/api/app/agents/agent-1/v1/acp"} {
+	for _, path := range []string{"/", "/scim/v2/Users", "/api/admin/overview", "/workspace/", "/api/app/workspace/v1/bootstrap", "/api/app/workspace/v1/agents/agent-1/events"} {
 		t.Run(path, func(t *testing.T) {
 			var headers http.Header
 			upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +195,7 @@ func TestLoginAdmissionIPv6AggregationPreservesForwardedAddress(t *testing.T) {
 }
 
 func TestPublicEntryDistinguishesAbsentAndEmptyOrigin(t *testing.T) {
-	for _, path := range []string{"/api/app/workspace/v1/bootstrap", "/api/app/agents/agent-1/state", "/api/app/agents/agent-1/v1/acp"} {
+	for _, path := range []string{"/api/app/workspace/v1/bootstrap", "/api/app/workspace/v1/agents/agent-1/view", "/api/app/workspace/v1/agents/agent-1/events"} {
 		for _, fixture := range []struct {
 			name    string
 			origins []string

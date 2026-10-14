@@ -1,14 +1,15 @@
 # Edge Gateway Architecture
 
 This document describes how Edge Gateway admits browser requests, binds OIDC
-transactions, routes Admin Console, Agent UI and ACP traffic, and how it fails.
+transactions, routes Admin Console and Agent UI traffic, and how it fails.
 
 For #64, the accepted [browser workspace entry decision](../../../docs/architecture/browser-workspace-entry.md)
 is option A: remove the unused direct browser stack and retain the Agent UI
 Bridge. The [shared retirement policy](../../../contracts/edge-gateway/workspace-entry-retirement.md)
 defines Gateway 24 activation, unchanged security boundaries, consumer migration
-and real two-user capacity admission. The initial shared batch leaves Gateway
-23 implementation and the existing route behavior below unchanged.
+and real two-user capacity admission. Gateway 24 removes the old routes; receiver
+credential retirement, Agent UI capacity and consumer/integration work have
+separate admission gates.
 
 ## Browser session boundary
 
@@ -104,7 +105,7 @@ Gateway revision 21 uses one process-owned Identity client and the existing
 revision 16 session-revocation feed. The [shared cache policy](../../../contracts/edge-gateway/resolve-cache.md)
 defines admission separately from the downstream service's authorization.
 The LRU key contains SHA-256 of the exact browser token, the server-selected
-`console`, `workspace`, `acp` or `session` profile, and exact Agent scope (including
+`console`, `workspace` or `session` profile, and exact Agent scope (including
 absence). Each client/issuer owns its cache; no raw browser token is retained
 in an entry. Only complete active Principals, their exact display fields and
 original private SID/CCT may enter it.
@@ -191,15 +192,14 @@ the affected business request, not by recursively disabling the entry point.
 One shared HTTP Transport creates CLIENT spans and injects their context for
 typed RPC clients, readiness-independent business calls and reverse proxies.
 The receiving service's SERVER span is a child of that CLIENT, not directly of
-the Gateway SERVER span. WebSocket handshakes use the same observation rules
-without changing the message relay or its socket configuration.
+the Gateway SERVER span.
 
 HTTP middleware and error-returning handler bindings own request diagnostics.
 Business clients return errors and preserve their causes; actual RPC CLIENT
 spans belong to the shared Transport. Resolve additionally emits a request-owned
 INTERNAL decision marker without replacing the actual RPC parent. HTTP
 observation records metadata and errors only, without Header values
-or request/response content. ACP/SCIM/Console payloads are not decoded or buffered
+or request/response content. Workspace/SCIM/Console payloads are not decoded or buffered
 for tracing. The receiving service's RPC adapter owns optional content capture;
 Gateway does not duplicate it on each HTTP hop.
 
@@ -218,9 +218,8 @@ HTTP limits/security header defaults wrapper
   -> cookie token resolution (protected routes)
   -> route-specific admission
        -> administrator + CSRF -> Admin Console
-       -> signed caller context + workload identity -> ACP local authorization
-       -> authenticated bootstrap -> Controller ID/name metadata
-       -> scoped state observation -> Agent ACP snapshot/watch
+       -> signed workspace context + workload identity -> Agent UI Bridge
+       -> scoped event observation -> leased Bridge SSE
   -> route allowlist after hop-by-hop filtering; inject verified identity
   -> Admin Console or Agent UI application proxy (no request trailers)
   -> final response commit: supply only missing security headers
@@ -240,12 +239,11 @@ It cannot restore a browser field nominated by `Connection`. Console and
 Workspace assets forward the asset profile (Accept/encoding, cache validators
 and Range); JSON APIs forward Accept, Content-Type, If-Match and Idempotency-Key;
 event streams forward Accept and Last-Event-ID. Workspace HTML forwards Accept.
-ACP HTTP adds its connection/session IDs to Accept and Content-Type. SCIM
-forwards Accept, Content-Type, Authorization, If-Match and If-None-Match.
+SCIM forwards Accept, Content-Type, Authorization, If-Match and If-None-Match.
 No browser Cookie reaches an upstream; only SCIM receives browser Authorization.
 All HTTP proxies discard request trailers, including values populated at EOF,
-while preserving the body. Only the declared ACP WebSocket routes forward
-subprotocol negotiation; generic application proxies do not forward upgrades.
+while preserving the body. No application proxy forwards a browser upgrade
+handshake; the retired direct ACP routes return 404 after outer admission.
 
 After the allowlist, authenticated routes reconstruct their presentation hints
 and caller context from the private Identity result. A validated network-policy
@@ -275,8 +273,7 @@ independent requirements after Origin admission.
 
 `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` defaults to `false`. Enabling it logs
 a warning and admits requests only when both headers are absent; it cannot
-override foreign or malformed evidence. ACP WebSocket upgrades always require
-matching Origin, regardless of this setting or Fetch Metadata. OIDC callbacks,
+override foreign or malformed evidence. OIDC callbacks,
 SCIM and document/assets routes retain their own protocol checks outside
 `/api/`. See the [public-entry contract](../../../contracts/edge-gateway/public-entry.md).
 
@@ -302,8 +299,7 @@ fallback. The wrapper preserves streaming Flush errors, response deadlines and
 WebSocket hijacking; it does not buffer response bodies.
 
 Gateway owns HSTS independently of document policies: an HTTPS public origin
-receives exactly `max-age=31536000`, including proxy responses and WebSocket
-handshakes. The configured public origin also defines the API Origin checks.
+receives exactly `max-age=31536000`, including proxy and retirement responses. The configured public origin also defines the API Origin checks.
 Trusted proxy CIDRs determine the client address used for login admission and
 diagnostics; incoming forwarding headers never pass through unchanged. See the
 [public-entry contract](../../../contracts/edge-gateway/public-entry.md).
@@ -329,8 +325,8 @@ blank metadata fails as `503 identity_unavailable`, preserving existing cookies.
 The blank check includes U+FEFF, matching the Node consumer's whitespace check;
 valid labels retain their exact UTF-8 bytes rather than being trimmed.
 The [shared projection contract](../../../contracts/agent-ui/organization-projection.md)
-defines Node decoding and the #92 → #93 → integration sequence. This Gateway
-batch does not alter the old `/api/app/bootstrap` projection tracked by #64.
+defines Node decoding and the completed #92 → #93 → integration sequence.
+The old `/api/app/bootstrap` projection is retired in Gateway 24.
 
 The Workspace API accepts only `GET` and `POST`. Each request resolves the
 browser session and replaces incoming identity headers with the verified
@@ -345,7 +341,7 @@ identity fields after that allowlist. Origin and CSRF rules are exact:
 - Every `POST` (mutation) requires a valid CSRF token, independent of Origin.
   A missing or mismatched token returns `403 csrf_failed`.
 
-Request bodies are limited to the ACP message limit (64 MiB). Ordinary requests
+Workspace HTTP request bodies are limited to 64 MiB. Ordinary requests
 have a fixed 65-second deadline so the Node service can return its own response
 deadline. `GET .../agents/{agent_id}/events` is an SSE stream: it forwards one
 validated `Last-Event-ID` (at most 4096 bytes), flushes immediately, uses one of
@@ -364,136 +360,66 @@ ACP retains durable execution authority.
 
 ## Routing
 
-Login, logout and account/session controls call Identity directly because Gateway owns the
-browser credential boundary. Every administrative command goes to Admin
-Console. Only workspace discovery calls Agent Controller's principal-scoped
-ID/name list. ACP protocol and execution-state traffic goes directly to ACP,
-without Controller lookups. Gateway never calls Runtime Controller or reads a
-service database.
+Login, logout and account/session controls call Identity directly because Gateway
+owns the browser credential boundary. Administrative commands go to Admin
+Console. All browser workspace traffic uses Agent UI at `/workspace/*` and
+`/api/app/workspace/v1/*`. Gateway has no Controller/ACP client, discovery
+fallback, execution-state projection or direct ACP protocol relay.
 
-[Workspace state observation](workspace-state.md) is a separate leased GET/SSE
-projection of ACP execution authority. Scope comes from the original browser
-principal, never from URL query fields. Typed ACP frames are bounded and
-re-encoded, with Identity revalidation before subsequent frames. Access loss,
-transport failure or lease expiry ends observation without replaying or
-cancelling ACP work. No private Run protocol or state cache is added. The
-service's stream lifecycle also cancels and drains these watches before
-telemetry shutdown; ordinary request drain remains unchanged.
+The old bootstrap, state/watch and ACP aliases return `404 not_found`,
+including implicit HEAD and upgrade variants, for both anonymous and valid
+browser sessions. They make no Identity or downstream call. Existing outer
+Origin/Fetch Metadata admission still rejects invalid requests first. The
+`/api/app/*` fallback remains a deny route, never the Console SPA.
 
-The login page discovers enabled organization OIDC methods through Edge and
-starts authorization through a typed Identity call. Identity completes the
-callback and returns its one-time access token only to Edge; Edge establishes
-the ordinary browser cookies and redirects to the application. The start
-response necessarily contains the authorization URL and its OIDC state for
-browser navigation. Callback completion/error redirects do not disclose state,
-authorization code or access token. Those values never belong in logs or span
-attributes, and the access token is never returned to browser JavaScript.
+The login page discovers organization OIDC methods through Edge and starts
+authorization through a typed Identity call. Identity completes the callback
+and returns its one-time access token only to Edge. Edge sets browser cookies
+and redirects without exposing code, state or token in completion locations.
+The start response includes the authorization URL and state for navigation;
+those values never belong in logs or span attributes.
 
-`/scim/v2` is a protocol-preserving proxy to Identity. It forwards method,
-path, query, body and its declared request header profile, including SCIM Bearer
-authorization. Browser cookies, reserved namespaces and trailers are removed.
-Identity continues to own
-token verification, scopes, SCIM semantics, and canonical error envelopes.
+`/scim/v2` forwards protocol method, path, query, body and its declared header
+profile, including the SCIM bearer. It removes browser cookies, reserved
+namespaces and trailers. Identity owns SCIM authentication, scopes, canonical
+errors and business behavior.
 
-`GET /api/app/bootstrap` returns principal display facts and accessible Agent
-IDs and names only. During a same-origin WebSocket upgrade at
-`/api/app/agents/{agent_id}/v1/acp` (stable) or
-`/api/app/agents/{agent_id}/v2/acp` (draft), Edge injects authenticated
-Organization/Principal and the route Agent ID. ACP owns Agent and Session
-authorization, including unavailable targets and protocol errors. Incoming
-cookies, authorization and forged internal identity headers are not forwarded.
+See [Workspace Bridge entry](workspace-state.md) and
+[execution ownership](execution-boundary.md). Agent UI owns browser DTOs,
+commands and reconnect/recovery; ACP retains private protocol and durable Run
+authority. Gateway does not translate disconnect into a cancel command.
 
-The existing `/api/app/agents/{agent_id}/acp` Workspace route remains a v1
-alias. Versions are an explicit route allowlist, not arbitrary upstream paths;
-unknown versions return `404`. Both versions use identical upgrade admission,
-Origin checks and trusted identity injection. Edge does not translate ACP messages or
-infer the version from their content.
+## Retained stream lifecycle
 
-After upgrade, a message relay replaces blind byte copying. Each complete
-client message is buffered within 64 MiB, then checked by scoped Resolve using
-the original browser token before forwarding. Protocol values remain unchanged,
-except W3C context in standard request/notification `params._meta`, which the
-transport tracing wrapper replaces with the actual Gateway PRODUCER context.
-Responses and non-JSON frames remain byte-for-byte unchanged. The current
-principal must be active and retain the same SID, User/Organization/Membership and roles;
-authentication cannot switch identity inside an existing connection. One
-message per direction is processed at a time, so a message waiting for Identity
-cannot bypass the check through fragmentation or pipelining. Independent
-directions permit client messages while ACP emits output; cancellation and
-client replies are subject to the same session check as every other message.
+Only Workspace Bridge events and administrator Agent event watches are managed
+receive streams. Their guard starts before opening the upstream, binds the
+original SID, User/Organization/Membership and roles, and checks Identity without
+recording activity, including during quiet periods.
 
-Revocation/expiry closes both hops with 1008; dependency failure uses 1013.
-These are transport outcomes, not invented ACP errors. No cookies or Bearer
-tokens reach ACP. Each request owns its decision marker; a shared waiter links
-the exact actual RPC CLIENT, and background refresh owns a separate root linked
-to its trigger. Diagnostics expose only stable result classes. Writes and dependency calls are bounded by the
-request timeout; connection cancellation closes both sockets and joins relay
-workers. Signal or listener failure stops new upgrades, cancels WebSocket
-contexts and waits for handlers (including their telemetry) within the shutdown
-deadline. Ordinary HTTP requests retain their graceful drain window; their
-contexts are not tied directly to the process signal.
+The maximum stale bound is `R = 30s`. Check interval and RPC budget are at most
+`min(R/3, activity_interval_ms)`. The hard deadline uses the actual source
+Resolve RPC start, including RPC latency and at most `min(1s, R/3)` for closing
+the connection. Initial admission must fit that budget before opening upstream.
+A cached snapshot does not reset source age; probe wait and scheduling time
+remain separate. Every returned snapshot must retain valid idle, absolute and
+CCT deadlines. Fresh live resolution may observe renewed idle eligibility and
+a new CCT, but cannot change the original identity or absolute session cap.
 
-All long-lived browser transports also run independent non-touch checks while
-quiet: administrator Agent events, Workspace state, Workspace API events, ACP
-v1 HTTP receive (including its alias), and both direct WebSocket versions.
-The guard starts before opening the upstream. It binds the original SID,
-User/Organization/Membership and roles, with maximum stale bound `R = 30s`.
-The check interval and RPC budget are at most `min(R/3, activity_interval_ms)`.
-Each hard stale deadline is anchored to the actual source Resolve RPC start,
-including RPC latency
-and at most `min(1s, R/3)` for socket closure. Initial resolution is bounded by
-`R/3`, then by the returned hint; a late successful response cannot open a stream.
-Current probe wait/scheduling time is separate from that source age. A cached
-snapshot may be older than the scheduling hint when every authority deadline,
-proof and stale-output budget remains valid; a hit cannot reset source age.
-Live/shared results must also satisfy the actual RPC duration budget.
-Idle expiry schedules a fresh check, so activity through another replica can
-extend it. Absolute expiry and the direct WebSocket's original handshake CCT
-remain hard caps. Fresh CCTs never extend an existing direct WebSocket.
+One main-owned private revocation-feed poller accelerates closure and fences
+cached authority. It starts at cursor zero, applies at most 500 events per page
+and four pages per catch-up pass, and retains no event cache. Missing or stale
+catch-up proof requires live Resolve; feed failures never waive bounded checks.
 
-One main-owned private revocation-feed poller accelerates closure through the
-active SID registry. It starts at cursor zero, uses pages of at most 500 and at
-most four pages per catch-up pass, and retains no event cache. The same events
-fence cached authority, with terminal-page catch-up proof as described above.
-Feed failure, backlog, restart or a register/poll race cannot weaken independent
-bounded checks; stale proof forces live Resolve.
-Cancellation interrupts blocked HTTP writes and both WebSocket directions;
-later frame deadlines cannot reopen a cancelled write. Guard workers, relay
-workers and callbacks are joined, and HTTP deadlines clear only after completion.
+Cancellation interrupts blocked browser writes even when the request carries
+Upgrade headers. Later write deadlines cannot reopen a cancelled stream.
+Signal or listener failure stops new streams, cancels upstream receive requests
+and joins handlers, guard workers and telemetry. Ordinary HTTP, including
+Bridge commands and prompts, keeps graceful drain.
 
-Stream closure does not cancel previously admitted ACP work. A check overlapping
-revocation can authorize a message even if ACP creates its Run after logout
-returns. A check started after authoritative revocation completes must reject;
-there is no distributed transaction between that check and ACP Run creation.
-ACP retains responsibility for Agent access revision, Session ownership and
-durable Run behavior; it does not receive browser credentials.
-
-## ACP Streamable HTTP
-
-The v1 route and its alias also accept POST/GET/DELETE Streamable HTTP through
-an opaque reverse proxy to ACP `/v1/acp`, relaying the official SDK transport.
-The draft v2 endpoint is WebSocket-only. Gateway does not interpret ACP methods.
-Each request repeats browser authentication with the existing login cookies;
-ACP owns resource authorization. POST and DELETE also require
-`X-Antnest-CSRF-Token` matching the authenticated session derivation, independently of the shared
-API Origin admission. Non-browser HTTP clients send the configured public
-Origin; the originless compatibility setting does not waive authentication
-or CSRF. WebSocket upgrades always require a
-matching Origin. Only `Content-Type`, `Accept`, `Acp-Connection-Id` and
-`Acp-Session-Id` are forwarded from the client, with trusted identity and trace
-context injected by Edge. Responses preserve ACP routing headers.
-
-GET SSE responses are flushed immediately and bounded by the browser-session
-guard and `ANTNEST_EDGE_STREAM_LEASE`, not an ordinary short request timeout.
-They consume receive-connection
-capacity separately from POST/DELETE message admission. Cancelling the client
-HTTP request cancels the upstream receive request; it does not become a
-session/cancel command. ACP Service owns connection IDs, expiry and recovery;
-Gateway owns no ACP connection registry. HTTP reuses the new-message admission
-policy above, including its explicit already-admitted-work boundary. Gateway
-does not translate browser-session closure into Run cancellation;
-ACP owns access updates, output subscription revocation, reconnect and
-connection expiry.
+Closing an observer does not cancel an accepted Run. A request whose admission
+overlaps revocation can have a later business effect; there is no distributed
+transaction between the Identity check and downstream Run creation. Downstream
+services still enforce resource access, Session ownership and durable execution.
 
 ## Login, Logout and Protocol Routes
 
@@ -538,7 +464,7 @@ canonical SCIM `503` envelope rather than a browser API error.
   administrator routes;
 - a state-changing request with a missing or mismatched CSRF token returns
   `403` without reaching Admin Console;
-- Identity, Agent Controller, ACP, Console, Agent UI, or SCIM transport failure
+- Identity, Console, Agent UI, or SCIM transport failure
   returns `503` with a stable route-specific error code;
 - exhausted login admission returns `429` before Identity password verification;
 - retryable logout revocation failure returns `503` and preserves the cookies
@@ -560,16 +486,16 @@ The [platform authentication contract](../../../contracts/platform/service-authe
 and [Gateway forwarding contract](../../../contracts/edge-gateway/service-authentication.md)
 define the implemented internal connection boundary. Each dependency origin
 has a distinct token file or verified mTLS service identity. Tokens are re-read
-for HTTP requests and WebSocket handshakes. Browser-supplied service/CCT headers
+for each HTTP request. Browser-supplied service/CCT headers
 and both complete reserved namespaces are removed; CSRF is kept privately for
-local comparison. Identity revision 16 resolves the session with a fixed
+local comparison. Identity revision 18 resolves the session with a fixed
 server-selected audience profile and target Agent; Gateway forwards its CCT
 unchanged from private request context. Internal credential response headers and upstream Set-Cookie
 are removed, and principal JSON never serializes the CCT.
 
-Direct WebSockets require the original session and an unexpired handshake CCT.
-Hard expiry closes quiet connections as well as active ones and requires
-reconnect; it does not cancel previously accepted ACP work. Console and Agent UI
+Retained SSE checks keep the original session identity, current snapshot CCT
+validity and bounded source age. Closing observation does not cancel an
+accepted Run. Console and Agent UI
 implement browser activity, account controls and request generations. Scripted
 consumers adopt replacement credentials and non-touch reads; the separate
 `make e2e-browser-sessions-https` target verifies the browser workflow. The earlier

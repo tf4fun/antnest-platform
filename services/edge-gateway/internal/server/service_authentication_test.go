@@ -62,23 +62,16 @@ func (s *selectedIdentity) Resolve(ctx context.Context, _ string) (identity.Prin
 func TestGatewaySelectsCallerScopeFromActualRoute(t *testing.T) {
 	for _, route := range []struct{ path, profile, agent string }{
 		{"/api/session", "session", ""},
-		{"/api/app/bootstrap", "workspace", ""},
 		{"/api/admin/agents", "console", ""},
 		{"/api/admin/agents/agent-1/events/watch", "console", "agent-1"},
 		{"/workspace/agent-1/sessions/session-1", "workspace", ""},
 		{"/api/app/workspace/v1/bootstrap", "workspace", ""},
 		{"/api/app/workspace/v1/agents/agent-1/configuration", "workspace", "agent-1"},
-		{"/api/app/agents/agent-1/state", "workspace", "agent-1"},
-		{"/api/app/agents/agent-1/acp", "acp", "agent-1"},
 	} {
 		t.Run(route.path, func(t *testing.T) {
 			issuer := &selectedIdentity{identityServiceStub: identityServiceStub{resolvePrincipal: administratorPrincipal()}}
 			h := newTestHandler(t, issuer, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }), time.Now())
 			r := newBrowserRequest("GET", route.path+"?profile=console&agent_id=forged", nil)
-			// State explicitly rejects query fields before authentication.
-			if route.path == "/api/app/agents/agent-1/state" {
-				r.URL.RawQuery = ""
-			}
 			addSessionCookies(r, "token", "csrf")
 			r.Header.Set(HeaderAgentID, "forged")
 			r.Header.Set("Antnest-Caller-Context", "attacker")
@@ -111,15 +104,5 @@ func TestGatewayCSRFIsLocalAndRejectsDuplicateFields(t *testing.T) {
 		if duplicate && (w.Code != 403 || called) || !duplicate && (w.Code != 200 || !called) {
 			t.Fatalf("duplicate=%v status=%d called=%v", duplicate, w.Code, called)
 		}
-	}
-}
-
-func TestWebSocketCannotAdmitNewMessageAfterCallerContextExpires(t *testing.T) {
-	principal := ordinaryPrincipal()
-	principal.ContextExpiresAt = time.Now().Add(-time.Second)
-	h := newTestHandler(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, http.NotFoundHandler(), time.Now()).(*handler)
-	end := h.checkRelaySession(context.Background(), "valid-user-token", principal)
-	if end == nil || end.code != 1008 || end.reason != "caller_context_expired" {
-		t.Fatalf("expired handshake context admitted a new message: %v", end)
 	}
 }

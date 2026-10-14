@@ -310,3 +310,34 @@ test("unused Gateway callers retire in receiver-owned batches without stripping 
   );
   assert.equal(value.agent_ui_urls_and_networks, "preserved");
 });
+
+test("Gateway activation removes legacy catalogs while retaining Bridge capacity and authority", () => {
+  const value = policy();
+  const gateway = contract("edge-gateway/session-contract.json");
+  const headers = contract("edge-gateway/request-headers.json");
+  const cache = contract("edge-gateway/resolve-cache-policy.json");
+  assert.equal(gateway.version, value.activation.gateway_version);
+  assert.equal(
+    gateway.workspace_entry_retirement_policy,
+    "workspace-entry-retirement-policy.json",
+  );
+  assert.equal(headers.version, value.activation.header_registry_version);
+  assert.equal(cache.gateway_session_revision, gateway.version);
+  assert.equal(
+    gateway.routes.workspace_bridge_api.maximum_body_bytes,
+    64 * 1024 * 1024,
+  );
+  assert.equal(
+    gateway.routes.workspace_bridge_events.maximum_concurrent_streams,
+    64,
+  );
+  assert.equal(Object.hasOwn(gateway.origin_admission, "websocket"), false);
+  assert.equal(
+    Object.hasOwn(
+      gateway.session_lifecycle.stream_revalidation,
+      "direct_acp_websocket_cct",
+    ),
+    false,
+  );
+  assert.equal(Object.hasOwn(headers, "websocket"), false);
+});

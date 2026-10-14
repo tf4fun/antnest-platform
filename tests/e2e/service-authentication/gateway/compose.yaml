@@ -28,8 +28,6 @@ services:
       ANTNEST_IDENTITY_SERVICE_URL: http://dependencies:8101
       ANTNEST_ADMIN_CONSOLE_URL: http://dependencies:8102
       ANTNEST_AGENT_UI_URL: http://dependencies:8103
-      ANTNEST_AGENT_CONTROLLER_URL: http://dependencies:8104
-      ANTNEST_AGENT_ACP_URL: http://dependencies:8105
       ANTNEST_EDGE_COOKIE_SECURE: "true"
       ANTNEST_EDGE_CSRF_KEY_FILE: /run/auth/csrf.key
       ANTNEST_EDGE_PUBLIC_ORIGIN: http://127.0.0.1

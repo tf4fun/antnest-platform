@@ -8,17 +8,15 @@ import { fileURLToPath } from "node:url";
 
 const label = "io.antnest.gateway-shutdown-test";
 const routes = [
-  "/api/app/agents/agent-1/state/watch",
-  "/api/app/agents/agent-1/v1/acp",
-  "/api/app/agents/agent-1/acp",
-  "/api/admin/agents/agent-1/events/watch",
   "/api/app/workspace/v1/agents/agent-1/events",
+  "/api/app/workspace/v1/agents/agent-2/events",
+  "/api/app/workspace/v1/agents/agent-3/events",
+  "/api/admin/agents/agent-1/events/watch",
+  "/api/admin/agents/agent-2/events/watch",
 ];
 
 const dependencyPorts = {
   "identity-service": 8080,
-  "agent-controller": 8081,
-  "agent-acp-service": 8082,
   "admin-console": 8083,
   "agent-ui": 8084,
 };
@@ -103,25 +101,35 @@ function upstream() {
         json({ events: [], next_sequence: input.after_sequence });
         return;
       }
-      const statePath = "/rpc/agent-acp/watch-agent-execution-state";
+      const bridge = path.startsWith("/api/app/workspace/v1/");
       if (
-        request.method !== (path === statePath ? "POST" : "GET") ||
-        ![statePath, "/v1/acp", routes[3], routes[4]].includes(path)
+        request.method !== "GET" ||
+        !routes.includes(path) ||
+        service !== (bridge ? "agent-ui" : "admin-console")
       ) {
         unexpected.push({ method: request.method, path });
         response.writeHead(404).end();
         return;
       }
-      if ([statePath, "/v1/acp", routes[4]].includes(path)) {
-        assert.equal(request.headers["x-antnest-organization-id"], "org-1");
+      const agent = path.split("/")[bridge ? 6 : 4];
+      assert.equal(request.headers["x-antnest-organization-id"], "org-1");
+      assert.equal(request.headers["x-antnest-user-id"], "user-admin");
+      assert.equal(request.headers["x-antnest-membership-id"], "member-1");
+      if (bridge) {
         assert.equal(request.headers["x-antnest-principal-id"], "user-admin");
-        assert.equal(request.headers["x-antnest-agent-id"], "agent-1");
-        assert.equal(
-          request.headers["x-antnest-agent-access-subject"],
-          undefined,
-        );
-        assert.equal(request.headers.cookie, undefined);
+        assert.equal(request.headers["x-antnest-agent-id"], agent);
+        assert.equal(request.headers["x-antnest-administrator"], "true");
+      } else {
+        assert.equal(request.headers["x-antnest-principal-id"], undefined);
+        assert.equal(request.headers["x-antnest-agent-id"], undefined);
+        assert.equal(request.headers["x-antnest-system-role"], "admin");
+        assert.equal(request.headers["x-antnest-organization-role"], "admin");
       }
+      assert.equal(
+        request.headers["x-antnest-agent-access-subject"],
+        undefined,
+      );
+      assert.equal(request.headers.cookie, undefined);
       assert(request.headers["antnest-caller-context"], "missing trusted CCT");
       opened++;
       watches.add(response);
@@ -131,18 +139,7 @@ function upstream() {
       });
       response.setHeader("Content-Type", "text/event-stream");
       response.flushHeaders();
-      if (path === statePath) {
-        response.write(
-          `event: workspace_state\ndata: ${JSON.stringify({
-            agent_id: "agent-1",
-            availability: "ready",
-            access_allowed: true,
-            configuration_revision: "a".repeat(64),
-            unavailable_reason: null,
-            active_session_id: null,
-          })}\n\n`,
-        );
-      }
+      response.write("event: ready\ndata: {}\n\n");
     });
     server.listen(port, "0.0.0.0");
     return server;
@@ -264,8 +261,6 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
     `type=bind,source=${credentials},target=/run/auth,readonly`,
     ...Object.entries({
       IDENTITY_SERVICE: 8080,
-      AGENT_CONTROLLER: 8081,
-      AGENT_ACP: 8082,
       ADMIN_CONSOLE: 8083,
       AGENT_UI: 8084,
     }).flatMap(([service, port]) => [
@@ -311,15 +306,14 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
         headers: {
           Cookie: "__Host-antnest_session=fixture-token",
           Accept: "text/event-stream",
-          "Acp-Connection-Id": "fixture-connection",
         },
       });
       if (response.status !== 200) {
-        const body = await response.text();
+        await response.body?.cancel();
         const diagnostic = await fetch(`${backendURL}/test/state`, { signal });
         const state = await diagnostic.text();
         throw new Error(
-          `stream did not open: ${path} status=${response.status} response=${body} upstream=${state}`,
+          `stream did not open: ${path} status=${response.status} upstream=${state}`,
         );
       }
       receives.push(
@@ -369,6 +363,7 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
     signals: ["SIGTERM", "SIGINT"],
     restart: "passed",
     receiveRoutes: routes.length,
+    receiveFamilies: ["workspace-bridge-events", "admin-agent-watch"],
     upstreamCancellations: routes.length * 2,
     exitCodes: [0, 0],
   };

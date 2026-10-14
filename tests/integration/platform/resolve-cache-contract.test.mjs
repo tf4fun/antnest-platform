@@ -14,11 +14,12 @@ const identity = contract("identity/identity-contract.json");
 const policy = () => contract("edge-gateway/resolve-cache-policy.json");
 
 test("Gateway cache revision reuses the issued Identity wire contract", () => {
-  assert.equal(gateway.version, 23);
+  assert.equal(gateway.version, 24);
   assert.equal(gateway.identity_resolve_cache, "resolve-cache-policy.json");
   const value = policy();
   assert.equal(value.contract, "antnest.edge-gateway.resolve-cache");
   assert.equal(value.revision, 3);
+  assert.equal(value.gateway_session_revision, gateway.version);
   assert.equal(value.identity_revision, identity.revision);
   assert.equal(identity.revision, 18);
   assert.equal(

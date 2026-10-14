@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,50 +10,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
-
-func TestPerMessageResolveChecksActualAuthorityAndInvocationTiming(t *testing.T) {
-	for _, scenario := range []struct {
-		name  string
-		valid bool
-	}{
-		{"valid-old-hit", true}, {"old-authority", false}, {"expired-cache", false},
-		{"partial-provenance", false}, {"slow-live-rpc", false}, {"slow-hit-invocation", false}, {"cache-expired-during-delivery", false},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				principal := administratorPrincipal()
-				principal.ActivityIntervalMS = 10
-				principal.ResolveStartedAt, principal.ResolveCompletedAt = time.Now().Add(-20*time.Millisecond), time.Now().Add(-19*time.Millisecond)
-				principal.ResolveValidUntil, principal.ResolveCacheHit = time.Now().Add(time.Second), true
-				service := &streamIdentity{principal: principal}
-				switch scenario.name {
-				case "old-authority":
-					service.principal.ResolveStartedAt = time.Now().Add(-60 * time.Millisecond)
-				case "expired-cache":
-					service.principal.ResolveValidUntil = time.Now()
-				case "partial-provenance":
-					service.principal.ResolveCompletedAt = time.Time{}
-				case "slow-live-rpc":
-					service.principal.ResolveCacheHit = false
-					service.principal.ResolveCompletedAt = time.Now()
-				case "slow-hit-invocation":
-					service.initialDelay = 20 * time.Millisecond
-				case "cache-expired-during-delivery":
-					service.principal.ResolveValidUntil = time.Now().Add(time.Millisecond)
-					service.initialDelay = 2 * time.Millisecond
-				}
-				h := &handler{identity: service, maximumSessionStale: 90 * time.Millisecond, requestTimeout: time.Second}
-				err := h.validateStreamIdentity(context.Background(), "token", principal)
-				if scenario.valid != (err == nil) {
-					t.Fatalf("per-message cached authority valid=%v err=%v", scenario.valid, err)
-				}
-			})
-		})
-	}
-}
 
 func TestWorkspaceSSEPeriodicCacheDeliveryExpiry(t *testing.T) {
 	for _, scenario := range []string{"fresh-recheck", "expired-recheck", "blocked-recheck"} {
@@ -102,29 +61,53 @@ func TestWorkspaceSSEPeriodicCacheDeliveryExpiry(t *testing.T) {
 					return current
 				}
 				second := make(chan struct{})
-				execution := &executionServiceStub{watchState: func(ctx context.Context, emit agentacp.WorkspaceStateEmitter) error {
-					if err := emit(readyState()); err != nil {
-						return err
-					}
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case <-second:
-					}
-					if err := emit(readyState()); err != nil {
-						return err
-					}
-					<-ctx.Done()
-					return ctx.Err()
-				}}
-				h := newTestHandlerWithServices(t, service, &agentServiceStub{}, execution, http.NotFoundHandler(), started, Config{}).(*handler)
+				producerDone := make(chan struct{})
+				cancelHookDone := make(chan struct{})
+				transportStarted := false
+				h := newTestHandler(t, service, http.NotFoundHandler(), started).(*handler)
+				h.workspaceBridgeProxy.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					transportStarted = true
+					reader, writer := io.Pipe()
+					go func() {
+						defer close(cancelHookDone)
+						<-request.Context().Done()
+						_ = writer.CloseWithError(request.Context().Err())
+					}()
+					go func() {
+						defer close(producerDone)
+						defer func() { _ = writer.Close() }()
+						for frame := range 2 {
+							if frame > 0 {
+								select {
+								case <-request.Context().Done():
+									return
+								case <-second:
+								}
+							}
+							if _, err := io.WriteString(writer, "event: view\ndata: {\"agentId\":\"agent-1\"}\n\n"); err != nil {
+								return
+							}
+						}
+						<-request.Context().Done()
+					}()
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: reader, Request: request}, nil
+				})
 				h.requestTimeout, h.maximumSessionStale = 15*time.Second, 30*time.Second
 				h.now = time.Now
 				ctx, cancel := context.WithCancel(context.Background())
 				response := httptest.NewRecorder()
 				done := make(chan struct{})
-				go func() { defer close(done); h.ServeHTTP(response, stateRequest("/watch").WithContext(ctx)) }()
-				defer func() { cancel(); <-done }()
+				request := newBrowserRequest(http.MethodGet, "/api/app/workspace/v1/agents/agent-1/events", nil).WithContext(ctx)
+				addSessionCookies(request, "token-1", testCSRFToken)
+				go func() { defer close(done); h.ServeHTTP(response, request) }()
+				defer func() {
+					cancel()
+					<-done
+					if transportStarted {
+						<-producerDone
+						<-cancelHookDone
+					}
+				}()
 				time.Sleep(10*time.Second + 3*time.Millisecond)
 				synctest.Wait()
 				if calls != 3 {
@@ -143,12 +126,17 @@ func TestWorkspaceSSEPeriodicCacheDeliveryExpiry(t *testing.T) {
 					}
 					close(second)
 					synctest.Wait()
-					if calls != 4 {
-						t.Fatalf("second frame did not keep its own admission: calls=%d", calls)
+					if calls != 3 {
+						t.Fatalf("Bridge frame unexpectedly changed periodic Resolve accounting: calls=%d", calls)
 					}
 					wantFrames = 2
 					cancel()
 				case "blocked-recheck":
+					select {
+					case <-done:
+						t.Fatal("blocked periodic recheck closed before its original deadline")
+					default:
+					}
 					time.Sleep(time.Until(started.Add(20 * time.Second)))
 				}
 				if scenario != "fresh-recheck" {
@@ -160,8 +148,8 @@ func TestWorkspaceSSEPeriodicCacheDeliveryExpiry(t *testing.T) {
 					}
 				}
 				<-done
-				if response.Code != http.StatusOK || strings.Count(response.Body.String(), "event: workspace_state\n") != wantFrames || len(response.Result().Cookies()) != 0 || len(h.stateConnections) != 0 {
-					t.Fatalf("SSE admission/cleanup changed: status=%d frames=%d capacity=%d", response.Code, strings.Count(response.Body.String(), "event: workspace_state\n"), len(h.stateConnections))
+				if response.Code != http.StatusOK || strings.Count(response.Body.String(), "event: view\n") != wantFrames || len(response.Result().Cookies()) != 0 || len(h.bridgeStreams) != 0 {
+					t.Fatalf("SSE admission/cleanup changed: status=%d frames=%d capacity=%d", response.Code, strings.Count(response.Body.String(), "event: view\n"), len(h.bridgeStreams))
 				}
 			})
 		})
@@ -179,12 +167,7 @@ func TestCachedPrincipalAdmitsEverySSEEntryWithoutCookieWrites(t *testing.T) {
 				<-r.Context().Done()
 				w.Header().Set("Content-Type", "text/event-stream")
 			})
-			execution := &executionServiceStub{watchState: func(ctx context.Context, _ agentacp.WorkspaceStateEmitter) error {
-				close(entered)
-				<-ctx.Done()
-				return ctx.Err()
-			}}
-			h := newTestHandlerWithServices(t, service, &agentServiceStub{}, execution, upstream, time.Now(), Config{})
+			h := newTestHandler(t, service, upstream, time.Now())
 			ctx, cancel := context.WithCancel(context.Background())
 			request := newBrowserRequest("GET", route.path, nil).WithContext(ctx)
 			addSessionCookies(request, "token", testCSRFToken)
@@ -204,18 +187,6 @@ func TestCachedPrincipalAdmitsEverySSEEntryWithoutCookieWrites(t *testing.T) {
 			if len(response.Result().Cookies()) != 0 {
 				t.Fatal("cache-hit stream admission rewrote browser cookies")
 			}
-		})
-	}
-}
-
-func TestCachedPrincipalAdmitsBothWebSocketVersionsAndMessages(t *testing.T) {
-	for _, version := range []string{"v1", "v2"} {
-		t.Run(version, func(t *testing.T) {
-			fixture := newRelayFixture(t, version, func(h *handler) {
-				service := h.identity.(*relayIdentity)
-				service.principal = cacheStreamPrincipal(service.principal)
-			})
-			fixture.roundTrip(t, `{"jsonrpc":"2.0","id":1,"method":"session/list"}`)
 		})
 	}
 }

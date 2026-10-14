@@ -28,22 +28,6 @@ func NewHTTPTransport(base http.RoundTripper) http.RoundTripper {
 	return &httpTransport{base: base}
 }
 
-// Socket configuration belongs to the underlying transport, not its tracing
-// decorator. Gorilla's WebSocket handshake does not use RoundTrip.
-func BaseHTTPTransport(transport http.RoundTripper) http.RoundTripper {
-	for {
-		wrapped, ok := transport.(*httpTransport)
-		if !ok {
-			break
-		}
-		transport = wrapped.base
-	}
-	if transport == nil {
-		return http.DefaultTransport
-	}
-	return transport
-}
-
 func (t *httpTransport) CloseIdleConnections() {
 	if closer, ok := t.base.(interface{ CloseIdleConnections() }); ok {
 		closer.CloseIdleConnections()

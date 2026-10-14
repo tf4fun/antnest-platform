@@ -77,12 +77,6 @@ func TestEveryRegisteredBrowserHeaderIsBoundedAtEveryHTTPProxyFamily(t *testing.
 		{"workspace-api", "GET", "/api/app/workspace/v1/agents/agent-1/configuration"},
 		{"workspace-api", "POST", "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
 		{"workspace-events", "GET", "/api/app/workspace/v1/agents/agent-1/events"},
-		{"acp-http", "GET", "/api/app/agents/agent-1/acp"},
-		{"acp-http", "POST", "/api/app/agents/agent-1/acp"},
-		{"acp-http", "DELETE", "/api/app/agents/agent-1/acp"},
-		{"acp-http", "GET", "/api/app/agents/agent-1/v1/acp"},
-		{"acp-http", "POST", "/api/app/agents/agent-1/v1/acp"},
-		{"acp-http", "DELETE", "/api/app/agents/agent-1/v1/acp"},
 		{"scim", "GET", "/scim/v2/Users"},
 		{"scim", "POST", "/scim/v2/Users"},
 		{"scim", "PUT", "/scim/v2/Users/user-1"},
@@ -183,7 +177,7 @@ func TestProxyAllowlistsDoNotRestoreConnectionNominatedBrowserFields(t *testing.
 		{http.MethodPut, "/api/admin/agents/agent-1/network-policy"},
 		{http.MethodPost, "/scim/v2/Users"},
 		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
-		{http.MethodPost, "/api/app/agents/agent-1/v1/acp"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/commands"},
 	} {
 		t.Run(route.path, func(t *testing.T) {
 			calls := 0
@@ -199,11 +193,7 @@ func TestProxyAllowlistsDoNotRestoreConnectionNominatedBrowserFields(t *testing.
 					if values := boundaryHeaderValues(request.Header, "Antnest-Caller-Context"); len(values) != 1 || values[0] != "trusted-issuer-context" {
 						t.Error("server-issued caller context was not injected exactly once")
 					}
-					principalHeader := HeaderUserID
-					if strings.HasPrefix(route.path, "/api/app/agents/") {
-						principalHeader = HeaderPrincipalID
-					}
-					if values := boundaryHeaderValues(request.Header, principalHeader); len(values) != 1 || values[0] != "user-admin" {
+					if values := boundaryHeaderValues(request.Header, HeaderUserID); len(values) != 1 || values[0] != "user-admin" {
 						t.Error("server-owned principal was not injected exactly once")
 					}
 				}
@@ -243,7 +233,7 @@ func TestHTTPProxiesDiscardBrowserTrailersWithoutChangingBody(t *testing.T) {
 		{http.MethodPost, "/api/admin/agents"},
 		{http.MethodPost, "/scim/v2/Users"},
 		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
-		{http.MethodPost, "/api/app/agents/agent-1/v1/acp"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/commands"},
 	} {
 		t.Run(route.path, func(t *testing.T) {
 			calls := 0

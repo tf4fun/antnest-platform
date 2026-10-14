@@ -22,7 +22,7 @@ test("login admission has its own policy and active Gateway implementation", () 
     gateway_version: 23,
     active_catalog_changes_with_owning_implementation: true,
   });
-  assert.equal(gateway.version, value.activation.gateway_version);
+  assert.equal(gateway.version, 24); // Login activation remains historical revision 23.
   assert.equal(value.owner, "edge-gateway-process");
   assert.equal(value.distributed_quota, false);
 });

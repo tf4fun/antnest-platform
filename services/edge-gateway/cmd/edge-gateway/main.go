@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
@@ -58,7 +56,7 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 	}
 	internal, err := serviceauth.LoadOutbound("edge-gateway", serviceauth.GatewayHeaders, lookup, map[string]string{
 		"identity-service": cfg.IdentityURL, "admin-console": cfg.AdminConsoleURL,
-		"agent-ui": cfg.AgentUIURL, "agent-controller": cfg.AgentControllerURL, "agent-acp-service": cfg.AgentACPURL,
+		"agent-ui": cfg.AgentUIURL,
 	})
 	if err != nil {
 		return fmt.Errorf("load internal authentication: %w", err)
@@ -99,14 +97,6 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		return fmt.Errorf("create Identity client: %w", err)
 	}
 	defer identityClient.Close()
-	agentClient, err := agentcontroller.NewClient(cfg.AgentControllerURL, httpClient)
-	if err != nil {
-		return fmt.Errorf("create Agent Controller client: %w", err)
-	}
-	executionClient, err := agentacp.NewClient(cfg.AgentACPURL, httpClient)
-	if err != nil {
-		return fmt.Errorf("create Agent ACP client: %w", err)
-	}
 	sessions, err := session.NewManager(session.Config{Secure: cfg.CookieSecure, CSRFKey: csrfKey})
 	if err != nil {
 		return fmt.Errorf("create session manager: %w", err)
@@ -116,12 +106,12 @@ func run(ctx context.Context, lookup serviceauth.LookupEnv) (resultErr error) {
 		AllowOriginlessMutations: cfg.AllowOriginlessMutations,
 		PublicOrigin:             cfg.PublicOrigin, TrustedProxies: cfg.TrustedProxies,
 		AdminConsoleURL: cfg.AdminConsoleURL, AgentUIURL: cfg.AgentUIURL,
-		AgentACPURL: cfg.AgentACPURL, IdentityURL: cfg.IdentityURL, RequestTimeout: cfg.RequestTimeout,
+		IdentityURL: cfg.IdentityURL, RequestTimeout: cfg.RequestTimeout,
 		StreamLease: cfg.StreamLease, LoginWindow: cfg.LoginWindow,
 		LoginSourceMax: cfg.LoginSourceMax, LoginAccountMax: cfg.LoginAccountMax,
 		LoginMaxKeys: cfg.LoginMaxKeys, OIDCStartSourceMax: cfg.OIDCStartSourceMax,
 	}, server.Dependencies{
-		Identity: identityClient, Agents: agentClient, Execution: executionClient, Sessions: sessions,
+		Identity: identityClient, Sessions: sessions,
 		HTTPClient: httpClient, Logger: logger, BrowserStreams: browserStreams,
 	})
 	if err != nil {

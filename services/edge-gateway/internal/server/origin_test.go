@@ -78,10 +78,8 @@ func TestOriginAdmissionOnEveryMutationRoute(t *testing.T) {
 		proxy                    bool
 	}{
 		{"workspace", "POST", "/api/app/workspace/v1/agents/agent-1/sessions", `{}`, 202, true},
-		{"acp-post", "POST", "/api/app/agents/agent-1/v1/acp", `{}`, 202, true},
-		{"acp-delete", "DELETE", "/api/app/agents/agent-1/v1/acp", "", 202, true},
-		{"acp-alias-post", "POST", "/api/app/agents/agent-1/acp", `{}`, 202, true},
-		{"acp-alias-delete", "DELETE", "/api/app/agents/agent-1/acp", "", 202, true},
+		{"workspace-command", "POST", "/api/app/workspace/v1/agents/agent-1/commands", `{}`, 202, true},
+		{"workspace-prompt", "POST", "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts", `{}`, 202, true},
 		{"admin-post", "POST", "/api/admin/agents", `{}`, 202, true},
 		{"admin-put", "PUT", "/api/admin/agents/agent-1", `{}`, 202, true},
 		{"admin-patch", "PATCH", "/api/admin/agents/agent-1", `{}`, 202, true},
@@ -162,7 +160,7 @@ func TestOriginAdmissionSafeMethods(t *testing.T) {
 	}{
 		{"GET", "/api/admin/agents", 202}, {"HEAD", "/api/admin/agents", 202},
 		{"OPTIONS", "/api/admin/agents", 202}, {"GET", "/api/session", 200},
-		{"GET", "/api/app/bootstrap", 200},
+		{"GET", "/api/app/workspace/v1/bootstrap", 202},
 	} {
 		for _, origin := range []string{"", admissionPublicOrigin, "https://foreign.example"} {
 			t.Run(route.method+route.path+origin, func(t *testing.T) {
@@ -212,7 +210,8 @@ func TestOriginAdmissionPrecedesRouting(t *testing.T) {
 func TestOriginAdmissionKeepsCSRFIndependent(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{"POST", "/api/app/workspace/v1/agents/agent-1/sessions"},
-		{"POST", "/api/app/agents/agent-1/v1/acp"}, {"DELETE", "/api/app/agents/agent-1/acp"},
+		{"POST", "/api/app/workspace/v1/agents/agent-1/commands"},
+		{"POST", "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
 		{"POST", "/api/admin/agents"}, {"PUT", "/api/admin/agents/agent-1"},
 		{"PATCH", "/api/admin/agents/agent-1"}, {"DELETE", "/api/admin/agents/agent-1"},
 		{"DELETE", "/api/session"},
@@ -238,7 +237,7 @@ func TestOriginAdmissionKeepsCSRFIndependent(t *testing.T) {
 	}
 }
 
-func TestOriginAdmissionKeepsWebSocketOriginMandatory(t *testing.T) {
+func TestRetiredWebSocketWithoutOriginDoesNotEnterAuthentication(t *testing.T) {
 	for _, suffix := range []string{"acp", "v1/acp", "v2/acp"} {
 		for _, allow := range []bool{false, true} {
 			for _, metadata := range []string{"", "same-origin"} {
@@ -253,8 +252,8 @@ func TestOriginAdmissionKeepsWebSocketOriginMandatory(t *testing.T) {
 					addSessionCookies(request, "token-1", testCSRFToken)
 					response := httptest.NewRecorder()
 					h.ServeHTTP(response, request)
-					if response.Code != 403 || identities.called() || *calls != 0 {
-						t.Fatalf("originless WS admitted: status=%d calls=%d identity=%v", response.Code, *calls, identities.called())
+					if response.Code != http.StatusNotFound || identities.called() || *calls != 0 || len(response.Result().Cookies()) != 0 {
+						t.Fatalf("retired originless WS did not reject before authentication: status=%d calls=%d identity=%v", response.Code, *calls, identities.called())
 					}
 				})
 			}

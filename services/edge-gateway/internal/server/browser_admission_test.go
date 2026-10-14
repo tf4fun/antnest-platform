@@ -24,7 +24,7 @@ func (s *browserAdmissionIdentity) Resolve(ctx context.Context, _ string) (ident
 func TestBrowserAdmissionChecksAuthorityAfterResolveReturns(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{"GET", "/api/session"}, {"GET", "/api/admin/directory"},
-		{"GET", "/api/app/bootstrap"}, {"GET", "/workspace/agent-1"},
+		{"GET", "/api/app/workspace/v1/bootstrap"}, {"GET", "/workspace/agent-1"},
 		{"DELETE", "/api/session"},
 	} {
 		for _, reason := range []string{"idle-equality", "idle-crossed", "absolute-equality", "absolute-crossed", "missing-deadline", "missing-hint", "late-success"} {

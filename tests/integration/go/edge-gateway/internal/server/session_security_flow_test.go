@@ -145,7 +145,7 @@ func TestSessionSecurityFlowThroughTrustedIssuer(t *testing.T) {
 			if res.StatusCode != 200 {
 				t.Fatalf("read without delivery cookie %d %s", res.StatusCode, body)
 			}
-			for _, path := range []string{"/api/admin/agents", "/api/app/workspace/v1/agents/agent-1/messages", "/api/app/agents/agent-1/v1/acp"} {
+			for _, path := range []string{"/api/admin/agents", "/api/app/workspace/v1/agents/agent-1/commands", "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"} {
 				before := writes.Load()
 				for _, bad := range []string{"planted", csrfValues[0]} {
 					res, body := request(http.MethodPost, path, sessionCookies[1]+"; "+prefix+session.CSRFCookieName+"="+bad, bad, `{}`)

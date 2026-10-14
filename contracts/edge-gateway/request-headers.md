@@ -3,7 +3,8 @@
 This contract defines the reserved namespaces and outbound request allowlists
 for #63. It extends the [session contract](session-contract.json) without
 changing Identity authority, session-bound CSRF, or the
-[public-entry trust boundary](public-entry.md).
+[public-entry trust boundary](public-entry.md). Header registry revision 2
+removes the retired direct ACP HTTP and browser WebSocket profiles in Gateway 24.
 
 ## Inbound reserved namespaces
 
@@ -37,24 +38,21 @@ The asset profile contains `Accept`, `Accept-Encoding`, `Cache-Control`,
 `If-Match` and `Idempotency-Key`. Preserving a conditional field does not add
 ETag or concurrency semantics to a consumer that does not implement them.
 
-| Route family                                             | Browser fields forwarded                                                            | Identity added by Gateway                                                                                 |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Console HTML/assets                                      | Asset profile                                                                       | Workload authentication only                                                                              |
-| Admin JSON API                                           | JSON profile; Idempotency-Key also survives receipt lookup GETs                     | Console CCT and the five existing principal hints                                                         |
-| Admin event watch                                        | Accept, Last-Event-ID                                                               | Console CCT and principal hints                                                                           |
-| Admin network-policy PUT                                 | JSON profile                                                                        | Console CCT, principal hints and the server-generated canonical Expected-Principal after local validation |
-| Workspace SSR HTML                                       | Accept                                                                              | Workspace CCT and organization-scoped presentation hints                                                  |
-| Workspace assets                                         | Asset profile                                                                       | Workload authentication only                                                                              |
-| Workspace JSON API                                       | JSON profile                                                                        | Workspace CCT, presentation hints and an Agent ID where the route selects one                             |
-| Workspace event stream                                   | Accept, Last-Event-ID                                                               | Workspace CCT, presentation hints and route Agent ID                                                      |
-| ACP HTTP/SSE                                             | Accept, Content-Type, Acp-Connection-Id, Acp-Session-Id                             | ACP CCT and existing route-scoped principal hints                                                         |
-| ACP WebSocket, including aliases and versions            | Subprotocol selection through the WebSocket library; no raw browser identity fields | ACP CCT and route-scoped hints; library-generated handshake fields                                        |
-| SCIM                                                     | Accept, Content-Type, Authorization, If-Match, If-None-Match                        | Workload authentication only; Identity validates the SCIM bearer                                          |
-| Local session/login/OIDC/bootstrap/state/status handlers | No raw header forwarding; typed downstream clients construct requests               | Existing server-selected RPC credentials and context                                                      |
+| Route family                             | Browser fields forwarded                                              | Identity added by Gateway                                                                                 |
+| ---------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Console HTML/assets                      | Asset profile                                                         | Workload authentication only                                                                              |
+| Admin JSON API                           | JSON profile; Idempotency-Key also survives receipt lookup GETs       | Console CCT and the five existing principal hints                                                         |
+| Admin event watch                        | Accept, Last-Event-ID                                                 | Console CCT and principal hints                                                                           |
+| Admin network-policy PUT                 | JSON profile                                                          | Console CCT, principal hints and the server-generated canonical Expected-Principal after local validation |
+| Workspace SSR HTML                       | Accept                                                                | Workspace CCT and organization-scoped presentation hints                                                  |
+| Workspace assets                         | Asset profile                                                         | Workload authentication only                                                                              |
+| Workspace JSON API                       | JSON profile                                                          | Workspace CCT, presentation hints and an Agent ID where the route selects one                             |
+| Workspace event stream                   | Accept, Last-Event-ID                                                 | Workspace CCT, presentation hints and route Agent ID                                                      |
+| SCIM                                     | Accept, Content-Type, Authorization, If-Match, If-None-Match          | Workload authentication only; Identity validates the SCIM bearer                                          |
+| Local session/login/OIDC/status handlers | No raw header forwarding; typed downstream clients construct requests | Existing server-selected RPC credentials and context                                                      |
 
-Only the declared ACP routes forward WebSocket protocol selection. Generic
 Console, asset, Workspace and SCIM HTTP proxies do not forward a browser
-upgrade handshake.
+upgrade handshake. Retired direct ACP paths return 404 after outer admission.
 
 `Cookie` never reaches an upstream. Browser `Authorization` reaches only SCIM.
 The existing telemetry transport extracts incoming trace context and injects

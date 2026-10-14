@@ -11,179 +11,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 )
 
-func TestWorkspaceBootstrapReturnsOnlyBrowserSafeAgentFacts(t *testing.T) {
+func TestWorkspaceBootstrapPreservesBridgePayloadAndVerifiedScope(t *testing.T) {
 	t.Parallel()
-
-	agents := &agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{
-		AgentID: "agent-1", Name: "Research Agent",
-		LifecycleState: "created", ActivationState: "enabled", RuntimeState: "waiting",
-	}}}
-	handler := newTestHandlerWithAgents(
-		t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, agents,
-		http.NotFoundHandler(), time.Now(), Config{},
-	)
-	request := newBrowserRequest(http.MethodGet, "/api/app/bootstrap", nil)
+	const payload = `{"principal":{"userId":"user-admin","organizationId":"org-1","administrator":false},"agents":[{"agentId":"agent-1","name":"Research","lifecycle":"created","activation":"enabled","runtime":"waiting"}],"bridgeEpoch":"epoch-1"}`
+	calls := 0
+	h := newTestHandler(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/api/app/workspace/v1/bootstrap" || r.Header.Get(HeaderOrganizationID) != "org-1" || r.Header.Get(HeaderPrincipalID) != "user-admin" || r.Header.Get(HeaderAgentID) != "" {
+			t.Error("bootstrap lost Bridge route or verified scope")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Set-Cookie", "upstream=private")
+		_, _ = io.WriteString(w, payload)
+	}), time.Now())
+	request := newBrowserRequest(http.MethodGet, "/api/app/workspace/v1/bootstrap", nil)
 	addSessionCookies(request, "token-1", testCSRFToken)
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("status=%d cache=%q body=%s", response.Code, response.Header().Get("Cache-Control"), response.Body.String())
-	}
-	if strings.Contains(response.Body.String(), "subject") || strings.Contains(response.Body.String(), "availability") {
-		t.Fatalf("Agent access subject leaked to browser: %s", response.Body.String())
-	}
-	if !strings.Contains(response.Body.String(), `"agent_id":"agent-1"`) ||
-		!strings.Contains(response.Body.String(), `"name":"Research Agent"`) ||
-		!strings.Contains(response.Body.String(), `"lifecycle_state":"created"`) ||
-		!strings.Contains(response.Body.String(), `"activation_state":"enabled"`) ||
-		!strings.Contains(response.Body.String(), `"runtime_state":"waiting"`) {
-		t.Fatalf("bootstrap body=%s", response.Body.String())
-	}
-	if agents.input.OrganizationID != "org-1" || agents.input.PrincipalID != "user-admin" {
-		t.Fatalf("Agent scope = %+v", agents.input)
-	}
-}
-
-func TestWorkspaceACPRequiresSameOriginAndInjectsTrustedIdentity(t *testing.T) {
-	t.Parallel()
-	for _, route := range []struct{ public, upstream string }{
-		{"/api/app/agents/agent-1/acp", "/v1/acp"},
-		{"/api/app/agents/agent-1/v1/acp", "/v1/acp"},
-		{"/api/app/agents/agent-1/v2/acp", "/v2/acp"},
-	} {
-		t.Run(route.public, func(t *testing.T) {
-			testWorkspaceACPRoute(t, route.public, route.upstream)
-		})
-	}
-}
-
-func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
-	t.Helper()
-
-	received := make(chan http.Header, 1)
-	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-	acp := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != upstreamPath {
-			t.Errorf("upstream path = %q, want %q", request.URL.Path, upstreamPath)
-		}
-		if request.Header.Get("X-Antnest-Agent-Id") == "agent-2" {
-			http.Error(response, "ACP rejected target", http.StatusForbidden)
-			return
-		}
-		received <- request.Header.Clone()
-		connection, err := upgrader.Upgrade(response, request, nil)
-		if err != nil {
-			return
-		}
-		defer func() { _ = connection.Close() }()
-		_ = connection.WriteMessage(websocket.TextMessage, []byte("connected"))
-	}))
-	defer acp.Close()
-	static := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/status" {
-			response.WriteHeader(http.StatusOK)
-			return
-		}
-		response.WriteHeader(http.StatusOK)
-	}))
-	defer static.Close()
-	sessions, err := session.NewManager(session.Config{CSRFKey: []byte(testCSRFKey)})
-	if err != nil {
-		t.Fatalf("session manager: %v", err)
-	}
-	agents := &agentServiceStub{listErr: context.DeadlineExceeded}
-	handler, err := NewHandler(Config{
-		AdminConsoleURL: static.URL, AgentUIURL: static.URL, AgentACPURL: acp.URL,
-		IdentityURL:    static.URL,
-		RequestTimeout: time.Second, NewRequestID: func() string { return "edge-request" },
-	}, Dependencies{
-		Identity: &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, Agents: agents, Execution: &executionServiceStub{},
-		Sessions: sessions, HTTPClient: &http.Client{Transport: telemetry.NewHTTPTransport(acp.Client().Transport)}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-	if err != nil {
-		t.Fatalf("NewHandler: %v", err)
-	}
-	edge := httptest.NewServer(handler)
-	defer edge.Close()
-	websocketURL := strings.Replace(edge.URL, "http://", "ws://", 1) + publicPath
-	headers := http.Header{}
-	headers.Set("Origin", edge.URL)
-	headers.Set("Cookie", session.AccessTokenCookieName+"=token-1; "+session.CSRFCookieName+"="+testCSRFToken)
-	headers.Set(HeaderAgentAccessSubject, "forged-subject")
-	for _, name := range []string{"X-Antnest-Agent-Id", "X-Antnest-Principal-Id", HeaderOrganizationID} {
-		headers.Add(name, "forged")
-		headers.Add(name, "duplicate")
-	}
-	headers.Set("Authorization", "Bearer forged-token")
-	connection, _, err := websocket.DefaultDialer.Dial(websocketURL, headers)
-	if err != nil {
-		t.Fatalf("dial workspace ACP: %v", err)
-	}
-	defer func() { _ = connection.Close() }()
-	messageType, message, err := connection.ReadMessage()
-	if err != nil || messageType != websocket.TextMessage || string(message) != "connected" {
-		t.Fatalf("ACP message=%q type=%d err=%v", message, messageType, err)
-	}
-	upstreamHeaders := <-received
-	if upstreamHeaders.Get(HeaderAgentAccessSubject) != "" ||
-		upstreamHeaders.Get("Cookie") != "" || upstreamHeaders.Get("Authorization") != "" {
-		t.Fatalf("ACP upstream headers = %v", upstreamHeaders)
-	}
-
-	for name, expected := range map[string]string{"X-Antnest-Agent-Id": "agent-1", "X-Antnest-Principal-Id": "user-admin", HeaderOrganizationID: "org-1"} {
-		if upstreamHeaders.Get(name) != expected || len(upstreamHeaders.Values(name)) != 1 {
-			t.Errorf("identity %s=%q", name, upstreamHeaders.Values(name))
-		}
-	}
-	if agents.input.RequestID != "" {
-		t.Fatal("protocol routing queried Controller")
-	}
-
-	wrongOrigin := newBrowserRequest(http.MethodGet, publicPath, nil)
-	wrongOrigin.Host = "edge.example.test"
-	wrongOrigin.Header.Set("Connection", "Upgrade")
-	wrongOrigin.Header.Set("Upgrade", "websocket")
-	wrongOrigin.Header.Set("Origin", "https://evil.example.test")
-	addSessionCookies(wrongOrigin, "token-1", testCSRFToken)
-	rejected := httptest.NewRecorder()
-	handler.ServeHTTP(rejected, wrongOrigin)
-	if rejected.Code != http.StatusForbidden {
-		t.Fatalf("cross-origin status=%d body=%s", rejected.Code, rejected.Body.String())
-	}
-	for _, denial := range []struct {
-		name, path, cookie string
-		status             int
-	}{
-		{"no session", publicPath, "", http.StatusUnauthorized},
-		{"ACP rejects other agent", strings.Replace(publicPath, "agent-1", "agent-2", 1), headers.Get("Cookie"), http.StatusForbidden},
-		{"unknown version", "/api/app/agents/agent-1/v3/acp", headers.Get("Cookie"), http.StatusNotFound},
-	} {
-		t.Run(denial.name, func(t *testing.T) {
-			request := newBrowserRequest(http.MethodGet, denial.path, nil)
-			request.Host = "edge.example.test"
-			request.Header.Set("Origin", "http://edge.example.test")
-			request.Header.Set("Connection", "Upgrade")
-			request.Header.Set("Upgrade", "websocket")
-			request.Header.Set("Cookie", denial.cookie)
-			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, request)
-			if response.Code != denial.status {
-				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
-			}
-		})
+	h.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || calls != 1 || response.Body.String() != payload || response.Header().Get("Cache-Control") != "no-store" || len(response.Result().Cookies()) != 0 {
+		t.Fatalf("bootstrap status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
 	}
 }
 
@@ -609,20 +464,18 @@ func TestLogoutPreservesCookiesWhenRevocationIsRetryable(t *testing.T) {
 func TestStatusDoesNotProbeDownstreamServices(t *testing.T) {
 	for _, unavailable := range []bool{false, true} {
 		identities := &identityServiceStub{}
-		agents := &agentServiceStub{}
 		if unavailable {
 			identities.readyErr = context.DeadlineExceeded
-			agents.readyErr = context.DeadlineExceeded
 		}
 		calls := 0
-		h := newTestHandlerWithAgents(t, identities, agents, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		h := newTestHandlerWithConfig(t, identities, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			calls++
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}), time.Now(), Config{})
 		response := httptest.NewRecorder()
 		h.ServeHTTP(response, newBrowserRequest(http.MethodGet, "/status", nil))
-		if response.Code != http.StatusOK || response.Body.String() != "{\"status\":\"ready\"}\n" || calls != 0 || identities.readyCalls != 0 || agents.readyCalls != 0 {
-			t.Fatalf("local readiness: status=%d calls=%d/%d/%d", response.Code, calls, identities.readyCalls, agents.readyCalls)
+		if response.Code != http.StatusOK || response.Body.String() != "{\"status\":\"ready\"}\n" || calls != 0 || identities.readyCalls != 0 {
+			t.Fatalf("local readiness: status=%d calls=%d/%d", response.Code, calls, identities.readyCalls)
 		}
 	}
 }
@@ -634,32 +487,6 @@ func newTestHandler(t *testing.T, identityService IdentityService, console http.
 func newTestHandlerWithConfig(
 	t *testing.T,
 	identityService IdentityService,
-	console http.Handler,
-	now time.Time,
-	config Config,
-) http.Handler {
-	return newTestHandlerWithAgents(
-		t, identityService, &agentServiceStub{}, console, now, config,
-	)
-}
-
-func newTestHandlerWithAgents(
-	t *testing.T,
-	identityService IdentityService,
-	agents agentcontroller.Service,
-	console http.Handler,
-	now time.Time,
-	config Config,
-) http.Handler {
-	t.Helper()
-	return newTestHandlerWithServices(t, identityService, agents, &executionServiceStub{}, console, now, config)
-}
-
-func newTestHandlerWithServices(
-	t *testing.T,
-	identityService IdentityService,
-	agents agentcontroller.Service,
-	execution agentacp.Service,
 	console http.Handler,
 	now time.Time,
 	config Config,
@@ -681,13 +508,12 @@ func newTestHandlerWithServices(
 	}
 	config.AdminConsoleURL = "http://admin-console.internal"
 	config.AgentUIURL = "http://agent-ui.internal"
-	config.AgentACPURL = "http://agent-acp.internal"
 	config.IdentityURL = "http://identity.internal"
 	config.RequestTimeout = time.Second
 	config.NewRequestID = func() string { return "edge-request-1" }
 	config.Now = func() time.Time { return now }
 	handler, err := NewHandler(config, Dependencies{
-		Identity: identityService, Agents: agents, Execution: execution, Sessions: sessions,
+		Identity: identityService, Sessions: sessions,
 		HTTPClient: &http.Client{Transport: telemetry.NewHTTPTransport(httpClient.Transport)}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
@@ -695,46 +521,6 @@ func newTestHandlerWithServices(
 	}
 	return handler
 }
-
-type executionServiceStub struct {
-	state      agentacp.WorkspaceState
-	stateInput agentacp.WorkspaceStateInput
-	stateErr   error
-	watchState func(context.Context, agentacp.WorkspaceStateEmitter) error
-}
-
-type agentServiceStub struct {
-	agents     []agentcontroller.WorkspaceAgent
-	input      agentcontroller.ListWorkspaceAgentsInput
-	listErr    error
-	readyErr   error
-	readyCalls int
-}
-
-func (stub *executionServiceStub) GetWorkspaceState(_ context.Context, input agentacp.WorkspaceStateInput) (agentacp.WorkspaceState, error) {
-	stub.stateInput = input
-	return stub.state, stub.stateErr
-}
-
-func (stub *executionServiceStub) WatchWorkspaceState(ctx context.Context, input agentacp.WorkspaceStateInput, emit agentacp.WorkspaceStateEmitter) error {
-	stub.stateInput = input
-	if stub.stateErr != nil {
-		return stub.stateErr
-	}
-	if stub.watchState != nil {
-		return stub.watchState(ctx, emit)
-	}
-	return emit(stub.state)
-}
-
-func (stub *agentServiceStub) ListWorkspaceAgents(
-	_ context.Context, input agentcontroller.ListWorkspaceAgentsInput,
-) ([]agentcontroller.WorkspaceAgent, error) {
-	stub.input = input
-	return stub.agents, stub.listErr
-}
-
-func (stub *agentServiceStub) Ready(context.Context) error { stub.readyCalls++; return stub.readyErr }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

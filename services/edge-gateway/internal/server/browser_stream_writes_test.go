@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 )
@@ -85,7 +84,7 @@ func awaitBlockedBrowserWrite(t *testing.T, probe *browserWriteProbe, handlerDon
 
 func TestBrowserSessionCancellationInterruptsActualBlockedSSEWrites(t *testing.T) {
 	for _, route := range browserSSERoutes {
-		for _, reason := range []string{"live-revocation", "private-feed"} {
+		for _, reason := range []string{"live-revocation", "private-feed", "live-revocation-upgrade", "private-feed-upgrade"} {
 			t.Run(route.path+"/"+reason, func(t *testing.T) {
 				service := newStreamIdentity()
 				service.principal.ActivityIntervalMS = 500
@@ -93,15 +92,7 @@ func TestBrowserSessionCancellationInterruptsActualBlockedSSEWrites(t *testing.T
 					w.Header().Set("Content-Type", "text/event-stream")
 					_, _ = io.Copy(w, strings.NewReader(strings.Repeat("data: payload\n\n", 1<<19)))
 				})
-				execution := &executionServiceStub{watchState: func(ctx context.Context, emit agentacp.WorkspaceStateEmitter) error {
-					for ctx.Err() == nil {
-						if err := emit(agentacp.WorkspaceState{AgentID: "agent-1", Availability: "available", AccessAllowed: true}); err != nil {
-							return err
-						}
-					}
-					return ctx.Err()
-				}}
-				h := newTestHandlerWithServices(t, service, &agentServiceStub{}, execution, upstream, time.Now(), Config{}).(*handler)
+				h := newTestHandler(t, service, upstream, time.Now()).(*handler)
 				h.maximumSessionStale = blockedBrowserSessionStale
 				h.requestTimeout = 2 * time.Second
 				probeReady := make(chan *browserWriteProbe, 1)
@@ -130,7 +121,11 @@ func TestBrowserSessionCancellationInterruptsActualBlockedSSEWrites(t *testing.T
 				if err := client.(*net.TCPConn).SetReadBuffer(1024); err != nil {
 					t.Fatal(err)
 				}
-				_, err = fmt.Fprintf(client, "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: %s=token; %s=%s\r\n\r\n", route.path, edge.Listener.Addr(), session.AccessTokenCookieName, session.CSRFCookieName, testCSRFToken)
+				upgradeHeaders := ""
+				if strings.HasSuffix(reason, "-upgrade") {
+					upgradeHeaders = "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+				}
+				_, err = fmt.Fprintf(client, "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: %s=token; %s=%s\r\n%s\r\n", route.path, edge.Listener.Addr(), session.AccessTokenCookieName, session.CSRFCookieName, testCSRFToken, upgradeHeaders)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -144,7 +139,7 @@ func TestBrowserSessionCancellationInterruptsActualBlockedSSEWrites(t *testing.T
 				started := time.Now()
 				deadline := started.Add(blockedBrowserSessionStale)
 				probe.requireCancellationBeforeWriteTimeout(t, deadline)
-				if reason == "private-feed" {
+				if strings.HasPrefix(reason, "private-feed") {
 					p := service.principal
 					h.browserStreams.Revoke(identity.SessionRevocation{TokenID: p.SessionID, UserID: p.UserID, OrganizationID: p.OrganizationID})
 				} else {

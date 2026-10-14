@@ -525,10 +525,14 @@ test("explicit activity returns deadlines and a bounded scheduling hint without 
   assert.equal(external({ ...value, activity_interval_ms: 0 }), false);
 });
 
-test("Console declares the active Gateway and Identity browser session revisions", () => {
+test("Console browser-session consumer stays within the explicit Gateway retirement migration", () => {
   const consumer = read("admin-console/admin-contract.json").response_policy
     .account_security;
-  assert.equal(consumer.gateway_revision, gateway.version);
+  // Revision 24 retires unused workspace endpoints; the session routes and DTOs
+  // exercised below stay compatible with Console's revision 23 declaration.
+  // The separate consumer batch adopts revision 24 explicitly.
+  assert.equal(gateway.version, 24);
+  assert([23, 24].includes(consumer.gateway_revision));
   assert.equal(consumer.identity_revision, identity.revision);
   assert.equal(
     consumer.browser_session_contract,
@@ -538,7 +542,7 @@ test("Console declares the active Gateway and Identity browser session revisions
 
 test("Gateway owns session mutations and records cookie concurrency and stream bounds", () => {
   assert.equal(identity.revision, 18);
-  assert.equal(gateway.version, 23);
+  assert.equal(gateway.version, 24);
   assert.equal(
     gateway.browser_session_contract,
     "../identity/browser-sessions.md",
