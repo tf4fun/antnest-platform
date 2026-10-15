@@ -401,10 +401,13 @@ export const suites = [
     tier: "b",
     setup: [],
     images: ["edge-gateway"],
-    pull: ["node:24.21.0-bookworm-slim"],
+    pull: [
+      "node:24.21.0-bookworm-slim",
+      "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0",
+    ],
     paths: [
       ...service("edge-gateway"),
-      "tests/e2e/edge-gateway/shutdown-docker.mjs",
+      "tests/e2e/edge-gateway/shutdown-*.mjs",
       ...go,
       ...compose,
     ],

@@ -218,6 +218,42 @@ test("documented Docker admissions include encryption rotation, Gateway shutdown
     });
 });
 
+test("Gateway shutdown interruption changes select the owning Docker admission", () => {
+  for (const path of [
+    "tests/e2e/edge-gateway/shutdown-interruption.mjs",
+    "tests/e2e/edge-gateway/shutdown-interruption.test.mjs",
+  ])
+    assert(
+      ids(selectSuites([path])).includes("gateway-shutdown"),
+      `${path} must select Gateway shutdown`,
+    );
+});
+
+test("Gateway shutdown declares its actual trace collector image", () => {
+  const suite = suites.find(({ id }) => id === "gateway-shutdown");
+  assert(
+    suite.pull.includes("cr.jaegertracing.io/jaegertracing/jaeger:2.21.0"),
+  );
+});
+
+test("repository admission runs the Gateway shutdown interruption tests", () => {
+  const commands = execFileSync("make", ["--dry-run", "test-repo"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 10_000,
+  }).split("\n");
+  assert(
+    commands.some(
+      (command) =>
+        /^node --test\s/u.test(command) &&
+        command
+          .split(/\s+/u)
+          .includes("tests/e2e/edge-gateway/shutdown-interruption.test.mjs"),
+    ),
+    "make test-repo must execute shutdown interruption tests",
+  );
+});
+
 test("an explicit full run selects every enabled suite without any changes", () => {
   assert.deepEqual(selectSuites([], { all: true }), enabled);
 });
