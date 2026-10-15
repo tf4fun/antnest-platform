@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { inspectRuntimeInformationRead } from "./runtime-information-read.mjs";
+import { inspectRuntimeToolLifecycle } from "./runtime-tool-lifecycle.mjs";
 import { tag, traceTopology } from "./trace-tree.mjs";
 
 const one = (spans, label) => {
@@ -93,10 +94,52 @@ export function inspectRunInformationReads(
     );
     within(prep, run);
   }
-  assert(
-    end(info) <= list.startTime,
-    "tool listing preceded information close",
-  );
+  const preparationObservations = [];
+  if (end(info) > list.startTime) {
+    // Both preparations have already been bound directly to this same Run and
+    // ACP process. Keep the original Node endpoint difference as an observation;
+    // this does not change either preparation's own events or read/tool proof.
+    const resource = {};
+    for (const { key, value } of trace.processes[info.processID].tags ?? []) {
+      assert(!Object.hasOwn(resource, key), "ambiguous preparation resource");
+      resource[key] = value;
+    }
+    assert(
+      typeof resource["host.name"] === "string" &&
+        resource["host.name"].length > 0 &&
+        Number.isSafeInteger(resource["process.pid"]) &&
+        resource["process.pid"] > 0 &&
+        typeof resource["service.instance.id"] === "string" &&
+        resource["service.instance.id"].length > 0,
+      "missing actual preparation process identity",
+    );
+    assert(
+      [info, list, run].every(
+        (span) =>
+          Number.isSafeInteger(span.startTime) && span.startTime % 1000 === 0,
+      ) && end(info) - list.startTime < 1000,
+      "tool listing preceded information close outside deferred same-Node sub-ms boundary",
+    );
+    preparationObservations.push({
+      trace_id: trace.traceID,
+      run_span_id: run.spanID,
+      span_id: info.spanID,
+      next_span_id: list.spanID,
+      parent_span_id: run.spanID,
+      process_id: info.processID,
+      host_name: resource["host.name"],
+      process_pid: resource["process.pid"],
+      service_instance_id: resource["service.instance.id"],
+      boundary: "run-information-before-tool-list",
+      raw_left_us: end(info),
+      raw_right_us: list.startTime,
+      raw_difference_us: end(info) - list.startTime,
+      raw_span_start_us: info.startTime,
+      raw_next_start_us: list.startTime,
+      raw_parent_start_us: run.startTime,
+      reason: "deferred-same-node-sdk-sub-ms-endpoint",
+    });
+  }
   const reads = trace.spans.filter(
     (span) => span.operationName === "mcp.runtime.info.read",
   );
@@ -163,6 +206,9 @@ export function inspectRunInformationReads(
   const toolOwners = [list, ...acp("mcp.tools.call")];
   const toolClients = new Set();
   const toolServers = new Set();
+  const toolProtocolSpans = new Set();
+  const toolProofs = [];
+  const ownedToolCancellations = new Set();
   for (const owner of toolOwners) {
     assert.equal(
       owner.processID,
@@ -170,54 +216,24 @@ export function inspectRunInformationReads(
       "tool inventory belongs to another ACP process",
     );
     assert(tree.chain(owner).includes(run), "tool inventory detached from Run");
-    const clients = targetClients.filter((span) => tree.parent(span) === owner);
-    assert.equal(
-      clients.length,
-      2,
-      "tool inventory needs discovery and its actual method",
-    );
-    const pairs = clients.map((client) => {
-      assert(!spans.has(client), "tool inventory borrowed information read");
-      assert.equal(client.processID, owner.processID);
-      assert.equal(client.operationName, "HTTP POST antnest-runtime");
-      assert.equal(tag(client, "span.kind"), "client");
-      assert.equal(tag(client, "http.request.method"), "POST");
-      assert.equal(tag(client, "peer.service"), "antnest-runtime");
-      assert.equal(tag(client, "http.response.status_code"), 200);
-      within(client, owner);
-      const server = one(
-        trace.spans.filter((span) => tree.parent(span) === client),
-        "actual tool Runtime SERVER",
-      );
-      assert.equal(tree.service(server), "antnest-runtime");
-      assert.equal(server.operationName, "HTTP POST /mcp");
-      assert.equal(tag(server, "span.kind"), "server");
-      assert.equal(tag(server, "http.request.method"), "POST");
-      assert.equal(tag(server, "http.route"), "/mcp");
-      assert(
-        [200, "200"].includes(tag(server, "http.response.status_code")),
-        "failed Runtime tool HTTP response",
-      );
-      assert.equal(tag(server, "antnest.agent.id"), agentId);
-      assert.equal(tag(server, "antnest.runtime.execution.id"), executionId);
-      toolClients.add(client);
-      toolServers.add(server);
-      return { client, server, method: tag(server, "rpc.method") };
+    const proof = inspectRuntimeToolLifecycle(trace, owner, {
+      agentId,
+      executionId,
     });
-    const method = owner === list ? "tools/list" : "tools/call";
-    const discovery = one(
-      pairs.filter((pair) => pair.method === "discover"),
-      "tool discovery",
-    );
-    const invocation = one(
-      pairs.filter((pair) => pair.method === method),
-      method,
-    );
-    assert(
-      end(discovery.client) <= invocation.client.startTime,
-      "tool invocation preceded discovery",
-    );
+    toolProofs.push(proof);
+    for (const client of proof.clients) {
+      assert(!spans.has(client), "tool inventory borrowed information read");
+      toolClients.add(client);
+    }
+    for (const { server, operation } of proof.exchanges) {
+      toolServers.add(server);
+      toolProtocolSpans.add(server);
+      toolProtocolSpans.add(operation);
+    }
+    for (const span of proof.ownedCancellations)
+      ownedToolCancellations.add(span);
   }
+
   for (const client of targetClients)
     assert(
       spans.has(client) || toolClients.has(client),
@@ -226,6 +242,14 @@ export function inspectRunInformationReads(
   for (const span of trace.spans) {
     if (spans.has(span)) continue;
     if (tree.service(span) === "antnest-runtime") {
+      if (
+        span.operationName === "runtime.mcp.operation" ||
+        span.operationName === "HTTP POST /mcp"
+      )
+        assert(
+          toolProtocolSpans.has(span),
+          "unproven Runtime protocol boundary inside tool inventory",
+        );
       assert(
         tree.chain(span).some((ancestor) => toolServers.has(ancestor)),
         "unowned Runtime work outside exact read/tool inventories",
@@ -237,7 +261,7 @@ export function inspectRunInformationReads(
       );
     }
     assert(
-      !cancelled(span),
+      !cancelled(span) || ownedToolCancellations.has(span),
       "unowned cancellation cannot borrow information read cleanup",
     );
   }
@@ -248,7 +272,13 @@ export function inspectRunInformationReads(
     prepared: [info, list],
     informationReads: proofs.length,
     postPromptInformationReads: postPromptRead ? 1 : 0,
-    neutralDiagnostics: proofs.flatMap((proof) => proof.neutralDiagnostics),
-    timeObservations: proofs.flatMap((proof) => proof.timeObservations),
+    toolLifecycles: toolProofs,
+    neutralDiagnostics: [...proofs, ...toolProofs].flatMap(
+      (proof) => proof.neutralDiagnostics,
+    ),
+    timeObservations: [
+      ...preparationObservations,
+      ...[...proofs, ...toolProofs].flatMap((proof) => proof.timeObservations),
+    ],
   };
 }

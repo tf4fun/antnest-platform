@@ -115,6 +115,7 @@ export function addRunInformationRead(
       discoveryClient,
       discoveryServer,
     );
+    addToolLifecycleReceipt(trace, owner);
   }
   run.duration =
     Math.max(...trace.spans.map((span) => span.startTime + span.duration)) -
@@ -122,6 +123,202 @@ export function addRunInformationRead(
     1000;
   request.duration = run.startTime + run.duration - request.startTime + 2000;
   return { ...read, request, run, info, list };
+}
+
+// Synthetic consumer evidence only; never add receipts to an archived trace.
+export function addToolLifecycleReceipt(
+  trace,
+  owner,
+  { heldDiscovery = false, cancelledClients = [], cancelledServers = [] } = {},
+) {
+  const fields = (values) =>
+    Object.entries(values).map(([key, value]) => ({ key, value }));
+  const event = (timestamp, name, values = {}) => ({
+    timestamp,
+    fields: fields({ event: name, ...values }),
+  });
+  const children = (span) =>
+    trace.spans.filter((item) => item.references[0]?.spanID === span.spanID);
+  const method =
+    owner.operationName === "mcp.tools.list" ? "tools/list" : "tools/call";
+  const clients = children(owner).filter(
+    (span) => span.operationName === "HTTP POST antnest-runtime",
+  );
+  const pairs = clients.map((client) => ({
+    client,
+    server: children(client)[0],
+  }));
+  const invocation = pairs.find(
+    ({ server }) => tag(server, "rpc.method") === method,
+  );
+  const start = owner.startTime;
+  const parsedAt =
+    invocation.client.startTime + invocation.client.duration - 100;
+  const closeAt = parsedAt + 20;
+  const closedAt = start + owner.duration - 20;
+  for (const [key, value] of Object.entries({
+    "span.kind": "internal",
+    "antnest.runtime.execution.id": "execution_test",
+    "antnest.mcp.method": method,
+    "antnest.mcp.tool_result.outcome": "success",
+    "antnest.mcp.connection.close.outcome": "closed",
+    "antnest.mcp.caller_cancelled": false,
+    "antnest.outcome": "ok",
+  }))
+    setTag(owner, key, value);
+  owner.logs = [
+    event(start + 250, "antnest.mcp.discovery.ready"),
+    event(start + 280, "antnest.mcp.tool.dispatch.started"),
+    event(parsedAt, "antnest.mcp.tool.result.parsed", { outcome: "success" }),
+    event(closeAt, "antnest.mcp.connection.close.started", {
+      "antnest.mcp.caller_cancelled": false,
+    }),
+    event(closedAt, "antnest.mcp.connection.close.completed", {
+      outcome: "closed",
+    }),
+  ];
+  for (const { client, server } of pairs) {
+    const rpc = tag(server, "rpc.method");
+    const bytes = rpc === "discover" ? 128 : 256;
+    for (const [span, pid] of [
+      [client, 2],
+      [server, 3],
+    ]) {
+      const process = trace.processes[span.processID];
+      process.tags ??= [];
+      for (const [key, value] of Object.entries({
+        ...(pid === 2
+          ? {
+              "host.name": process.serviceName + "-host",
+              "process.pid": pid,
+              "service.instance.id": process.serviceName + "-instance",
+            }
+          : {
+              "antnest.agent.id": tag(server, "antnest.agent.id"),
+              "antnest.runtime.generation": "1",
+            }),
+        "telemetry.sdk.name": "opentelemetry",
+        "telemetry.sdk.language": pid === 2 ? "nodejs" : "rust",
+      }))
+        if (!process.tags.some((item) => item.key === key))
+          process.tags.push({ key, value });
+    }
+    if (rpc === "discover" && heldDiscovery)
+      client.duration = parsedAt - client.startTime - 10;
+    setTag(client, "http.response.body.size", bytes);
+    client.logs = [];
+    if (cancelledClients.includes(rpc)) {
+      client.duration = closedAt - client.startTime - 5;
+      for (const [key, value] of Object.entries({
+        "antnest.outcome": "cancelled",
+        "antnest.operation.phase": "http.send_or_read",
+        "antnest.cancellation.type": "AbortError",
+      }))
+        setTag(client, key, value);
+      client.logs = [
+        event(closeAt + 5, "antnest.cancelled", {
+          "antnest.cancellation.phase": "http.send_or_read",
+          "antnest.cancellation.type": "AbortError",
+        }),
+      ];
+    }
+    for (const [key, value] of Object.entries({
+      "antnest.runtime.generation": "1",
+      "antnest.protocol.outcome": "success",
+      "http.transport.outcome": "success",
+      "http.response.body.size": bytes,
+    }))
+      setTag(server, key, value);
+    let operation = children(server).find(
+      (span) => span.operationName === "runtime.mcp.operation",
+    );
+    if (!operation) {
+      const work = children(server);
+      operation = {
+        ...structuredClone(server),
+        spanID: server.spanID + "-operation",
+        operationName: "runtime.mcp.operation",
+        startTime: server.startTime + 5,
+        duration: server.duration - 10,
+        tags: [],
+        references: [
+          {
+            refType: "CHILD_OF",
+            traceID: trace.traceID,
+            spanID: server.spanID,
+          },
+        ],
+      };
+      trace.spans.splice(trace.spans.indexOf(server) + 1, 0, operation);
+      for (const child of work) {
+        child.references[0].spanID = operation.spanID;
+        child.startTime = operation.startTime + 1;
+        child.duration = operation.duration - 2;
+      }
+    }
+    for (const [key, value] of Object.entries({
+      "span.kind": "internal",
+      "rpc.method": rpc,
+      "antnest.agent.id": tag(server, "antnest.agent.id"),
+      "antnest.runtime.execution.id": "execution_test",
+      "antnest.runtime.generation": "1",
+      "mcp.operation.outcome": "success",
+      "antnest.operation.outcome": "success",
+      "otel.status_code": "OK",
+    }))
+      setTag(operation, key, value);
+    operation.logs = [
+      event(
+        operation.startTime + operation.duration - 1,
+        "Runtime MCP operation completed",
+        {
+          level: "INFO",
+          "service.name": "antnest-runtime",
+          trace_id: trace.traceID,
+          span_id: operation.spanID,
+          "antnest.agent.id": tag(server, "antnest.agent.id"),
+          "antnest.runtime.generation": "1",
+          "mcp.operation.name": rpc,
+          "mcp.operation.outcome": "success",
+          "error.type": "",
+        },
+      ),
+    ];
+    const cancelled = cancelledServers.includes(rpc);
+    if (cancelled) {
+      setTag(server, "http.transport.outcome", "canceled");
+      setTag(server, "http.transport.error.type", "client_disconnected");
+    }
+    server.logs = [
+      ...(cancelled
+        ? [
+            event(server.startTime + server.duration - 2, "antnest.cancelled", {
+              "antnest.phase": "http",
+              "antnest.cancellation.type": "client_disconnected",
+              "antnest.protocol.outcome": "success",
+            }),
+          ]
+        : []),
+      event(
+        server.startTime + server.duration - 1,
+        "Runtime HTTP request completed",
+        {
+          level: cancelled ? "WARN" : "INFO",
+          "service.name": "antnest-runtime",
+          "http.request.method": "POST",
+          "url.path": "/mcp",
+          "http.response.status_code": 200,
+          "antnest.agent.id": tag(server, "antnest.agent.id"),
+          "antnest.runtime.generation": "1",
+          trace_id: trace.traceID,
+          span_id: server.spanID,
+          "error.type": cancelled ? "client_disconnected" : "",
+          "http.transport.outcome": cancelled ? "canceled" : "success",
+        },
+      ),
+    ];
+  }
+  return { owner, pairs, events: owner.logs };
 }
 
 export function addPostPromptInformationRead(trace, options = {}) {

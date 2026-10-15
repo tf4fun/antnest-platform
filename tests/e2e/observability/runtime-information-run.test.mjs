@@ -61,6 +61,83 @@ const removeReadReceipt = (f) => {
 };
 
 for (const [name, fixture, inspect] of consumers) {
+  for (const overlap of [1, 391, 999])
+    test(`${name} records same-Run preparation endpoint overlap of ${overlap}us`, () => {
+      const f = fixture();
+      const baseline = inspect(f);
+      const { info, list, run } = f.information;
+      info.duration = list.startTime - info.startTime + overlap;
+      const raw = structuredClone(f.trace);
+      const result = inspect(f);
+      assertReadEndpointObservations(
+        result,
+        [
+          {
+            trace_id: f.trace.traceID,
+            span_id: info.spanID,
+            next_span_id: list.spanID,
+            parent_span_id: run.spanID,
+            boundary: "run-information-before-tool-list",
+            raw_left_us: info.startTime + info.duration,
+            raw_right_us: list.startTime,
+            raw_difference_us: overlap,
+          },
+        ],
+        baseline,
+      );
+      assert.deepEqual(f.trace, raw);
+    });
+  for (const [label, mutate] of [
+    ...[1000, 1001].map((overlap) => [
+      `${overlap}us overlap`,
+      (f) => {
+        f.information.info.duration =
+          f.information.list.startTime - f.information.info.startTime + overlap;
+      },
+    ]),
+    ...["host.name", "process.pid", "service.instance.id"].map((key) => [
+      `missing ${key}`,
+      (f) => {
+        const resource = f.trace.processes[f.information.info.processID];
+        resource.tags = resource.tags.filter((item) => item.key !== key);
+      },
+    ]),
+    ...["info", "list", "run"].map((key) => [
+      `non-millisecond ${key} start`,
+      (f) => {
+        f.information[key].startTime += 0.5;
+      },
+    ]),
+    [
+      "ambiguous process identity",
+      (f) => {
+        const resource = f.trace.processes[f.information.info.processID];
+        resource.tags.push({ key: "process.pid", value: 999 });
+      },
+    ],
+    [
+      "different process for tools/list",
+      (f) => {
+        f.trace.processes.other = structuredClone(
+          f.trace.processes[f.information.list.processID],
+        );
+        f.information.list.processID = "other";
+      },
+    ],
+    [
+      "tools/list owned by the information span",
+      (f) => {
+        f.information.list.references[0].spanID = f.information.info.spanID;
+      },
+    ],
+  ])
+    test(`${name} rejects preparation endpoint allowance with ${label}`, () => {
+      const f = fixture();
+      f.information.info.duration =
+        f.information.list.startTime - f.information.info.startTime + 391;
+      mutate(f);
+      assert.throws(() => inspect(f));
+    });
   test(`${name} accepts original Runtime tool HTTP status encoded as string 200`, () => {
     const f = fixture();
     const servers = f.trace.spans.filter(
@@ -348,9 +425,10 @@ for (const [name, mutate] of [
     },
   ],
   [
-    "error before the refresh joined",
+    "error at least one millisecond before the refresh joined",
     (f) => {
-      f.information.request.logs[0].timestamp = f.post.read.startTime;
+      f.information.request.logs[0].timestamp =
+        f.post.read.startTime + f.post.read.duration - 1000;
     },
   ],
   [
