@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { inspectRecoveryWindow } from "./resolve-cache-recovery.mjs";
 import { inspectRebuildPreparation } from "./resolve-cache-rebuild-trace.mjs";
-import { hasError } from "../acp-plan/requests.mjs";
+import { hasDiagnosticError, hasError } from "../acp-plan/requests.mjs";
 import {
   tag,
   traceTopology,
@@ -190,7 +190,7 @@ function rejectionTags(span, allowed) {
     }
 }
 
-function committedTransaction(trace, tree, server, database) {
+export function committedTransaction(trace, tree, server, database) {
   const transaction = one(
     trace.spans.filter(
       (s) =>
@@ -260,6 +260,203 @@ export function inspectLoginRefusalTransaction(trace, server) {
     "one locked refusal credential required",
   );
   return { transaction, sql, credential };
+}
+
+// A Session observer owns one actual logout, independent of the full recovery
+// scenario. Its original credential scope comes from the HTTP dispatcher; SQL
+// values remain private and cannot substitute for that authority receipt.
+export function inspectLogoutMutation(
+  trace,
+  observation,
+  collection,
+  secrets = [],
+) {
+  assert.equal(observation.kind, "logout");
+  assert.equal(observation.path, "/api/session");
+  assert.equal(observation.method, "DELETE");
+  assert.equal(observation.status, 204);
+  assert.equal(trace.traceID, observation.traceID);
+  assert.match(
+    observation.credentialScope ?? "",
+    /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u,
+  );
+  for (const key of ["organization_id", "user_id"])
+    assert(
+      typeof observation.principal?.[key] === "string" &&
+        observation.principal[key],
+    );
+  assert(
+    collection.archivedTraceIDs.has(trace.traceID),
+    "logout Trace not archived",
+  );
+  const sources = resolveTraceSources(trace, secrets, collection);
+  for (const source of sources) {
+    assertGatewayResolutionAttributes(source);
+    for (const span of source.spans) {
+      fields(span.tags ?? []);
+      assert(
+        Number.isFinite(span.startTime) &&
+          Number.isFinite(span.duration) &&
+          span.duration >= 0 &&
+          Number.isFinite(end(span)),
+        "unfinished logout source span",
+      );
+    }
+  }
+  const logoutSuccess = (span, source) => {
+    successful(span, source);
+    assert(!hasDiagnosticError(span), "unexpected logout diagnostic");
+    for (const { key, value } of [
+      ...(span.tags ?? []),
+      ...(span.logs ?? []).flatMap((event) => event.fields ?? []),
+    ])
+      if (["antnest.result", "antnest.outcome"].includes(key))
+        assert(
+          ["success", "completed", "admitted"].includes(value),
+          "contradictory logout success receipt",
+        );
+  };
+  const tree = traceTopology(trace);
+  const root = one(
+    trace.spans.filter((s) => !tree.parent(s)),
+    "one logout HTTP root required",
+  );
+  assert.equal(tree.service(root), "edge-gateway");
+  assert.equal(tag(root, "span.kind"), "server");
+  assert.equal(tag(root, "http.route"), "/api/session");
+  assert.equal(tag(root, "http.request.method"), "DELETE");
+  assert.equal(tag(root, "http.response.status_code"), 204);
+  const server = one(
+    trace.spans.filter(
+      (s) =>
+        tree.service(s) === "identity-service" &&
+        tag(s, "span.kind") === "server" &&
+        tag(s, "http.route") === "/rpc/identity/revoke-access-token",
+    ),
+    "one actual Identity logout command required",
+  );
+  assert.equal(tag(server, "rpc.method"), "revoke_access_token");
+  const client = tree.parent(server);
+  assert.equal(tree.service(client), "edge-gateway");
+  assert.equal(tree.parent(client), root);
+  assert.equal(tag(client, "span.kind"), "client");
+  assert.equal(
+    client.processID,
+    root.processID,
+    "foreign logout Gateway process",
+  );
+  assert(
+    root.startTime <= client.startTime && end(client) <= end(root),
+    "logout command outside Gateway request lifetime",
+  );
+  for (const span of [client, server]) {
+    assert.equal(tag(span, "http.request.method"), "POST");
+    assert.equal(tag(span, "http.response.status_code"), 200);
+  }
+  const decision = one(
+    trace.spans.filter((s) => s.operationName === "gateway.identity.resolve"),
+    "one logout Resolve required",
+  );
+  const resolution = inspectGatewayResolution(
+    trace,
+    {
+      rootSpanID: root.spanID,
+      decisionSpanID: decision.spanID,
+      upstreamSpanID: client.spanID,
+      profile: "session",
+      ttlMs: 10000,
+    },
+    collection,
+  );
+  const currentClients = new Set([client]),
+    currentServers = new Set([server]);
+  if (resolution.rpc_client_span_id) {
+    const source = collection.traces.get(resolution.source_trace_id);
+    assert(
+      source && collection.archivedTraceIDs.has(source.traceID),
+      "logout Resolve source not archived",
+    );
+    const sourceTree = traceTopology(source),
+      resolved = sourceTree.spans.get(resolution.identity_server_span_id),
+      rpc = sourceTree.spans.get(resolution.rpc_client_span_id),
+      database = databaseChildrenTopology(source, resolved);
+    const read = one(database, "one admitted logout token SELECT required");
+    assert.equal(query(read), tokenRead);
+    assert.equal(rows(read), 1);
+    for (const span of [rpc, resolved, ...database])
+      logoutSuccess(span, source);
+    if (source === trace) {
+      currentClients.add(rpc);
+      currentServers.add(resolved);
+    }
+  }
+  for (const span of trace.spans) {
+    assert(tree.chain(span).includes(root), "detached logout span");
+    assert(
+      ["edge-gateway", "identity-service"].includes(tree.service(span)),
+      "logout reached an unrelated service",
+    );
+    logoutSuccess(span, trace);
+    if (
+      tree.service(span) === "edge-gateway" &&
+      tag(span, "span.kind") === "client"
+    )
+      assert(currentClients.has(span), "unbound logout forwarding");
+    if (
+      tree.service(span) === "identity-service" &&
+      tag(span, "span.kind") === "server"
+    )
+      assert(currentServers.has(span), "unbound logout Identity receiver");
+    if (tag(span, "db.system.name") && tag(span, "span.kind") === "client")
+      assert(
+        [...currentServers].some((owner) => tree.chain(span).includes(owner)),
+        "unbound logout SQL",
+      );
+  }
+  const database = databaseChildrenTopology(trace, server);
+  const { transaction } = committedTransaction(trace, tree, server, database);
+  const groups = Object.fromEntries(
+    ["begin", "commit", "revoke", "sessionLock", "session", "audit"].map(
+      (key) => [key, []],
+    ),
+  );
+  for (const span of database) {
+    assert.equal(
+      span.processID,
+      server.processID,
+      "foreign logout SQL process",
+    );
+    rows(span);
+    const text = query(span);
+    if (/^SELECT /u.test(text)) continue;
+    const key = Object.keys(groups).find((key) => statements[key] === text);
+    assert(key, "unexpected logout SQL write");
+    assert.equal(
+      tree.parent(span),
+      transaction,
+      "logout write outside transaction",
+    );
+    groups[key].push(span);
+  }
+  for (const key of ["begin", "commit", "revoke", "sessionLock", "session"])
+    assert.equal(groups[key].length, 1, `one logout ${key} required`);
+  assert(groups.audit.length > 0, "logout audit missing");
+  for (const [key, spans] of Object.entries(groups))
+    for (const span of spans)
+      assert.equal(
+        rows(span),
+        ["begin", "commit", "sessionLock"].includes(key) ? 0 : 1,
+      );
+  return {
+    trace_id: trace.traceID,
+    identity_server_span_id: server.spanID,
+    transaction_span_id: transaction.spanID,
+    commit_span_id: groups.commit[0].spanID,
+    revoked_sessions: 1,
+    session_feed_rows: 1,
+    resolution,
+    ...resolveTraceDiagnostics(trace, sources),
+  };
 }
 
 // Business receipts establish credential/Principal identity and ordering. This

@@ -13,6 +13,10 @@ import {
   addResolveRPC,
 } from "../observability/gateway-resolution-fixtures.mjs";
 import { fields } from "../observability/trace-fixtures.mjs";
+import {
+  addReadEndpointObservation,
+  assertReadEndpointObservations,
+} from "../observability/runtime-information-timing-fixture.mjs";
 
 const inspect = (f) =>
   load.inspectResolveLoad(f.wire, f.agentID, f.settings, f, [
@@ -23,6 +27,20 @@ const setEventField = (row, key, value) => {
   setTag(span, key, value);
   row.event.fields = span.tags;
 };
+
+test("load keeps original catalog endpoint observations and raw strict diagnostics", () => {
+  const f = loadFixture(),
+    c = addInitializeCatalog(f);
+  // This synthetic receiver uses the production Node integer-ms start anchor.
+  const offset = c.root.startTime % 1000;
+  c.root.startTime -= offset;
+  c.root.duration += offset;
+  const baseline = inspect(f);
+  const expected = addReadEndpointObservation(c.trace, c.read);
+  const raw = structuredClone(f.traces);
+  assertReadEndpointObservations(inspect(f), [expected], baseline);
+  assert.deepEqual(f.traces, raw);
+});
 
 test("load accepts initialize HTTP 200 and session/list HTTP 202 receipts", () => {
   const f = loadFixture();
@@ -627,3 +645,67 @@ for (const name of [
     assert.equal(JSON.stringify([...f.traces.values()]), before);
   });
 }
+
+for (const runtimeOutcome of ["success", "canceled"])
+  test(
+    "load accepts only original parsed-read owned cleanup: " + runtimeOutcome,
+    () => {
+      const f = loadFixture();
+      addInitializeCatalog(f, { runtimeOutcome, clientOutcome: "cancelled" });
+      const before = JSON.stringify([...f.traces.values()]);
+      assert.equal(inspect(f).requests.length, 100);
+      assert.equal(JSON.stringify([...f.traces.values()]), before);
+    },
+  );
+
+test("load rejects legacy metadata exchanges with no parsed receipt", () => {
+  const f = loadFixture();
+  const c = addInitializeCatalog(f);
+  for (const span of [c.client, c.handshake.client])
+    span.references[0].spanID = c.root.spanID;
+  c.trace.spans = c.trace.spans.filter((span) => span !== c.read);
+  assert.throws(() => inspect(f));
+});
+
+test("warm list cannot hide an unproved Runtime read without HTTP children", () => {
+  const f = loadFixture();
+  const trace = f.traces.get(f.wire.requests[1].trace_id);
+  const list = trace.spans.find((span) => span.spanID === "list");
+  trace.spans.push({
+    ...structuredClone(list),
+    spanID: "unproved-read",
+    operationName: "mcp.runtime.info.read",
+    references: [
+      { refType: "CHILD_OF", traceID: trace.traceID, spanID: list.spanID },
+    ],
+    tags: fields({ "span.kind": "internal" }),
+  });
+  assert.throws(() => inspect(f));
+});
+
+for (const [name, operationName, peer] of [
+  ["named Runtime CLIENT", "HTTP POST antnest-runtime", undefined],
+  ["Runtime peer CLIENT", "HTTP GET antnest-runtime", "antnest-runtime"],
+])
+  test("warm list rejects " + name + " even without a receiver", () => {
+    const f = loadFixture();
+    const trace = f.traces.get(f.wire.requests[1].trace_id);
+    const list = trace.spans.find((span) => span.spanID === "list");
+    trace.spans.push({
+      ...structuredClone(list),
+      spanID: "unpaired-runtime-client",
+      operationName,
+      startTime: list.startTime + 100,
+      duration: 100,
+      references: [
+        { refType: "CHILD_OF", traceID: trace.traceID, spanID: list.spanID },
+      ],
+      tags: fields({
+        "span.kind": "client",
+        "http.request.method": "POST",
+        "http.response.status_code": 200,
+        ...(peer ? { "peer.service": peer } : {}),
+      }),
+    });
+    assert.throws(() => inspect(f));
+  });

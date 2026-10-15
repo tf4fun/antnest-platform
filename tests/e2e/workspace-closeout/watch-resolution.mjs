@@ -179,7 +179,15 @@ function sourceOrigin(selected, options, ttlMs, decision, rejected = true) {
       trigger.span.startTime <= root.startTime,
       "refresh predates trigger",
     );
-    return "background-refresh";
+    return {
+      kind: "background-refresh",
+      outcome,
+      gateways: [
+        { trace: selected.trace, span: root },
+        { trace: trigger.trace, span: trigger.span },
+        { trace: trigger.trace, span: triggerRoot },
+      ],
+    };
   }
   requestRoot(tree, root);
   const origin = selected.trace.spans
@@ -210,7 +218,14 @@ function sourceOrigin(selected, options, ttlMs, decision, rejected = true) {
   if (outcome !== "unavailable")
     assert(end(client) <= end(origin), "source denial predates RPC completion");
   // The original caller may cancel before the retained work completes.
-  return "request";
+  return {
+    kind: "request",
+    outcome,
+    gateways: [
+      { trace: selected.trace, span: root },
+      { trace: selected.trace, span: origin },
+    ],
+  };
 }
 
 function closureWitness(decision, expected, context) {
@@ -278,6 +293,140 @@ function cancelledTransport(client, expected, context) {
     "unrelated pending Resolve status",
   );
   return true;
+}
+
+// Locate a real non-admitting workspace RPC without turning a waiter or
+// pre-CLIENT cancellation into a dependency failure. A shared deadline still
+// requires a completed actual deadline CLIENT. Owning callers must still
+// validate its exact error/SQL receipt and independent fault window.
+export function inspectWorkspaceFailureSource(trace, root, decision, options) {
+  const tree = traceTopology(trace);
+  decisionUnder(tree, decision, root);
+  const outcome = value(decision, "outcome");
+  assert(["rejected", "unavailable"].includes(outcome));
+  errorDecision(decision, outcome);
+  const cancelKind = value(decision, "cancel_kind");
+  assert(
+    cancelKind === undefined ||
+      (cancelKind === "shared-deadline" && outcome === "unavailable"),
+    "cancelled waiter cannot prove Identity failure",
+  );
+  const source = value(decision, "source");
+  let selected,
+    origin = { kind: "request", outcome, gateways: [] };
+  if (source === "rpc") {
+    assert.equal(cancelKind, undefined, "RPC creator has shared cancellation");
+    assert.equal(links(decision).length, 0);
+    assert.equal(value(decision, "shared_source_state"), undefined);
+    selected = {
+      trace,
+      tree,
+      span: one(
+        trace.spans.filter(
+          (span) =>
+            tree.parent(span) === root &&
+            tree.service(span) === "edge-gateway" &&
+            tag(span, "span.kind") === "client" &&
+            span.operationName === "HTTP POST identity-service" &&
+            span.startTime >= decision.startTime &&
+            end(span) <= end(decision),
+        ),
+        "actual failed workspace CLIENT",
+      ),
+    };
+  } else {
+    assert.equal(source, "shared");
+    assert.equal(value(decision, "shared_source_state"), "actual-client");
+    selected = linked(
+      one(links(decision), "actual failed workspace source link"),
+      options,
+    );
+    origin = sourceOrigin(
+      selected,
+      options,
+      10000,
+      decision,
+      outcome === "rejected",
+    );
+    // A refresh records the retained flight's result directly. A request
+    // owner may instead have cancelled before an actual 401 completed, but
+    // an unavailable RPC cannot produce a rejected owner decision.
+    if (origin.kind === "background-refresh" || outcome === "unavailable")
+      assert.equal(origin.outcome, outcome, "contradictory source outcome");
+  }
+  clientShape(selected.tree, selected.span);
+  if (cancelKind === "shared-deadline") {
+    assert(
+      hasError(selected.span),
+      "shared deadline lacks failed actual CLIENT",
+    );
+    assert.equal(tag(selected.span, "error.type"), "deadline_exceeded");
+    assert.equal(
+      tag(selected.span, "otel.status_description"),
+      "Request deadline exceeded",
+    );
+  }
+  assert.equal(tag(selected.span, "server.address"), "identity-service");
+  assert(
+    end(selected.span) <= end(decision),
+    "failed decision precedes its actual source completion",
+  );
+  const process = (raw, span) => {
+    const metadata = raw.processes[span.processID];
+    const tags = Object.fromEntries(
+      (metadata.tags ?? []).map((t) => [t.key, t.value]),
+    );
+    assert.equal(
+      Object.keys(tags).length,
+      (metadata.tags ?? []).length,
+      "duplicate Gateway resource field",
+    );
+    for (const key of ["host.name", "service.instance.id"])
+      assert(typeof tags[key] === "string" && tags[key]);
+    assert(
+      Number.isSafeInteger(tags["process.pid"]) && tags["process.pid"] > 0,
+    );
+    return [
+      metadata.serviceName,
+      tags["host.name"],
+      tags["process.pid"],
+      tags["service.instance.id"],
+    ];
+  };
+  for (const gateway of [
+    { trace, span: decision },
+    { trace: selected.trace, span: selected.span },
+    ...origin.gateways,
+  ]) {
+    if (gateway.trace === trace)
+      assert.equal(
+        gateway.span.processID,
+        root.processID,
+        "failure ancestry belongs to another Gateway process",
+      );
+    else
+      assert.deepEqual(
+        process(gateway.trace, gateway.span),
+        process(trace, root),
+        "failure ancestry belongs to another Gateway process",
+      );
+  }
+  return {
+    ...selected,
+    record: {
+      trace_id: trace.traceID,
+      root_span_id: root.spanID,
+      decision_span_id: decision.spanID,
+      profile: "workspace",
+      source,
+      outcome,
+      ...(cancelKind === undefined ? {} : { cancel_kind: cancelKind }),
+      admission: false,
+      source_trace_id: selected.trace.traceID,
+      rpc_client_span_id: selected.span.spanID,
+      source_root: origin.kind,
+    },
+  };
 }
 
 // Watch owns rejection/closure evidence. The shared admission oracle remains
@@ -461,7 +610,13 @@ export function inspectWatchResolutions(
           });
         }
         if (source === "shared")
-          sourceRoot = sourceOrigin(selected, options, ttlMs, decision, false);
+          sourceRoot = sourceOrigin(
+            selected,
+            options,
+            ttlMs,
+            decision,
+            false,
+          ).kind;
         if (sourceTrace === trace) {
           currentClients.add(client);
           if (hasError(client)) allowedErrors.add(client);
@@ -534,7 +689,7 @@ export function inspectWatchResolutions(
         "cancelled waiter cannot prove rejection",
       );
       selected = linked(one(links(decision), "shared rejection link"), options);
-      sourceRoot = sourceOrigin(selected, options, ttlMs, decision);
+      sourceRoot = sourceOrigin(selected, options, ttlMs, decision).kind;
     }
     const { trace: sourceTrace, tree: sourceTree, span: client } = selected;
     claimRpcClient(decision, sourceTrace, client);

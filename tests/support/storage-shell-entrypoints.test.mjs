@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const children = [
@@ -203,7 +204,36 @@ test("containers writing private evidence run as the evidence owner", () => {
         commands.push([name, command]);
     }
   }
-  assert(commands.length >= 3, "evidence-writing clients not found");
+  // The Session runner delegates container creation to the shared deployment
+  // module. Include its actual arguments in the same evidence-owner inventory.
+  assert.match(
+    readFileSync(join(directory, "e2e-acp-session.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
+  );
+  const runID = "00000000-0000-4000-8000-000000000001";
+  const uid = String(process.getuid());
+  const gid = String(process.getgid());
+  const { client } = sessionHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `session-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:session-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence", checkpoints: "/fixture/checkpoints" },
+  );
+  assert(client.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    client.flatMap((arg, index) =>
+      arg === "--user" ? [client[index + 1]] : [],
+    ),
+    [`${uid}:${gid}`],
+  );
+  assert(commands.length + 1 >= 3, "evidence-writing clients not found");
   for (const [name, command] of commands)
     assert(
       command.includes('--user "$(id -u):$(id -g)"') ||

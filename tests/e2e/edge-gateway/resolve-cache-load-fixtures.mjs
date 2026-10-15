@@ -1,3 +1,4 @@
+import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
 import {
   resolutionFixture,
   addResolveRPC,
@@ -179,126 +180,26 @@ export function loadFixture() {
   };
 }
 
-export function addInitializeCatalog(f) {
+export function addInitializeCatalog(f, options = {}) {
   const trace = [...f.traces.values()][0];
-  trace.processes.runtime = { serviceName: "antnest-runtime" };
   const request = trace.spans.find((span) => span.spanID === "initialize");
-  const add = (id, parent, operation, processID, tags) => {
-    const span = {
-      traceID: trace.traceID,
-      spanID: id,
-      operationName: operation,
-      processID,
-      startTime: request.startTime,
-      duration: 1,
-      references: [
-        { refType: "CHILD_OF", traceID: trace.traceID, spanID: parent },
-      ],
-      tags: fields(tags),
-      logs: [],
-    };
-    trace.spans.push(span);
-    return span;
+  return {
+    trace,
+    ...addCompletedRead(trace, request, "http", f.agentID, {
+      preserveRequest: true,
+      runtimeOutcome: "success",
+      clientOutcome: "success",
+      ...options,
+    }),
   };
-  for (const method of ["discover", "resources/read"]) {
-    const client = add(
-      method + "-client",
-      request.spanID,
-      "HTTP POST antnest-runtime",
-      request.processID,
-      {
-        "span.kind": "client",
-        "http.response.status_code": 200,
-      },
-    );
-    const server = add(
-      method + "-server",
-      client.spanID,
-      "HTTP POST /mcp",
-      "runtime",
-      {
-        "span.kind": "server",
-        "rpc.method": method,
-        "http.response.status_code": 200,
-      },
-    );
-    add(
-      method + "-operation",
-      server.spanID,
-      "runtime.mcp.operation",
-      "runtime",
-      {
-        "rpc.method": method,
-        "otel.status_code": "OK",
-        "error.type": "",
-        "mcp.operation.outcome": "success",
-        "antnest.operation.outcome": "success",
-      },
-    );
-  }
-  return { trace, operation: trace.spans.at(-1) };
 }
 
 export function addInitializeCatalogEvents(f) {
   const { trace } = addInitializeCatalog(f);
-  const operation = trace.spans.find(
-    (span) => span.spanID === "resources/read-operation",
-  );
-  const executor = {
-    ...structuredClone(operation),
-    spanID: "catalog-executor",
-    operationName: "runtime.executor",
-    references: [
-      { refType: "CHILD_OF", traceID: trace.traceID, spanID: operation.spanID },
-    ],
-    tags: fields({
-      "span.kind": "internal",
-      "otel.status_code": "OK",
-      "executor.outcome": "success",
-    }),
-  };
-  trace.spans.push(executor);
-  const rows = [];
-  for (const span of trace.spans.filter((s) => s.processID === "runtime")) {
-    setTag(span, "antnest.agent.id", f.agentID);
-    let detail;
-    if (span.operationName === "HTTP POST /mcp") {
-      setTag(span, "http.request.method", "POST");
-      setTag(span, "http.route", "/mcp");
-      setTag(span, "http.transport.outcome", "success");
-      setTag(span, "antnest.protocol.outcome", "success");
-      detail = {
-        event: "Runtime HTTP request completed",
-        "http.transport.outcome": "success",
-        "http.request.method": "POST",
-        "http.status_code": "200",
-        "url.path": "/mcp",
-      };
-    } else if (span.operationName === "runtime.mcp.operation") {
-      const method = span.tags.find(
-        (field) => field.key === "rpc.method",
-      ).value;
-      setTag(span, "mcp.operation.name", method);
-      detail = {
-        event: "Runtime MCP operation completed",
-        "mcp.operation.name": method,
-        "mcp.operation.outcome": "success",
-      };
-    } else detail = { event: "Runtime Executor completed", outcome: "success" };
-    const event = {
-      timestamp: span.startTime + span.duration,
-      fields: fields({
-        ...detail,
-        level: "INFO",
-        "error.type": "",
-        "service.name": "antnest-runtime",
-        "antnest.agent.id": f.agentID,
-        trace_id: trace.traceID,
-        span_id: span.spanID,
-      }),
-    };
-    span.logs = [event];
-    rows.push({ span, event });
-  }
-  return rows;
+  return trace.spans
+    .filter(
+      (span) =>
+        trace.processes[span.processID]?.serviceName === "antnest-runtime",
+    )
+    .flatMap((span) => span.logs.map((event) => ({ span, event })));
 }

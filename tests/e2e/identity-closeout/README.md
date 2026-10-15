@@ -34,6 +34,66 @@ node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
 
 Helper tests do not replace the real integration run.
 
+The shared private ACP helpers support an explicit `boundary: "private-acp"`
+on `connectACP`. Each owning consumer must obtain `workspaceContext` from the
+existing browser access token and use the `agent-ui-acp` workload authorization
+from `serviceClient`. Pass the issued context, authorization, exact private
+`/v1/acp` or `/v2/acp` endpoint and a `createPrivateACPTelemetry` provider; the
+Cookie argument must be `undefined`. Header overrides and disabling the actual
+CLIENT trace context are rejected. The default remains the Gateway boundary
+until each consumer is migrated and admitted separately.
+
+The telemetry provider exports real root CLIENT spans under
+`antnest-private-acp-client`. It records successful 101 only after the official
+SDK transport reaches `open`; rejected or invalid handshakes remain failures.
+The private response's `X-Antnest-Trace-ID` is never used as proof. A client's
+`connectionTraceID` and `clientSpanID` identify its exported CLIENT context;
+the actual ACP SERVER span must still be discovered from raw evidence.
+
+`collectPrivateACPTrace` requires a nonempty durable evidence directory, a
+provider `flush` callback and the owning request inspector. Supply the actual
+method, request ID, Agent, protocol version and applicable Session, plus the
+CLIENT IDs; do not supply `connectionSpanID` or `connectionTrace`. Collection
+discovers the unique workspace upgrade and verifies its exported CLIENT parent,
+then binds the request's exact Link and original ACP process resource identity
+(`host.name`, positive numeric `process.pid`, and `service.instance.id`). Each
+identity attribute must occur exactly once in both raw resources. Trace-local
+process IDs may differ; the resource tuple must match. This binding does not
+claim a globally unique process generation across restarts. Private request
+reports do not claim Gateway ancestry. Three consecutive complete raw snapshots
+and candidate inventories must agree. Every received query body is saved before
+parsing or validation, with its SHA-256 receipt, including unsuccessful attempts.
+The caller must include its CCT, workload credential and other canaries in
+`secrets`; warnings and errors from both sources remain visible even when an
+older owning inspector does not recognize a diagnostic. A collected record
+with `strict_trace: "failed"` still requires owning review. Close each client
+and shut down its telemetry provider in `finally`.
+Raw error counts use the shared diagnostic predicate: cancellation alone is not
+an error. A request's verified read-close cancellation remains in its original
+spans and owning proof; real error fields and warnings still fail strict checks.
+The successful private upgrade independently rejects any canceled exchange.
+Session success checks also reject failed or conflicting HTTP status fields
+in tags and events, and unowned warning/error log levels. A dedicated owning
+proof is still required for expected diagnostics; generic success cannot
+silence them or rewrite the original records.
+
+The loopback SDK/OTLP and raw-collector tests cover these shared tools only.
+ACP Session faults, Agent access and ACP Closeout still require separate
+consumer migration and real Docker authentication, business and Trace evidence.
+
+The Session fault migration uses the private SDK for protocol and execution,
+and a separate same-Session Bridge SSE for browser authorization. A private ACP
+connection does not prove silent browser logout, outage or expiry enforcement.
+`observeBrowserSession` retains the original Cookie independently of the browser
+that logs out. Checkpoint before the fault, observe a remote close within the
+fixed 30-second bound without SDK or browser probes, then send an actual prompt
+denial using the original Cookie. The denial must preserve the expected status
+and code, no-store policy and absence of Cookie writes. Cancellation waits for
+that bounded HTTP request to finish and cannot turn into a passed check.
+The close receipt deliberately leaves `authorizationCauseVerified` false:
+independent Identity state, CCT/session deadlines and the raw Bridge/Resolve
+Trace closure must still prove the cause in the owning Docker scenario.
+
 Cross-service membership, SCIM and administrator revocations observe an already
 warm Principal until the actual deployed Gateway snapshot TTL. Every response
 retains its unique Trace ID, monotonic send/completion times and original
@@ -446,68 +506,154 @@ cancellation and convergence of arbitrary unavailable Runtimes.
 
 `make e2e-acp-session` uses official SDK clients against the real Gateway,
 Identity and ACP services, with synthetic credentials and a local model fixture.
+Protocol work uses the private ACP v1/v2 connection with its real Identity
+Resolve and signed caller context. Browser authorization is observed on the
+original Cookie's Bridge SSE request for that Agent and Session. Its Trace ID
+comes from the actual HTTP response. The SDK connection is closed locally only
+after the browser's remote close and independent HTTP denial have been observed.
 
-**Logout.** For each v1 and v2 route, the client creates a Session, completes
-browser logout through the Gateway, then waits for the silent WebSocket to close
-with `1008/session_rejected`. A subsequent SDK prompt is rejected locally and
-must not add a transport request. A new login must load or
-resume the same Session with no rejected prompt or Run events in its history.
+The client mounts the real Agent UI stream parser and protocol source directories
+read-only. Its import test reconstructs those mounts with the ACP image's locked
+dependencies and verifies that both services use the same Zod version and integrity.
 
-**Identity outage.** Official v1 and v2 clients connect before the coordinator
-stops only Identity. Both old connections must close without a client message,
-with `1013/identity_unavailable` and no durable Run, message or Tool change.
-The close observations run together and must occur within the 30-second
-authority bound, before the original caller context expires. The same long-lived cookies
-must reconnect after Identity recovers. An empty recovered Session must contain
-its current command catalog, one untitled Session info update with a valid
-timestamp and, for v2 replay only, exactly one idle control update
-(`assertEmptySession`). User messages, Tool activity, execution state and
-duplicate catalogs are failures. Clients use the shared bounded connection
-helper and the SDK's `cancellationSignal`; socket errors are observed, and no
-upgrade retry is introduced.
+**Logout.** Each version creates a Session and records the original stream
+before logout through the Gateway. The stream must close silently within the
+30-second authority bound. The logout Trace must prove committed revocation;
+an independent POST to the same Session's prompts route, using the retained
+original Cookie, must return 401 without a Cookie write or durable effect.
+The revocation feed may close the stream before another Resolve failure. A new
+login must load or resume the same Session with no rejected prompt or Run events.
 
-**Expiry.** The coordinator restarts Identity with a five-second token TTL. New
-connections must work before their deadlines and close with `1008` without
-another message. The reason is `caller_context_expired` when the original CCT
-ends first, or `session_rejected` when it equals the absolute session deadline.
-For this short session the CCT deadline is the issued absolute deadline rounded
-down to a whole second. Evidence retains both the issued deadline and this
-derived CCT deadline and requires closure within its preceding one-second
-closing grace. The later SDK probe waits until the issued deadline has passed
-and must remain local. Database rows and clocks are not modified. Earlier long-lived
-credentials keep working. The normal TTL is restored before the last scenario.
+**Identity outage.** Both original SSE streams open before the coordinator stops
+Identity. Their close observations run together without another SDK request.
+The actual failed Resolve and the later original-Cookie POST 503 must both lie
+within the independently acknowledged stopped interval. Failure evidence uses
+the shared Resolve's actual five-second maximum, preserves the Cookie, and
+requires no Run, message or Tool change. The same long-lived Cookie reconnects
+after recovery. An empty recovered Session contains its current command catalog,
+one untitled Session info update with a valid timestamp and, for v2 replay only,
+exactly one idle control update (`assertEmptySession`).
 
-**Admitted work.** A local model fixture holds a real request. Only after the
-Run is running does the client log out and observe the remote close on the old
-connection. Releasing the fixture must let the same Run complete one real
-Runtime Tool, finish with a quiescent executor and a settled Tool effect, and
-resume without re-execution on reconnect. The Run and request IDs and the
-captured execution snapshot stay unchanged. The structured Bash result must
-show exit code zero, complete output and an exact ordered file append per Run.
-A v1 prompt answers only after its Run, so its own ACP dispatch span may end
-in error because the socket is already closed; every Run, model and Tool span
-must still be error-free.
+**Expiry.** Identity is rebuilt with a five-second token TTL. The original login
+must follow that deployment's acknowledgement and finish before SSE dispatch.
+Its separately archived Trace proves Gateway login, successful Identity
+`local_login`, the actual token INSERT and committed transaction. The original
+CCT ends at the issued absolute deadline rounded down to a whole second; the
+stream must close within that preceding one-second grace, without further
+browser or SDK traffic. Gateway's actual deployment must retain the ten-second
+Resolve cache budget. The later independent POST waits until more than 17 seconds
+after the original SSE headers on the client monotonic clock, then must return 401. This is a conservative bound on the five-second token and ten-second cache;
+RPC completion and cache hits cannot renew the original source-start budget.
+Raw service clocks, database rows and original deadlines remain unchanged.
+Earlier long-lived credentials keep working, and the normal TTL is restored.
 
-Silent close evidence records the peer code, reason, time, absence of local
-shutdown and unchanged SDK request list. The fixture obtains its connection
-Trace ID from the actual upgrade response, without injecting an unexported
-parent. Complete connection Traces must include Gateway, the real ACP upgrade,
-and exactly one initial `acp` Resolve decision before the socket CLIENT. A
-live RPC requires its exact Identity receiver and SQL; a cache hit requires
-valid snapshot/proof/deadline budgets; a shared decision requires the archived
-source CLIENT, receiver and SQL, including the cache-hit trigger of a background
-refresh. Every later admitted revalidation has the same source checks. SQL is
-counted by its real receiving SERVER, so repeated shared consumers do not
-invent extra queries. No message Trace is invented for a request that was
-never sent. Actual message-denial trace validators remain separate; a rejected
-or unavailable decision cannot substitute for successful admission.
-Successful requests
-bind the SDK request ID and returned Session ID, and execution binds the
-Provider HTTP span IDs. Traces are scanned for the synthetic cookies and model
-credential, including URL-encoded forms. The service relay unit tests
-separately cover identity changes, dependency failure, timeout,
-fragmented and pipelined messages, bounded capacity and shutdown cleanup. Silent
-revocation has a bounded delay; admitted Runs continue to completion.
+**Admitted work.** A local model fixture holds a real request. Once its Run is
+running, the client logs out and observes the original SSE close and POST 401.
+All pending private SDK work is joined before releasing the fixture. The same
+Run must complete one real Runtime Tool, reach a quiescent executor and settled
+Tool effect, and replay without re-execution. Run and request IDs and the
+execution snapshot stay unchanged. The Bash result must show exit code zero,
+complete output and an exact ordered file append per Run. A locally interrupted
+v1 dispatch may end in error; Run, model and Tool work still require their own
+successful evidence.
+
+Each ordinary Run owns a complete Runtime information read under its preparation
+span, before catalog listing and model execution. The original request's Agent
+and Session and the Run's pinned execution must match the raw HTTP, parse and
+close receipts. A v1 prompt may also refresh its catalog after the Run finishes;
+that separate read belongs directly to the original RPC and may observe a newer
+Runtime execution. All Runtime HTTP work must belong to one of those reads or
+to an independently verified catalog or Tool exchange. A closed v1 response
+allows only the recorded dispatch-error shape after the refresh has completed;
+it does not excuse failed reads, failed closes, Tool cancellation or extra errors.
+Session and command collectors select model receipts by the inspected request's
+actual Trace ID. A catalog request must still have none; an ordinary Run must
+own both expected model stages. Extra same-Trace calls and receipts borrowed
+from another Run remain failures.
+
+Read evidence includes the five original discovery-ready, resource-dispatch,
+validated, close-started and close-completed events, in that order. Discovery
+readiness follows the SDK's parsed response and can precede HTTP SSE EOF.
+Closing that same SDK connection can cancel either of its two exact HTTP CLIENTs,
+including a successfully parsed discovery response still awaiting EOF. Each
+cancellation requires its original AbortError event inside the proved close
+interval, a validated resource, no caller cancellation, successful close and
+matching HTTP 200 response bytes. Discovery still requires a successful Runtime
+transport; this does not admit a canceled discovery SERVER or another read's
+cleanup. Both original cancellation records remain in the final report.
+Event order is checked by the original timestamps; the backend's event-array
+order is retained and need not be chronological.
+Each report preserves any deferred same-Node endpoint discrepancy in
+`time_observations`, including raw endpoints, Trace and Span IDs and process
+identity. Every difference is checked independently and must be strictly below
+one millisecond with integer-millisecond start anchors and a direct parent in
+the same ACP process. ACP own-span events, same-read ordering and Runtime child
+containment remain strict. Runtime events follow the existing
+[Jaeger representation rule](../../../contracts/edge-gateway/resolve-cache.md):
+safe integer-microsecond start, duration and event fields may represent an event
+one microsecond beyond the summed raw end; two microseconds are rejected.
+This requires the owned Runtime's Rust OpenTelemetry resource identity and records
+each event separately as `jaeger-integer-microsecond-representation`, including
+its original array index and raw values. It does not prove nanosecond ordering.
+Executor, operation and HTTP completion events must still retain their original
+causal order, and cancellation must fall between operation and HTTP completion.
+These observations never rewrite timestamps or
+change raw warning/error counts, error ownership or `strict_trace`; repeated
+outage checks retain each original observation once.
+
+An unavailable prompt may report the original context deadline without an HTTP
+wrapper. This still requires the selected, completed Identity CLIENT to have the
+same exact deadline receipt, a bounded request budget, the original Gateway
+process and ancestry, and no receiver or business execution. A shared decision
+may retain `actual-client / shared-deadline` only with its exact source Link and
+that completed deadline receipt. Caller cancellation, unfinished shared work,
+and unrelated network or DNS errors cannot use this case. The raw error chain
+does not identify which context-return branch won the race.
+
+The combined collector retains the original SSE, each independent cause and
+denial, and every linked Resolve source. It verifies the exact Gateway-to-UI
+parent chain, original CCT, successful token SELECT or bounded cache receipt,
+and each later revalidation. Every Gateway CLIENT must be accounted for; two
+RPC creators cannot claim one CLIENT, while legitimate shared waiters may reuse
+it. Claimed failures must match their exact diagnostics, and unrelated errors
+or cancellation fields fail admission. Raw warnings and errors remain strict
+failures. Successful protocol requests retain their own private ACP Trace,
+request ID, Session ID and Provider evidence. All traces are scanned for
+synthetic credentials, including encoded forms. Cleanup joins transports and
+database work before telemetry shutdown, including after an earlier closer fails.
+Local inspector tests do not replace this profile's actual Docker acceptance.
+
+After all eight original browser streams have closed, explicit SDK clients have
+joined, and the admitted Run effects have settled, the client requests a separate
+owner-drain window. The runner captures all eight participating services after
+Identity's final restoration, binds the unchanged UI and peer processes to the
+original deployment, and normally stops only that UI container. A zero exit
+with forced-drain or shutdown diagnostics fails. Original Trace collection starts
+only after the matching acknowledgement and the normal-stop checks; it cannot
+use this later stop as the reason for an earlier browser authorization closure.
+The same UI container is restored and observed healthy before the window ends,
+including after collection fails or is cancelled. Container lifecycle receipts
+do not replace the private ACP close, complete DELETE and watch-join evidence.
+
+Before stopping UI, the runner archives an independent ACP control `/status`
+clock sample from the original container, using the same host monotonic clock
+as the lifecycle receipts. The collector queries owner closes, workspace DELETEs
+and that control probe independently. It archives every original observation,
+all eight SSE/cause/denial sets, initialization Links and Resolve sources before
+inspecting individual causes. Three identical full snapshots are required;
+changed resources, events or warnings restart convergence. Failed responses and
+partial bodies remain archived, and cancellation joins the active body before
+returning without a verified result.
+
+Every observed SSE belongs to exactly one owner for its original Organization,
+User and Agent, including observations that create no additional private request.
+The owner must belong to the same UI process, link to its actual initialization,
+and retain a complete successful DELETE202 and joined GET/watch inventory.
+Each ACP stream end and DELETE boundary must independently fit the calibrated
+stop interval. SDK stream callbacks may finish after DELETE; no invented ordering
+or rewritten timestamps are used. Each cause revalidates these raw records before
+classifying only its own stream diagnostics. Private SDK execution collections
+remain separate, and the shared summary counts each raw Span once.
 
 ## Evidence and cleanup
 

@@ -10,6 +10,11 @@ import {
 import { fields } from "../observability/trace-fixtures.mjs";
 
 import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
+import {
+  addReadEndpointObservation,
+  addRuntimeEventRepresentations,
+  assertReadEndpointObservations,
+} from "../observability/runtime-information-timing-fixture.mjs";
 import { recoveryHTTPFixture } from "./resolve-cache-recovery-http-fixtures.mjs";
 import { inspectRecoveryHTTP } from "./resolve-cache-recovery-http.mjs";
 import { tag } from "../observability/trace-tree.mjs";
@@ -1387,6 +1392,13 @@ for (const kind of ["cancelled-read", "successful-runtime"]) {
   test(`retained non-error ${kind} telemetry is not an error claim`, () => {
     const f = fixture();
     benignTelemetry(f, kind);
+    if (kind === "cancelled-read") {
+      assert.throws(
+        () => check(f),
+        "unbound cancellation cannot prove a parsed read",
+      );
+      return;
+    }
     const r = check(f);
     assert.equal(r.error_spans, 20);
     assert.equal(r.owned_error_spans.length, 19);
@@ -2701,7 +2713,7 @@ for (const [name, change] of [
     assert.throws(() => check(f));
   });
 
-function completedViewRead(transport) {
+function completedViewRead(transport, options) {
   const f = fixture(),
     p = f.parts["prep-view"];
   const initialize = p.initialize,
@@ -2711,6 +2723,7 @@ function completedViewRead(transport) {
       initialize,
       transport,
       f.evidence.agent_id,
+      options,
     );
   p.trace.processes.acp = process;
   if (transport === "http")
@@ -2725,12 +2738,47 @@ function completedViewRead(transport) {
     ...read,
   };
 }
+test("stream report preserves each original read endpoint once without changing error claims", () => {
+  const f = completedViewRead("http"),
+    baseline = check(f);
+  const trace = f.parts["prep-view"].trace;
+  const expected = addReadEndpointObservation(trace, f.read);
+  const raw = structuredClone(f.traces);
+  assertReadEndpointObservations(check(f), [expected], baseline);
+  assert.deepEqual(f.traces, raw);
+});
+test("stream retains both original Runtime event representations once", () => {
+  const f = completedViewRead("http");
+  const baseline = check(f);
+  const expected = addRuntimeEventRepresentations(
+    f.parts["prep-view"].trace,
+    f.read,
+    f.server,
+  );
+  const raw = structuredClone(f.traces),
+    result = check(f);
+  assertReadEndpointObservations(result, expected);
+  for (const key of [
+    "strict_trace",
+    "warning_count",
+    "warnings",
+    "owned_error_spans",
+  ])
+    assert.deepEqual(result[key], baseline[key]);
+  assert.deepEqual(f.traces, raw);
+});
 const setEvent = (event, key, value) => {
   event.fields = event.fields.filter((field) => field.key !== key);
   event.fields.push({ key, value });
 };
 test("Bridge outage rejects a retired WSS initialization even with a successful Runtime read", () => {
   assert.throws(() => check(completedViewRead("ws")));
+});
+test("stream binds ACP-only cancellation to original successful read cleanup", () => {
+  const f = completedViewRead("http", { runtimeOutcome: "success" });
+  const before = structuredClone(f.traces);
+  assert.equal(check(f).owned_error_spans.length, 19);
+  assert.deepEqual(f.traces, before);
 });
 // Both transports' diagnostic shapes remain covered in the shared diagnostic
 // tests. This HTTP Bridge consumer must not admit a legacy WSS owner.

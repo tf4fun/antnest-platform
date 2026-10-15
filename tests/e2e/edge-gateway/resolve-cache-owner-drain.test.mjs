@@ -5,6 +5,235 @@ import { join } from "node:path";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
 import * as lifecycle from "./resolve-cache-owner-drain.mjs";
 
+test("a completed Session can collect after the real owner stop without inventing load responses", async () => {
+  assert.equal(typeof lifecycle.createOwnerLifecycle, "function");
+  const f = fixture();
+  try {
+    const owner = await lifecycle.createOwnerLifecycle({
+      ...f.options,
+      artifactPrefix: "session",
+    });
+    assert.equal(f.controls.clockCalls, undefined);
+    assert.equal(owner.baseline["agent-ui"].running, true);
+    let collected = 0;
+    const result = await owner.collect(async (receipt) => {
+      collected += 1;
+      assert.equal(receipt.after["agent-ui"].running, false);
+      assert.equal(f.calls.filter((args) => args[0] === "start").length, 0);
+      for (const service of lifecycle.loadParticipantServices)
+        if (service !== "agent-ui")
+          assert.equal(receipt.after[service].running, true);
+      lifecycle.inspectOwnerDrain(receipt);
+      return { originalTraceIDs: ["original"] };
+    });
+    assert.deepEqual(result, { originalTraceIDs: ["original"] });
+    assert.equal(collected, 1);
+    assert.equal(f.calls.filter((args) => args[0] === "start").length, 1);
+    const saved = JSON.parse(
+      readFileSync(join(f.directory, "session-owner-drain.private.json")),
+    );
+    assert.equal(saved.restored, true);
+    assert.equal(saved.acp_clock, undefined);
+    assert(!f.calls.some((args) => args[0] === "exec"));
+    await assert.rejects(() =>
+      owner.collect(() => assert.fail("reused drain")),
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("Session trace collection waits for the actual UI stop to settle", async () => {
+  assert.equal(typeof lifecycle.createOwnerLifecycle, "function");
+  const f = fixture();
+  const stopEntered = Promise.withResolvers(),
+    stopFinished = Promise.withResolvers();
+  let collected = false;
+  try {
+    const owner = await lifecycle.createOwnerLifecycle({
+      ...f.options,
+      artifactPrefix: "session",
+      docker: async (...args) => {
+        if (args[0][0] === "stop") {
+          stopEntered.resolve();
+          await stopFinished.promise;
+        }
+        return f.options.docker(...args);
+      },
+    });
+    const pending = owner.collect(async () => {
+      collected = true;
+    });
+    await stopEntered.promise;
+    assert.equal(collected, false);
+    stopFinished.resolve();
+    await pending;
+    assert.equal(collected, true);
+  } finally {
+    stopFinished.resolve();
+    f.cleanup();
+  }
+});
+
+test("owner lifecycle preserves independent preparation before stop and in the durable receipt", async () => {
+  const f = fixture();
+  const clock = {
+    container_id: "a".repeat(64),
+    started_at: 10,
+    received_at: 20,
+  };
+  const stages = [];
+  try {
+    const owner = await lifecycle.createOwnerLifecycle({
+      ...f.options,
+      artifactPrefix: "session",
+    });
+    await owner.collect(
+      async (receipt) => {
+        stages.push("collect");
+        assert.deepEqual(receipt.acp_clock, clock);
+      },
+      {
+        evidence: { acp_clock: clock },
+        beforeDrain() {
+          stages.push("before");
+          assert(!f.calls.some((args) => args[0] === "stop"));
+        },
+        inspectDrain(receipt) {
+          stages.push("inspect");
+          assert.equal(receipt.after["agent-ui"].running, false);
+          assert.deepEqual(receipt.acp_clock, clock);
+        },
+      },
+    );
+    assert.deepEqual(stages, ["before", "inspect", "collect"]);
+    const saved = JSON.parse(
+      readFileSync(join(f.directory, "session-owner-drain.private.json")),
+    );
+    assert.deepEqual(saved.acp_clock, clock);
+    assert.equal(saved.restored, true);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("owner preparation failure prevents the stop and collector", async () => {
+  const f = fixture();
+  try {
+    const owner = await lifecycle.createOwnerLifecycle({
+      ...f.options,
+      artifactPrefix: "session",
+    });
+    await assert.rejects(
+      () =>
+        owner.collect(() => assert.fail("unprepared collection"), {
+          beforeDrain() {
+            throw new Error("clock preparation refused");
+          },
+        }),
+      /clock preparation refused/u,
+    );
+    assert(!f.calls.some((args) => args[0] === "stop" || args[0] === "start"));
+  } finally {
+    f.cleanup();
+  }
+});
+
+for (const warning of [
+  "Bridge drain did not close cleanly",
+  "Bridge shutdown failed",
+  "Bridge telemetry shutdown failed",
+  "Bridge authentication client shutdown failed",
+])
+  test(`Session cannot collect after a zero exit with ${warning}`, async () => {
+    assert.equal(typeof lifecycle.createOwnerLifecycle, "function");
+    const f = fixture();
+    try {
+      f.controls.logs = warning;
+      const owner = await lifecycle.createOwnerLifecycle({
+        ...f.options,
+        artifactPrefix: "session",
+      });
+      await assert.rejects(() =>
+        owner.collect(() => assert.fail("unclean drain admitted")),
+      );
+      assert.equal(f.calls.filter((args) => args[0] === "start").length, 1);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+test("cancelled collection still joins restoration with an independent cleanup budget", async () => {
+  const f = fixture(),
+    controller = new AbortController();
+  let restoring = false,
+    observations = 0;
+  try {
+    f.controls.start = () => {
+      restoring = true;
+      f.controls.neverHealthy = true;
+    };
+    f.controls.inspect = (state) => {
+      if (
+        restoring &&
+        state.Config.Labels["com.docker.compose.service"] === "agent-ui" &&
+        ++observations > 1
+      )
+        state.State.Health.Status = "healthy";
+    };
+    const owner = await lifecycle.createOwnerLifecycle({
+      ...f.options,
+      artifactPrefix: "session",
+      signal: controller.signal,
+      docker: (...args) => {
+        controller.signal.throwIfAborted();
+        return f.options.docker(...args);
+      },
+      cleanupDocker: f.options.docker,
+    });
+    await assert.rejects(() =>
+      owner.collect(async () => {
+        controller.abort(new Error("collection cancelled"));
+      }),
+    );
+    assert(
+      observations >= 2,
+      "restoration never joined its healthy observation",
+    );
+    const saved = JSON.parse(
+      readFileSync(join(f.directory, "session-owner-drain.private.json")),
+    );
+    assert.equal(saved.restored, true);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("cancellation during UI restoration is reported only after the healthy join", async () => {
+  const f = fixture(),
+    controller = new AbortController();
+  const failure = new Error("cancelled during restore start");
+  try {
+    f.controls.start = () => controller.abort(failure);
+    const owner = await lifecycle.createOwnerLifecycle({
+      ...f.options,
+      artifactPrefix: "session",
+      signal: controller.signal,
+      cleanupDocker: f.options.docker,
+    });
+    await assert.rejects(
+      () => owner.collect(async () => "collected"),
+      (error) => error === failure || error.errors?.includes(failure),
+    );
+    const saved = JSON.parse(
+      readFileSync(join(f.directory, "session-owner-drain.private.json")),
+    );
+    assert.equal(saved.restored, true);
+  } finally {
+    f.cleanup();
+  }
+});
+
 function fixture() {
   const project = "antnest-lifecycle-abcdef12";
   const services = [

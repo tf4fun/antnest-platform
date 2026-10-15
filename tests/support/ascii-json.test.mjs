@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
 import { asciiJSON } from "./ascii-json.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -84,7 +85,29 @@ function logReadClients() {
     const create = logicalCommands(script).find((command) =>
       /\bcreate --name "\$client"/u.test(command),
     );
-    const entry = create?.match(/\bnode \/app\/(tests\/\S+\.mjs)/u)?.[1];
+    let entry = create?.match(/\bnode \/app\/(tests\/\S+\.mjs)/u)?.[1];
+    if (name === "e2e-acp-session.sh") {
+      assert.match(
+        script,
+        /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
+      );
+      const runID = "00000000-0000-4000-8000-000000000001";
+      const { client } = sessionHarnessArguments(
+        {
+          COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+          ANTNEST_E2E_RUN_ID: runID,
+          ANTNEST_ADMISSION_TAG: `session-${runID}`,
+          ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:session-${runID}`,
+          ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+          ANTNEST_SERVICE_AUTH_UID: String(process.getuid()),
+          ANTNEST_SERVICE_AUTH_GID: String(process.getgid()),
+          ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+        },
+        { evidence: "/fixture/evidence", checkpoints: "/fixture/checkpoints" },
+      );
+      assert.equal(client.at(-2), "node");
+      entry = client.at(-1).match(/^\/app\/(tests\/\S+\.mjs)$/u)?.[1];
+    }
     assert(entry, `${name} creates no Node client read through docker logs`);
     clients.push({ runner: name, entry });
   }

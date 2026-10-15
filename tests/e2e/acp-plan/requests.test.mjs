@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectPlanRequestTrace, selectRequestTrace } from "./requests.mjs";
 import { requestFixture } from "./trace-fixture.mjs";
+import { addCompletedRead } from "../edge-gateway/resolve-cache-completed-read-fixtures.mjs";
+import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
+import {
+  addReadEndpointObservation,
+  assertReadEndpointObservations,
+  scaleReadFixtureTrace,
+} from "../observability/runtime-information-timing-fixture.mjs";
 
 test("repeated Session/method requests are selected by their actual socket link", () => {
   const first = requestFixture("session/load", "first"),
@@ -128,38 +135,41 @@ test("denial permits only its exact rejected ACP boundary and matching domain op
     "access_denied",
   );
 });
-function catalogRead(f, method = "resources/read") {
-  f.add(
-    "catalog-client",
-    "request",
-    "HTTP POST antnest-runtime",
-    undefined,
-    5,
-    {
-      "span.kind": "client",
-    },
-  );
-  f.add(
-    "catalog-server",
-    "catalog-client",
-    "HTTP POST /mcp",
-    "antnest-runtime",
-    5,
-    {
-      "span.kind": "server",
-      "rpc.method": method,
-    },
-  );
-  f.add(
-    "catalog-operation",
-    "catalog-server",
-    "runtime.mcp.operation",
-    "antnest-runtime",
-    5,
-    { "rpc.method": method },
-  );
+function catalogRead(f, method = "resources/read", options = {}) {
+  const request = f.trace.spans.find((span) => span.spanID === "request");
+  request.duration = 100;
+  f.catalog = addCompletedRead(f.trace, request, "ws", f.expected.agentId, {
+    preserveRequest: true,
+    runtimeOutcome: "success",
+    clientOutcome: "success",
+    ...options,
+  });
+  setTag(f.catalog.server, "rpc.method", method);
+  setTag(f.catalog.operation, "rpc.method", method);
   return f;
 }
+
+test("catalog replay exports its original read endpoint observation", () => {
+  const f = catalogRead(requestFixture());
+  scaleReadFixtureTrace(f.trace);
+  const baseline = inspectPlanRequestTrace(f.trace, f.expected);
+  const expected = addReadEndpointObservation(f.trace, f.catalog.read);
+  const raw = structuredClone(f.trace);
+  assertReadEndpointObservations(
+    inspectPlanRequestTrace(f.trace, f.expected),
+    [expected],
+    baseline,
+  );
+  assert.deepEqual(f.trace, raw);
+});
+test("replay without a Runtime read exports an empty timing inventory", () => {
+  const f = requestFixture();
+  assertReadEndpointObservations(
+    inspectPlanRequestTrace(f.trace, f.expected),
+    [],
+  );
+});
+
 test("replays may refresh the Skill catalog but never call executable Runtime methods", () => {
   for (const method of ["session/load", "session/resume", "session/fork"]) {
     const f = catalogRead(requestFixture(method));
@@ -186,3 +196,93 @@ test("replays may refresh the Skill catalog but never call executable Runtime me
     /cannot refresh Skill catalog/,
   );
 });
+
+for (const [name, mutate] of [
+  [
+    "missing parsed receipt",
+    (f) => {
+      f.catalog.read.logs = f.catalog.read.logs.filter(
+        (event) => event !== f.catalog.validated,
+      );
+    },
+  ],
+  [
+    "caller cancellation",
+    (f) => setTag(f.catalog.read, "antnest.mcp.caller_cancelled", true),
+  ],
+  [
+    "failed close",
+    (f) =>
+      setTag(f.catalog.read, "antnest.mcp.connection.close.outcome", "failed"),
+  ],
+  [
+    "foreign Agent",
+    (f) => {
+      for (const span of f.trace.spans)
+        if (
+          f.trace.processes[span.processID]?.serviceName === "antnest-runtime"
+        ) {
+          for (const group of [
+            span.tags,
+            ...(span.logs ?? []).map((event) => event.fields),
+          ])
+            for (const field of group)
+              if (field.key === "antnest.agent.id") field.value = "other";
+        }
+    },
+  ],
+  [
+    "Run metadata borrowed by replay",
+    (f) => {
+      const wrapper = f.add(
+        "run-info",
+        "request",
+        "mcp.runtime.info",
+        undefined,
+        2,
+        { "span.kind": "internal" },
+      );
+      wrapper.duration = 100;
+      f.catalog.read.references[0].spanID = wrapper.spanID;
+    },
+  ],
+  [
+    "extra read without Runtime children",
+    (f) => {
+      f.trace.spans.push({
+        ...structuredClone(f.catalog.read),
+        spanID: "extra-read",
+      });
+    },
+  ],
+  [
+    "legacy read without lifecycle",
+    (f) => {
+      for (const span of [f.catalog.client, f.catalog.handshake.client])
+        span.references[0].spanID = "request";
+      f.trace.spans = f.trace.spans.filter((span) => span !== f.catalog.read);
+    },
+  ],
+])
+  test("replay catalog rejects " + name, () => {
+    const f = catalogRead(requestFixture());
+    mutate(f);
+    assert.throws(() => inspectPlanRequestTrace(f.trace, f.expected));
+  });
+
+for (const runtimeOutcome of ["success", "canceled"])
+  test(
+    "replay catalog accepts only proven owned cleanup: " + runtimeOutcome,
+    () => {
+      const f = catalogRead(requestFixture(), "resources/read", {
+        runtimeOutcome,
+        clientOutcome: "cancelled",
+      });
+      const before = structuredClone(f.trace);
+      assert.equal(
+        inspectPlanRequestTrace(f.trace, f.expected).runtime_information_reads,
+        1,
+      );
+      assert.deepEqual(f.trace, before);
+    },
+  );

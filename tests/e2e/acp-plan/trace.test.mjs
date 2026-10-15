@@ -49,7 +49,8 @@ test("plan trace rejects absent preparation/persistence, extra or misattributed 
       f.trace.spans = f.trace.spans.filter((s) => s.spanID !== "insert");
     },
     (f) => {
-      f.trace.spans.find((s) => s.spanID === "info").startTime = 100;
+      f.trace.spans.find((s) => s.spanID === "info").startTime =
+        f.trace.spans.find((s) => s.spanID === "model-0").startTime + 5000;
     },
     (f) => {
       f.trace.spans.push({

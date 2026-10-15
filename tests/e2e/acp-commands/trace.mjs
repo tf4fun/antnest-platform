@@ -1,3 +1,4 @@
+import { inspectRunInformationReads } from "../observability/runtime-information-run.mjs";
 import assert from "node:assert/strict";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,6 +11,8 @@ import {
 } from "../observability/trace-tree.mjs";
 import {
   requestBoundary,
+  requestBoundaryKind,
+  selectRequestTrace,
   timingEvidence,
   hasError,
   closedV1PromptResponse,
@@ -18,6 +21,8 @@ import {
 import { clockWarningsOnly } from "../stage3-base/trace.mjs";
 
 function boundary(trace, expected, secrets) {
+  const kind = requestBoundaryKind(expected);
+  assert(kind !== "private-acp" || expected.transport === "websocket");
   assert(
     expected.requestId && expected.agentId,
     "actual request identity missing",
@@ -176,19 +181,21 @@ export function inspectCommandTrace(
     );
   }
   let runtimeInformationReads = 0;
+  let postPromptInformationReads = 0;
+  let neutralDiagnostics = [];
+  let timeObservations = [];
   if (expected.kind !== "ordinary") {
     assert.equal(requests.length, 0);
-    runtimeInformationReads = inspectCatalogRuntime(
-      trace,
-      tree,
-      request,
-      expected,
-    );
+    const catalog = inspectCatalogRuntime(trace, tree, request, expected);
+    runtimeInformationReads = catalog.informationReads;
+    neutralDiagnostics = catalog.neutralDiagnostics;
+    timeObservations = catalog.timeObservations;
     for (const span of trace.spans) {
       assert(
-        !/^(model\.|mcp\.|HTTP POST model$|agent_controller\.resolve_credential$)/.test(
-          span.operationName,
-        ),
+        catalog.spans.has(span) ||
+          !/^(model\.|mcp\.|HTTP POST model$|agent_controller\.resolve_credential$)/.test(
+            span.operationName,
+          ),
         "command executed model, MCP or credential resolution",
       );
     }
@@ -208,19 +215,18 @@ export function inspectCommandTrace(
     assert.equal(new Set(requests.map((item) => item.model_span_id)).size, 2);
     assert.equal(acp("HTTP POST model").length, 2);
     assert.equal(acp("model.complete").length, 2);
-    const prepared = ["mcp.runtime.info", "mcp.tools.list"].map((name) => {
-      const span = single(acp(name), name);
-      assert(tree.chain(span).includes(run));
-      assert(
-        trace.spans.some(
-          (child) =>
-            tree.service(child) === "antnest-runtime" &&
-            tree.chain(child).includes(span),
-        ),
-        "Runtime preparation descendant missing",
-      );
-      return span;
+    const information = inspectRunInformationReads(trace, {
+      request: request,
+      run,
+      closedBeforeResponse:
+        expected.transport === "websocket" &&
+        expected.closedBeforeResponse === true,
     });
+    const prepared = information.prepared;
+    runtimeInformationReads = information.informationReads;
+    postPromptInformationReads = information.postPromptInformationReads;
+    neutralDiagnostics = information.neutralDiagnostics;
+    timeObservations = information.timeObservations;
     const models = new Set();
     for (const item of requests) {
       const http = tree.spans.get(item.model_span_id);
@@ -284,8 +290,13 @@ export function inspectCommandTrace(
       !trace.spans.some((span) => tree.service(span) === "antnest-runtime"),
     no_model_or_tools: expected.kind !== "ordinary",
     runtime_information_reads: runtimeInformationReads,
+    post_prompt_information_reads: postPromptInformationReads,
+    neutral_diagnostics: neutralDiagnostics,
+    time_observations: timeObservations,
     runtime_tool_calls: expected.kind === "ordinary" ? 1 : 0,
-    gateway_ancestry: true,
+    ...(requestBoundaryKind(expected) === "gateway"
+      ? { gateway_ancestry: true }
+      : {}),
     ...timingEvidence(trace, tree, request, forwarded),
   };
 }
@@ -294,6 +305,8 @@ export function selectCommandTrace(data, expected) {
     Array.isArray(data) && data.length < 100,
     "invalid or truncated request trace query",
   );
+  if (requestBoundaryKind(expected) === "private-acp")
+    return selectRequestTrace(data, expected);
   const matches = data.filter(
     (trace) =>
       trace.spans?.some(
@@ -317,6 +330,20 @@ export function selectCommandTrace(data, expected) {
   assert(matches.length <= 1, "ambiguous actual request trace");
   return matches[0]?.traceID;
 }
+export function inspectCommandTraceFromRequests(
+  trace,
+  expected,
+  secrets = [],
+  requests = [],
+) {
+  return inspectCommandTrace(
+    trace,
+    expected,
+    secrets,
+    requests.filter((item) => item.trace_id === trace.traceID),
+  );
+}
+
 export async function collectCommandTrace(
   base,
   expected,
@@ -325,12 +352,7 @@ export async function collectCommandTrace(
   signal,
 ) {
   const inspect = (trace) =>
-    inspectCommandTrace(
-      trace,
-      expected,
-      secrets,
-      requests.filter((item) => item.trace_id === trace.traceID),
-    );
+    inspectCommandTraceFromRequests(trace, expected, secrets, requests);
   if (expected.transport === "http")
     return collectTrace(base, expected.traceID, inspect, signal);
   const query = new URLSearchParams({

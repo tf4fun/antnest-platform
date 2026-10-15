@@ -25,59 +25,13 @@ const one = (rows, label) => {
   return rows[0];
 };
 const key = (trace, span) => `${trace.traceID}:${span.spanID}`;
-const runtimeOperationSucceeded = (span) =>
-  span.operationName === "runtime.mcp.operation" &&
-  tag(span, "error.type") === "" &&
-  tag(span, "otel.status_code") === "OK" &&
-  tag(span, "mcp.operation.outcome") === "success" &&
-  tag(span, "antnest.operation.outcome") === "success";
-
-function runtimeSuccessEvent(span, event, agentID) {
-  const value = (name) => tag({ tags: event.fields }, name);
-  if (!(
-    value("error.type") === "" &&
-    value("level") === "INFO" &&
-    value("service.name") === "antnest-runtime" &&
-    tag(span, "antnest.agent.id") === agentID &&
-    value("antnest.agent.id") === tag(span, "antnest.agent.id") &&
-    value("trace_id") === span.traceID &&
-    value("span_id") === span.spanID
-  ))
-    return false;
-  if (value("event") === "Runtime MCP operation completed")
-    return (
-      runtimeOperationSucceeded(span) &&
-      value("mcp.operation.outcome") === "success" &&
-      value("mcp.operation.name") === tag(span, "rpc.method")
-    );
-  if (value("event") === "Runtime Executor completed")
-    return (
-      span.operationName === "runtime.executor" &&
-      tag(span, "otel.status_code") === "OK" &&
-      tag(span, "executor.outcome") === "success" &&
-      value("outcome") === "success"
-    );
-  return (
-    value("event") === "Runtime HTTP request completed" &&
-    span.operationName === "HTTP POST /mcp" &&
-    tag(span, "http.transport.outcome") === "success" &&
-    tag(span, "antnest.protocol.outcome") === "success" &&
-    [200, "200"].includes(tag(span, "http.response.status_code")) &&
-    value("http.transport.outcome") === "success" &&
-    [200, "200"].includes(value("http.response.status_code")) &&
-    value("http.request.method") === tag(span, "http.request.method") &&
-    value("url.path") === tag(span, "http.route")
-  );
-}
-
-function failedEvent(span, event, runtime, agentID) {
+function failedEvent(event) {
   const names = (event.fields ?? []).map((field) => field.key);
   if (new Set(names).size !== names.length) return true;
   if (["exception", "error", "antnest.error"].includes(event.name)) return true;
-  const successful = runtime && runtimeSuccessEvent(span, event, agentID);
   return (event.fields ?? []).some(({ key, value }) => {
     if (/^(?:exception|error)(?:\.|$)|^antnest\.error\./u.test(key))
-      return !(key === "error.type" && value === "" && successful);
+      return true;
     return (
       (key === "event" &&
         ["exception", "error", "antnest.error"].includes(value)) ||
@@ -318,7 +272,16 @@ function sessionListSQL(trace, tree, request, operation) {
   return database.filter((span) => tag(span, "db.query.text") !== undefined);
 }
 
-function bridgeRequest(trace, tree, root, agentID, first, collection, ttl) {
+function bridgeRequest(
+  trace,
+  tree,
+  root,
+  agentID,
+  first,
+  collection,
+  ttl,
+  catalogs,
+) {
   assert.equal(tree.service(root), "edge-gateway");
   assert.equal(tag(root, "span.kind"), "server");
   assert.equal(tag(root, "http.request.method"), "GET");
@@ -407,18 +370,27 @@ function bridgeRequest(trace, tree, root, agentID, first, collection, ttl) {
   };
   const list = request("session/list");
   let initialize;
+  let catalog;
   if (first) {
     initialize = request("initialize");
     assert(
       end(initialize) <= list.startTime,
       "list preceded completed cold initialization",
     );
-    inspectCatalogRuntime(trace, tree, initialize, { method: "initialize" });
+    catalog = inspectCatalogRuntime(trace, tree, initialize, {
+      method: "initialize",
+      agentId: agentID,
+    });
+    catalogs.push(catalog);
   } else {
     assert(
       !trace.spans.some((s) => tree.service(s) === "antnest-runtime"),
       "warm list unexpectedly executed Runtime work",
     );
+    inspectCatalogRuntime(trace, tree, list, {
+      method: "session/list",
+      agentId: agentID,
+    });
   }
   const operation = one(
     trace.spans.filter(
@@ -442,9 +414,10 @@ function bridgeRequest(trace, tree, root, agentID, first, collection, ttl) {
   );
   for (const span of trace.spans) {
     assert(
-      !/^(agent\.run$|model\.|mcp\.tools\.call$|HTTP POST model$)/u.test(
-        span.operationName,
-      ),
+      catalog?.spans.has(span) ||
+        !/^(agent\.run$|model\.|mcp\.|HTTP POST model$)/u.test(
+          span.operationName,
+        ),
       "load executed unrelated model or Runtime work",
     );
     if (tag(span, "db.query.text") !== undefined) {
@@ -545,6 +518,7 @@ export function inspectResolveLoad(
     servers.length >= 1 && servers.length <= 3,
     "Identity actual Resolve receipts exceed budget",
   );
+  const catalogs = [];
   const receipts = requests.map((row, index) => {
     const trace = traces.get(row.trace_id);
     assert(trace, "actual HTTP request Trace missing");
@@ -556,8 +530,12 @@ export function inspectResolveLoad(
       index === 0,
       collection,
       settings.resolveTTLMS,
+      catalogs,
     );
   });
+  const catalogSpans = new Set(
+    catalogs.flatMap((catalog) => [...catalog.spans]),
+  );
   const final = receipts.at(-1);
   let finalRefresh = 0;
   for (const { trace, root } of refreshes) {
@@ -629,34 +607,32 @@ export function inspectResolveLoad(
   );
   for (const trace of traces.values())
     for (const span of trace.spans) {
-      const successfulRuntimePlaceholder =
-        trace.processes[span.processID]?.serviceName === "antnest-runtime" &&
-        runtimeOperationSucceeded(span);
+      const catalogOwned = catalogSpans.has(span);
       const failed =
         hasError(span) ||
         tag(span, "otel.status_code") === 2 ||
         tag(span, "http.response.status_code") >= 400 ||
-        (tag(span, "error.type") !== undefined &&
-          !successfulRuntimePlaceholder) ||
-        (span.tags ?? []).some((field) =>
-          /^exception(?:\.|$)|^error\.(?!type$)|^antnest\.error\./u.test(
-            field.key,
-          ),
-        ) ||
-        [...(span.logs ?? []), ...(span.events ?? [])].some((event) =>
-          failedEvent(
-            span,
-            event,
-            trace.processes[span.processID]?.serviceName === "antnest-runtime",
-            agentID,
-          ),
-        );
+        (!catalogOwned &&
+          (tag(span, "error.type") !== undefined ||
+            (span.tags ?? []).some((field) =>
+              /^exception(?:\.|$)|^error\.(?!type$)|^antnest\.error\./u.test(
+                field.key,
+              ),
+            ))) ||
+        [
+          ...(catalogOwned ? [] : (span.logs ?? [])),
+          ...(span.events ?? []),
+        ].some(failedEvent);
       assert(
         !failed || ownedErrors.has(loadSpanKey(trace, span)),
         "unexpected load error",
       );
     }
   return {
+    neutral_diagnostics: catalogs.flatMap(
+      (catalog) => catalog.neutralDiagnostics,
+    ),
+    time_observations: catalogs.flatMap((catalog) => catalog.timeObservations),
     policy_revision: 4,
     transport: "http",
     profile: "workspace",

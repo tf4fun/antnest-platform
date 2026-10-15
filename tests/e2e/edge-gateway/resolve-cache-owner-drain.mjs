@@ -212,7 +212,7 @@ function measured(wire, baseline, at) {
     );
 }
 
-export function inspectLoadOwnerDrain(wire, evidence) {
+export function inspectOwnerDrain(evidence) {
   assert(
     evidence && evidence.baseline && evidence.before && evidence.after,
     "actual load owner drain receipt missing",
@@ -220,9 +220,8 @@ export function inspectLoadOwnerDrain(wire, evidence) {
   for (const snapshot of [evidence.baseline, evidence.before, evidence.after])
     participants(snapshot, evidence.project);
   for (const state of Object.values(evidence.baseline)) normal(state, true);
-  inspectClockBeforeLoad(wire, evidence.baseline, evidence.acp_clock);
-  measured(wire, evidence.baseline, evidence.requested_at);
   sameLive(evidence.baseline, evidence.before);
+  finite(evidence.requested_at);
   finite(evidence.stopped_at);
   assert(
     evidence.requested_at < evidence.stopped_at &&
@@ -264,6 +263,13 @@ export function inspectLoadOwnerDrain(wire, evidence) {
   return evidence;
 }
 
+export function inspectLoadOwnerDrain(wire, evidence) {
+  inspectOwnerDrain(evidence);
+  inspectClockBeforeLoad(wire, evidence.baseline, evidence.acp_clock);
+  measured(wire, evidence.baseline, evidence.requested_at);
+  return evidence;
+}
+
 function inspectClockBeforeLoad(wire, baseline, clock) {
   inspectACPClockReceipt(clock);
   assert.equal(
@@ -281,13 +287,14 @@ function inspectClockBeforeLoad(wire, baseline, clock) {
   );
 }
 
-// All lifecycle operations target the containers captured before the first
-// measured request. No workspace probe can initialize or revive an owner here.
+// All lifecycle operations target the containers captured at setup.
+// No workspace probe can initialize or revive an owner here.
 // This proves the container lifecycle only. The collector must separately
 // require the owner's actual protocol cleanup receipt; UI exit is not a join
 // of the SDK's asynchronous HTTP DELETE.
-export async function createLoadOwnerLifecycle({
+async function createOwnerLifecycleCore({
   docker,
+  cleanupDocker = docker,
   compose,
   project,
   agentID,
@@ -295,19 +302,19 @@ export async function createLoadOwnerLifecycle({
   output,
   secrets = [],
   signal,
-  environment,
-  clockProbe = probeACPClock,
+  artifactPrefix = "load",
   now = () => performance.now(),
   wall = Date.now,
   wait = delay,
 }) {
   output = evidenceDirectory(output);
   assert(output, "durable owner lifecycle archive required");
+  assert.match(artifactPrefix, /^[a-z][a-z0-9-]*$/u);
   const ids = {},
     baseline = {};
   const mark = () => ({ at: now(), observed_at_ms: wall() });
-  const read = async (service, id) => {
-    const rows = JSON.parse(await docker(["inspect", id]));
+  const read = async (service, id, client = docker) => {
+    const rows = JSON.parse(await client(["inspect", id]));
     assert.equal(rows.length, 1, "load participant missing or duplicated");
     const [row] = rows,
       labels = row.Config.Labels ?? {};
@@ -349,10 +356,10 @@ export async function createLoadOwnerLifecycle({
       ...mark(),
     };
   };
-  const snapshot = async () => {
+  const snapshot = async (client = docker) => {
     const result = {};
     for (const service of loadParticipantServices)
-      result[service] = await read(service, ids[service]);
+      result[service] = await read(service, ids[service], client);
     return result;
   };
   for (const service of loadParticipantServices) {
@@ -376,47 +383,39 @@ export async function createLoadOwnerLifecycle({
     2,
   );
   assertSecretFree(baselineRaw, secrets);
-  writeEvidenceFile(output, "load-owner-baseline.private.json", baselineRaw);
-  const clock = await clockProbe({
-    container: ids["agent-acp-service"],
-    environment,
-    signal,
-    now,
-  });
-  inspectACPClockReceipt(clock);
-  assert.equal(
-    clock.container_id,
-    ids["agent-acp-service"],
-    "clock container differs",
+  writeEvidenceFile(
+    output,
+    `${artifactPrefix}-owner-baseline.private.json`,
+    baselineRaw,
   );
-  assert(clock.started_at >= baseline["agent-acp-service"].at);
-  assert(clock.received_at <= now(), "clock probe receipt is from the future");
-  const clockRaw = JSON.stringify(clock, null, 2);
-  assertSecretFree(clockRaw, secrets);
-  writeEvidenceFile(output, "load-acp-clock.private.json", clockRaw);
   let used = false;
   return {
-    async collect(wire, collect) {
+    baseline,
+    output,
+    async collect(collect, preparation = {}) {
       assert.equal(used, false, "load owner lifecycle already used");
       used = true;
       const evidence = {
         project,
         agent_id: agentID,
         baseline,
-        acp_clock: clock,
+        ...preparation.evidence,
         restored: false,
       };
       const save = () => {
         const raw = JSON.stringify(evidence, null, 2);
         assertSecretFree(raw, secrets);
-        writeEvidenceFile(output, "load-owner-drain.private.json", raw);
+        writeEvidenceFile(
+          output,
+          `${artifactPrefix}-owner-drain.private.json`,
+          raw,
+        );
       };
       let result;
       let stopAttempted = false;
       const errors = [];
       try {
-        inspectClockBeforeLoad(wire, baseline, clock);
-        measured(wire, baseline, now());
+        preparation.beforeDrain?.();
         evidence.before = await snapshot();
         sameLive(baseline, evidence.before);
         assert(!signal?.aborted, "load owner drain cancelled");
@@ -439,7 +438,11 @@ export async function createLoadOwnerLifecycle({
           { captureStderr: true },
         );
         assertSecretFree(logs, secrets);
-        writeEvidenceFile(output, "load-owner-stop.private.log", logs);
+        writeEvidenceFile(
+          output,
+          `${artifactPrefix}-owner-stop.private.log`,
+          logs,
+        );
         evidence.log_checked = true;
         evidence.log_sha256 = hash(logs);
         evidence.forced_drain =
@@ -447,8 +450,10 @@ export async function createLoadOwnerLifecycle({
             logs,
           );
         save();
-        inspectLoadOwnerDrain(wire, evidence);
+        inspectOwnerDrain(evidence);
+        preparation.inspectDrain?.(evidence);
         result = await collect(evidence);
+        signal?.throwIfAborted();
       } catch (error) {
         errors.push(error);
       } finally {
@@ -456,17 +461,27 @@ export async function createLoadOwnerLifecycle({
           try {
             evidence.restore = { requested_at: now() };
             const deadline = evidence.restore.requested_at + 30000;
-            await docker(["start", ids["agent-ui"]]);
+            const cleanupSignal = AbortSignal.timeout(30000);
+            const restoringDocker = (args, long = false, options = {}) => {
+              const timeoutMS = Math.ceil(deadline - now());
+              assert(timeoutMS > 0, "UI restoration exceeded its deadline");
+              return cleanupDocker(args, long, {
+                ...options,
+                signal: cleanupSignal,
+                timeoutMS,
+              });
+            };
+            await restoringDocker(["start", ids["agent-ui"]]);
             let ui;
             do {
-              ui = await read("agent-ui", ids["agent-ui"]);
+              ui = await read("agent-ui", ids["agent-ui"], restoringDocker);
               sameContainer(baseline["agent-ui"], ui);
               assert(now() <= deadline, "UI restoration exceeded its deadline");
               if (ui.running && ui.health === "healthy") break;
               assert(now() < deadline, "UI restoration did not become healthy");
-              await wait(250, undefined, { signal });
+              await wait(250, undefined, { signal: cleanupSignal });
             } while (true);
-            const after = await snapshot();
+            const after = await snapshot(restoringDocker);
             evidence.restore.after = after;
             evidence.restore.completed_at = now();
             inspectLoadOwnerRestoration(evidence);
@@ -474,6 +489,8 @@ export async function createLoadOwnerLifecycle({
           } catch (error) {
             errors.push(error);
           }
+        if (signal?.aborted && !errors.includes(signal.reason))
+          errors.push(signal.reason);
         evidence.failures = errors.map((error) => {
           try {
             assertSecretFree(error.message, secrets);
@@ -490,9 +507,65 @@ export async function createLoadOwnerLifecycle({
       }
       if (errors.length) {
         if (!stopAttempted && errors.length === 1) throw errors[0];
-        throw new AggregateError(errors, "Bridge load owner lifecycle failed");
+        throw new AggregateError(
+          errors,
+          `Bridge ${artifactPrefix} owner lifecycle failed`,
+        );
       }
       return result;
     },
+  };
+}
+
+export async function createOwnerLifecycle(options) {
+  const owner = await createOwnerLifecycleCore(options);
+  return {
+    baseline: owner.baseline,
+    collect: (collect, preparation) => owner.collect(collect, preparation),
+  };
+}
+
+export async function createLoadOwnerLifecycle({
+  environment,
+  clockProbe = probeACPClock,
+  now = () => performance.now(),
+  ...options
+}) {
+  const owner = await createOwnerLifecycleCore({
+    ...options,
+    artifactPrefix: "load",
+    now,
+  });
+  const baseline = owner.baseline;
+  const clock = await clockProbe({
+    container: baseline["agent-acp-service"].id,
+    environment,
+    signal: options.signal,
+    now,
+  });
+  inspectACPClockReceipt(clock);
+  assert.equal(
+    clock.container_id,
+    baseline["agent-acp-service"].id,
+    "clock container differs",
+  );
+  assert(clock.started_at >= baseline["agent-acp-service"].at);
+  assert(clock.received_at <= now(), "clock probe receipt is from the future");
+  const clockRaw = JSON.stringify(clock, null, 2);
+  assertSecretFree(clockRaw, options.secrets ?? []);
+  writeEvidenceFile(owner.output, "load-acp-clock.private.json", clockRaw);
+  return {
+    baseline,
+    collect: (wire, collect) =>
+      owner.collect(collect, {
+        evidence: { acp_clock: clock },
+        beforeDrain() {
+          inspectClockBeforeLoad(wire, baseline, clock);
+          measured(wire, baseline, now());
+        },
+        inspectDrain(evidence) {
+          inspectLoadOwnerDrain(wire, evidence);
+        },
+      }),
   };
 }

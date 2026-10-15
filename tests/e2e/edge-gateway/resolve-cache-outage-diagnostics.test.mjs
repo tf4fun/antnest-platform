@@ -3,6 +3,11 @@ import test from "node:test";
 import { inspectOutageDiagnostics } from "./resolve-cache-outage-diagnostics.mjs";
 import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
 import {
+  addReadEndpointObservation,
+  addRuntimeEventRepresentations,
+  assertReadEndpointObservations,
+} from "../observability/runtime-information-timing-fixture.mjs";
+import {
   runtimeCancellationBusinessFixture,
   addSDKClosedMetadata,
 } from "./resolve-cache-runtime-cancellation-business-fixtures.mjs";
@@ -118,11 +123,44 @@ test("raw diagnostics export each original Trace once before source-closure reus
   assert.equal(result.warning_count, 3);
   assert.deepEqual(f, before);
 });
-function completedRead(transport = "ws") {
+function completedRead(transport = "ws", options) {
   const f = fixture(),
     trace = [...f.traces.values()][2];
-  return { ...f, ...addCompletedRead(trace, trace.spans[0], transport) };
+  return {
+    ...f,
+    ...addCompletedRead(
+      trace,
+      trace.spans[0],
+      transport,
+      "agent_test",
+      options,
+    ),
+  };
 }
+test("archive keeps each original read endpoint observation once across repeated validation", () => {
+  const f = completedRead(),
+    baseline = check(f);
+  const trace = f.traces.get(f.read.traceID);
+  const expected = addReadEndpointObservation(trace, f.read);
+  const raw = structuredClone(f.traces);
+  assertReadEndpointObservations(check(f), [expected], baseline);
+  assert.deepEqual(f.traces, raw);
+});
+test("archive retains both original Runtime event representations once", () => {
+  const f = completedRead();
+  const expected = addRuntimeEventRepresentations(
+    f.traces.get(f.read.traceID),
+    f.read,
+    f.server,
+  );
+  const raw = structuredClone(f.traces),
+    result = check(f);
+  assertReadEndpointObservations(result, expected);
+  assert.equal(result.owned_error_count, 2);
+  assert.equal(result.warning_count, 3);
+  assert.equal(result.strict_trace, "failed");
+  assert.deepEqual(f.traces, raw);
+});
 const changeTag = (span, key, value) => {
   const field = span.tags.find((f) => f.key === key);
   if (field) field.value = value;
@@ -130,6 +168,17 @@ const changeTag = (span, key, value) => {
 };
 const changeEvent = (event, key, value) =>
   changeTag({ tags: event.fields }, key, value);
+test("archive validates ACP-only read cancellation even when Runtime completed normally", () => {
+  const f = completedRead("http", { runtimeOutcome: "success" });
+  const before = structuredClone(f.traces);
+  assert.equal(check(f).owned_error_count, 2);
+  assert.deepEqual(f.traces, before);
+  f.read.logs.pop();
+  assert.throws(
+    () => check(f),
+    "missing owned close receipt cannot be admitted",
+  );
+});
 test("completed initialize MCP read disconnect remains exact neutral transport evidence", () => {
   const f = completedRead(),
     before = structuredClone(f),

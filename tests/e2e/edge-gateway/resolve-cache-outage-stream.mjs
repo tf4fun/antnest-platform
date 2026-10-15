@@ -13,6 +13,7 @@ import {
 import { hasError } from "../acp-plan/requests.mjs";
 import { inspectRecoveryHTTP } from "./resolve-cache-recovery-http.mjs";
 import { completedInitializeRead } from "./resolve-cache-outage-diagnostics.mjs";
+import { inspectRuntimeInformationRead } from "../observability/runtime-information-read.mjs";
 import { inspectOutageOwnerInventory } from "./resolve-cache-outage-owner.mjs";
 import { cleanupInventory } from "./resolve-cache-load-close.mjs";
 import { inspectOutageACPClock } from "./resolve-cache-outage-clock.mjs";
@@ -39,7 +40,7 @@ const values = (fields) => {
   return result;
 };
 const errorKey =
-  /^(error($|\.)|exception\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.|stream\.termination$|http\.request_cancelled$)|otel\.status_)/u;
+  /^(error($|\.)|exception\.|http\.transport\.error\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.|stream\.termination$|http\.request_cancelled$)|otel\.status_)/u;
 function diagnostics(span, expected, event) {
   const tags = values(span.tags ?? []);
   for (const [key, value] of Object.entries(expected))
@@ -64,40 +65,31 @@ function diagnostics(span, expected, event) {
     ...event,
   });
 }
-function clean(span, service, trace, validatedTermination) {
+function cleanSpan(span, service, trace, validatedTermination, recordRead) {
   assert(!hasError(span), "unrelated stream trace error");
   const tags = values(span.tags ?? []);
   if (
     service === "antnest-runtime" &&
     tags["http.transport.outcome"] === "canceled"
   ) {
-    completedInitializeRead(trace, span);
+    recordRead(completedInitializeRead(trace, span));
     return;
   }
   // These existing non-error producer records remain raw observations, never
   // error claims. Preserve their exact shape instead of inventing a failure.
   if (
     service === "agent-acp-service" &&
-    tags["antnest.outcome"] === "cancelled"
+    (span.operationName === "mcp.runtime.info.read" ||
+      tags["antnest.outcome"] === "cancelled")
   ) {
-    assert.equal(span.operationName, "HTTP POST antnest-runtime");
-    assert.equal(tag(span, "span.kind"), "client");
-    assert.equal(tag(span, "http.request.method"), "POST");
-    assert.equal(tag(span, "http.response.status_code"), 200);
-    assert.equal(tag(span, "peer.service"), "antnest-runtime");
-    diagnostics(
-      span,
-      {
-        "antnest.outcome": "cancelled",
-        "antnest.operation.phase": "http.send_or_read",
-        "antnest.cancellation.type": "AbortError",
-      },
-      {
-        event: "antnest.cancelled",
-        "antnest.cancellation.phase": "http.send_or_read",
-        "antnest.cancellation.type": "AbortError",
-      },
-    );
+    const read =
+      span.operationName === "mcp.runtime.info.read"
+        ? span
+        : traceTopology(trace).parent(span);
+    const proof = inspectRuntimeInformationRead(trace, read);
+    recordRead(proof);
+    recordRead(completedInitializeRead(trace, proof.resource.server));
+    assert(proof.spans.includes(span), "foreign completed-read diagnostic");
     return;
   }
   for (const field of [
@@ -139,9 +131,9 @@ function clean(span, service, trace, validatedTermination) {
 const error = { error: true, "otel.status_code": "ERROR" };
 const operationMessage =
   "Operation failed; unclassified error text was not exported";
-const tokenRead =
+export const tokenRead =
   "SELECT t.id, t.expires_at, t.idle_expires_at, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM api_tokens t JOIN users u ON u.id = t.user_id JOIN organization_memberships m ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id JOIN organizations o ON o.id = t.organization_id WHERE t.token_hash = $1 AND t.kind = 'browser' AND t.revoked_at IS NULL AND t.expires_at > $2 AND t.idle_expires_at > $2 AND m.scim_deleted_at IS NULL";
-function sseDiagnostics(root, upstream) {
+export function sseDiagnostics(root, upstream) {
   diagnostics(
     root,
     { ...error, "otel.status_description": "handler_aborted" },
@@ -225,6 +217,22 @@ export function inspectOutageStreams(
   secrets = [],
   { inspectRecovery = inspectRecoveryHTTP } = {},
 ) {
+  const timeObservations = new Map();
+  const recordRead = (proof) => {
+    for (const observation of proof.timeObservations)
+      timeObservations.set(
+        JSON.stringify([
+          observation.trace_id,
+          observation.read_span_id,
+          observation.span_id,
+          observation.boundary,
+          observation.event_index,
+        ]),
+        observation,
+      );
+  };
+  const clean = (span, service, trace, validatedTermination) =>
+    cleanSpan(span, service, trace, validatedTermination, recordRead);
   assert.equal(evidence.settings.resolveTTLMS, 10000);
   assert.equal(evidence.settings.captureRpcContent, false);
   const get = (id) => {
@@ -1489,6 +1497,7 @@ export function inspectOutageStreams(
     internal_watches: watches,
     owned_error_spans: owned,
     ...resolveTraceDiagnostics(first, sources),
+    time_observations: [...timeObservations.values()],
   };
 }
 

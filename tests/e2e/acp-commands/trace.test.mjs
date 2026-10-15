@@ -1,61 +1,96 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  commandStrictOutcome,
-  inspectCommandTrace,
-  selectCommandTrace,
-} from "./trace.mjs";
+import * as commandTraces from "./trace.mjs";
 import { fixture } from "./trace-fixtures.mjs";
+import { addCompletedRead } from "../edge-gateway/resolve-cache-completed-read-fixtures.mjs";
+import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
+import {
+  addReadEndpointObservation,
+  assertReadEndpointObservations,
+  scaleReadFixtureTrace,
+} from "../observability/runtime-information-timing-fixture.mjs";
 
+const { commandStrictOutcome, inspectCommandTrace, selectCommandTrace } =
+  commandTraces;
 const inspect = (f) =>
   inspectCommandTrace(f.trace, f.expected, ["PRIVATE"], f.requests ?? []);
 
-function catalogRead(f) {
-  for (const [id, method] of [
-    ["catalog-discover", "discover"],
-    ["catalog-info", "resources/read"],
-  ]) {
-    f.add(
-      `${id}-client`,
-      "request",
-      "HTTP POST antnest-runtime",
-      undefined,
-      5,
-      {
-        "span.kind": "client",
-      },
+for (const kind of ["request", "ordinary"])
+  test(`shared Session model inventory isolates the actual ${kind} Trace`, () => {
+    assert.equal(
+      typeof commandTraces.inspectCommandTraceFromRequests,
+      "function",
     );
-    f.add(
-      `${id}-server`,
-      `${id}-client`,
-      "HTTP POST /mcp",
-      "antnest-runtime",
-      5,
-      {
-        "span.kind": "server",
-        "rpc.method": method,
-      },
+    const f = fixture(kind);
+    const requests = [
+      ...(f.requests ?? []),
+      { trace_id: "other-trace", stage: "tool", phase: "other-run" },
+      { trace_id: "other-trace", stage: "reply", phase: "other-run" },
+    ];
+    const before = structuredClone({ trace: f.trace, requests });
+    assert.deepEqual(
+      commandTraces.inspectCommandTraceFromRequests(
+        f.trace,
+        f.expected,
+        ["PRIVATE"],
+        requests,
+      ),
+      inspect(f),
     );
-    f.add(
-      `${id}-operation`,
-      `${id}-server`,
-      "runtime.mcp.operation",
-      "antnest-runtime",
-      5,
-      {
-        "rpc.method": method,
-      },
+    assert.deepEqual({ trace: f.trace, requests }, before);
+    requests.push({
+      trace_id: f.trace.traceID,
+      stage: "tool",
+      phase: "unrelated",
+    });
+    assert.throws(() =>
+      commandTraces.inspectCommandTraceFromRequests(
+        f.trace,
+        f.expected,
+        ["PRIVATE"],
+        requests,
+      ),
     );
-  }
-  f.add(
-    "catalog-executor",
-    "catalog-info-operation",
-    "runtime.executor",
-    "antnest-runtime",
-    5,
+  });
+test("Session inventory cannot borrow a missing model reply from another Trace", () => {
+  assert.equal(
+    typeof commandTraces.inspectCommandTraceFromRequests,
+    "function",
   );
+  const f = fixture("ordinary");
+  const requests = structuredClone(f.requests);
+  requests[1].trace_id = "other-trace";
+  assert.throws(() =>
+    commandTraces.inspectCommandTraceFromRequests(
+      f.trace,
+      f.expected,
+      ["PRIVATE"],
+      requests,
+    ),
+  );
+});
+
+function catalogRead(f, options = {}) {
+  const request = f.trace.spans.find((span) => span.spanID === "request");
+  request.duration = 100;
+  f.catalog = addCompletedRead(f.trace, request, "http", f.expected.agentId, {
+    preserveRequest: true,
+    runtimeOutcome: "success",
+    clientOutcome: "success",
+    ...options,
+  });
   return f;
 }
+
+test("command catalog exports the original read endpoint observation", () => {
+  const f = catalogRead(fixture("command"));
+  scaleReadFixtureTrace(f.trace);
+  const baseline = inspect(f);
+  const expected = addReadEndpointObservation(f.trace, f.catalog.read);
+  const raw = structuredClone(f.trace);
+  assertReadEndpointObservations(inspect(f), [expected], baseline);
+  assert.deepEqual(f.trace, raw);
+});
 
 test("Session setup and command completion may refresh Skill metadata without model or tool execution", () => {
   for (const http of [false, true])
@@ -91,20 +126,16 @@ test("initialize Skill metadata never permits executable calls, model work or ex
     (f) =>
       f.add(
         "tool",
-        "catalog-info-operation",
+        f.catalog.operation.spanID,
         "runtime.mcp.tool",
         "antnest-runtime",
       ),
     (f) => {
-      f.trace.spans.find(
-        (span) => span.spanID === "catalog-info-server",
-      ).tags[1].value = "tools/call";
+      setTag(f.catalog.server, "rpc.method", "tools/call");
     },
     (f) => {
       f.trace.spans.push({
-        ...structuredClone(
-          f.trace.spans.find((span) => span.spanID === "catalog-info-server"),
-        ),
+        ...structuredClone(f.catalog.server),
         spanID: "duplicate-info",
       });
     },
@@ -132,34 +163,29 @@ test("Skill catalog refresh cannot hide tool execution, detached calls, extra re
       (f) =>
         f.add(
           "hidden-tool",
-          "catalog-info-operation",
+          f.catalog.operation.spanID,
           "runtime.mcp.tool",
           "antnest-runtime",
         ),
       (f) => {
-        f.trace.spans.find(
-          (s) => s.spanID === "catalog-info-server",
-        ).tags[1].value = "tools/call";
+        setTag(f.catalog.server, "rpc.method", "tools/call");
       },
       (f) => {
         f.trace.spans.find(
-          (s) => s.spanID === "catalog-info-operation",
+          (s) => s.spanID === f.catalog.operation.spanID,
         ).tags[0].value = "tools/call";
       },
       (f) => {
-        f.trace.spans.find(
-          (s) => s.spanID === "catalog-executor",
-        ).references[0].spanID = "catalog-discover-operation";
+        f.catalog.executor.references[0].spanID =
+          f.catalog.handshake.operation.spanID;
       },
       (f) => {
-        f.trace.spans.find(
-          (s) => s.spanID === "catalog-info-server",
-        ).references[0].spanID = "forward";
+        f.catalog.server.references[0].spanID = "forward";
       },
       (f) =>
         f.add(
           "extra-read",
-          "catalog-info-client",
+          f.catalog.client.spanID,
           "HTTP POST /mcp",
           "antnest-runtime",
           5,
@@ -168,12 +194,14 @@ test("Skill catalog refresh cannot hide tool execution, detached calls, extra re
       (f) => f.add("hidden-model", "request", "model.complete"),
       (f) => {
         f.trace.spans = f.trace.spans.filter(
-          (span) => span.spanID !== "catalog-discover-operation",
+          (span) => span !== f.catalog.handshake.operation,
         );
       },
       (f) => {
         f.trace.spans = f.trace.spans.filter(
-          (span) => span.processID !== "antnest-runtime",
+          (span) =>
+            f.trace.processes[span.processID]?.serviceName !==
+            "antnest-runtime",
         );
       },
       (f) => {
@@ -339,7 +367,8 @@ test("ordinary prompt correlates model HTTP spans and actual Bash execution afte
         "request";
     },
     (f) => {
-      f.trace.spans.find((s) => s.spanID === "list").startTime = 100;
+      f.trace.spans.find((s) => s.spanID === "list").startTime =
+        f.trace.spans.find((s) => s.spanID === "model-0").startTime + 5000;
     },
     (f) => {
       f.trace.spans.find((s) => s.spanID === "call").tags[1].value = "write";
@@ -419,4 +448,26 @@ test("a passed summary cannot bypass the error inventory or warning gate", () =>
       commandStrictOutcome([{ strict_trace: "passed", ...patch }]).accepted,
       false,
     );
+});
+
+for (const runtimeOutcome of ["success", "canceled"])
+  test(
+    "command catalog retains exact owned cleanup evidence: " + runtimeOutcome,
+    () => {
+      const f = catalogRead(fixture("command"), {
+        runtimeOutcome,
+        clientOutcome: "cancelled",
+      });
+      const before = structuredClone(f.trace);
+      assert.equal(inspect(f).runtime_information_reads, 1);
+      assert.deepEqual(f.trace, before);
+    },
+  );
+
+test("command catalog cannot admit a resource read with no parsed and joined lifecycle", () => {
+  const f = catalogRead(fixture("command"));
+  for (const span of [f.catalog.client, f.catalog.handshake.client])
+    span.references[0].spanID = "request";
+  f.trace.spans = f.trace.spans.filter((span) => span !== f.catalog.read);
+  assert.throws(() => inspect(f));
 });

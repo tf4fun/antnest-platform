@@ -385,8 +385,15 @@ if [ -n "$tool_profile" ]; then
   docker() { node "$repository_root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 fi
 # Runtime Controller policy admits repository references, never bare image IDs.
-runtime_image=antnest/antnest-runtime:local
-docker image inspect "$runtime_image" >/dev/null
+if [ "$tool_profile" = acp-session ]; then
+  export ANTNEST_ADMISSION_TAG="session-$ANTNEST_E2E_RUN_ID"
+  runtime_image="antnest/antnest-runtime:$ANTNEST_ADMISSION_TAG"
+  export ANTNEST_E2E_IDENTITY_IMAGE="antnest/identity-service:$ANTNEST_ADMISSION_TAG"
+  export ANTNEST_E2E_ACP_IMAGE="antnest/agent-acp-service:$ANTNEST_ADMISSION_TAG"
+else
+  runtime_image=antnest/antnest-runtime:local
+  docker image inspect "$runtime_image" >/dev/null
+fi
 export ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$runtime_image
 
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage3-e2e.XXXXXX")
@@ -394,9 +401,11 @@ temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage3-e2e.XXXXXX")
 compose() {
   if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ] || [ "$tool_profile" = acp-closeout ]; then
     if [ "$1" = up ]; then identity_lifecycle=--lifecycle; else identity_lifecycle=; fi
+    admission_overlay=
+    if [ "$tool_profile" = acp-session ]; then admission_overlay='-f tests/integration/deployment/compose.admission.yaml'; fi
     docker $identity_lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml \
       -f tests/e2e/identity-closeout/oidc-compose.yaml -f tests/e2e/identity-closeout/compose.yaml \
-      --profile stage3 --profile observability "$@"
+      $admission_overlay --profile stage3 --profile observability "$@"
     return
   fi
   if [ "$managed_mcp" = true ]; then
@@ -576,6 +585,9 @@ cleanup() {
       status=1
     fi
   done
+  if [ "$tool_profile" = acp-session ]; then
+    node tests/e2e/identity-closeout/session-deployment.mjs cleanup || status=1
+  fi
   rm -rf -- "${temporary_root:?}" "${credentials_root:?}/credentials"
   rmdir -- "$credentials_root" 2>/dev/null || true
   if [ -n "$tool_profile" ] && [ "$status" -eq 0 ]; then
@@ -607,8 +619,15 @@ prepare_oidc() {
 }
 
 if [ -n "$tool_profile" ]; then
+  if [ "$tool_profile" = acp-session ]; then
+    node tests/e2e/identity-closeout/session-deployment.mjs build
+  fi
   if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ] || [ "$tool_profile" = acp-closeout ]; then prepare_oidc; fi
-  compose up -d --wait
+  if [ "$tool_profile" = acp-session ]; then
+    compose up -d --wait --no-build --pull never
+  else
+    compose up -d --wait
+  fi
   ANTNEST_E2E_DISPOSABLE=true sh "tests/e2e/e2e-${tool_profile}.sh"
   exit 0
 fi

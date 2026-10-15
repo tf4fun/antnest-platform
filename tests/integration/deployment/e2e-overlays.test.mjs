@@ -56,6 +56,7 @@ const environment = {
   ANTNEST_LIFECYCLE_MODEL_HOST_PORT: "43113",
   ANTNEST_EDGE_PUBLIC_BASE_URL: "http://127.0.0.1:43110",
   ANTNEST_E2E_RUN_ID: "overlay-contract",
+  ANTNEST_ADMISSION_TAG: "session-overlay-contract",
 };
 
 test("HTTPS workspace consumers can select the current Controller candidate", () => {
@@ -242,6 +243,68 @@ test("Identity diagnostic polling can differ without changing retained deploymen
     retained.services["agent-controller"].environment[key],
     undefined,
   );
+});
+
+test("only ACP Session appends the admission overlay for all service candidates and both Identity rebuilds", () => {
+  const selected = dispatch({ tool_profile: "acp-session" }, "config");
+  const admission = "tests/integration/deployment/compose.admission.yaml";
+  assert.equal(selected.files.at(-1), admission);
+  for (const profile of ["identity-http", "agent-access", "acp-closeout"])
+    assert(
+      !dispatch({ tool_profile: profile }, "config").files.includes(admission),
+    );
+  const child = readFileSync(
+    new URL("../../e2e/e2e-acp-session.sh", import.meta.url),
+    "utf8",
+  );
+  const childCompose = child.match(/^compose\(\) \{\n[\s\S]*?^\}/mu)?.[0];
+  assert(childCompose);
+  const files = [...childCompose.matchAll(/-f ([\w./-]+)(?:\s|$)/gu)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(files, selected.files);
+  for (const ttl of ["12h", "5s"]) {
+    const config = composeConfig(selected.files, {
+      ...environment,
+      ...selected.ranges,
+      ANTNEST_IDENTITY_ACCESS_TOKEN_TTL: ttl,
+    });
+    for (const name of [
+      "admin-console",
+      "agent-acp-service",
+      "agent-controller",
+      "agent-ui",
+      "edge-gateway",
+      "identity-service",
+      "runtime-controller",
+      "runtime-egress",
+      "skill-registry",
+      "temporal",
+    ])
+      assert.equal(
+        config.services[name].image,
+        `antnest/${name}:session-overlay-contract`,
+      );
+    assert.equal(
+      config.services["runtime-controller"].environment
+        .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+      "antnest/runtime-controller:session-overlay-contract",
+    );
+    assert.equal(
+      config.services["identity-service"].environment
+        .ANTNEST_IDENTITY_TOKEN_TTL,
+      ttl,
+    );
+    assert.equal(
+      config.services["identity-service"].environment.SSL_CERT_FILE,
+      "/test-ca/tls.crt",
+    );
+    assert(
+      config.services["identity-service"].volumes.some(
+        (volume) => volume.target === "/test-ca" && volume.read_only,
+      ),
+    );
+  }
 });
 
 for (const [name, overlay, prefix] of [

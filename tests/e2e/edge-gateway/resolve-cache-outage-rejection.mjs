@@ -7,7 +7,8 @@ import {
   resolveTraceSources,
   resolveTraceDiagnostics,
 } from "../../support/gateway-resolution-evidence.mjs";
-import { hasError } from "../acp-plan/requests.mjs";
+import { hasDiagnosticError, hasError } from "../acp-plan/requests.mjs";
+import { inspectWorkspaceFailureSource } from "../workspace-closeout/watch-resolution.mjs";
 import {
   tag,
   traceTopology,
@@ -28,15 +29,17 @@ const fields = (rows) => {
   );
   return values;
 };
+const diagnosticKey =
+  /^(error($|\.)|exception\.|http\.transport\.error\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.|stream\.termination$|http\.request_cancelled$)|otel\.status_)/u;
 function errorTags(span, expected) {
   const actual = fields(span.tags ?? []);
   for (const [key, value] of Object.entries(expected))
     assert.equal(actual[key], value, `missing or wrong refusal ${key}`);
   for (const [key, value] of Object.entries(actual))
     if (
-      /^(error($|\.)|exception\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.)|otel\.status_)/u.test(
-        key,
-      )
+      diagnosticKey.test(key) ||
+      key === "outcome" ||
+      key.endsWith(".outcome")
     ) {
       assert(Object.hasOwn(expected, key), "unrelated refusal error metadata");
       assert.equal(value, expected[key], "unrelated refusal error metadata");
@@ -70,6 +73,7 @@ function errorEvent(span, expected, process) {
 function decisionError(span, outcome) {
   errorTags(span, {
     error: true,
+    [prefix + "outcome"]: outcome,
     "otel.status_code": "ERROR",
     "otel.status_description": outcome,
   });
@@ -151,6 +155,282 @@ const end = (s) => {
   );
   return s.startTime + s.duration;
 };
+
+// Shared by the original SSE revalidation and its later independent HTTP
+// denial. This proves an actual Resolve failure, not why the browser closed.
+export function inspectWorkspaceFailureReceipt(
+  trace,
+  root,
+  decision,
+  collection,
+  requestTimeoutMs,
+) {
+  const selected = inspectWorkspaceFailureSource(
+    trace,
+    root,
+    decision,
+    collection,
+  );
+  const { trace: source, tree, span: client, record } = selected;
+  decisionError(decision, record.outcome);
+  const currentSpans = new Set([decision]);
+  if (source === trace) currentSpans.add(client);
+  const receivers = source.spans.filter((s) => tree.parent(s) === client);
+  if (record.outcome === "unavailable") {
+    assert.equal(
+      receivers.length,
+      0,
+      "unavailable transport invented receiver work",
+    );
+    assert.equal(tag(client, "http.response.status_code"), undefined);
+    const timeout = tag(client, "antnest.request.timeout_ms");
+    assert(Number.isSafeInteger(requestTimeoutMs) && requestTimeoutMs > 0);
+    assert(
+      Number.isSafeInteger(timeout) &&
+        timeout >= 0 &&
+        timeout <= requestTimeoutMs,
+      "failed Identity CLIENT exceeds its request budget",
+    );
+    const failure = transportFailure(
+      client,
+      "send",
+      "workspace",
+      source.processes[client.processID],
+    );
+    assert(
+      ["network_error", "dns_error", "deadline_exceeded"].includes(
+        failure.type,
+      ),
+      "caller cancellation cannot prove Identity outage",
+    );
+    if (record.cancel_kind === "shared-deadline")
+      assert.deepEqual(
+        failure,
+        {
+          type: "deadline_exceeded",
+          causes: ["context.deadlineExceededError"],
+        },
+        "shared deadline does not match its completed actual CLIENT",
+      );
+    return {
+      ...selected,
+      client,
+      currentSpans,
+      failure,
+      record: { ...record, database_spans: 0, transport_failure: failure },
+    };
+  }
+  const server = one(receivers, "one actual rejected Identity SERVER required");
+  assert.equal(tree.service(server), "identity-service");
+  assert.equal(tag(server, "span.kind"), "server");
+  assert.equal(tag(server, "http.request.method"), "POST");
+  assert.equal(tag(server, "http.route"), "/rpc/identity/resolve-access-token");
+  assert.equal(tag(server, "rpc.method"), "resolve_access_token");
+  assert.equal(tag(server, "http.response.status_code"), 401);
+  assert.equal(tag(client, "http.response.status_code"), 401);
+  errorTags(client, {
+    error: true,
+    "error.type": "401",
+    "otel.status_code": "ERROR",
+    "otel.status_description": "HTTP status 401",
+  });
+  assert.equal(client.logs?.length ?? 0, 0);
+  const protocolError = {
+    "antnest.error.cause_types": '["*domain.Error"]',
+    "antnest.error.code": "unauthenticated",
+    "antnest.error.message": "Authentication failed",
+    "antnest.error.stage": "protocol",
+    "antnest.error.type": "unauthenticated",
+    "error.type": "unauthenticated",
+  };
+  errorTags(server, {
+    ...protocolError,
+    "antnest.outcome": "rejected",
+    "antnest.result": "rejected",
+  });
+  errorEvent(server, protocolError, source.processes[server.processID]);
+  const sql = one(
+    databaseChildrenTopology(source, server),
+    "one actual rejected token SELECT required",
+  );
+  assert.equal(tree.parent(sql), server);
+  assert.equal(sql.processID, server.processID);
+  assert(
+    sql.startTime >= server.startTime && end(sql) <= end(server),
+    "token SELECT outside its Identity receiver",
+  );
+  assert.equal(tag(sql, "db.operation.name"), "SELECT");
+  assert.equal(
+    tag(sql, "db.query.text").replace(/\s+/gu, " ").trim(),
+    "SELECT t.id, t.expires_at, t.idle_expires_at, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM api_tokens t JOIN users u ON u.id = t.user_id JOIN organization_memberships m ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id JOIN organizations o ON o.id = t.organization_id WHERE t.token_hash = $1 AND t.kind = 'browser' AND t.revoked_at IS NULL AND t.expires_at > $2 AND t.idle_expires_at > $2 AND m.scim_deleted_at IS NULL",
+  );
+  assert.equal(tag(sql, "pgx.rows_affected"), 0);
+  assert(!hasDiagnosticError(sql), "rejected token SELECT failed");
+  assert.equal(sql.logs?.length ?? 0, 0);
+  for (const [key, value] of Object.entries(fields(sql.tags ?? [])))
+    if (
+      diagnosticKey.test(key) ||
+      key === "outcome" ||
+      key.endsWith(".outcome")
+    )
+      assert(
+        (key === "error" && value === false) ||
+          (key === "error.type" && value === "") ||
+          (key === "antnest.error.class" && value === "none") ||
+          (key === "otel.status_code" &&
+            ["OK", "UNSET", 0, 1].includes(value)) ||
+          ((key === "antnest.result" ||
+            key === "outcome" ||
+            key.endsWith(".outcome")) &&
+            value === "success"),
+        "unrelated rejected token SELECT diagnostic",
+      );
+  const synchronous = new Set([client, server, sql]);
+  assert(
+    source.spans
+      .filter((span) => tree.chain(span).includes(client))
+      .every((span) => synchronous.has(span)),
+    "rejected RPC contains unrelated synchronous work",
+  );
+  if (source === trace) {
+    currentSpans.add(server);
+    currentSpans.add(sql);
+  }
+  return {
+    ...selected,
+    client,
+    server,
+    sql,
+    currentSpans,
+    record: {
+      ...record,
+      database_spans: 1,
+      identity_server_span_id: server.spanID,
+      token_read_span_id: sql.spanID,
+    },
+  };
+}
+
+export function inspectGatewayIdentityRejection(
+  trace,
+  expected,
+  collection,
+  secrets = [],
+) {
+  assert.equal(expected.traceID, trace.traceID);
+  assert.equal(expected.method, "POST");
+  assert.match(
+    expected.path ?? "",
+    /^\/api\/app\/workspace\/v1\/agents\/[^/]+\/sessions\/[^/]+\/prompts$/u,
+  );
+  assert.equal(expected.profile, "workspace");
+  assert([401, 503].includes(expected.status));
+  assert.equal(
+    expected.code,
+    expected.status === 401 ? "unauthenticated" : "identity_unavailable",
+  );
+  assert(
+    collection.archivedTraceIDs?.has(trace.traceID),
+    "actual HTTP denial not archived",
+  );
+  const sources = resolveTraceSources(trace, secrets, collection);
+  for (const source of sources) {
+    assertGatewayResolutionAttributes(source);
+    for (const span of source.spans) {
+      end(span);
+      fields(span.tags ?? []);
+      for (const event of span.logs ?? []) fields(event.fields ?? []);
+    }
+  }
+  const tree = traceTopology(trace);
+  const root = one(
+    trace.spans.filter((s) => !tree.parent(s)),
+    "one actual denial HTTP root required",
+  );
+  assert.equal(tree.service(root), "edge-gateway");
+  for (const [key, value] of Object.entries({
+    "span.kind": "server",
+    "http.route": "/api/app/workspace/v1/{path...}",
+    "http.request.method": "POST",
+    "http.response.status_code": expected.status,
+  }))
+    assert.equal(tag(root, key), value);
+  const decision = one(
+    trace.spans.filter((s) => s.operationName === "gateway.identity.resolve"),
+    "one failed HTTP Resolve decision required",
+  );
+  const failure = inspectWorkspaceFailureReceipt(
+    trace,
+    root,
+    decision,
+    collection,
+    expected.requestTimeoutMs,
+  );
+  assert.equal(
+    failure.record.outcome,
+    expected.status === 401 ? "rejected" : "unavailable",
+  );
+  if (expected.status === 401) {
+    const message =
+      "Operation failed; unclassified error text was not exported";
+    errorTags(root, {
+      error: true,
+      "error.type": "operation_failed",
+      "otel.status_code": "ERROR",
+      "otel.status_description": message,
+    });
+    errorEvent(
+      root,
+      {
+        "error.type": "operation_failed",
+        "antnest.error.stage": "request",
+        "antnest.error.message": message,
+        "antnest.error.cause_types": '["*errors.errorString"]',
+      },
+      trace.processes[root.processID],
+    );
+  } else {
+    const rootFailure = transportFailure(
+      root,
+      "request",
+      "workspace",
+      trace.processes[root.processID],
+    );
+    assert.equal(rootFailure.type, failure.failure.type);
+    if (
+      rootFailure.type === "deadline_exceeded" &&
+      rootFailure.causes.length === 1 &&
+      rootFailure.causes[0] === "context.deadlineExceededError"
+    ) {
+      // Retained Resolve work returns its context deadline directly after
+      // transport cleanup. Keep the selected actual CLIENT and its complete
+      // deadline receipt; a bare request error alone proves no dependency fault.
+      assert.deepEqual(
+        failure.failure.causes,
+        ["context.deadlineExceededError"],
+        "unwrapped HTTP deadline does not match its completed actual CLIENT",
+      );
+    } else
+      assert.deepEqual(
+        rootFailure.causes,
+        ["*fmt.wrapError", "*url.Error", ...failure.failure.causes].slice(0, 4),
+        "HTTP failure does not wrap the selected actual CLIENT",
+      );
+  }
+  const required = new Set([root, ...failure.currentSpans]);
+  assert(
+    trace.spans.every((s) => required.has(s)),
+    "denied prompt reached unrelated work or execution",
+  );
+  return {
+    trace_id: trace.traceID,
+    root_span_id: root.spanID,
+    status: expected.status,
+    no_execution: true,
+    resolution: failure.record,
+    ...resolveTraceDiagnostics(trace, sources),
+  };
+}
 const scopeID = (value) =>
   assert.match(
     value ?? "",

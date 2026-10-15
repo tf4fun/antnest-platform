@@ -1,3 +1,4 @@
+import { addRunInformationRead } from "../observability/runtime-information-run-fixtures.mjs";
 import { requestFixture } from "../acp-plan/trace-fixture.mjs";
 
 export function fixture(kind = "command", http = false) {
@@ -91,5 +92,6 @@ export function fixture(kind = "command", http = false) {
     });
     f.add("tool", "tool-server", "runtime.mcp.tool", "antnest-runtime", 15);
   }
+  if (kind === "ordinary") f.information = addRunInformationRead(f.trace);
   return f;
 }
