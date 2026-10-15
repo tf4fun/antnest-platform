@@ -19,7 +19,23 @@ export type BridgeTelemetry = {
 };
 
 const HTTP_BOUNDARY = createContextKey("antnest.ui.active-http-boundary");
-type HttpBoundary = { active: boolean; span: Span };
+type HttpBoundary = { active: boolean; span: Span; streamDelegationRecorded?: boolean };
+
+/** The original verified SSE delegation, never renewed by later requests. */
+export function recordStreamDelegation(expiresAtUnixMs: number): void {
+  try {
+    const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
+    if (boundary?.active !== true || boundary.streamDelegationRecorded || !boundary.span.isRecording()) return;
+    const remainingMs = expiresAtUnixMs - Date.now();
+    if (!Number.isSafeInteger(expiresAtUnixMs) || expiresAtUnixMs <= 0 ||
+      !Number.isSafeInteger(remainingMs) || remainingMs <= 0) return;
+    boundary.streamDelegationRecorded = true;
+    boundary.span.setAttributes({
+      "antnest.ui.stream.delegation_expires_at_unix_ms": expiresAtUnixMs,
+      "antnest.ui.stream.delegation_remaining_ms": remainingMs,
+    });
+  } catch { /* Diagnostics never change authentication or stream delivery. */ }
+}
 
 const agentViewFailureCodes = new Map([
   ["Bridge owner cleanup failed", "owner_cleanup_failed"],

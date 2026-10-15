@@ -9,7 +9,7 @@ import { Readable } from "node:stream";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { BridgeTelemetry } from "../telemetry.ts";
+import { recordStreamDelegation, type BridgeTelemetry } from "../telemetry.ts";
 import { parseWorkspaceDocumentPath, type WorkspaceRoute } from "../protocol/workspace-route.ts";
 import { readWorkspacePrincipal } from "./workspace-principal.ts";
 import type { RequestAuthentication } from "./request-authentication.ts";
@@ -214,7 +214,9 @@ async function serve(
     }
     // The original verified delegation caps this subscription. Gateway's live
     // session revalidation does not replace the CCT already delivered to Node.
-    await serveEventStream(runtime, request, outgoing, disconnect, admitted.context!.claims.exp * 1000);
+    const delegationExpiresAt = admitted.context!.claims.exp * 1000;
+    recordStreamDelegation(delegationExpiresAt);
+    await serveEventStream(runtime, request, outgoing, disconnect, delegationExpiresAt);
   } catch (cause) {
     if (outgoing.destroyed) return;
     if (outgoing.headersSent) {

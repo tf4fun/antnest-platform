@@ -149,7 +149,10 @@ test(
     });
     signal.addEventListener("abort", releaseCleanup, { once: true });
     const revocationTraceId = "0987654321abcdef0987654321abcdef";
-    let revocationWatch;
+    let revocationWatch,
+      revocationDelegation,
+      revocationSentAt,
+      revocationClosedAt;
     const gatewayTraceId = "0123456789abcdef0123456789abcdef";
     const gatewayParentSpanId = "1111111111111111";
     const controllerCalls = [];
@@ -2062,13 +2065,17 @@ test(
         ]);
         let revocationReader;
         try {
-          const response = await fetch(
+          revocationDelegation = testContext({
+            agt: "agent-1",
+            sub: "user-9876",
+          });
+          revocationSentAt = performance.now();
+          const response = await nativeFetch(
             `${base}/api/app/workspace/v1/agents/agent-1/events`,
             {
               headers: {
-                "x-antnest-organization-id": "org-1",
-                "x-antnest-principal-id": "user-9876",
-                "x-antnest-agent-id": "agent-1",
+                ...workloadHeaders(),
+                "Antnest-Caller-Context": revocationDelegation.token,
                 traceparent: `00-${revocationTraceId}-${gatewayParentSpanId}-01`,
               },
               signal: revocationSignal,
@@ -2094,6 +2101,7 @@ test(
           );
           while (!(await revocationReader.read()).done)
             revocationSignal.throwIfAborted();
+          revocationClosedAt = performance.now();
           revocationSignal.throwIfAborted();
         } finally {
           revocationAbort.abort();
@@ -2233,6 +2241,24 @@ test(
                   : Number(entry.value.intValue)),
             ]),
           );
+        const delegationReceipt = attributes(revocationSpan.attributes);
+        assert.equal(
+          delegationReceipt["antnest.ui.stream.delegation_expires_at_unix_ms"],
+          revocationDelegation.claims.exp * 1000,
+          "production SSE must retain its actual original verified CCT expiry",
+        );
+        const delegationRemaining =
+          delegationReceipt["antnest.ui.stream.delegation_remaining_ms"];
+        assert(
+          Number.isSafeInteger(delegationRemaining) && delegationRemaining > 0,
+        );
+        assert(
+          revocationClosedAt < revocationSentAt + delegationRemaining,
+          "revocation must precede the original delegation's conservative deadline",
+        );
+        assert(
+          !JSON.stringify(exportedSpans).includes(revocationDelegation.token),
+        );
         assert.equal(heldCleanup.complete, true);
         assert.equal(
           cleanupReceipts.filter(

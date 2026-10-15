@@ -359,8 +359,8 @@ Duplicates are ignored, while a gap, expired suffix, changed epoch or changed
 projection receives `reset` plus a fresh snapshot. A cursor is only a resume
 hint. The browser must rebootstrap after an EventSource error to distinguish
 network failure, 401 login expiry and 403 access revocation; it stops
-reconnecting on the latter two. Gateway's existing Agent-state SSE behavior
-is separate and still rejects `Last-Event-ID` until its own contract changes.
+reconnecting on the latter two. The unused Gateway Agent-state SSE routes are
+retired; browser consumers use this Bridge stream contract.
 
 Each subscriber has a 1 MiB pending-byte limit. Replaceable updates may be
 coalesced; operation terminal facts and permission inbox remain in the next
@@ -385,6 +385,21 @@ setup. It does not produce a browser-session 401. The browser obtains a fresh
 authorized View and stream through the usual reconnect path without replaying
 a Prompt. Reconnection and ordinary reads never report browser activity.
 Disconnecting an observer never cancels an ACP Run.
+
+After authenticating the original SSE request and before starting its
+subscription, the Agent UI HTTP SERVER span records
+`antnest.ui.stream.delegation_expires_at_unix_ms` from that request's verified
+CCT `exp`, and `antnest.ui.stream.delegation_remaining_ms` from the same deadline
+minus one local wall-clock sample. Both values are positive safe integer
+milliseconds, frozen once per request. Revalidation, owner reuse or a subsequent
+request with a newer CCT cannot replace them. Rejected authentication and ordinary
+HTTP requests do not publish this stream receipt. It contains no CCT, session
+identifier, token hash or caller-provided diagnostic header.
+An observer can add the recorded remaining duration to its own request-send
+monotonic time to establish a conservative deadline without assuming synchronized
+service clocks. The receipt identifies the original stream's delegation budget;
+it does not prove the cause of a remote close or replace the actual Identity
+fault, revocation and Resolve evidence.
 
 ## Related contracts
 

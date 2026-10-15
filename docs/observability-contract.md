@@ -102,6 +102,25 @@ cannot restore data that was never captured or was truncated at the source.
 - Disabling export does not stop context propagation. The standard SDK exports
   asynchronously in batches, and export failures must not change business results.
 
+### Agent UI original stream delegation
+
+The Agent UI HTTP SERVER for an authenticated Workspace SSE records the original
+verified delegation once, before subscription setup. The fixed numeric fields
+`antnest.ui.stream.delegation_expires_at_unix_ms` and
+`antnest.ui.stream.delegation_remaining_ms` are respectively the verified CCT
+expiry in Unix milliseconds and that same expiry minus one local `Date.now()`
+sample. Both must be positive safe integers. They remain bound to that SERVER
+and its existing Gateway parent; later credentials and Resolve checks cannot
+renew the receipt. Ordinary requests, rejected authentication and completed
+HTTP boundaries do not receive it. Diagnostic failure does not alter HTTP/SSE
+behavior. No CCT, browser session identifier, token/hash or request-supplied
+diagnostic value is captured, regardless of payload-capture settings.
+
+Consumers use their original request-send monotonic time plus `remaining_ms`
+as a conservative delegation deadline. They must still prove the actual stream
+identity and the independent close cause; a deadline alone is not revocation or
+Identity outage evidence.
+
 ### ACP messages and asynchronous Runs
 
 The Gateway WebSocket message root span covers only admission and forwarding,
