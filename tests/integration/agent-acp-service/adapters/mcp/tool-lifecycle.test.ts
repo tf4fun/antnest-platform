@@ -70,7 +70,6 @@ async function peer(method: Method, mode: Mode) {
   const handlers = new Set<Promise<void>>();
   let discovery: ServerResponse | undefined;
   let held: ServerResponse | undefined;
-  let authority: ReturnType<typeof runtimeAuthority>;
   const handler = createMcpHandler(
     () => {
       const server = new McpServer({
@@ -186,7 +185,9 @@ async function peer(method: Method, mode: Mode) {
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("missing peer address");
-  authority = runtimeAuthority(new URL(`http://127.0.0.1:${address.port}/mcp`));
+  const authority = runtimeAuthority(
+    new URL(`http://127.0.0.1:${address.port}/mcp`),
+  );
   const raw = new McpToolCatalog({
     runtimeDialer: new OfficialMcpDialer({
       trust: "runtime",
