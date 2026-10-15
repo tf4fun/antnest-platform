@@ -2383,7 +2383,7 @@ for (const [name, change] of [
     assert.throws(() => check(f));
   });
 
-function terminalPasswordRevalidation() {
+function terminalRevocationRevalidationFixture() {
   const f = fullRecoveryStreamFixture(),
     warm = f.parts["warm-stream"],
     mutation = f.recoveryParts.find((p) => p.action === "password"),
@@ -2468,7 +2468,7 @@ function terminalPasswordRevalidation() {
 }
 
 test("terminal RPC 401 binds the real committed password revocation without rewriting raw evidence", () => {
-  const f = terminalPasswordRevalidation(),
+  const f = terminalRevocationRevalidationFixture(),
     before = structuredClone({ evidence: f.evidence, traces: f.traces });
   assert.equal(inspectRecoveryHTTP(f.evidence, f).status, "passed");
   const result = check(f),
@@ -2499,7 +2499,7 @@ test("terminal RPC 401 binds the real committed password revocation without rewr
 
 for (const offset of [-120000000, 600000000])
   test(`terminal rejection uses Identity process order with independent clock offset ${offset}`, () => {
-    const f = terminalPasswordRevalidation();
+    const f = terminalRevocationRevalidationFixture();
     for (const span of [
       ...f.rejection.mutation.trace.spans.filter(
         (s) => s.processID === "identity",
@@ -2639,13 +2639,13 @@ for (const [name, change] of [
   ],
 ])
   test(`terminal stream rejection refuses ${name}`, () => {
-    const f = terminalPasswordRevalidation();
+    const f = terminalRevocationRevalidationFixture();
     change(f);
     assert.throws(() => check(f));
   });
 
 test("a supplied passed marker cannot replace complete terminal-rejection recovery admission", () => {
-  const f = terminalPasswordRevalidation(),
+  const f = terminalRevocationRevalidationFixture(),
     p = f.rejection.mutation;
   p.trace.spans = p.trace.spans.filter((s) => s.spanID !== "session-feed-0");
   assert.throws(() =>
