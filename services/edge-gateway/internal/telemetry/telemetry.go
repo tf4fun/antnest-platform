@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,10 @@ import (
 )
 
 const instrumentationName = "github.com/tf4fun/antnest-platform/edge-gateway"
+
+// Keep one identity for this process even when telemetry is reconfigured. A
+// fresh process gets a new identity, including a restart with the same PID.
+var processInstanceID = "gateway-" + rand.Text()
 
 type Config struct {
 	ServiceVersion string
@@ -62,6 +67,7 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 	attributes := []attribute.KeyValue{
 		attribute.String("service.name", serviceName),
 		attribute.String("service.namespace", "antnest"),
+		attribute.String("service.instance.id", processInstanceID),
 	}
 	if config.ServiceVersion != "" {
 		attributes = append(attributes, attribute.String("service.version", config.ServiceVersion))
@@ -69,7 +75,7 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 	if config.Environment != "" {
 		attributes = append(attributes, attribute.String("deployment.environment.name", config.Environment))
 	}
-	res, err := resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK(),
+	res, err := resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK(), resource.WithHost(), resource.WithProcessPID(),
 		resource.WithContainer(), resource.WithAttributes(attributes...))
 	if err != nil {
 		return nil, fmt.Errorf("create telemetry resource: %w", err)

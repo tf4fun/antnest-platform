@@ -411,6 +411,14 @@ feed, clears entries, and unregisters metric callbacks before transport and
 telemetry teardown. Feed outage or lag never waives each stream's independent
 bounded checks. Constructors start no cache worker or poller.
 
+Trace and metric resources include the actual `host.name` and numeric
+`process.pid`, plus a generated `service.instance.id` that remains stable for
+the process lifetime. Restarting the same container creates a new instance ID
+even when its hostname and PID are reused. These three fields override values
+in `OTEL_RESOURCE_ATTRIBUTES`; other deployment resource attributes and
+`OTEL_SERVICE_NAME` retain their existing behavior. The instance ID identifies
+a process generation, not a user, session, request or credential.
+
 Telemetry cleanup uses fresh bounded contexts even if its caller has already
 expired, and retains that cancellation in the returned error. At trace drain
 expiry, Gateway cancels active exporter HTTP requests, rejects further queued
@@ -426,11 +434,15 @@ docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
 node tests/e2e/edge-gateway/shutdown-docker.mjs
 ```
 
-The regression starts only a Gateway container and a controlled Node HTTP
-dependency. Both retained receive routes must close on SIGTERM, reopen after a
+The regression starts a Gateway container, a controlled Node HTTP dependency,
+and a private Jaeger receiver. Both retained receive routes must close on SIGTERM, reopen after a
 restart, and close on SIGINT, with both exits zero and no extra upstream
 commands. It verifies the image ID and removes only its labeled containers and
-network. No database, model Provider or retained deployment is used.
+network. The five original streams in each process must export their actual
+hostname, PID and one common instance ID. The two processes must have different
+instance IDs despite sharing the same container, hostname and PID. Original
+Trace responses remain in private verification evidence. No database, model
+Provider or retained deployment is used.
 
 ## State, Limits And Capacity
 
