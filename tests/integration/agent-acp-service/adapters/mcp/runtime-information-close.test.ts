@@ -44,7 +44,6 @@ async function peer(mode: Mode) {
   const requests: { spanId: string; resource: boolean }[] = [];
   let bytes = 0;
   let held: ServerResponse | undefined;
-  let authority: ReturnType<typeof runtimeAuthority>;
   const handler = createMcpHandler(
     () => {
       const server = new McpServer({
@@ -56,8 +55,10 @@ async function peer(mode: Mode) {
         "antnest://runtime/info",
         { mimeType: "application/json" },
         (uri) => {
-          const { executionId: _executionId, ...information } =
-            runtimeInformation();
+          const { executionId, ...information } = {
+            ...runtimeInformation(),
+            executionId: "execution-1",
+          };
           information.instructions!.content = "PRIVATE-RESOURCE-CONTENT";
           return {
             contents: [
@@ -68,7 +69,7 @@ async function peer(mode: Mode) {
                   mode === "invalid-resource"
                     ? "{}"
                     : JSON.stringify({
-                        execution_id: "execution-1",
+                        execution_id: executionId,
                         ...information,
                       }),
               },
@@ -161,7 +162,7 @@ async function peer(mode: Mode) {
   if (!address || typeof address === "string")
     throw new Error("missing peer address");
   const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
-  authority = runtimeAuthority(endpoint);
+  const authority = runtimeAuthority(endpoint);
   const connections = {
     fetchFor(binding: typeof authority.binding): typeof fetch {
       const send = authority.connections.fetchFor(binding);
@@ -265,7 +266,14 @@ function bounded<Result>(
 ): Promise<Result> {
   let abort = () => {};
   const interrupted = new Promise<never>((_resolve, reject) => {
-    abort = () => reject(signal.reason);
+    abort = () => {
+      const reason: unknown = signal.reason;
+      reject(
+        reason instanceof Error
+          ? reason
+          : new Error("MCP operation interrupted", { cause: reason }),
+      );
+    };
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
   });
