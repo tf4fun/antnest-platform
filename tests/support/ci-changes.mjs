@@ -197,10 +197,16 @@ export const suites = [
     paths: [
       ...service("agent-acp-service"),
       "tests/e2e/agent-acp-service/**",
+      "tests/integration/agent-acp-service/adapters/mcp/runtime-information-close.test.ts",
+      "tests/e2e/acp-closeout/docker.mjs",
+      "tests/e2e/acp-closeout/network.mjs",
       "tests/e2e/service-authentication/acp/**",
       ...compose,
     ],
-    run: ["make e2e-acp-authentication"],
+    run: [
+      "make e2e-acp-authentication",
+      "ANTNEST_ACP_TEST_IMAGE=antnest/agent-acp-service:local node tests/e2e/agent-acp-service/runtime-information-docker.mjs",
+    ],
   },
   ...[
     ["console", "Admin Console", service("admin-console")],

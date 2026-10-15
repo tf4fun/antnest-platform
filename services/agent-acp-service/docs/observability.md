@@ -13,6 +13,26 @@ optional RPC content capture, PostgreSQL tracing, span names and known limits.
   EOF, cancellation or read failure. Model and Runtime MCP use it; ordinary
   execution does not call Controller.
   Adapter operations are INTERNAL, not duplicate CLIENT spans.
+- `mcp.runtime.info.read` owns one Runtime information connection, resource
+  parsing and its cleanup. `antnest.mcp.resource.validated` occurs only after
+  both the SDK read and execution-fenced resource parsing succeed. The
+  `antnest.mcp.connection.close.started` and `.completed` events bracket the
+  actual awaited close. Span attributes retain `antnest.mcp.resource_read.outcome`
+  (`success|failed`), `antnest.mcp.connection.close.outcome`
+  (`not_started|closed|failed`), the admitted Runtime execution ID and whether
+  the original caller signal was cancelled. Read/parse and close errors retain
+  their own diagnostics even when the caller tolerates metadata failure or the
+  adapter preserves a successful result after reporting a close failure.
+  This metadata contains no resource contents, headers or credentials. A
+  successful ACP parent alone does not prove a successful information read;
+  consumers must bind the original read, HTTP children and close receipts.
+  The owning production-image gate is
+  `node tests/e2e/agent-acp-service/runtime-information-docker.mjs` from the
+  repository root. CI passes its candidate via `ANTNEST_ACP_TEST_IMAGE` and
+  retains the original OTLP bytes (base64 and SHA-256), peer request inventory,
+  actual image ID and cleanup result in its durable suite log. The isolated
+  TCP peer tests read/close provenance; Runtime credential admission and the
+  complete Session workflow remain separate gates.
 - The ACP dispatcher records registered v1/v2 requests with their own context,
   complete decoded request/response values (when enabled) and protocol outcome. WebSocket requests
   without request metadata use connection Links, not a handshake parent.

@@ -4,6 +4,7 @@ import { runtimeCallStopped } from "./runtime-stop-evidence.js";
 import type { RuntimePath } from "../../domain/runtime-information.js";
 import type { RuntimeInformationPort } from "../../ports/runtime-information.js";
 import { parseRuntimeInformation, RUNTIME_INFORMATION_URI } from "./runtime-information.js";
+import { observeRuntimeInformationRead } from "../../telemetry/runtime-information-read.js";
 import type {
   ContentBlock,
   JsonObject,
@@ -83,20 +84,26 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
 
   /** Reads the current Runtime binding for maintenance admission, not a historical Run snapshot. */
   public async readBinding(binding: RuntimeBinding, signal: AbortSignal) {
-    return this.withConnection(
-      this.dependencies.runtimeDialer,
-      {
-        endpoint: new URL(binding.mcpEndpoint),
-        runtimeBinding: binding,
-        headers: runtimeHeaders(binding.executionId),
-        signal,
+    return observeRuntimeInformationRead(
+      binding.executionId,
+      signal,
+      async () => {
+        const connection = await this.dependencies.runtimeDialer.connect({
+          endpoint: new URL(binding.mcpEndpoint),
+          runtimeBinding: binding,
+          headers: runtimeHeaders(binding.executionId),
+          signal,
+        });
+        return {
+          read: async () =>
+            parseRuntimeInformation(
+              await connection.readResource(RUNTIME_INFORMATION_URI, signal),
+              binding.executionId,
+            ),
+          close: () => connection.close(),
+        };
       },
       (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
-      async (connection) =>
-        parseRuntimeInformation(
-          await connection.readResource(RUNTIME_INFORMATION_URI, signal),
-          binding.executionId,
-        ),
     );
   }
 
