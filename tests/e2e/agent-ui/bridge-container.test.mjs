@@ -43,6 +43,47 @@ const { createNodeHttpHandler } = await import(
 );
 const dockerSoak = process.env.ANTNEST_UI_DOCKER_SOAK === "1";
 
+function processResourceIdentity(requests, hostname) {
+  const identities = new Set();
+  for (const [path, key] of [
+    ["/v1/traces", "resourceSpans"],
+    ["/v1/metrics", "resourceMetrics"],
+  ]) {
+    const exports = requests.filter((item) => item.path === path);
+    assert(exports.length > 0, `Missing production export ${path}`);
+    for (const item of exports) {
+      const groups = JSON.parse(item.body)[key];
+      assert(groups.length > 0, `Missing production resource ${path}`);
+      for (const group of groups) {
+        const attributes = Object.fromEntries(
+          group.resource.attributes.map((entry) => [
+            entry.key,
+            entry.value.stringValue ?? Number(entry.value.intValue),
+          ]),
+        );
+        assert.equal(attributes["service.name"], "agent-ui");
+        assert.equal(attributes["host.name"], hostname);
+        assert.equal(attributes["process.pid"], 1);
+        assert.match(
+          attributes["service.instance.id"] ?? "",
+          /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
+        );
+        assert.equal(
+          attributes["deployment.environment.name"],
+          "ui-process-generation-test",
+        );
+        identities.add(attributes["service.instance.id"]);
+      }
+    }
+  }
+  assert.equal(
+    identities.size,
+    1,
+    "Trace and metrics share one process generation",
+  );
+  return [...identities][0];
+}
+
 async function inspectContainerMemory(container, docker) {
   await docker(["exec", container, "kill", "-USR1", "1"]);
   const code = `
@@ -627,6 +668,8 @@ test(
           "-e",
           "OTEL_SERVICE_NAME=agent-ui",
           "-e",
+          "OTEL_RESOURCE_ATTRIBUTES=service.instance.id=environment-instance,host.name=environment-host,process.pid=999999999,deployment.environment.name=ui-process-generation-test",
+          "-e",
           "OTEL_SDK_DISABLED=false",
           "-e",
           "ANTNEST_AGENT_UI_BRIDGE_MAX_OWNERS=16",
@@ -636,6 +679,14 @@ test(
           "ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES=1024",
           image,
         ]);
+        const { stdout: hostnameOutput } = await docker([
+          "inspect",
+          "-f",
+          "{{.Config.Hostname}}",
+          container,
+        ]);
+        const hostname = hostnameOutput.trim();
+        assert(hostname.length > 0);
         const { stdout } = await docker(["port", container, "8080/tcp"]);
         const port = Number(stdout.trim().split(":").at(-1));
         assert.ok(Number.isSafeInteger(port) && port > 0);
@@ -2208,6 +2259,14 @@ test(
             ),
             `Production Bridge did not export ${path} during normal stop: ${JSON.stringify(telemetryRequests)}`,
           );
+        await writeFile(
+          `${evidenceRoot}/process-generation-1-otlp.json`,
+          JSON.stringify(telemetryRequests, null, 2) + "\n",
+        );
+        const firstInstanceId = processResourceIdentity(
+          telemetryRequests,
+          hostname,
+        );
         const exportedSpans = telemetryRequests
           .filter((item) => item.path === "/v1/traces")
           .flatMap((item) =>
@@ -2446,6 +2505,80 @@ test(
           gaugeValues("antnest.ui.process.rss_bytes").some(
             (value) => value > 0,
           ),
+        );
+        const firstExportCount = telemetryRequests.length;
+        holdCleanup = false;
+        await docker(["start", container]);
+        const { stdout: restartedPort } = await docker([
+          "port",
+          container,
+          "8080/tcp",
+        ]);
+        const newPort = Number(restartedPort.trim().split(":").at(-1));
+        assert(Number.isSafeInteger(newPort) && newPort > 0);
+        let restarted = false;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          try {
+            const response = await fetch(`http://127.0.0.1:${newPort}/status`, {
+              signal: AbortSignal.any([AbortSignal.timeout(500), signal]),
+            });
+            await response.text();
+            restarted = response.status === 200;
+          } catch {
+            signal.throwIfAborted();
+          }
+          if (restarted) break;
+          await sleep(100);
+        }
+        assert(
+          restarted,
+          "The same production container must restart normally",
+        );
+        await docker(["stop", "-t", "30", container], 45_000);
+        const { stdout: restartedExitCode } = await docker([
+          "inspect",
+          "-f",
+          "{{.State.ExitCode}}",
+          container,
+        ]);
+        assert.equal(restartedExitCode.trim(), "0");
+        const { stdout: restartedHostname } = await docker([
+          "inspect",
+          "-f",
+          "{{.Config.Hostname}}",
+          container,
+        ]);
+        assert.equal(restartedHostname.trim(), hostname);
+        const secondExports = telemetryRequests.slice(firstExportCount);
+        await writeFile(
+          `${evidenceRoot}/process-generation-2-otlp.json`,
+          JSON.stringify(secondExports, null, 2) + "\n",
+        );
+        const secondInstanceId = processResourceIdentity(
+          secondExports,
+          hostname,
+        );
+        assert.notEqual(
+          firstInstanceId,
+          secondInstanceId,
+          "Same-container PID 1 restart must produce a new process generation",
+        );
+        await writeFile(
+          `${evidenceRoot}/process-generations.json`,
+          JSON.stringify(
+            {
+              container,
+              hostname,
+              pid: 1,
+              instances: [firstInstanceId, secondInstanceId],
+              exitCodes: [
+                Number(exitCode.trim()),
+                Number(restartedExitCode.trim()),
+              ],
+            },
+            null,
+            2,
+          ) + "\n",
         );
       },
       diagnostics: async (error) => {

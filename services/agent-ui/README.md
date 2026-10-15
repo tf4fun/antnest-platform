@@ -114,6 +114,11 @@ Telemetry exports HTTP request spans plus `antnest.ui.http.requests` and
 `antnest.ui.http.duration` metrics, aggregate Bridge gauges (owners, observer
 leases, held work, retained history bytes, subscribers, journal bytes,
 replays, Node heap/RSS) with no Agent, Session or principal labels.
+Trace and metric resources share the actual `host.name`, `process.pid`, and
+a random `service.instance.id` generated once per process. Restarting the same
+container creates a new instance ID even when its hostname and PID 1 repeat.
+These identity fields override environment resource values; other deployment
+attributes from `OTEL_RESOURCE_ATTRIBUTES` are retained.
 Exporters have a 5-second timeout and are flushed after Bridge drain. A valid
 W3C `traceparent` from Gateway parents each HTTP span. Capacity and lifetime
 semantics are described in [Architecture](docs/architecture.md#bridge-capacity-and-lifetimes).

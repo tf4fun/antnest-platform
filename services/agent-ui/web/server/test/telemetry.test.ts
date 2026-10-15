@@ -3,12 +3,19 @@ import { testScope } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { hostname } from "node:os";
 import { test } from "node:test";
 
 import { discoverWorkspaceAgents } from "../src/adapters/controller-workspace.ts";
 import { startBridgeTelemetry, withActiveHttpTrace } from "../src/telemetry.ts";
 
-test("Bridge continues the incoming Gateway trace and flushes HTTP telemetry on shutdown", async () => {
+test("Bridge continues the incoming Gateway trace and flushes HTTP telemetry on shutdown", async (t) => {
+  const originalResourceAttributes = process.env.OTEL_RESOURCE_ATTRIBUTES;
+  process.env.OTEL_RESOURCE_ATTRIBUTES = "service.instance.id=environment-instance,host.name=environment-host,process.pid=999999999,deployment.environment.name=ui-producer-test";
+  t.after(() => {
+    if (originalResourceAttributes === undefined) delete process.env.OTEL_RESOURCE_ATTRIBUTES;
+    else process.env.OTEL_RESOURCE_ATTRIBUTES = originalResourceAttributes;
+  });
   const traceId = "0123456789abcdef0123456789abcdef";
   const parentSpanId = "1111111111111111";
   const received: Array<{ path: string; body: string }> = [];
@@ -98,6 +105,26 @@ test("Bridge continues the incoming Gateway trace and flushes HTTP telemetry on 
     `The Bridge span did not continue the Gateway context: ${JSON.stringify(spans)}`);
     assert.ok(received.some((item) => item.path === "/v1/metrics" && item.body),
       `HTTP metrics were not flushed: ${JSON.stringify(received)}`);
+    const identities = new Set<string>();
+    for (const item of received) {
+      const body = JSON.parse(item.body);
+      const groups = body.resourceSpans ?? body.resourceMetrics;
+      assert.ok(groups?.length, "Every export must retain its resource");
+      for (const group of groups) {
+        const attributes = Object.fromEntries(group.resource.attributes.map((entry) =>
+          [entry.key, entry.value.stringValue ?? Number(entry.value.intValue)]));
+        assert.equal(attributes["service.name"], "agent-ui-test");
+        assert.equal(attributes["host.name"], hostname());
+        assert.equal(attributes["process.pid"], process.pid);
+        assert.match(attributes["service.instance.id"] ?? "",
+          /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
+          "The instance must identify this process generation, not an environment override");
+        assert.equal(attributes["deployment.environment.name"], "ui-producer-test",
+          "Deployment resource attributes remain available");
+        identities.add(attributes["service.instance.id"]);
+      }
+    }
+    assert.equal(identities.size, 1, "All Trace and metric exports share one process generation");
     const exportedMetrics = received.filter((item) => item.path === "/v1/metrics")
       .flatMap((item) => JSON.parse(item.body).resourceMetrics.flatMap((resource) =>
         resource.scopeMetrics.flatMap((scope) => scope.metrics)));

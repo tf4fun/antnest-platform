@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { context, createContextKey, isSpanContextValid, metrics, propagation, ROOT_CONTEXT,
   SpanKind, SpanStatusCode, trace, type Span } from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import { core, NodeSDK, tracing } from "@opentelemetry/sdk-node";
+import { core, NodeSDK, resources, tracing } from "@opentelemetry/sdk-node";
 import type { BridgeRuntimeMetrics } from "./workspace-runtime.ts";
 import type { BridgeScope } from "./bridge/registry.ts";
 import type { StreamTermination } from "./bridge/stream-journal.ts";
@@ -20,6 +22,11 @@ export type BridgeTelemetry = {
 
 const HTTP_BOUNDARY = createContextKey("antnest.ui.active-http-boundary");
 type HttpBoundary = { active: boolean; span: Span; streamDelegationRecorded?: boolean };
+const processIdentity = Object.freeze({
+  "host.name": hostname(),
+  "process.pid": process.pid,
+  "service.instance.id": randomUUID(),
+});
 
 /** The original verified SSE delegation, never renewed by later requests. */
 export function recordStreamDelegation(expiresAtUnixMs: number): void {
@@ -177,6 +184,10 @@ export async function startBridgeTelemetry(config: {
   if (!config.disabled && config.endpoint) {
     sdk = new NodeSDK({
       serviceName: config.serviceName,
+      // Last detector wins: deployment attributes remain, but process identity
+      // cannot be supplied by the environment or repeated on a PID 1 restart.
+      resourceDetectors: [resources.envDetector, resources.processDetector,
+        resources.hostDetector, { detect: () => ({ attributes: processIdentity }) }],
       textMapPropagator: new core.W3CTraceContextPropagator(),
       spanProcessors: [new tracing.BatchSpanProcessor(
         new OTLPTraceExporter({ url: signalUrl(config.endpoint, "traces"), timeoutMillis: 5_000 }),
