@@ -23,7 +23,10 @@ import { observeWorkspaceStream } from "./resolve-cache-stream.mjs";
 import { collectOutageTraceArchive } from "./resolve-cache-outage-collect.mjs";
 import { shortenIdleSession } from "./resolve-cache-expiry-fixture.mjs";
 import { createOutageRunSnapshotReader } from "./resolve-cache-run-snapshot.mjs";
-import { prepareOutageAdmissions } from "./resolve-cache-outage-preparation.mjs";
+import {
+  prepareOutageAdmissions,
+  waitForOutageRecovery,
+} from "./resolve-cache-outage-preparation.mjs";
 import { verifyRecovery } from "./resolve-cache-recovery-flow.mjs";
 import { rebuildRecoveryAgent } from "./resolve-cache-rebuild.mjs";
 import { captureOutageACPClock } from "./resolve-cache-outage-clock.mjs";
@@ -333,8 +336,32 @@ export async function verifyWarmOutage({
       docker,
       config,
       signal,
+      async prepareRejections({ client, administrator, adminSession }) {
+        const idleFixture = await shortenIdleSession({
+          project: config.project,
+          compose,
+          docker,
+          token: shortSession.accessToken,
+          principal: shortLogin.body.principal,
+          idleMS: 2000,
+          secrets,
+          protectedTokens: [client.accessToken, administrator.accessToken],
+          otherMembership: adminSession.body.principal.membership_id,
+        });
+        evidence.rejections.expired_session = idleFixture.evidence;
+        idleFixture.evidence.credential_scope = credentialScope(
+          shortSession.cookie,
+        );
+        await http(shortSession, "/api/session", { label: "short-idle-warm" });
+        await idleFixture.read("after-warm");
+        await http(shortSession, "/api/session", { label: "short-idle-hit" });
+        const shortIdle = await idleFixture.read("after-hit");
+        assert(!shortIdle.expired && shortIdle.remaining_ms > 0);
+        return { idleFixture, shortIdle };
+      },
     });
     const { client, session, administrator, adminSession } = admission;
+    const { idleFixture, shortIdle } = admission.rejections;
     runtimeWork = admission.runtimeWork;
     activeClient = client;
     const view = await http(client, `${sessionPath}/view`, {
@@ -415,6 +442,7 @@ export async function verifyWarmOutage({
     evidence.runtime.tool_id = tools[0].item.id;
     const runSnapshot = await createOutageRunSnapshotReader({
       project: config.project,
+      containerID: idleFixture.containerID,
       compose,
       docker,
       signal,
@@ -431,26 +459,6 @@ export async function verifyWarmOutage({
       },
     });
     evidence.run_storage = runSnapshot.evidence;
-    const idleFixture = await shortenIdleSession({
-      project: config.project,
-      compose,
-      docker,
-      token: shortSession.accessToken,
-      principal: shortLogin.body.principal,
-      idleMS: 2000,
-      secrets,
-      protectedTokens: [client.accessToken, administrator.accessToken],
-      otherMembership: adminSession.body.principal.membership_id,
-    });
-    evidence.rejections.expired_session = idleFixture.evidence;
-    idleFixture.evidence.credential_scope = credentialScope(
-      shortSession.cookie,
-    );
-    await http(shortSession, "/api/session", { label: "short-idle-warm" });
-    await idleFixture.read("after-warm");
-    await http(shortSession, "/api/session", { label: "short-idle-hit" });
-    const shortIdle = await idleFixture.read("after-hit");
-    assert(!shortIdle.expired && shortIdle.remaining_ms > 0);
     const auditPath = `/api/admin/execution-audits/${encodeURIComponent(heldRun.runId)}`;
     const prewarm = await http(administrator, auditPath, {
       label: "warm-console-audit",
@@ -657,16 +665,13 @@ export async function verifyWarmOutage({
         ...result,
       }),
     );
-    await poll(
-      async () => {
-        const state = await inspectIdentity();
-        evidence.identity.healthy = state;
-        return state.running && state.health === "healthy";
-      },
-      "Identity recovery health",
+    await waitForOutageRecovery({
+      evidence,
+      inspectIdentity,
+      poll,
       signal,
-      30000,
-    );
+      stream,
+    });
     await http(client, `${sessionPath}/view`, {
       label: "recovered-workspace-view",
     });

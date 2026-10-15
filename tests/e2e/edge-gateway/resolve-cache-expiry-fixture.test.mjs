@@ -85,6 +85,7 @@ function harness(change = () => {}) {
 test("isolated expiry fixture shortens one exact browser session and observes unchanged reads", async () => {
   const h = harness();
   const fixture = await shortenIdleSession(h.options);
+  assert.equal(fixture.containerID, "a".repeat(64));
   const row = await fixture.read();
   assert.equal(row.expired, false);
   assert.equal(row.remaining_ms, 1500);

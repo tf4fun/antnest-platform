@@ -1,6 +1,29 @@
 import assert from "node:assert/strict";
 import { createCacheRuntimeWork } from "./resolve-cache-runtime-work.mjs";
 
+export async function waitForOutageRecovery({
+  evidence,
+  inspectIdentity,
+  poll,
+  signal,
+  stream,
+}) {
+  await poll(
+    async () => {
+      const state = await inspectIdentity();
+      evidence.identity.healthy = state;
+      return state.running && state.health === "healthy";
+    },
+    "Identity recovery health",
+    signal,
+    30000,
+  );
+  signal.throwIfAborted();
+  // Readiness alone cannot prove that the original warm SSE survived the
+  // restart. Stop before Rebuild or mutations if fail-closed already retired it.
+  stream.assertOpen();
+}
+
 export async function prepareOutageAdmissions({
   evidence,
   agentID,
@@ -14,8 +37,10 @@ export async function prepareOutageAdmissions({
   signal,
   docker,
   config,
+  prepareRejections,
   createRuntimeWork = createCacheRuntimeWork,
 }) {
+  assert.equal(typeof prepareRejections, "function");
   const base = `/api/app/workspace/v1/agents/${encodeURIComponent(agentID)}`;
   // Physical Runtime setup and configuration polling have no dependency on
   // the final SID/CCT. Keep them outside both final Resolve-cache lifetimes.
@@ -107,6 +132,16 @@ export async function prepareOutageAdmissions({
       administrator.cookie !== prepAdministrator.cookie,
     "final administrator reused preparation Cookie",
   );
+  // Isolated short-session SQL must protect the actual final credentials, but
+  // it must not spend their first Resolve snapshots. Finish those independent
+  // reads and admissions before either final Console/Workspace scope is used.
+  const rejections = await prepareRejections({
+    client,
+    session,
+    administrator,
+    adminSession,
+  });
+  signal.throwIfAborted();
   // One real request establishes the final admin's cold RPC source. If the
   // configuration changes again, fail this run instead of polling on its budget.
   const synchronization = await http(
@@ -125,5 +160,12 @@ export async function prepareOutageAdmissions({
   assert.equal(state.body.agentId, agentID);
   assert.equal(state.body.availability, "ready");
   assert.equal(state.body.activeSessionId, null);
-  return { client, session, administrator, adminSession, runtimeWork };
+  return {
+    client,
+    session,
+    administrator,
+    adminSession,
+    runtimeWork,
+    rejections,
+  };
 }

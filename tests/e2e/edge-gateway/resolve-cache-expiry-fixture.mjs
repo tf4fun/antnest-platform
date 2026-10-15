@@ -207,6 +207,7 @@ export async function shortenIdleSession({
     ...mark(),
   };
   return {
+    containerID: id,
     evidence,
     async read(label, options) {
       const row = await query(

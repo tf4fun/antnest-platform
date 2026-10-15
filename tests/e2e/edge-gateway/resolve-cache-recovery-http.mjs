@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { inspectRecoveryWindow } from "./resolve-cache-recovery.mjs";
+import { inspectRebuildPreparation } from "./resolve-cache-rebuild-trace.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import {
   tag,
@@ -265,6 +266,10 @@ export function inspectLoginRefusalTransaction(trace, server) {
 // gate binds their actual HTTP traces to committed command SQL and exact refusal
 // spans. SQL parameters are intentionally absent: row counts do not prove SIDs.
 export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
+  const preparation =
+    evidence.policy_revision === 4 || evidence.recovery_preparation
+      ? inspectRebuildPreparation(evidence, collection, secrets)
+      : undefined;
   inspectRecoveryWindow(evidence);
   assert.equal(evidence.settings.resolveTTLMS, 10000);
   resolveTraceSources(
@@ -652,8 +657,17 @@ export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
       rejection(c.restored_old_session);
     }
   }
+  if (preparation) {
+    owned.push(...preparation.owned_error_spans);
+    for (const id of preparation.trace_ids) {
+      const trace = get(id);
+      assert(!selected.includes(trace), "Rebuild aliases recovery mutation");
+      selected.push(trace);
+    }
+  }
   return {
     status: "passed",
+    ...(preparation ? { preparation } : {}),
     mutations,
     rejections,
     owned_error_spans: owned,

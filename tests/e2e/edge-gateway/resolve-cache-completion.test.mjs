@@ -12,6 +12,308 @@ import { verdict } from "../../support/ci-shard.mjs";
 const gates = (r) => r.warm_outage.trace_evidence.owning_gates;
 const archive = (r) => r.warm_outage.trace_evidence;
 const clock = (r) => gates(r).stream.service_clocks[0];
+const preparation = (r) => gates(r).recovery_http.preparation;
+for (const rebuildStatus of [202, 503]) {
+  test(`cache completion accepts exact Rebuild ${rebuildStatus} without early operation absence`, () => {
+    const r = bridgeCompletionFixture({ rebuildStatus, earlyOperation: false });
+    assertBridgeCacheCompletion(r);
+  });
+}
+test("cache completion preserves and reconciles preparation warnings", () => {
+  const r = bridgeCompletionFixture(),
+    p = preparation(r);
+  const warning = "retained preparation warning";
+  for (const row of [
+    p,
+    archive(r).diagnostics,
+    r.traces.find((row) => row.trace_id === p.command_trace_id),
+    archive(r).diagnostics.raw_trace_diagnostics.find(
+      (row) => row.trace_id === p.command_trace_id,
+    ),
+  ]) {
+    row.warning_count = 1;
+    row.warnings = [warning];
+    row.strict_trace = "failed";
+  }
+  assertBridgeCacheCompletion(r);
+  p.warning_count = 0;
+  p.warnings = [];
+  assert.throws(() => assertBridgeCacheCompletion(r));
+});
+for (const [name, change] of [
+  [
+    "removed early-404 subtree still owned by its parent",
+    (r) => {
+      const p = preparation(r),
+        id = p.early_operation_queries[0].trace_id;
+      p.requests = p.requests.filter((row) => row.trace_id !== id);
+      p.early_operation_queries = p.early_operation_queries.filter(
+        (row) => row.trace_id !== id,
+      );
+      p.owned_error_spans = p.owned_error_spans.filter(
+        (row) => row.trace_id !== id,
+      );
+      p.trace_ids = p.trace_ids.filter((trace) => trace !== id);
+      p.source_trace_ids = p.source_trace_ids.filter((trace) => trace !== id);
+      p.error_spans -= 4;
+    },
+  ],
+  [
+    "omitted clean audit Trace",
+    (r) => {
+      const p = preparation(r);
+      const id = p.trace_ids.find(
+        (trace) =>
+          ![
+            p.command_trace_id,
+            p.operation_trace_id,
+            p.receipt_trace_id,
+            p.ready_trace_id,
+            ...p.requests.map((row) => row.trace_id),
+          ].includes(trace),
+      );
+      assert(id);
+      p.trace_ids = p.trace_ids.filter((trace) => trace !== id);
+    },
+  ],
+  [
+    "omitted preparation source",
+    (r) => {
+      preparation(r).source_trace_ids.pop();
+    },
+  ],
+  [
+    "hidden preparation errors",
+    (r) => {
+      preparation(r).error_spans = 0;
+    },
+  ],
+  [
+    "hidden preparation strict findings",
+    (r) => {
+      preparation(r).strict_trace = "passed";
+    },
+  ],
+  [
+    "missing preparation",
+    (r) => {
+      delete gates(r).recovery_http.preparation;
+    },
+  ],
+  [
+    "only a passed marker",
+    (r) => {
+      gates(r).recovery_http.preparation = { status: "passed" };
+    },
+  ],
+  [
+    "failed preparation",
+    (r) => {
+      preparation(r).status = "failed";
+    },
+  ],
+  [
+    "foreign Run",
+    (r) => {
+      preparation(r).original_run_id = "foreign";
+    },
+  ],
+  [
+    "foreign old Runtime",
+    (r) => {
+      preparation(r).original_runtime_execution_id = "foreign";
+    },
+  ],
+  [
+    "unchanged Runtime",
+    (r) => {
+      preparation(r).runtime_execution_id =
+        preparation(r).original_runtime_execution_id;
+    },
+  ],
+  [
+    "missing new Runtime",
+    (r) => {
+      delete preparation(r).runtime_execution_id;
+    },
+  ],
+  [
+    "foreign Agent",
+    (r) => {
+      preparation(r).agent_id = "foreign";
+    },
+  ],
+  [
+    "missing lifecycle phase",
+    (r) => {
+      preparation(r).activities.pop();
+    },
+  ],
+  [
+    "reordered lifecycle",
+    (r) => {
+      preparation(r).activities.reverse();
+    },
+  ],
+  [
+    "missing phase write",
+    (r) => {
+      preparation(r).activities[0].write_span_ids.pop();
+    },
+  ],
+  [
+    "malformed phase write ID",
+    (r) => {
+      preparation(r).activities[0].write_span_ids[0] = "bad";
+    },
+  ],
+  [
+    "duplicate phase write",
+    (r) => {
+      preparation(r).activities[0].write_span_ids[0] =
+        preparation(r).activities[0].write_span_ids[1];
+    },
+  ],
+  [
+    "foreign workflow",
+    (r) => {
+      preparation(r).workflow_id = "agent-rebuild/foreign";
+    },
+  ],
+  [
+    "unsettled execution",
+    (r) => {
+      preparation(r).settlement = "unresolved";
+    },
+  ],
+  [
+    "missing runtime target",
+    (r) => {
+      preparation(r).runtime_target_revision = "";
+    },
+  ],
+  [
+    "wrong operation insertion",
+    (r) => {
+      preparation(r).operation_insert_span_id =
+        preparation(r).activities[0].write_span_ids[0];
+    },
+  ],
+  [
+    "wrong operation admission commit",
+    (r) => {
+      preparation(r).operation_insert_commit_span_id =
+        preparation(r).activities[1].commit_span_id;
+    },
+  ],
+  [
+    "wrong completed commit",
+    (r) => {
+      preparation(r).completed_commit_span_id =
+        preparation(r).activities[0].commit_span_id;
+    },
+  ],
+  [
+    "missing Runtime transaction",
+    (r) => {
+      preparation(r).runtime_transactions.pop();
+    },
+  ],
+  [
+    "missing Runtime write",
+    (r) => {
+      preparation(r).runtime_transactions[1].write_span_ids.pop();
+    },
+  ],
+  [
+    "malformed Runtime write ID",
+    (r) => {
+      preparation(r).runtime_transactions[1].write_span_ids[0] = "bad";
+    },
+  ],
+  [
+    "aliased Runtime transaction",
+    (r) => {
+      preparation(r).runtime_transactions[1].transaction_span_id =
+        preparation(r).runtime_transactions[0].transaction_span_id;
+    },
+  ],
+  [
+    "command absent from preparation inventory",
+    (r) => {
+      preparation(r).trace_ids = preparation(r).trace_ids.filter(
+        (id) => id !== preparation(r).command_trace_id,
+      );
+    },
+  ],
+  [
+    "duplicate preparation inventory",
+    (r) => {
+      preparation(r).trace_ids.push(preparation(r).trace_ids[0]);
+    },
+  ],
+  [
+    "missing final operation receipt",
+    (r) => {
+      preparation(r).requests = preparation(r).requests.filter(
+        (row) => row.trace_id !== preparation(r).operation_trace_id,
+      );
+    },
+  ],
+  [
+    "duplicate SQL receipt",
+    (r) => {
+      preparation(r).requests.push(structuredClone(preparation(r).requests[0]));
+    },
+  ],
+  [
+    "missing early operation proof",
+    (r) => {
+      preparation(r).early_operation_queries = [];
+    },
+  ],
+  [
+    "foreign early SQL proof",
+    (r) => {
+      preparation(r).early_operation_queries[0].sql_span_id =
+        preparation(r).early_operation_queries[0].server_span_id;
+    },
+  ],
+  [
+    "unsupported command status",
+    (r) => {
+      preparation(r).command_status = 500;
+    },
+  ],
+  [
+    "202 with early operation absence",
+    (r) => {
+      preparation(r).command_status = 202;
+    },
+  ],
+  [
+    "missing preparation claim",
+    (r) => {
+      preparation(r).owned_error_spans.pop();
+    },
+  ],
+  [
+    "wrong preparation claim reason",
+    (r) => {
+      preparation(r).owned_error_spans[0].reason = "unrelated";
+    },
+  ],
+]) {
+  test(`cache completion rejects Rebuild ${name}`, () => {
+    const r = bridgeCompletionFixture();
+    assertBridgeCacheCompletion(r);
+    const before = structuredClone(r);
+    change(r);
+    assert.notDeepEqual(r, before, "negative case must change its input");
+    assert.throws(() => assertBridgeCacheCompletion(r));
+    assert.equal(isResolveCacheCompletion(r), false);
+  });
+}
 for (const [name, change] of [
   [
     "missing service clocks",

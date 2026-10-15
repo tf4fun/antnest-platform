@@ -219,10 +219,59 @@ export function inspectRuntimeCancellationTiming(trace, expected) {
   );
   joinedEnd(finish, run, "terminal SQL was not joined by Run completion");
   joinedEnd(client, tool, "Runtime CLIENT cleanup outlived its ACP call");
-  assert(
-    end(run) <= end(cancel) && end(finish) <= end(cancel),
-    "Run completion outlived internal cancellation",
-  );
+  const cancelJoinQuantization = [];
+  const joinedCompletions = [
+    [run, "awaited-run-completion"],
+    [finish, "awaited-run-terminal-sql"],
+  ].filter(([span]) => end(span) > end(cancel));
+  if (joinedCompletions.length) {
+    // These spans belong to different Traces: their process IDs are local
+    // indexes, and the Run is not a child of cancel. The matching ACP resource
+    // and integer-ms anchors were checked above. Retain a separate join receipt
+    // only when the actual successful cancel application covers completion.
+    for (const [span] of joinedCompletions)
+      assert(
+        end(span) - end(cancel) < 1000,
+        "Run completion outlived internal cancellation",
+      );
+    const application = one(
+      expected.cancelTrace.spans.filter(
+        (s) =>
+          cancelTree.parent(s) === cancel &&
+          s.operationName === "acp.session.cancel",
+      ),
+      "actual cancellation join application",
+    );
+    assert.equal(application.processID, cancel.processID);
+    assert.deepEqual(acpProcess(expected.cancelTrace, application), acp);
+    requireTags(application, {
+      "span.kind": "internal",
+      "antnest.agent.id": tag(prompt, "antnest.agent.id"),
+      "antnest.session.id": tag(run, "antnest.session.id"),
+      "antnest.outcome": "ok",
+    });
+    cleanClockSample(application);
+    assert(!hasError(application), "failed cancellation join application");
+    assert.equal(application.startTime % 1000, 0);
+    assert(application.startTime >= cancel.startTime);
+    assert(
+      end(application) - end(cancel) < 1000 &&
+        end(run) <= end(application) &&
+        end(finish) <= end(application),
+      "actual cancellation application did not join Run completion",
+    );
+    for (const [span, relation] of joinedCompletions)
+      cancelJoinQuantization.push({
+        trace_id: trace.traceID,
+        span_id: span.spanID,
+        cancel_trace_id: expected.cancelTrace.traceID,
+        cancel_span_id: cancel.spanID,
+        application_span_id: application.spanID,
+        relation,
+        raw_end_delta_us: end(span) - end(cancel),
+        resolution_us: 1000,
+      });
+  }
 
   const binding = {
     "antnest.agent.id": tag(prompt, "antnest.agent.id"),
@@ -463,6 +512,7 @@ export function inspectRuntimeCancellationTiming(trace, expected) {
     runtime_ends: runtimeEnds,
     raw_server_client_end_delta_us: end(server) - end(client),
     node_end_quantization: nodeQuantization,
+    node_cancel_join_quantization: cancelJoinQuantization,
     representation_ambiguities: ambiguities,
   };
 }

@@ -11,6 +11,102 @@ import {
 import { inspectOutageRuntimeCancellation } from "./resolve-cache-runtime-cancellation.mjs";
 const inspect = (f) =>
   inspectOutageRuntimeCancellation(f.evidence, f.collection, []);
+
+function joinedCancelFixture(delta = 8) {
+  const f = runtimeCancellationBusinessFixture();
+  const cancelEnd = f.cancel.startTime + f.cancel.duration;
+  f.run.duration = cancelEnd + delta - f.run.startTime;
+  f.cancelApplication.duration =
+    cancelEnd + 999 - f.cancelApplication.startTime;
+  return f;
+}
+
+for (const delta of [8, 999])
+  test(`same-process awaited Run join preserves ${delta}us cross-Trace end inversion`, () => {
+    const f = joinedCancelFixture(delta);
+    const before = structuredClone({
+      trace: f.trace,
+      cancelTrace: f.cancelTrace,
+    });
+    const r = inspect(f);
+    assert.deepEqual(r.timing.node_cancel_join_quantization, [
+      {
+        trace_id: f.trace.traceID,
+        span_id: f.run.spanID,
+        cancel_trace_id: f.cancelTrace.traceID,
+        cancel_span_id: f.cancel.spanID,
+        application_span_id: f.cancelApplication.spanID,
+        relation: "awaited-run-completion",
+        raw_end_delta_us: delta,
+        resolution_us: 1000,
+      },
+    ]);
+    assert.deepEqual({ trace: f.trace, cancelTrace: f.cancelTrace }, before);
+    assert.equal(r.strict_trace, "failed");
+  });
+
+test("the joined terminal SQL records its own bounded difference without stacking allowances", () => {
+  const f = joinedCancelFixture(8);
+  const cancelEnd = f.cancel.startTime + f.cancel.duration;
+  f.finish.duration = cancelEnd + 5 - f.finish.startTime;
+  const r = inspect(f);
+  assert.deepEqual(
+    r.timing.node_cancel_join_quantization.map((row) => [
+      row.relation,
+      row.raw_end_delta_us,
+    ]),
+    [
+      ["awaited-run-completion", 8],
+      ["awaited-run-terminal-sql", 5],
+    ],
+  );
+  f.finish.duration = cancelEnd + 1000 - f.finish.startTime;
+  assert.throws(
+    () => inspect(f),
+    /Run completion outlived internal cancellation/u,
+  );
+});
+
+for (const [name, change] of [
+  ["whole millisecond", (f) => (f.run.duration += 992)],
+  ["noninteger Run anchor", (f) => f.run.startTime++],
+  ["noninteger cancel anchor", (f) => f.cancel.startTime++],
+  ["noninteger application anchor", (f) => f.cancelApplication.startTime++],
+  [
+    "application does not cover Run",
+    (f) => (f.cancelApplication.duration -= 1000),
+  ],
+  [
+    "missing application",
+    (f) =>
+      (f.cancelTrace.spans = f.cancelTrace.spans.filter(
+        (s) => s !== f.cancelApplication,
+      )),
+  ],
+  ["detached application", (f) => (f.cancelApplication.references = [])],
+  [
+    "wrong application Session",
+    (f) => set(f.cancelApplication, "antnest.session.id", "other"),
+  ],
+  [
+    "wrong application Agent",
+    (f) => set(f.cancelApplication, "antnest.agent.id", "other"),
+  ],
+  [
+    "failed application",
+    (f) => set(f.cancelApplication, "antnest.outcome", "error"),
+  ],
+  [
+    "different ACP process",
+    (f) => set(f.cancelTrace.processes.other, "service.instance.id", "other:1"),
+  ],
+])
+  test(`awaited Run end inversion rejects ${name}`, () => {
+    const f = joinedCancelFixture();
+    change(f);
+    assert.throws(() => inspect(f));
+  });
+
 test("actual cancel application retains the observed 586us joined-end representation", () => {
   const f = runtimeCancellationBusinessFixture();
   f.cancelApplication.duration =

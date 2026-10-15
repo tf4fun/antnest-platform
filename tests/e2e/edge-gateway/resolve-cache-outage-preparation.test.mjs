@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { prepareOutageAdmissions } from "./resolve-cache-outage-preparation.mjs";
+import {
+  prepareOutageAdmissions,
+  waitForOutageRecovery,
+} from "./resolve-cache-outage-preparation.mjs";
 
 const deferred = () => {
   let resolve;
@@ -17,7 +20,9 @@ function fixture() {
     factoryEntered = deferred(),
     factoryRelease = deferred(),
     freshnessEntered = deferred(),
-    freshnessRelease = deferred();
+    freshnessRelease = deferred(),
+    rejectionsEntered = deferred(),
+    rejectionsRelease = deferred();
   const owner = {
     user_id: "owner",
     organization_id: "organization",
@@ -35,6 +40,8 @@ function fixture() {
     holdFactory: false,
     holdFreshness: false,
     freshError: null,
+    holdRejections: false,
+    rejectionsError: null,
     staleFinalACK: false,
     staleACKs: 2,
     mutateLogin() {},
@@ -68,6 +75,21 @@ function fixture() {
     signal: controller.signal,
     docker: () => assert.fail("unexpected Docker"),
     config: { project: "owned-project" },
+    async prepareRejections(value) {
+      options.rejectionsPreparedWith = value;
+      events.push("rejections-start");
+      rejectionsEntered.resolve();
+      if (controls.holdRejections) await rejectionsRelease.promise;
+      controller.signal.throwIfAborted();
+      if (controls.rejectionsError) throw controls.rejectionsError;
+      // Actual isolated expiry setup performs several owned PostgreSQL reads.
+      time += 2500;
+      events.push("rejections-complete");
+      return {
+        idleFixture: { evidence: {} },
+        shortIdle: { remaining_ms: 1500 },
+      };
+    },
     async login(credentials, label) {
       controller.signal.throwIfAborted();
       events.push(label);
@@ -152,6 +174,8 @@ function fixture() {
     factoryRelease,
     freshnessEntered,
     freshnessRelease,
+    rejectionsEntered,
+    rejectionsRelease,
     time: () => time,
     finalRequests: () =>
       requests.filter((r) =>
@@ -160,8 +184,8 @@ function fixture() {
   };
 }
 
-for (const stage of ["Factory", "Freshness"]) {
-  test(`final credentials remain unused while Runtime ${stage} is pending`, async () => {
+for (const stage of ["Factory", "Freshness", "Rejections"]) {
+  test(`final scopes remain cold while ${stage} preparation is pending`, async () => {
     const f = fixture();
     f.controls[`hold${stage}`] = true;
     const running = prepareOutageAdmissions(f.options);
@@ -169,14 +193,17 @@ for (const stage of ["Factory", "Freshness"]) {
     try {
       await Promise.race([f[`${stage.toLowerCase()}Entered`].promise, running]);
       assert.deepEqual(f.finalRequests(), []);
-      assert(!f.events.includes("warm-login"));
-      assert(!f.events.includes("audit-login"));
+      if (stage !== "Rejections") {
+        assert(!f.events.includes("warm-login"));
+        assert(!f.events.includes("audit-login"));
+      }
       f[`${stage.toLowerCase()}Release`].resolve();
       await running;
     } finally {
       f.controller.abort();
       f.factoryRelease.resolve();
       f.freshnessRelease.resolve();
+      f.rejectionsRelease.resolve();
       await running.catch(() => {});
     }
   });
@@ -186,6 +213,7 @@ test("slow preparation leaves the original final Resolve budgets intact", async 
   const f = fixture();
   const result = await prepareOutageAdmissions(f.options);
   const restart = f.time() + 8000;
+  assert(f.events.includes("rejections-complete"));
   for (const [client, profile] of [
     [result.client, "workspace"],
     [result.administrator, "console"],
@@ -209,6 +237,116 @@ test("slow preparation leaves the original final Resolve budgets intact", async 
     f.finalRequests().map((r) => r.label),
     ["fresh-configuration-acknowledgement", "fresh-consumer-agent-ready"],
   );
+});
+
+test("expiry preparation protects the final credentials before either exact scope is used", async () => {
+  const f = fixture();
+  const result = await prepareOutageAdmissions(f.options);
+  assert.deepEqual(f.options.rejectionsPreparedWith, {
+    client: result.client,
+    session: result.session,
+    administrator: result.administrator,
+    adminSession: result.adminSession,
+  });
+  assert.equal(result.rejections.shortIdle.remaining_ms, 1500);
+  assert(
+    f.events.indexOf("audit-login") < f.events.indexOf("rejections-start"),
+  );
+});
+
+test("failed expiry preparation never admits either final protected scope", async () => {
+  const f = fixture();
+  const failure = new Error("short session isolation failed");
+  f.controls.rejectionsError = failure;
+  await assert.rejects(
+    prepareOutageAdmissions(f.options),
+    (e) => e === failure,
+  );
+  assert.deepEqual(f.finalRequests(), []);
+});
+
+test("missing expiry preparation cannot silently consume the final cache budget later", async () => {
+  const f = fixture();
+  delete f.options.prepareRejections;
+  await assert.rejects(prepareOutageAdmissions(f.options));
+  assert.deepEqual(f.finalRequests(), []);
+});
+
+function recoveryFixture() {
+  const evidence = { identity: { restart_started_at: 7000 } };
+  const controller = new AbortController();
+  let instant = 7100;
+  const controls = { closed: false, checks: 0, verified: false };
+  const options = {
+    evidence,
+    signal: controller.signal,
+    stream: {
+      assertOpen() {
+        controls.checks++;
+        assert(
+          !controls.closed,
+          "original SSE closed before Identity recovered",
+        );
+        controls.verified = true;
+      },
+    },
+    async inspectIdentity() {
+      const state = {
+        running: true,
+        health: instant < 9500 ? "starting" : "healthy",
+        at: instant,
+      };
+      instant += 2400;
+      return state;
+    },
+    async poll(check, _label, signal, timeout) {
+      assert.equal(signal, controller.signal);
+      assert.equal(timeout, 30000);
+      for (let i = 0; i < 2; i++) {
+        signal.throwIfAborted();
+        if (await check()) return;
+      }
+      throw new Error("Identity recovery timeout");
+    },
+  };
+  return { evidence, controller, controls, options };
+}
+
+test("recovery preserves the original SSE through observed healthy readiness", async () => {
+  const f = recoveryFixture();
+  await waitForOutageRecovery(f.options);
+  assert.equal(f.evidence.identity.healthy.health, "healthy");
+  assert.equal(f.controls.checks, 1);
+});
+
+test("expiry after restart but before healthy fails before recovery mutations", async () => {
+  const f = recoveryFixture();
+  const inspect = f.options.inspectIdentity;
+  f.options.inspectIdentity = async () => {
+    const state = await inspect();
+    if (state.at >= 8000) f.controls.closed = true;
+    return state;
+  };
+  let mutationStarted = false;
+  await assert.rejects(async () => {
+    await waitForOutageRecovery(f.options);
+    mutationStarted = true;
+  }, /original SSE closed before Identity recovered/u);
+  assert.equal(mutationStarted, false);
+  assert.equal(f.evidence.identity.healthy.at, 9500);
+});
+
+test("interrupted recovery preserves the last observation without checking a replacement stream", async () => {
+  const f = recoveryFixture();
+  const inspect = f.options.inspectIdentity;
+  f.options.inspectIdentity = async () => {
+    const state = await inspect();
+    f.controller.abort(new Error("stop recovery"));
+    return state;
+  };
+  await assert.rejects(waitForOutageRecovery(f.options), /stop recovery/u);
+  assert.equal(f.evidence.identity.healthy.health, "starting");
+  assert.equal(f.controls.checks, 0);
 });
 
 test("Runtime preparation uses the independent member and administrator Principals", async () => {

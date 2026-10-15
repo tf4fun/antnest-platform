@@ -359,11 +359,18 @@ remain the responsibility of their separate owning gates.
 Runtime inspection and configuration acknowledgement polling use independent
 preparation credentials before the final member and audit logins. The final
 Principals must match the preparation identities, while their Cookies must be
-new. The audit Cookie makes one fresh acknowledgement request, followed by the
-member's actual workspace admission. A stale final acknowledgement fails the
-run. Preparation does not extend the original ten-second authorization budget;
-the original Cookie still opens the SSE and submits the single prompt, and the
-short-idle fixture is armed once after that Run is observed.
+new. Before either final scope is used, arm the independent short-idle fixture
+once, protecting those exact final tokens, and complete its two successful
+session reads and unchanged database observations. Its expiry may precede the
+stop; the stopped-period database read must prove expiry before the real 503,
+and recovery must still return 401 without Cookie loss. The audit Cookie then
+makes one fresh acknowledgement request, followed by the member's actual
+workspace admission. A stale final acknowledgement fails the run. Preparation
+does not extend the original ten-second authorization budget; the original
+Cookie still opens the SSE and submits the single prompt. Reuse the prepared
+PostgreSQL container identity for Run observations, retaining each read's
+ownership check. Immediately after Identity becomes healthy, require the
+original SSE to remain open before Rebuild or any recovery mutation.
 
 Revision 4 recovery authority binds each new Cookie's Session-creation POST201
 to its actual Resolve RPC and SQL, then independently traces the initial view
@@ -439,6 +446,12 @@ stored snapshot, and the same Runtime execution, image, generation and process
 group. Audit readiness is optional and cannot replace the organization/Run
 scoped business query; SQL must remain within its owning operation. Same Node
 SDK joined-end differences below one millisecond are recorded separately.
+An awaited Run/terminal-SQL end in another Trace uses a distinct join receipt,
+not a synthetic parent. Both ACP resources and integer-millisecond anchors must
+match; the actual successful cancel application must be a direct dispatch child
+and cover those completions. Each difference from internal cancellation must be
+strictly below one millisecond, without stacking allowances. Original raw times
+and strict diagnostics are retained.
 
 `resolve-cache-runtime-cancellation-diagnostics.mjs` validates five explicit
 ERROR spans and the Runtime HTTP error event as six exact raw error claims.
@@ -574,6 +587,17 @@ Pending preparation states and operation 404 are bounded read-only waits; the
 POST is never retried. The original workspace effects and complete old Run,
 execution events, audit inventory and stored snapshot digest must remain
 unchanged. No cached status or old PID marker can prove the new Runtime.
+`resolve-cache-rebuild-trace.mjs` independently binds these HTTP observations to
+the completed lifecycle workflow, six committed Controller phases and the
+Runtime's serializable admission/completion transactions. It admits the exact
+503 cancellation chain only after durable completion, and an early operation
+404 only when its zero-row read precedes the operation insertion in the same
+Controller process. Unknown diagnostics remain failures. Successful Runtime
+status completion events with an empty error type require matching request,
+process identity and timestamps and cannot carry transport errors. The final
+policy-4 boundary requires this preparation proof under `recovery_http`, bound
+to the original Run/Runtime and Bridge Agent, with every transaction/write
+reference and error claim reconciled against the archived Trace inventory.
 Four fresh Bridge HTTP-created Sessions each hold one real model request while
 logout, password change, an active Membership role change, and Membership
 deactivation retire their original SSE observers. Remote closure must precede both

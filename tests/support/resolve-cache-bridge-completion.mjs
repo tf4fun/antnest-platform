@@ -118,6 +118,164 @@ function assertACPClockCompletion(stream, reference) {
     );
 }
 
+function assertRebuildCompletion(outage, gates, reference) {
+  const p = gates.recovery_http.preparation;
+  assert.equal(p?.status, "passed", "Rebuild preparation proof missing");
+  assert.equal(p.original_run_id, outage.run_id);
+  assert.equal(p.original_runtime_execution_id, outage.runtime_execution_id);
+  nonempty(p.runtime_execution_id);
+  assert.notEqual(p.runtime_execution_id, p.original_runtime_execution_id);
+  const bridge = gates.authority.original_bridge;
+  const owners = gates.stream.owner_inventory.owners.filter(
+    (o) =>
+      o.origin_trace_id === bridge.source_trace_id &&
+      o.origin_ui_span_id === bridge.ui_receiver_span_id &&
+      o.initialization_span_id === bridge.initialization_span_id,
+  );
+  assert.equal(owners.length, 1);
+  assert.equal(p.agent_id, owners[0].scope.agent_id);
+  assert.match(p.request_id ?? "", /^lifecycle-[a-f0-9]{64}$/u);
+  assert.equal(p.workflow_id, `agent-rebuild/${p.request_id}`);
+  assert.equal(p.settlement, "runtime_barrier_required");
+  nonempty(p.runtime_target_revision);
+  sameSet(p.trace_ids, p.trace_ids);
+  assert(Array.isArray(p.source_trace_ids));
+  sameSet(p.source_trace_ids, p.source_trace_ids);
+  sameSet(p.trace_ids, [p.command_trace_id, ...p.source_trace_ids]);
+  p.trace_ids.forEach((trace) => reference(trace));
+  const primary = [
+    p.command_trace_id,
+    p.operation_trace_id,
+    p.receipt_trace_id,
+    p.ready_trace_id,
+  ];
+  sameSet(primary, primary);
+  primary.forEach((trace) => assert(p.trace_ids.includes(trace)));
+  assert([202, 503].includes(p.command_status));
+  assert(Array.isArray(p.activities));
+  assert.deepEqual(
+    p.activities.map((r) => r.phase),
+    [
+      "admit_lifecycle",
+      "drain",
+      "network_fence",
+      "runtime_update",
+      "network_ensure",
+      "publish",
+    ],
+  );
+  assert(
+    Array.isArray(p.runtime_transactions) &&
+      p.runtime_transactions.length === 2,
+  );
+  const commandRefs = [p.workflow_span_id, p.runtime_span_id];
+  function transaction(row, writeCount) {
+    assert(
+      Array.isArray(row.write_span_ids) &&
+        row.write_span_ids.length === writeCount,
+    );
+    commandRefs.push(
+      row.transaction_span_id,
+      row.commit_span_id,
+      ...row.write_span_ids,
+    );
+  }
+  p.activities.forEach((row, index) => {
+    commandRefs.push(row.span_id);
+    transaction(row, [5, 1, 1, 1, 1, 5][index]);
+  });
+  p.runtime_transactions.forEach((row, index) =>
+    transaction(row, [1, 2][index]),
+  );
+  sameSet(commandRefs, commandRefs);
+  commandRefs.forEach((span) => reference(p.command_trace_id, span));
+  assert.equal(p.operation_insert_span_id, p.activities[0].write_span_ids[1]);
+  assert.equal(
+    p.operation_insert_commit_span_id,
+    p.activities[0].commit_span_id,
+  );
+  assert.equal(p.completed_commit_span_id, p.activities[5].commit_span_id);
+  assert(Array.isArray(p.requests) && p.requests.length >= 2);
+  sameSet(
+    p.requests.map((r) => r.trace_id),
+    p.requests.map((r) => r.trace_id),
+  );
+  for (const row of p.requests) {
+    assert(p.trace_ids.includes(row.trace_id));
+    assert([200, 404].includes(row.status));
+    assert(![p.command_trace_id, p.ready_trace_id].includes(row.trace_id));
+    reference(row.trace_id, row.server_span_id);
+    reference(row.trace_id, row.sql_span_id);
+    assert.notEqual(row.server_span_id, row.sql_span_id);
+  }
+  for (const id of [p.operation_trace_id, p.receipt_trace_id])
+    assert.equal(p.requests.find((row) => row.trace_id === id)?.status, 200);
+  const absent = p.requests.filter((row) => row.status === 404);
+  if (p.command_status === 202) assert.equal(absent.length, 0);
+  const sort = (rows) =>
+    [...rows].sort((a, b) => a.trace_id.localeCompare(b.trace_id));
+  assert(Array.isArray(p.early_operation_queries));
+  assert.deepEqual(
+    sort(p.early_operation_queries),
+    sort(absent.map(({ status, ...row }) => row)),
+  );
+  assert(Array.isArray(p.owned_error_spans));
+  sameSet(p.owned_error_spans.map(key), p.owned_error_spans.map(key));
+  const groups = new Map([
+    [
+      p.command_trace_id,
+      {
+        count: p.command_status === 503 ? 6 : 0,
+        reason: "rebuild-command-wait-cancelled-after-durable-completion",
+      },
+    ],
+    ...absent.map((row) => [
+      row.trace_id,
+      { count: 4, reason: "rebuild-operation-not-yet-inserted" },
+    ]),
+  ]);
+  for (const row of p.owned_error_spans) {
+    reference(row.trace_id, row.span_id);
+    assert(groups.has(row.trace_id), "claim outside Rebuild command/poll");
+    assert.equal(row.reason, groups.get(row.trace_id)?.reason);
+  }
+  for (const [trace, { count }] of groups)
+    assert.equal(
+      p.owned_error_spans.filter((row) => row.trace_id === trace).length,
+      count,
+    );
+  for (const row of absent) {
+    assert(
+      p.owned_error_spans.some(
+        (claim) =>
+          claim.trace_id === row.trace_id &&
+          claim.span_id === row.server_span_id,
+      ),
+    );
+    assert(
+      !p.owned_error_spans.some(
+        (claim) =>
+          claim.trace_id === row.trace_id && claim.span_id === row.sql_span_id,
+      ),
+    );
+  }
+  const sortedClaims = (rows) =>
+    [...rows].sort((a, b) => key(a).localeCompare(key(b)));
+  const reasons = new Set([
+    "rebuild-command-wait-cancelled-after-durable-completion",
+    "rebuild-operation-not-yet-inserted",
+  ]);
+  assert.deepEqual(
+    sortedClaims(p.owned_error_spans),
+    sortedClaims(
+      gates.recovery_http.owned_error_spans.filter(
+        (row) => p.trace_ids.includes(row.trace_id) || reasons.has(row.reason),
+      ),
+    ),
+  );
+  return p;
+}
+
 // The owning inspectors already validate raw ancestry, wire receipts and
 // clocks. This final boundary joins their checked outputs without treating a
 // status marker as a replacement for the evidence or recomputing raw clocks.
@@ -440,6 +598,8 @@ export function assertBridgeOutageCompletion(outage, reports) {
     ),
   );
 
+  const preparation = assertRebuildCompletion(outage, gates, reference);
+
   const claims = new Map();
   for (const name of claimNames) {
     const rows = gates[name].owned_error_spans;
@@ -497,6 +657,23 @@ export function assertBridgeOutageCompletion(outage, reports) {
   assert.deepEqual(
     [...rawWarnings].sort(),
     [...new Set(archive.diagnostics.warnings)].sort(),
+  );
+  const preparationRows = preparation.trace_ids.map((id) => rawByID.get(id));
+  assert.equal(
+    preparation.error_spans,
+    preparationRows.reduce((sum, row) => sum + row.error_spans, 0),
+  );
+  assert.equal(
+    preparation.warning_count,
+    preparationRows.reduce((sum, row) => sum + row.warning_count, 0),
+  );
+  sameSet(
+    preparation.warnings,
+    preparationRows.flatMap((row) => row.warnings),
+  );
+  assert.equal(
+    preparation.strict_trace,
+    preparation.error_spans || preparation.warning_count ? "failed" : "passed",
   );
 
   assert(Array.isArray(reports) && reports.length > 0);

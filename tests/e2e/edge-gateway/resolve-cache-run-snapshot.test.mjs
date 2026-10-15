@@ -37,6 +37,7 @@ async function setup({
   query = () => JSON.stringify(stored()),
   signal,
   now,
+  preparedContainer,
 } = {}) {
   const calls = [];
   const { createOutageRunSnapshotReader } =
@@ -46,6 +47,7 @@ async function setup({
     scope,
     signal,
     now,
+    containerID: preparedContainer,
     compose: (args) => ["compose", ...args],
     docker: async (args, long, options) => {
       calls.push({ args, long, options });
@@ -57,6 +59,23 @@ async function setup({
   });
   return { reader, calls };
 }
+
+test("prepared PostgreSQL identity avoids discovery on the warm budget but still verifies ownership", async () => {
+  const { reader, calls } = await setup({ preparedContainer: containerID });
+  assert.deepEqual(calls, []);
+  const row = await reader.read("before-stop");
+  assert.equal(row.record.run_id, scope.run_id);
+  assert.deepEqual(
+    calls.map((c) => c.args[0]),
+    ["inspect", "exec"],
+  );
+});
+
+test("invalid prepared PostgreSQL identity cannot fall back to fresh discovery", async () => {
+  for (const preparedContainer of [null, false, "", "other", "g".repeat(64)]) {
+    await assert.rejects(setup({ preparedContainer }));
+  }
+});
 
 test("reads only the exact stored Run binding with its owning DB role and read-only SQL", async () => {
   const { reader, calls } = await setup();
@@ -97,24 +116,27 @@ for (const field of [...Object.keys(scope), "snapshot_organization_id"]) {
     assert.deepEqual(reader.evidence.observations, []);
   });
 }
-for (const mutate of [
-  (row) => (row.Config.Labels["com.docker.compose.project"] = "foreign"),
-  (row) =>
-    (row.Config.Labels["com.docker.compose.service"] = "identity-service"),
-  (row) => (row.State.Running = false),
-  (row) => (row.Id = "c".repeat(64)),
-]) {
-  test("rejects changed database ownership before dispatching SQL", async () => {
-    const { reader, calls } = await setup({
-      inspect: () => {
-        const rows = ownership();
-        mutate(rows[0]);
-        return rows;
-      },
+for (const preparedContainer of [undefined, containerID]) {
+  for (const mutate of [
+    (row) => (row.Config.Labels["com.docker.compose.project"] = "foreign"),
+    (row) =>
+      (row.Config.Labels["com.docker.compose.service"] = "identity-service"),
+    (row) => (row.State.Running = false),
+    (row) => (row.Id = "c".repeat(64)),
+  ]) {
+    test("rejects changed database ownership before dispatching SQL", async () => {
+      const { reader, calls } = await setup({
+        preparedContainer,
+        inspect: () => {
+          const rows = ownership();
+          mutate(rows[0]);
+          return rows;
+        },
+      });
+      await assert.rejects(reader.read("before-stop"));
+      assert.equal(calls.filter((c) => c.args[0] === "exec").length, 0);
     });
-    await assert.rejects(reader.read("before-stop"));
-    assert.equal(calls.filter((c) => c.args[0] === "exec").length, 0);
-  });
+  }
 }
 test("does not retain unexpected secret fields or echo SQL failure diagnostics", async () => {
   for (const query of [

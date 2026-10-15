@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { loadAdmissionFixture } from "./resolve-cache-load-admission-fixtures.mjs";
 import {
@@ -8,23 +9,49 @@ import { inspectOutageRuntimeCancellation } from "./resolve-cache-runtime-cancel
 import { outageGateNames } from "../../support/resolve-cache-admission.mjs";
 import { outageClockFixture } from "./resolve-cache-outage-clock-fixtures.mjs";
 import { inspectOutageACPClock } from "./resolve-cache-outage-clock.mjs";
+import { rebuildTraceFixture } from "./resolve-cache-rebuild-trace-fixtures.mjs";
+import { inspectRebuildPreparation } from "./resolve-cache-rebuild-trace.mjs";
 
 const id = (n) => n.toString(16).padStart(32, "e");
 const span = (n) => n.toString(16).padStart(16, "d");
 const clone = (value) => structuredClone(value);
+const normalizeSpan = (value) =>
+  createHash("sha256").update(value).digest("hex").slice(0, 16);
+const normalizeReport = (report) =>
+  JSON.parse(JSON.stringify(report), (key, value) => {
+    if (typeof value === "string" && /(?:span_id|decision_id)$/u.test(key))
+      return normalizeSpan(value);
+    if (Array.isArray(value) && /_span_ids$/u.test(key))
+      return value.map(normalizeSpan);
+    return value;
+  });
 
-export function bridgeCompletionFixture() {
+export function bridgeCompletionFixture({
+  rebuildStatus = 503,
+  earlyOperation = rebuildStatus === 503,
+} = {}) {
   const { report: load } = loadAdmissionFixture();
   const f = runtimeCancellationBusinessFixture();
   addSDKClosedMetadata(f);
   // The owning cancellation inspector runs against its real synthetic raw
   // fixture. Normalize readable fixture span IDs only at the report boundary.
-  const cancellation = JSON.parse(
-    JSON.stringify(inspectOutageRuntimeCancellation(f.evidence, f.collection)),
-    (key, value) =>
-      typeof value === "string" && /(?:span_id|decision_id)$/u.test(key)
-        ? createHash("sha256").update(value).digest("hex").slice(0, 16)
-        : value,
+  const cancellation = normalizeReport(
+    inspectOutageRuntimeCancellation(f.evidence, f.collection),
+  );
+  const rebuild = rebuildTraceFixture({
+    status: rebuildStatus,
+    early: earlyOperation,
+  });
+  const identities = new Map([
+    ["execution-id-old", f.evidence.runtime.runtime_execution_id],
+    ["execution-old", f.evidence.runtime.execution_revision],
+    ["runtime-old", f.evidence.runtime.runtime_revision],
+  ]);
+  rebuild.evidence = JSON.parse(JSON.stringify(rebuild.evidence), (_, value) =>
+    identities.has(value) ? identities.get(value) : value,
+  );
+  const preparation = normalizeReport(
+    inspectRebuildPreparation(rebuild.evidence, rebuild),
   );
   const names = ["logout", "password", "role", "deactivate"];
   const recovery = {
@@ -44,6 +71,8 @@ export function bridgeCompletionFixture() {
     ]),
   );
   gates.cancellation = cancellation;
+  gates.recovery_http.preparation = preparation;
+  gates.recovery_http.owned_error_spans = clone(preparation.owned_error_spans);
   gates.recovery_runs = {
     status: "passed",
     business: clone(recovery),
@@ -153,7 +182,7 @@ export function bridgeCompletionFixture() {
     conservative_deadline: 20000,
   };
   gates.authority.remaining_at_restart_ms = 1000;
-  const ids = [
+  const otherIDs = [
     ...new Set([
       ...f.collection.archivedTraceIDs,
       ...names.flatMap((_, i) => [id(i + 1), id(i + 10)]),
@@ -163,10 +192,16 @@ export function bridgeCompletionFixture() {
       ...clockFixture.archivedTraceIDs,
     ]),
   ].sort();
-  const errors = cancellation.owned_error_spans.map((row) => ({
-    ...clone(row),
-    owners: ["cancellation"],
-  }));
+  assert(
+    [...rebuild.archivedTraceIDs].every((trace) => !otherIDs.includes(trace)),
+  );
+  const ids = [...otherIDs, ...rebuild.archivedTraceIDs].sort();
+  const errors = ["cancellation", "recovery_http"].flatMap((name) =>
+    gates[name].owned_error_spans.map((row) => ({
+      ...clone(row),
+      owners: [name],
+    })),
+  );
   const archive = {
     status: "owning_admission_passed",
     archived_trace_ids: ids,
@@ -202,7 +237,8 @@ export function bridgeCompletionFixture() {
     const count = errors.filter((e) => e.trace_id === trace).length;
     return {
       trace_id: trace,
-      raw_span_count: Math.max(count, 20),
+      raw_span_count:
+        rebuild.traces.get(trace)?.spans.length ?? Math.max(count, 20),
       source_trace_ids: [],
       warning_count: 0,
       warnings: [],

@@ -20,6 +20,7 @@ export async function createOutageRunSnapshotReader({
   project,
   compose,
   docker,
+  containerID,
   scope,
   signal,
   now = () => performance.now(),
@@ -32,10 +33,16 @@ export async function createOutageRunSnapshotReader({
     }),
   );
   signal?.throwIfAborted();
-  const id = await docker(compose(["ps", "-q", "postgres"]), false, {
-    signal,
-    timeoutMS: 15000,
-  });
+  // The isolated expiry fixture already discovered this owned PostgreSQL
+  // container before final Resolve admission. Reuse only its identity; each
+  // actual read still checks the current project, service and running state.
+  const id =
+    containerID === undefined
+      ? await docker(compose(["ps", "-q", "postgres"]), false, {
+          signal,
+          timeoutMS: 15000,
+        })
+      : containerID;
   signal?.throwIfAborted();
   assert.match(id, /^[a-f0-9]{64}$/u);
   const evidence = { container_id: id, project, database, observations: [] };
