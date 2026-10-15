@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { evidenceDirectory } from "../../support/storage.mjs";
 import { assertNoStore, GatewayClient } from "./support.mjs";
 import { assertOrganizationSession } from "./organization-session.mjs";
+import { assertWorkspaceBootstrap } from "./organization-workspace.mjs";
 import { observePrincipalRevocation } from "./principal-revocation.mjs";
 import { createRequestFailureRecorder } from "./request-failure.mjs";
 import {
@@ -300,13 +301,23 @@ await unrelatedIdentityStillWorks();
 
 // Independent logout and directory checks require fresh, currently live sessions.
 await login(a2, "stage3", "access-admin@example.com", secrets[3]);
-await login(shared, "access-b", "shared-member@example.com", secrets[3]);
+const sharedLogin = await login(
+  shared,
+  "access-b",
+  "shared-member@example.com",
+  secrets[3],
+);
+const sharedPrincipal = structuredClone(sharedLogin.body.principal);
+assertOrganizationSession(sharedLogin.body, "login", {
+  slug: sharedPrincipal.organization_slug,
+  name: sharedPrincipal.organization_name,
+});
 
 const savedA = a.cookie;
 await a.request("/api/session", { method: "DELETE", status: 204 });
 for (const path of [
   "/api/session",
-  "/api/app/bootstrap",
+  "/api/app/workspace/v1/bootstrap",
   "/api/admin/directory",
 ]) {
   await a.request(path, { headers: { Cookie: savedA }, status: 401 });
@@ -329,8 +340,16 @@ await observePrincipalRevocation({
   ttlMS: resolveTTLMS,
   name: "access-membership-revocation",
 });
-const sharedWorkspace = (await shared.request("/api/app/bootstrap")).body
-  .principal;
+assertWorkspaceBootstrap(
+  (await shared.request("/api/app/workspace/v1/bootstrap")).body,
+  sharedPrincipal,
+  {
+    slug: sharedPrincipal.organization_slug,
+    name: sharedPrincipal.organization_name,
+  },
+  [],
+  secrets,
+);
 await root.request(`/api/admin/directory/memberships/${pa.membership_id}`, {
   body: { ...membershipState, active: true },
 });
@@ -376,14 +395,16 @@ for (const active of [false, true]) {
     if (!active && browser === shared)
       await observePrincipalRevocation({
         client: browser,
-        path: "/api/app/bootstrap",
-        principal: sharedWorkspace,
+        path: "/api/app/workspace/v1/bootstrap",
+        principal: sharedPrincipal,
+        agentIDs: [],
+        secrets,
         committedMS: userDisabledMS,
         ttlMS: resolveTTLMS,
         name: "access-user-revocation",
       });
     else
-      await browser.request("/api/app/bootstrap", {
+      await browser.request("/api/app/workspace/v1/bootstrap", {
         headers: { Cookie: cookie },
         status: 401,
       });

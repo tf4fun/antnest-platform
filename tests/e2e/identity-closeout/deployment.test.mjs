@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectIdentityDeployment } from "./deployment.mjs";
+import * as deployment from "./deployment.mjs";
 
 test("revocation deadline comes from the actual deployed Gateway TTL", () => {
   for (const [setting, expected] of [
@@ -117,5 +118,150 @@ test("Identity deployment records the actual diagnostic Controller poll setting"
         inspectIdentityDeployment(value, "fixture", interval),
       );
     }
+  }
+});
+
+const identityImageID = "sha256:" + "2".repeat(64);
+function identityLifecycleFixture(ttl = "12h") {
+  const value = rows();
+  const identity = value.find(
+    (row) =>
+      row.Config.Labels["com.docker.compose.service"] === "identity-service",
+  );
+  identity.Id = "1".repeat(64);
+  identity.Image = identityImageID;
+  identity.Config.Env = identity.Config.Env.map((entry) =>
+    entry.startsWith("ANTNEST_IDENTITY_TOKEN_TTL=")
+      ? "ANTNEST_IDENTITY_TOKEN_TTL=" + ttl
+      : entry,
+  );
+  return { value, identity };
+}
+
+test("initial and recreated Identity keep the independently selected image and exact token TTL", () => {
+  assert.equal(typeof deployment.inspectIdentityLifecycle, "function");
+  for (const tokenTTL of ["12h", "5s"]) {
+    const f = identityLifecycleFixture(tokenTTL);
+    const result = deployment.inspectIdentityLifecycle(f.value, "fixture", {
+      imageID: identityImageID,
+      tokenTTL,
+    });
+    assert.equal(result.container_id, f.identity.Id);
+    assert.equal(result.image_id, identityImageID);
+    assert.equal(result.token_ttl, tokenTTL);
+    assert.equal(result.healthy, true);
+  }
+});
+
+for (const [name, mutate] of [
+  [
+    "foreign image",
+    (f) => {
+      f.identity.Image = "sha256:" + "3".repeat(64);
+    },
+  ],
+  [
+    "foreign project",
+    (f) => {
+      f.identity.Config.Labels["com.docker.compose.project"] = "foreign";
+    },
+  ],
+  [
+    "wrong service",
+    (f) => {
+      f.identity.Config.Labels["com.docker.compose.service"] = "foreign";
+    },
+  ],
+  [
+    "missing container ID",
+    (f) => {
+      delete f.identity.Id;
+    },
+  ],
+  [
+    "duplicate Identity",
+    (f) => {
+      f.value.push(structuredClone(f.identity));
+    },
+  ],
+  [
+    "missing TTL",
+    (f) => {
+      f.identity.Config.Env = f.identity.Config.Env.filter(
+        (s) => !s.startsWith("ANTNEST_IDENTITY_TOKEN_TTL="),
+      );
+    },
+  ],
+  [
+    "duplicate TTL",
+    (f) => {
+      f.identity.Config.Env.push("ANTNEST_IDENTITY_TOKEN_TTL=5s");
+    },
+  ],
+  [
+    "stale 12h TTL after recreation",
+    (f) => {
+      f.identity.Config.Env = f.identity.Config.Env.map((s) =>
+        s === "ANTNEST_IDENTITY_TOKEN_TTL=5s"
+          ? "ANTNEST_IDENTITY_TOKEN_TTL=12h"
+          : s,
+      );
+    },
+  ],
+  [
+    "stopped Identity",
+    (f) => {
+      f.identity.State.Running = false;
+    },
+  ],
+  [
+    "unhealthy Identity",
+    (f) => {
+      f.identity.State.Health.Status = "unhealthy";
+    },
+  ],
+  [
+    "missing TLS trust",
+    (f) => {
+      f.identity.Config.Env = f.identity.Config.Env.filter(
+        (s) => !s.startsWith("SSL_CERT_FILE="),
+      );
+    },
+  ],
+  [
+    "writable TLS trust",
+    (f) => {
+      f.identity.Mounts[0].RW = true;
+    },
+  ],
+])
+  test("Identity lifecycle rejects " + name, () => {
+    assert.equal(typeof deployment.inspectIdentityLifecycle, "function");
+    const f = identityLifecycleFixture("5s");
+    mutate(f);
+    assert.throws(() =>
+      deployment.inspectIdentityLifecycle(f.value, "fixture", {
+        imageID: identityImageID,
+        tokenTTL: "5s",
+      }),
+    );
+  });
+
+test("the expected Identity image cannot be inferred from the container under inspection", () => {
+  assert.equal(typeof deployment.inspectIdentityLifecycle, "function");
+  const f = identityLifecycleFixture("5s");
+  assert.throws(() =>
+    deployment.inspectIdentityLifecycle(f.value, "fixture", {
+      imageID: "sha256:" + "4".repeat(64),
+      tokenTTL: "5s",
+    }),
+  );
+  for (const imageID of [undefined, "", "tag:mutable"]) {
+    assert.throws(() =>
+      deployment.inspectIdentityLifecycle(f.value, "fixture", {
+        imageID,
+        tokenTTL: "5s",
+      }),
+    );
   }
 });

@@ -47,10 +47,22 @@ inspector supplies `ANTNEST_E2E_RESOLVE_TTL_MS` from the actual container settin
 Transport and JSON decoding failures stop immediately; they cannot supply a
 decoded observation. Content-validation errors use fixed messages, while the
 actual response values remain in private evidence.
-The deprecated Gateway `/api/app/bootstrap` keeps its three-field Principal
-(`user_id`, `organization_id`, `administrator`) and Agent management projection.
-Its revocation observer validates that DTO directly; the active Agent UI
-bootstrap still requires the organization display fields under its own contract.
+Identity HTTP access and expiry use the active Agent UI Bridge bootstrap at
+`/api/app/workspace/v1/bootstrap`. Its shared schema and production decoder are
+checked against the full login Principal and an explicit initial Agent inventory;
+Organization labels and administrator scope must match. During revocation the
+directory may shrink, but a removed Agent cannot reappear. Session responses
+retain the complete original Principal comparison. Every observation is saved
+before validation, with the original Cookie and mutation deadline unchanged.
+Cold outage preparation still performs only login; all three protected scopes
+must return the actual Identity-unavailable 503 without Cookie writes.
+
+The owning runner independently resolves its selected Identity image before
+inspecting the initial container, then requires the same image after the expiry
+recreation. Both observations bind the project, service, full container/image
+IDs, healthy state and read-only TLS trust. The initial token TTL is exactly
+12 hours; the recreated expiry container must use exactly 5 seconds, without a
+build or pull. Safe lifecycle receipts are retained beside the deployment proof.
 
 Organization feed searches select the unique Identity SERVER by service,
 route, method and RPC, then require its direct Gateway CLIENT parent. CLIENT

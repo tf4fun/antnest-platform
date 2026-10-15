@@ -33,9 +33,11 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+selected_identity_image_id=$(docker_cmd image inspect --format '{{.Id}}' "${ANTNEST_E2E_IDENTITY_IMAGE:-antnest/identity-service:local}")
 containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/identity-closeout/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME" >"$evidence/deployment.json"
+node "$root/tests/e2e/identity-closeout/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME" identity-lifecycle "$selected_identity_image_id" 12h >"$evidence/identity-initial.json"
 ANTNEST_E2E_RESOLVE_TTL_MS=$(node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(String(r.resolve_cache_ttl_ms));' "$evidence/deployment.json")
 export ANTNEST_E2E_RESOLVE_TTL_MS
 strict_status=0
@@ -90,6 +92,9 @@ else
   node "$root/tests/e2e/identity-closeout/expiry-client.mjs" "$gateway" "$jaeger" unavailable "$temporary/expiry.json"
   export ANTNEST_IDENTITY_ACCESS_TOKEN_TTL=5s
   compose up -d --wait --no-deps --no-build --pull never identity-service >/dev/null
+  recreated_identity=$(compose ps -q identity-service)
+  docker_cmd inspect "$recreated_identity" >"$temporary/identity-recreated.json"
+  node "$root/tests/e2e/identity-closeout/deployment.mjs" "$temporary/identity-recreated.json" "$COMPOSE_PROJECT_NAME" identity-lifecycle "$selected_identity_image_id" 5s >"$evidence/identity-recreated.json"
   run_suite expiry "$root/tests/e2e/identity-closeout/expiry-client.mjs" "$gateway" "$jaeger" expiry "$temporary/expiry.json"
 fi
 suite_label=$ANTNEST_IDENTITY_SUITE
