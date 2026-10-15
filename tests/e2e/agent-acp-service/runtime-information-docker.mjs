@@ -9,6 +9,12 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 const probe = fileURLToPath(
   new URL("./runtime-information-probe.mjs", import.meta.url),
 );
+const toolsProbe = fileURLToPath(
+  new URL("./runtime-tools-probe.mjs", import.meta.url),
+);
+const toolsEvidence = fileURLToPath(
+  new URL("./runtime-tools-evidence.mjs", import.meta.url),
+);
 const token = randomUUID().slice(0, 12);
 const container = `antnest-acp-read-${token}`;
 const provided = process.env.ANTNEST_ACP_TEST_IMAGE;
@@ -70,11 +76,16 @@ try {
     "--tmpfs",
     "/tmp:rw,noexec,nosuid,size=32m",
     "--entrypoint",
-    "node",
+    "sh",
     "--mount",
     `type=bind,src=${probe},dst=/app/runtime-information-probe.mjs,readonly`,
+    "--mount",
+    `type=bind,src=${toolsProbe},dst=/app/runtime-tools-probe.mjs,readonly`,
+    "--mount",
+    `type=bind,src=${toolsEvidence},dst=/app/runtime-tools-evidence.mjs,readonly`,
     imageId,
-    "/app/runtime-information-probe.mjs",
+    "-c",
+    "node /app/runtime-information-probe.mjs && node /app/runtime-tools-probe.mjs",
   ]);
   const before = JSON.parse(await docker(["inspect", container]))[0];
   assert.equal(before.Image, imageId);
@@ -87,7 +98,7 @@ try {
       container,
     }),
   );
-  await docker(["start", "--attach", container], true, { timeoutMS: 90000 });
+  await docker(["start", "--attach", container], true, { timeoutMS: 150000 });
   const after = JSON.parse(await docker(["inspect", container]))[0];
   assert.equal(after.Image, imageId);
   assert.equal(after.State.Status, "exited");

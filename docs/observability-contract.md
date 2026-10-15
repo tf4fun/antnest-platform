@@ -170,6 +170,44 @@ dispatch receipts do not prove this sequence. The ACP producer gate admits
 these receipts; migration of shared read inspectors and Session, Run, catalog
 and stream consumers requires their own subsequent integration evidence.
 
+### ACP Runtime tool connection lifecycle
+
+The existing `mcp.tools.list` and `mcp.tools.call` INTERNAL spans own their
+respective Runtime connections. Lifecycle receipts belong only to the explicitly
+bound instrumented operation, its exact Runtime execution and fixed
+`antnest.mcp.method=tools/list|tools/call`. Direct adapter calls, disabled or
+no-op telemetry must not attach receipts to an unrelated active ancestor. Each
+operation claims its connection receipt once; resource-read receipts cannot be
+borrowed by tool operations.
+
+On that owning span, `antnest.mcp.discovery.ready` follows successful SDK
+connect. `antnest.mcp.tool.dispatch.started` immediately precedes the actual
+SDK list/call invocation. Discovery HTTP EOF is not a dispatch prerequisite:
+the SDK can validate discovery while its response stream remains open.
+Dispatch proves an invocation attempt, not arrival at the peer.
+`antnest.mcp.tool.result.parsed` follows the SDK adapter's parsed return, with
+fixed `outcome=success|tool_error`. The span's
+`antnest.mcp.tool_result.outcome` begins as `not_received` and records the same
+parsed outcome. A parsed `isError:true` response is still a tool failure;
+parsing does not prove application validation, successful effects or Runtime
+quiescence. Preserve the existing effect-state and stopping evidence.
+
+`antnest.mcp.connection.close.started` and `.completed` bracket the actual
+awaited close, with `antnest.mcp.connection.close.outcome=not_started|closed|failed`.
+Connection failure emits no ready, dispatch, parsed or close receipt. Failure
+after dispatch emits no parsed receipt; cancellation after connect but before
+dispatch retains ready and actual cleanup only. Close failures retain their
+diagnostic and failed completion without replacing the original result/error.
+`antnest.mcp.caller_cancelled` independently records the final caller signal;
+close-start also records its then-current value. No event includes tool
+arguments, returned content, credentials or error messages.
+
+Consumers must bind these original receipts to the actual operation's HTTP
+children, execution and process, retaining raw lifetimes, errors and clock
+diagnostics. Historical traces without their own tool receipts remain
+insufficient. ACP producer checks precede consumer migration and a new actual
+Session run; they do not establish the complete business workflow.
+
 ### ACP HTTP access-revocation closure
 
 When a session-output, learning-notice or permission failure actually invokes

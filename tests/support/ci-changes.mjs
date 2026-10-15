@@ -198,6 +198,7 @@ export const suites = [
       ...service("agent-acp-service"),
       "tests/e2e/agent-acp-service/**",
       "tests/integration/agent-acp-service/adapters/mcp/runtime-information-close.test.ts",
+      "tests/integration/agent-acp-service/adapters/mcp/tool-lifecycle.test.ts",
       "tests/e2e/acp-closeout/docker.mjs",
       "tests/e2e/acp-closeout/network.mjs",
       "tests/e2e/service-authentication/acp/**",
