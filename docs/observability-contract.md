@@ -143,6 +143,33 @@ expresses causality. Sub-millisecond cross-host clock inversions keep their raw
 warnings and are evaluated by their actual source; they are not removed by
 adjusting business waits or timestamps.
 
+### ACP Runtime information read lifecycle
+
+The ACP adapter's `mcp.runtime.info.read` INTERNAL span owns the Runtime MCP
+connection, one resource read and its awaited cleanup. On that same span,
+`antnest.mcp.discovery.ready` is recorded only after the actual SDK connection
+has succeeded, including discovery validation. Next,
+`antnest.mcp.resource.read.started` is recorded immediately before invoking the
+resource read. Neither event has content attributes or proves that an HTTP
+request has reached the peer. A parsed SSE discovery response can make the
+connection ready while its HTTP response stream remains open; HTTP EOF must not
+be used as the prerequisite for resource dispatch.
+
+`antnest.mcp.resource.validated` follows successful SDK read and execution-fenced
+resource parsing. `antnest.mcp.connection.close.started` and `.completed` bracket
+the actual awaited close. Connection failure emits no ready, read or close
+receipt. Read failure retains ready/read-start and its original diagnostic,
+but no validated event. Close failure retains its own diagnostic and failed
+completion without replacing the original read result or error. Caller
+cancellation remains an independent fact on the actual path taken.
+
+Consumers must bind the original same-span sequence to the exact HTTP children,
+Runtime execution and service process. Preserve HTTP lifetimes, cancellation,
+errors and raw clock diagnostics. Historical traces without the readiness and
+dispatch receipts do not prove this sequence. The ACP producer gate admits
+these receipts; migration of shared read inspectors and Session, Run, catalog
+and stream consumers requires their own subsequent integration evidence.
+
 ### ACP HTTP access-revocation closure
 
 When a session-output, learning-notice or permission failure actually invokes

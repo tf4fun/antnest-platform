@@ -15,7 +15,10 @@ beforeEach(() => {
   exporter.reset();
   configureBoundaries({ captureRpcContent: false, disabled: false });
 });
-afterEach(() => configureBoundaries({ captureRpcContent: false, disabled: false }));
+afterEach(() => {
+  vi.restoreAllMocks();
+  configureBoundaries({ captureRpcContent: false, disabled: false });
+});
 afterAll(async () => {
   await provider.shutdown();
   trace.disable();
@@ -86,6 +89,8 @@ describe("Runtime information read and close provenance", () => {
       "antnest.mcp.caller_cancelled": false,
     });
     expect(span.events.map((event) => event.name)).toEqual([
+      "antnest.mcp.discovery.ready",
+      "antnest.mcp.resource.read.started",
       "antnest.mcp.resource.validated",
       "antnest.mcp.connection.close.started",
       "antnest.mcp.connection.close.completed",
@@ -97,11 +102,80 @@ describe("Runtime information read and close provenance", () => {
     );
   });
 
-  it.each(["request", "schema", "execution"] as const)(
+  it("records readiness only after connect and dispatch before invoking the resource read", async () => {
+    const f = fixture();
+    const connected = Promise.withResolvers<Pick<McpConnection, "readResource" | "close">>();
+    const parsed = Promise.withResolvers<unknown>();
+    const entered = Promise.withResolvers<void>();
+    const dispatched = Promise.withResolvers<void>();
+    let atDispatch: string[] = [];
+    let names = () => [] as string[];
+    f.connect.mockImplementation(() => {
+      const events = vi.spyOn(trace.getActiveSpan()!, "addEvent");
+      names = () => events.mock.calls.map(([name]) => name);
+      entered.resolve();
+      return connected.promise;
+    });
+    f.readResource.mockImplementation(() => {
+      atDispatch = names();
+      dispatched.resolve();
+      return parsed.promise;
+    });
+    const reading = f.read();
+    const wait = async (gate: Promise<void>) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          gate,
+          reading.then(() => {
+            throw new Error("read finished before the controlled resource was released");
+          }),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("read lifecycle gate deadline")), 1000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    try {
+      await wait(entered.promise);
+      expect(names()).toEqual([]);
+      expect(f.readResource).not.toHaveBeenCalled();
+      connected.resolve({ readResource: f.readResource, close: f.close });
+      await wait(dispatched.promise);
+      expect(atDispatch).toEqual([
+        "antnest.mcp.discovery.ready",
+        "antnest.mcp.resource.read.started",
+      ]);
+      expect(f.close).not.toHaveBeenCalled();
+      expect(exporter.getFinishedSpans()).toHaveLength(0);
+    } finally {
+      connected.resolve({ readResource: f.readResource, close: f.close });
+      parsed.resolve(f.resource);
+      await reading;
+    }
+    expect(
+      f
+        .span()
+        .events.slice(0, 3)
+        .map((event) => event.name),
+    ).toEqual([
+      "antnest.mcp.discovery.ready",
+      "antnest.mcp.resource.read.started",
+      "antnest.mcp.resource.validated",
+    ]);
+  });
+
+  it.each(["request", "synchronous-request", "schema", "execution"] as const)(
     "retains %s failure even when cleanup succeeds",
     async (kind) => {
       const f = fixture();
       if (kind === "request") f.readResource.mockRejectedValue(new Error("PRIVATE-READ-ERROR"));
+      else if (kind === "synchronous-request")
+        f.readResource.mockImplementation(() => {
+          throw new Error("PRIVATE-READ-ERROR");
+        });
       else if (kind === "schema") f.resource.contents[0]!.text = "{}";
       else
         f.resource.contents[0]!.text = f.resource.contents[0]!.text.replace(
@@ -113,12 +187,18 @@ describe("Runtime information read and close provenance", () => {
       expect(span.attributes["antnest.mcp.resource_read.outcome"]).toBe("failed");
       expect(span.attributes["antnest.mcp.connection.close.outcome"]).toBe("closed");
       expect(span.status.code).toBe(
-        kind === "request" ? SpanStatusCode.ERROR : SpanStatusCode.UNSET,
+        kind.endsWith("request") ? SpanStatusCode.ERROR : SpanStatusCode.UNSET,
       );
-      expect(span.attributes["antnest.outcome"]).toBe(kind === "request" ? "error" : "rejected");
-      expect(span.events.map((event) => event.name)).not.toContain(
-        "antnest.mcp.resource.validated",
+      expect(span.attributes["antnest.outcome"]).toBe(
+        kind.endsWith("request") ? "error" : "rejected",
       );
+      expect(span.events.map((event) => event.name)).toEqual([
+        "antnest.mcp.discovery.ready",
+        "antnest.mcp.resource.read.started",
+        "antnest.error",
+        "antnest.mcp.connection.close.started",
+        "antnest.mcp.connection.close.completed",
+      ]);
       expect(f.close).toHaveBeenCalledTimes(1);
       expect(JSON.stringify({ attributes: span.attributes, events: span.events })).not.toContain(
         "PRIVATE",
@@ -164,9 +244,8 @@ describe("Runtime information read and close provenance", () => {
     const span = f.span();
     expect(span.attributes["antnest.mcp.resource_read.outcome"]).toBe("failed");
     expect(span.attributes["antnest.mcp.connection.close.outcome"]).toBe("not_started");
-    expect(span.events.map((event) => event.name)).not.toContain(
-      "antnest.mcp.connection.close.started",
-    );
+    expect(span.events.map((event) => event.name)).toEqual(["antnest.error"]);
+    expect(f.readResource).not.toHaveBeenCalled();
     expect(f.close).not.toHaveBeenCalled();
   });
 

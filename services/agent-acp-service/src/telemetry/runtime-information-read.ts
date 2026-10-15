@@ -36,7 +36,9 @@ export function observeRuntimeInformationRead<Result>(
       recordFailure(span, error, "mcp.runtime.info.connect");
       throw error;
     }
+    span?.addEvent("antnest.mcp.discovery.ready");
     try {
+      span?.addEvent("antnest.mcp.resource.read.started");
       const result = await owned.read();
       span?.setAttribute("antnest.mcp.resource_read.outcome", "success");
       span?.addEvent("antnest.mcp.resource.validated");

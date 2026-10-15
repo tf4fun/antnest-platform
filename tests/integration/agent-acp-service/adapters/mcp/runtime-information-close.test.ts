@@ -2,7 +2,15 @@ import { createServer, type ServerResponse } from "node:http";
 import { context, propagation, SpanKind, trace } from "@opentelemetry/api";
 import { node, tracing } from "@opentelemetry/sdk-node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { OfficialMcpDialer } from "../../../../../services/agent-acp-service/src/adapters/mcp/official-client.js";
 import { McpToolCatalog } from "../../../../../services/agent-acp-service/src/adapters/mcp/tool-catalog.js";
 import { configureBoundaries } from "../../../../../services/agent-acp-service/src/telemetry/diagnostics.js";
@@ -30,9 +38,15 @@ type Mode =
   | "server-finished"
   | "invalid-resource"
   | "caller-abort"
-  | "http-error";
+  | "http-error"
+  | "discovery-held"
+  | "discovery-invalid"
+  | "discovery-http-error"
+  | "discovery-error-after-abort";
 const micros = ([seconds, nanos]: readonly [number, number]) =>
   seconds * 1_000_000 + nanos / 1000;
+const nanos = ([seconds, fraction]: readonly [number, number]) =>
+  BigInt(seconds) * 1_000_000_000n + BigInt(fraction);
 
 async function peer(mode: Mode) {
   const received = Promise.withResolvers<void>();
@@ -40,10 +54,24 @@ async function peer(mode: Mode) {
   const disconnected = Promise.withResolvers<void>();
   const releaseEOF = Promise.withResolvers<void>();
   const consumedEOF = Promise.withResolvers<void>();
+  const resourceArrived = Promise.withResolvers<void>();
+  const releaseResource = Promise.withResolvers<void>();
+  const discoveryFinished = Promise.withResolvers<void>();
   const failures: unknown[] = [];
+  const handlers = new Set<Promise<void>>();
   const requests: { spanId: string; resource: boolean }[] = [];
   let bytes = 0;
   let held: ServerResponse | undefined;
+  let discovery: ServerResponse | undefined;
+  let discoveryId: number | string | undefined;
+  const failPendingDiscovery = () => {
+    if (mode !== "discovery-error-after-abort" || !discovery) return false;
+    if (!discovery.writableEnded && !discovery.destroyed)
+      discovery.end(
+        `${JSON.stringify({ jsonrpc: "2.0", id: discoveryId, error: { code: -32603, message: "controlled discovery failure" } })}\n\n`,
+      );
+    return true;
+  };
   const handler = createMcpHandler(
     () => {
       const server = new McpServer({
@@ -82,14 +110,17 @@ async function peer(mode: Mode) {
     { legacy: "reject" },
   );
   const server = createServer((request, response) => {
-    void (async () => {
+    const running = (async () => {
       if (!authority.admit(request, response)) return;
       const chunks: Buffer[] = [];
       for await (const chunk of request)
         chunks.push(Buffer.from(chunk as Uint8Array));
       const body = Buffer.concat(chunks);
       const message = body.length
-        ? (JSON.parse(body.toString()) as { method?: string })
+        ? (JSON.parse(body.toString()) as {
+            method?: string;
+            id?: number | string;
+          })
         : {};
       const resource = message.method === "resources/read";
       const parent = String(request.headers.traceparent ?? "");
@@ -99,6 +130,33 @@ async function peer(mode: Mode) {
         held = response;
         response.once("finish", () => finished.resolve());
         response.once("close", () => disconnected.resolve());
+        resourceArrived.resolve();
+        if (mode === "discovery-held") await releaseResource.promise;
+      } else {
+        discovery = response;
+        discoveryId = message.id;
+        response.once("finish", () => discoveryFinished.resolve());
+        if (mode === "discovery-http-error") {
+          response
+            .writeHead(503, { "content-type": "application/json" })
+            .end("{}");
+          received.resolve();
+          return;
+        }
+        if (
+          mode === "discovery-invalid" ||
+          mode === "discovery-error-after-abort"
+        ) {
+          response.writeHead(200, { "content-type": "text/event-stream" });
+          if (mode === "discovery-error-after-abort")
+            response.write("event: message\ndata: ");
+          else
+            response.end(
+              `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} })}\n\n`,
+            );
+          received.resolve();
+          return;
+        }
       }
       if (resource && mode === "http-error") {
         response
@@ -129,7 +187,7 @@ async function peer(mode: Mode) {
       const content = Buffer.from(await result.arrayBuffer());
       result.headers.forEach((value, name) => response.setHeader(name, value));
       response.statusCode = result.status;
-      if (!resource) {
+      if (!resource && mode !== "discovery-held") {
         response.end(content);
         return;
       }
@@ -141,6 +199,10 @@ async function peer(mode: Mode) {
         : content;
       response.removeHeader("content-length");
       response.setHeader("content-type", "text/event-stream");
+      if (!resource) {
+        response.write(payload);
+        return;
+      }
       bytes = payload.byteLength;
       if (mode === "server-finished") response.end(payload);
       else response.write(payload);
@@ -150,6 +212,8 @@ async function peer(mode: Mode) {
       received.resolve();
       response.destroy();
     });
+    handlers.add(running);
+    void running.finally(() => handlers.delete(running));
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -219,8 +283,16 @@ async function peer(mode: Mode) {
     finished: finished.promise,
     bytes: () => bytes,
     requests,
+    resourceArrived: resourceArrived.promise,
+    discoveryFinished: discoveryFinished.promise,
+    discoveryEnded: () => discovery?.writableEnded ?? false,
+    releaseDiscovery: () => discovery?.end(),
+    releaseResource: () => releaseResource.resolve(),
+    failPendingDiscovery,
     async close() {
       releaseEOF.resolve();
+      releaseResource.resolve();
+      discovery?.destroy();
       held?.destroy();
       const cleanup = await Promise.allSettled([
         handler.close(),
@@ -229,6 +301,7 @@ async function peer(mode: Mode) {
           server.close((error) => (error ? reject(error) : resolve()));
           server.closeAllConnections();
         }),
+        Promise.all([...handlers]),
       ]);
       for (const result of cleanup)
         if (result.status === "rejected") failures.push(result.reason);
@@ -311,11 +384,19 @@ function operation(fixture: Awaited<ReturnType<typeof peer>>) {
         3000,
       );
       try {
+        // SDK 2.2.0's discovery probe does not forward the caller signal.
+        // A matching protocol error settles this controlled incomplete reply;
+        // joining it before transport teardown is cleanup, not abort evidence.
+        const discoveryCleanup = fixture.failPendingDiscovery()
+          ? await Promise.allSettled([bounded(outcome, cleanupDeadline.signal)])
+          : [];
         const cleanup = await Promise.allSettled([
           bounded(fixture.close(), cleanupDeadline.signal),
           bounded(outcome, cleanupDeadline.signal),
         ]);
-        const failed = cleanup.filter((item) => item.status === "rejected");
+        const failed = [...discoveryCleanup, ...cleanup].filter(
+          (item) => item.status === "rejected",
+        );
         expect(failed).toEqual([]);
       } finally {
         clearTimeout(cleanupTimer);
@@ -325,6 +406,89 @@ function operation(fixture: Awaited<ReturnType<typeof peer>>) {
 }
 
 describe("official MCP information read cleanup", () => {
+  it("dispatches resources/read after parsed SSE discovery while its real HTTP response is still open", async () => {
+    const fixture = await peer("discovery-held");
+    const running = operation(fixture);
+    try {
+      await running.wait(fixture.resourceArrived);
+      expect(fixture.requests.map((request) => request.resource)).toEqual([
+        false,
+        true,
+      ]);
+      expect(fixture.discoveryEnded()).toBe(false);
+      expect(exporter.getFinishedSpans()).toHaveLength(0);
+      fixture.releaseDiscovery();
+      await running.wait(fixture.discoveryFinished);
+      await vi.waitFor(() => {
+        expect(
+          exporter.getFinishedSpans().map((span) => span.spanContext().spanId),
+        ).toEqual([fixture.requests[0]!.spanId]);
+      });
+      fixture.releaseResource();
+      expect(await running.wait(running.outcome)).toMatchObject({
+        status: "resolved",
+        value: { executionId: "execution-1" },
+      });
+      await running.wait(fixture.disconnected);
+      const { read } = observed(fixture);
+      expect(read.events.map((event) => event.name)).toEqual([
+        "antnest.mcp.discovery.ready",
+        "antnest.mcp.resource.read.started",
+        "antnest.mcp.resource.validated",
+        "antnest.mcp.connection.close.started",
+        "antnest.mcp.connection.close.completed",
+      ]);
+      expect(
+        read.events
+          .slice(0, 3)
+          .every((event) => Object.keys(event.attributes ?? {}).length === 0),
+      ).toBe(true);
+      for (let i = 1; i < read.events.length; i++)
+        expect(micros(read.events[i]!.time)).toBeGreaterThanOrEqual(
+          micros(read.events[i - 1]!.time),
+        );
+    } finally {
+      await running.close();
+    }
+  });
+
+  it.each([
+    "discovery-invalid",
+    "discovery-http-error",
+    "discovery-error-after-abort",
+  ] as const)("does not dispatch or invent readiness for %s", async (mode) => {
+    const fixture = await peer(mode);
+    const running = operation(fixture);
+    try {
+      await running.wait(fixture.received);
+      if (mode === "discovery-error-after-abort") {
+        running.caller.abort();
+        // The peer independently rejects discovery after caller cancellation.
+        // This checks receipt truthfulness, not prompt SDK abort support.
+        expect(fixture.failPendingDiscovery()).toBe(true);
+      }
+      expect((await running.wait(running.outcome)).status).toBe("rejected");
+      expect(fixture.requests.map((request) => request.resource)).toEqual([
+        false,
+      ]);
+      const reads = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === "mcp.runtime.info.read");
+      expect(reads).toHaveLength(1);
+      expect(reads[0]!.events.map((event) => event.name)).toEqual([
+        "antnest.error",
+      ]);
+      expect(reads[0]!.attributes).toMatchObject({
+        "antnest.mcp.resource_read.outcome": "failed",
+        "antnest.mcp.connection.close.outcome": "not_started",
+        "antnest.mcp.caller_cancelled": mode === "discovery-error-after-abort",
+        "antnest.operation.phase": "mcp.runtime.info.connect",
+      });
+    } finally {
+      await running.close();
+    }
+  });
+
   it.each(["server-held", "server-finished"] as const)(
     "binds actual SDK cancellation after parsed read with %s EOF",
     async (mode) => {
@@ -356,6 +520,12 @@ describe("official MCP information read cleanup", () => {
         });
         expect(client.events).toHaveLength(1);
         expect(client.events[0]!.name).toBe("antnest.cancelled");
+        expect(nanos(client.events[0]!.time)).toBeGreaterThanOrEqual(
+          nanos(client.startTime),
+        );
+        expect(nanos(client.events[0]!.time)).toBeLessThanOrEqual(
+          nanos(client.endTime),
+        );
         const times = Object.fromEntries(
           read.events.map((event) => [event.name, micros(event.time)]),
         );
@@ -363,12 +533,48 @@ describe("official MCP information read cleanup", () => {
         expect(times["antnest.mcp.resource.validated"]!).toBeLessThanOrEqual(
           times["antnest.mcp.connection.close.started"]!,
         );
-        expect(cancelledAt).toBeGreaterThanOrEqual(
+        expect(
           times["antnest.mcp.connection.close.started"]!,
-        );
-        expect(cancelledAt).toBeLessThanOrEqual(
-          times["antnest.mcp.connection.close.completed"]!,
-        );
+        ).toBeLessThanOrEqual(times["antnest.mcp.connection.close.completed"]!);
+        for (const [boundary, excess] of [
+          [
+            "close.started",
+            times["antnest.mcp.connection.close.started"]! - cancelledAt,
+          ],
+          [
+            "close.completed",
+            cancelledAt - times["antnest.mcp.connection.close.completed"]!,
+          ],
+        ] as const) {
+          if (excess <= 0) continue;
+          // Preserve the explicitly deferred, same-process Node SDK endpoint
+          // representation difference. Same-read ordering remains exact.
+          expect(client.parentSpanContext?.spanId).toBe(
+            read.spanContext().spanId,
+          );
+          expect(micros(read.startTime) % 1000).toBe(0);
+          expect(micros(client.startTime) % 1000).toBe(0);
+          expect(excess).toBeLessThan(1000);
+          console.info(
+            JSON.stringify({
+              event: "runtime_information_time_observation",
+              trace_id: read.spanContext().traceId,
+              read_span_id: read.spanContext().spanId,
+              client_span_id: client.spanContext().spanId,
+              boundary,
+              raw_difference_us: excess,
+              read_start: read.startTime,
+              client_start: client.startTime,
+              cancelled: client.events[0]!.time,
+              close_events: read.events
+                .filter((event) =>
+                  event.name.startsWith("antnest.mcp.connection.close."),
+                )
+                .map((event) => ({ name: event.name, time: event.time })),
+              reason: "deferred-same-node-sdk-sub-ms-cross-span-event",
+            }),
+          );
+        }
         expect(JSON.stringify(spansForPrivacy())).not.toContain("PRIVATE");
       } finally {
         await running.close();

@@ -14,7 +14,13 @@ optional RPC content capture, PostgreSQL tracing, span names and known limits.
   execution does not call Controller.
   Adapter operations are INTERNAL, not duplicate CLIENT spans.
 - `mcp.runtime.info.read` owns one Runtime information connection, resource
-  parsing and its cleanup. `antnest.mcp.resource.validated` occurs only after
+  parsing and its cleanup. The shared
+  [read lifecycle contract](../../../docs/observability-contract.md#acp-runtime-information-read-lifecycle)
+  records `antnest.mcp.discovery.ready` after successful SDK connection and
+  `antnest.mcp.resource.read.started` immediately before the actual read call.
+  These same-span events carry no content and do not assert HTTP EOF or peer
+  receipt. A complete discovery SSE message may make the connection ready
+  before its response stream ends. `antnest.mcp.resource.validated` occurs only after
   both the SDK read and execution-fenced resource parsing succeed. The
   `antnest.mcp.connection.close.started` and `.completed` events bracket the
   actual awaited close. Span attributes retain `antnest.mcp.resource_read.outcome`
@@ -31,7 +37,8 @@ optional RPC content capture, PostgreSQL tracing, span names and known limits.
   repository root. CI passes its candidate via `ANTNEST_ACP_TEST_IMAGE` and
   retains the original OTLP bytes (base64 and SHA-256), peer request inventory,
   actual image ID and cleanup result in its durable suite log. The isolated
-  TCP peer tests read/close provenance; Runtime credential admission and the
+  TCP peer holds discovery SSE EOF behind an actual resource-request barrier
+  and tests read/close provenance; Runtime credential admission and the
   complete Session workflow remain separate gates.
 - The ACP dispatcher records registered v1/v2 requests with their own context,
   complete decoded request/response values (when enabled) and protocol outcome. WebSocket requests
@@ -124,6 +131,14 @@ serialization. The HTTP telemetry adapter only joins request context across the
 queue; it does not validate or implement ACP semantics. Real official-SDK tests
 prove that initialize, new Session and prompt belong to their own POST traces.
 Pre-dispatch protocol failures still require their own transport evidence.
+
+The pinned MCP client 2.2.0 does not pass the caller's AbortSignal into its
+discovery probe; an incomplete discovery can remain pending until the SDK's
+60-second probe timeout. The failed-discovery component case aborts the caller
+and then supplies an independent matching protocol error, joining that outcome
+before transport teardown. It verifies truthful lifecycle receipts and retains
+the caller-cancelled fact, not prompt cancellation of discovery. This telemetry
+batch does not change that SDK limitation.
 
 Other explicit limits: content is recorded once at the receiving RPC boundary,
 not at model/Tool/Internal decorators. Non-RPC error metadata retains stable
