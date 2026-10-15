@@ -149,3 +149,77 @@ test("malformed exporter URLs cannot expose credential input in errors", () => {
     },
   );
 });
+
+test("HTTP telemetry exports separate method contexts and neutral cancellation", async (t) => {
+  const c = await collector(t);
+  const telemetry = create(c.url);
+  t.after(() => telemetry.shutdown());
+  const clients = ["GET", "POST", "DELETE"].map((method) =>
+    telemetry.startHTTP(method),
+  );
+  clients[0].end(200, "cancelled", 9);
+  clients[1].end(202, "eof", 0);
+  clients[2].end(202, "eof", 2);
+  clients[0].end(503, "failed");
+  await telemetry.flush();
+  const spans = exported(c.records);
+  assert.equal(spans.length, 3);
+  assert.equal(new Set(spans.map(({ span }) => span.traceId)).size, 3);
+  spans.forEach(({ span, attributes: values }, index) => {
+    assert.equal(span.kind, 3);
+    assert.equal(span.traceId, clients[index].traceID);
+    assert.equal(span.spanId, clients[index].clientSpanID);
+    assert(!span.parentSpanId);
+    assert.notEqual(span.status?.code, 2);
+    assert.equal(values["antnest.protocol.version"], "v1");
+    assert.equal(
+      values["http.request.method"],
+      ["GET", "POST", "DELETE"][index],
+    );
+  });
+  assert.equal(spans[0].attributes["antnest.outcome"], "cancelled");
+  assert.equal(Number(spans[0].attributes["http.response.body.size"]), 9);
+});
+
+test("HTTP failure status and independent body failure survive cancellation", async (t) => {
+  const c = await collector(t);
+  const telemetry = create(c.url);
+  t.after(() => telemetry.shutdown());
+  telemetry.startHTTP("GET").end(503, "cancelled", 2);
+  telemetry.startHTTP("POST").end(200, "failed", 3);
+  telemetry.startHTTP("DELETE").end(204, "failed", 0);
+  await telemetry.flush();
+  const spans = exported(c.records);
+  assert.equal(spans.length, 3);
+  assert(spans.every(({ span }) => span.status.code === 2));
+  assert.deepEqual(
+    spans.map(({ attributes: values }) =>
+      Number(values["http.response.status_code"]),
+    ),
+    [503, 200, 204],
+  );
+  assert(
+    spans.every(
+      ({ attributes: values }) => values["error.type"] === "ACPHTTPError",
+    ),
+  );
+  assert(!JSON.stringify(c.records).includes("exception.message"));
+  for (const method of [undefined, "PATCH", "get"])
+    assert.throws(() => telemetry.startHTTP(method));
+  await telemetry.shutdown();
+  assert.throws(() => telemetry.startHTTP("GET"));
+});
+
+test("HTTP cleanup failure retains its original cancelled body outcome", async (t) => {
+  const c = await collector(t);
+  const telemetry = create(c.url);
+  t.after(() => telemetry.shutdown());
+  telemetry.startHTTP("DELETE").end(202, "failed", 5, "cancelled");
+  await telemetry.flush();
+  const [{ span, attributes: values }] = exported(c.records);
+  assert.equal(span.status.code, 2);
+  assert.equal(values["antnest.outcome"], "failed");
+  assert.equal(values["antnest.http.body.outcome"], "cancelled");
+  assert.equal(Number(values["http.response.status_code"]), 202);
+  assert.equal(Number(values["http.response.body.size"]), 5);
+});

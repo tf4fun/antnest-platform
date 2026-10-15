@@ -34,6 +34,45 @@ node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
 
 Helper tests do not replace the real integration run.
 
+### Private v1 HTTP lifecycle contract
+
+The shared `createPrivateACPHTTP(endpoint, options)` transport precedes its
+pending slash-command consumer. It wraps the locked SDK's real HTTP stream;
+the owning client connects `stream`, calls `bindConnection(connection)`, awaits
+its actual initialize result and then calls `completeInitialization()`.
+`closeAndWait()` returns one stable promise and owns the original stream readers,
+writers, pending requests and response bodies. `connection.closed` alone is not
+proof of cleanup. The initialization-only `signal` and deadline are detached
+after successful initialization; later lifetime shutdown uses `closeAndWait()`.
+
+`headersFor({ method, signal })` supplies the current issued
+`Antnest-Caller-Context` and `Antnest-Service-Authorization` on every actual
+request. It may reuse a still-valid context or refresh it from the same original
+browser session. It must settle after cancellation. It cannot override SDK
+connection/session headers or inject Cookie or trace headers. The endpoint is
+an exact plain HTTP(S) `/v1/acp`; redirects and cookies are disabled, and business
+POSTs are never replayed automatically. Each actual GET, POST and DELETE injects
+its own exported CLIENT context from `createPrivateACPTelemetry.startHTTP`.
+
+Initialize uses 200 JSON; later 202 responses acknowledge POSTs while their RPC
+results arrive over connection or Session SSE. Results do not require SSE EOF.
+The safe `snapshot()` retains per-request method, RPC identity, transport IDs,
+status, CLIENT IDs, byte count and original body outcome, without credentials or
+business contents. Normal cancellation is preserved without marking ERROR;
+failed status and independent request/body/cleanup errors remain failures.
+An unread ACK is cancelled and joined, never relabelled as EOF.
+The final CLIENT outcome and `antnest.http.body.outcome` are recorded separately:
+an incomplete DELETE remains an ERROR while preserving its actual cancelled body
+and HTTP status. Synchronous connection-close failures use safe diagnostics and
+cannot skip the remaining stream, request or response-body joins.
+
+DELETE has its own cleanup signal and must finish with exactly 202 and a fully
+drained body of at most 64 KiB. Late initialization and the SDK's automatic
+DELETE are joined too, with exactly one DELETE for an observed target. A cleanup
+deadline aborts the actual I/O and still joins it before failing. This shared
+SDK/TCP/OTLP contract does not complete slash-command, candidate image migration,
+Identity authorization, or Docker integration; those are separate owning batches.
+
 The shared private ACP helpers support an explicit `boundary: "private-acp"`
 on `connectACP`. Each owning consumer must obtain `workspaceContext` from the
 existing browser access token and use the `agent-ui-acp` workload authorization

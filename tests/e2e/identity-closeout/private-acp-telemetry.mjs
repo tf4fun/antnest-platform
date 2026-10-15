@@ -33,6 +33,57 @@ export function createPrivateACPTelemetry(endpoint) {
   const tracer = provider.getTracer(service);
   let shutdown;
   return Object.freeze({
+    startHTTP(method) {
+      assert(!shutdown, "private CLIENT telemetry is shut down");
+      assert(
+        ["GET", "POST", "DELETE"].includes(method),
+        "unsupported private HTTP method",
+      );
+      const span = tracer.startSpan(
+        `HTTP ${method} agent-acp-workspace`,
+        {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            "http.request.method": method,
+            "antnest.protocol.version": "v1",
+          },
+        },
+        ROOT_CONTEXT,
+      );
+      const { traceId: traceID, spanId: clientSpanID } = span.spanContext();
+      let ended = false;
+      return Object.freeze({
+        traceID,
+        clientSpanID,
+        traceparent: `00-${traceID}-${clientSpanID}-01`,
+        end(status, outcome, bytes = 0, bodyOutcome = outcome) {
+          if (ended) return;
+          assert(
+            ["eof", "cancelled", "failed"].includes(outcome),
+            "invalid private HTTP outcome",
+          );
+          assert(
+            ["eof", "cancelled", "failed"].includes(bodyOutcome),
+            "invalid private HTTP body outcome",
+          );
+          assert(
+            Number.isSafeInteger(bytes) && bytes >= 0,
+            "invalid private HTTP byte count",
+          );
+          ended = true;
+          if (Number.isInteger(status))
+            span.setAttribute("http.response.status_code", status);
+          span.setAttribute("http.response.body.size", bytes);
+          span.setAttribute("antnest.outcome", outcome);
+          span.setAttribute("antnest.http.body.outcome", bodyOutcome);
+          if (outcome === "failed" || status >= 400) {
+            span.setStatus({ code: SpanStatusCode.ERROR });
+            span.setAttribute("error.type", "ACPHTTPError");
+          }
+          span.end();
+        },
+      });
+    },
     startUpgrade(version) {
       assert(!shutdown, "private CLIENT telemetry is shut down");
       assert([1, 2].includes(version), "unsupported private ACP version");
