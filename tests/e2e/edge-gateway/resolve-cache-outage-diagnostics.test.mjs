@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectOutageDiagnostics } from "./resolve-cache-outage-diagnostics.mjs";
 import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
+import {
+  runtimeCancellationBusinessFixture,
+  addSDKClosedMetadata,
+} from "./resolve-cache-runtime-cancellation-business-fixtures.mjs";
+import { inspectOutageRuntimeCancellation } from "./resolve-cache-runtime-cancellation.mjs";
 const names = [
   "authority",
   "http_rejections",
@@ -15,6 +20,32 @@ const names = [
 const claimNames = names.filter(
   (n) => !["authority", "recovery_authority"].includes(n),
 );
+test("full held Runtime cancellation reconciles all six raw errors including its HTTP error event", () => {
+  const f = runtimeCancellationBusinessFixture();
+  addSDKClosedMetadata(f);
+  const cancellation = inspectOutageRuntimeCancellation(
+    f.evidence,
+    f.collection,
+  );
+  const gates = Object.fromEntries(
+    names.map((name) => [name, { status: "passed", owned_error_spans: [] }]),
+  );
+  gates.cancellation = cancellation;
+  const result = inspectOutageDiagnostics(f.collection, gates);
+  assert.equal(result.status, "passed");
+  assert.equal(result.owned_error_count, 6);
+  assert.equal(result.strict_trace, "failed");
+  assert.equal(cancellation.transport_receipts.length, 2);
+  assert.equal(cancellation.metadata_receipts.length, 1);
+  gates.cancellation = {
+    ...cancellation,
+    owned_error_spans: cancellation.otel_error_spans,
+  };
+  assert.throws(
+    () => inspectOutageDiagnostics(f.collection, gates),
+    /unowned raw outage error/u,
+  );
+});
 const clock =
   "clock skew adjustment disabled; not applying calculated delta of -20.125µs";
 function fixture() {
@@ -65,6 +96,28 @@ function fixture() {
   return { traces, archivedTraceIDs: new Set(traces.keys()), gates, claims };
 }
 const check = (f) => inspectOutageDiagnostics(f, f.gates);
+test("raw diagnostics export each original Trace once before source-closure reuse", () => {
+  const f = fixture(),
+    before = structuredClone(f),
+    result = check(f);
+  assert.equal(result.raw_trace_diagnostics?.length, 3);
+  assert.deepEqual(
+    result.raw_trace_diagnostics.map((r) => ({
+      trace_id: r.trace_id,
+      raw_span_count: r.raw_span_count,
+      warning_count: r.warning_count,
+      error_spans: r.error_spans,
+    })),
+    [...f.traces.values()].map((trace, i) => ({
+      trace_id: trace.traceID,
+      raw_span_count: 1,
+      warning_count: 1,
+      error_spans: i < 2 ? 1 : 0,
+    })),
+  );
+  assert.equal(result.warning_count, 3);
+  assert.deepEqual(f, before);
+});
 function completedRead(transport = "ws") {
   const f = fixture(),
     trace = [...f.traces.values()][2];

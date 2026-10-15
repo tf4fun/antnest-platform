@@ -374,6 +374,32 @@ close on proved offboarding before the UI drain begins. Extra errors,
 missing ancestry or archives, local closure and unrelated shutdowns are not
 covered. Every claim names one original trace/span; raw diagnostics stay strict.
 
+Before restarting the old ACP process, the outage runner performs its own
+control `GET /status` and records the monotonic send and complete ready-body
+receipt, HTTP Date and body hash. Docker observations before and after the probe
+must retain the original container, StartedAt and healthy process; bind raw
+receivers to the same host, PID and service instance as the actual old ACP
+initialization. Use already verified complete HTTP request windows to form a
+coarse clock bound, then require exactly one health SERVER whose possible start
+interval intersects this probe. Intersect the independently measured health
+bounds with all existing same-process bounds. Do not select the nearest
+timestamp, synthesize a parent, or reuse an unverified load-clock summary.
+
+Keep a fixed independent `HTTP GET /status` query window covering the entire
+possible probe interval, reject unread pages or a saturated 500-Trace result,
+and require three equal complete raw snapshots. Archive every candidate and
+reconcile the search and full raw archive in both directions, retaining the
+reason each other receiver cannot belong to the probe. Missing, ambiguous,
+foreign-process or inconsistent evidence fails admission. The entire resulting
+closure interval must still lie within the observed process lifecycle; mere
+overlap with the restart boundary is insufficient. Preserve the original
+errors and warnings. Historical runs without the probe remain incomplete.
+The final policy 4 completion report must retain this generation-zero ACP clock
+and its probe, with identical resulting bounds, one selected archived receiver,
+the actual probe sample, and the original verified initialization samples.
+Omitting these fields cannot admit an older report that once passed a narrower
+stream inspector.
+
 The outage owner inventory includes successful POST/session creation, GET/view
 requests and any denied HTTP origin that actually initialized an owner. A denied
 origin needs its exact independently verified denial; its status alone does not
@@ -661,6 +687,38 @@ timestamps, authority budgets, raw traces, strict error ownership and cleanup
 receipts. Old WSS, a protocol double or a passing shared-contract test cannot
 substitute for these actual Bridge/Runtime results. Store the #64 evidence in
 `artifacts/verification/issue-64/`, outside `.cache`.
+
+### Current suite completion
+
+The final current report explicitly identifies policy 4. Admit the complete
+HTTP load through its full owning admission, including original-owner drain,
+protocol cleanup and restoration. The outage must identify `http-sse` and
+carry all eight successful owning gates and complete raw diagnostic admission.
+Bind its business fields to the cancellation inspector's checked `business`
+result: the same Run and Runtime execution, new output, terminal outcome and
+Runtime quiescence must occur within the actual five-second-or-longer stop.
+Retain the cancellation inspector's original timing, error ownership and
+transport receipts; an isolated `passed` marker does not replace that result.
+
+The four recovery cases are logout, password change, role change and member
+deactivation. Bind their exact business results to `recovery_runs.business`
+and the same Run IDs to its owning `runs`. Require independently observed
+remote SSE closure within 30 seconds; a historical WSS field is not a Bridge
+receipt. Keep the other recovery, authority and stream inspectors' evidence.
+
+Join the final Trace inventory to the unique complete archived closure, and
+reconcile the diagnostic error claims with the exact union of owning-gate
+claims, including their reasons and owners. Preserve source closure and raw
+strict findings; source warnings may appear in more than one per-Trace report
+and must not be counted as distinct raw warnings merely by summing reports.
+The raw diagnostic inspector retains a unique per-Trace span/error/warning
+inventory; the final global counts and each source-closure summary must agree
+with it. Recovery owning reports retain their checked current view and SSE
+Trace IDs, distinct from the authorization source IDs, to join the same cases.
+Cleanup must be verified before publishing completion. Missing, pending or
+failed evidence, unknown revisions and mixed legacy/current scenarios fail
+completion. Policy-3 records remain historical and cannot admit policy 4.
+This shared contract does not itself complete the consumer or Docker batch.
 
 ### Historical direct-ACP measurement
 

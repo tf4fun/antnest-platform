@@ -9,6 +9,182 @@ import {
 } from "../observability/gateway-resolution-fixtures.mjs";
 
 const check = (f) => inspectOutageAuthority(f.evidence, f, ["private-canary"]);
+
+test("Bridge authority uses actual UI admission and private ACP initialization without a retired WSS scope", () => {
+  const f = authorityFixture(4);
+  const before = structuredClone([...f.traces]);
+  const result = check(f);
+  assert.equal(result.status, "passed");
+  assert.deepEqual(
+    result.prewarm.map((r) => r.profile),
+    ["console", "workspace"],
+  );
+  assert.equal(Object.hasOwn(result, "original_wss"), false);
+  assert.equal(
+    result.original_bridge.source_trace_id,
+    f.fixtures.workspaceSource.trace.traceID,
+  );
+  assert.equal(
+    result.original_bridge.initialization_span_id,
+    f.fixtures.workspaceSource.initialize.spanID,
+  );
+  assert.equal(result.original_bridge.ui_receiver_span_id, "receiver");
+  assert.equal(
+    result.original_bridge.conservative_deadline,
+    result.prewarm.find((r) => r.profile === "workspace").conservative_deadline,
+  );
+  assert.equal(result.original_sse.trace_id, f.fixtures.sse.trace.traceID);
+  assert(result.remaining_at_restart_ms > 0);
+  assert.deepEqual([...f.traces], before);
+});
+
+test("historical authority cannot accept Bridge transport metadata", () => {
+  const f = authorityFixture();
+  f.evidence.transport = "http-sse";
+  assert.throws(() => check(f), /revision 4/u);
+});
+
+test("Bridge authority cannot carry a retired WSS admission", () => {
+  const f = authorityFixture(4);
+  f.evidence.wire = authorityFixture().evidence.wire;
+  assert.throws(() => check(f), /retired WSS/u);
+});
+
+for (const [name, mutate, reason] of [
+  [
+    "retired state URL",
+    (f) => {
+      f.evidence.http.find(
+        (r) => r.label === "fresh-consumer-agent-ready",
+      ).path = "/api/app/agents/agent/state";
+    },
+    /view/u,
+  ],
+  [
+    "retired WSS transport",
+    (f) => {
+      f.evidence.transport = "wss";
+    },
+    /http-sse/u,
+  ],
+  [
+    "direct Gateway-to-ACP chain",
+    (f) => {
+      f.fixtures.workspaceSource.initialize.references[0].spanID = "upstream";
+    },
+    /initialization.*UI/u,
+  ],
+  [
+    "different Agent initialization",
+    (f) =>
+      setTag(
+        f.fixtures.workspaceSource.initialize,
+        "antnest.agent.id",
+        "other",
+      ),
+    /Agent/u,
+  ],
+  [
+    "missing private initialize",
+    (f) => {
+      const p = f.fixtures.workspaceSource;
+      p.trace.spans = p.trace.spans.filter((s) => s !== p.initialize);
+    },
+    /initialization/u,
+  ],
+  [
+    "different ACP method",
+    (f) =>
+      setTag(
+        f.fixtures.workspaceSource.initialize,
+        "rpc.method",
+        "session/list",
+      ),
+    /initialization/u,
+  ],
+  [
+    "failed private initialize",
+    (f) =>
+      setTag(
+        f.fixtures.workspaceSource.initialize,
+        "http.response.status_code",
+        403,
+      ),
+    undefined,
+  ],
+  [
+    "wrong view Agent",
+    (f) => {
+      f.evidence.http.find(
+        (r) => r.label === "fresh-consumer-agent-ready",
+      ).body.agentId = "other";
+    },
+    /Agent/u,
+  ],
+  [
+    "missing source Identity SQL",
+    (f) => {
+      const p = f.fixtures.workspaceSource;
+      p.trace.spans = p.trace.spans.filter((s) => s.spanID !== "sql");
+    },
+    undefined,
+  ],
+  [
+    "wrong cache origin",
+    (f) =>
+      setTag(
+        f.fixtures.workspaceHit.decision,
+        resolvePrefix + "snapshot_age_ms",
+        500,
+      ),
+    /origin/u,
+  ],
+  [
+    "missing archived UI source",
+    (f) => f.archivedTraceIDs.delete(f.fixtures.workspaceSource.trace.traceID),
+    /archived/u,
+  ],
+  [
+    "expired original workspace authority",
+    (f) =>
+      setTag(
+        f.fixtures.workspaceHit.decision,
+        resolvePrefix + "valid_for_ms",
+        5000,
+      ),
+    /authority deadline/u,
+  ],
+  [
+    "expired original SSE authority",
+    (f) =>
+      setTag(f.fixtures.sse.decision, resolvePrefix + "valid_for_ms", 5000),
+    /original SSE/u,
+  ],
+])
+  test(`Bridge authority rejects ${name}`, () => {
+    const f = authorityFixture(4);
+    mutate(f);
+    assert.throws(() => check(f), reason);
+  });
+
+test("Bridge SSE later revalidation cannot extend its original authority", () => {
+  const f = authorityFixture(4),
+    before = check(f),
+    p = f.fixtures.sse;
+  const later = structuredClone(p.decision);
+  later.spanID = "later-revalidation";
+  later.startTime = 5010000;
+  later.duration = 5000;
+  setTag(later, resolvePrefix + "source", "rpc");
+  for (const key of ["snapshot_age_ms", "proof_age_ms", "valid_for_ms"])
+    setTag(later, resolvePrefix + key, undefined);
+  p.trace.spans.push(later);
+  p.root.duration = 6000000;
+  addResolveRPC(p.trace, "-later", 5011000);
+  assert.equal(check(f).conservative_deadline, before.conservative_deadline);
+  setTag(p.decision, resolvePrefix + "valid_for_ms", 5000);
+  assert.throws(() => check(f), /original SSE/u);
+});
 for (const surface of ["connection", "sse"]) {
   const revalidate = (f) => {
     const fixture = f.fixtures[surface],

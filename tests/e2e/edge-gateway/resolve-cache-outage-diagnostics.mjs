@@ -372,6 +372,17 @@ export function inspectOutageDiagnostics(collection, gates, secrets = []) {
       .map(([, v]) => ({ ...v, owners: [...v.owners].sort() })),
     unowned_error_spans: [],
     non_error_diagnostics: neutral,
+    raw_trace_diagnostics: all.map((trace) => {
+      const { source_trace_ids, ...diagnostics } = resolveTraceDiagnostics(
+        trace,
+        [trace],
+      );
+      return {
+        trace_id: trace.traceID,
+        raw_span_count: trace.spans.length,
+        ...diagnostics,
+      };
+    }),
     ...resolveTraceDiagnostics(first, all),
   };
 }

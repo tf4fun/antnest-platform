@@ -21,6 +21,71 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+function earlyWakeFixture() {
+  let time = 0,
+    requests = 0;
+  const wire = {},
+    waits = [],
+    controller = new AbortController();
+  return {
+    wire,
+    waits,
+    controller,
+    options: {
+      gateway: "https://gateway.invalid",
+      agentID: "agent",
+      cookie: "session=private-token",
+      wire,
+      signal: controller.signal,
+      now: () => time,
+      wait: async (ms, _value, { signal }) => {
+        assert.equal(signal.aborted, false);
+        waits.push(ms);
+        time += waits.length <= 2 ? Math.max(0, ms - 2) : ms;
+      },
+      request: async () => {
+        time++;
+        requests++;
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+          headers: {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-antnest-trace-id": requests.toString(16).padStart(32, "0"),
+          },
+        });
+      },
+    },
+  };
+}
+
+test("load measurement waits through repeated early timer wakeups", async () => {
+  const f = earlyWakeFixture();
+  await measureResolveLoad(f.options);
+  assert.equal(f.waits.length, 3);
+  assert.equal(f.wire.requests.length, 100);
+  assert(
+    f.wire.requests.at(-1).started_at - f.wire.requests[0].completed_at >= 5000,
+  );
+  assert(f.wire.completed_at - f.wire.started_at <= 8000);
+});
+
+test("load measurement stops after an early wakeup is cancelled", async () => {
+  const f = earlyWakeFixture(),
+    wait = f.options.wait;
+  f.options.wait = async (...args) => {
+    await wait(...args);
+    f.controller.abort(new Error("private cancellation detail"));
+  };
+  await assert.rejects(measureResolveLoad(f.options), (error) => {
+    assert.match(error.message, /Bridge load (?:delay )?cancelled/u);
+    assert(!error.message.includes("private cancellation detail"));
+    return true;
+  });
+  assert.equal(f.waits.length, 1);
+  assert.equal(f.wire.requests.length, 99);
+  assert(Number.isFinite(f.wire.completed_at));
+});
+
 function fixture() {
   let time = 10,
     requests = 0,

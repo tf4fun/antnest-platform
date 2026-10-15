@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { runtimeControllerRead, runtimeStatus } from "./runtime-status.mjs";
+import * as runtimeStatusModule from "./runtime-status.mjs";
 
 const project = "antnest-lifecycle-1234abcd";
 
@@ -43,6 +45,156 @@ test("Runtime status fails without leaking rejected credentials", async () => {
     runtimeStatus(docker, project, "runtime-id"),
     (error) => !error.message.includes("sender-"),
   );
+});
+
+test("an invalid successful status response cannot be hidden by another credential", async () => {
+  const { docker: base } = fakeDocker("sender-two");
+  let attempts = 0;
+  const docker = async (args) => {
+    if (args[1] === "-e" && ++attempts === 1) return "invalid-status-body";
+    return base(args);
+  };
+  await assert.rejects(runtimeStatus(docker, project, "runtime-id"));
+  assert.equal(attempts, 1);
+});
+
+test("prepared Runtime status reuses only the accepted credential while sampling the live process again", async () => {
+  const { docker, calls } = fakeDocker("sender-two");
+  const prepared = await runtimeStatusModule.prepareRuntimeStatus(
+    docker,
+    project,
+    "runtime-id",
+  );
+  assert.equal(prepared.status.execution_id, "process");
+  const count = calls.length;
+  const next = [];
+  const result = await prepared.read(
+    async (args, long, options) => {
+      next.push(args);
+      assert.equal(args[2], "ANTNEST_RUNTIME_STATUS_BEARER=sender-two");
+      assert(options.signal instanceof AbortSignal);
+      return JSON.stringify({
+        status: "ready",
+        execution_id: "changed-process",
+      });
+    },
+    { timeoutMS: 500 },
+  );
+  assert.equal(result.execution_id, "changed-process");
+  assert.equal(next.length, 1);
+  assert.equal(calls.length, count);
+  assert(!JSON.stringify(prepared).includes("sender-"));
+});
+
+test("prepared status uses the new operation budget after the preparation signal ends", async () => {
+  const { docker } = fakeDocker("sender-one");
+  const initial = new AbortController();
+  const prepared = await runtimeStatusModule.prepareRuntimeStatus(
+    docker,
+    project,
+    "runtime-id",
+    { signal: initial.signal },
+  );
+  initial.abort();
+  assert.equal(
+    (await prepared.read(docker, { timeoutMS: 500 })).status,
+    "ready",
+  );
+});
+
+test("a rejected bound status credential cannot trigger new discovery or leak diagnostics", async () => {
+  const { docker, calls } = fakeDocker("sender-one");
+  const prepared = await runtimeStatusModule.prepareRuntimeStatus(
+    docker,
+    project,
+    "runtime-id",
+  );
+  const count = calls.length;
+  let attempts = 0;
+  await assert.rejects(
+    prepared.read(async () => {
+      attempts++;
+      throw new Error("private-sender in failed Docker command");
+    }),
+    (error) =>
+      !error.message.includes("private-sender") && error.cause === undefined,
+  );
+  assert.equal(attempts, 1);
+  assert.equal(calls.length, count);
+});
+
+test("prepared status keeps unresolved remote cleanup visible", async () => {
+  const { docker } = fakeDocker("sender-one");
+  const prepared = await runtimeStatusModule.prepareRuntimeStatus(
+    docker,
+    project,
+    "runtime-id",
+  );
+  const failure = Object.assign(new Error("remote join missing"), {
+    remoteCleanupPending: true,
+  });
+  await assert.rejects(
+    prepared.read(async () => {
+      throw failure;
+    }),
+    (error) => error === failure,
+  );
+});
+
+test("Runtime status gives curl a remote deadline within the operation budget", async () => {
+  const { docker, calls } = fakeDocker("sender-two");
+  await runtimeStatus(docker, project, "runtime-id", { timeoutMS: 500 });
+  for (const args of calls.filter((args) => args[1] === "-e")) {
+    const bounded = args.at(-1).match(/--max-time ([0-9.]+)/u);
+    assert(bounded, "remote curl must not outlive a killed Docker client");
+    assert(Number(bounded[1]) > 0 && Number(bounded[1]) <= 0.5);
+  }
+});
+
+test("Runtime status joins aborted sampling and stops before the next credential", async () => {
+  const operation = new AbortController();
+  const reason = new Error("outage window expired");
+  const { docker: base } = fakeDocker("sender-two");
+  let requests = 0;
+  let active = 0;
+  const docker = async (args, long, options) => {
+    if (args[1] !== "-e") return base(args);
+    requests++;
+    active++;
+    try {
+      operation.abort(reason);
+      await delay(30, undefined, { signal: options?.signal });
+      return JSON.stringify({ status: "ready", execution_id: "too-late" });
+    } finally {
+      active--;
+    }
+  };
+  await assert.rejects(
+    runtimeStatus(docker, project, "runtime-id", {
+      signal: operation.signal,
+      timeoutMS: 500,
+    }),
+    /outage window expired/u,
+  );
+  assert.equal(requests, 1);
+  assert.equal(active, 0);
+});
+
+test("an unjoined Runtime request cannot be hidden by a successful later credential", async () => {
+  const { docker: base } = fakeDocker("sender-two");
+  const failure = Object.assign(new Error("Runtime attachment lost"), {
+    remoteCleanupPending: true,
+  });
+  let attempts = 0;
+  const docker = async (args) => {
+    if (args[1] === "-e" && ++attempts === 1) throw failure;
+    return base(args);
+  };
+  await assert.rejects(
+    runtimeStatus(docker, project, "runtime-id"),
+    (error) => error === failure,
+  );
+  assert.equal(attempts, 1);
 });
 
 test("Runtime Controller reads mount the Agent Controller credential", async () => {

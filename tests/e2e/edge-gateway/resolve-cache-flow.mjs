@@ -161,10 +161,16 @@ export async function measureResolveLoad({
       if (index === 99) {
         // Initial Resolve starts before the first body finishes, so this also
         // crosses its half TTL without a cross-host wall-clock assumption.
-        const remaining = wire.requests[0].completed_at + 5001 - now();
-        if (remaining > 0) {
+        const finalRequestAt = wire.requests[0].completed_at + 5001;
+        // A timer can wake early; recheck the monotonic deadline each time.
+        for (
+          let remaining = finalRequestAt - now();
+          remaining > 0;
+          remaining = finalRequestAt - now()
+        ) {
+          assert(!deadline.aborted, "Bridge load cancelled");
           try {
-            await wait(remaining, undefined, { signal: deadline });
+            await wait(Math.ceil(remaining), undefined, { signal: deadline });
           } catch {
             throw new Error("Bridge load delay cancelled or failed");
           }

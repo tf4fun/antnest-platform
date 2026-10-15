@@ -4,6 +4,7 @@ import { recoveryFixture } from "./resolve-cache-recovery-fixtures.mjs";
 import {
   inspectRecoveryWindow,
   recoveryMembershipUpdate,
+  recoveryStreamDeadline,
 } from "./resolve-cache-recovery.mjs";
 import { inspectRecoveryRunTraces } from "./resolve-cache-recovery-trace.mjs";
 import { workspaceChatFixture } from "../workspace-closeout/chat-fixtures.mjs";
@@ -69,6 +70,70 @@ test("recovery requires four fresh mutations with remote retirement and live Run
     ["completed", "completed", "completed", "cancelled"],
   );
 });
+
+for (const cacheControl of [
+  "no-store, no-store",
+  "NO-STORE",
+  " \tno-store\t ",
+]) {
+  test(`recovery accepts the complete no-store directive in ${JSON.stringify(cacheControl)}`, () => {
+    const evidence = recoveryFixture();
+    evidence.recovery.cases[3].restored_state.cache_control = cacheControl;
+    assert.equal(inspectRecoveryWindow(evidence).status, "passed");
+    assert.equal(
+      evidence.recovery.cases[3].restored_state.cache_control,
+      cacheControl,
+      "the actual Header receipt remains unchanged",
+    );
+  });
+}
+
+for (const cacheControl of [
+  undefined,
+  null,
+  "",
+  "no-cache",
+  "public, max-age=60",
+  "x-no-store",
+  "no-store=1",
+  '"no-store"',
+  "no-store-suffix",
+  "no-store;",
+  "public, no-store=1",
+]) {
+  test(`recovery rejects an absent or invalid no-store directive: ${JSON.stringify(cacheControl)}`, () => {
+    const evidence = recoveryFixture();
+    evidence.recovery.cases[3].restored_state.cache_control = cacheControl;
+    assert.throws(() => inspectRecoveryWindow(evidence));
+  });
+}
+
+test("recovery requires remote SSE closure strictly before original natural expiry", () => {
+  const e = recoveryFixture(),
+    c = e.recovery.cases[3];
+  const deadline = recoveryStreamDeadline(c, e.settings);
+  const triggerShift = 19500 - (c.trigger.at - c.stream.started_at);
+  const previousTrigger = c.trigger.at;
+  // Keep all original create/view/SSE/prompt ordering. Move the actual mutation
+  // near 19.5s and post-close observations after the 49s expiry boundary.
+  for (const row of [...e.http, ...e.model_observations]) {
+    if (row.at >= previousTrigger && row.at < c.stream.closure.at) {
+      row.at += triggerShift;
+      if (Number.isFinite(row.started_at)) row.started_at += triggerShift;
+    } else if (row.at >= c.stream.closure.at) {
+      row.at += 49000;
+      if (Number.isFinite(row.started_at)) row.started_at += 49000;
+    }
+  }
+  c.trigger.at += triggerShift;
+  c.stream.closure.at = deadline - 1;
+  assert.equal(inspectRecoveryWindow(e).status, "passed");
+  c.stream.closure.at = deadline;
+  assert.throws(
+    () => inspectRecoveryWindow(e),
+    /natural CCT expiry may explain/u,
+  );
+});
 for (const [name, change] of [
   ["missing case", (e) => e.recovery.cases.pop()],
   [
@@ -102,33 +167,33 @@ for (const [name, change] of [
     },
   ],
   [
-    "local WSS close",
+    "missing actual Bridge session creation",
     (e, c) => {
-      c.wss_close.localClose = true;
+      delete c.session_create;
     },
   ],
   [
-    "unavailable WSS close",
+    "wrong session creation status",
     (e, c) => {
-      c.wss_close.code = 1013;
+      c.session_create.status = 200;
     },
   ],
   [
-    "natural CCT close",
+    "foreign created Session",
     (e, c) => {
-      c.wss_close.reason = "caller_context_expired";
+      c.session_create.body.sessionId = "other";
     },
   ],
   [
-    "WSS close before mutation",
+    "SSE close before mutation",
     (e, c) => {
-      c.wss_close.observed_at = c.trigger.at - 1;
+      c.stream.closure.at = c.trigger.at - 1;
     },
   ],
   [
-    "WSS close beyond bound",
+    "SSE close beyond bound",
     (e, c) => {
-      c.wss_close.observed_at = c.trigger.at + 30001;
+      c.stream.closure.at = c.trigger.at + 30001;
     },
   ],
   [
@@ -151,12 +216,14 @@ for (const [name, change] of [
     },
   ],
   [
-    "active post-mutation WSS request",
+    "active post-mutation owner request before SSE retirement",
     (e, c) => {
-      c.wire.frames.push({
-        direction: "send",
-        at: c.trigger.at + 1,
-        raw: '{"method":"session/list"}',
+      e.http.push({
+        path: "/api/session/activity",
+        credential_scope: c.login.issued_credential_scope,
+        method: "POST",
+        started_at: c.trigger.at + 1,
+        at: c.trigger.at + 2,
       });
     },
   ],
@@ -287,13 +354,110 @@ for (const [name, change] of [
   [
     "reactivation enables Agent",
     (e) => {
-      e.recovery.cases[3].restored_state.body.access_allowed = true;
+      e.recovery.cases[3].restored_state.status = 200;
+    },
+  ],
+  [
+    "restored membership created a new Run",
+    (e) => {
+      e.recovery.cases[3].restore_audits_after.body.items.push({
+        run_id: "unexpected",
+      });
+    },
+  ],
+  [
+    "truncated restore audit inventory",
+    (e) => {
+      e.recovery.cases[3].restore_audits_after.body.next_cursor = "more";
+    },
+  ],
+  [
+    "empty original restore inventory",
+    (e) => {
+      e.recovery.cases[3].restore_audits_before.body.items = [];
+      e.recovery.cases[3].restore_audits_after.body.items = [];
+    },
+  ],
+  [
+    "foreign creator credential",
+    (e, c) => {
+      c.session_create.credential_scope = "other";
+    },
+  ],
+  [
+    "view before session creation",
+    (e, c) => {
+      c.initial_view.started_at = c.session_create.started_at - 1;
+    },
+  ],
+  [
+    "created Session missing from HTTP inventory",
+    (e, c) => {
+      e.http.splice(e.http.indexOf(c.session_create), 1);
+    },
+  ],
+  [
+    "session Cookie rewrite",
+    (e, c) => {
+      c.session_create.set_cookie_count = 1;
+    },
+  ],
+  [
+    "SSE natural CCT expiry",
+    (e, c) => {
+      c.stream.started_at = c.stream.closure.at - 49000;
+    },
+  ],
+  [
+    "unknown deployed Resolve TTL",
+    (e) => {
+      delete e.settings.resolveTTLMS;
+    },
+  ],
+  [
+    "missing original stream wall time",
+    (e, c) => {
+      delete c.stream.started_at_ms;
+    },
+  ],
+  [
+    "disabled denial remains retryable",
+    (e) => {
+      e.recovery.cases[3].restored_state.body.retryable = true;
+    },
+  ],
+  [
+    "disabled denial allows recovery",
+    (e) => {
+      e.recovery.cases[3].restored_state.body.recovery = "retry_read";
+    },
+  ],
+  [
+    "restored membership auto-enables Agent",
+    (e) => {
+      e.recovery.cases[3].restored_agent.body.desired_state = "enabled";
+    },
+  ],
+  [
+    "post-restore Agent check before restoration",
+    (e) => {
+      e.recovery.cases[3].restored_agent.started_at = 1;
     },
   ],
 ])
   test(`recovery rejects ${name}`, () => {
     const e = recoveryFixture();
     change(e, e.recovery.cases[0]);
+    assert.throws(() => inspectRecoveryWindow(e));
+  });
+
+for (const field of ["idle_expires_at", "expires_at"])
+  test(`recovery rejects original ${field} at the 60-second boundary`, () => {
+    const e = recoveryFixture(),
+      c = e.recovery.cases[0];
+    c.login.body[field] = new Date(
+      c.stream.started_at_ms + 60000,
+    ).toISOString();
     assert.throws(() => inspectRecoveryWindow(e));
   });
 
@@ -353,6 +517,18 @@ test("recovery Run gate binds all four actual Provider requests and durable term
     },
   ]);
   assert.deepEqual(result.runs[3].owned_error_spans, result.owned_error_spans);
+});
+test("current recovery Run receipt retains its checked view and remote SSE identities", () => {
+  const f = traceFixture();
+  f.evidence.policy_revision = 4;
+  f.evidence.transport = "http-sse";
+  const result = inspectRecoveryRunTraces(f.evidence, f);
+  for (const [i, run] of result.runs.entries()) {
+    const c = f.evidence.recovery.cases[i];
+    assert.equal(run.view_trace_id, c.initial_view.trace_id);
+    assert.equal(run.sse_trace_id, c.stream.trace_id);
+    assert.equal(run.session_create_trace_id, c.session_create.trace_id);
+  }
 });
 for (const [name, change] of [
   [

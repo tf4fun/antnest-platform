@@ -242,3 +242,140 @@ for (const headers of [
     await assert.rejects(f.open());
     assert.equal(f.requests, 1);
   });
+
+function failingReader(t, options = {}) {
+  const { invalidAdmission = false, invalidEvent = false } = options;
+  const cleanupError = Object.hasOwn(options, "cleanupError")
+    ? options.cleanupError
+    : new Error("reader cancellation failed");
+  let cancellations = 0,
+    releases = 0;
+  const reader = {
+    async read() {
+      if (Object.hasOwn(options, "readFailure")) throw options.readFailure;
+      if (invalidEvent)
+        return {
+          done: false,
+          value: Buffer.from("event: unknown\ndata: {}\n\n"),
+        };
+      return { done: true };
+    },
+    async cancel() {
+      cancellations++;
+      throw cleanupError;
+    },
+    releaseLock() {
+      releases++;
+    },
+  };
+  t.mock.method(globalThis, "fetch", async () => ({
+    status: 200,
+    headers: new Headers({
+      "content-type": "text/event-stream",
+      "x-antnest-trace-id": invalidAdmission ? "invalid" : "a".repeat(32),
+    }),
+    body: { getReader: () => reader, cancel: () => reader.cancel() },
+  }));
+  return { cleanupError, counts: () => ({ cancellations, releases }) };
+}
+
+test("Workspace remote EOF preserves a reader cancellation failure and joins cleanup once", async (t) => {
+  const f = failingReader(t);
+  const stream = await observeWorkspaceStream(
+    { base: "http://fixture", cookie: "synthetic" },
+    "agent-1",
+    "session-1",
+  );
+  await stream.waitClosed();
+  const results = await Promise.allSettled([
+    stream.closeAndWait(),
+    stream.closeAndWait(),
+  ]);
+  assert(
+    results.every(
+      (r) => r.status === "rejected" && r.reason === f.cleanupError,
+    ),
+  );
+  assert.deepEqual(f.counts(), { cancellations: 1, releases: 1 });
+});
+
+test("Workspace invalid event retains validation and reader cleanup failures", async (t) => {
+  const f = failingReader(t, { invalidEvent: true });
+  const stream = await observeWorkspaceStream(
+    { base: "http://fixture", cookie: "synthetic" },
+    "agent-1",
+    "session-1",
+  );
+  await stream.waitClosed();
+  await assert.rejects(stream.closeAndWait(), (error) => {
+    assert(error instanceof AggregateError);
+    assert.equal(error.errors.length, 2);
+    assert.match(error.errors[0].message, /validation failed/u);
+    assert.equal(error.errors[1], f.cleanupError);
+    return true;
+  });
+  assert.deepEqual(f.counts(), { cancellations: 1, releases: 1 });
+});
+
+test("Workspace failed admission retains response-body cleanup failure", async (t) => {
+  const f = failingReader(t, { invalidAdmission: true });
+  await assert.rejects(
+    observeWorkspaceStream(
+      { base: "http://fixture", cookie: "synthetic" },
+      "agent-1",
+      "session-1",
+    ),
+    (error) => {
+      assert(error instanceof AggregateError);
+      assert.equal(error.errors.length, 2);
+      assert.equal(error.errors[1], f.cleanupError);
+      return true;
+    },
+  );
+  assert.deepEqual(f.counts(), { cancellations: 1, releases: 0 });
+});
+
+for (const cleanupError of [null, undefined]) {
+  for (const invalidEvent of [false, true])
+    test(`Workspace ${invalidEvent ? "validation failure" : "EOF"} retains ${String(cleanupError)} cancellation and joins cleanup`, async (t) => {
+      const f = failingReader(t, { cleanupError, invalidEvent });
+      const stream = await observeWorkspaceStream(
+        { base: "http://fixture", cookie: "synthetic" },
+        "agent-1",
+        "session-1",
+      );
+      await stream.waitClosed();
+      const results = await Promise.allSettled([
+        stream.closeAndWait(),
+        stream.closeAndWait(),
+      ]);
+      for (const result of results) {
+        assert.equal(result.status, "rejected");
+        if (invalidEvent) {
+          assert(result.reason instanceof AggregateError);
+          assert.equal(result.reason.errors.length, 2);
+          assert.match(result.reason.errors[0].message, /validation failed/u);
+          assert.equal(result.reason.errors[1], cleanupError);
+        } else assert.equal(result.reason, cleanupError);
+      }
+      assert.equal(stream.evidence.reader_cleanup.outcome, "failed");
+      assert.equal(
+        stream.evidence.reader_cleanup.error.message,
+        String(cleanupError),
+      );
+      assert.deepEqual(f.counts(), { cancellations: 1, releases: 1 });
+    });
+
+  test(`Workspace matching ${String(cleanupError)} read and cancel failures retain transport closure`, async (t) => {
+    const f = failingReader(t, { cleanupError, readFailure: cleanupError });
+    const stream = await observeWorkspaceStream(
+      { base: "http://fixture", cookie: "synthetic" },
+      "agent-1",
+      "session-1",
+    );
+    await stream.waitClosed();
+    assert.equal((await stream.closeAndWait()).kind, "transport-end");
+    assert.equal(stream.evidence.reader_cleanup.outcome, "already-terminated");
+    assert.deepEqual(f.counts(), { cancellations: 1, releases: 1 });
+  });
+}

@@ -69,9 +69,18 @@ export function dockerClient(env, signal, budget = 900000) {
   return async function docker(
     args,
     long = false,
-    { env: callEnv = env, captureStderr = false } = {},
+    {
+      env: callEnv = env,
+      captureStderr = false,
+      signal: callSignal,
+      timeoutMS,
+    } = {},
   ) {
-    signal?.throwIfAborted();
+    const operationSignal =
+      signal && callSignal
+        ? AbortSignal.any([signal, callSignal])
+        : (callSignal ?? signal);
+    operationSignal?.throwIfAborted();
     const invocation = dockerInvocation(
       long ? ["--lifecycle", ...args] : args,
       deadline,
@@ -79,6 +88,10 @@ export function dockerClient(env, signal, budget = 900000) {
       callEnv,
     );
     assert(invocation, "Docker integration deadline exceeded");
+    if (timeoutMS !== undefined) {
+      assert(Number.isFinite(timeoutMS) && timeoutMS > 0);
+      invocation.timeoutMs = Math.min(invocation.timeoutMs, timeoutMS);
+    }
     const commandFailure = new Error(`Docker ${args[0]} failed`);
     return new Promise((resolve, reject) => {
       const child = spawn("docker", invocation.args, {
@@ -113,13 +126,14 @@ export function dockerClient(env, signal, budget = 900000) {
         }
       });
       const timer = setTimeout(terminate, invocation.timeoutMs);
-      signal?.addEventListener("abort", terminate, { once: true });
+      operationSignal?.addEventListener("abort", terminate, { once: true });
+      if (operationSignal?.aborted) terminate();
       child.once("error", (error) => {
         failure = error;
       });
       child.once("close", (code) => {
         clearTimeout(timer);
-        signal?.removeEventListener("abort", terminate);
+        operationSignal?.removeEventListener("abort", terminate);
         if (failure || code !== 0) {
           commandFailure.message += ` (${code})`;
           const diagnostic = stderrDiagnostic(errors, callEnv);

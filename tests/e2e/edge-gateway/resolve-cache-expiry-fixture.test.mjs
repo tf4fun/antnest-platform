@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { shortenIdleSession } from "./resolve-cache-expiry-fixture.mjs";
 
 function harness(change = () => {}) {
@@ -175,4 +176,44 @@ test("database failure redacts query and credential material", async () => {
     assert(!error.cause);
     return true;
   });
+});
+
+test("expired-session sampling obeys the outage deadline and does not publish a late row", async () => {
+  const h = harness();
+  const original = h.options.docker;
+  const abort = new AbortController();
+  let sampling = false;
+  let active = 0;
+  h.options.docker = async (args, long, options) => {
+    if (sampling && args[0] === "exec") {
+      active++;
+      try {
+        abort.abort(new Error("expiry window timed out"));
+        await delay(30, undefined, { signal: options?.signal });
+      } finally {
+        active--;
+      }
+    }
+    return original(args);
+  };
+  const fixture = await shortenIdleSession(h.options);
+  sampling = true;
+  await assert.rejects(
+    fixture.read("expired", { signal: abort.signal, timeoutMS: 500 }),
+    /timed out|aborted/u,
+  );
+  assert.equal(active, 0);
+  assert.deepEqual(fixture.evidence.observations, []);
+});
+
+test("expiry read bounds the actual PostgreSQL statement as well as its Docker attachment", async () => {
+  const h = harness();
+  const fixture = await shortenIdleSession(h.options);
+  const before = h.calls.length;
+  await fixture.read("expired", { timeoutMS: 500 });
+  const sql = h.calls.slice(before).find((args) => args[0] === "exec");
+  const setting = sql.find((value) => value.startsWith("PGOPTIONS="));
+  assert.match(setting ?? "", /^PGOPTIONS=-c statement_timeout=\d+$/u);
+  const milliseconds = Number(setting.split("=").at(-1));
+  assert(milliseconds > 0 && milliseconds <= 500);
 });

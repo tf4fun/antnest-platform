@@ -13,6 +13,105 @@ const gateway = contract("edge-gateway/session-contract.json");
 const identity = contract("identity/identity-contract.json");
 const policy = () => contract("edge-gateway/resolve-cache-policy.json");
 
+test("outage ACP clock uses its own complete control probe and unchanged old process", () => {
+  const value = policy().admission.outage_owner_close.pre_restart_acp_clock;
+  assert(value, "outage must independently calibrate the old ACP process");
+  assert.deepEqual(value.probe, {
+    method: "GET",
+    route: "/status",
+    listener: "control",
+    status: 200,
+    complete_ready_body: true,
+    timing: "runner-monotonic-send-through-complete-response",
+    before_actual_restart: true,
+  });
+  assert.deepEqual(value.process_binding, [
+    "container-id",
+    "unchanged-started-at",
+    "host-name",
+    "process-pid",
+    "service-instance-id",
+  ]);
+  assert.equal(value.coarse_anchor, "verified-complete-same-generation-http");
+  assert.equal(
+    value.pairing,
+    "unique-candidate-intersecting-coarse-probe-window",
+  );
+  assert.equal(value.clock, "intersect-all-independent-same-process-bounds");
+});
+
+test("outage ACP clock requires stable complete raw inventory without relaxing closure", () => {
+  const value = policy().admission.outage_owner_close.pre_restart_acp_clock;
+  assert(value, "outage clock needs an explicit fail-closed evidence contract");
+  assert.deepEqual(value.inventory, {
+    service: "agent-acp-service",
+    operation: "HTTP GET /status",
+    fixed_query_window: true,
+    search_limit: 500,
+    reject_saturation_and_unread_pages: true,
+    stable_complete_rounds: 3,
+    raw_archive: "bidirectional-inventory-and-exact-snapshot-equality",
+    retain_all_candidates_and_exclusions: true,
+  });
+  assert.equal(value.missing_ambiguous_or_foreign_evidence, "reject");
+  assert.equal(value.nearest_timestamp_or_synthetic_parent, false);
+  assert.equal(value.entire_closure_interval_inside_observed_lifecycle, true);
+  assert.equal(value.preserve_original_diagnostics, true);
+});
+
+test("current cache completion joins full HTTP load and actual Bridge Runtime admission", () => {
+  const value = policy().admission.suite_completion;
+  assert(value, "policy 4 needs an explicit whole-suite completion contract");
+  assert.equal(value.policy_revision, 4);
+  assert.deepEqual(value.load, {
+    transport: "http",
+    requires_full_load_admission: true,
+    requires_owner_restored: true,
+  });
+  assert.deepEqual(value.outage, {
+    transport: "http-sse",
+    bind_business_to: "cancellation.business",
+    requires_same_run_and_runtime: true,
+    requires_runtime_quiescent_before_restart: true,
+    requires_pre_restart_acp_clock: true,
+    requires_all_owning_gates: [
+      "authority",
+      "http_rejections",
+      "recovery_runs",
+      "recovery_authority",
+      "recovery_http",
+      "feed",
+      "stream",
+      "cancellation",
+    ],
+  });
+});
+
+test("current cache completion retains recovery bindings and complete raw ownership", () => {
+  const value = policy().admission.suite_completion;
+  assert(value, "suite completion must bind independent owning reports");
+  assert.deepEqual(value.recovery, {
+    cases: ["logout", "password", "role", "deactivate"],
+    bind_business_to: "recovery_runs.business",
+    bind_runs_to: "recovery_runs.runs",
+    remote_sse_close_max_ms: 30000,
+  });
+  assert.deepEqual(value.raw_evidence, {
+    trace_inventory: "complete-unique-archived-closure",
+    error_claims: "exact-union-of-owning-gate-claims",
+    preserve_original_strict_result: true,
+  });
+});
+
+test("current cache completion requires cleanup and rejects partial or mixed revisions", () => {
+  const value = policy().admission.suite_completion;
+  assert(value, "suite completion needs fail-closed finalization");
+  assert.equal(value.cleanup, "verified");
+  assert.equal(value.unknown_or_mixed_revision, "reject");
+  assert.equal(value.policy_3, "historical-only");
+  assert.equal(value.missing_pending_or_failed_evidence, "reject");
+});
+
 test("Runtime outage cancellation binds the actual single model and original held bash", () => {
   const value = policy().admission.outage_runtime_cancellation;
   assert(value, "held Runtime cancellation needs its own evidence contract");

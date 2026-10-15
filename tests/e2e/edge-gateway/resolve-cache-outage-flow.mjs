@@ -8,18 +8,28 @@ import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
 import { member } from "../workspace-closeout/c4-setup.mjs";
 import { observedHeldRun } from "../workspace-closeout/browser-control.mjs";
-import { connectOwner } from "../lifecycle-closeout/acp.mjs";
+import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
+import { groupAlive, processStat } from "../workspace-closeout/process.mjs";
+import { cacheRuntimePhase } from "../workspace-closeout/cache-runtime-work.mjs";
+import {
+  createCacheRuntimeWork,
+  pollOutageObservation,
+} from "./resolve-cache-runtime-work.mjs";
+import {
+  bridgeRuntimeTurn,
+  hasBridgeRuntimeOutput,
+} from "./resolve-cache-bridge-outage.mjs";
 import { observeWorkspaceStream } from "./resolve-cache-stream.mjs";
 import { collectOutageTraceArchive } from "./resolve-cache-outage-collect.mjs";
 import { shortenIdleSession } from "./resolve-cache-expiry-fixture.mjs";
+import { createOutageRunSnapshotReader } from "./resolve-cache-run-snapshot.mjs";
+import { prepareOutageAdmissions } from "./resolve-cache-outage-preparation.mjs";
 import { verifyRecovery } from "./resolve-cache-recovery-flow.mjs";
+import { rebuildRecoveryAgent } from "./resolve-cache-rebuild.mjs";
+import { captureOutageACPClock } from "./resolve-cache-outage-clock.mjs";
 import {
   inspectOutageWindow,
   inspectFreshConsumerWindow,
-  outagePhase,
-  outageDelivery,
-  outageOutput,
-  outageTerminal,
 } from "./resolve-cache-outage.mjs";
 
 const admin = {
@@ -45,6 +55,8 @@ export async function verifyWarmOutage({
   const agentID = fixture.agentID,
     base = `/api/app/workspace/v1/agents/${encodeURIComponent(agentID)}`;
   const evidence = {
+    policy_revision: 4,
+    transport: "http-sse",
     project: config.project,
     agent_id: agentID,
     settings,
@@ -65,16 +77,16 @@ export async function verifyWarmOutage({
       credentialScopes.set(cookie, randomUUID());
     return credentialScopes.get(cookie);
   };
-  const connections = [];
   let stream,
-    owner,
+    runtimeWork,
+    activeClient,
+    activeSessionPath,
     identityID,
     stopped = false,
     rejectionWork,
     problem,
     result;
   const write = () => {
-    if (owner) evidence.wire = owner.wire;
     if (stream)
       evidence.stream = {
         ...stream.evidence,
@@ -137,12 +149,16 @@ export async function verifyWarmOutage({
       status: response.status,
       trace_id: response.headers.get("x-antnest-trace-id"),
       server_date: response.headers.get("date"),
+      cache_control: response.headers.get("cache-control"),
       set_cookie_count: response.headers.getSetCookie().length,
       body: text ? JSON.parse(text) : null,
     };
     assertSecretFree(JSON.stringify(row), secrets);
     evidence.http.push(row);
-    assert.equal(row.status, status, `${label}: HTTP ${row.status}`);
+    assert(
+      [status].flat().includes(row.status),
+      `${label}: HTTP ${row.status}`,
+    );
     assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
     return row;
   };
@@ -162,16 +178,8 @@ export async function verifyWarmOutage({
     requestSignal = signal,
     timeoutMS = 15000,
     intervalMS = 25,
-  ) => {
-    const deadline = performance.now() + timeoutMS;
-    for (;;) {
-      requestSignal.throwIfAborted();
-      const value = await check();
-      if (value) return value;
-      assert(performance.now() < deadline, `${label}: timed out`);
-      await delay(intervalMS, undefined, { signal: requestSignal });
-    }
-  };
+  ) =>
+    pollOutageObservation(check, label, requestSignal, timeoutMS, intervalMS);
   const model = async (requestSignal = signal) => {
     const response = await fetch(`${config.model}/status`, {
       signal: AbortSignal.any([requestSignal, AbortSignal.timeout(2000)]),
@@ -199,6 +207,7 @@ export async function verifyWarmOutage({
       id: row.Id,
       project: row.Config.Labels["com.docker.compose.project"],
       service: row.Config.Labels["com.docker.compose.service"],
+      host_name: row.Config.Hostname,
       running: row.State.Running,
       restarting: row.State.Restarting,
       exit_code: row.State.ExitCode,
@@ -215,34 +224,20 @@ export async function verifyWarmOutage({
     assert.match(identityID, /^[a-f0-9]{64}$/u);
     evidence.identity.before = await inspectIdentity();
     assert(evidence.identity.before.running);
-    const { client: prep } = await login(member, "prep-login");
-    const preparer = connectOwner(
-      config.gateway,
-      agentID,
-      prep.cookie,
-      signal,
-      { captureWire: true, injectTraceParent: false },
+    const { client: prep, response: prepSession } = await login(
+      member,
+      "prep-login",
     );
-    connections.push(preparer);
-    evidence.prep_wire = preparer.wire;
-    await preparer.initialize();
-    const sessionID = (
-      await preparer.request("new", { cwd: "/workspace", mcpServers: [] })
-    ).sessionId;
+    const created = await http(prep, `${base}/sessions`, {
+      body: {},
+      status: 201,
+      label: "prep-session-create",
+    });
+    const sessionID = created.body.sessionId;
     assert(sessionID);
     evidence.session_id = sessionID;
-    const prepared = await preparer.request(
-      "prompt",
-      {
-        sessionId: sessionID,
-        prompt: [{ type: "text", text: "c4-browser-write" }],
-      },
-      120000,
-    );
-    assert.equal(prepared.stopReason, "end_turn");
-    await preparer.closeAndWait();
-    evidence.prep_wire = preparer.wire;
     const sessionPath = `${base}/sessions/${encodeURIComponent(sessionID)}`;
+    activeSessionPath = sessionPath;
     const initial = await http(prep, `${sessionPath}/view`, {
       label: "prep-view",
     });
@@ -259,6 +254,23 @@ export async function verifyWarmOutage({
         ?.currentValue,
       "auto",
     );
+    // Setup created this second Agent before Gateway's short outage budget.
+    // Recheck it using the independent admin; the later warm member Cookie
+    // never visits this Agent before the actual cold-scope rejection.
+    const coldAgentID = fixture.coldAgentID;
+    assert(typeof coldAgentID === "string" && coldAgentID.length > 0);
+    assert.equal(fixture.coldAgentSetup?.agent_id, coldAgentID);
+    assert.equal(fixture.coldAgentSetup.owner_user_id, fixture.ownerID);
+    assert.equal(fixture.coldAgentSetup.request_timeout_ms, 150000);
+    evidence.cold_agent_setup = fixture.coldAgentSetup;
+    evidence.cold_agent = await waitForAgentReady(
+      () =>
+        fixture.json(`/api/admin/agents/${encodeURIComponent(coldAgentID)}`),
+      signal,
+    );
+    assert.equal(evidence.cold_agent.agent_id, coldAgentID);
+    assert.notEqual(coldAgentID, agentID);
+    assert.equal(evidence.cold_agent.owner_user_id, fixture.ownerID);
     // These new tokens have never resolved a profile. Prepare them before
     // starting the consumer key-cache budget, and keep their cookies separate.
     const { client: coldConsole } = await login(admin, "cold-console-login");
@@ -284,8 +296,18 @@ export async function verifyWarmOutage({
       const row = {
         service,
         before: await inspectOwned(id, service),
-        started_at: performance.now(),
       };
+      if (service === "agent-acp-service")
+        await captureOutageACPClock({
+          before: row.before,
+          inspectOwned,
+          environment: config.env,
+          signal,
+          record: (probe) => {
+            evidence.acp_clock_probe = probe;
+          },
+        });
+      row.started_at = performance.now();
       evidence.consumer_restarts.push(row);
       await docker(["restart", "--time", "1", id]);
       row.after = await poll(
@@ -298,79 +320,23 @@ export async function verifyWarmOutage({
         15000,
       );
     }
-    const { client, response: session } = await login(member, "warm-login");
-    const { client: administrator, response: adminSession } = await login(
-      admin,
-      "audit-login",
-    );
-    evidence.session_deadlines = {
-      owner: session.body,
-      admin: adminSession.body,
-    };
-    assert.equal(
-      adminSession.body.principal.organization_id,
-      session.body.principal.organization_id,
-    );
-    const acpStarted = evidence.consumer_restarts.find(
-      (row) => row.service === "agent-acp-service",
-    ).after.started_at;
-    const synchronization = await poll(
-      async () => {
-        const row = await http(
-          administrator,
-          "/api/admin/execution-synchronization",
-          {
-            label: "fresh-configuration-acknowledgement",
-          },
-        );
-        const value = row.body.synchronization;
-        return (
-          value &&
-          value.revision === value.applied_revision &&
-          Date.parse(value.applied_at) > Date.parse(acpStarted) &&
-          row
-        );
-      },
-      "new ACP process configuration acknowledgement",
+    const admission = await prepareOutageAdmissions({
+      evidence,
+      agentID,
+      ownerCredentials: member,
+      adminCredentials: admin,
+      prepPrincipal: prepSession.body.principal,
+      prepClient: prep,
+      login,
+      http,
+      poll,
+      docker,
+      config,
       signal,
-      10000,
-    );
-    const state = await http(
-      client,
-      `/api/app/agents/${encodeURIComponent(agentID)}/state`,
-      {
-        label: "fresh-consumer-agent-ready",
-      },
-    );
-    evidence.consumer_configuration = { synchronization, state };
-    assert.equal(state.body.agent_id, agentID);
-    assert.equal(state.body.access_allowed, true);
-    assert.equal(state.body.availability, "ready");
-    assert.equal(state.body.active_session_id, null);
-    assert.equal(state.body.unavailable_reason, null);
-    assert.match(state.body.configuration_revision ?? "", /^[a-f0-9]{64}$/u);
-    const ownerCookie = client.cookie;
-    owner = connectOwner(config.gateway, agentID, ownerCookie, signal, {
-      captureWire: true,
-      injectTraceParent: false,
     });
-    owner.wire.credential_scope = credentialScope(ownerCookie);
-    connections.push(owner);
-    const capabilities = { intentReceipt: 1, targetCancel: 1, deliveryMark: 1 };
-    const initialized = await owner.initialize({
-      "antnest.dev/bridge": capabilities,
-    });
-    for (const [key, value] of Object.entries(capabilities))
-      assert.equal(
-        initialized._meta?.["antnest.dev/bridge"]?.[key],
-        value,
-        `ACP capability ${key}`,
-      );
-    await owner.request("load", {
-      sessionId: sessionID,
-      cwd: "/workspace",
-      mcpServers: [],
-    });
+    const { client, session, administrator, adminSession } = admission;
+    runtimeWork = admission.runtimeWork;
+    activeClient = client;
     const view = await http(client, `${sessionPath}/view`, {
       label: "warm-workspace-view",
     });
@@ -379,19 +345,22 @@ export async function verifyWarmOutage({
     });
     await stream.wait((value) => value.selectedView?.sessionId === sessionID);
     const intentID = randomUUID();
-    await http(client, `${sessionPath}/prompts`, {
+    evidence.intent_id = intentID;
+    const promptBody = {
+      intentId: intentID,
+      expectedAppendVersion: view.body.appendVersion,
+      prompt: [{ type: "text", text: cacheRuntimePhase }],
+    };
+    evidence.prompt = await http(client, `${sessionPath}/prompts`, {
       label: "outage-prompt",
       status: 202,
       headers: {
         "If-Match": view.body.historyToken,
         "Idempotency-Key": intentID,
       },
-      body: {
-        intentId: intentID,
-        expectedAppendVersion: view.body.appendVersion,
-        prompt: [{ type: "text", text: outagePhase }],
-      },
+      body: promptBody,
     });
+    evidence.prompt.request = promptBody;
     const accepted = await stream.wait((value) =>
       value.operations.some(
         (operation) =>
@@ -407,15 +376,61 @@ export async function verifyWarmOutage({
     evidence.model_started = await poll(async () => {
       const value = await model();
       const rows = value.state.requests.filter(
-        (row) => row.phase === outagePhase,
+        (row) => row.phase === cacheRuntimePhase,
       );
       return (
         rows.length === 1 &&
         rows[0].stage === "tool" &&
-        value.state.pending.includes(outagePhase) &&
+        !value.state.pending.includes(cacheRuntimePhase) &&
         value
       );
-    }, "first model held");
+    }, "one model response dispatched real bash");
+    evidence.runtime.started = await poll(async (samplingSignal) => {
+      const value = await runtimeWork.observe({ signal: samplingSignal });
+      return (
+        value.work.pid &&
+        value.work.stat &&
+        value.work.effects === "started\n" &&
+        processStat(value.work.stat).state !== "Z" &&
+        groupAlive(value.work.processes, value.work.pgid) &&
+        value
+      );
+    }, "actual held Runtime process group");
+    const toolStarted = await stream.wait((value) => {
+      const turn = bridgeRuntimeTurn(value, evidence);
+      return (
+        turn?.outcome === "running" &&
+        turn.liveProcessDelta?.items.some(
+          ({ item }) => item.kind === "tool" && item.status === "running",
+        )
+      );
+    });
+    const tools = bridgeRuntimeTurn(
+      toolStarted.view,
+      evidence,
+    ).liveProcessDelta.items.filter(
+      ({ item }) => item.kind === "tool" && item.status === "running",
+    );
+    assert.equal(tools.length, 1);
+    evidence.runtime.tool_id = tools[0].item.id;
+    const runSnapshot = await createOutageRunSnapshotReader({
+      project: config.project,
+      compose,
+      docker,
+      signal,
+      scope: {
+        run_id: heldRun.runId,
+        session_id: sessionID,
+        agent_id: agentID,
+        principal_id: session.body.principal.user_id,
+        organization_id: session.body.principal.organization_id,
+        bridge_intent_id: intentID,
+        execution_revision: evidence.runtime.execution_revision,
+        runtime_revision: evidence.runtime.runtime_revision,
+        runtime_execution_id: evidence.runtime.runtime_execution_id,
+      },
+    });
+    evidence.run_storage = runSnapshot.evidence;
     const idleFixture = await shortenIdleSession({
       project: config.project,
       compose,
@@ -441,10 +456,11 @@ export async function verifyWarmOutage({
       label: "warm-console-audit",
     });
     assert.equal(prewarm.body.run_id, heldRun.runId);
-    await owner.request("list", {});
+    assert.equal(prewarm.body.state, "running");
+    evidence.audit_before = prewarm;
+    evidence.run_storage.before = await runSnapshot.read("before-stop");
     await http(client, `${sessionPath}/view`, { label: "warm-workspace-hit" });
     stream.assertOpen();
-    assert.equal(owner.closeCode, undefined);
     console.log(JSON.stringify({ phase: "outage", check: "stop-identity" }));
     const stopMark = mark();
     evidence.identity.stop_started_at = stopMark.at;
@@ -454,6 +470,13 @@ export async function verifyWarmOutage({
     evidence.identity.stopped = await inspectIdentity();
     assert.equal(evidence.identity.stopped.running, false);
     const windowSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+    const windowRemaining = () => {
+      windowSignal.throwIfAborted();
+      const remaining =
+        5000 - (performance.now() - evidence.identity.stopped.at);
+      assert(remaining > 0, "Identity outage business window timed out");
+      return remaining;
+    };
     const rejectionOptions = { status: 503, requestSignal: windowSignal };
     // Observe every branch immediately and join all of them, including on a
     // separate business failure. A fetch timeout never creates an HTTP row.
@@ -466,18 +489,16 @@ export async function verifyWarmOutage({
         ...rejectionOptions,
         label: "stopped-cold-workspace",
       }),
+      http(client, "/api/session", {
+        ...rejectionOptions,
+        label: "stopped-cold-profile",
+      }),
       http(
-        coldWorkspace,
-        `/api/app/agents/${encodeURIComponent(agentID)}/v1/acp`,
+        client,
+        `/api/app/workspace/v1/agents/${encodeURIComponent(coldAgentID)}/sessions`,
         {
           ...rejectionOptions,
-          label: "stopped-cold-acp",
-          body: {
-            jsonrpc: "2.0",
-            id: "cold-initialize",
-            method: "initialize",
-            params: { protocolVersion: 1, clientCapabilities: {} },
-          },
+          label: "stopped-cold-agent",
         },
       ),
       http(new GatewayClient(config.gateway), "/api/session/login", {
@@ -497,7 +518,10 @@ export async function verifyWarmOutage({
           { signal: windowSignal },
         );
         windowSignal.throwIfAborted();
-        const expired = await idleFixture.read("expired");
+        const expired = await idleFixture.read("expired", {
+          signal: windowSignal,
+          timeoutMS: windowRemaining(),
+        });
         assert(expired.expired && expired.remaining_ms <= 0);
         return http(shortSession, "/api/session", {
           ...rejectionOptions,
@@ -506,76 +530,68 @@ export async function verifyWarmOutage({
       })(),
     ]);
     const after = stream.records.length;
-    const started_at = performance.now();
-    const response = await fetch(`${config.model}/release/${outagePhase}`, {
-      method: "POST",
+    await runtimeWork.emit({
       signal: windowSignal,
+      timeoutMS: windowRemaining(),
     });
-    await response.arrayBuffer();
-    evidence.release = { started_at, ...mark(), status: response.status };
-    assert.equal(response.status, 200);
-    const delivered = await poll(
-      () => outageDelivery(owner.wire, sessionID, heldRun.runId, started_at),
-      "new WSS model output",
-      windowSignal,
-      5000,
-    );
-    await stream.wait(
-      (value) =>
-        outageOutput(
-          value,
-          agentID,
-          sessionID,
-          heldRun.runId,
-          delivered.sequence,
-        ),
-      {
-        after,
-        timeoutMS: Math.max(
-          1,
-          5000 - (performance.now() - evidence.identity.stopped.at),
-        ),
-      },
-    );
+    await stream.wait((value) => hasBridgeRuntimeOutput(value, evidence), {
+      after,
+      timeoutMS: Math.max(
+        1,
+        5000 - (performance.now() - evidence.identity.stopped.at),
+      ),
+    });
     stream.assertOpen();
-    assert.equal(owner.closeCode, undefined);
-    evidence.model_held = await poll(
-      async () => {
-        const value = await model(windowSignal);
-        const rows = value.state.requests.filter(
-          (row) => row.phase === outagePhase,
-        );
-        return (
-          rows.length === 2 &&
-          rows[1].stage === "reply" &&
-          value.state.pending.includes(outagePhase) &&
-          value
-        );
-      },
-      "second model held after real read",
-      windowSignal,
-      5000,
+    evidence.runtime.before_cancel = await runtimeWork.observe({
+      signal: windowSignal,
+      timeoutMS: windowRemaining(),
+    });
+    assert(
+      groupAlive(
+        evidence.runtime.before_cancel.work.processes,
+        evidence.runtime.started.work.pgid,
+      ),
+      "Runtime naturally finished before cancellation",
     );
-    evidence.cancel_at = performance.now();
-    await owner.cancel(sessionID, heldRun.runId);
-    evidence.model_cancelled = await poll(
-      async () => {
-        const value = await model(windowSignal);
+    assert.equal(
+      evidence.runtime.before_cancel.work.effects,
+      "started\nemitted\n",
+    );
+    const cancelBody = { expectedRunId: heldRun.runId };
+    evidence.cancel = await http(
+      client,
+      `${sessionPath}/operations/${encodeURIComponent(intentID)}/cancel`,
+      {
+        label: "outage-cancel",
+        body: cancelBody,
+        requestSignal: windowSignal,
+      },
+    );
+    evidence.cancel.request = cancelBody;
+    evidence.cancel_at = evidence.cancel.started_at;
+    evidence.runtime.quiescent = await poll(
+      async (samplingSignal) => {
+        const value = await runtimeWork.observe({
+          signal: samplingSignal,
+          timeoutMS: windowRemaining(),
+        });
         return (
-          value.state.requests.find(
-            (row) =>
-              row.phase === outagePhase &&
-              row.stage === "reply" &&
-              row.disconnected === true,
+          !groupAlive(
+            value.work.processes,
+            evidence.runtime.started.work.pgid,
           ) && value
         );
       },
-      "second model cancelled",
+      "cancelled Runtime whole process group exit",
       windowSignal,
       5000,
     );
+    evidence.model_cancelled = await model(windowSignal);
     await stream.wait(
-      (value) => outageTerminal(value, agentID, sessionID, heldRun.runId),
+      (value) =>
+        bridgeRuntimeTurn(value, evidence)?.outcome === "unknown" &&
+        value.availability === "offline" &&
+        value.activeSessionId === null,
       {
         after,
         timeoutMS: Math.max(
@@ -591,15 +607,19 @@ export async function verifyWarmOutage({
           requestSignal: windowSignal,
         });
         return (
-          value.body.state === "cancelled" &&
+          value.body.state === "unresolved" &&
           value.body.executor_state === "quiescent" &&
           value
         );
       },
-      "durable cancelled audit",
+      "durable cancelled Runtime audit",
       windowSignal,
       5000,
     );
+    evidence.run_storage.after = await runSnapshot.read("after-cancel", {
+      signal: windowSignal,
+      timeoutMS: windowRemaining(),
+    });
     const rejectionResults = await rejectionWork;
     const rejectionErrors = rejectionResults
       .filter((row) => row.status === "rejected")
@@ -621,7 +641,6 @@ export async function verifyWarmOutage({
     );
     evidence.identity.stopped_end = await inspectIdentity();
     stream.assertOpen();
-    assert.equal(owner.closeCode, undefined);
     evidence.identity.restart_started_at = performance.now();
     evidence.identity.restart_started_at_ms = Date.now();
     await docker(["start", identityID]);
@@ -655,6 +674,27 @@ export async function verifyWarmOutage({
       label: "recovered-expired-session",
       status: 401,
     });
+    await rebuildRecoveryAgent({
+      fixture,
+      administrator,
+      evidence,
+      signal,
+      http,
+      readStoredRun: (label, options) => runSnapshot.read(label, options),
+      observeRuntime: async (agent, options) => {
+        const recovered = await createCacheRuntimeWork({
+          docker,
+          config,
+          agent,
+          principal: session.body.principal,
+          readerPrincipal: adminSession.body.principal,
+          signal: options.signal,
+        });
+        const observation = await recovered.observe(options);
+        return { ...recovered.evidence, observation };
+      },
+    });
+    write();
     evidence.recovery_window = await verifyRecovery({
       config,
       fixture,
@@ -696,20 +736,50 @@ export async function verifyWarmOutage({
       } catch (error) {
         errors.push(error);
       }
-    for (const connection of connections)
-      try {
-        const closed = await connection.closeAndWait();
-        if (connection === owner) {
-          evidence.wss_close = closed;
-          if (evidence.identity.restart_started_at_ms)
-            assert(
-              closed.at >= evidence.identity.restart_started_at_ms,
-              "WSS closed before restart",
-            );
+    // A failed observation cannot leave accepted real work detached. Attempt
+    // the exact intent/Run cancellation and join its process group before UI
+    // drain. The outer runner still removes all owned Runtime resources when
+    // the global signal is aborted or this independent bounded cleanup fails.
+    if (runtimeWork && evidence.run_id && !evidence.runtime.quiescent) {
+      if (signal.aborted) evidence.runtime.cleanup_pending_outer_project = true;
+      else
+        try {
+          const cleanupSignal = AbortSignal.timeout(15000);
+          const cleanupDeadline = performance.now() + 15000;
+          const cleanupBody = { expectedRunId: evidence.run_id };
+          evidence.runtime.cleanup_cancel = await http(
+            activeClient,
+            `${activeSessionPath}/operations/${encodeURIComponent(evidence.intent_id)}/cancel`,
+            {
+              label: "cleanup-runtime-cancel",
+              body: cleanupBody,
+              requestSignal: cleanupSignal,
+            },
+          );
+          evidence.runtime.cleanup_cancel.request = cleanupBody;
+          evidence.runtime.cleanup_quiescent = await poll(
+            async (samplingSignal) => {
+              const value = await runtimeWork.observe({
+                signal: samplingSignal,
+                timeoutMS: Math.max(1, cleanupDeadline - performance.now()),
+              });
+              if (!evidence.runtime.started) return false;
+              return (
+                !groupAlive(
+                  value.work.processes,
+                  evidence.runtime.started.work.pgid,
+                ) && value
+              );
+            },
+            "failed outage Runtime cleanup",
+            cleanupSignal,
+            15000,
+          );
+        } catch (error) {
+          evidence.runtime.cleanup_pending_outer_project = true;
+          errors.push(error);
         }
-      } catch (error) {
-        errors.push(error);
-      }
+    }
     if (stopped && !signal.aborted)
       try {
         evidence.identity.cleanup_restart = mark();

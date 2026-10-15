@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertBridgeOutageCompletion } from "./resolve-cache-bridge-completion.mjs";
 import {
   inspectLoadOwnerDrain,
   inspectLoadOwnerRestoration,
@@ -391,8 +392,39 @@ export function assertLoadAdmission(load) {
   return load;
 }
 
+export function assertBridgeCacheCompletion(record) {
+  assert.equal(record?.suite, resolveCacheSuite);
+  assert.equal(record.policy_revision, 4);
+  assert.equal(record.status, "business_passed");
+  assert.equal(record.cleanup, "verified");
+  assert.equal(record.scenarios, 2);
+  assert.deepEqual(record.verified, [
+    "100-acp-load",
+    "identity-outage-recovery",
+    "trace-admission",
+  ]);
+  assert(empty(record.pending));
+  assert(Array.isArray(record.traces) && record.traces.length > 1);
+  const load = record.traces[0],
+    outage = record.warm_outage;
+  assertLoadAdmission(load);
+  assertOutageAdmission(outage.trace_evidence);
+  assertBridgeOutageCompletion(outage, record.traces.slice(1));
+  assert.equal(
+    record.strict_trace,
+    [load, outage.trace_evidence].some((r) => r.strict_trace === "failed")
+      ? "failed"
+      : "passed",
+  );
+  return record;
+}
+
 export function isResolveCacheCompletion(record) {
   try {
+    if (record?.policy_revision === 4) {
+      assertBridgeCacheCompletion(record);
+      return true;
+    }
     assert.equal(record?.suite, resolveCacheSuite);
     assert.equal(record.status, "business_passed");
     assert.equal(record.cleanup, "verified");

@@ -18,7 +18,8 @@ import {
   composeArgs,
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
-import { setup, until } from "../workspace-closeout/c4-setup.mjs";
+import { until } from "../workspace-closeout/c4-setup.mjs";
+import { setupResolveCache } from "./resolve-cache-setup.mjs";
 import { resolveObservationConfig } from "../observability/resolve-config.mjs";
 import { certificates } from "./tls-certificates.mjs";
 import { verifyResolveLoad } from "./resolve-cache-flow.mjs";
@@ -222,7 +223,8 @@ try {
     signal,
     30000,
   );
-  const fixture = await setup(config, signal);
+  const fixture = await setupResolveCache(config, signal);
+  save("cold-agent-setup.private.json", fixture.coldAgentSetup);
   // Provisioning keeps its normal budget. Recreate only the owned Gateway
   // after setup and before any load/warm-cache observations. The short request
   // budget lets real negative HTTP responses complete inside the 5s stop.
@@ -298,6 +300,7 @@ try {
   });
   report = {
     suite: resolveCacheSuite,
+    policy_revision: 4,
     status: "business_passed",
     scenarios: 2,
     verified: ["100-acp-load", "identity-outage-recovery", "trace-admission"],

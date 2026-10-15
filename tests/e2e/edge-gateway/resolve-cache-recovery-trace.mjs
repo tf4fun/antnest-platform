@@ -54,7 +54,17 @@ export function inspectRecoveryRunTraces(evidence, collection, secrets = []) {
       ),
       "held recovery Run unexpectedly executed a Tool",
     );
-    return { name: c.name, ...report };
+    return {
+      name: c.name,
+      ...report,
+      ...(evidence.policy_revision === 4
+        ? {
+            view_trace_id: c.initial_view.trace_id,
+            sse_trace_id: c.stream.trace_id,
+            session_create_trace_id: c.session_create.trace_id,
+          }
+        : {}),
+    };
   });
   return {
     status: "passed",
