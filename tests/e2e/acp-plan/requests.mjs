@@ -375,12 +375,13 @@ export function inspectCatalogRuntime(trace, tree, request, expected) {
   };
 }
 
-function privatePlanApplication(
+function privateSessionApplication(
   trace,
   tree,
   request,
   expected,
   timeObservations,
+  diagnosticOwner,
 ) {
   const input = expected.inputSessionID;
   if (["initialize", "session/new"].includes(expected.method))
@@ -425,7 +426,7 @@ function privatePlanApplication(
       request,
       application,
       timeObservations,
-      "plan-application-joined-by-rpc",
+      `${diagnosticOwner}-application-joined-by-rpc`,
     );
   assert.equal(tag(application, "span.kind"), "internal");
   for (const key of ["agent.id", "antnest.agent.id"])
@@ -446,12 +447,13 @@ function privatePlanApplication(
     );
 }
 
-export function inspectPlanRequestTrace(
+export function inspectSessionRequestTrace(
   trace,
   expected,
   secrets = [],
-  { strictPrivate = false } = {},
+  { strictPrivate = false, diagnosticOwner = "plan" } = {},
 ) {
+  assert(["plan", "files"].includes(diagnosticOwner));
   if (strictPrivate) {
     assert.equal(requestBoundaryKind(expected), "private-acp");
     assert.equal(
@@ -502,12 +504,13 @@ export function inspectPlanRequestTrace(
   });
   let denialProof;
   if (strictPrivate) {
-    privatePlanApplication(
+    privateSessionApplication(
       trace,
       tree,
       request,
       expected,
       catalog.timeObservations,
+      diagnosticOwner,
     );
     for (const span of expected.connectionTrace.spans)
       assertSessionSuccess(span);
@@ -582,13 +585,27 @@ export function inspectPlanRequestTrace(
           input_session_id: expected.inputSessionID,
           owned_error_spans: denialProof.records.map((record) => ({
             ...record,
-            reason: "plan-rejection",
+            reason: `${diagnosticOwner}-rejection`,
           })),
         }
       : {}),
     ...(expected.denial ? { denial: expected.denial } : {}),
     ...timingEvidence(trace, tree, request, forwarded),
   };
+}
+
+// Non-executing ACP methods share one wire contract across consumer suites.
+// Each owner keeps its own exact diagnostic inventory label.
+export function inspectPlanRequestTrace(
+  trace,
+  expected,
+  secrets = [],
+  options = {},
+) {
+  return inspectSessionRequestTrace(trace, expected, secrets, {
+    ...options,
+    diagnosticOwner: "plan",
+  });
 }
 
 export function inspectPrivatePlanRequestTrace(trace, expected, secrets = []) {

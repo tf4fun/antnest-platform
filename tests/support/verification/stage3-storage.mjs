@@ -20,7 +20,7 @@ const profiles = {
   AGENT_ACCESS: "identity-agent",
   ACP_CLOSEOUT: "acp-closeout-normal",
   TOOL_PROGRESS: null,
-  FILE_OBSERVATIONS: null,
+  FILE_OBSERVATIONS: "acp-files",
   STRUCTURED_PLAN: "acp-plan",
   SLASH_COMMANDS: "acp-commands",
   MULTIMODAL: null,

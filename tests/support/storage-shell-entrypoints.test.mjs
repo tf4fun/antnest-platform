@@ -18,6 +18,7 @@ import test from "node:test";
 import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
 import { commandHarnessArguments } from "../e2e/acp-commands/deployment.mjs";
 import { planHarnessArguments } from "../e2e/acp-plan/deployment.mjs";
+import { filesHarnessArguments } from "../e2e/acp-files/deployment.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const children = [
@@ -29,6 +30,7 @@ const children = [
   ["acp-session", "identity-session"],
   ["slash-commands", "acp-commands"],
   ["structured-plan", "acp-plan"],
+  ["file-observations", "acp-files"],
   ["identity-http", "identity-http"],
   ["agent-access", "identity-agent"],
   ["acp-closeout", "acp-closeout-normal"],
@@ -168,6 +170,7 @@ for (const [flag, directory] of [
   ["ACP_RESTART", "acp-restart"],
   ["ACP_SESSION", "identity-session"],
   ["SLASH_COMMANDS", "acp-commands"],
+  ["FILE_OBSERVATIONS", "acp-files"],
   ["IDENTITY_CORE", "identity-http"],
   ["IDENTITY_ACCESS", "identity-http"],
   ["AGENT_ACCESS", "identity-agent"],
@@ -284,7 +287,29 @@ test("containers writing private evidence run as the evidence owner", () => {
     plan.flatMap((arg, index) => (arg === "--user" ? [plan[index + 1]] : [])),
     [`${uid}:${gid}`],
   );
-  assert(commands.length + 3 >= 4, "evidence-writing clients not found");
+  assert.match(
+    readFileSync(join(directory, "e2e-file-observations.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-files\/deployment\.mjs" create-harness/u,
+  );
+  const files = filesHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `files-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:files-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(files.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    files.flatMap((arg, index) => (arg === "--user" ? [files[index + 1]] : [])),
+    [`${uid}:${gid}`],
+  );
+  assert(commands.length + 4 >= 5, "evidence-writing clients not found");
   for (const [name, command] of commands)
     assert(
       command.includes('--user "$(id -u):$(id -g)"') ||

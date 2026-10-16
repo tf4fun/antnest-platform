@@ -585,7 +585,6 @@ function tierC() {
       ["e2e-stage3-local", "base"],
       ...[
         "acp-restart",
-        "file-observations",
         "multimodal",
         "rpc-response-loss",
         "session-cost",
@@ -599,6 +598,7 @@ function tierC() {
         ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
         ["slash-commands", "ANTNEST_E2E_SLASH_COMMANDS=true"],
         ["structured-plan", "ANTNEST_E2E_STRUCTURED_PLAN=true"],
+        ["file-observations", "ANTNEST_E2E_FILE_OBSERVATIONS=true"],
         ["agent-access", "ANTNEST_E2E_AGENT_ACCESS=true"],
         ["identity-access", "ANTNEST_E2E_IDENTITY_ACCESS=true"],
         ["identity-core", "ANTNEST_E2E_IDENTITY_CORE=true"],

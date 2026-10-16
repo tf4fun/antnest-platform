@@ -383,6 +383,44 @@ test("structured plans select current service and preparer candidates without Se
   );
 });
 
+test("file observations select current service and preparer candidates without Session fault overlays", () => {
+  const selected = dispatch(
+    { file_observations: "true", tool_profile: "file-observations" },
+    "config",
+  );
+  assert.equal(
+    selected.files.at(-1),
+    "tests/integration/deployment/compose.admission.yaml",
+  );
+  assert(!selected.files.some((file) => file.includes("identity-closeout")));
+  const config = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ANTNEST_ADMISSION_TAG: "files-overlay-contract",
+  });
+  for (const name of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry",
+    "temporal",
+  ])
+    assert.equal(
+      config.services[name].image,
+      `antnest/${name}:files-overlay-contract`,
+    );
+  assert.equal(
+    config.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+    "antnest/runtime-controller:files-overlay-contract",
+  );
+});
+
 for (const [name, overlay, prefix] of [
   ["foundation", "lifecycle-closeout/foundation.compose.yaml", "LIFECYCLE"],
   ["c4", "workspace-closeout/c4.compose.yaml", "C4"],
