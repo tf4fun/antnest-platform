@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { hostname } from "node:os";
 import { ROOT_CONTEXT, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { core, node, resources, tracing } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
@@ -127,8 +128,18 @@ export function createPrivateACPTelemetry(endpoint) {
   );
   const exporter = ownedExporter(new OTLPTraceExporter({ url: url.href }));
   const active = new Set();
+  const host = hostname();
   const provider = new node.NodeTracerProvider({
-    resource: resources.resourceFromAttributes({ "service.name": service }),
+    resource: resources.defaultResource().merge(
+      resources.resourceFromAttributes({
+        "service.name": service,
+        "service.instance.id": `${host}:${process.pid}`,
+        "host.name": host,
+        "process.pid": process.pid,
+        "process.runtime.name": "nodejs",
+        "process.runtime.version": process.versions.node,
+      }),
+    ),
     sampler: new tracing.AlwaysOnSampler(),
     spanProcessors: [new tracing.SimpleSpanProcessor(exporter)],
   });

@@ -1,10 +1,12 @@
 import "./acp-client-dependencies.fixture.mjs";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { EventEmitter, once } from "node:events";
+import { hostname } from "node:os";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import { inspect } from "node:util";
+import { inspect, promisify } from "node:util";
 
 const moduleURL = new URL("./private-acp-telemetry.mjs", import.meta.url);
 const implementation = await import(moduleURL).catch((error) => {
@@ -65,6 +67,7 @@ function exported(records) {
         scope.spans.map((span) => ({
           span,
           service: attributes(resource.resource.attributes)["service.name"],
+          resource: attributes(resource.resource.attributes),
           attributes: attributes(span.attributes),
         })),
       ),
@@ -100,6 +103,88 @@ test("private CLIENT telemetry exports an actual root and preserves its exact wi
   assert.equal(values["antnest.protocol.version"], "v1");
   assert.equal(c.records[0].path, "/v1/traces");
   assert.equal(c.records[0].headers["content-type"], "application/json");
+});
+
+test("HTTP and WS CLIENT exports carry one actual process identity across providers", async (t) => {
+  const c = await collector(t);
+  const providers = [create(c.url), create(c.url)];
+  for (const provider of providers) t.after(() => provider.shutdown());
+  const clients = [
+    providers[0].startHTTP("GET"),
+    providers[0].startUpgrade(1),
+    providers[1].startUpgrade(2),
+  ];
+  clients[0].end(200, "eof");
+  clients[1].end(101);
+  clients[2].end(101);
+  for (const provider of providers) await provider.flush();
+  const records = exported(c.records);
+  assert.equal(records.length, 3);
+  const instances = new Set();
+  for (const client of clients) {
+    const record = records.find(
+      (item) => item.span.spanId === client.clientSpanID,
+    );
+    assert(record);
+    assert.equal(record.span.traceId, client.traceID);
+    assert.equal(record.resource["host.name"], hostname());
+    assert.equal(Number(record.resource["process.pid"]), process.pid);
+    assert.equal(record.resource["process.runtime.name"], "nodejs");
+    assert.equal(record.resource["telemetry.sdk.name"], "opentelemetry");
+    assert.equal(record.resource["telemetry.sdk.language"], "nodejs");
+    assert.equal(typeof record.resource["service.instance.id"], "string");
+    assert(record.resource["service.instance.id"].length > 0);
+    instances.add(record.resource["service.instance.id"]);
+  }
+  assert.equal(instances.size, 1);
+});
+
+test("a separate actual Node process exports a distinct CLIENT process identity", async (t) => {
+  const c = await collector(t);
+  const telemetry = create(c.url);
+  t.after(() => telemetry.shutdown());
+  const parent = telemetry.startHTTP("POST");
+  parent.end(200, "eof");
+  await telemetry.flush();
+  const dependencies = new URL(
+    "./acp-client-dependencies.fixture.mjs",
+    import.meta.url,
+  );
+  const code = `
+    import ${JSON.stringify(dependencies.href)};
+    const { createPrivateACPTelemetry } = await import(${JSON.stringify(moduleURL.href)});
+    const telemetry = createPrivateACPTelemetry(${JSON.stringify(c.url)});
+    const client = telemetry.startHTTP("GET");
+    client.end(200, "eof");
+    try { await telemetry.flush(); } finally { await telemetry.shutdown(); }
+    process.stdout.write(JSON.stringify({pid: process.pid, traceID: client.traceID, clientSpanID: client.clientSpanID}));
+  `;
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    ["--input-type=module", "-e", code],
+    { timeout: 10000, maxBuffer: 16384 },
+  );
+  const child = JSON.parse(stdout);
+  assert(Number.isSafeInteger(child.pid) && child.pid > 0);
+  assert.notEqual(child.pid, process.pid);
+  const records = exported(c.records);
+  assert.equal(records.length, 2);
+  const first = records.find(
+    (record) => record.span.spanId === parent.clientSpanID,
+  );
+  const second = records.find(
+    (record) => record.span.spanId === child.clientSpanID,
+  );
+  assert(first && second);
+  assert.equal(second.span.traceId, child.traceID);
+  assert.equal(first.resource["host.name"], hostname());
+  assert.equal(second.resource["host.name"], hostname());
+  assert.equal(Number(first.resource["process.pid"]), process.pid);
+  assert.equal(Number(second.resource["process.pid"]), child.pid);
+  assert.notEqual(
+    first.resource["service.instance.id"],
+    second.resource["service.instance.id"],
+  );
 });
 
 test("private CLIENT denial and interrupted upgrade remain exported failures", async (t) => {

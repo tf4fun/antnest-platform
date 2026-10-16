@@ -107,6 +107,12 @@ The private response's `X-Antnest-Trace-ID` is never used as proof. A client's
 `connectionTraceID` and `clientSpanID` identify its exported CLIENT context;
 the actual ACP SERVER span must still be discovered from raw evidence.
 
+Each exported CLIENT resource includes the actual host name, numeric PID,
+Node runtime and SDK metadata. Its service instance uses the same host/PID
+convention as ACP, so providers in one process share an identity and separate
+processes remain distinguishable. This does not establish a globally unique
+process generation across restarts or defer cross-process timing warnings.
+
 The private telemetry exporter admits at most 256 unfinished exports, including
 at most eight in-flight OTLP requests. It passes each admitted original SDK span
 to the SDK exporter once; overflow fails explicitly with the rejected Trace/Span

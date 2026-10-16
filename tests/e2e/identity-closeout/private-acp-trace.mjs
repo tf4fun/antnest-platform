@@ -16,6 +16,12 @@ import {
   selectRequestTrace,
 } from "../acp-plan/requests.mjs";
 import { tag } from "../observability/trace-tree.mjs";
+import {
+  canonicalCompleteSources,
+  createCompleteSourceReceipt,
+  isCompleteSourceFailure,
+  preserveCompleteSourceFailure,
+} from "../../support/complete-source-inspection.mjs";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const traceID = /^[a-f0-9]{32}$/u;
@@ -36,6 +42,7 @@ export async function collectPrivateACPTrace(
     request = fetch,
     wait = delay,
     attempts = 40,
+    sourceReceipt = false,
   } = {},
 ) {
   signal?.throwIfAborted();
@@ -48,6 +55,7 @@ export async function collectPrivateACPTrace(
     shellStoragePreflight(directory);
     assert.equal(typeof inspect, "function");
     assert.equal(typeof flush, "function");
+    assert.equal(typeof sourceReceipt, "boolean");
     assert(Number.isSafeInteger(attempts) && attempts >= 3 && attempts <= 40);
     assert.equal(expected.boundary, "private-acp");
     assert.equal(expected.transport, "websocket");
@@ -256,6 +264,14 @@ export async function collectPrivateACPTrace(
           status: "validated",
           stable_samples: stable,
           snapshot_sha256: hash(snapshot),
+          ...(sourceReceipt
+            ? {
+                source_trace_ids: sources
+                  .map((source) => source.traceID)
+                  .sort(),
+                source_snapshot_sha256: hash(canonicalCompleteSources(sources)),
+              }
+            : {}),
         });
         save();
         if (stable >= 3) {
@@ -290,6 +306,15 @@ export async function collectPrivateACPTrace(
                 : diagnostics.strict_trace,
             connection_span_id: bound.connectionSpanID,
             evidence_directory: archive,
+            ...(sourceReceipt
+              ? {
+                  complete_source_receipt: createCompleteSourceReceipt(
+                    "websocket",
+                    archive,
+                    manifest,
+                  ),
+                }
+              : {}),
           };
           writeEvidenceFile(archive, "connection.json", encode(connection));
           writeEvidenceFile(archive, "request.json", encode(trace));
@@ -313,6 +338,10 @@ export async function collectPrivateACPTrace(
         previous = undefined;
         save();
         signal?.throwIfAborted();
+        if (isCompleteSourceFailure(error)) {
+          preserveCompleteSourceFailure(error, archive);
+          throw error;
+        }
       }
       if (attempt < attempts) await wait(1000, undefined, { signal });
     }

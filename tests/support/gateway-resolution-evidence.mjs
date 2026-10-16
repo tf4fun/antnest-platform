@@ -12,6 +12,10 @@ import {
   writeEvidenceFile,
 } from "./storage.mjs";
 import { collectResolutionSources } from "./gateway-resolution-collect.mjs";
+import {
+  isCompleteSourceFailure,
+  preserveCompleteSourceFailure,
+} from "./complete-source-inspection.mjs";
 
 export function resolveTraceSources(trace, secrets, options = {}) {
   const traces = options.traces ?? new Map([[trace.traceID, trace]]);
@@ -253,6 +257,10 @@ export async function collectResolveTraceEvidence(
             lastError = new Error("Identity trace export did not converge");
           } catch (error) {
             signal?.throwIfAborted();
+            if (isCompleteSourceFailure(error)) {
+              preserveCompleteSourceFailure(error, directory);
+              throw error;
+            }
             lastError = error;
             previous = undefined;
             stable = 0;

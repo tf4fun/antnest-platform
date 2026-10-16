@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -207,6 +208,518 @@ function httpFixture(t, { rejection = false, mutate = () => {} } = {}) {
   };
 }
 
+function wsConsumerFixture(t, { mutate = () => {} } = {}) {
+  const f = privateBoundaryFixture(fixture("command"));
+  const directory = mkdtempSync(join(tmpdir(), "antnest-source-hook-ws-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const expected = { ...f.expected };
+  delete expected.connectionTrace;
+  delete expected.connectionSpanID;
+  let rounds = 0;
+  return {
+    ...f,
+    expected,
+    directory,
+    raw: new Map([
+      [f.trace.traceID, f.trace],
+      [f.connectionTrace.traceID, f.connectionTrace],
+    ]),
+    get rounds() {
+      return rounds;
+    },
+    options: {
+      directory,
+      flush: async () => {},
+      wait: async () => {},
+      attempts: 6,
+      request: async (address) => {
+        const path = new URL(address).pathname;
+        if (path === `/api/traces/${f.connectionTrace.traceID}`) rounds++;
+        const state = new Map([
+          [f.trace.traceID, structuredClone(f.trace)],
+          [f.connectionTrace.traceID, structuredClone(f.connectionTrace)],
+        ]);
+        mutate(state, rounds);
+        if (path === "/api/v3/trace-summaries")
+          return Response.json({ summaries: [{ traceId: f.trace.traceID }] });
+        const trace = state.get(path.split("/").at(-1));
+        return trace
+          ? Response.json({ data: [trace] })
+          : new Response("", { status: 404 });
+      },
+    },
+  };
+}
+
+const canonicalSources = (sources) =>
+  JSON.stringify(
+    sources
+      .toSorted((a, b) => a.traceID.localeCompare(b.traceID))
+      .map((source) => ({
+        ...source,
+        spans: source.spans.toSorted((a, b) =>
+          a.spanID.localeCompare(b.spanID),
+        ),
+      })),
+  );
+
+function assertCompleteReceipt(result, f, attempts) {
+  const receipt = result.complete_source_receipt;
+  assert(receipt, "complete source receipt required");
+  assert.equal(receipt.version, 1);
+  assert.equal(receipt.transport, f.expected.transport);
+  assert.equal(receipt.stable_samples, 3);
+  assert.deepEqual(receipt.source_trace_ids, [...f.raw.keys()].sort());
+  assert.deepEqual(
+    receipt.samples.map((sample) => sample.attempt),
+    attempts,
+  );
+  const manifest = parse(join(result.evidence_directory, "manifest.json"));
+  const files = [];
+  for (const sample of receipt.samples) {
+    assert.equal(sample.snapshot_sha256, receipt.samples[0].snapshot_sha256);
+    assert.equal(sample.source_snapshot_sha256, receipt.source_snapshot_sha256);
+    assert.deepEqual(sample.source_trace_ids, receipt.source_trace_ids);
+    assert.deepEqual(
+      sample.queries,
+      manifest.queries.filter((query) => query.attempt === sample.attempt),
+    );
+    assert.equal(
+      sample.queries.length,
+      f.expected.transport === "http" ? 4 : 3,
+    );
+    const sources = new Map();
+    for (const query of sample.queries) {
+      files.push(query.file);
+      const bytes = readFileSync(join(result.evidence_directory, query.file));
+      assert.equal(hash(bytes), query.sha256);
+      assert.equal(bytes.length, query.bytes);
+      assert.equal(query.status, 200);
+      assert.equal(query.body_complete, true);
+      assert.equal(query.outcome, "complete");
+      for (const trace of JSON.parse(bytes).data ?? [])
+        sources.set(trace.traceID, trace);
+    }
+    assert.deepEqual([...sources.keys()].sort(), receipt.source_trace_ids);
+    assert.equal(
+      hash(canonicalSources([...sources.values()])),
+      sample.source_snapshot_sha256,
+    );
+    if (f.expected.transport === "websocket") {
+      const snapshot = JSON.stringify({
+        candidates: [f.trace.traceID],
+        sources: JSON.parse(canonicalSources([...sources.values()])),
+      });
+      assert.equal(hash(snapshot), sample.snapshot_sha256);
+    }
+  }
+  assert.equal(new Set(files).size, files.length);
+}
+
+for (const [transport, makeFixture] of [
+  ["http", httpFixture],
+  ["websocket", wsConsumerFixture],
+]) {
+  test(`complete-source ${transport} hook sees all validated sources and reports in three actual samples`, async (t) => {
+    const f = makeFixture(t);
+    const calls = [];
+    const result = await collectConsumer(
+      "http://jaeger",
+      f.expected,
+      f.options,
+      {
+        ownedReasons: consumerReasons(),
+        inspect: consumerInspector,
+        inspectCompleteSources: (context) => {
+          assert.equal(context.expected.method, f.expected.method);
+          assert.deepEqual(
+            context.sources.map((source) => source.traceID).sort(),
+            [...f.raw.keys()].sort(),
+          );
+          assert.equal(context.reports.length, transport === "http" ? 4 : 1);
+          if (transport === "http")
+            assert.deepEqual(
+              context.reports.map((report) => report.trace_id).sort(),
+              [...f.raw.keys()].sort(),
+            );
+          calls.push(context);
+        },
+      },
+    );
+    assert.equal(calls.length, 3);
+    assert.equal(f.rounds, 3);
+    assertCompleteReceipt(result, f, [1, 2, 3]);
+    assert.equal(
+      result.strict_trace,
+      transport === "http" ? "failed" : "passed",
+    );
+    assert.deepEqual(
+      parse(join(result.evidence_directory, "result.json")),
+      JSON.parse(JSON.stringify(result)),
+    );
+  });
+
+  for (const kind of [
+    "throw once",
+    "return replacement",
+    "change source",
+    "remove source",
+    "change report",
+    "remove report",
+    "change claim",
+    "change expected",
+    "external source",
+    "external report",
+  ])
+    test(`complete-source ${transport} ${kind} fails immediately and cannot be retried clean`, async (t) => {
+      const f = makeFixture(t);
+      let calls = 0,
+        retainedTrace,
+        retainedReport;
+      await assert.rejects(
+        collectConsumer("http://jaeger", f.expected, f.options, {
+          ownedReasons: consumerReasons(),
+          inspect: (...args) => {
+            retainedTrace = args[0];
+            retainedReport = consumerInspector(...args);
+            return retainedReport;
+          },
+          inspectCompleteSources: ({ sources, reports, expected }) => {
+            calls++;
+            if (calls > 1) return;
+            if (kind === "throw once") throw new Error("PRIVATE-HOOK-CANARY");
+            if (kind === "return replacement")
+              return { strict_trace: "passed" };
+            if (kind === "change source")
+              sources.at(-1).spans[0].operationName = "rewritten";
+            if (kind === "remove source") sources.pop();
+            if (kind === "change report") reports[0].strict_trace = "rewritten";
+            if (kind === "remove report") reports.pop();
+            if (kind === "change claim")
+              reports[0].owned_error_spans.push({ span_id: "invented" });
+            if (kind === "change expected") expected.method = "invented";
+            if (kind === "external source")
+              retainedTrace.spans[0].operationName = "rewritten";
+            if (kind === "external report")
+              retainedReport.owned_error_spans.push({ span_id: "invented" });
+          },
+        }),
+        (error) => {
+          assert(!String(error).includes("PRIVATE-HOOK-CANARY"));
+          assert.equal(error.cause, undefined);
+          return true;
+        },
+      );
+      assert.equal(calls, 1);
+      assert.equal(f.rounds, 1);
+      const archive = join(f.directory, readdirSync(f.directory)[0]);
+      const manifest = parse(join(archive, "manifest.json"));
+      assert.equal(manifest.status, "failed");
+      assert(!readdirSync(archive).includes("result.json"));
+      if (kind === "throw once")
+        assert(
+          readFileSync(
+            join(archive, "complete-source-failure.private.txt"),
+            "utf8",
+          ).includes("PRIVATE-HOOK-CANARY"),
+        );
+      for (const query of manifest.queries)
+        assert.equal(
+          hash(readFileSync(join(archive, query.file))),
+          query.sha256,
+        );
+    });
+
+  test(`complete-source ${transport} refusal sees an auxiliary/connection warning before later clean samples`, async (t) => {
+    const f = makeFixture(t, {
+      mutate: (state, round) => {
+        if (round !== 1) return;
+        const related = [...state.values()].find(
+          (source) =>
+            source.traceID !== f.trace.traceID &&
+            (transport === "websocket" || source.traceID === "b".repeat(32)),
+        );
+        related.spans[1].warnings = ["original related-source warning"];
+      },
+    });
+    let calls = 0;
+    await assert.rejects(
+      collectConsumer("http://jaeger", f.expected, f.options, {
+        ownedReasons: consumerReasons(),
+        inspect: consumerInspector,
+        inspectCompleteSources: ({ sources }) => {
+          calls++;
+          assert(
+            sources.some(
+              (source) =>
+                source.traceID !== f.trace.traceID &&
+                source.spans.some((span) => span.warnings?.length),
+            ),
+          );
+          throw new Error("related source refused");
+        },
+      }),
+    );
+    assert.equal(calls, 1);
+    assert.equal(f.rounds, 1);
+  });
+
+  test(`complete-source ${transport} receipt retains the last three full changed samples`, async (t) => {
+    const f = makeFixture(t, {
+      mutate: (state, round) => {
+        if (round > 1)
+          [...state.values()].find(
+            (source) => source.traceID !== f.trace.traceID,
+          ).spans[1].warnings = ["late original warning"];
+      },
+    });
+    let calls = 0;
+    const result = await collectConsumer(
+      "http://jaeger",
+      f.expected,
+      f.options,
+      {
+        ownedReasons: consumerReasons(),
+        inspect: consumerInspector,
+        inspectCompleteSources: () => {
+          calls++;
+        },
+      },
+    );
+    assert.equal(calls, 4);
+    assert.equal(f.rounds, 4);
+    assert.equal(result.warning_count, 1);
+    assert.equal(result.strict_trace, "failed");
+    assertCompleteReceipt(result, f, [2, 3, 4]);
+  });
+
+  test(`complete-source ${transport} cannot splice validated samples across a missing main Trace`, async (t) => {
+    const f = makeFixture(t, {
+      mutate: (state, round) => {
+        if (round === 2) state.delete(f.trace.traceID);
+      },
+    });
+    let calls = 0;
+    const result = await collectConsumer(
+      "http://jaeger",
+      f.expected,
+      { ...f.options, attempts: 6 },
+      {
+        ownedReasons: consumerReasons(),
+        inspect: consumerInspector,
+        inspectCompleteSources: () => {
+          calls++;
+        },
+      },
+    );
+    assert.equal(f.rounds, 5);
+    assert.equal(calls, 4);
+    assertCompleteReceipt(result, f, [3, 4, 5]);
+  });
+
+  test(`complete-source ${transport} cancellation after the callback cannot publish a receipt`, async (t) => {
+    const f = makeFixture(t);
+    const controller = new AbortController();
+    const reason = new Error("collection canceled after callback");
+    let calls = 0;
+    await assert.rejects(
+      collectConsumer(
+        "http://jaeger",
+        f.expected,
+        { ...f.options, signal: controller.signal },
+        {
+          ownedReasons: consumerReasons(),
+          inspect: consumerInspector,
+          inspectCompleteSources: ({ signal }) => {
+            calls++;
+            assert.equal(signal, controller.signal);
+            controller.abort(reason);
+          },
+        },
+      ),
+      (error) => error === reason,
+    );
+    assert.equal(f.rounds, 1);
+    assert.equal(calls, 1);
+    const archive = join(f.directory, readdirSync(f.directory)[0]);
+    assert.equal(parse(join(archive, "manifest.json")).status, "failed");
+    assert(!readdirSync(archive).includes("result.json"));
+  });
+
+  test(`complete-source ${transport} raw archive changes invalidate the final receipt`, async (t) => {
+    const f = makeFixture(t);
+    let calls = 0;
+    await assert.rejects(
+      collectConsumer("http://jaeger", f.expected, f.options, {
+        ownedReasons: consumerReasons(),
+        inspect: consumerInspector,
+        inspectCompleteSources: () => {
+          if (++calls !== 1) return;
+          const archive = join(f.directory, readdirSync(f.directory)[0]);
+          const query = parse(join(archive, "manifest.json")).queries[0];
+          const file = join(archive, query.file);
+          writeFileSync(
+            file,
+            Buffer.concat([readFileSync(file), Buffer.from(" ")]),
+          );
+        },
+      }),
+    );
+    const archive = join(f.directory, readdirSync(f.directory)[0]);
+    assert.equal(parse(join(archive, "manifest.json")).status, "failed");
+    assert(!readdirSync(archive).includes("result.json"));
+  });
+
+  for (const target of ["raw", "expected"])
+    test(`complete-source ${transport} owning ${target} rewrite fails before the hook without retry`, async (t) => {
+      const f = makeFixture(t);
+      let calls = 0,
+        owningCalls = 0;
+      await assert.rejects(
+        collectConsumer("http://jaeger", f.expected, f.options, {
+          ownedReasons: consumerReasons(),
+          inspect: (...args) => {
+            const result = consumerInspector(...args);
+            if (++owningCalls === 1) {
+              if (target === "raw")
+                args[0].spans[0].operationName = "rewritten";
+              else args[1].method = "rewritten";
+            }
+            return result;
+          },
+          inspectCompleteSources: () => {
+            calls++;
+          },
+        }),
+      );
+      assert.equal(calls, 0);
+      assert.equal(owningCalls, 1);
+      assert.equal(f.rounds, 1);
+    });
+
+  for (const container of [Map, Set, Date])
+    test(`complete-source ${transport} rejects non-JSON ${container.name} reports before the readonly hook`, async (t) => {
+      const f = makeFixture(t);
+      let calls = 0;
+      await assert.rejects(
+        collectConsumer("http://jaeger", f.expected, f.options, {
+          ownedReasons: consumerReasons(),
+          inspect: (...args) => ({
+            ...consumerInspector(...args),
+            extra: new container(),
+          }),
+          inspectCompleteSources: () => {
+            calls++;
+          },
+        }),
+      );
+      assert.equal(calls, 0);
+      assert.equal(f.rounds, 1);
+    });
+
+  for (const target of ["raw", "timing"])
+    test(`complete-source ${transport} delayed ${target} mutation cannot change checked snapshots`, async (t) => {
+      const f = makeFixture(t);
+      let calls = 0,
+        retainedTrace,
+        retainedReport,
+        checkedTiming,
+        checkedOffsets,
+        mutated = false;
+      const result = await collectConsumer(
+        "http://jaeger",
+        f.expected,
+        f.options,
+        {
+          ownedReasons: consumerReasons(),
+          inspect: (...args) => {
+            retainedTrace = args[0];
+            retainedReport = consumerInspector(...args);
+            retainedReport.time_observations ??= [];
+            checkedTiming = structuredClone(retainedReport.time_observations);
+            checkedOffsets = structuredClone(retainedReport.timing);
+            return retainedReport;
+          },
+          inspectCompleteSources: () => {
+            if (++calls !== 3) return;
+            queueMicrotask(() =>
+              queueMicrotask(() =>
+                queueMicrotask(() => {
+                  if (target === "raw")
+                    retainedTrace.spans[0].warnings = [
+                      "delayed rewritten warning",
+                    ];
+                  else {
+                    retainedReport.time_observations.push({ invented: true });
+                    const field = Object.keys(retainedReport.timing)[0];
+                    assert(field);
+                    retainedReport.timing[field] += 1000;
+                  }
+                  mutated = true;
+                }),
+              ),
+            );
+          },
+        },
+      );
+      assert.equal(mutated, true);
+      assert.equal(f.rounds, 3);
+      assert.equal(calls, 3);
+      assert.equal(result.warning_count, 0);
+      assert(!result.time_observations.some((item) => item.invented));
+      assert.deepEqual(result.timing, checkedOffsets);
+      assert.deepEqual(
+        result.time_observations.slice(0, checkedTiming.length),
+        checkedTiming,
+      );
+      assertCompleteReceipt(result, f, [1, 2, 3]);
+      const saved = parse(join(result.evidence_directory, "result.json"));
+      assert.deepEqual(saved, JSON.parse(JSON.stringify(result)));
+    });
+}
+
+test("complete-source HTTP delayed report mutation cannot reassign an admitted rejection", async (t) => {
+  const f = httpFixture(t, { rejection: true });
+  let calls = 0,
+    retainedClaim,
+    checkedClaim,
+    mutated = false;
+  const result = await collectConsumer("http://jaeger", f.expected, f.options, {
+    ownedReasons: consumerReasons(),
+    inspect: (...args) => {
+      const report = consumerInspector(...args);
+      retainedClaim = report.owned_error_spans.find(
+        (claim) => claim.reason === "consumer-rejection",
+      );
+      assert(retainedClaim);
+      checkedClaim = structuredClone(retainedClaim);
+      return report;
+    },
+    inspectCompleteSources: () => {
+      if (++calls !== 3) return;
+      queueMicrotask(() =>
+        queueMicrotask(() =>
+          queueMicrotask(() => {
+            retainedClaim.reason = "private-http-sse-close";
+            mutated = true;
+          }),
+        ),
+      );
+    },
+  });
+  assert.equal(mutated, true);
+  assert.equal(f.rounds, 3);
+  assert.deepEqual(
+    result.owned_error_spans.find(
+      (claim) =>
+        claim.trace_id === checkedClaim.trace_id &&
+        claim.span_id === checkedClaim.span_id,
+    ),
+    checkedClaim,
+  );
+  assertCompleteReceipt(result, f, [1, 2, 3]);
+});
+
 for (const rejection of [false, true])
   test(`generic HTTP collection uses the owner only for the main request and retains raw inventory; rejection=${rejection}`, async (t) => {
     const f = httpFixture(t, { rejection });
@@ -325,6 +838,7 @@ for (const invalid of [
       },
     });
     const calls = [];
+    let sourceCalls = 0;
     await assert.rejects(
       collectConsumer("http://jaeger", f.expected, f.options, {
         ownedReasons: consumerReasons(),
@@ -332,12 +846,16 @@ for (const invalid of [
           calls.push(args[1].method);
           return consumerInspector(...args);
         },
+        inspectCompleteSources: () => {
+          sourceCalls++;
+        },
       }),
     );
     assert(
       !calls.includes("initialize"),
       "auxiliary initialize reached consumer callback",
     );
+    assert.equal(sourceCalls, 0);
     const [archive] = readdirSync(f.directory);
     const manifest = parse(join(f.directory, archive, "manifest.json"));
     assert.equal(manifest.status, "failed");

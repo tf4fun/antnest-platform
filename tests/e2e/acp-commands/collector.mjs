@@ -20,6 +20,15 @@ import {
 } from "../observability/private-acp-inventory.mjs";
 import { traceTopology, tag } from "../observability/trace-tree.mjs";
 import {
+  canonicalCompleteSources,
+  assertCompleteSourceInputs,
+  assertCompleteSourceSnapshot,
+  checkCompleteSources,
+  createCompleteSourceReceipt,
+  isCompleteSourceFailure,
+  preserveCompleteSourceFailure,
+} from "../../support/complete-source-inspection.mjs";
+import {
   inspectCommandHTTPClosure,
   inspectPrivateCommandHTTPBoundary,
   inspectPrivateCommandTrace,
@@ -288,9 +297,15 @@ export async function collectPrivateACPConsumerTrace(
     wait = delay,
     attempts = 40,
   } = {},
-  { inspect, ownedReasons: reasonPolicy } = {},
+  { inspect, ownedReasons: reasonPolicy, inspectCompleteSources } = {},
 ) {
   assert.equal(typeof inspect, "function");
+  assert(
+    inspectCompleteSources === undefined ||
+      typeof inspectCompleteSources === "function",
+  );
+  const sourceReceipt = inspectCompleteSources !== undefined;
+  if (sourceReceipt) expected = structuredClone(expected);
   assert(
     reasonPolicy instanceof Set,
     "consumer diagnostic reason Set required",
@@ -312,15 +327,46 @@ export async function collectPrivateACPConsumerTrace(
       request,
       wait,
       attempts,
+      sourceReceipt,
       inspect: async (trace, bound) => {
-        const result = await inspectMain(trace, bound);
+        const originals = [trace, bound.connectionTrace];
+        if (sourceReceipt)
+          ({ trace, bound } = structuredClone({ trace, bound }));
+        const sources = [trace, bound.connectionTrace];
+        const before = JSON.stringify({ sources, bound });
+        let result;
+        try {
+          result = await inspectMain(trace, bound);
+        } finally {
+          if (sourceReceipt)
+            assertCompleteSourceInputs({ sources, bound }, before);
+        }
+        const evidence = inventory(sources, [result], reasons);
+        assert.equal(
+          JSON.stringify({ sources, bound }),
+          before,
+          "command inspector modified raw or expectation",
+        );
+        if (sourceReceipt) {
+          const checked = await checkCompleteSources(inspectCompleteSources, {
+            expected: bound,
+            sources,
+            reports: [result],
+            signal,
+          });
+          assertCompleteSourceSnapshot(checked.sources, originals);
+          return {
+            ...checked.reports[0],
+            ...inventory(checked.sources, checked.reports, reasons),
+          };
+        }
         return {
           ...result,
-          ...inventory([trace, bound.connectionTrace], [result], reasons),
+          ...evidence,
         };
       },
     });
-  let archive, manifest;
+  let archive, manifest, currentAttempt;
   const save = () =>
     writeEvidenceFile(archive, "manifest.json", encode(manifest));
   try {
@@ -351,11 +397,31 @@ export async function collectPrivateACPConsumerTrace(
       status: "collecting",
       trace_id: expected.traceID,
       queries: [],
+      ...(sourceReceipt ? { attempts: [] } : {}),
     };
     save();
+    const primaryURL = new URL(
+      `${endpoint.href.replace(/\/$/, "")}/api/traces/${expected.traceID}`,
+    ).href;
     const archivedRequest = async (address, options = {}) => {
+      if (
+        sourceReceipt &&
+        new URL(address).href === primaryURL &&
+        (options.method ?? "GET") === "GET"
+      ) {
+        if (currentAttempt?.status === "collecting")
+          currentAttempt.status = "failed";
+        currentAttempt = {
+          attempt: manifest.attempts.length + 1,
+          status: "collecting",
+        };
+        manifest.attempts.push(currentAttempt);
+      }
+      if (sourceReceipt)
+        assert(currentAttempt, "source query outside a collection attempt");
       const file = `query-${String(manifest.queries.length + 1).padStart(4, "0")}.raw`;
       const query = {
+        ...(sourceReceipt ? { attempt: currentAttempt.attempt } : {}),
         url: String(address),
         file,
         status: null,
@@ -426,20 +492,35 @@ export async function collectPrivateACPConsumerTrace(
         directory: archive,
         signal,
         inspect: async (trace, item, _secrets, collection) => {
+          const originals = sourceReceipt
+            ? resolveTraceSources(trace, secrets, collection)
+            : undefined;
+          if (sourceReceipt)
+            ({ trace, item, collection } = structuredClone({
+              trace,
+              item,
+              collection,
+            }));
           const sources = resolveTraceSources(trace, secrets, collection);
           assert.equal(
             sources.length,
             1 + auxiliary.length,
             "unexpected command source Trace",
           );
-          const before = JSON.stringify(sources);
-          const main = await inspectMain(trace, item);
+          const before = JSON.stringify({ sources, item });
+          let main;
+          try {
+            main = await inspectMain(trace, item);
+          } finally {
+            if (sourceReceipt)
+              assertCompleteSourceInputs({ sources, item }, before);
+          }
           const reference = inspectPrivateCommandHTTPBoundary(
             trace,
             item,
             secrets,
           ).http;
-          const extra = auxiliary.map((receipt) =>
+          let extra = auxiliary.map((receipt) =>
             inspectAuxiliary(
               collection.traces.get(receipt.traceID),
               receipt,
@@ -450,12 +531,34 @@ export async function collectPrivateACPConsumerTrace(
               requests,
             ),
           );
-          const evidence = inventory(sources, [main, ...extra], reasons);
+          let evidence = inventory(sources, [main, ...extra], reasons);
           assert.equal(
-            JSON.stringify(sources),
+            JSON.stringify({ sources, item }),
             before,
-            "command inspector modified raw",
+            "command inspector modified raw or expectation",
           );
+          if (sourceReceipt) {
+            const checked = await checkCompleteSources(inspectCompleteSources, {
+              expected: item,
+              sources,
+              reports: [main, ...extra],
+              signal,
+            });
+            assertCompleteSourceSnapshot(checked.sources, originals);
+            [main, ...extra] = checked.reports;
+            evidence = inventory(checked.sources, checked.reports, reasons);
+            assert.equal(currentAttempt.status, "collecting");
+            const snapshot = hash(canonicalCompleteSources(checked.sources));
+            Object.assign(currentAttempt, {
+              status: "validated",
+              source_trace_ids: checked.sources
+                .map((source) => source.traceID)
+                .sort(),
+              source_snapshot_sha256: snapshot,
+              snapshot_sha256: snapshot,
+            });
+            save();
+          }
           return {
             ...main,
             ...evidence,
@@ -477,18 +580,29 @@ export async function collectPrivateACPConsumerTrace(
       },
     );
     signal?.throwIfAborted();
+    if (sourceReceipt)
+      result.complete_source_receipt = createCompleteSourceReceipt(
+        "http",
+        archive,
+        manifest,
+      );
     result.evidence_directory = archive;
     writeEvidenceFile(archive, "result.json", encode(result));
     manifest.status = "collected";
     save();
     return result;
-  } catch {
+  } catch (error) {
     if (manifest) {
+      if (currentAttempt) currentAttempt.status = "failed";
       manifest.status = "failed";
       manifest.aborted = signal?.aborted === true;
       save();
     }
     signal?.throwIfAborted();
+    if (isCompleteSourceFailure(error))
+      preserveCompleteSourceFailure(error, archive);
+    // Raw assertion causes can include secrets; only private evidence retains them.
+    // eslint-disable-next-line preserve-caught-error
     throw new Error("private command HTTP trace collection failed");
   }
 }

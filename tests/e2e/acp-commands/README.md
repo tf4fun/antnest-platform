@@ -113,6 +113,24 @@ inspectors, and inventories and strict counts always come from the collected raw
 evidence. `collectPrivateCommandTrace` keeps the command policy fixed; transport
 options cannot replace its inspector or expand its allowed reasons.
 
+An optional `inspectCompleteSources` policy hook runs only after the owning
+request, fixed transport checks and complete error inventory have passed. It
+receives readonly JSON snapshots of `expected`, all `sources`, all owning
+`reports`, and the original cancellation `signal`. WebSocket includes the
+request and connection; HTTP includes the request, initialization, SSE and
+DELETE. The hook may return only `undefined`. Refusal, input rewriting or a
+damaged archive fails immediately; convergence retries cannot clear it. The
+owning inspector receives isolated inputs, and subsequent output uses the
+checked snapshots so retained references cannot change claims or timing later.
+
+Successful hook-enabled collection adds a `complete_source_receipt` for the
+actual last three consecutive stable samples. It binds full source snapshots
+and each archived query's bytes and SHA-256; WebSocket also retains its complete
+candidate snapshot. A missing sample resets convergence. The receipt describes
+collection evidence and does not itself grant diagnostic admission or clear raw
+`strict_trace=failed`. Consumers must bind their own policy decision to that
+receipt and final result. Consumers without the hook keep their existing output.
+
 The runner exits 0 for strict success, 2 when complete business/topology checks
 pass with only reviewed strict findings, and 1 for failures. CI runs the Stage 3
 recipe directly so exit 2 retains the existing warning classification; Make can
