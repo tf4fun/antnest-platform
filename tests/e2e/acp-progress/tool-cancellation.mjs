@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inspectToolProgressOutput } from "./tool-progress-output.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { inspectRuntimeToolInventory } from "../observability/runtime-tool-inventory.mjs";
 import {
@@ -527,12 +528,14 @@ export function inspectProgressCancellation(
       toolCompleted.timestamp <= operationError.timestamp,
     "cancellation classified before its actual Runtime child completed",
   );
+  const output = inspectToolProgressOutput(trace, owner, identity);
   for (const span of trace.spans)
     if (tree.chain(span).includes(owner))
       assert(
-        checkedSpans.has(span),
+        checkedSpans.has(span) || output.spans.has(span),
         "unaccounted work below cancellation owner",
       );
+  workTimeObservations.push(...output.timeObservations);
   assert.equal(proof.neutralDiagnostics.length, 0);
   return {
     ...proof,

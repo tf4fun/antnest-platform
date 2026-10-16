@@ -22,6 +22,7 @@ import {
   runtimeToolEvidence,
 } from "../observability/runtime-tool-evidence.mjs";
 import { inspectProgressCancellation } from "./tool-cancellation.mjs";
+import { inspectToolProgressOutput } from "./tool-progress-output.mjs";
 
 function errorStatus(span) {
   const status = tag(span, "otel.status_code");
@@ -238,9 +239,14 @@ function parsedTool(trace, owner, identity, kind, ending, toolName) {
     tool,
     work,
   ]);
+  const output = inspectToolProgressOutput(trace, owner, identity);
   for (const span of trace.spans)
     if (tree.chain(span).includes(owner))
-      assert(checkedSpans.has(span), "unaccounted Progress Tool descendant");
+      assert(
+        checkedSpans.has(span) || output.spans.has(span),
+        "unaccounted Progress Tool descendant",
+      );
+  workTimeObservations.push(...output.timeObservations);
   return { ...proof, tool, work, checkedSpans, workTimeObservations };
 }
 
@@ -365,10 +371,12 @@ export function inspectTrace(trace, expected, secrets = [], requests = []) {
   const information = inspectRunInformationReadsWithToolCalls(
     trace,
     { request, run, closedBeforeResponse: closed },
-    (raw, owner, identity) =>
-      ending === "cancel"
-        ? inspectProgressCancellation(raw, owner, identity, { kind, toolName })
-        : parsedTool(raw, owner, identity, kind, ending, toolName),
+    (raw, owner, identity) => {
+      const bound = { ...identity, sessionId: expected.sessionId };
+      return ending === "cancel"
+        ? inspectProgressCancellation(raw, owner, bound, { kind, toolName })
+        : parsedTool(raw, owner, bound, kind, ending, toolName);
+    },
   );
   const callProof = one(
     information.toolLifecycles.filter((proof) => proof.owner === call),

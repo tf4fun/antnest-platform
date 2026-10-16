@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectTrace } from "./trace.mjs";
-import { progressTraceFixture as fixture } from "./trace.fixture.mjs";
+import {
+  progressTraceFixture as fixture,
+  addProgressOutput,
+} from "./trace.fixture.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { privateACPDiagnosticInventory } from "../observability/private-acp-inventory.mjs";
 const inspect = (f) =>
@@ -13,6 +16,179 @@ const phases = [1, 2].flatMap((version) =>
     ),
   ),
 );
+for (const phase of phases)
+  test(`${phase} accounts for successful ACP progress persistence and output under the Tool`, () => {
+    const f = fixture(phase);
+    const branches = addProgressOutput(f);
+    const before = structuredClone(f.trace);
+    const result = inspect(f);
+    assert.deepEqual(f.trace, before);
+    assert(
+      !result.owned_error_spans.some((claim) =>
+        branches.spans.some((span) => span.spanID === claim.span_id),
+      ),
+    );
+  });
+for (const phase of ["v1-bash-success", "v2-managed-cancel"])
+  for (const [name, mutate] of [
+    ["failed progress SQL", (f, b) => f.set(b.statements[1], "error", true)],
+    [
+      "foreign output Session",
+      (f, b) => f.set(b.output, "antnest.session.id", "foreign"),
+    ],
+    [
+      "foreign output Agent",
+      (f, b) => f.set(b.output, "antnest.agent.id", "foreign"),
+    ],
+    [
+      "contradictory Agent alias",
+      (f, b) => f.set(b.output, "agent.id", "foreign"),
+    ],
+    [
+      "contradictory Session alias",
+      (f, b) => f.set(b.output, "session.id", "foreign"),
+    ],
+    [
+      "COMMIT starts before BEGIN",
+      (_f, b) => {
+        [b.statements[0].startTime, b.statements.at(-1).startTime] = [
+          b.statements.at(-1).startTime,
+          b.statements[0].startTime,
+        ];
+      },
+    ],
+    [
+      "configuration starts before authorization",
+      (_f, b) => {
+        [b.reads[0].startTime, b.reads.at(-1).startTime] = [
+          b.reads.at(-1).startTime,
+          b.reads[0].startTime,
+        ];
+      },
+    ],
+    [
+      "rolled-back persistence",
+      (f, b) =>
+        f.set(b.transaction, "antnest.transaction.outcome", "rolled_back"),
+    ],
+    [
+      "missing COMMIT",
+      (f, b) => {
+        f.trace.spans = f.trace.spans.filter((s) => s !== b.statements.at(-1));
+      },
+    ],
+    [
+      "foreign SQL database",
+      (f, b) => f.set(b.reads[0], "db.namespace", "foreign"),
+    ],
+    [
+      "unrelated SELECT",
+      (f, b) => f.set(b.reads[0], "db.query.text", "SELECT * FROM unrelated"),
+    ],
+    [
+      "missing output query",
+      (f, b) => {
+        f.trace.spans = f.trace.spans.filter((s) => s !== b.reads[0]);
+      },
+    ],
+    [
+      "extra successful query",
+      (f, b) => {
+        f.trace.spans.push({
+          ...structuredClone(b.reads[0]),
+          spanID: "extra-progress-query",
+        });
+      },
+    ],
+    [
+      "wrong progress INSERT",
+      (f, b) =>
+        f.set(
+          b.statements[5],
+          "db.query.text",
+          "INSERT INTO unrelated VALUES ($1)",
+        ),
+    ],
+    [
+      "foreign output process",
+      (f, b) => {
+        b.output.processID = f.tool.processID;
+      },
+    ],
+    [
+      "unknown Tool branch",
+      (_f, b) => {
+        b.output.operationName = "unexpected.work";
+      },
+    ],
+    [
+      "hidden work below SQL",
+      (_f, b) => {
+        b.reads[1].references[0].spanID = b.reads[0].spanID;
+      },
+    ],
+    [
+      "nested protocol request",
+      (f, b) => f.set(b.reads[0], "rpc.method", "tools/call"),
+    ],
+    [
+      "SQL outlives its awaited output parent",
+      (f, b) => {
+        b.reads[0].duration =
+          b.output.startTime + b.output.duration - b.reads[0].startTime + 2000;
+      },
+    ],
+  ])
+    test(`${phase} rejects ${name} without borrowing Tool error ownership`, () => {
+      const f = fixture(phase),
+        b = addProgressOutput(f);
+      inspect(f);
+      mutate(f, b);
+      assert.throws(() => inspect(f));
+    });
+test("multiple progress writes and merged output do not require one output for each transaction", () => {
+  const f = fixture("v2-managed-cancel");
+  addProgressOutput(f);
+  const merged = addProgressOutput(f);
+  f.trace.spans = f.trace.spans.filter(
+    (span) => span !== merged.output && !merged.reads.includes(span),
+  );
+  inspect(f);
+});
+test("original SQL enumeration order is independent of ordered execution start times", () => {
+  const f = fixture(),
+    branches = addProgressOutput(f);
+  f.set(branches.output, "agent.id", f.expected.agentId);
+  f.set(branches.output, "session.id", f.expected.sessionId);
+  f.trace.spans.reverse();
+  inspect(f);
+});
+test("queries with the same millisecond start preserve their original precision", () => {
+  const f = fixture(),
+    branches = addProgressOutput(f);
+  for (const span of branches.statements)
+    span.startTime = branches.transaction.startTime + 1;
+  for (const span of branches.reads)
+    span.startTime = branches.output.startTime + 1;
+  inspect(f);
+});
+for (const name of ["output", "transaction"])
+  test(`asynchronous progress ${name} retains an original late warning without a Tool timing exemption`, () => {
+    const f = fixture(),
+      branches = addProgressOutput(f),
+      branch = branches[name];
+    branch.duration =
+      f.call.startTime + f.call.duration - branch.startTime + 2000;
+    branch.warnings = ["original asynchronous progress endpoint warning"];
+    const before = structuredClone(f.trace),
+      result = inspect(f);
+    assert.equal(result.strict_trace, "failed");
+    assert(result.warnings.includes(branch.warnings[0]));
+    assert(
+      !result.time_observations.some((row) => row.span_id === branch.spanID),
+    );
+    assert.deepEqual(f.trace, before);
+  });
 for (const phase of phases)
   test(`private collector accounts for every original ${phase} error`, () => {
     const f = fixture(phase);

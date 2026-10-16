@@ -144,6 +144,17 @@ cancellation and two for every completed path. Preparation, complete Runtime
 HTTP inventories, one Tool dispatch and committed Run persistence are checked.
 No preview payloads or credentials may appear in either raw Trace.
 
+Tool progress callbacks also produce ACP-owned persistence and Session output
+branches beneath the original MCP call. Both parsed and cancelled Tool checks
+require the same ACP process and Run/Session identity, the exact eight-statement
+committed progress transaction and the four output SELECTs, with no nested work
+or failed diagnostics. Statement text does not expose SQL parameter values.
+Repeated writes and merged output are allowed; these successful ACP spans never
+borrow Tool error or cancellation ownership. Publication is asynchronous and
+progress persistence is joined after the instrumented call returns, so the
+checker does not impose synchronous Tool containment or grant an additional
+timing exemption. Original warnings remain subject to complete-source review.
+
 Every accepted diagnostic belongs to an individually checked original span.
 Managed `isError` requires the exact stdio, Tool, protocol and ACP diagnostics.
 Cancellation requires an unresolved, quiescent Run with unknown Runtime effects;

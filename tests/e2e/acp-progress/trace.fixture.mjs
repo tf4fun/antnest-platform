@@ -24,6 +24,77 @@ export const eventField = (entry, key, value) => {
   entry.fields.push({ key, value });
 };
 
+// Tool progress callbacks retain the MCP call context while persisting the
+// preview and publishing the Session output. Model this ACP-owned work too.
+export function addProgressOutput(f) {
+  const spans = [];
+  const add = (name, parent, index, tags) => {
+    const span = {
+      spanID: `progress-output-${f.trace.spans.length}`,
+      traceID: f.trace.traceID,
+      operationName: name,
+      processID: f.call.processID,
+      startTime: f.call.startTime + 100 + index * 10,
+      duration: 1,
+      references: [
+        {
+          refType: "CHILD_OF",
+          traceID: f.trace.traceID,
+          spanID: parent.spanID,
+        },
+      ],
+      tags: fields(tags),
+      logs: [],
+    };
+    f.trace.spans.push(span);
+    spans.push(span);
+    return span;
+  };
+  const transaction = add("postgresql transaction", f.call, 0, {
+    "span.kind": "internal",
+    "db.system.name": "postgresql",
+    "antnest.transaction.outcome": "committed",
+  });
+  transaction.duration = 90;
+  const sql = (parent, index, query) => {
+    const operation = query.split(" ")[0];
+    return add(operation, parent, index, {
+      "span.kind": "client",
+      "db.system.name": "postgresql",
+      "db.namespace": "antnest_agent_acp",
+      "db.operation.name": operation,
+      "db.query.text": query,
+    });
+  };
+  const statements = [
+    "BEGIN",
+    "SELECT session_id FROM runs WHERE id = $1",
+    "SELECT last_message_sequence FROM acp_sessions WHERE id = $1 FOR UPDATE",
+    "SELECT session_id, state FROM runs WHERE id = $1 FOR UPDATE",
+    "SELECT id FROM tool_attempts WHERE run_id = $1 AND tool_call_id = $2 AND state = 'in_progress'",
+    "INSERT INTO session_messages( id, session_id, run_id, sequence, kind, visible, payload, created_at ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)",
+    "UPDATE acp_sessions SET last_message_sequence = $2, updated_at = $3 WHERE id = $1",
+    "COMMIT",
+  ].map((query, index) => sql(transaction, index + 1, query));
+  const output = add("acp.session.output", f.call, 10, {
+    "span.kind": "internal",
+    "antnest.agent.id": f.expected.agentId,
+    "antnest.session.id": f.expected.sessionId,
+    "antnest.operation.phase": "read",
+    "antnest.outcome": "ok",
+  });
+  output.duration = 50;
+  const sessionQuery =
+    "SELECT id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id, client_mcp_revision_id, last_execution_revision, last_message_sequence, created_at, updated_at FROM acp_sessions WHERE id = $1";
+  const reads = [
+    sessionQuery,
+    "SELECT s.last_message_sequence AS sequence, s.append_version, s.title, s.updated_at, COALESCE((SELECT jsonb_agg( CASE WHEN $3::boolean THEN jsonb_build_object( 'sequence', m.sequence, 'runId', m.run_id, 'messageId', m.id, 'payload', m.payload ) ELSE m.payload END ORDER BY m.sequence) FROM session_messages m WHERE m.session_id = s.id AND m.visible AND m.sequence > COALESCE($2::bigint, s.last_message_sequence)), '[]'::jsonb) AS events, r.state, r.stop_reason FROM acp_sessions s LEFT JOIN LATERAL (SELECT state, stop_reason FROM runs WHERE session_id = s.id ORDER BY created_at DESC, id DESC LIMIT 1) r ON true WHERE s.id = $1",
+    sessionQuery,
+    "SELECT configuration, configuration_revision FROM acp_sessions WHERE id = $1 AND state <> 'deleted'",
+  ].map((query, index) => sql(output, index + 11, query));
+  return { transaction, output, statements, reads, spans };
+}
+
 // Controlled fixture composition only; never applied to archived raw evidence.
 export function progressTraceFixture(
   phase = "v1-bash-success",
