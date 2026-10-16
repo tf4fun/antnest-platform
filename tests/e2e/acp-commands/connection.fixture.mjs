@@ -32,11 +32,13 @@ export async function commandFixture(t, profile, options = {}) {
     clients = [];
   const pending = new Set(),
     contexts = new Set(),
-    responseStreams = new Set(),
+    responseStreams = new Map(),
     errors = [];
   const deleteStarted = Promise.withResolvers(),
     releaseDelete = Promise.withResolvers();
   const releaseAck = Promise.withResolvers();
+  const newStarted = Promise.withResolvers(),
+    releaseNew = Promise.withResolvers();
   const identityStarted = Promise.withResolvers(),
     identityClosed = Promise.withResolvers(),
     releaseIdentity = Promise.withResolvers();
@@ -69,7 +71,14 @@ export async function commandFixture(t, profile, options = {}) {
     )
     .onRequest(
       sdk.methods.agent.session.new,
-      record("session/new", () => {
+      record("session/new", async () => {
+        newStarted.resolve();
+        if (options.holdNew) await releaseNew.promise;
+        if (options.newError)
+          throw new sdk.RequestError(-32603, "fixture new refused", {
+            code: "provider_failure",
+            retryable: true,
+          });
         if (options.denyNew)
           throw new sdk.RequestError(-32020, "fixture access denied", {
             code: "access_denied",
@@ -77,6 +86,15 @@ export async function commandFixture(t, profile, options = {}) {
           });
         return { sessionId: `session-${++sessions}` };
       }),
+    )
+    .onRequest(
+      sdk.methods.agent.session.list,
+      record("session/list", () => ({
+        sessions: Array.from({ length: sessions }, (_, index) => ({
+          sessionId: "session-" + (index + 1),
+          cwd: "/workspace",
+        })),
+      })),
     )
     .onRequest(
       sdk.methods.agent.session.resume,
@@ -246,7 +264,7 @@ export async function commandFixture(t, profile, options = {}) {
       }
     }
     if (request.method === "GET") {
-      responseStreams.add(response);
+      responseStreams.set(response, request.headers["acp-session-id"] ?? null);
       response.once("close", () => responseStreams.delete(response));
     }
     http(request, response);
@@ -284,6 +302,7 @@ export async function commandFixture(t, profile, options = {}) {
   t.after(async () => {
     releaseDelete.resolve();
     releaseAck.resolve();
+    releaseNew.resolve();
     releaseIdentity.resolve();
     let peerClosing;
     const closePeer = () => (peerClosing ??= peer.close());
@@ -335,11 +354,23 @@ export async function commandFixture(t, profile, options = {}) {
     exports,
     contexts,
     sockets,
-    sendRawFrame(frame) {
+    hasRawStream(sessionId = null) {
+      return [...responseStreams].some(
+        ([response, actual]) =>
+          actual === sessionId &&
+          response.statusCode === 200 &&
+          response.headersSent &&
+          !response.destroyed,
+      );
+    },
+    sendRawFrame(frame, sessionId = null) {
       const raw = JSON.stringify(frame);
       if (profile.http) {
-        assert.equal(responseStreams.size, 1);
-        const [response] = responseStreams;
+        const matches = [...responseStreams].filter(
+          ([, actual]) => actual === sessionId,
+        );
+        assert.equal(matches.length, 1, "one actual selected SSE required");
+        const [[response]] = matches;
         assert.equal(response.statusCode, 200);
         assert.equal(response.headersSent, true);
         assert.equal(response.destroyed, false);
@@ -352,6 +383,8 @@ export async function commandFixture(t, profile, options = {}) {
     },
     options: { principal, endpoint, telemetry, service, secrets },
     deleteStarted: deleteStarted.promise,
+    newStarted: newStarted.promise,
+    releaseNew: releaseNew.resolve,
     identityStarted: identityStarted.promise,
     identityClosed: identityClosed.promise,
     releaseIdentity: releaseIdentity.resolve,

@@ -19,6 +19,7 @@ import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deploy
 import { commandHarnessArguments } from "../e2e/acp-commands/deployment.mjs";
 import { planHarnessArguments } from "../e2e/acp-plan/deployment.mjs";
 import { multimodalHarnessArguments } from "../e2e/acp-multimodal/deployment.mjs";
+import { costHarnessArguments } from "../e2e/acp-cost/deployment.mjs";
 import { filesHarnessArguments } from "../e2e/acp-files/deployment.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -32,6 +33,7 @@ const children = [
   ["slash-commands", "acp-commands"],
   ["structured-plan", "acp-plan"],
   ["multimodal", "acp-multimodal"],
+  ["session-cost", "acp-cost"],
   ["file-observations", "acp-files"],
   ["identity-http", "identity-http"],
   ["agent-access", "identity-agent"],
@@ -42,6 +44,7 @@ function launch(t, entry, evidenceRoot, cached, extra = {}, setup = () => {}) {
   t.after(() => rmSync(work, { recursive: true, force: true }));
   for (const file of [
     "tests/e2e/e2e-" + entry + ".sh",
+    "tests/e2e/acp-closeout/container-state.sh",
     "tests/support/storage.mjs",
     "tests/support/public-development-secrets.sh",
     "tests/support/service-hosts.sh",
@@ -109,7 +112,7 @@ for (const [entry, directory] of children) {
   });
   test(`${entry} durable output still reaches its first dependency`, (t) => {
     const result = launch(t, entry, directory, false);
-    assert.notEqual(result.calls, "");
+    assert.notEqual(result.calls, "", result.stderr);
     assert.doesNotMatch(result.stderr, /durable.*cache/i);
   });
   for (const alias of [false, true])
@@ -173,6 +176,7 @@ for (const [flag, directory] of [
   ["ACP_SESSION", "identity-session"],
   ["SLASH_COMMANDS", "acp-commands"],
   ["MULTIMODAL", "acp-multimodal"],
+  ["SESSION_COST", "acp-cost"],
   ["FILE_OBSERVATIONS", "acp-files"],
   ["IDENTITY_CORE", "identity-http"],
   ["IDENTITY_ACCESS", "identity-http"],
@@ -312,6 +316,28 @@ test("containers writing private evidence run as the evidence owner", () => {
     multimodal.flatMap((arg, index) =>
       arg === "--user" ? [multimodal[index + 1]] : [],
     ),
+    [`${uid}:${gid}`],
+  );
+  assert.match(
+    readFileSync(join(directory, "e2e-session-cost.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-cost\/deployment\.mjs" create-harness/u,
+  );
+  const cost = costHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `cost-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:cost-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(cost.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    cost.flatMap((arg, index) => (arg === "--user" ? [cost[index + 1]] : [])),
     [`${uid}:${gid}`],
   );
   assert.match(

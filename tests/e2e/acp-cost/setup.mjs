@@ -84,6 +84,16 @@ export async function waitForPublication(read, before) {
   throw new Error("ACP current pricing publication timed out");
 }
 
+// Emitted only by the private reader after the complete actual 503 response
+// matches ACP's execution_state_unavailable envelope. Status lookalikes and
+// Identity/authentication failures do not qualify for recovery retries.
+export class CostExecutionStateUnavailableError extends Error {
+  constructor() {
+    super("ACP execution state is unavailable during recovery");
+    this.name = "CostExecutionStateUnavailableError";
+  }
+}
+
 export async function waitForRestoredConfiguration(read, fingerprint) {
   assert.match(fingerprint, /^[a-f0-9]{64}$/);
   const deadline = Date.now() + 120000;
@@ -92,14 +102,7 @@ export async function waitForRestoredConfiguration(read, fingerprint) {
     try {
       state = await read();
     } catch (error) {
-      // GatewayClient reports exact HTTP status mismatches as assertions.
-      // Only the public startup-unavailable response is a recovery observation.
-      if (!(
-        error.code === "ERR_ASSERTION" &&
-        error.actual === 503 &&
-        error.expected === 200
-      ))
-        throw error;
+      if (!(error instanceof CostExecutionStateUnavailableError)) throw error;
     }
     if (state?.access_allowed && state.availability === "ready") {
       assert.equal(

@@ -24,7 +24,7 @@ const profiles = {
   STRUCTURED_PLAN: "acp-plan",
   SLASH_COMMANDS: "acp-commands",
   MULTIMODAL: "acp-multimodal",
-  SESSION_COST: null,
+  SESSION_COST: "acp-cost",
   TOOL_PERMISSIONS: null,
 };
 let selected = false;

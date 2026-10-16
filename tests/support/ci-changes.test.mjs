@@ -647,6 +647,7 @@ test("tier C Stage 3a profiles keep their strict exit 2 by running the make reci
     "slash-commands",
     "structured-plan",
     "multimodal",
+    "session-cost",
     "file-observations",
     "agent-access",
     "identity-access",
