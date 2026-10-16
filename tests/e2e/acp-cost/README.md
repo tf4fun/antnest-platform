@@ -90,9 +90,7 @@ Strict Jaeger timing and ordering failures keep a nonzero exit even when the
 business, privacy and ancestry checks pass. Strict-only findings retain raw
 exit 2. CI can accept that result only after complete business evidence and
 classification under its existing reviewed-warning rules. Unknown warnings,
-invalid pricing evidence and Go pricing diagnostics remain failures; the
-same-process Node SDK sub-millisecond deferral does not apply to Go or
-cross-process timing.
+invalid pricing evidence and Go pricing diagnostics remain failures.
 
 `warning-source.mjs` inventories each original warning occurrence by Trace,
 Span and index, then follows only synchronous `CHILD_OF` edges to identify
@@ -100,10 +98,18 @@ its source. Asynchronous connection Links cannot substitute for a parent.
 The same-Node endpoint classification requires matching process resources,
 safe integer timestamps, a child starting within its parent, integer-millisecond
 starts, an end overrun strictly below one millisecond and exactly one matching
-observation for that edge. Duplicate warnings, ambiguous propagation, unknown
-messages and cross-process boundaries remain rejected. The calculated Jaeger
-delta is retained separately from the raw end overrun; it is not a measured
-clock offset.
+observation for that edge. The user's Node sub-millisecond investigation deferral
+also covers a complete private Node CLIENT to ACP Node HTTP SERVER pair: both
+process identities, route, method, status and direct parent must match, starts
+must be integer milliseconds, and the raw end overrun must be strictly below
+one millisecond. This is recorded as `deferred-node-http-sub-ms-endpoint`.
+Independent SDK clock anchors and server completion after writing the response
+can both contribute; the observation does not establish either cause. In
+particular, ws writes 101 before the ACP connection setup callback returns.
+Duplicate warnings, ambiguous propagation, unknown messages, missing spans,
+other cross-process boundaries and overruns at or above one millisecond remain
+rejected. The calculated Jaeger delta is retained separately from the raw end
+overrun; its magnitude is not a measured clock offset or this policy's bound.
 
 The diagnostic helper alone does not grant admission. The Cost collector uses
 the fixed complete-source hook for the main Trace, connection and every HTTP

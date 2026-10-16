@@ -181,9 +181,12 @@ Runtime stop probe remains a separate requirement.
 Initialization and empty-MCP Session setup/replay reuse the strict contracts
 already used by Cost. Every result requires three consecutive stable complete
 source samples, original query hashes and raw diagnostic inventory. Warning
-review uses the same complete-source causal policy as Cost: only the previously
-deferred same-Node endpoint observation can qualify, with explicit matching
-process identity. Unknown or cross-process warnings fail. Original errors and
+review uses the same complete-source policy as Cost: the existing same-Node
+endpoint observation and the user's deferred complete private Node HTTP endpoint
+overrun strictly below one millisecond can qualify. The latter binds both actual
+processes and the HTTP boundary without claiming clock calibration or a cause;
+see the [Cost warning policy](../acp-cost/README.md). Missing spans, other
+cross-process warnings and unknown warnings fail. Original errors and
 warnings retain strict failure status; reviewed known diagnostics do not erase
 them. Admission binds the exact returned result and rechecks its archived bytes,
 so copied, mutated or repeated results cannot authorize success. These collector

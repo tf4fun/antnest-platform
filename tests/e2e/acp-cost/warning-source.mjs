@@ -1,4 +1,5 @@
 const deferred = "deferred-same-node-sdk-sub-ms-endpoint";
+const deferredHTTP = "deferred-node-http-sub-ms-endpoint";
 const invalid = () => new Error("invalid Cost warning sources");
 const requireSource = (condition) => {
   if (!condition) throw invalid();
@@ -106,6 +107,9 @@ function processIdentity(trace, span) {
     pid,
     instance,
     key: JSON.stringify([host, pid, instance, process.serviceName]),
+    sdk:
+      values.get("telemetry.sdk.language") === "nodejs" &&
+      values.get("telemetry.sdk.name") === "opentelemetry",
     node:
       values.get("process.runtime.name") === "nodejs" &&
       (!values.has("telemetry.sdk.language") ||
@@ -113,6 +117,62 @@ function processIdentity(trace, span) {
       (!values.has("telemetry.sdk.name") ||
         values.get("telemetry.sdk.name") === "opentelemetry"),
   };
+}
+
+function deferredNodeHTTP(trace, child, parent, left, right) {
+  // The user deferred Node sub-millisecond precision investigation. Separate
+  // Node spans have independent Date.now()/performance.now() anchors. Also,
+  // a received response need not join the server's post-write completion
+  // (notably ws writes 101 before its connection setup callback returns).
+  // This bounded observation does not claim clock calibration or a cause.
+  if (
+    !left.node ||
+    !right.node ||
+    !right.sdk ||
+    trace.processes[child.processID].serviceName !== "agent-acp-service" ||
+    trace.processes[parent.processID].serviceName !==
+      "antnest-private-acp-client" ||
+    child.startTime < parent.startTime ||
+    child.startTime % 1000 !== 0 ||
+    parent.startTime % 1000 !== 0 ||
+    end(child) <= end(parent) ||
+    end(child) - end(parent) >= 1000
+  )
+    return false;
+  const attributes = (span) => {
+    if (!Array.isArray(span.tags)) return null;
+    const result = new Map();
+    for (const item of span.tags) {
+      if (!item || typeof item.key !== "string" || result.has(item.key))
+        return null;
+      result.set(item.key, item.value);
+    }
+    return result;
+  };
+  const c = attributes(child),
+    p = attributes(parent);
+  if (!c || !p) return false;
+  const status = (fields) => {
+    const current = fields.get("http.response.status_code");
+    const legacy = fields.get("http.status_code");
+    if (current !== undefined && legacy !== undefined && current !== legacy)
+      return null;
+    return current ?? legacy;
+  };
+  const method = c.get("http.request.method"),
+    route = c.get("http.route");
+  return (
+    c.get("span.kind") === "server" &&
+    p.get("span.kind") === "client" &&
+    ["GET", "POST", "DELETE"].includes(method) &&
+    p.get("http.request.method") === method &&
+    ["/v1/acp", "/v2/acp"].includes(route) &&
+    c.get("antnest.listener") === "workspace" &&
+    child.operationName === `HTTP ${method} ${route}` &&
+    parent.operationName === `HTTP ${method} agent-acp-workspace` &&
+    [101, 200, 202, 204].includes(status(c)) &&
+    status(c) === status(p)
+  );
 }
 
 function calculatedDelta(warning) {
@@ -219,7 +279,10 @@ function sourceFor(context, span, warning, observations) {
   let classification;
   if (warnings(child).length !== 1) classification = "ambiguous-source";
   else if (uncertain) classification = "invalid-process-identity";
-  else if (crossProcess) classification = "cross-process";
+  else if (crossProcess)
+    classification = deferredNodeHTTP(trace, child, parent, left, right)
+      ? deferredHTTP
+      : "cross-process";
   else if (!left.node || !right.node) classification = "unsupported-runtime";
   else if (
     child.startTime < parent.startTime ||
@@ -287,8 +350,8 @@ export function inspectCostWarningSources(sources, timeObservations = []) {
           inventory.push(entry);
         }
     }
-    const count = inventory.filter(
-      (item) => item.classification === deferred,
+    const count = inventory.filter((item) =>
+      [deferred, deferredHTTP].includes(item.classification),
     ).length;
     return {
       warning_count: inventory.length,
