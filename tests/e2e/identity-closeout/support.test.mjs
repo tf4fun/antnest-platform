@@ -118,7 +118,10 @@ for (const status of [200, 503])
     const observed = [];
     const base = await fixture(t, (_, response) => {
       response.setHeader("X-Antnest-Trace-ID", "a".repeat(32));
-      response.setHeader("Set-Cookie", "secret=private-header");
+      response.setHeader(
+        "Set-Cookie",
+        "secret=private-header; Path=/; Secure; HttpOnly; SameSite=Lax",
+      );
       response.writeHead(status).end(text);
     });
     const promise = new GatewayClient(base).request("/api/session", {

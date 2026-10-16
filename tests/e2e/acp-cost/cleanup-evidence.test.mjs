@@ -58,7 +58,12 @@ async function fixture(t, failFirst = false, mutation) {
         : 202
       : 200;
     response.setHeader("x-antnest-trace-id", "b".repeat(32));
-    response.setHeader("set-cookie", "private-header=DO_NOT_ARCHIVE; Path=/");
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    response.setHeader("x-content-type-options", "nosniff");
+    response.setHeader(
+      "set-cookie",
+      "private-header=DO_NOT_ARCHIVE; Path=/; Secure; HttpOnly; SameSite=Lax",
+    );
     const name = request.url.match(
       /(?:agent|operation)-(one|two|three|four)/u,
     )?.[1];
