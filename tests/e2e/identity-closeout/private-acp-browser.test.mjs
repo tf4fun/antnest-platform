@@ -20,6 +20,7 @@ async function fixture(t, override = {}) {
   const transport = await privateTransportFixture(t, {
     deny: override.deny,
     initializeError: override.initializeError,
+    initializationResult: override.initializationResult,
   });
   const requests = [];
   const identity = createServer(async (request, response) => {
@@ -124,6 +125,48 @@ for (const version of [1, 2])
     assert(f.secrets.includes("original-browser-session"));
     assert(f.secrets.includes("W".repeat(43)));
     assert.equal((await f.exportedSpans()).length, 1);
+  });
+
+for (const version of [1, 2])
+  test(`browser v${version} retains the single actual SDK initialize result through requests and cleanup`, async (t) => {
+    const initializationResult =
+      version === 1
+        ? {
+            protocolVersion: 1,
+            agentCapabilities: {
+              loadSession: true,
+              promptCapabilities: {
+                image: true,
+                audio: true,
+                embeddedContext: true,
+              },
+            },
+            agentInfo: { name: "browser-negotiation-peer", version: "41" },
+            authMethods: [],
+            _meta: { negotiation: "browser-v1" },
+          }
+        : {
+            protocolVersion: 2,
+            info: { name: "browser-negotiation-peer", version: "42" },
+            capabilities: {
+              session: {
+                prompt: { image: {}, audio: {}, embeddedContext: {} },
+              },
+            },
+            _meta: { negotiation: "browser-v2" },
+          };
+    const f = await fixture(t, { initializationResult });
+    const client = await f.open(version);
+    assert.deepEqual(client.initializationResult, initializationResult);
+    const retained = client.initializationResult;
+    await client.request("new", { cwd: "/workspace", mcpServers: [] });
+    await client.closeAndWait();
+    assert.strictEqual(client.initializationResult, retained);
+    assert.deepEqual(client.initializationResult, initializationResult);
+    assert.deepEqual(
+      f.messages.map((message) => message.method),
+      ["initialize", "session/new"],
+    );
   });
 
 for (const field of ["organization_id", "user_id"])

@@ -34,6 +34,21 @@ node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
 
 Helper tests do not replace the real integration run.
 
+### Private initialize result contract
+
+`openBrowserPrivateACP` and `openPrivateCommandConnection` expose
+`initializationResult` after their single successful initialize and existing
+cancellation checks. This is the actual SDK return value; v2 applies its own
+schema parsing before returning it. The helpers do not synthesize capabilities,
+normalize v1 booleans into v2 objects, or send another initialize. Explicit
+false/null values and omitted capabilities remain unchanged. Session requests
+and joined connection cleanup do not replace this result.
+
+Owning consumers must inspect the appropriate protocol's negotiated capabilities
+from this value. The shared contract tests cover real v1/v2 WebSocket and v1 HTTP
+connections; multimodal behavior and production-stack admission remain a separate
+consumer batch.
+
 ### Private v1 HTTP lifecycle contract
 
 The shared `createPrivateACPHTTP(endpoint, options)` transport precedes its

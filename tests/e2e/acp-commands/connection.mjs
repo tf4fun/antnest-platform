@@ -359,18 +359,23 @@ export async function openPrivateCommandConnection(
     },
   };
   try {
-    await connection.agent.request(v1.methods.agent.initialize, {
-      protocolVersion: v1.PROTOCOL_VERSION,
-      clientCapabilities: {},
-    });
+    const initializationResult = await connection.agent.request(
+      v1.methods.agent.initialize,
+      {
+        protocolVersion: v1.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      },
+    );
     signal?.throwIfAborted();
     transport.completeInitialization();
+    client.initializationResult = initializationResult;
     return client;
   } catch (error) {
     const original = signal?.aborted ? signal.reason : error;
     try {
       await transport.closeAndWait();
     } catch (cleanup) {
+      // eslint-disable-next-line preserve-caught-error -- Both failures are retained in errors.
       throw new AggregateError(
         [original, cleanup],
         "private command initialization and cleanup failed",

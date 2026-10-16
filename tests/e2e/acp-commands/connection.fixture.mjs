@@ -51,6 +51,9 @@ export async function commandFixture(t, profile, options = {}) {
       record("initialize", () => {
         if (options.initializeError)
           throw new sdk.RequestError(-32603, "fixture initialize refused");
+        options.beforeInitializeReply?.();
+        if (options.initializationResult !== undefined)
+          return options.initializationResult;
         return profile.version === 1
           ? {
               protocolVersion: sdk.PROTOCOL_VERSION,

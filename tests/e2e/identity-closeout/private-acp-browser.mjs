@@ -55,8 +55,9 @@ export async function openBrowserPrivateACP(
     telemetry,
   });
   try {
-    await client.initialize();
+    const initializationResult = await client.initialize();
     signal?.throwIfAborted();
+    client.initializationResult = initializationResult;
     return client;
   } catch (error) {
     await client.closeAndWait();

@@ -19,7 +19,12 @@ const [
 // verifier. Owning Docker gates must supply the real workspace CCT and grant.
 export async function privateTransportFixture(
   t,
-  { deny = false, badAccept = false, initializeError = false } = {},
+  {
+    deny = false,
+    badAccept = false,
+    initializeError = false,
+    initializationResult,
+  } = {},
 ) {
   const context = "private-context-header.payload.signature";
   const authorization = {
@@ -79,7 +84,7 @@ export async function privateTransportFixture(
           return;
         }
         const version = request.url === "/v1/acp" ? 1 : 2;
-        const result =
+        let result =
           message.method === "initialize"
             ? version === 1
               ? {
@@ -97,6 +102,9 @@ export async function privateTransportFixture(
               : message.method === "session/list"
                 ? { sessions: [{ sessionId: "session", cwd: "/workspace" }] }
                 : {};
+        if (message.method === "initialize") {
+          if (initializationResult !== undefined) result = initializationResult;
+        }
         opened.send(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
       });
     });

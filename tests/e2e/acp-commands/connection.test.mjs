@@ -43,6 +43,84 @@ async function open(fixture, profile, overrides = {}) {
 }
 
 for (const profile of profiles) {
+  for (const supported of [true, false])
+    test(`${profile.name}: preserves actual ${supported ? "supported" : "absent and disabled"} initialization capabilities without another RPC`, async (t) => {
+      const initializationResult =
+        profile.version === 1
+          ? {
+              protocolVersion: 1,
+              agentCapabilities: {
+                loadSession: true,
+                promptCapabilities: supported
+                  ? { image: true, audio: true, embeddedContext: true }
+                  : { image: false, audio: true },
+              },
+              agentInfo: { name: "negotiation-peer", version: "71" },
+              authMethods: [],
+              _meta: { negotiation: `${profile.name}-${supported}` },
+            }
+          : {
+              protocolVersion: 2,
+              info: { name: "negotiation-peer", version: "72" },
+              capabilities: {
+                session: {
+                  prompt: supported
+                    ? { image: {}, audio: {}, embeddedContext: {} }
+                    : { image: null, audio: {} },
+                },
+              },
+              _meta: { negotiation: `${profile.name}-${supported}` },
+            };
+      const f = await commandFixture(t, profile, { initializationResult });
+      const client = await open(f, profile);
+      assert.deepEqual(client.initializationResult, initializationResult);
+      const retained = client.initializationResult;
+      await client.request("new", setup);
+      assert.strictEqual(client.initializationResult, retained);
+      await client.closeAndWait();
+      assert.deepEqual(client.initializationResult, initializationResult);
+      assert.deepEqual(
+        f.calls.map((call) => call.method),
+        ["initialize", "session/new"],
+      );
+      if (profile.http) {
+        const final = client.httpSnapshot();
+        assert.equal(final.pendingRequests, 0);
+        assert.equal(final.streamJoined, true);
+        assert.equal(
+          final.requests.filter((item) => item.rpcMethod === "initialize")
+            .length,
+          1,
+        );
+      }
+    });
+
+  test(`${profile.name}: cancellation before a valid initialize reply preserves the original reason and joins cleanup`, async (t) => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled at initialize reply");
+    const f = await commandFixture(t, profile, {
+      beforeInitializeReply: () => controller.abort(reason),
+    });
+    await assert.rejects(
+      open(f, profile, { signal: controller.signal }),
+      (error) => error === reason,
+    );
+    assert.deepEqual(
+      f.calls.map((call) => call.method),
+      ["initialize"],
+    );
+    if (profile.http) {
+      await within(Promise.all(f.wire.map((item) => item.closed)));
+    } else {
+      await within(
+        Promise.all(
+          [...f.sockets.clients].map((socket) => once(socket, "close")),
+        ),
+      );
+      assert.equal(f.sockets.clients.size, 0);
+    }
+  });
+
   test(`${profile.name}: business records acquire the final shared connection receipt only after cleanup joins`, async (t) => {
     assert.equal(
       typeof implementation.withPrivateCommandConnection,
