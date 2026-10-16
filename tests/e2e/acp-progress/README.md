@@ -46,9 +46,10 @@ four original cancel notifications and twenty model requests before admitting
 76 distinct original Traces. It retains all four Agents until it consumes the
 host's candidate Runtime inspection receipt, then uses the shared four-Agent
 cleanup recorder to join every actual delete operation. Connection capture
-itself joins close before reading the original notifications. Host-owned Runtime
-gates, timeout diagnostic migration, candidate deployment, shell entry-point
-wiring and Docker acceptance remain pending; these local checks do not complete
+itself joins close before reading the original notifications. Runtime gates now
+use a file channel serviced by one host loop, followed by the final four-Runtime
+inspection. Timeout diagnostic migration, candidate deployment, shell entry-point
+wiring and full Docker acceptance remain pending; local checks do not complete
 the migration.
 
 ## Scope
@@ -86,14 +87,27 @@ and cancellation.
   prompt and `session/cancel` traces, including
   `executor.exit.classification`. It never extends the deadline.
 
-Synthetic accounts and all Agent management go through the Gateway. The
-test-only driver mounts the Docker socket solely to release gate files and
-inspect PID and child cancellation markers. It validates the disposable scope
-and Agent labels before running fixed probes as UID/GID 1000. Runtime admission
+Synthetic accounts and all Agent management go through the Gateway. The migrated
+gate gives the client a run-scoped file channel. Only the host driver executes
+fixed probes as UID/GID 1000. It binds the original candidate image, container,
+Agent, generation and complete StartedAt string, and rechecks them before and
+after every probe and at the final four-Runtime ACK. Bash stopping requires the
+same PID file and the original process start ticks; a changed PID, inaccessible
+process, malformed output or Docker error fails. Runtime admission
 deliberately rejects a second native MCP call while Bash is active, and probes
 do not relax that rule. This auxiliary access is absent from product images and
 never stands in for the Agent Tool call. There is no cross-service SQL, new
 production endpoint or new deployment authorization.
+
+Every gate request has its own sequence and nonce, an immutable receipt and a
+consumption hash. Final inspection rechecks all original request, receipt and
+host evidence bytes, and rejects an unconsumed or newly pending request. Raw
+Docker inspection remains outside the client channel. Interrupted commands are
+joined before a failed receipt and partial evidence are saved. The scenario
+passes each stop probe the remaining original ten-second monotonic budget;
+publication, host queueing and receipt reading all count, and late success fails.
+The deployment shell still needs to start this host loop and remove its legacy
+client socket mount before full Progress admission.
 
 ## Trace checks
 
@@ -143,13 +157,21 @@ Runtime gates, diagnostic migration and deployment acceptance remain pending.
 
 ## Running
 
-The main entry point is pending host-driver, diagnostic and candidate deployment
-wiring; `make e2e-tool-progress` is not an admission command for this checkpoint.
+The main entry point is pending host-driver shell, diagnostic and candidate
+deployment wiring; `make e2e-tool-progress` is not an admission command for this checkpoint.
 The local fixture command remains available:
 
 ```sh
 make test-tool-progress-fixtures
 ```
+
+`gate-container.mjs <private-evidence-directory> <existing-runtime-image-id>`
+checks the fixed probes and file IPC in one isolated Linux container. It uses
+an existing local image by immutable ID, overrides the product entrypoint with
+a child-process fixture, and restores its temporary container and image alias.
+This check does not validate managed MCP cancellation, the production Runtime,
+four-Agent final admission, client container permissions or the Progress business
+workflow. Those require the complete candidate deployment below.
 
 The candidate managed image must add only the official-SDK fixture executable
 to this run's production Runtime candidate, with a private `progress-<run-id>`

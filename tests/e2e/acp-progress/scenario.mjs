@@ -185,7 +185,14 @@ export function createProgressScenario({
             `${phase} process cancellation deadline`,
           );
           await until(
-            () => gate.stopped(phase, source),
+            () => {
+              const timeoutMS = 10000 - (now() - started);
+              assert(
+                timeoutMS > 0 && timeoutMS <= 10000,
+                `${phase} process cancellation deadline`,
+              );
+              return gate.stopped(phase, source, { timeoutMS });
+            },
             `${phase} process cancellation`,
             remaining,
           );

@@ -55,7 +55,29 @@ const proof = () => ({
     container_id: String(index + 1).repeat(64),
     image_id: "sha256:" + "4".repeat(64),
     image_ref: image,
+    started_at: "2026-10-16T00:00:00.123456789Z",
   })),
+});
+test("the final Runtime server passes its bounded signal to the joined gate waiting hook", async (t) => {
+  const serve = entry("serveProgressRuntimeInspection"),
+    request = entry("requestProgressRuntimeInspection"),
+    f = await fixture(t);
+  const entered = Promise.withResolvers();
+  const host = f.track(
+    serve({
+      ...f.options,
+      inspect: async () => proof(),
+      waiting: async (signal) => {
+        assert(signal instanceof AbortSignal);
+        signal.throwIfAborted();
+        entered.resolve();
+      },
+    }),
+  );
+  await Promise.race([entered.promise, host]);
+  const client = f.track(request(agents, f.options));
+  const [a, b] = await Promise.all([client, host]);
+  assert.deepEqual(a, b);
 });
 test("client waits for the host inspection of four live Agent Runtimes before cleanup can proceed", async (t) => {
   const request = entry("requestProgressRuntimeInspection"),
@@ -174,6 +196,12 @@ for (const [label, mutate] of [
     "missing raw evidence hash",
     (value) => {
       delete value.raw_sha256;
+    },
+  ],
+  [
+    "missing original Runtime start",
+    (value) => {
+      delete value.runtimes[0].started_at;
     },
   ],
 ])

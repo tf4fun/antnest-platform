@@ -74,6 +74,14 @@ function inspectReceipt(receipt, request) {
     assert.match(row.image_id ?? "", /^sha256:[a-f0-9]{64}$/u);
     assert.match(row.container_id ?? "", /^[a-f0-9]{64}$/u);
     assert(Number.isSafeInteger(row.generation) && row.generation > 0);
+    assert.match(
+      row.started_at ?? "",
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,9}Z$/u,
+    );
+    assert(
+      Number.isFinite(Date.parse(row.started_at)) &&
+        Date.parse(row.started_at) > 0,
+    );
   }
   return receipt;
 }
@@ -177,8 +185,8 @@ export async function serveProgressRuntimeInspection({
       publish(directory, "runtime-receipt.json", receipt);
       return receipt;
     }
-    await waiting();
+    await waiting(signal);
     signal.throwIfAborted();
-    await wait(1000, undefined, { signal });
+    await wait(100, undefined, { signal });
   }
 }

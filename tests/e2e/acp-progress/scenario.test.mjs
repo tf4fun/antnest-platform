@@ -208,6 +208,37 @@ test("notification time is subtracted from the remaining stop deadline", async (
     6000,
   );
 });
+test("every host stop probe receives the remaining original cancellation budget", async () => {
+  const f = run(2, "managed", "cancel", { notifyElapsed: 4000 });
+  const original = f.gate.stopped,
+    observed = [];
+  let elapsed = 4000;
+  // The scenario's clock starts immediately before notify, at zero.
+  let first = true;
+  f.dependencies.now = () => {
+    if (first) {
+      first = false;
+      return 0;
+    }
+    return elapsed;
+  };
+  const until = f.dependencies.until;
+  f.dependencies.until = async (check, label, timeout) => {
+    if (label.endsWith("process cancellation"))
+      assert((await check()) || (await check()));
+    else await until(check, label, timeout);
+  };
+  f.gate.stopped = async (...args) => {
+    observed.push(args[2]);
+    if (observed.length === 1) {
+      elapsed += 2000;
+      return false;
+    }
+    return original(...args);
+  };
+  await f.execute();
+  assert.deepEqual(observed, [{ timeoutMS: 6000 }, { timeoutMS: 4000 }]);
+});
 test("replay uses the complete observed preview through joined close", async () => {
   const f = run(1, "bash", "success", { latePreview: true });
   await f.execute();
