@@ -62,8 +62,10 @@ export async function httpFixture(t, options = {}) {
     releaseInitialize = deferred();
   const ackHeld = deferred(),
     releaseAck = deferred();
+  const releaseExports = deferred();
   const errors = [];
   let holdAck = false,
+    holdExports = false,
     sessions = 0;
   const peer = new AcpServer({
     agent: acp
@@ -98,6 +100,7 @@ export async function httpFixture(t, options = {}) {
           const chunks = [];
           for await (const chunk of request) chunks.push(chunk);
           exports.push(JSON.parse(Buffer.concat(chunks).toString()));
+          if (holdExports) await releaseExports.promise;
           response
             .writeHead(200, { "content-type": "application/json" })
             .end("{}");
@@ -217,6 +220,7 @@ export async function httpFixture(t, options = {}) {
     releaseDelete.resolve();
     releaseInitialize.resolve();
     releaseAck.resolve();
+    releaseExports.resolve();
     releases.forEach((release) => release());
     let peerClosing;
     const closePeer = () => (peerClosing ??= peer.close());
@@ -269,6 +273,13 @@ export async function httpFixture(t, options = {}) {
     releaseDelete: releaseDelete.resolve,
     releaseInitialize: releaseInitialize.resolve,
     releaseAck: releaseAck.resolve,
+    holdExports() {
+      holdExports = true;
+    },
+    releaseExports() {
+      holdExports = false;
+      releaseExports.resolve();
+    },
     holdAcknowledgements() {
       holdAck = true;
     },

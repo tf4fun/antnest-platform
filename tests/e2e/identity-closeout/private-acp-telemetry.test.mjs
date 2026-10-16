@@ -1,7 +1,8 @@
 import "./acp-client-dependencies.fixture.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
+import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { inspect } from "node:util";
 
@@ -18,8 +19,9 @@ function create(...args) {
   assert.equal(typeof implementation.createPrivateACPTelemetry, "function");
   return implementation.createPrivateACPTelemetry(...args);
 }
-async function collector(t) {
+async function collector(t, respond) {
   const records = [];
+  const observations = new EventEmitter();
   const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -28,8 +30,12 @@ async function collector(t) {
       headers: request.headers,
       body: JSON.parse(Buffer.concat(chunks).toString()),
     });
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end("{}");
+    if (respond) respond(response, records.length);
+    else {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    }
+    observations.emit("request");
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -40,6 +46,12 @@ async function collector(t) {
   return {
     records,
     url: `http://127.0.0.1:${server.address().port}/v1/traces`,
+    async waitForRequests(count) {
+      while (records.length < count)
+        await once(observations, "request", {
+          signal: AbortSignal.timeout(5_000),
+        });
+    },
   };
 }
 const attributes = (values) =>
@@ -222,4 +234,250 @@ test("HTTP cleanup failure retains its original cancelled body outcome", async (
   assert.equal(values["antnest.http.body.outcome"], "cancelled");
   assert.equal(Number(values["http.response.status_code"]), 202);
   assert.equal(Number(values["http.response.body.size"]), 5);
+});
+
+function respond(response, status = 200) {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end("{}");
+}
+
+async function heldCollector(t, rejectFirst = false) {
+  const held = new Set();
+  let released = false;
+  let active = 0;
+  let peak = 0;
+  const c = await collector(t, (response, index) => {
+    active++;
+    peak = Math.max(peak, active);
+    response.once("finish", () => active--);
+    if (rejectFirst && index === 1) respond(response, 400);
+    else if (released) respond(response);
+    else held.add(response);
+  });
+  return {
+    ...c,
+    peak: () => peak,
+    release() {
+      released = true;
+      for (const response of held) respond(response);
+      held.clear();
+    },
+  };
+}
+
+async function exportFailure(promise, client, reason = "export_failed") {
+  let failure;
+  await assert.rejects(promise, (error) => {
+    failure = error;
+    assert.equal(error.code, "PRIVATE_ACP_EXPORT_FAILED");
+    assert.equal(error.reason, reason);
+    assert.equal(error.traceID, client.traceID);
+    assert.equal(error.clientSpanID, client.clientSpanID);
+    return true;
+  });
+  return failure;
+}
+
+test("an already settled HTTP 400 export remains a failure after later exports and shutdown", async (t) => {
+  const c = await collector(t, (response, index) =>
+    respond(response, index === 1 ? 400 : index === 3 ? 403 : 200),
+  );
+  const telemetry = create(c.url);
+  try {
+    const first = telemetry.startHTTP("GET");
+    first.end(200, "eof", 2);
+    // This first flush is a settlement barrier, not evidence of success. The
+    // regression is the later flush, after the SDK has removed its failed work.
+    await telemetry.flush().catch(() => {});
+    const failure = await exportFailure(telemetry.flush(), first);
+    assert.equal(failure.cause.code, 400);
+    for (let index = 0; index < 2; index++) {
+      telemetry.startUpgrade(1).end(101);
+      assert.equal(await exportFailure(telemetry.flush(), first), failure);
+    }
+    assert.equal(exported(c.records).length, 3);
+    const shutdown = telemetry.shutdown();
+    assert.equal(telemetry.shutdown(), shutdown);
+    assert.equal(await exportFailure(shutdown, first), failure);
+    assert.throws(() => telemetry.startHTTP("GET"));
+    assert.throws(() => telemetry.startUpgrade(1));
+  } finally {
+    await telemetry.shutdown().catch(() => {});
+  }
+});
+
+for (const operation of ["flush", "shutdown"])
+  test(`${operation} joins a held burst beyond the SDK exporter limit without losing original spans`, async (t) => {
+    const c = await heldCollector(t);
+    const telemetry = create(c.url);
+    const clients = Array.from({ length: 64 }, () =>
+      telemetry.startHTTP("GET"),
+    );
+    for (const client of clients) client.end(200, "cancelled", 7);
+    let settled = false;
+    const result = telemetry[operation]().then(
+      () => ({ ok: true }),
+      (error) => ({ ok: false, error }),
+    );
+    void result.then(() => (settled = true));
+    try {
+      await c.waitForRequests(1);
+      await setImmediate();
+      assert.equal(
+        settled,
+        false,
+        "must join the actual held export responses",
+      );
+      c.release();
+      const outcome = await result;
+      if (!outcome.ok) throw outcome.error;
+      assert.deepEqual(
+        exported(c.records)
+          .map(({ span }) => `${span.traceId}/${span.spanId}`)
+          .sort(),
+        clients
+          .map((client) => `${client.traceID}/${client.clientSpanID}`)
+          .sort(),
+      );
+      assert(c.peak() <= 8, "private exporter bounds actual HTTP concurrency");
+    } finally {
+      c.release();
+      await result;
+      await telemetry.shutdown().catch(() => {});
+    }
+  });
+
+test("shutdown still joins later in-flight exports before reporting an earlier settled failure", async (t) => {
+  const c = await heldCollector(t, true);
+  const telemetry = create(c.url);
+  let result;
+  try {
+    const failed = telemetry.startUpgrade(2);
+    failed.end(101);
+    await telemetry.flush().catch(() => {});
+    const next = telemetry.startHTTP("DELETE");
+    next.end(204, "eof");
+    await c.waitForRequests(2);
+    let settled = false;
+    result = telemetry.shutdown().then(
+      () => ({ ok: true }),
+      (error) => ({ ok: false, error }),
+    );
+    void result.then(() => (settled = true));
+    await setImmediate();
+    assert.equal(settled, false);
+    assert.throws(() => telemetry.startHTTP("GET"));
+    c.release();
+    await result;
+    const failure = await exportFailure(telemetry.shutdown(), failed);
+    assert.equal(failure.cause.code, 400);
+    assert.deepEqual(
+      exported(c.records).map(({ span }) => span.spanId),
+      [failed.clientSpanID, next.clientSpanID],
+    );
+  } finally {
+    c.release();
+    await result;
+    await telemetry.shutdown().catch(() => {});
+  }
+});
+
+test("queue overflow is explicit and retains the rejected span identity while accepted exports drain", async (t) => {
+  const c = await heldCollector(t);
+  const telemetry = create(c.url);
+  const clients = Array.from({ length: 257 }, () => telemetry.startUpgrade(1));
+  for (const client of clients) client.end(101);
+  const result = telemetry.flush().catch(() => {});
+  try {
+    await c.waitForRequests(1);
+    c.release();
+    await result;
+    const failure = await exportFailure(
+      telemetry.flush(),
+      clients.at(-1),
+      "queue_full",
+    );
+    assert.deepEqual(
+      exported(c.records)
+        .map(({ span }) => `${span.traceId}/${span.spanId}`)
+        .sort(),
+      clients
+        .slice(0, 256)
+        .map((client) => `${client.traceID}/${client.clientSpanID}`)
+        .sort(),
+    );
+    assert.equal(
+      await exportFailure(telemetry.shutdown(), clients.at(-1), "queue_full"),
+      failure,
+    );
+  } finally {
+    c.release();
+    await result;
+    await telemetry.shutdown().catch(() => {});
+  }
+});
+
+for (const kind of ["http", "upgrade"])
+  test(`shutdown rejects an unfinished ${kind} span and a late end cannot silently disappear`, async (t) => {
+    const c = await collector(t);
+    const telemetry = create(c.url);
+    const client =
+      kind === "http" ? telemetry.startHTTP("GET") : telemetry.startUpgrade(1);
+    const shutdown = telemetry.shutdown();
+    void shutdown.catch(() => {});
+    try {
+      assert.throws(
+        () => client.end(kind === "http" ? 200 : 101, "eof"),
+        /telemetry is shut down/u,
+      );
+      await exportFailure(shutdown, client, "unfinished_span");
+      assert.equal(exported(c.records).length, 0);
+    } finally {
+      await shutdown.catch(() => {});
+    }
+  });
+
+test("a provider flush deadline still joins the actual queued exports before returning its error", async (t) => {
+  const { node } = await import("@opentelemetry/sdk-node");
+  const original = node.NodeTracerProvider.prototype.forceFlush;
+  const deadline = Promise.withResolvers();
+  // Exercise the installed SDK's real deadline without spending its default
+  // 30 seconds. Only the provider deadline changes; OTLP responses stay real.
+  t.mock.method(node.NodeTracerProvider.prototype, "forceFlush", function () {
+    return original.call(this, { timeoutMillis: 1 }).catch((error) => {
+      deadline.resolve(error);
+      throw error;
+    });
+  });
+  const c = await heldCollector(t);
+  const telemetry = create(c.url);
+  const clients = Array.from({ length: 17 }, () => telemetry.startHTTP("GET"));
+  for (const client of clients) client.end(200, "eof", 2);
+  let settled = false;
+  const result = telemetry.flush().then(
+    () => ({ ok: true }),
+    (error) => ({ ok: false, error }),
+  );
+  void result.then(() => (settled = true));
+  try {
+    await c.waitForRequests(1);
+    const error = await deadline.promise;
+    assert.match(inspect(error), /timeout period of 1 ms/u);
+    await setImmediate();
+    assert.equal(settled, false, "provider timeout must not abandon exports");
+    c.release();
+    assert.deepEqual(await result, { ok: false, error });
+    assert.deepEqual(
+      exported(c.records)
+        .map(({ span }) => `${span.traceId}/${span.spanId}`)
+        .sort(),
+      clients
+        .map((client) => `${client.traceID}/${client.clientSpanID}`)
+        .sort(),
+    );
+  } finally {
+    c.release();
+    await result;
+    await telemetry.shutdown().catch(() => {});
+  }
 });

@@ -65,6 +65,102 @@ const prompt = (connection, sessionId) =>
     prompt: [{ type: "text", text: "PRIVATE-HTTP-BUSINESS-BODY" }],
   });
 
+for (const holdExports of [false, true])
+  test(
+    `closing 35 actual ACK and SSE bodies retains the late GET CLIENT beyond the exporter limit (held=${holdExports})`,
+    { timeout: 10000 },
+    async (t) => {
+      const f = await httpFixture(t);
+      const c = client(f);
+      let flushing;
+      try {
+        await bounded(c.opening);
+        await f.telemetry.flush();
+        // Match the failing Cost connection's transport inventory: initialize,
+        // one connection SSE, four Session SSEs, thirty ACKs, then one DELETE.
+        // These are real SDK requests. ACK bodies remain unconsumed until close.
+        for (const count of [12, 7, 4, 3]) {
+          const session = await bounded(newSession(c.connection));
+          for (let index = 0; index < count; index++)
+            assert.equal(
+              (await bounded(prompt(c.connection, session.sessionId)))
+                .stopReason,
+              "end_turn",
+            );
+        }
+        await bounded(
+          (async () => {
+            while (
+              c.http
+                .snapshot()
+                .requests.some((receipt) => receipt.status === null)
+            )
+              await turn();
+          })(),
+        );
+        const live = c.http.snapshot();
+        assert.equal(live.requests.length, 36);
+        assert.equal(
+          live.requests.filter((receipt) => receipt.bodyOutcome === "pending")
+            .length,
+          35,
+        );
+        assert.equal(live.requests[32].method, "GET");
+        // Hold real OTLP responses to make the export concurrency boundary
+        // deterministic, without replacing the exporter or inventing spans.
+        if (holdExports) f.holdExports();
+        await bounded(c.http.closeAndWait());
+        await f.joinResponses();
+        flushing = f.telemetry.flush();
+        void flushing.catch(() => {});
+        f.releaseExports();
+        await bounded(flushing);
+        const receipt = c.http.snapshot();
+        assert.equal(receipt.requests.length, 37);
+        assert.equal(receipt.pendingRequests, 0);
+        assert.equal(receipt.streamJoined, true);
+        assert.deepEqual(receipt.failures, []);
+        const spans = f.spans();
+        const ids = new Set(
+          spans.map((span) => `${span.traceId}/${span.spanId}`),
+        );
+        const missing = receipt.requests
+          .filter((item) => !ids.has(`${item.traceID}/${item.clientSpanID}`))
+          .map(({ index, method, traceID, clientSpanID }) => ({
+            index,
+            method,
+            traceID,
+            clientSpanID,
+          }));
+        console.log(
+          JSON.stringify({
+            scenario: "actual-35-body-close-burst",
+            held: holdExports,
+            requests: receipt.requests.length,
+            exported: spans.length,
+            missing,
+          }),
+        );
+        assert(
+          ids.has(
+            `${receipt.requests[32].traceID}/${receipt.requests[32].clientSpanID}`,
+          ),
+          "late GET index 32 must retain its original exported CLIENT",
+        );
+        assert.deepEqual(
+          spans.map((span) => `${span.traceId}/${span.spanId}`).sort(),
+          receipt.requests
+            .map((item) => `${item.traceID}/${item.clientSpanID}`)
+            .sort(),
+        );
+      } finally {
+        f.releaseExports();
+        await flushing?.catch(() => {});
+        await c.http.closeAndWait().catch(() => {});
+      }
+    },
+  );
+
 test(
   "actual HTTP initialize, ACK and multiple Session SSEs retain unique exported CLIENTs",
   { timeout: 10000 },
@@ -195,6 +291,89 @@ test(
     );
   },
 );
+
+for (const when of ["before", "after"])
+  test(
+    `a CLIENT end failure ${when} the SDK end cannot become successful HTTP cleanup`,
+    { timeout: 10000 },
+    async (t) => {
+      const f = await httpFixture(t);
+      let original,
+        argumentsAtEnd,
+        calls = 0;
+      const c = client(f, {
+        telemetry: {
+          ...f.telemetry,
+          startHTTP(method) {
+            const actual = f.telemetry.startHTTP(method);
+            if (method !== "GET" || original) return actual;
+            original = actual;
+            return {
+              ...actual,
+              end(...args) {
+                calls++;
+                argumentsAtEnd = args;
+                if (when === "after") actual.end(...args);
+                throw new Error("PRIVATE-SPAN-END-SECRET");
+              },
+            };
+          },
+        },
+      });
+      try {
+        await bounded(c.opening);
+        await bounded(newSession(c.connection));
+        const closing = c.http.closeAndWait();
+        assert.equal(c.http.closeAndWait(), closing);
+        await assert.rejects(bounded(closing), (error) => {
+          assert.match(error.message, /private ACP HTTP cleanup failed/u);
+          assert(!inspect(error).includes("PRIVATE-SPAN-END-SECRET"));
+          return true;
+        });
+        await f.joinResponses();
+        await f.telemetry.flush();
+        const receipt = c.http.snapshot();
+        const failed = receipt.requests.find(
+          (item) => item.clientSpanID === original.clientSpanID,
+        );
+        assert.equal(failed.failed, true);
+        assert.equal(failed.bodyOutcome, "cancelled");
+        assert.equal(
+          failed.ended,
+          undefined,
+          "a throwing end did not complete",
+        );
+        assert(
+          receipt.failures.some(
+            (item) =>
+              item.phase === "telemetry_end" &&
+              item.requestIndex === failed.index,
+          ),
+        );
+        assert.equal(receipt.pendingRequests, 0);
+        assert.equal(receipt.streamJoined, true);
+        const deletions = receipt.requests.filter(
+          (item) => item.method === "DELETE",
+        );
+        assert.equal(deletions.length, 1);
+        assert.equal(deletions[0].status, 202);
+        assert.equal(deletions[0].bodyOutcome, "eof");
+        assert.equal(calls, 1, "cleanup must not retry a partly completed end");
+        assert.equal(
+          f.spans().filter((span) => span.spanId === original.clientSpanID)
+            .length,
+          when === "after" ? 1 : 0,
+        );
+        assert(!JSON.stringify(receipt).includes("PRIVATE-SPAN-END-SECRET"));
+      } finally {
+        await c.http.closeAndWait().catch(() => {});
+        // Fault injection can deliberately stop the original SDK handle before
+        // end. This fallback owns it solely for teardown, after the assertions.
+        if (original && argumentsAtEnd) original.end(...argumentsAtEnd);
+        await f.telemetry.flush();
+      }
+    },
+  );
 
 for (const mode of ["held-headers", "held-body"]) {
   test(

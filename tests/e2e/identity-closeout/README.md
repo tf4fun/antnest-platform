@@ -80,6 +80,9 @@ The final CLIENT outcome and `antnest.http.body.outcome` are recorded separately
 an incomplete DELETE remains an ERROR while preserving its actual cancelled body
 and HTTP status. Synchronous connection-close failures use safe diagnostics and
 cannot skip the remaining stream, request or response-body joins.
+CLIENT `end` failures also fail cleanup with safe request diagnostics; they
+cannot create a completed `ended` receipt. A partly completed `end` is not
+retried, and cleanup still joins the remaining responses and DELETE.
 
 DELETE has its own cleanup signal and must finish with exactly 202 and a fully
 drained body of at most 64 KiB. Late initialization and the SDK's automatic
@@ -103,6 +106,18 @@ SDK transport reaches `open`; rejected or invalid handshakes remain failures.
 The private response's `X-Antnest-Trace-ID` is never used as proof. A client's
 `connectionTraceID` and `clientSpanID` identify its exported CLIENT context;
 the actual ACP SERVER span must still be discovered from raw evidence.
+
+The private telemetry exporter admits at most 256 unfinished exports, including
+at most eight in-flight OTLP requests. It passes each admitted original SDK span
+to the SDK exporter once; overflow fails explicitly with the rejected Trace/Span
+identity. The first export failure and its cause remain failures of every later
+`flush` and `shutdown`, including after successful exports. Both operations join
+the queued exports and the underlying exporter before reporting failure, and
+shutdown still closes that exporter. A provider flush deadline also waits for
+delivery to finish before returning its original error. End every CLIENT span before
+shutdown: unfinished spans fail shutdown, and a late `end` is rejected instead
+of silently disappearing. Export completion alone does not prove collector
+acceptance or Jaeger indexing; the complete raw parent chain remains required.
 
 `collectPrivateACPTrace` requires a nonempty durable evidence directory, a
 provider `flush` callback and the owning request inspector. Supply the actual

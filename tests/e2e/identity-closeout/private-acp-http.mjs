@@ -296,19 +296,24 @@ export function createPrivateACPHTTP(endpoint, options = {}) {
     };
     requests.push(receipt);
     let client,
-      ended = false,
+      endAttempted = false,
       bodyOwned = false,
       phase = "headers";
     const end = () => {
-      if (ended) return;
-      ended = true;
+      if (endAttempted) return;
+      endAttempted = true;
+      try {
+        client?.end(
+          receipt.status,
+          receipt.failed ? "failed" : receipt.bodyOutcome,
+          receipt.bytes,
+          receipt.bodyOutcome,
+        );
+      } catch {
+        recordFailure("telemetry_end", receipt);
+        throw failure("private ACP HTTP telemetry end failed");
+      }
       receipt.ended = stamp();
-      client?.end(
-        receipt.status,
-        receipt.failed ? "failed" : receipt.bodyOutcome,
-        receipt.bytes,
-        receipt.bodyOutcome,
-      );
     };
     try {
       if (method === "POST") {
