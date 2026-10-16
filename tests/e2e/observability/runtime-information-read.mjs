@@ -175,6 +175,8 @@ const record = (span, event, reason) => ({
 
 function requestDiagnostics(request, read, outcome, nodeBefore) {
   if (outcome === "success") return diagnostics(request);
+  if (outcome === "failed-v1-run-response")
+    return failedRunResponseDiagnostics(request, read, nodeBefore);
   assert.equal(
     outcome,
     "closed-v1-response",
@@ -246,6 +248,94 @@ function requestDiagnostics(request, read, outcome, nodeBefore) {
       "otel.status_code": status,
       "antnest.outcome": "error",
       "antnest.operation.phase": "acp.dispatch",
+    },
+    new Map([[event, attributes]]),
+  );
+}
+
+// This proves only that the independent refresh finished before dispatch
+// reported its v1 Run failure. Its caller still owns the RPC/Run/model errors
+// and must bind the actual wire result and durable Run outcome separately.
+function failedRunResponseDiagnostics(request, read, nodeBefore) {
+  assert(
+    ["acp session/prompt", "HTTP POST /v1/acp"].includes(request.operationName),
+  );
+  if (request.operationName === "HTTP POST /v1/acp") {
+    expectedTags(request, {
+      "http.request.method": "POST",
+      "http.route": "/v1/acp",
+      "http.response.status_code": 202,
+    });
+  }
+  expectedTags(request, {
+    "span.kind": "server",
+    "rpc.method": "session/prompt",
+    "antnest.protocol.version": "v1",
+    "error.type": "RequestError",
+    "error.code": "-32022",
+    "antnest.error.code": "-32022",
+    "rpc.response.status_code": -32022,
+    "antnest.outcome": "error",
+    "antnest.operation.phase": "acp.dispatch",
+  });
+  const status = tag(request, "otel.status_code");
+  assert(["ERROR", 2].includes(status));
+  const legacy = tag(request, "error");
+  assert(legacy === undefined || legacy === true);
+  for (const key of [
+    "antnest.error.origin_trace_id",
+    "antnest.error.origin_span_id",
+  ])
+    assert.equal(
+      tag(request, key),
+      undefined,
+      "unproved failed Run response origin",
+    );
+  assert.equal(
+    request.logs?.length,
+    1,
+    "one original Run response error event required",
+  );
+  const event = request.logs[0],
+    attributes = eventValues(event);
+  const types = attributes["antnest.error.cause_types"];
+  assert(types === "[]" || (Array.isArray(types) && types.length === 0));
+  const causes = attributes["antnest.error.causes"];
+  assert.equal(typeof causes, "string");
+  assert.deepEqual(JSON.parse(causes), [
+    {
+      type: "RequestError",
+      code: -32022,
+      message: "Operation reported -32022",
+    },
+  ]);
+  exactEvent(request, "antnest.error", {
+    "antnest.error.stage": "acp.dispatch",
+    "antnest.error.type": "RequestError",
+    "antnest.error.code": "-32022",
+    "antnest.error.message": "Operation reported -32022",
+    "antnest.error.cause_types": types,
+    "antnest.error.causes": causes,
+    "antnest.operation.phase": "acp.dispatch",
+  });
+  nodeBefore(
+    read,
+    request,
+    end(read),
+    event.timestamp,
+    "read-before-response-error",
+  );
+  diagnostics(
+    request,
+    {
+      "error.type": "RequestError",
+      "error.code": "-32022",
+      "antnest.error.code": "-32022",
+      "rpc.response.status_code": -32022,
+      "otel.status_code": status,
+      "antnest.outcome": "error",
+      "antnest.operation.phase": "acp.dispatch",
+      ...(legacy === undefined ? {} : { error: true }),
     },
     new Map([[event, attributes]]),
   );

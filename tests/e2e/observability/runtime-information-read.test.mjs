@@ -3,6 +3,7 @@ import test from "node:test";
 import { addCompletedRead } from "../edge-gateway/resolve-cache-completed-read-fixtures.mjs";
 import { completedInitializeRead } from "../edge-gateway/resolve-cache-outage-diagnostics.mjs";
 import { addRuntimeEventRepresentations } from "./runtime-information-timing-fixture.mjs";
+import { addFailedV1RunResponse } from "./failed-run-response-fixture.mjs";
 
 const url = new URL("./runtime-information-read.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
@@ -481,6 +482,111 @@ function closedResponse(f, timestamp) {
     },
   ];
 }
+for (const http of [false, true])
+  for (const causeTypes of [[], "[]"])
+    test(`failed v1 Run response retains independently completed read without owning the parent error: http=${http}, cause=${typeof causeTypes}`, () => {
+      const f = fixture();
+      addFailedV1RunResponse(f.root, { http, causeTypes });
+      const raw = structuredClone(f.trace);
+      assert.throws(() => inspect(f));
+      assert.throws(() => inspect(f, { requestOutcome: "closed-v1-response" }));
+      const proof = inspect(f, { requestOutcome: "failed-v1-run-response" });
+      assert.equal(proof.request, f.root);
+      assert(!proof.spans.includes(f.root));
+      assert(
+        !proof.neutralDiagnostics.some((row) => row.span_id === f.root.spanID),
+      );
+      assert.deepEqual(f.trace, raw);
+    });
+
+for (const [name, mutate] of [
+  ["v2", (f) => set(f.root, "antnest.protocol.version", "v2")],
+  ["wrong RPC", (f) => set(f.root, "rpc.method", "session/new")],
+  [
+    "wrong operation",
+    (f) => {
+      f.root.operationName = "unrelated";
+    },
+  ],
+  ["wrong error type", (f) => set(f.root, "error.type", "Error")],
+  ["wrong code", (f) => set(f.root, "antnest.error.code", "-32020")],
+  ["wrong RPC status", (f) => set(f.root, "rpc.response.status_code", -32020)],
+  [
+    "foreign origin",
+    (f) => set(f.root, "antnest.error.origin_span_id", "foreign"),
+  ],
+  ["false error marker", (f) => set(f.root, "error", false)],
+  [
+    "extra cause",
+    (f) =>
+      eventSet(f.root.logs[0], "antnest.error.cause_types", ["ForeignError"]),
+  ],
+  [
+    "forged model code",
+    (f) =>
+      eventSet(
+        f.root.logs[0],
+        "antnest.error.code",
+        "model_unsupported_content",
+      ),
+  ],
+  [
+    "extra event origin",
+    (f) => eventSet(f.root.logs[0], "antnest.error.origin_trace_id", "foreign"),
+  ],
+  [
+    "extra warning",
+    (f) =>
+      f.root.logs.push({
+        timestamp: f.root.startTime + 1,
+        fields: [{ key: "level", value: "WARN" }],
+      }),
+  ],
+  [
+    "duplicate tag",
+    (f) => f.root.tags.push({ key: "error.code", value: "-32022" }),
+  ],
+  ["failed HTTP", (f) => set(f.root, "http.response.status_code", 503)],
+  ["wrong HTTP method", (f) => set(f.root, "http.request.method", "GET")],
+  ["wrong HTTP route", (f) => set(f.root, "http.route", "/v2/acp")],
+  [
+    "failed read close",
+    (f) => set(f.read, "antnest.mcp.connection.close.outcome", "failed"),
+  ],
+  [
+    "cancelled read caller",
+    (f) => set(f.read, "antnest.mcp.caller_cancelled", true),
+  ],
+  [
+    "error before read joined by one ms",
+    (f) => {
+      f.root.logs[0].timestamp = f.read.startTime + f.read.duration - 1000;
+    },
+  ],
+])
+  test(`failed v1 parent does not excuse ${name}`, () => {
+    const f = fixture();
+    addFailedV1RunResponse(f.root, { http: true });
+    mutate(f);
+    assert.throws(() =>
+      inspect(f, { requestOutcome: "failed-v1-run-response" }),
+    );
+  });
+
+for (const difference of [1, 999])
+  test(`failed v1 parent preserves the original ${difference}us same-Node endpoint`, () => {
+    const f = fixture();
+    addFailedV1RunResponse(f.root, {
+      timestamp: f.read.startTime + f.read.duration - difference,
+    });
+    const proof = inspect(f, { requestOutcome: "failed-v1-run-response" });
+    assert.equal(
+      proof.timeObservations.find(
+        (row) => row.boundary === "read-before-response-error",
+      ).raw_difference_us,
+      difference,
+    );
+  });
 for (const difference of [1, 999])
   test(
     "records the independent original response-error endpoint " +

@@ -10,6 +10,8 @@ import { privateBoundaryFixture } from "../acp-plan/private-boundary.fixture.mjs
 import { addPostPromptInformationRead } from "./runtime-information-run-fixtures.mjs";
 import { setTag } from "./gateway-resolution-fixtures.mjs";
 import { tag } from "./trace-tree.mjs";
+import { inspectRunInformationReads } from "./runtime-information-run.mjs";
+import { addFailedV1RunResponse } from "./failed-run-response-fixture.mjs";
 import {
   addReadEndpointObservation,
   assertReadEndpointObservations,
@@ -376,6 +378,83 @@ test("files cannot classify a malformed preparation read as a deliberate failed 
   setTag(f.information.read, "error", true);
   assert.throws(() => inspectFileTrace(f.trace, f.requests));
 });
+
+function failedAfterRefresh() {
+  const f = commandFixture("ordinary");
+  const post = addPostPromptInformationRead(f.trace);
+  const { request, run } = f.information;
+  addFailedV1RunResponse(request);
+  setTag(run, "run.terminal_class", "failed");
+  return {
+    ...f,
+    post,
+    owners: {
+      request,
+      run,
+      postPromptRequestOutcome: "failed-v1-run-response",
+    },
+  };
+}
+test("failed v1 Run read proof accounts only for preparation and post-prompt cleanup", () => {
+  const f = failedAfterRefresh();
+  const raw = structuredClone(f.trace);
+  assert.throws(() =>
+    inspectRunInformationReads(f.trace, {
+      ...f.owners,
+      postPromptRequestOutcome: "success",
+    }),
+  );
+  const proof = inspectRunInformationReads(f.trace, f.owners);
+  assert.equal(proof.informationReads, 2);
+  assert.equal(proof.postPromptInformationReads, 1);
+  assert(!proof.spans.has(f.owners.request));
+  assert(!proof.spans.has(f.owners.run));
+  assert.deepEqual(f.trace, raw);
+});
+for (const [name, mutate] of [
+  ["v2", (f) => setTag(f.owners.request, "antnest.protocol.version", "v2")],
+  [
+    "successful Run",
+    (f) => setTag(f.owners.run, "run.terminal_class", "completed"),
+  ],
+  [
+    "closed response ambiguity",
+    (f) => {
+      f.owners.closedBeforeResponse = true;
+    },
+  ],
+  [
+    "foreign parent",
+    (f) => {
+      f.post.read.references[0].spanID = f.owners.run.spanID;
+    },
+  ],
+  [
+    "read before Run ends",
+    (f) => {
+      f.post.read.startTime = f.owners.run.startTime;
+    },
+  ],
+  [
+    "duplicate post read",
+    (f) =>
+      f.trace.spans.push({
+        ...structuredClone(f.post.read),
+        spanID: "duplicate-post-read",
+      }),
+  ],
+  [
+    "unknown parent outcome",
+    (f) => {
+      f.owners.postPromptRequestOutcome = "anything";
+    },
+  ],
+])
+  test(`failed v1 post-prompt read rejects ${name}`, () => {
+    const f = failedAfterRefresh();
+    mutate(f);
+    assert.throws(() => inspectRunInformationReads(f.trace, f.owners));
+  });
 
 function closedAfterRefresh(causeTypes = "[]") {
   const f = commandFixture("ordinary");

@@ -92,6 +92,14 @@ errors, warnings and `strict_trace=failed` remain visible even when business and
 topology are accepted. The strictly sub-millisecond Node SDK investigation is
 deferred separately; raw timestamps are never rewritten.
 
+`collectPrivateACPConsumerTrace` shares this collection lifecycle with other
+private ACP consumers. Each consumer supplies its primary-request inspector and
+allowed diagnostic reasons; the collector snapshots those reasons before any
+asynchronous work. Initialization, SSE and DELETE still use the fixed shared
+inspectors, and inventories and strict counts always come from the collected raw
+evidence. `collectPrivateCommandTrace` keeps the command policy fixed; transport
+options cannot replace its inspector or expand its allowed reasons.
+
 The runner exits 0 for strict success, 2 when complete business/topology checks
 pass with only reviewed strict findings, and 1 for failures. CI runs the Stage 3
 recipe directly so exit 2 retains the existing warning classification; Make can

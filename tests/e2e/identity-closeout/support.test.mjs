@@ -112,6 +112,44 @@ test("HTTP status failures never echo sensitive response bodies", async (t) => {
   );
 });
 
+for (const status of [200, 503])
+  test(`explicit private response observation preserves the complete HTTP ${status} response without changing status admission`, async (t) => {
+    const text = '{\n  "code": "private-body"\n}\n';
+    const observed = [];
+    const base = await fixture(t, (_, response) => {
+      response.setHeader("X-Antnest-Trace-ID", "a".repeat(32));
+      response.setHeader("Set-Cookie", "secret=private-header");
+      response.writeHead(status).end(text);
+    });
+    const promise = new GatewayClient(base).request("/api/session", {
+      onResponse: (receipt) => {
+        observed.push(structuredClone(receipt));
+        receipt.status = 200;
+      },
+    });
+    if (status === 200)
+      assert.deepEqual((await promise).body, JSON.parse(text));
+    else await assert.rejects(promise, /HTTP 503, expected 200/);
+    assert.deepEqual(observed, [{ status, traceID: "a".repeat(32), text }]);
+  });
+
+test("private response observation failure cannot replace the original HTTP assertion", async (t) => {
+  let called = false;
+  const base = await fixture(t, (_, response) =>
+    response.writeHead(503).end("private-response"),
+  );
+  await assert.rejects(
+    new GatewayClient(base).request("/api/session", {
+      onResponse: () => {
+        called = true;
+        throw new Error("private-observer-failure");
+      },
+    }),
+    /HTTP 503, expected 200/,
+  );
+  assert.equal(called, true);
+});
+
 test("unexpected status retains only safe response diagnostics before throwing", async (t) => {
   let calls = 0;
   const traceID = "d".repeat(32),

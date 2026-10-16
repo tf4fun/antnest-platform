@@ -20,6 +20,7 @@ import { privateBoundaryFixture } from "../acp-plan/private-boundary.fixture.mjs
 import { addCompletedRead } from "../edge-gateway/resolve-cache-completed-read-fixtures.mjs";
 import { addRuntimeEventRepresentations } from "../observability/runtime-information-timing-fixture.mjs";
 import { verdict } from "../../support/ci-shard.mjs";
+import { inspectPrivateCommandTrace } from "./trace.mjs";
 
 const url = new URL("./collector.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
@@ -33,6 +34,34 @@ const implementation = await import(url).catch((error) => {
 async function collect(...args) {
   assert.equal(typeof implementation.collectPrivateCommandTrace, "function");
   return implementation.collectPrivateCommandTrace(...args);
+}
+async function collectConsumer(...args) {
+  assert.equal(
+    typeof implementation.collectPrivateACPConsumerTrace,
+    "function",
+  );
+  return implementation.collectPrivateACPConsumerTrace(...args);
+}
+const consumerReasons = () =>
+  new Set([
+    "consumer-rejection",
+    "private-http-sse-close",
+    "completed-initialize-mcp-read-disconnect",
+    "completed-runtime-tool-http-disconnect",
+  ]);
+function consumerInspector(trace, bound, secrets, requests) {
+  const result = inspectPrivateCommandTrace(trace, bound, secrets, requests);
+  return {
+    ...result,
+    consumer: "native-inputs",
+    owned_error_spans: (result.owned_error_spans ?? []).map((claim) => ({
+      ...claim,
+      reason:
+        claim.reason === "command-rejection"
+          ? "consumer-rejection"
+          : claim.reason,
+    })),
+  };
 }
 const parse = (path) => JSON.parse(readFileSync(path, "utf8"));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -177,6 +206,169 @@ function httpFixture(t, { rejection = false, mutate = () => {} } = {}) {
     },
   };
 }
+
+for (const rejection of [false, true])
+  test(`generic HTTP collection uses the owner only for the main request and retains raw inventory; rejection=${rejection}`, async (t) => {
+    const f = httpFixture(t, { rejection });
+    const calls = [];
+    const reasons = consumerReasons();
+    const flush = f.options.flush;
+    const result = await collectConsumer(
+      "http://jaeger",
+      f.expected,
+      {
+        ...f.options,
+        flush: async () => {
+          await flush();
+          reasons.clear();
+        },
+      },
+      {
+        ownedReasons: reasons,
+        inspect: async (...args) => {
+          calls.push(args[1].method);
+          assert.deepEqual(args[2], f.options.secrets);
+          const checked = consumerInspector(...args);
+          return {
+            ...checked,
+            error_spans: 0,
+            strict_trace: "passed",
+            raw_error_inventory: [],
+            diagnostic_inventory_verified: false,
+          };
+        },
+      },
+    );
+    assert.equal(result.consumer, "native-inputs");
+    assert.deepEqual(calls, Array(3).fill(f.expected.method));
+    assert.equal(result.error_spans, rejection ? 3 : 1);
+    assert.equal(result.owned_error_spans.length, result.error_spans);
+    assert.equal(result.raw_error_inventory.length, result.error_spans);
+    assert.equal(result.diagnostic_inventory_verified, true);
+    assert.equal(result.strict_trace, "failed");
+    assert.equal(result.http_auxiliary.length, 3);
+    assert.equal(
+      parse(join(result.evidence_directory, "manifest.json")).status,
+      "collected",
+    );
+  });
+
+for (const invalid of [
+  "throw",
+  "unallowed reason",
+  "unclaimed error",
+  "duplicate claim",
+  "borrow auxiliary",
+  "mutate raw",
+])
+  test(`generic HTTP owner cannot admit ${invalid}`, async (t) => {
+    const f = httpFixture(t, { rejection: true });
+    let called = 0;
+    await assert.rejects(
+      collectConsumer("http://jaeger", f.expected, f.options, {
+        ownedReasons: consumerReasons(),
+        inspect: (...args) => {
+          called++;
+          const checked = consumerInspector(...args);
+          if (invalid === "throw") throw new Error("owner refused");
+          if (invalid === "unallowed reason")
+            checked.owned_error_spans[0].reason = "foreign";
+          if (invalid === "unclaimed error") checked.owned_error_spans.pop();
+          if (invalid === "duplicate claim")
+            checked.owned_error_spans.push({ ...checked.owned_error_spans[0] });
+          if (invalid === "borrow auxiliary")
+            checked.owned_error_spans.push({
+              trace_id: "b".repeat(32),
+              span_id: f.receiver.spanID,
+              reason: "private-http-sse-close",
+            });
+          if (invalid === "mutate raw")
+            args[0].spans[0].operationName = "rewritten";
+          return checked;
+        },
+      }),
+    );
+    assert(called > 0, "main owner was never evaluated");
+    const [archive] = readdirSync(f.directory);
+    assert.equal(
+      parse(join(f.directory, archive, "manifest.json")).status,
+      "failed",
+    );
+  });
+
+for (const invalid of [
+  "initialize",
+  "foreign process",
+  "missing GET",
+  "hidden DELETE work",
+])
+  test(`generic HTTP owner cannot replace fixed auxiliary validation: ${invalid}`, async (t) => {
+    const f = httpFixture(t, {
+      mutate: (state) => {
+        if (invalid === "initialize")
+          state
+            .get("a".repeat(32))
+            .spans.find((span) => span.spanID === "request").logs = [
+            { timestamp: 3, fields: [{ key: "level", value: "WARN" }] },
+          ];
+        if (invalid === "foreign process")
+          state
+            .get("a".repeat(32))
+            .processes["agent-acp-service"].tags.find(
+              (item) => item.key === "process.pid",
+            ).value++;
+        if (invalid === "missing GET") state.delete("b".repeat(32));
+        if (invalid === "hidden DELETE work")
+          state
+            .get("d".repeat(32))
+            .spans[1].tags.push(...tags({ "rpc.method": "session/new" }));
+      },
+    });
+    const calls = [];
+    await assert.rejects(
+      collectConsumer("http://jaeger", f.expected, f.options, {
+        ownedReasons: consumerReasons(),
+        inspect: (...args) => {
+          calls.push(args[1].method);
+          return consumerInspector(...args);
+        },
+      }),
+    );
+    assert(
+      !calls.includes("initialize"),
+      "auxiliary initialize reached consumer callback",
+    );
+    const [archive] = readdirSync(f.directory);
+    const manifest = parse(join(f.directory, archive, "manifest.json"));
+    assert.equal(manifest.status, "failed");
+    for (const query of manifest.queries)
+      assert.equal(
+        hash(readFileSync(join(f.directory, archive, query.file))),
+        query.sha256,
+      );
+  });
+
+test("Commands options cannot replace its owning inspector or reasons", async (t) => {
+  const f = httpFixture(t, {
+    mutate: (state) => {
+      state.get(f.trace.traceID).spans[0].logs = [
+        { timestamp: 3, fields: [{ key: "level", value: "WARN" }] },
+      ];
+    },
+  });
+  let called = false;
+  await assert.rejects(
+    collect("http://jaeger", f.expected, {
+      ...f.options,
+      inspect: () => {
+        called = true;
+        return {};
+      },
+      ownedReasons: new Set(["anything"]),
+    }),
+  );
+  assert.equal(called, false);
+});
 
 for (const rejection of [false, true])
   test(`HTTP collection retains complete auxiliary inventory and raw diagnostics; rejection=${rejection}`, async (t) => {
@@ -546,7 +738,9 @@ test("HTTP cancellation during final response settlement cannot publish collecte
         request,
       });
       passed = true;
-    } catch {}
+    } catch {
+      // Cancellation may reject; verify its manifest and settlement below.
+    }
     for (let settle = 0; !statusAtCancellation && settle < 32; settle++)
       await Promise.resolve();
     assert(
@@ -655,6 +849,26 @@ for (const version of [1, 2])
     assert.equal(
       implementation.privateCommandStrictOutcome([result]).exit_code,
       0,
+    );
+    let ownerCalls = 0;
+    const generic = await collectConsumer("http://jaeger", expected, options, {
+      ownedReasons: consumerReasons(),
+      inspect: async (...args) => {
+        ownerCalls++;
+        return consumerInspector(...args);
+      },
+    });
+    assert.equal(ownerCalls, 3);
+    assert.equal(generic.consumer, "native-inputs");
+    assert.equal(generic.error_spans, 0);
+    assert.equal(generic.strict_trace, "passed");
+    await assert.rejects(
+      collectConsumer("http://jaeger", expected, options, {
+        ownedReasons: consumerReasons(),
+        inspect: () => {
+          throw new Error("WS owner refused");
+        },
+      }),
     );
     f.trace.spans[0].logs = [
       { timestamp: 3, fields: [{ key: "level", value: "WARN" }] },

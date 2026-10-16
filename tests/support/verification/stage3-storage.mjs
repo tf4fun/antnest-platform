@@ -23,7 +23,7 @@ const profiles = {
   FILE_OBSERVATIONS: "acp-files",
   STRUCTURED_PLAN: "acp-plan",
   SLASH_COMMANDS: "acp-commands",
-  MULTIMODAL: null,
+  MULTIMODAL: "acp-multimodal",
   SESSION_COST: null,
   TOOL_PERMISSIONS: null,
 };

@@ -34,8 +34,8 @@ const ownedReasons = new Set([
   "completed-runtime-tool-http-disconnect",
 ]);
 
-function inventory(sources, reports) {
-  return privateACPDiagnosticInventory(sources, reports, ownedReasons);
+function inventory(sources, reports, reasons) {
+  return privateACPDiagnosticInventory(sources, reports, reasons);
 }
 
 export function privateCommandStrictOutcome(results) {
@@ -266,7 +266,16 @@ function inspectAuxiliary(
   };
 }
 
-export async function collectPrivateCommandTrace(
+export function collectPrivateCommandTrace(base, expected, options = {}) {
+  return collectPrivateACPConsumerTrace(base, expected, options, {
+    inspect: inspectPrivateCommandTrace,
+    ownedReasons,
+  });
+}
+
+// Only the main request belongs to the consumer. Transport initialization,
+// HTTP cleanup and complete raw diagnostic inventory retain their fixed policy.
+export async function collectPrivateACPConsumerTrace(
   base,
   expected,
   {
@@ -279,7 +288,20 @@ export async function collectPrivateCommandTrace(
     wait = delay,
     attempts = 40,
   } = {},
+  { inspect, ownedReasons: reasonPolicy } = {},
 ) {
+  assert.equal(typeof inspect, "function");
+  assert(
+    reasonPolicy instanceof Set,
+    "consumer diagnostic reason Set required",
+  );
+  const reasons = new Set(reasonPolicy);
+  const inspectMain = async (trace, bound) => {
+    const result = await inspect(trace, bound, secrets, requests);
+    assert(result && typeof result === "object" && !Array.isArray(result));
+    assert.equal(result.trace_id, trace.traceID, "foreign consumer report");
+    return result;
+  };
   assert.equal(expected.boundary, "private-acp");
   if (expected.transport === "websocket")
     return collectPrivateACPTrace(base, expected, {
@@ -290,16 +312,11 @@ export async function collectPrivateCommandTrace(
       request,
       wait,
       attempts,
-      inspect: (trace, bound) => {
-        const result = inspectPrivateCommandTrace(
-          trace,
-          bound,
-          secrets,
-          requests,
-        );
+      inspect: async (trace, bound) => {
+        const result = await inspectMain(trace, bound);
         return {
           ...result,
-          ...inventory([trace, bound.connectionTrace], [result]),
+          ...inventory([trace, bound.connectionTrace], [result], reasons),
         };
       },
     });
@@ -408,7 +425,7 @@ export async function collectPrivateCommandTrace(
         attempts,
         directory: archive,
         signal,
-        inspect: (trace, item, _secrets, collection) => {
+        inspect: async (trace, item, _secrets, collection) => {
           const sources = resolveTraceSources(trace, secrets, collection);
           assert.equal(
             sources.length,
@@ -416,12 +433,7 @@ export async function collectPrivateCommandTrace(
             "unexpected command source Trace",
           );
           const before = JSON.stringify(sources);
-          const main = inspectPrivateCommandTrace(
-            trace,
-            item,
-            secrets,
-            requests,
-          );
+          const main = await inspectMain(trace, item);
           const reference = inspectPrivateCommandHTTPBoundary(
             trace,
             item,
@@ -438,7 +450,7 @@ export async function collectPrivateCommandTrace(
               requests,
             ),
           );
-          const evidence = inventory(sources, [main, ...extra]);
+          const evidence = inventory(sources, [main, ...extra], reasons);
           assert.equal(
             JSON.stringify(sources),
             before,

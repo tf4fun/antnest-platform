@@ -39,8 +39,16 @@ const cancelled = (span) =>
 /** Read proof is owned by its Run preparation or a separate v1 completion refresh. */
 export function inspectRunInformationReads(
   trace,
-  { request, run, closedBeforeResponse = false },
+  {
+    request,
+    run,
+    closedBeforeResponse = false,
+    postPromptRequestOutcome = "success",
+  },
 ) {
+  assert(
+    ["success", "failed-v1-run-response"].includes(postPromptRequestOutcome),
+  );
   const tree = traceTopology(trace);
   for (const span of [request, run]) {
     assert.equal(tree.spans.get(span?.spanID), span, "foreign Run read owner");
@@ -157,6 +165,20 @@ export function inspectRunInformationReads(
     "Run read differs from pinned execution",
   );
   const afterRun = reads.filter((span) => span !== runRead.read);
+  if (postPromptRequestOutcome === "failed-v1-run-response") {
+    assert.equal(
+      closedBeforeResponse,
+      false,
+      "ambiguous post-prompt response proof",
+    );
+    assert.equal(protocol, "v1");
+    assert.equal(tag(run, "run.terminal_class"), "failed");
+    assert.equal(
+      afterRun.length,
+      1,
+      "failed v1 response requires its actual refresh",
+    );
+  }
   assert(
     afterRun.length <= 1,
     "extra information read outside Run preparation",
@@ -182,7 +204,7 @@ export function inspectRunInformationReads(
         closedBeforeResponse === true &&
         tag(request, "antnest.outcome") === "error"
           ? "closed-v1-response"
-          : "success",
+          : postPromptRequestOutcome,
     });
     assert.equal(
       postPromptRead.agentId,
@@ -239,6 +261,21 @@ export function inspectRunInformationReads(
       spans.has(client) || toolClients.has(client),
       "unowned Runtime CLIENT outside read/tool inventories",
     );
+  // The outer private HTTP response body belongs to the request boundary,
+  // which binds its actual wire receipt and checks all client diagnostics.
+  // It is not a Runtime exchange and cannot acquire a read/tool close claim.
+  const privateHTTPClient = tree
+    .chain(request)
+    .find(
+      (span) =>
+        !tree.parent(span) &&
+        tree.service(span) === "antnest-private-acp-client" &&
+        span.operationName === "HTTP POST agent-acp-workspace" &&
+        tag(span, "span.kind") === "client" &&
+        tag(span, "http.request.method") === "POST" &&
+        tag(span, "antnest.outcome") === "cancelled" &&
+        tag(span, "antnest.http.body.outcome") === "cancelled",
+    );
   for (const span of trace.spans) {
     if (spans.has(span)) continue;
     if (tree.service(span) === "antnest-runtime") {
@@ -261,7 +298,9 @@ export function inspectRunInformationReads(
       );
     }
     assert(
-      !cancelled(span) || ownedToolCancellations.has(span),
+      !cancelled(span) ||
+        ownedToolCancellations.has(span) ||
+        span === privateHTTPClient,
       "unowned cancellation cannot borrow information read cleanup",
     );
   }

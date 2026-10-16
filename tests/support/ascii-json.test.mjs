@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
 import { commandHarnessArguments } from "../e2e/acp-commands/deployment.mjs";
 import { planHarnessArguments } from "../e2e/acp-plan/deployment.mjs";
+import { multimodalHarnessArguments } from "../e2e/acp-multimodal/deployment.mjs";
 import { filesHarnessArguments } from "../e2e/acp-files/deployment.mjs";
 import { asciiJSON } from "./ascii-json.mjs";
 
@@ -94,11 +95,13 @@ function logReadClients() {
         "e2e-acp-session.sh",
         "e2e-slash-commands.sh",
         "e2e-structured-plan.sh",
+        "e2e-multimodal.sh",
         "e2e-file-observations.sh",
       ].includes(name)
     ) {
       const commands = name === "e2e-slash-commands.sh";
       const plan = name === "e2e-structured-plan.sh";
+      const multimodal = name === "e2e-multimodal.sh";
       const files = name === "e2e-file-observations.sh";
       assert.match(
         script,
@@ -106,19 +109,23 @@ function logReadClients() {
           ? /node "\$root\/tests\/e2e\/acp-files\/deployment\.mjs" create-harness/u
           : plan
             ? /node "\$root\/tests\/e2e\/acp-plan\/deployment\.mjs" create-harness/u
-            : commands
-              ? /node "\$root\/tests\/e2e\/acp-commands\/deployment\.mjs" create-harness/u
-              : /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
+            : multimodal
+              ? /node "\$root\/tests\/e2e\/acp-multimodal\/deployment\.mjs" create-harness/u
+              : commands
+                ? /node "\$root\/tests\/e2e\/acp-commands\/deployment\.mjs" create-harness/u
+                : /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
       );
       const runID = "00000000-0000-4000-8000-000000000001";
-      const tag = `${files ? "files" : plan ? "plan" : commands ? "commands" : "session"}-${runID}`;
+      const tag = `${files ? "files" : plan ? "plan" : multimodal ? "multimodal" : commands ? "commands" : "session"}-${runID}`;
       const harness = files
         ? filesHarnessArguments
         : plan
           ? planHarnessArguments
-          : commands
-            ? commandHarnessArguments
-            : sessionHarnessArguments;
+          : multimodal
+            ? multimodalHarnessArguments
+            : commands
+              ? commandHarnessArguments
+              : sessionHarnessArguments;
       const { client } = harness(
         {
           COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",

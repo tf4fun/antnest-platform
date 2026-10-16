@@ -18,6 +18,7 @@ import test from "node:test";
 import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
 import { commandHarnessArguments } from "../e2e/acp-commands/deployment.mjs";
 import { planHarnessArguments } from "../e2e/acp-plan/deployment.mjs";
+import { multimodalHarnessArguments } from "../e2e/acp-multimodal/deployment.mjs";
 import { filesHarnessArguments } from "../e2e/acp-files/deployment.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -30,6 +31,7 @@ const children = [
   ["acp-session", "identity-session"],
   ["slash-commands", "acp-commands"],
   ["structured-plan", "acp-plan"],
+  ["multimodal", "acp-multimodal"],
   ["file-observations", "acp-files"],
   ["identity-http", "identity-http"],
   ["agent-access", "identity-agent"],
@@ -170,6 +172,7 @@ for (const [flag, directory] of [
   ["ACP_RESTART", "acp-restart"],
   ["ACP_SESSION", "identity-session"],
   ["SLASH_COMMANDS", "acp-commands"],
+  ["MULTIMODAL", "acp-multimodal"],
   ["FILE_OBSERVATIONS", "acp-files"],
   ["IDENTITY_CORE", "identity-http"],
   ["IDENTITY_ACCESS", "identity-http"],
@@ -285,6 +288,30 @@ test("containers writing private evidence run as the evidence owner", () => {
   assert(plan.includes("/fixture/evidence:/evidence"));
   assert.deepEqual(
     plan.flatMap((arg, index) => (arg === "--user" ? [plan[index + 1]] : [])),
+    [`${uid}:${gid}`],
+  );
+  assert.match(
+    readFileSync(join(directory, "e2e-multimodal.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-multimodal\/deployment\.mjs" create-harness/u,
+  );
+  const multimodal = multimodalHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `multimodal-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:multimodal-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(multimodal.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    multimodal.flatMap((arg, index) =>
+      arg === "--user" ? [multimodal[index + 1]] : [],
+    ),
     [`${uid}:${gid}`],
   );
   assert.match(
