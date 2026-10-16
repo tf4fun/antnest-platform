@@ -100,6 +100,30 @@ between services, waive trace warnings or replace Docker acceptance. It does
 not rewrite timestamps. Optional final arguments `setup` and `open-and-cleanup`
 exercise failure cleanup and deliberately exit nonzero.
 
+`acp-rpc-timing.mjs` observes the production Go Controller client and Node ACP
+configuration handler in separate local processes. Build its Go fixture through
+the integration overlay, then use a fresh private output directory:
+
+```sh
+overlay=$(node --input-type=module -e 'import {writeGoOverlay} from "./tests/support/go-overlay.mjs"; console.log(writeGoOverlay({root:process.cwd(),service:"agent-controller",output:"artifacts/verification/rpc-build",profile:"integration"}));')
+go build -overlay "$overlay" -o artifacts/verification/rpc-build/acp-rpc-timing ./services/agent-controller/internal/diagnostic/acp-rpc-timing
+node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/support/verification/acp-rpc-timing.mjs artifacts/verification/rpc-build/acp-rpc-timing artifacts/verification/rpc-timing-unique-run 100
+node tests/integration/verification/acp-rpc-timing-lifecycle.mjs artifacts/verification/rpc-build/acp-rpc-timing artifacts/verification/rpc-lifecycle-unique-run
+```
+
+Each RPC retains five calibration exchanges before and after it, all original
+OTLP request bodies, actual process identities and partial failed attempts.
+The phase intersection assumes equal clock rates and a fixed offset within
+that phase. The before/after envelope only gives a conditional endpoint-order
+estimate: an unobserved jump or drift cannot be excluded. Conflicting samples
+remain uncertain; wall readings have unknown resolution and do not establish
+ordering. Original span timestamps and warning admission are unchanged, and
+these observations do not attribute historical traces or replace Docker gates.
+The lifecycle command exercises interruption before spawning, cancellation
+during RPC, failed post-RPC calibration, ignored TERM and inherited open pipes.
+It expects the diagnostic failures, verifies partial evidence and checks that
+each owned child process group has exited.
+
 | Tool | Scope |
 | --- | --- |
 | [run-command.mjs](../run-command.mjs) | Runs one argv command, owns its process group, writes private log and result files and preserves failure or incomplete status. Existing evidence names are rejected. |
