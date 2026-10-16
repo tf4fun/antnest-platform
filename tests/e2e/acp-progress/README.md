@@ -40,11 +40,16 @@ timings and held discovery responses. They do not prove real Runtime processes
 stopped. `trace.mjs` now composes the complete private Run/prompt inspection for
 all twelve paths, including their twenty model calls. The owning collector now
 archives requests and original cancel notifications with complete source
-receipts. The main client still
-uses the previous Gateway flow and must be migrated to the new collector
-signature. Host-owned Runtime gates, candidate deployment, entry-point wiring
-and Docker acceptance remain pending; these local checks do not complete the
-migration.
+receipts. The main client now uses the actual login Principal, private connector,
+scenario and collector. It indexes all 28 initializations, 44 business requests,
+four original cancel notifications and twenty model requests before admitting
+76 distinct original Traces. It retains all four Agents until it consumes the
+host's candidate Runtime inspection receipt, then uses the shared four-Agent
+cleanup recorder to join every actual delete operation. Connection capture
+itself joins close before reading the original notifications. Host-owned Runtime
+gates, timeout diagnostic migration, candidate deployment, shell entry-point
+wiring and Docker acceptance remain pending; these local checks do not complete
+the migration.
 
 ## Scope
 
@@ -133,30 +138,23 @@ process identity. Unknown or cross-process warnings fail. Original errors and
 warnings retain strict failure status; reviewed known diagnostics do not erase
 them. Admission binds the exact returned result and rechecks its archived bytes,
 so copied, mutated or repeated results cannot authorize success. These collector
-checks use controlled Jaeger responses and real SDK notification receipts; the
-actual client, Runtime gates and deployment acceptance remain pending.
+checks use controlled Jaeger responses and real SDK notification receipts;
+Runtime gates, diagnostic migration and deployment acceptance remain pending.
 
 ## Running
 
-The main entry point below is pending private collector and host-driver wiring;
-it is not an admission command for the current migration checkpoint.
-
-Build the service images serially (explicit iteration avoids parallel Compose
-Bake builds):
+The main entry point is pending host-driver, diagnostic and candidate deployment
+wiring; `make e2e-tool-progress` is not an admission command for this checkpoint.
+The local fixture command remains available:
 
 ```sh
-make docker-build-runtime-controller
-for service in agent-acp-service identity-service agent-controller admin-console agent-ui edge-gateway; do
-  docker compose --profile stage3 build "$service" || break
-done
-docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:managed-build .
-docker build -f tests/e2e/managed-mcp/Dockerfile -t antnest/antnest-runtime:managed-integration .
 make test-tool-progress-fixtures
-make e2e-tool-progress
 ```
 
-The managed integration image adds only the official-SDK fixture executable to
-the production Runtime image. The fresh Compose project shares one PostgreSQL
+The candidate managed image must add only the official-SDK fixture executable
+to this run's production Runtime candidate, with a private `progress-<run-id>`
+image reference. The new Runtime receipt contract rejects the old shared managed
+image tag. The fresh Compose project shares one PostgreSQL
 instance across service-owned databases. The progress-specific Compose override
 disables the host Temporal port, allocates dynamic endpoints outside the fixed
 Egress and Jaeger addresses and uses `--env-file /dev/null`. Do not run this
