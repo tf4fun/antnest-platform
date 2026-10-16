@@ -121,9 +121,36 @@ and entered writes, including failures before the observer was reached.
 Closing during a write remains `closed_during_write`, with its eventual local
 write outcome recorded separately; it cannot turn into a successful receipt
 after close. Failures remain visible to the caller and cleanup, even after
-later successful writes. Matching the original INTERNAL cancellation Trace to
-the actual connection Link and proving Progress cancellation behavior remain
-separate consumer work.
+later successful writes.
+
+`inspectPrivateNotificationReceipt()` accepts only an original snapshot from
+the private connector, captured after successful `closeAndWait()`. It rechecks
+the complete terminal notification inventory. Clones, public recorder-factory
+snapshots, pre-close snapshots and inventories changed by a later rejected call
+cannot authorize Trace correlation. Two notifications with the same method and
+Session on one connection are ambiguous; a local index cannot distinguish them
+in production telemetry.
+
+`collectPrivateACPNotificationTrace(base, receipt, options)` in
+`identity-closeout/private-acp-trace.mjs` collects `session/cancel` separately
+from requests. The original receipt supplies Agent, Session, protocol and
+CLIENT/connection identity. The collector observes the actual exported upgrade
+SERVER and requires one INTERNAL cancellation root with no request ID or
+synchronous parent, one Link to that SERVER and the same ACP process identity.
+Duplicate candidates or conflicting attributes on the actual connection are
+rejected before selection. Ordinary request collection still requires its
+actual JSON-RPC ID.
+
+The notification collector requires an owning `inspect` callback and can call
+`inspectCompleteSources` with frozen copies of the full connection and
+notification raw plus the owning report. Hook rejection and evidence mutation
+are fatal. Every response, including failed and partial bodies, is archived
+before parsing. Admission requires three consecutive stable complete sources;
+the returned receipt records the original query byte lengths and SHA values.
+Original warnings, errors and strict failure remain visible, even if an owning
+report says passed. This shared correlation contract does not establish peer
+receipt, successful Runtime cancellation or Progress business acceptance;
+those remain consumer work.
 
 All Traces require full topology, disabled payload capture and private-content
 checks. Rejection diagnostics are allowed only on the matching rejected ACP

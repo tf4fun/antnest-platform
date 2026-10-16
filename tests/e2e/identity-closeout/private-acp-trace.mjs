@@ -17,7 +17,10 @@ import {
 } from "../acp-plan/requests.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import {
+  assertCompleteSourceInputs,
+  assertCompleteSourceSnapshot,
   canonicalCompleteSources,
+  checkCompleteSources,
   createCompleteSourceReceipt,
   isCompleteSourceFailure,
   preserveCompleteSourceFailure,
@@ -28,9 +31,120 @@ const traceID = /^[a-f0-9]{32}$/u;
 const spanID = /^[a-f0-9]{16}$/u;
 const encode = (value) => JSON.stringify(value, null, 2) + "\n";
 
+const requestContract = {
+  kind: "request",
+  required: ["method", "agentId", "requestId"],
+  connection: inspectPrivateACPConnection,
+  select: selectRequestTrace,
+  boundary: requestBoundary,
+  current: () => {},
+};
+
+export function collectPrivateACPTrace(base, expected, options) {
+  return collectPrivateSources(base, expected, options, requestContract);
+}
+
+// Notifications cannot borrow the request entry point or invent an ID. Only
+// the original closed connector receipt supplies this fixed contract.
+export async function collectPrivateACPNotificationTrace(
+  base,
+  receipt,
+  options = {},
+) {
+  const {
+    privateNotificationExpectation,
+    inspectPrivateNotificationConnection,
+    inspectPrivateNotificationTrace,
+    selectPrivateNotificationTrace,
+  } = await import("./private-acp-notification.mjs");
+  const expected = privateNotificationExpectation(receipt);
+  const { inspect, inspectCompleteSources } = options;
+  assert.equal(typeof inspect, "function");
+  assert(
+    inspectCompleteSources === undefined ||
+      typeof inspectCompleteSources === "function",
+  );
+  const current = () => privateNotificationExpectation(receipt);
+  return collectPrivateSources(
+    base,
+    expected,
+    {
+      ...options,
+      sourceReceipt: true,
+      inspect: async (trace, bound, secrets) => {
+        const originals = [trace, bound.connectionTrace];
+        ({ trace, bound } = structuredClone({ trace, bound }));
+        const sources = [trace, bound.connectionTrace];
+        const before = JSON.stringify({ sources, bound });
+        let result;
+        try {
+          result = await inspect(trace, bound, secrets);
+        } finally {
+          assertCompleteSourceInputs({ sources, bound }, before);
+        }
+        assert(result && typeof result === "object" && !Array.isArray(result));
+        assert.equal(
+          result.trace_id,
+          trace.traceID,
+          "foreign notification report",
+        );
+        const checked = await checkCompleteSources(
+          async (context) => {
+            current();
+            if (inspectCompleteSources) {
+              const value = await inspectCompleteSources(context);
+              assert.equal(
+                value,
+                undefined,
+                "complete source inspection cannot replace reports",
+              );
+            }
+            current();
+          },
+          {
+            expected: bound,
+            sources,
+            reports: [result],
+            signal: options.signal,
+          },
+        );
+        assertCompleteSourceSnapshot(checked.sources, originals);
+        return {
+          ...checked.reports[0],
+          notification_index: expected.notificationIndex,
+        };
+      },
+    },
+    {
+      kind: "notification",
+      required: ["method", "agentId", "sessionId"],
+      current,
+      connection: (bound, secrets) =>
+        inspectPrivateNotificationConnection(
+          receipt,
+          bound.connectionTrace,
+          secrets,
+        ),
+      select: (candidates, bound) =>
+        selectPrivateNotificationTrace(
+          candidates,
+          receipt,
+          bound.connectionTrace,
+        ),
+      boundary: (trace, bound, secrets) =>
+        inspectPrivateNotificationTrace(
+          trace,
+          receipt,
+          bound.connectionTrace,
+          secrets,
+        ),
+    },
+  );
+}
+
 // Every query response is archived before parsing or validation, including a
 // failed attempt. Success requires complete stable raw, not just stable IDs.
-export async function collectPrivateACPTrace(
+async function collectPrivateSources(
   base,
   expected,
   {
@@ -44,6 +158,7 @@ export async function collectPrivateACPTrace(
     attempts = 40,
     sourceReceipt = false,
   } = {},
+  contract,
 ) {
   signal?.throwIfAborted();
   let archive,
@@ -72,7 +187,7 @@ export async function collectPrivateACPTrace(
       undefined,
       "upgrade raw must be queried",
     );
-    for (const key of ["method", "agentId", "requestId"])
+    for (const key of contract.required)
       assert(
         typeof expected[key] === "string" && expected[key].trim().length > 0,
       );
@@ -104,6 +219,7 @@ export async function collectPrivateACPTrace(
       stable = 0;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       signal?.throwIfAborted();
+      contract.current();
       const receipt = { attempt, status: "collecting" };
       manifest.attempts.push(receipt);
       const archivedRequest = async (url, options) => {
@@ -210,8 +326,8 @@ export async function collectPrivateACPTrace(
           connectionTrace: connection,
           connectionSpanID: upgrades[0].spanID,
         };
-        inspectPrivateACPConnection(bound, secrets);
-        phase = "request_inventory";
+        contract.connection(bound, secrets);
+        phase = `${contract.kind}_inventory`;
         const query = new URLSearchParams({
           service: "agent-acp-service",
           limit: "100",
@@ -219,7 +335,9 @@ export async function collectPrivateACPTrace(
           tags: JSON.stringify({
             "rpc.method": expected.method,
             "antnest.agent.id": expected.agentId,
-            "antnest.request.id": expected.requestId,
+            ...(contract.kind === "request"
+              ? { "antnest.request.id": expected.requestId }
+              : {}),
             "antnest.protocol.version": `v${expected.protocolVersion}`,
             ...(expected.sessionId === undefined
               ? {}
@@ -230,11 +348,11 @@ export async function collectPrivateACPTrace(
           signal: currentSignal(),
           fetchImpl: archivedRequest,
         });
-        const selected = selectRequestTrace(candidates, bound);
-        assert(selected, "private request not exported");
+        const selected = contract.select(candidates, bound);
+        assert(selected, `private ${contract.kind} not exported`);
         const trace = candidates.find((item) => item.traceID === selected);
-        phase = "request_boundary";
-        requestBoundary(trace, bound, secrets);
+        phase = `${contract.kind}_boundary`;
+        contract.boundary(trace, bound, secrets);
         const sources = [connection, trace];
         const before = JSON.stringify(sources);
         phase = "owning_inspector";
@@ -246,6 +364,7 @@ export async function collectPrivateACPTrace(
           "inspector changed raw evidence",
         );
         signal?.throwIfAborted();
+        contract.current();
         phase = "stable_closure";
         const snapshot = JSON.stringify({
           candidates: candidates.map((item) => item.traceID).sort(),
@@ -317,11 +436,11 @@ export async function collectPrivateACPTrace(
               : {}),
           };
           writeEvidenceFile(archive, "connection.json", encode(connection));
-          writeEvidenceFile(archive, "request.json", encode(trace));
+          writeEvidenceFile(archive, `${contract.kind}.json`, encode(trace));
           writeEvidenceFile(archive, "result.json", encode(result));
           Object.assign(manifest, {
             status: "collected",
-            request_trace_id: trace.traceID,
+            [`${contract.kind}_trace_id`]: trace.traceID,
             connection_span_id: bound.connectionSpanID,
             stable_samples: stable,
           });

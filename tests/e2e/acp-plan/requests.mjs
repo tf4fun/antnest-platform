@@ -57,7 +57,7 @@ export const hasPrivateACPError = (span) =>
     ({ key, value }) => key === "antnest.outcome" && value === "cancelled",
   );
 
-function privateACPProcessIdentity(trace, span) {
+export function privateACPProcessIdentity(trace, span) {
   const resource = trace.processes?.[span.processID];
   assert.equal(resource?.serviceName, "agent-acp-service");
   const values = new Map();
@@ -95,6 +95,15 @@ export function inspectPrivateACPConnection(expected, secrets = []) {
         expected.sessionId.trim().length > 0,
       "actual Session identity required for private request",
     );
+  return inspectPrivateACPUpgrade(expected, secrets);
+}
+
+// Upgrade identity is shared by requests and notifications. Request callers
+// retain the mandatory request ID and Session preconditions above.
+export function inspectPrivateACPUpgrade(expected, secrets = []) {
+  assert.equal(requestBoundaryKind(expected), "private-acp");
+  assert.equal(expected.transport, "websocket");
+  assert([1, 2].includes(expected.protocolVersion));
   assert.match(expected.connectionTraceID ?? "", /^[a-f0-9]{32}$/u);
   for (const key of ["connectionSpanID", "clientSpanID"])
     assert.match(expected[key] ?? "", /^[a-f0-9]{16}$/u);

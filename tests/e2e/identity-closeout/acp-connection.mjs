@@ -13,6 +13,52 @@ import { createSessionCloseObserver } from "./session-close.mjs";
 
 export const gateway = "http://edge-gateway:8080";
 
+// Only snapshots issued by an actual private connection may authorize Trace
+// correlation. The public recorder is an observation helper, not an authority.
+const notificationReceipts = new WeakMap();
+
+export function inspectPrivateNotificationReceipt(receipt) {
+  const proof = notificationReceipts.get(receipt);
+  assert(proof, "original private notification receipt required");
+  assert(
+    proof.closedAtCapture && proof.closed() && proof.pending() === 0,
+    "notification receipt requires a successfully closed terminal connection",
+  );
+  assert.equal(
+    JSON.stringify(proof.current()),
+    proof.inventoryJSON,
+    "notification inventory changed after receipt capture",
+  );
+  assert(
+    proof.inventory.every(
+      (entry) =>
+        entry.status === "write_completed" &&
+        entry.wireObserved === true &&
+        entry.writeOutcome === "completed",
+    ),
+    "notification inventory contains an incomplete or failed write",
+  );
+  assert(
+    proof.inventory[receipt.index] === receipt &&
+      receipt.origin === "notify" &&
+      typeof receipt.method === "string" &&
+      receipt.method.length > 0 &&
+      typeof receipt.sessionId === "string" &&
+      receipt.sessionId.length > 0,
+    "notification receipt is not an original Session notification",
+  );
+  assert.equal(
+    proof.inventory.filter(
+      (entry) =>
+        entry.method === receipt.method &&
+        entry.sessionId === receipt.sessionId,
+    ).length,
+    1,
+    "duplicate notification keys are ambiguous on one connection",
+  );
+  return receipt;
+}
+
 function privateConfiguration(version, agent, cookie, options) {
   assert([1, 2].includes(version), "unsupported private ACP version");
   assert(typeof agent === "string" && agent.trim().length > 0);
@@ -115,6 +161,20 @@ export function connectACP(version, agent, cookie, options = {}) {
       })
     : undefined;
   let closeCode, actualTraceID, upgradeStatus, socket, closing;
+  let closureSucceeded = false;
+  const notificationSnapshot = () => {
+    const inventory = notifications.snapshot();
+    const proof = {
+      inventory,
+      inventoryJSON: JSON.stringify(inventory),
+      closedAtCapture: closureSucceeded,
+      closed: () => closureSucceeded,
+      pending: () => notifications.pending,
+      current: () => notifications.snapshot(),
+    };
+    for (const receipt of inventory) notificationReceipts.set(receipt, proof);
+    return inventory;
+  };
   const closed = new AbortController();
   const peerClose = createSessionCloseObserver();
   const SocketBase = observeSocket(WebSocket, closed, (code, reason) => {
@@ -225,6 +285,7 @@ export function connectACP(version, agent, cookie, options = {}) {
           errors,
           "private ACP close and notification cleanup failed",
         );
+      closureSucceeded = true;
       return receipt;
     })());
   };
@@ -292,10 +353,10 @@ export function connectACP(version, agent, cookie, options = {}) {
   };
   if (notifications)
     Object.defineProperties(client, {
-      notifications: { enumerable: true, get: () => notifications.snapshot() },
+      notifications: { enumerable: true, get: notificationSnapshot },
       lastNotification: {
         enumerable: true,
-        get: () => notifications.snapshot().at(-1),
+        get: () => notificationSnapshot().at(-1),
       },
     });
   return client;
