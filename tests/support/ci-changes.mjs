@@ -593,12 +593,12 @@ function tierC() {
         "stage4-skill-offline-reuse",
         "stage4-skill-registry-outage",
         "stage4-skill-restart-rebuild",
-        "structured-plan",
       ].map((name) => [`e2e-${name}`, name]),
       ...[
         ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
         ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
         ["slash-commands", "ANTNEST_E2E_SLASH_COMMANDS=true"],
+        ["structured-plan", "ANTNEST_E2E_STRUCTURED_PLAN=true"],
         ["agent-access", "ANTNEST_E2E_AGENT_ACCESS=true"],
         ["identity-access", "ANTNEST_E2E_IDENTITY_ACCESS=true"],
         ["identity-core", "ANTNEST_E2E_IDENTITY_CORE=true"],

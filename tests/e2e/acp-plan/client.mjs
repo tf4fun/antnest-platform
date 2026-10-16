@@ -5,21 +5,38 @@ import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" w
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertDeniedSessionError } from "../identity-closeout/agent-access-evidence.mjs";
 import { until } from "../acp-closeout/support.mjs";
-import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
-import { collectTrace } from "../managed-mcp/trace.mjs";
+import { gateway } from "../identity-closeout/acp-connection.mjs";
+import { withAgentCleanup } from "../../support/verification/agent-cleanup.mjs";
+import { summarizeFailure } from "../../support/verification/failure.mjs";
+import {
+  withPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "../acp-commands/connection.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import {
+  evidenceDirectory,
+  shellStoragePreflight,
+  writeEvidenceFile,
+} from "../../support/storage.mjs";
+import {
+  openPrivatePlanConnection,
+  planRequestIdentity,
+  runPlanPrompt,
+} from "./connection.mjs";
+import { requestPlanRuntimeInspection } from "./runtime-inspection.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { seedPlans } from "./setup.mjs";
-import { collectPlanRequestTrace } from "./requests.mjs";
-import { inspectPlanTrace } from "./trace.mjs";
-import { commandStrictOutcome } from "../acp-commands/trace.mjs";
 import {
-  assertPlanEvents,
-  planUpdates,
+  collectPrivatePlanTrace,
+  privatePlanStrictOutcome,
+} from "./collector.mjs";
+import {
+  planPromptInputs,
   relevantUpdates,
   appendRunEvidence,
 } from "./evidence.mjs";
-import { caseFor, phases, marker, stepsFor } from "./model.mjs";
+import { phases, marker, stepsFor } from "./model.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
@@ -29,7 +46,22 @@ const setup = { cwd: "/workspace", mcpServers: [] };
 const outcomes = [],
   agents = [],
   executionRequests = [],
-  replayRequests = [];
+  replayRequests = [],
+  setupRequests = [],
+  initializationRequests = [],
+  connectionInventory = [];
+const clients = new Set(),
+  issuedSessions = new WeakMap();
+const secrets = [
+  marker,
+  "plan-model-test",
+  "stage3-admin-password",
+  "plan-owner-password",
+  "plan-stranger-password",
+  ...planPromptInputs,
+];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+const directory = evidenceDirectory(process.env.ANTNEST_PLAN_EVIDENCE_DIR);
 const validators = [v1Schema, v2Schema].map((schema) =>
   new Ajv2020({ strict: false, validateFormats: false }).compile({
     $ref: "#/$defs/SessionUpdate",
@@ -37,10 +69,14 @@ const validators = [v1Schema, v2Schema].map((schema) =>
   }),
 );
 let stage = "setup";
-const login = (browser, email, password) =>
-  browser.request("/api/session/login", {
+const login = async (browser, email, password) => {
+  const result = await browser.request("/api/session/login", {
     body: { organization_slug: "stage3", email, password },
   });
+  issuedSessions.set(browser, result.body);
+  secrets.push(...browser.cookies.values());
+  return result;
+};
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 async function operation(id) {
@@ -54,23 +90,32 @@ async function operation(id) {
     120000,
   );
 }
-async function connect(version, agent) {
-  const client = connectACP(version, agent, member.cookie);
+async function connect(version, agent, browser = member) {
+  const issued = issuedSessions.get(browser);
+  assert(issued, "original browser login receipt missing");
+  const client = await openPrivatePlanConnection(version, agent, browser, {
+    principal: issued.principal,
+    telemetry,
+    secrets,
+  });
+  clients.add(client);
+  initializationRequests.push(client.initializationRequest);
+  return client;
+}
+async function use(client, action) {
   try {
-    await client.initialize();
-    client.agentId = agent;
-    return client;
-  } catch (error) {
-    client.close();
-    throw error;
+    return await withPrivateCommandConnection(client, [], action);
+  } finally {
+    connectionInventory.push({
+      version: client.version,
+      agent_id: client.agentId,
+      connection_trace_id: client.connectionTraceID,
+      client_span_id: client.clientSpanID,
+      requests: structuredClone(client.requests),
+    });
+    clients.delete(client);
   }
 }
-const requestIdentity = (client, method, sessionId) => ({
-  method,
-  sessionId,
-  agentId: client.agentId,
-  connectionTraceID: client.traceID,
-});
 async function replay(client, version, sessionId, expected) {
   client.updates.length = 0;
   await client.request(version === 1 ? "load" : "resume", {
@@ -79,7 +124,7 @@ async function replay(client, version, sessionId, expected) {
     ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
   });
   replayRequests.push(
-    requestIdentity(
+    planRequestIdentity(
       client,
       version === 1 ? "session/load" : "session/resume",
       sessionId,
@@ -95,117 +140,107 @@ async function replay(client, version, sessionId, expected) {
 }
 async function roundtrip(version, agent, sessionId, expected) {
   const client = await connect(version, agent);
-  try {
+  return use(client, async () => {
     assert(expected.length > 0, "empty replay evidence");
     await replay(client, version, sessionId, expected);
     const fork = await client.request("fork", { ...setup, sessionId });
     assert.notEqual(fork.sessionId, sessionId);
     replayRequests.push(
-      requestIdentity(client, "session/fork", fork.sessionId),
+      planRequestIdentity(client, "session/fork", fork.sessionId),
     );
     await replay(client, version, fork.sessionId, expected);
     return fork.sessionId;
-  } finally {
-    client.close();
-  }
+  });
 }
 async function prompt(client, version, sessionId, phase) {
   stage = phase;
-  client.updates.length = 0;
-  executionRequests.push({
-    ...requestIdentity(client, "session/prompt", sessionId),
-    phase,
-  });
-  let completed = false;
-  const pending = client.request(
-    "prompt",
-    { sessionId, prompt: [{ type: "text", text: phase }] },
-    120000,
-  );
-  const observed = pending.then(
-    (response) => {
-      completed = version === 1;
-      return { response };
+  const result = await runPlanPrompt(client, version, sessionId, phase, {
+    release: async (selected) => {
+      const released = await fetch(
+        `http://plan-model:8080/release/${selected}`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(5000),
+        },
+      );
+      await released.arrayBuffer();
+      assert.equal(released.status, 200);
     },
-    (error) => ({ error }),
-  );
-  if (caseFor(phase).plans.length) {
-    await until(
-      () => planUpdates(client.updates).length === caseFor(phase).plans.length,
-      "early plan",
-    );
-    assert(!completed, "v1 Prompt ended before the plan gate");
-    assert(
-      !client.updates.some(({ update }) =>
-        ["agent_message", "agent_message_chunk"].includes(update.sessionUpdate),
-      ),
-      "final response preceded gate release",
-    );
-    assert(
-      !client.updates.some(
-        ({ update }) =>
-          update.sessionUpdate === "state_update" && update.state === "idle",
-      ),
-      "v2 ended before plan gate release",
-    );
-    const released = await fetch(`http://plan-model:8080/release/${phase}`, {
-      method: "POST",
-      signal: AbortSignal.timeout(5000),
-    });
-    assert.equal(released.status, 200);
-  }
-  const result = await observed;
-  if (result.error) throw result.error;
-  if (version === 1) assert.equal(result.response.stopReason, "end_turn");
-  else
-    await until(
-      () =>
-        client.updates.some(
-          ({ update }) =>
-            update.sessionUpdate === "state_update" &&
-            update.state === "idle" &&
-            update.stopReason === "end_turn",
-        ),
-      "v2 Run idle",
-    );
-  assert(client.updates.every((frame) => frame.sessionId === sessionId));
-  for (const frame of client.updates)
+  });
+  for (const frame of result.updates)
     assert(validators[version - 1](frame.update), "invalid live schema");
-  outcomes.push({ phase, ...assertPlanEvents(version, phase, client.updates) });
+  executionRequests.push(result.request);
+  outcomes.push({ phase, ...result.outcome });
   console.log(asciiJSON({ status: "scenario_passed", ...outcomes.at(-1) }));
-  return structuredClone(relevantUpdates(client.updates));
+  return relevantUpdates(result.updates);
 }
 
 async function exercise(version, agent) {
-  let client = await connect(version, agent);
-  try {
-    const { sessionId } = await client.request("new", setup);
-    const history = [];
-    for (const id of ["create", "execute", "invalid"])
-      appendRunEvidence(
-        history,
-        await prompt(client, version, sessionId, `v${version}-${id}`),
-      );
-    const beforeClear = structuredClone(history);
-    const forkId = await roundtrip(version, agent, sessionId, beforeClear);
-    for (const id of ["clear", "recall"])
-      appendRunEvidence(
-        history,
-        await prompt(client, version, sessionId, `v${version}-${id}`),
-      );
-    client.close();
-    await roundtrip(version, agent, sessionId, history);
-    await roundtrip(version, agent, forkId, beforeClear);
-    client = await connect(version, agent);
-    await replay(client, version, forkId, beforeClear);
-    await prompt(client, version, forkId, `v${version}-fork`);
-    return sessionId;
-  } finally {
-    client.close();
-  }
+  const client = await connect(version, agent);
+  const { sessionId, forkId, beforeClear, history } = await use(
+    client,
+    async () => {
+      const { sessionId } = await client.request("new", setup);
+      setupRequests.push(planRequestIdentity(client, "session/new", sessionId));
+      const history = [];
+      for (const id of ["create", "execute", "invalid"])
+        appendRunEvidence(
+          history,
+          await prompt(client, version, sessionId, `v${version}-${id}`),
+        );
+      const beforeClear = structuredClone(history);
+      const forkId = await roundtrip(version, agent, sessionId, beforeClear);
+      for (const id of ["clear", "recall"])
+        appendRunEvidence(
+          history,
+          await prompt(client, version, sessionId, `v${version}-${id}`),
+        );
+      return { sessionId, forkId, beforeClear, history };
+    },
+  );
+  await roundtrip(version, agent, sessionId, history);
+  await roundtrip(version, agent, forkId, beforeClear);
+  const fork = await connect(version, agent);
+  await use(fork, async () => {
+    await replay(fork, version, forkId, beforeClear);
+    await prompt(fork, version, forkId, `v${version}-fork`);
+  });
+  return sessionId;
+}
+
+async function modelStatus() {
+  const response = await fetch("http://plan-model:8080/status", {
+    signal: AbortSignal.timeout(5000),
+  });
+  const observed = await response.json();
+  writeEvidenceFile(
+    directory,
+    "model-status.private.json",
+    JSON.stringify(observed) + "\n",
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(observed.errors, []);
+  assert.equal(outcomes.length, phases.length * 2);
+  assert.equal(observed.requests.length, 22);
+  for (const { phase } of outcomes)
+    assert.deepEqual(
+      observed.requests
+        .filter((request) => request.phase === phase)
+        .map((request) => request.stage),
+      Array.from({ length: stepsFor(phase).length + 1 }, (_, index) => index),
+    );
+  assert.equal(executionRequests.length, outcomes.length);
+  assert.equal(
+    new Set(observed.requests.map((request) => request.trace_id)).size,
+    outcomes.length,
+    "one independent execution trace per prompt",
+  );
+  return observed;
 }
 
 async function main() {
+  shellStoragePreflight(directory);
+  shellStoragePreflight(process.env.ANTNEST_PLAN_RUNTIME_CHECKPOINT_DIR);
   const image = process.env.TEST_RUNTIME_IMAGE;
   assert(image, "test Runtime image required");
   await login(admin, "stage3-admin@example.com", "stage3-admin-password");
@@ -224,125 +259,139 @@ async function main() {
   await login(member, "plan-owner@example.com", "plan-owner-password");
   await login(stranger, "plan-stranger@example.com", "plan-stranger-password");
   const template = await seedPlans(api, image);
-  try {
-    const sessions = [];
-    for (const version of [1, 2]) {
-      stage = `create-v${version}`;
-      const created = await api(
-        "/api/admin/agents",
-        {
-          owner_user_id: user.user.id,
-          name: `Plans v${version}`,
-          template_id: template.template_id,
-          template_revision: template.revision,
-        },
-        202,
-      );
-      agents.push(created.agent.agent_id);
-      await operation(created.operation.request_id);
-      await waitForAgentReady(() => api(`/api/admin/agents/${agents.at(-1)}`));
-      const foreign = connectACP(version, agents.at(-1), stranger.cookie);
-      foreign.agentId = agents.at(-1);
-      try {
-        await foreign.initialize();
-        await assertAgentDenied(foreign);
-        replayRequests.push({
-          ...requestIdentity(foreign, "session/new"),
-          denial: "access_denied",
-        });
-      } finally {
-        foreign.close();
-      }
-      sessions.push(await exercise(version, agents.at(-1)));
-    }
-    stage = "cross-agent-rejection";
-    for (const version of [1, 2]) {
-      const client = await connect(version, agents[1]);
-      try {
-        for (const method of [version === 1 ? "load" : "resume", "fork"]) {
-          await assert.rejects(
-            client.request(method, {
-              ...setup,
-              sessionId: sessions[0],
-              ...(version === 2 && method === "resume"
-                ? { replayFrom: { type: "start" } }
-                : {}),
-            }),
-            (error) => {
-              assertDeniedSessionError(error, "Agent");
-              return true;
-            },
-          );
-          replayRequests.push({
-            ...requestIdentity(client, `session/${method}`, sessions[0]),
-            denial: "session_access_denied",
-          });
-        }
-        assert.equal(
-          client.updates.length,
-          0,
-          "foreign Session leaked updates",
+  const { runtimeInspection, observed } = await withAgentCleanup(
+    agents,
+    api,
+    async () => {
+      const sessions = [];
+      for (const version of [1, 2]) {
+        stage = `create-v${version}`;
+        const created = await api(
+          "/api/admin/agents",
+          {
+            owner_user_id: user.user.id,
+            name: `Plans v${version}`,
+            template_id: template.template_id,
+            template_revision: template.revision,
+          },
+          202,
         );
-      } finally {
-        client.close();
+        agents.push(created.agent.agent_id);
+        await operation(created.operation.request_id);
+        await waitForAgentReady(() =>
+          api(`/api/admin/agents/${agents.at(-1)}`),
+        );
+        const foreign = await connect(version, agents.at(-1), stranger);
+        await use(foreign, async () => {
+          await assertAgentDenied(foreign);
+          replayRequests.push(
+            planRequestIdentity(foreign, "session/new", undefined, {
+              denial: "access_denied",
+            }),
+          );
+        });
+        sessions.push(await exercise(version, agents.at(-1)));
       }
-    }
-  } finally {
-    for (const agent of agents)
-      await operation(
-        (await api(`/api/admin/agents/${agent}/delete`, {}, 202)).request_id,
+      stage = "cross-agent-rejection";
+      for (const version of [1, 2]) {
+        const client = await connect(version, agents[1]);
+        await use(client, async () => {
+          for (const method of [version === 1 ? "load" : "resume", "fork"]) {
+            await assert.rejects(
+              client.request(method, {
+                ...setup,
+                sessionId: sessions[0],
+                ...(version === 2 && method === "resume"
+                  ? { replayFrom: { type: "start" } }
+                  : {}),
+              }),
+              (error) => {
+                assertDeniedSessionError(error, "Agent");
+                return true;
+              },
+            );
+            replayRequests.push(
+              planRequestIdentity(client, `session/${method}`, sessions[0], {
+                denial: "session_access_denied",
+              }),
+            );
+          }
+          assert.equal(
+            client.updates.length,
+            0,
+            "foreign Session leaked updates",
+          );
+        });
+      }
+      assert.equal(
+        clients.size,
+        0,
+        "join all Plan connections before inspection",
       );
-  }
+      assert.equal(setupRequests.length, 2);
+      assert.equal(replayRequests.length, 26);
+      assert.equal(
+        replayRequests.filter((request) => !request.denial).length,
+        20,
+      );
+      assert.equal(
+        replayRequests.filter((request) => request.denial).length,
+        6,
+      );
+      assert.equal(initializationRequests.length, 14);
+      assert.equal(connectionInventory.length, initializationRequests.length);
+      const observed = await modelStatus();
+      for (const [name, value] of [
+        ["model-requests.private.json", observed.requests],
+        [
+          "request-inventory.private.json",
+          [...setupRequests, ...executionRequests, ...replayRequests],
+        ],
+        ["initialization-inventory.private.json", initializationRequests],
+        ["connection-inventory.private.json", connectionInventory],
+      ])
+        writeEvidenceFile(directory, name, JSON.stringify(value) + "\n");
+      stage = "runtime-inspection";
+      const runtimeInspection = await requestPlanRuntimeInspection(agents);
+      return { runtimeInspection, observed };
+    },
+  );
   stage = "trace-verification";
-  const status = await fetch("http://plan-model:8080/status", {
-    signal: AbortSignal.timeout(5000),
-  });
-  const observed = await status.json();
-  assert.deepEqual(observed.errors, []);
-  assert.equal(outcomes.length, phases.length * 2);
-  assert.equal(observed.requests.length, 22);
-  for (const { phase } of outcomes)
-    assert.deepEqual(
-      observed.requests
-        .filter((request) => request.phase === phase)
-        .map((request) => request.stage),
-      Array.from({ length: stepsFor(phase).length + 1 }, (_, index) => index),
+  const checked = [];
+  for (const expected of [
+    ...setupRequests,
+    ...executionRequests,
+    ...replayRequests,
+    ...initializationRequests,
+  ]) {
+    stage = `trace:${expected.phase ?? expected.method}`;
+    checked.push(
+      await collectPrivatePlanTrace("http://jaeger:16686", expected, {
+        directory,
+        flush: () => telemetry.flush(),
+        secrets,
+        requests: observed.requests,
+      }),
     );
-  assert.equal(executionRequests.length, outcomes.length);
-  const executionIDs = new Set(
-    observed.requests.map((request) => request.trace_id),
+  }
+  const setups = checked.slice(0, setupRequests.length);
+  const traces = checked.slice(
+    setupRequests.length,
+    setupRequests.length + executionRequests.length,
   );
+  const replays = checked.slice(
+    setupRequests.length + executionRequests.length,
+    40,
+  );
+  const auxiliary = checked.slice(40);
   assert.equal(
-    executionIDs.size,
-    outcomes.length,
-    "one independent execution trace per prompt",
+    new Set(checked.slice(0, 40).map((trace) => trace.trace_id)).size,
+    40,
   );
-  const secrets = [
-    marker,
-    "plan-model-test",
-    ...outcomes.map((item) => item.phase),
-    ...admin.cookies.values(),
-    ...member.cookies.values(),
-    ...stranger.cookies.values(),
-  ];
-  const traces = [],
-    replays = [];
-  for (const id of executionIDs)
-    traces.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectPlanTrace(
-          trace,
-          observed.requests.filter((request) => request.trace_id === id),
-          secrets,
-          executionRequests.find(
-            (expected) =>
-              expected.phase ===
-              observed.requests.find((request) => request.trace_id === id)
-                .phase,
-          ),
-        ),
-      ),
-    );
+  assert.deepEqual(
+    new Set(traces.map((trace) => trace.trace_id)),
+    new Set(observed.requests.map((request) => request.trace_id)),
+  );
   assert.equal(
     new Set(traces.map((trace) => trace.run_id)).size,
     outcomes.length,
@@ -351,18 +400,11 @@ async function main() {
     traces.reduce((sum, trace) => sum + trace.runtime_tool_calls, 0),
     2,
   );
-  assert.equal(replayRequests.length, 26);
-  for (const expected of replayRequests)
-    replays.push(
-      await collectPlanRequestTrace("http://jaeger:16686", expected, secrets),
-    );
-  assert.equal(
-    new Set(replays.map((trace) => trace.trace_id)).size,
-    replayRequests.length,
-  );
+  assert.equal(replays.length, 26);
   assert.equal(replays.filter((trace) => !trace.denial).length, 20);
   assert.equal(replays.filter((trace) => trace.denial).length, 6);
-  const { accepted, ...strict } = commandStrictOutcome([...traces, ...replays]);
+  assert.equal(auxiliary.length, 14);
+  const { exit_code: exitCode, ...strict } = privatePlanStrictOutcome(checked);
   console.log(
     asciiJSON({
       status: "business_passed",
@@ -376,25 +418,23 @@ async function main() {
       outcomes,
       traces,
       replay_traces: replays,
+      setup_traces: setups,
+      auxiliary_traces: auxiliary,
+      runtime_inspection: runtimeInspection,
       cross_user_rejections: 2,
       cross_agent_rejections: 4,
     }),
   );
-  if (!accepted) process.exitCode = 1;
+  process.exitCode = exitCode;
 }
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, main);
 } catch (error) {
   console.error(
     asciiJSON({
       status: "failed",
       stage,
-      error_type: error.name,
-      code: error.code,
-      locations: error.stack
-        ?.split("\n")
-        .filter((line) => line.trim().startsWith("at "))
-        .slice(0, 4),
+      ...summarizeFailure(error),
     }),
   );
   process.exitCode = 1;

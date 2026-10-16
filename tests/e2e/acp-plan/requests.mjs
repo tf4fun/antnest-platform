@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import { inspectRuntimeInformationRead } from "../observability/runtime-information-read.mjs";
+import {
+  assertPrivateACPApplicationJoined,
+  privateACPDiagnosticView,
+  privateACPRejection,
+} from "../observability/private-acp-diagnostics.mjs";
+import { assertSessionSuccess } from "../identity-closeout/session-diagnostics.mjs";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import { collectTrace } from "../managed-mcp/trace.mjs";
@@ -369,14 +375,109 @@ export function inspectCatalogRuntime(trace, tree, request, expected) {
   };
 }
 
-export function inspectPlanRequestTrace(trace, expected, secrets = []) {
+function privatePlanApplication(
+  trace,
+  tree,
+  request,
+  expected,
+  timeObservations,
+) {
+  const input = expected.inputSessionID;
+  if (["initialize", "session/new"].includes(expected.method))
+    assert.equal(input, null, "new/initialize must have no input Session");
+  else
+    assert(
+      typeof input === "string" && input.trim().length > 0,
+      "actual input Session required",
+    );
+  if (expected.method === "initialize") {
+    assert.equal(expected.sessionId, undefined);
+    assert.equal(expected.denial, undefined);
+    return;
+  }
+  const method =
+    expected.method === "session/load"
+      ? "resume"
+      : expected.method.split("/")[1];
+  const applications = trace.spans.filter(
+    (span) =>
+      tree.service(span) === "agent-acp-service" &&
+      span.operationName === `acp.session.${method}`,
+  );
+  assert.equal(
+    applications.length,
+    1,
+    "one original Plan application request required",
+  );
+  const application = applications[0];
+  assert.equal(
+    tree.parent(application),
+    request,
+    "Plan application belongs to another RPC",
+  );
+  assert.deepEqual(
+    privateACPProcessIdentity(trace, application),
+    privateACPProcessIdentity(trace, request),
+  );
+  if (!expected.denial)
+    assertPrivateACPApplicationJoined(
+      trace,
+      request,
+      application,
+      timeObservations,
+      "plan-application-joined-by-rpc",
+    );
+  assert.equal(tag(application, "span.kind"), "internal");
+  for (const key of ["agent.id", "antnest.agent.id"])
+    assert.equal(tag(application, key), expected.agentId);
+  for (const key of ["session.id", "antnest.session.id"])
+    assert.equal(
+      tag(application, key),
+      input ?? undefined,
+      "Plan application input Session mismatch",
+    );
+  if (expected.method === "session/fork" && !expected.denial)
+    assert.notEqual(expected.sessionId, input, "fork reused its input Session");
+  else if (expected.method !== "session/new")
+    assert.equal(
+      expected.sessionId,
+      input,
+      "replay/denial changed its input Session",
+    );
+}
+
+export function inspectPlanRequestTrace(
+  trace,
+  expected,
+  secrets = [],
+  { strictPrivate = false } = {},
+) {
+  if (strictPrivate) {
+    assert.equal(requestBoundaryKind(expected), "private-acp");
+    assert.equal(
+      expected.rejection,
+      undefined,
+      "Plan uses its own denial receipt",
+    );
+    assert.notEqual(
+      expected.closedBeforeResponse,
+      true,
+      "Plan must finish its original request",
+    );
+  }
   assert(
-    ["session/load", "session/resume", "session/fork", "session/new"].includes(
-      expected.method,
-    ),
+    [
+      "session/load",
+      "session/resume",
+      "session/fork",
+      "session/new",
+      ...(strictPrivate ? ["initialize"] : []),
+    ].includes(expected.method),
   );
   assert(
-    expected.method !== "session/new" || expected.denial === "access_denied",
+    expected.method !== "session/new" ||
+      expected.denial === "access_denied" ||
+      strictPrivate,
   );
   assert(
     expected.denial === undefined ||
@@ -399,6 +500,27 @@ export function inspectPlanRequestTrace(trace, expected, secrets = []) {
     method: expected.method,
     rejection: expected.denial,
   });
+  let denialProof;
+  if (strictPrivate) {
+    privatePlanApplication(
+      trace,
+      tree,
+      request,
+      expected,
+      catalog.timeObservations,
+    );
+    for (const span of expected.connectionTrace.spans)
+      assertSessionSuccess(span);
+    denialProof = expected.denial
+      ? privateACPRejection(
+          trace,
+          tree,
+          request,
+          { ...expected, rejection: expected.denial },
+          catalog.timeObservations,
+        )
+      : { views: new Map(), records: [] };
+  }
   for (const span of trace.spans) {
     assert(
       catalog.spans.has(span) ||
@@ -407,6 +529,16 @@ export function inspectPlanRequestTrace(trace, expected, secrets = []) {
         ),
       "non-execution request executed work",
     );
+    if (strictPrivate) {
+      const view = privateACPDiagnosticView(
+        trace,
+        span,
+        catalog.neutralDiagnostics,
+        catalog.spans,
+      );
+      assertSessionSuccess(denialProof.views.get(span) ?? view);
+      continue;
+    }
     if (!hasError(span)) continue;
     assert(expected.denial, "successful replay failed");
     assert.equal(tree.service(span), "agent-acp-service");
@@ -445,9 +577,24 @@ export function inspectPlanRequestTrace(trace, expected, secrets = []) {
     runtime_information_reads: catalog.informationReads,
     neutral_diagnostics: catalog.neutralDiagnostics,
     time_observations: catalog.timeObservations,
+    ...(strictPrivate
+      ? {
+          input_session_id: expected.inputSessionID,
+          owned_error_spans: denialProof.records.map((record) => ({
+            ...record,
+            reason: "plan-rejection",
+          })),
+        }
+      : {}),
     ...(expected.denial ? { denial: expected.denial } : {}),
     ...timingEvidence(trace, tree, request, forwarded),
   };
+}
+
+export function inspectPrivatePlanRequestTrace(trace, expected, secrets = []) {
+  return inspectPlanRequestTrace(trace, expected, secrets, {
+    strictPrivate: true,
+  });
 }
 export function selectRequestTrace(data, expected) {
   assert(

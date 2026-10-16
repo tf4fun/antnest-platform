@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
 import { commandHarnessArguments } from "../e2e/acp-commands/deployment.mjs";
+import { planHarnessArguments } from "../e2e/acp-plan/deployment.mjs";
 import { asciiJSON } from "./ascii-json.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -87,19 +88,30 @@ function logReadClients() {
       /\bcreate --name "\$client"/u.test(command),
     );
     let entry = create?.match(/\bnode \/app\/(tests\/\S+\.mjs)/u)?.[1];
-    if (["e2e-acp-session.sh", "e2e-slash-commands.sh"].includes(name)) {
+    if (
+      [
+        "e2e-acp-session.sh",
+        "e2e-slash-commands.sh",
+        "e2e-structured-plan.sh",
+      ].includes(name)
+    ) {
       const commands = name === "e2e-slash-commands.sh";
+      const plan = name === "e2e-structured-plan.sh";
       assert.match(
         script,
-        commands
-          ? /node "\$root\/tests\/e2e\/acp-commands\/deployment\.mjs" create-harness/u
-          : /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
+        plan
+          ? /node "\$root\/tests\/e2e\/acp-plan\/deployment\.mjs" create-harness/u
+          : commands
+            ? /node "\$root\/tests\/e2e\/acp-commands\/deployment\.mjs" create-harness/u
+            : /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
       );
       const runID = "00000000-0000-4000-8000-000000000001";
-      const tag = `${commands ? "commands" : "session"}-${runID}`;
-      const harness = commands
-        ? commandHarnessArguments
-        : sessionHarnessArguments;
+      const tag = `${plan ? "plan" : commands ? "commands" : "session"}-${runID}`;
+      const harness = plan
+        ? planHarnessArguments
+        : commands
+          ? commandHarnessArguments
+          : sessionHarnessArguments;
       const { client } = harness(
         {
           COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",

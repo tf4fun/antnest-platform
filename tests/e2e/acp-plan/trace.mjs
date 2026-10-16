@@ -1,4 +1,6 @@
 import { inspectRunInformationReads } from "../observability/runtime-information-run.mjs";
+import { privateACPDiagnosticView } from "../observability/private-acp-diagnostics.mjs";
+import { assertSessionSuccess } from "../identity-closeout/session-diagnostics.mjs";
 import assert from "node:assert/strict";
 import { tag } from "../observability/trace-tree.mjs";
 import { caseFor, stepsFor } from "./model.mjs";
@@ -158,10 +160,37 @@ export function inspectPlanTrace(trace, requests, secrets = [], expected) {
     assert.equal(tag(client, "span.kind"), "client");
     assert(tree.chain(client).includes(call));
   }
-  assert(
-    !trace.spans.some(hasError),
-    "unexpected execution error, including handled invalid-plan Run",
-  );
+  if (requestBoundaryKind(expected) === "private-acp") {
+    assert.notEqual(
+      expected.closedBeforeResponse,
+      true,
+      "Plan must finish its original prompt",
+    );
+    for (const span of expected.connectionTrace.spans)
+      assertSessionSuccess(span);
+    const runtimeSpans = new Set([
+      ...information.spans,
+      ...information.toolLifecycles.flatMap((proof) => [
+        proof.owner,
+        ...proof.clients,
+        ...proof.servers,
+        ...proof.exchanges.map((exchange) => exchange.operation),
+      ]),
+    ]);
+    for (const span of trace.spans)
+      assertSessionSuccess(
+        privateACPDiagnosticView(
+          trace,
+          span,
+          information.neutralDiagnostics,
+          runtimeSpans,
+        ),
+      );
+  } else
+    assert(
+      !trace.spans.some(hasError),
+      "unexpected execution error, including handled invalid-plan Run",
+    );
   return {
     trace_id: trace.traceID,
     run_id: runId,

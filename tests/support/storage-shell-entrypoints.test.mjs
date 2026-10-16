@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
 import { commandHarnessArguments } from "../e2e/acp-commands/deployment.mjs";
+import { planHarnessArguments } from "../e2e/acp-plan/deployment.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const children = [
@@ -27,6 +28,7 @@ const children = [
   ["acp-restart", "acp-restart"],
   ["acp-session", "identity-session"],
   ["slash-commands", "acp-commands"],
+  ["structured-plan", "acp-plan"],
   ["identity-http", "identity-http"],
   ["agent-access", "identity-agent"],
   ["acp-closeout", "acp-closeout-normal"],
@@ -260,7 +262,29 @@ test("containers writing private evidence run as the evidence owner", () => {
     ),
     [`${uid}:${gid}`],
   );
-  assert(commands.length + 2 >= 4, "evidence-writing clients not found");
+  assert.match(
+    readFileSync(join(directory, "e2e-structured-plan.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-plan\/deployment\.mjs" create-harness/u,
+  );
+  const plan = planHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `plan-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:plan-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(plan.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    plan.flatMap((arg, index) => (arg === "--user" ? [plan[index + 1]] : [])),
+    [`${uid}:${gid}`],
+  );
+  assert(commands.length + 3 >= 4, "evidence-writing clients not found");
   for (const [name, command] of commands)
     assert(
       command.includes('--user "$(id -u):$(id -g)"') ||

@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { caseFor, stepsFor } from "./model.mjs";
+import { caseFor, phases, stepsFor } from "./model.mjs";
+
+export const planPromptInputs = [1, 2].flatMap((version) =>
+  phases.map(({ id }) => `v${version}-${id}`),
+);
 
 export const planUpdates = (frames) =>
   frames
