@@ -58,7 +58,7 @@ function captureIncoming(readable, frames) {
   );
 }
 
-export function observeStream(stream, observed, frames) {
+export function observeStream(stream, observed, frames, notifications) {
   assert(
     frames === undefined || Array.isArray(frames),
     "raw frame destination must be an array",
@@ -77,7 +77,9 @@ export function observeStream(stream, observed, frames) {
       write(message) {
         const metadata = requestMetadata(message);
         if (metadata) observed.push(metadata);
-        return writer.write(message);
+        return notifications
+          ? notifications.write(message, (frame) => writer.write(frame))
+          : writer.write(message);
       },
       close: () => writer.close(),
       abort: (reason) => writer.abort(reason),

@@ -8,6 +8,7 @@ import { WebSocket } from "ws";
 import { observeSocket, requestWithin } from "../acp-closeout/connection.mjs";
 
 import { observeStream } from "../acp-commands/transport.mjs";
+import { createNotificationEvidence } from "../acp-commands/notification-evidence.mjs";
 import { createSessionCloseObserver } from "./session-close.mjs";
 
 export const gateway = "http://edge-gateway:8080";
@@ -88,6 +89,15 @@ export function connectACP(version, agent, cookie, options = {}) {
     ["gateway", "private-acp"].includes(boundary),
     "unknown ACP connection boundary",
   );
+  assert(
+    options.captureNotifications === undefined ||
+      typeof options.captureNotifications === "boolean",
+    "captureNotifications must be a boolean",
+  );
+  assert(
+    !options.captureNotifications || boundary === "private-acp",
+    "notification capture requires private WebSocket ACP",
+  );
   const privateTransport =
     boundary === "private-acp"
       ? privateConfiguration(version, agent, cookie, options)
@@ -96,6 +106,14 @@ export function connectACP(version, agent, cookie, options = {}) {
   const traceID =
     privateTransport?.upgrade.traceID ?? randomBytes(16).toString("hex");
   const parent = privateTransport ? undefined : randomBytes(8).toString("hex");
+  const notifications = options.captureNotifications
+    ? createNotificationEvidence({
+        agentId: agent,
+        version,
+        connectionTraceID: traceID,
+        clientSpanID: privateTransport.upgrade.clientSpanID,
+      })
+    : undefined;
   let closeCode, actualTraceID, upgradeStatus, socket, closing;
   const closed = new AbortController();
   const peerClose = createSessionCloseObserver();
@@ -165,6 +183,7 @@ export function connectACP(version, agent, cookie, options = {}) {
           ),
           requests,
           rawFrames,
+          notifications,
         ),
       );
   } catch (error) {
@@ -172,6 +191,7 @@ export function connectACP(version, agent, cookie, options = {}) {
     throw error;
   }
   const close = () => {
+    notifications?.stop();
     peerClose.markLocalClose();
     privateTransport?.upgrade.end(upgradeStatus, "cancelled");
     connection.close();
@@ -179,15 +199,33 @@ export function connectACP(version, agent, cookie, options = {}) {
   const closeAndWait = ({ graceMs = 1000 } = {}) => {
     assert(Number.isFinite(graceMs) && graceMs > 0 && graceMs <= 5000);
     return (closing ??= (async () => {
-      close();
+      const errors = [];
+      let receipt;
       try {
-        return await peerClose.wait(graceMs);
-      } catch {
-        // A peer can stop reading instead of replying to the close frame.
-        // Terminate the actual transport and still join its close event.
-        socket.terminate();
-        return peerClose.wait(5000);
+        close();
+        try {
+          receipt = await peerClose.wait(graceMs);
+        } catch {
+          // A peer can stop reading instead of replying to the close frame.
+          // Terminate the actual transport and still join its close event.
+          socket.terminate();
+          receipt = await peerClose.wait(5000);
+        }
+      } catch (error) {
+        errors.push(error);
       }
+      try {
+        await notifications?.join();
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length)
+        throw new AggregateError(
+          errors,
+          "private ACP close and notification cleanup failed",
+        );
+      return receipt;
     })());
   };
   const observedTraceID = () =>
@@ -201,7 +239,7 @@ export function connectACP(version, agent, cookie, options = {}) {
       close,
       timeout,
     );
-  return {
+  const client = {
     boundary,
     ...(privateTransport
       ? { clientSpanID: privateTransport.upgrade.clientSpanID }
@@ -230,7 +268,13 @@ export function connectACP(version, agent, cookie, options = {}) {
     request: (name, params, timeout) =>
       request(acp.methods.agent.session[name], params, timeout),
     notify: (name, params) =>
-      connection.agent.notify(acp.methods.agent.session[name], params),
+      notifications
+        ? notifications.notify(
+            acp.methods.agent.session[name],
+            params,
+            (method, input) => connection.agent.notify(method, input),
+          )
+        : connection.agent.notify(acp.methods.agent.session[name], params),
     initialize: () =>
       request(
         acp.methods.agent.initialize,
@@ -246,4 +290,13 @@ export function connectACP(version, agent, cookie, options = {}) {
             },
       ),
   };
+  if (notifications)
+    Object.defineProperties(client, {
+      notifications: { enumerable: true, get: () => notifications.snapshot() },
+      lastNotification: {
+        enumerable: true,
+        get: () => notifications.snapshot().at(-1),
+      },
+    });
+  return client;
 }

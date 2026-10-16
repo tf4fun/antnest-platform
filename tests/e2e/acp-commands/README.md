@@ -93,6 +93,38 @@ and is never automatically exported to telemetry or console output. A consumer
 must explicitly opt in and handle this payload-bearing inventory as private
 evidence; this shared facility does not establish Cost business acceptance.
 
+Private WebSocket clients also accept the optional boolean
+`captureNotifications`; it is disabled by default and rejected for HTTP before
+Identity delegation. With it enabled, `notify()` still returns `Promise<void>`
+and sends the official SDK notification without a JSON-RPC ID. Each call has an
+independent attempt, including calls waiting for v2 initialization or queued
+behind another write. Object parameters are copied privately before entering
+the SDK, and the stream observer derives its metadata from the same private
+frame it forwards. This prevents caller mutations from changing the recorded
+Session while a write is pending. Requests and responses keep their existing
+transport behavior.
+
+`notifications` and `lastNotification` expose frozen metadata snapshots: the
+local index, method, Session, actual Agent/version and upgrade Trace/CLIENT
+identity, plus `status`, `wireObserved` and `writeOutcome`. No notification
+payload, raw exception or invented request/server ID is retained in these
+receipts. Explicit calls have `origin=notify`; other notifications actually
+seen at the SDK stream boundary have `origin=sdk`. The local index is an
+inventory position, not a protocol correlation ID.
+
+`write_completed` means only that the SDK's upstream write returned. The locked
+WS adapter calls `socket.send` without awaiting its callback; it does not prove
+peer receipt, execution or successful cancellation. Those require separate
+peer/business evidence. A pending prompt does not block a notification's write.
+`closeAndWait()` stops new notifications and joins both the tracked SDK calls
+and entered writes, including failures before the observer was reached.
+Closing during a write remains `closed_during_write`, with its eventual local
+write outcome recorded separately; it cannot turn into a successful receipt
+after close. Failures remain visible to the caller and cleanup, even after
+later successful writes. Matching the original INTERNAL cancellation Trace to
+the actual connection Link and proving Progress cancellation behavior remain
+separate consumer work.
+
 All Traces require full topology, disabled payload capture and private-content
 checks. Rejection diagnostics are allowed only on the matching rejected ACP
 boundary and domain operation, with the original SDK denial receipt. Collection

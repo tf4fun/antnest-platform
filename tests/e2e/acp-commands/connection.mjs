@@ -197,6 +197,15 @@ export async function openPrivateCommandConnection(
       typeof options.captureRawFrames === "boolean",
     "captureRawFrames must be a boolean",
   );
+  assert(
+    options.captureNotifications === undefined ||
+      typeof options.captureNotifications === "boolean",
+    "captureNotifications must be a boolean",
+  );
+  assert(
+    !options.captureNotifications || !profile.http,
+    "notification capture requires private WebSocket ACP",
+  );
   options.signal?.throwIfAborted();
   const principal = {};
   for (const field of ["organization_id", "user_id"]) {

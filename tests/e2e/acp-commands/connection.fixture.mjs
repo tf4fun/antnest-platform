@@ -39,6 +39,10 @@ export async function commandFixture(t, profile, options = {}) {
   const releaseAck = Promise.withResolvers();
   const newStarted = Promise.withResolvers(),
     releaseNew = Promise.withResolvers();
+  const initializeStarted = Promise.withResolvers(),
+    releaseInitialize = Promise.withResolvers();
+  const promptStarted = Promise.withResolvers(),
+    releasePrompt = Promise.withResolvers();
   const identityStarted = Promise.withResolvers(),
     identityClosed = Promise.withResolvers(),
     releaseIdentity = Promise.withResolvers();
@@ -51,7 +55,9 @@ export async function commandFixture(t, profile, options = {}) {
     .agent({ name: "command-connection-peer" })
     .onRequest(
       sdk.methods.agent.initialize,
-      record("initialize", () => {
+      record("initialize", async () => {
+        initializeStarted.resolve();
+        if (options.holdInitialize) await releaseInitialize.promise;
         if (options.initializeError)
           throw new sdk.RequestError(-32603, "fixture initialize refused");
         options.beforeInitializeReply?.();
@@ -107,6 +113,8 @@ export async function commandFixture(t, profile, options = {}) {
     .onRequest(
       sdk.methods.agent.session.prompt,
       record("session/prompt", async ({ params, client }) => {
+        promptStarted.resolve();
+        if (options.holdPrompt) await releasePrompt.promise;
         await client.notify(sdk.methods.client.session.update, {
           sessionId: params.sessionId,
           update:
@@ -125,6 +133,10 @@ export async function commandFixture(t, profile, options = {}) {
           ? { stopReason: "end_turn" }
           : { messageId: "help-message" };
       }),
+    )
+    .onNotification(
+      sdk.methods.agent.session.cancel,
+      record("session/cancel", () => {}),
     );
   if (profile.version === 1)
     agent = agent.onRequest(
@@ -303,6 +315,8 @@ export async function commandFixture(t, profile, options = {}) {
     releaseDelete.resolve();
     releaseAck.resolve();
     releaseNew.resolve();
+    releaseInitialize.resolve();
+    releasePrompt.resolve();
     releaseIdentity.resolve();
     let peerClosing;
     const closePeer = () => (peerClosing ??= peer.close());
@@ -385,6 +399,10 @@ export async function commandFixture(t, profile, options = {}) {
     deleteStarted: deleteStarted.promise,
     newStarted: newStarted.promise,
     releaseNew: releaseNew.resolve,
+    initializeStarted: initializeStarted.promise,
+    releaseInitialize: releaseInitialize.resolve,
+    promptStarted: promptStarted.promise,
+    releasePrompt: releasePrompt.resolve,
     identityStarted: identityStarted.promise,
     identityClosed: identityClosed.promise,
     releaseIdentity: releaseIdentity.resolve,
