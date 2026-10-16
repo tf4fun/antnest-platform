@@ -160,7 +160,7 @@ export function connectACP(version, agent, cookie, options = {}) {
         clientSpanID: privateTransport.upgrade.clientSpanID,
       })
     : undefined;
-  let closeCode, actualTraceID, upgradeStatus, socket, closing;
+  let closeCode, actualTraceID, upgradeStatus, socket, closing, localCloseCause;
   let closureSucceeded = false;
   const notificationSnapshot = () => {
     const inventory = notifications.snapshot();
@@ -254,7 +254,11 @@ export function connectACP(version, agent, cookie, options = {}) {
     notifications?.stop();
     peerClose.markLocalClose();
     privateTransport?.upgrade.end(upgradeStatus, "cancelled");
+    const wasOpen = !connection.signal.aborted;
     connection.close();
+    // The SDK may already have closed because of a protocol or write failure.
+    // Only the original reason created by our own close proves local closure.
+    if (wasOpen) localCloseCause = connection.signal.reason;
   };
   const closeAndWait = ({ graceMs = 1000 } = {}) => {
     assert(Number.isFinite(graceMs) && graceMs > 0 && graceMs <= 5000);
@@ -303,7 +307,11 @@ export function connectACP(version, agent, cookie, options = {}) {
   const client = {
     boundary,
     ...(privateTransport
-      ? { clientSpanID: privateTransport.upgrade.clientSpanID }
+      ? {
+          clientSpanID: privateTransport.upgrade.clientSpanID,
+          isLocalCloseError: (error) =>
+            localCloseCause !== undefined && error === localCloseCause,
+        }
       : {}),
     get observedConnectionTraceID() {
       return actualTraceID;

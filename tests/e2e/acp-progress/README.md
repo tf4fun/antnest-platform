@@ -4,6 +4,32 @@ This scenario verifies live Tool progress from the Runtime (producer) to ACP
 clients (consumer) on a disposable full stack. It is a deployment test, not a
 service or a public protocol.
 
+## Private ACP migration checkpoint
+
+`connection.mjs` and `scenario.mjs` implement the private WebSocket consumer
+for both ACP versions. The connector uses the original browser Principal and
+issued workspace caller context, omits browser cookies, and records the actual
+SDK initialize and business request identities separately. An outstanding v1
+prompt receives deliberate replay-disconnect evidence only when its original
+error is the SDK's exact locally created close reason and no response arrived.
+Protocol, serialization, peer-close and deadline errors cannot borrow that proof.
+
+The scenario joins every opened connection before reconnecting or reporting
+success. It retains the original closed connection for request and notification
+inventory, including when Session validation fails. Early progress, all replay
+frames and the single terminal Tool identity are bound to the original Session.
+The cancellation admission budget is one monotonic 10-second interval covering
+notification writing and the stop probe; a late successful probe remains failed.
+Cleanup and inventory failures retain the original business error.
+
+Connection tests use the locked SDK and real TCP peers. Scenario tests use a
+controlled producer to exercise all twelve paths: 28 separate initializations,
+44 business RPCs and four cancel notifications. These are local contract and
+scenario checks, not evidence that real Runtime processes stopped. The entry
+point below still uses the previous Gateway flow. Its private Trace validator,
+host-owned Runtime gate, candidate deployment, entry-point wiring and Docker
+acceptance are pending; this checkpoint does not complete the migration.
+
 ## Scope
 
 The flow is: login through the Gateway and Admin Console BFF, create a Provider

@@ -115,6 +115,11 @@ export async function commandFixture(t, profile, options = {}) {
       record("session/prompt", async ({ params, client }) => {
         promptStarted.resolve();
         if (options.holdPrompt) await releasePrompt.promise;
+        if (options.barrierPrompt)
+          throw new sdk.RequestError(-32020, "fixture Runtime barrier", {
+            code: "runtime_barrier_required",
+            retryable: false,
+          });
         await client.notify(sdk.methods.client.session.update, {
           sessionId: params.sessionId,
           update:
