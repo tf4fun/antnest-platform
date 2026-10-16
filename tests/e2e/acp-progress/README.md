@@ -37,16 +37,19 @@ controlled producer to exercise all twelve paths: 28 separate initializations,
 44 business RPCs and four cancel notifications. These are local contract and
 scenario checks; cancellation Trace fixtures cover both Runtime protocol-error
 timings and held discovery responses. They do not prove real Runtime processes
-stopped. The entry
-point below still uses the previous Gateway flow. Its private Trace validator,
-host-owned Runtime gate, candidate deployment, entry-point wiring and Docker
-acceptance are pending; this checkpoint does not complete the migration.
+stopped. `trace.mjs` now composes the complete private Run/prompt inspection for
+all twelve paths, including their twenty model calls. The main client still
+uses the previous Gateway flow and must be migrated to the new collector
+signature. Host-owned Runtime gates, candidate deployment, entry-point wiring
+and Docker acceptance remain pending; these local checks do not complete the
+migration.
 
 ## Scope
 
-The flow is: login through the Gateway and Admin Console BFF, create a Provider
-connection, Model, Template and Agent, then call ACP v1 and v2 through the
-Gateway against the real Rust Runtime's Bash Tool or a managed stdio MCP server,
+The target deployment flow is: login through the Gateway and Admin Console BFF,
+create a Provider connection, Model, Template and Agent, then call the private
+ACP v1 and v2 listeners with the issued workspace caller context against the
+real Rust Runtime's Bash Tool or a managed stdio MCP server,
 with durable Tool updates and reconnect replay. The only fake business
 dependency is a deterministic OpenAI-compatible SSE model. No external Provider
 or `.secret` file is used.
@@ -60,7 +63,9 @@ and cancellation.
   complete replay, no duplicate Tool dispatch and a preview-free model context
   are asserted.
 - A Bash exit code 7 is a completed Tool result, validated by the model fixture;
-  managed MCP `isError` is a failed Tool.
+  the Executor process delivering that result still exits 0. Managed MCP
+  `isError` is a failed Tool whose observed result can continue to the final
+  model response and a completed Run.
 - Cancellation must stop the actual Bash PID or notify the managed child, not
   just hide the Run in a client. On HTTP cancellation the result is unobserved:
   v1 returns `stopReason: cancelled`, v2 reports `_unresolved`, and further
@@ -85,27 +90,35 @@ production endpoint or new deployment authorization.
 
 ## Trace checks
 
-Jaeger must show Gateway ancestry and Runtime child spans for ACP Tool calls,
-correlated through the model HTTP CLIENT span to the owning `agent.run` and
-`antnest.run.id`. Preview payloads must not appear in Traces. Packet forwarding
-is not traced.
+`inspectTrace(trace, expected, secrets, requests)` binds the original private
+RPC ID, Session, actual upgrade Link and ACP process resource. Admission creates
+an independent Run request resource ID; it is preserved separately from the
+SDK RPC ID. The live Tool ID must match the normalized original Run/model call.
+Model HTTP CLIENT spans map one-to-one to the recorded model requests: one for
+cancellation and two for every completed path. Preparation, complete Runtime
+HTTP inventories, one Tool dispatch and committed Run persistence are checked.
+No preview payloads or credentials may appear in either raw Trace.
 
-Traces are collected after Agent deletion and Runtime telemetry shutdown. Three
-identical span-ID sets sampled one second apart are required before counting
-calls; this is a bounded convergence check, not proof that no span arrives
-later. The oracle checks complete parent topology, one Run, preparation before
-every model request, exactly one ACP dispatch and one Runtime invocation. A
-deliberate managed Tool failure permits errors only inside that Tool call;
-cancellation also permits the owning Run error. Bash exit 7 and successful paths
-permit no error spans, except that a v1 successful path disconnected before its
-prompt answered may record the failed response dispatch on that ACP prompt span.
-Clock warnings stay visible and cause exit 2 even when all business and
-topology checks pass; any other failure exits 1. Warning
-evidence includes the original cross-service timing differences, without
-rewriting timestamps or exempting small durations. Only compact final counts and
-verdicts are saved.
+Every accepted diagnostic belongs to an individually checked original span.
+Managed `isError` requires the exact stdio, Tool, protocol and ACP diagnostics.
+Cancellation requires an unresolved, quiescent Run with unknown Runtime effects;
+its errors remain visible. A deliberate v1 success disconnect requires the
+actual closed-before-response receipt and its precise original dispatch error.
+An optional v1 post-prompt refresh is checked separately; v2 admission may finish
+before its Run. Unrelated SQL errors and extra work cannot use these proofs.
+
+Both request and upgrade sources must have finite nonnegative span lifetimes
+and events inside their own spans. Existing exact same-Node sub-millisecond
+endpoint observations and Rust integer-microsecond representation observations
+remain attached to their original values. Warnings remain visible and keep
+`strict_trace` failed; no timestamps or raw diagnostics are rewritten. The
+remaining collector integration must archive complete original sources and
+retain every failed attempt, rather than storing only summary counts.
 
 ## Running
+
+The main entry point below is pending private collector and host-driver wiring;
+it is not an admission command for the current migration checkpoint.
 
 Build the service images serially (explicit iteration avoids parallel Compose
 Bake builds):
