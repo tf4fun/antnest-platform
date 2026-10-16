@@ -22,10 +22,22 @@ The cancellation admission budget is one monotonic 10-second interval covering
 notification writing and the stop probe; a late successful probe remains failed.
 Cleanup and inventory failures retain the original business error.
 
+`tool-cancellation.mjs` validates the original dispatched cancellation subtree:
+ACP discovery, Tool dispatch and joined close; both HTTP exchanges; Runtime
+operation, Tool and Bash or managed stdio work. It requires the original
+unreceived result, cancellation cause and failure diagnostics, and rejects
+additional work or errors. Runtime work diagnostics must precede their owning
+Tool and operation classification. A completion log cannot approve arbitrary
+error fields. The proof preserves original spans and timestamps, records the
+existing same-Node sub-millisecond observations separately, and cannot establish
+successful cleanup or actual process stopping.
+
 Connection tests use the locked SDK and real TCP peers. Scenario tests use a
 controlled producer to exercise all twelve paths: 28 separate initializations,
 44 business RPCs and four cancel notifications. These are local contract and
-scenario checks, not evidence that real Runtime processes stopped. The entry
+scenario checks; cancellation Trace fixtures cover both Runtime protocol-error
+timings and held discovery responses. They do not prove real Runtime processes
+stopped. The entry
 point below still uses the previous Gateway flow. Its private Trace validator,
 host-owned Runtime gate, candidate deployment, entry-point wiring and Docker
 acceptance are pending; this checkpoint does not complete the migration.
