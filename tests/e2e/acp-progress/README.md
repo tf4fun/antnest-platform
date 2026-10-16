@@ -48,8 +48,9 @@ host's candidate Runtime inspection receipt, then uses the shared four-Agent
 cleanup recorder to join every actual delete operation. Connection capture
 itself joins close before reading the original notifications. Runtime gates now
 use a file channel serviced by one host loop, followed by the final four-Runtime
-inspection. Timeout diagnostic migration, candidate deployment, shell entry-point
-wiring and full Docker acceptance remain pending; local checks do not complete
+inspection. Timeout diagnostics now use the original closed connector and
+archived private Trace sources. Candidate deployment, shell entry-point wiring
+and full Docker acceptance remain pending; local checks do not complete
 the migration.
 
 ## Scope
@@ -82,10 +83,13 @@ and cancellation.
   v2. The test separately verifies that execution was alive before
   cancellation and stopped within 10 s. Cancellation does not claim rollback.
 - When that deadline is missed, the client prints one `cancel_timeout` line
-  before failing. It reports whether the process stopped within 30 more
-  seconds, the Tool and state frame transitions, and payload-free spans of the
-  prompt and `session/cancel` traces, including
-  `executor.exit.classification`. It never extends the deadline.
+  before failing. It first joins the original connection, then probes only
+  within the original deadline plus 30 seconds; close time counts against that
+  interval. It reports observed Tool/state transitions and spans from the actual
+  prompt and original cancel notification, linked to their exact ACP upgrade.
+  The separate diagnostic collection budget is bounded to 60 seconds and joins
+  cancellation. Late stopping or successful collection never changes the
+  original business failure or produces a successful scenario outcome.
 
 Synthetic accounts and all Agent management go through the Gateway. The migrated
 gate gives the client a run-scoped file channel. Only the host driver executes
@@ -153,11 +157,26 @@ warnings retain strict failure status; reviewed known diagnostics do not erase
 them. Admission binds the exact returned result and rechecks its archived bytes,
 so copied, mutated or repeated results cannot authorize success. These collector
 checks use controlled Jaeger responses and real SDK notification receipts;
-Runtime gates, diagnostic migration and deployment acceptance remain pending.
+deployment acceptance remains pending.
+
+Timeout diagnostics reuse the shared v3 search/v1 detail collector, including
+three consecutive complete stable samples and private raw query bytes/SHA.
+Failed and interrupted responses retain their received prefix. The diagnostic
+request/reader observer also preserves original fetch, reset and cancellation
+errors with their causes before the shared collector reports a fixed error.
+The original CLIENT flush failure, including its Span identity and export
+cause, is retained before any Jaeger query can start.
+Failure to save them aborts collection and retains the original error together
+with the storage failure. Public output permits fixed field values only;
+arbitrary operations, values, warnings, frames and error details stay private.
+These diagnostic results always have `admitted: false` and are never inputs to
+the business strict-outcome function. Tests include actual SDK/TCP notification
+receipts and an actual HTTP body reset; they do not complete Progress Docker
+acceptance.
 
 ## Running
 
-The main entry point is pending host-driver shell, diagnostic and candidate
+The main entry point is pending host-driver shell and candidate
 deployment wiring; `make e2e-tool-progress` is not an admission command for this checkpoint.
 The local fixture command remains available:
 

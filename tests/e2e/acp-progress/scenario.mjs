@@ -203,14 +203,24 @@ export function createProgressScenario({
           );
         } catch (error) {
           remember(error);
+          try {
+            await close(client);
+          } catch (failure) {
+            remember(failure);
+          }
           if (diagnose) {
             try {
               await diagnose({
                 phase,
+                version,
+                source,
+                agentId: agent,
+                sessionId,
                 cancelAt,
+                cancelStarted: started,
                 client,
                 frames: structuredClone(client.updates),
-                stopped: () => gate.stopped(phase, source),
+                stopped: (options) => gate.stopped(phase, source, options),
               });
             } catch (failure) {
               remember(failure);

@@ -97,16 +97,15 @@ const scenario = createProgressScenario({
     connections.push(await captureProgressConnection(context));
     clients.delete(context.client);
   },
-  diagnose: async ({ phase, cancelAt, frames, stopped }) => {
+  diagnose: async (context) => {
     console.log(
       asciiJSON(
         await cancelDiagnostics({
+          ...context,
           jaeger: "http://jaeger:16686",
-          model: "http://progress-model:8080",
-          phase,
-          cancelAt,
-          frames,
-          stopped,
+          directory,
+          secrets,
+          flush: () => telemetry.flush(),
         }),
       ),
     );

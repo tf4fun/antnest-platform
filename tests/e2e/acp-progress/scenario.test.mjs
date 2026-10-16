@@ -239,6 +239,50 @@ test("every host stop probe receives the remaining original cancellation budget"
   await f.execute();
   assert.deepEqual(observed, [{ timeoutMS: 6000 }, { timeoutMS: 4000 }]);
 });
+
+test("timeout diagnosis follows joined close, captures final frames and keeps the business failure", async () => {
+  const f = run(1, "bash", "cancel", { neverStopped: true, latePreview: true });
+  let observed;
+  f.dependencies.diagnose = async (context) => {
+    observed = context;
+    assert(context.client.closed);
+    assert.equal(f.receipts.length, 1);
+  };
+  await assert.rejects(f.execute(), (error) =>
+    hasMessage(error, /process cancellation/),
+  );
+  assert(observed.client.closed);
+  assert.equal(observed.version, 1);
+  assert.equal(observed.agentId, "agent");
+  assert.equal(observed.sessionId, "progress-session");
+  assert.equal(observed.cancelStarted, 0);
+  assert.equal(
+    observed.frames.at(-1).update.content[0].content.text,
+    "last preview before EOF",
+  );
+  assert.deepEqual(f.outcomes, []);
+});
+
+test("timeout, close and diagnostic failures all survive without a success outcome", async () => {
+  const close = new Error("failed joined close"),
+    diagnostic = new Error("failed diagnostic save");
+  const f = run(2, "managed", "cancel", {
+    neverStopped: true,
+    closeFailure: { at: 0, error: close },
+  });
+  f.dependencies.diagnose = async ({ client }) => {
+    assert(client.closed);
+    throw diagnostic;
+  };
+  await assert.rejects(
+    f.execute(),
+    (error) =>
+      hasMessage(error, /process cancellation/) &&
+      contains(error, close) &&
+      contains(error, diagnostic),
+  );
+  assert.deepEqual(f.outcomes, []);
+});
 test("replay uses the complete observed preview through joined close", async () => {
   const f = run(1, "bash", "success", { latePreview: true });
   await f.execute();
