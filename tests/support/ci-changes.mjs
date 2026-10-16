@@ -612,18 +612,23 @@ function tierC() {
         name,
         { ...options, ...stage3aProfile(profile) },
       ]),
-      ...[
-        ["tool-permissions", "ANTNEST_E2E_TOOL_PERMISSIONS=true"],
-        ["tool-progress", "ANTNEST_E2E_TOOL_PROGRESS=true"],
-      ].map(([name, profile]) => [
-        `e2e-${name}`,
-        name,
+      [
+        "e2e-tool-permissions",
+        "tool-permissions",
         {
           before: ["make docker-build-managed-runtime"],
           images: [...platformImages, "antnest-runtime-managed"].sort(),
-          ...stage3aProfile(profile),
+          ...stage3aProfile("ANTNEST_E2E_TOOL_PERMISSIONS=true"),
         },
-      ]),
+      ],
+      [
+        "e2e-tool-progress",
+        "tool-progress",
+        {
+          images: [...platformImages, "antnest-runtime-fixture"].sort(),
+          ...stage3aProfile("ANTNEST_E2E_TOOL_PROGRESS=true"),
+        },
+      ],
     ],
     "Authenticated shell": [
       ["e2e-stage2", "stage 2"],

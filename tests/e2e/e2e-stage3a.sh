@@ -402,6 +402,9 @@ elif [ "$tool_profile" = session-cost ]; then
 elif [ "$tool_profile" = multimodal ]; then
   export ANTNEST_ADMISSION_TAG="multimodal-$ANTNEST_E2E_RUN_ID"
   runtime_image="antnest/antnest-runtime:$ANTNEST_ADMISSION_TAG"
+elif [ "$tool_profile" = tool-progress ]; then
+  export ANTNEST_ADMISSION_TAG="progress-$ANTNEST_E2E_RUN_ID"
+  runtime_image="antnest/antnest-runtime:$ANTNEST_ADMISSION_TAG"
 elif [ "$tool_profile" = file-observations ]; then
   export ANTNEST_ADMISSION_TAG="files-$ANTNEST_E2E_RUN_ID"
   runtime_image="antnest/antnest-runtime:$ANTNEST_ADMISSION_TAG"
@@ -497,9 +500,9 @@ compose() {
   fi
   if [ "$tool_progress" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml -f tests/integration/deployment/compose.admission.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml -f tests/integration/deployment/compose.admission.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
@@ -610,6 +613,8 @@ cleanup() {
     node tests/e2e/acp-cost/deployment.mjs cleanup || status=1
   elif [ "$tool_profile" = multimodal ]; then
     node tests/e2e/acp-multimodal/deployment.mjs cleanup || status=1
+  elif [ "$tool_profile" = tool-progress ]; then
+    node tests/e2e/acp-progress/deployment.mjs cleanup || status=1
   elif [ "$tool_profile" = file-observations ]; then
     node tests/e2e/acp-files/deployment.mjs cleanup || status=1
   fi
@@ -654,11 +659,13 @@ if [ -n "$tool_profile" ]; then
     node tests/e2e/acp-cost/deployment.mjs build
   elif [ "$tool_profile" = multimodal ]; then
     node tests/e2e/acp-multimodal/deployment.mjs build
+  elif [ "$tool_profile" = tool-progress ]; then
+    node tests/e2e/acp-progress/deployment.mjs build
   elif [ "$tool_profile" = file-observations ]; then
     node tests/e2e/acp-files/deployment.mjs build
   fi
   if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ] || [ "$tool_profile" = acp-closeout ]; then prepare_oidc; fi
-  if [ "$tool_profile" = acp-session ] || [ "$tool_profile" = slash-commands ] || [ "$tool_profile" = structured-plan ] || [ "$tool_profile" = multimodal ] || [ "$tool_profile" = session-cost ] || [ "$tool_profile" = file-observations ]; then
+  if [ "$tool_profile" = acp-session ] || [ "$tool_profile" = slash-commands ] || [ "$tool_profile" = structured-plan ] || [ "$tool_profile" = multimodal ] || [ "$tool_profile" = session-cost ] || [ "$tool_profile" = file-observations ] || [ "$tool_profile" = tool-progress ]; then
     compose up -d --wait --no-build --pull never
   else
     compose up -d --wait

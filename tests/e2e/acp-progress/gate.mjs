@@ -638,6 +638,7 @@ export async function serveProgressGates({
   checkpointDirectory,
   signal,
   timeout,
+  check = async () => {},
   ...options
 }) {
   const host = createProgressGateHost(options);
@@ -647,8 +648,15 @@ export async function serveProgressGates({
     signal,
     timeout,
     wait: options.wait,
-    waiting: (boundedSignal) => host.poll(boundedSignal),
-    inspect: (request, boundedSignal) =>
-      host.finish(request.agent_ids, boundedSignal),
+    waiting: async (boundedSignal) => {
+      await check(boundedSignal);
+      return host.poll(boundedSignal);
+    },
+    inspect: async (request, boundedSignal) => {
+      await check(boundedSignal);
+      const proof = await host.finish(request.agent_ids, boundedSignal);
+      await check(boundedSignal);
+      return proof;
+    },
   });
 }

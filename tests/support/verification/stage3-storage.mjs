@@ -19,7 +19,7 @@ const profiles = {
   IDENTITY_ACCESS: "identity-http",
   AGENT_ACCESS: "identity-agent",
   ACP_CLOSEOUT: "acp-closeout-normal",
-  TOOL_PROGRESS: null,
+  TOOL_PROGRESS: "acp-progress",
   FILE_OBSERVATIONS: "acp-files",
   STRUCTURED_PLAN: "acp-plan",
   SLASH_COMMANDS: "acp-commands",

@@ -49,9 +49,26 @@ cleanup recorder to join every actual delete operation. Connection capture
 itself joins close before reading the original notifications. Runtime gates now
 use a file channel serviced by one host loop, followed by the final four-Runtime
 inspection. Timeout diagnostics now use the original closed connector and
-archived private Trace sources. Candidate deployment, shell entry-point wiring
-and full Docker acceptance remain pending; local checks do not complete
-the migration.
+archived private Trace sources. Candidate deployment and shell entry points now
+use the owning deployment helper. Full Docker acceptance remains pending;
+local checks do not complete the migration.
+
+The deployment builds ten service candidates, a production Runtime base and
+the managed MCP fixture source, then copies only the fixture executable into
+the final `progress-<run UUID>` Runtime. It records original image inspections
+and build arguments, checks the isolated source references against their original
+image IDs before and after the final COPY, and checks the production layer
+prefix and Runtime configuration remain unchanged. CI may supply the base and
+fixture carrier; the final COPY still runs. These test images are local to the
+run and are removed after the stack, never published as service packages.
+
+Both harness containers run as the host credential UID/GID. The client mounts
+exactly two read-only service grants, the three required contract files and
+the tests read-only, plus separate writable Trace, gate IPC and Runtime ACK
+directories. Host Docker inspections remain in unmounted sibling directories.
+Actual inspections check the complete mount inventory and user. The host loop
+checks the original client/model identities and start times before probes and
+around the final ACK, so an early client exit or restart fails admission.
 
 ## Scope
 
@@ -110,8 +127,11 @@ Docker inspection remains outside the client channel. Interrupted commands are
 joined before a failed receipt and partial evidence are saved. The scenario
 passes each stop probe the remaining original ten-second monotonic budget;
 publication, host queueing and receipt reading all count, and late success fails.
-The deployment shell still needs to start this host loop and remove its legacy
-client socket mount before full Progress admission.
+The deployment shell starts this host loop after the client. A completed ACK
+does not replace the actual client exit code; strict exit 2 remains unchanged,
+and host or cleanup failures remain fatal. Cleanup uses recorded original
+container IDs or the unique run-labelled recovery result, preserves logs and
+attempts removal even when inspection or evidence writing fails.
 
 ## Trace checks
 
@@ -176,8 +196,9 @@ acceptance.
 
 ## Running
 
-The main entry point is pending host-driver shell and candidate
-deployment wiring; `make e2e-tool-progress` is not an admission command for this checkpoint.
+The main entry point is wired to the host driver and candidate deployment.
+`make e2e-tool-progress` runs the complete stack; its Docker acceptance is still
+pending for this checkpoint.
 The local fixture command remains available:
 
 ```sh

@@ -619,3 +619,20 @@ test("one joined host loop services gates before the final four-Runtime inspecti
   );
   assert(receipt.runtimes.every((r) => r.started_at === row().State.StartedAt));
 });
+
+test("host loop checks the original harness before polling and cannot wait forever after client exit", async (t) => {
+  const f = await fixture(t),
+    original = new Error("original client exited");
+  await assert.rejects(
+    implementation.serveProgressGates({
+      ...f.hostOptions,
+      checkpointDirectory: join(f.evidence, "checkpoint"),
+      signal: f.signal,
+      timeout: 100,
+      check: async () => {
+        throw original;
+      },
+    }),
+    (error) => error === original,
+  );
+});
