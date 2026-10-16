@@ -86,6 +86,20 @@ do not retry rejected requests, extend timeouts or waive cleanup failures.
 
 ## Execution and evidence tools
 
+`acp-http-close-timing.mjs` observes the actual private ACP SDK's 37-request
+close sequence and production HTTP SERVER instrumentation over local TCP/OTLP:
+
+```sh
+node --import ./services/agent-acp-service/node_modules/tsx/dist/loader.mjs tests/support/verification/acp-http-close-timing.mjs artifacts/verification/http-close-unique-run 10
+```
+
+Use a fresh private evidence directory. The command preserves original OTLP
+HTTP bodies, request receipts, original Span IDs and monotonic observations.
+Its delay bounds describe this single process; they do not calibrate clocks
+between services, waive trace warnings or replace Docker acceptance. It does
+not rewrite timestamps. Optional final arguments `setup` and `open-and-cleanup`
+exercise failure cleanup and deliberately exit nonzero.
+
 | Tool | Scope |
 | --- | --- |
 | [run-command.mjs](../run-command.mjs) | Runs one argv command, owns its process group, writes private log and result files and preserves failure or incomplete status. Existing evidence names are rejected. |
