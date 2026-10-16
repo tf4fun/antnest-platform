@@ -80,6 +80,19 @@ keep method, request and Session IDs, never prompt payloads. The domain-level
 resume operation can be `acp.session.resume`, while the request boundary must
 carry the actual wire method and JSON-RPC ID.
 
+The shared private connection helpers accept the optional boolean
+`captureRawFrames`. It is disabled by default. An owning consumer that enables
+it receives `rawFrames` containing independent copies of all incoming decoded
+JSON-RPC frames before SDK schema parsing, including initialize results, errors
+and unknown usage fields. These are decoded frames, not original wire bytes or
+a record of duplicate JSON keys. Capture follows the existing consumer's reads
+without a second background stream; cancellation preserves its reason, joins
+upstream cleanup and propagates cleanup failures. Typed SDK updates and outgoing
+request metadata remain unchanged. The inventory stays in memory after close
+and is never automatically exported to telemetry or console output. A consumer
+must explicitly opt in and handle this payload-bearing inventory as private
+evidence; this shared facility does not establish Cost business acceptance.
+
 All Traces require full topology, disabled payload capture and private-content
 checks. Rejection diagnostics are allowed only on the matching rejected ACP
 boundary and domain operation, with the original SDK denial receipt. Collection

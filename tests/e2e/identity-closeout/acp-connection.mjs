@@ -77,6 +77,11 @@ function privateConfiguration(version, agent, cookie, options) {
 }
 
 export function connectACP(version, agent, cookie, options = {}) {
+  assert(
+    options.captureRawFrames === undefined ||
+      typeof options.captureRawFrames === "boolean",
+    "captureRawFrames must be a boolean",
+  );
   const boundary =
     options.boundary === undefined ? "gateway" : options.boundary;
   assert(
@@ -123,6 +128,7 @@ export function connectACP(version, agent, cookie, options = {}) {
       }
     }
   }
+  const rawFrames = options.captureRawFrames ? [] : undefined;
   const updates = [],
     requests = [];
   let connection;
@@ -158,6 +164,7 @@ export function connectACP(version, agent, cookie, options = {}) {
             },
           ),
           requests,
+          rawFrames,
         ),
       );
   } catch (error) {
@@ -207,6 +214,7 @@ export function connectACP(version, agent, cookie, options = {}) {
     },
     version,
     updates,
+    ...(rawFrames ? { rawFrames } : {}),
     requests,
     agentId: agent,
     get connectionTraceID() {

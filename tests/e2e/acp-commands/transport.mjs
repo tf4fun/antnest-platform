@@ -8,10 +8,71 @@ function requestMetadata(message) {
     sessionId: message.params?.sessionId,
   };
 }
-export function observeStream(stream, observed) {
+// Keep one consumer-driven read chain. The copy precedes SDK schema parsing,
+// and cancellation joins the same upstream reader instead of a background tee.
+function captureIncoming(readable, frames) {
+  const reader = readable.getReader();
+  let stopped = false,
+    cancelling;
+  const cancel = (reason) => {
+    stopped = true;
+    return (cancelling ??= reader
+      .cancel(reason)
+      .finally(() => reader.releaseLock()));
+  };
+  return new ReadableStream(
+    {
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (stopped) return;
+          if (next.done) {
+            stopped = true;
+            reader.releaseLock();
+            controller.close();
+            return;
+          }
+          frames.push(structuredClone(next.value));
+          controller.enqueue(next.value);
+        } catch (error) {
+          if (stopped) return;
+          try {
+            await cancel(error);
+          } catch (cleanupError) {
+            if (cleanupError !== error) {
+              controller.error(
+                new AggregateError(
+                  [error, cleanupError],
+                  "Raw frame capture and upstream cleanup failed",
+                ),
+              );
+              return;
+            }
+          }
+          controller.error(error);
+        }
+      },
+      cancel,
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+export function observeStream(stream, observed, frames) {
+  assert(
+    frames === undefined || Array.isArray(frames),
+    "raw frame destination must be an array",
+  );
   const writer = stream.writable.getWriter();
+  let readable = stream.readable;
+  try {
+    if (frames !== undefined) readable = captureIncoming(readable, frames);
+  } catch (error) {
+    writer.releaseLock();
+    throw error;
+  }
   return {
-    readable: stream.readable,
+    readable,
     writable: new WritableStream({
       write(message) {
         const metadata = requestMetadata(message);

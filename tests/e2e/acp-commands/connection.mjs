@@ -192,6 +192,11 @@ export async function openPrivateCommandConnection(
       (!profile.http || profile.version === 1),
     "unsupported private command protocol",
   );
+  assert(
+    options.captureRawFrames === undefined ||
+      typeof options.captureRawFrames === "boolean",
+    "captureRawFrames must be a boolean",
+  );
   options.signal?.throwIfAborted();
   const principal = {};
   for (const field of ["organization_id", "user_id"]) {
@@ -277,6 +282,7 @@ export async function openPrivateCommandConnection(
       },
     },
   );
+  const rawFrames = options.captureRawFrames ? [] : undefined;
   const observed = [],
     updates = [],
     closed = new AbortController();
@@ -288,7 +294,7 @@ export async function openPrivateCommandConnection(
     .onRequest(v1.methods.client.session.requestPermission, () => ({
       outcome: { outcome: "cancelled" },
     }))
-    .connect(observeStream(transport.stream, observed));
+    .connect(observeStream(transport.stream, observed, rawFrames));
   transport.bindConnection(connection);
   void connection.closed.then(() =>
     closed.abort(new Error("private command connection closed")),
@@ -302,6 +308,7 @@ export async function openPrivateCommandConnection(
     agentId,
     transport: "http",
     updates,
+    ...(rawFrames ? { rawFrames } : {}),
     close,
     closeAndWait: transport.closeAndWait,
     httpSnapshot: transport.snapshot,

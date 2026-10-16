@@ -32,6 +32,7 @@ export async function commandFixture(t, profile, options = {}) {
     clients = [];
   const pending = new Set(),
     contexts = new Set(),
+    responseStreams = new Set(),
     errors = [];
   const deleteStarted = Promise.withResolvers(),
     releaseDelete = Promise.withResolvers();
@@ -244,6 +245,10 @@ export async function commandFixture(t, profile, options = {}) {
         };
       }
     }
+    if (request.method === "GET") {
+      responseStreams.add(response);
+      response.once("close", () => responseStreams.delete(response));
+    }
     http(request, response);
   });
   server.on("upgrade", (request, socket, head) => {
@@ -330,6 +335,21 @@ export async function commandFixture(t, profile, options = {}) {
     exports,
     contexts,
     sockets,
+    sendRawFrame(frame) {
+      const raw = JSON.stringify(frame);
+      if (profile.http) {
+        assert.equal(responseStreams.size, 1);
+        const [response] = responseStreams;
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.headersSent, true);
+        assert.equal(response.destroyed, false);
+        response.write(`data: ${raw}\n\n`);
+      } else {
+        assert.equal(sockets.clients.size, 1);
+        const [socket] = sockets.clients;
+        socket.send(raw);
+      }
+    },
     options: { principal, endpoint, telemetry, service, secrets },
     deleteStarted: deleteStarted.promise,
     identityStarted: identityStarted.promise,

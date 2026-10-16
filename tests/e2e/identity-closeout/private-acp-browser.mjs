@@ -15,8 +15,13 @@ export async function openBrowserPrivateACP(
     service = serviceClient(),
     endpoint = `http://agent-acp-service:8080/v${version}/acp`,
     signal,
+    captureRawFrames,
   },
 ) {
+  assert(
+    captureRawFrames === undefined || typeof captureRawFrames === "boolean",
+    "captureRawFrames must be a boolean",
+  );
   signal?.throwIfAborted();
   assert([1, 2].includes(version), "unsupported private ACP version");
   assert(Array.isArray(secrets), "private evidence canary inventory required");
@@ -53,6 +58,7 @@ export async function openBrowserPrivateACP(
     context: issued.context,
     authorization,
     telemetry,
+    captureRawFrames,
   });
   try {
     const initializationResult = await client.initialize();

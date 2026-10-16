@@ -3,6 +3,7 @@ import test from "node:test";
 import { setImmediate as turn } from "node:timers/promises";
 import { once } from "node:events";
 import { commandFixture, principal, setup } from "./connection.fixture.mjs";
+import { until } from "../acp-closeout/wait.mjs";
 
 const implementation = await import("./connection.mjs");
 const profiles = [
@@ -43,6 +44,90 @@ async function open(fixture, profile, overrides = {}) {
 }
 
 for (const profile of profiles) {
+  test(`${profile.name}: opt-in raw frames preserve unknown usage fields before the real SDK strips them`, async (t) => {
+    const f = await commandFixture(t, profile);
+    const client = await open(f, profile, { captureRawFrames: true });
+    const { sessionId } = await client.request("new", setup);
+    const raw = {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId,
+        update: {
+          sessionUpdate: "usage_update",
+          used: 1100,
+          size: 64000,
+          cost: { amount: 0.01, currency: "USD", source: "estimated" },
+          measurement: { pricing: "PRIVATE-RAW-USAGE" },
+        },
+      },
+    };
+    f.sendRawFrame(raw);
+    await until(
+      () => client.updates.length === 1,
+      "actual SDK usage update",
+      2000,
+    );
+    assert.equal(client.updates[0].update.measurement, undefined);
+    assert.equal(client.updates[0].update.cost.source, undefined);
+    assert(Array.isArray(client.rawFrames), "pre-SDK frame inventory required");
+    assert.equal(client.rawFrames.length, 3);
+    assert.deepEqual(client.rawFrames.at(-1), raw);
+    assert.equal(client.rawFrames[0].result.protocolVersion, profile.version);
+    assert.equal(client.rawFrames[1].result.sessionId, sessionId);
+    const retained = client.rawFrames;
+    client.rawFrames.at(-1).params.update.cost.amount = 9;
+    assert.equal(client.updates[0].update.cost.amount, 0.01);
+    await client.closeAndWait();
+    assert.strictEqual(client.rawFrames, retained);
+    assert.equal(client.rawFrames.length, 3);
+    if (profile.http) {
+      assert.equal(client.httpSnapshot().pendingRequests, 0);
+      assert.equal(client.httpSnapshot().streamJoined, true);
+    }
+    await f.telemetry.flush();
+    assert(!JSON.stringify(f.exports).includes("PRIVATE-RAW-USAGE"));
+  });
+
+  test(`${profile.name}: raw capture keeps the actual JSON-RPC rejection and joins cleanup`, async (t) => {
+    const f = await commandFixture(t, profile, { denyNew: true });
+    const client = await open(f, profile, { captureRawFrames: true });
+    await assert.rejects(
+      client.request("new", setup),
+      (error) => error.code === -32020,
+    );
+    assert(
+      Array.isArray(client.rawFrames),
+      "raw error frame inventory required",
+    );
+    assert.equal(client.rawFrames.length, 2);
+    const frame = client.rawFrames.at(-1);
+    assert.equal(String(frame.id), client.lastRequest.requestId);
+    assert.deepEqual(frame.error, {
+      code: -32020,
+      message: "fixture access denied",
+      data: { code: "access_denied", retryable: false },
+    });
+    await client.closeAndWait();
+    if (profile.http) assert.equal(client.httpSnapshot().streamJoined, true);
+  });
+
+  test(`${profile.name}: the default connection does not retain raw incoming payloads`, async (t) => {
+    const f = await commandFixture(t, profile);
+    const client = await open(f, profile);
+    await client.request("new", setup);
+    assert.equal(client.rawFrames, undefined);
+    await client.closeAndWait();
+  });
+
+  for (const captureRawFrames of ["true", 1, {}])
+    test(`${profile.name}: invalid capture option ${JSON.stringify(captureRawFrames)} fails before Identity delegation`, async (t) => {
+      const f = await commandFixture(t, profile);
+      await assert.rejects(open(f, profile, { captureRawFrames }));
+      assert.equal(f.identities.length, 0);
+      assert.equal(f.calls.length, 0);
+    });
+
   for (const supported of [true, false])
     test(`${profile.name}: preserves actual ${supported ? "supported" : "absent and disabled"} initialization capabilities without another RPC`, async (t) => {
       const initializationResult =
@@ -103,6 +188,32 @@ for (const profile of profiles) {
     });
     await assert.rejects(
       open(f, profile, { signal: controller.signal }),
+      (error) => error === reason,
+    );
+    assert.deepEqual(
+      f.calls.map((call) => call.method),
+      ["initialize"],
+    );
+    if (profile.http) {
+      await within(Promise.all(f.wire.map((item) => item.closed)));
+    } else {
+      await within(
+        Promise.all(
+          [...f.sockets.clients].map((socket) => once(socket, "close")),
+        ),
+      );
+      assert.equal(f.sockets.clients.size, 0);
+    }
+  });
+
+  test(`${profile.name}: raw capture cancellation before a valid initialize reply preserves the original reason and joins cleanup`, async (t) => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled at initialize reply");
+    const f = await commandFixture(t, profile, {
+      beforeInitializeReply: () => controller.abort(reason),
+    });
+    await assert.rejects(
+      open(f, profile, { signal: controller.signal, captureRawFrames: true }),
       (error) => error === reason,
     );
     assert.deepEqual(
