@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { inspectRuntimeInformationRead } from "./runtime-information-read.mjs";
 import { inspectRuntimeToolLifecycle } from "./runtime-tool-lifecycle.mjs";
+import { requireRuntimeToolInventory } from "./runtime-tool-inventory.mjs";
+import { values } from "./runtime-tool-evidence.mjs";
 import { tag, traceTopology } from "./trace-tree.mjs";
 
 const one = (spans, label) => {
@@ -37,7 +39,26 @@ const cancelled = (span) =>
   );
 
 /** Read proof is owned by its Run preparation or a separate v1 completion refresh. */
-export function inspectRunInformationReads(
+export function inspectRunInformationReads(trace, options) {
+  return inspectRunInventory(trace, options, inspectRuntimeToolLifecycle);
+}
+
+// Only an explicit owning code path can select call policy. Preparation and
+// tools/list always retain the original parsed-result inspector.
+export function inspectRunInformationReadsWithToolCalls(
+  trace,
+  options,
+  inspectCall,
+) {
+  assert.equal(
+    typeof inspectCall,
+    "function",
+    "owning tool-call inspector required",
+  );
+  return inspectRunInventory(trace, options, inspectCall);
+}
+
+function inspectRunInventory(
   trace,
   {
     request,
@@ -45,6 +66,7 @@ export function inspectRunInformationReads(
     closedBeforeResponse = false,
     postPromptRequestOutcome = "success",
   },
+  inspectCall,
 ) {
   assert(
     ["success", "failed-v1-run-response"].includes(postPromptRequestOutcome),
@@ -238,10 +260,29 @@ export function inspectRunInformationReads(
       "tool inventory belongs to another ACP process",
     );
     assert(tree.chain(owner).includes(run), "tool inventory detached from Run");
-    const proof = inspectRuntimeToolLifecycle(trace, owner, {
-      agentId,
-      executionId,
-    });
+    const identity = Object.freeze({ agentId, executionId });
+    const inspector =
+      owner === list ? inspectRuntimeToolLifecycle : inspectCall;
+    const before = structuredClone(trace);
+    let proof;
+    const errors = [];
+    try {
+      proof = inspector(trace, owner, identity);
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      assert.deepEqual(trace, before, "tool inspector rewrote raw evidence");
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length)
+      throw new AggregateError(
+        errors,
+        "tool inspection and raw integrity failed",
+      );
+    requireRuntimeToolInventory(trace, owner, identity, proof);
     toolProofs.push(proof);
     for (const client of proof.clients) {
       assert(!spans.has(client), "tool inventory borrowed information read");
@@ -279,9 +320,14 @@ export function inspectRunInformationReads(
   for (const span of trace.spans) {
     if (spans.has(span)) continue;
     if (tree.service(span) === "antnest-runtime") {
+      const attributes = values(span.tags);
       if (
         span.operationName === "runtime.mcp.operation" ||
-        span.operationName === "HTTP POST /mcp"
+        span.operationName === "HTTP POST /mcp" ||
+        attributes["span.kind"] === "server" ||
+        Object.hasOwn(attributes, "http.route") ||
+        Object.hasOwn(attributes, "mcp.operation.name") ||
+        Object.hasOwn(attributes, "mcp.operation.outcome")
       )
         assert(
           toolProtocolSpans.has(span),

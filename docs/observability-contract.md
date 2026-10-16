@@ -208,6 +208,25 @@ diagnostics. Historical traces without their own tool receipts remain
 insufficient. ACP producer checks precede consumer migration and a new actual
 Session run; they do not establish the complete business workflow.
 
+Run consumers retain one complete raw Runtime inventory. The default inspector
+requires parsed tool results and an uncancelled caller for both list and call.
+An owning consumer may explicitly compose a separate `tools/call` inspector;
+`tools/list`, preparation reads and v1 completion refresh remain fixed. This is
+a code-level composition boundary, not a skip flag or filtered Trace supplied
+through expected data. Every original call must be inspected once, and its
+returned inventory must reference that exact owner and all actual direct
+CLIENT, SERVER and operation objects with the original execution and generation.
+Missing, duplicated, cloned or borrowed members and unowned Runtime work fail.
+The owning inspector must not rewrite raw evidence. Its cancellation and
+diagnostic claims can name only members of its own proven exchanges.
+
+Cancellation is a separate owning outcome: `not_received` never becomes a
+parsed result, and a returned local close never proves that the Runtime process
+stopped. Cancellation failures remain original errors and cannot be relabeled
+as successful connection-cleanup diagnostics. Each consumer must check its
+specific Run, Tool, executor or managed-child behavior and actual stopping
+evidence in its subsequent integration batch.
+
 ### ACP HTTP access-revocation closure
 
 When a session-output, learning-notice or permission failure actually invokes
