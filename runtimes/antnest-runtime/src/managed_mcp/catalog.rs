@@ -228,32 +228,35 @@ impl Catalog {
             )),
         }
         }.instrument(span.clone()).await;
-        let failed = match &result {
-            Ok(result) => result.is_error == Some(true),
-            Err(_) => true,
-        };
-        span.record("otel.status_code", if failed { "ERROR" } else { "OK" });
-        span.set_attribute(
-            "antnest.protocol.outcome",
-            if failed { "error" } else { "success" },
-        );
-        match &result {
-            Ok(_) => {
-                if failed {
-                    span.record("error.type", "managed_tool_error");
-                    crate::diagnostics::error_summary(
-                        &span,
-                        "mcp.stdio",
-                        "managed_tool_error",
-                        "Managed tool returned isError",
-                    );
+        // Final diagnostics must complete before the last span exit.
+        span.in_scope(|| {
+            let failed = match &result {
+                Ok(result) => result.is_error == Some(true),
+                Err(_) => true,
+            };
+            span.record("otel.status_code", if failed { "ERROR" } else { "OK" });
+            span.set_attribute(
+                "antnest.protocol.outcome",
+                if failed { "error" } else { "success" },
+            );
+            match &result {
+                Ok(_) => {
+                    if failed {
+                        span.record("error.type", "managed_tool_error");
+                        crate::diagnostics::error_summary(
+                            &span,
+                            "mcp.stdio",
+                            "managed_tool_error",
+                            "Managed tool returned isError",
+                        );
+                    }
                 }
-            }
-            Err(error) => {
-                span.record("error.type", error.code.as_str());
-                crate::diagnostics::record_tool_error(&span, "mcp.stdio", error);
-            }
-        };
+                Err(error) => {
+                    span.record("error.type", error.code.as_str());
+                    crate::diagnostics::record_tool_error(&span, "mcp.stdio", error);
+                }
+            };
+        });
 
         result
     }
