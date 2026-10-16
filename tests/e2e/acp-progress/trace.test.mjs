@@ -3,6 +3,7 @@ import test from "node:test";
 import { inspectTrace } from "./trace.mjs";
 import { progressTraceFixture as fixture } from "./trace.fixture.mjs";
 import { tag } from "../observability/trace-tree.mjs";
+import { privateACPDiagnosticInventory } from "../observability/private-acp-inventory.mjs";
 const inspect = (f) =>
   inspectTrace(f.trace, f.expected, ["progress-payload-canary"], f.requests);
 const phases = [1, 2].flatMap((version) =>
@@ -12,6 +13,60 @@ const phases = [1, 2].flatMap((version) =>
     ),
   ),
 );
+for (const phase of phases)
+  test(`private collector accounts for every original ${phase} error`, () => {
+    const f = fixture(phase);
+    const report = inspect(f);
+    assert(Array.isArray(report.owned_error_spans));
+    const inventory = privateACPDiagnosticInventory(
+      [f.trace, f.expected.connectionTrace],
+      [report],
+      new Set([
+        "progress-replay-disconnect",
+        "progress-run-unresolved",
+        "progress-tool-cancelled",
+        "progress-managed-tool-error",
+        "completed-initialize-mcp-read-disconnect",
+        "completed-runtime-tool-http-disconnect",
+      ]),
+    );
+    assert.equal(inventory.diagnostic_inventory_verified, true);
+    assert.equal(
+      inventory.raw_error_inventory.length,
+      report.error_spans.length,
+    );
+  });
+for (const phase of phases.filter((value) => !value.endsWith("cancel")))
+  test(`${phase} parsed Tool retains its exact owned discovery cleanup`, () => {
+    const f = fixture(phase, { heldDiscovery: true });
+    const report = inspect(f);
+    const neutral = report.neutral_diagnostics.filter(
+      (row) => row.reason === "completed-runtime-tool-http-disconnect",
+    );
+    assert(neutral.length > 0);
+    assert(
+      neutral.every(
+        (row) =>
+          !report.owned_error_spans.some(
+            (claim) =>
+              claim.trace_id === row.trace_id && claim.span_id === row.span_id,
+          ),
+      ),
+      "original cleanup cannot be claimed twice as a business error",
+    );
+    privateACPDiagnosticInventory(
+      [f.trace, f.expected.connectionTrace],
+      [report],
+      new Set([
+        "progress-replay-disconnect",
+        "progress-run-unresolved",
+        "progress-tool-cancelled",
+        "progress-managed-tool-error",
+        "completed-initialize-mcp-read-disconnect",
+        "completed-runtime-tool-http-disconnect",
+      ]),
+    );
+  });
 for (const phase of phases)
   test(`complete private Progress ${phase} retains original evidence`, () => {
     const f = fixture(phase),

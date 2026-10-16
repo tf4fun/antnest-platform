@@ -558,6 +558,27 @@ export function inspectTrace(trace, expected, secrets = [], requests = []) {
         );
       }
     }
+  const ownedErrors = new Map();
+  if (closed) ownedErrors.set(request, "progress-replay-disconnect");
+  if (ending === "cancel") ownedErrors.set(run, "progress-run-unresolved");
+  const verifiedCleanup = new Set(
+    (callProof.neutralDiagnostics ?? [])
+      .filter((row) => row.trace_id === trace.traceID)
+      .map((row) => row.span_id),
+  );
+  for (const span of callProof.checkedSpans)
+    if (hasDiagnosticError(span) && !verifiedCleanup.has(span.spanID)) {
+      assert(
+        ending === "cancel" || (kind === "managed" && ending === "failure"),
+        "successful Progress Tool cannot claim an error",
+      );
+      ownedErrors.set(
+        span,
+        ending === "cancel"
+          ? "progress-tool-cancelled"
+          : "progress-managed-tool-error",
+      );
+    }
   return {
     trace_id: trace.traceID,
     request_id: expected.requestId,
@@ -577,6 +598,11 @@ export function inspectTrace(trace, expected, secrets = [], requests = []) {
     neutral_diagnostics: information.neutralDiagnostics,
     time_observations: timeObservations,
     services: [...new Set(trace.spans.map(tree.service))].sort(),
+    owned_error_spans: [...ownedErrors].map(([span, reason]) => ({
+      trace_id: trace.traceID,
+      span_id: span.spanID,
+      reason,
+    })),
     error_spans: trace.spans.filter(hasDiagnosticError).map((span) => ({
       span_id: span.spanID,
       service: tree.service(span),

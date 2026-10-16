@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { fixture as ordinaryFixture } from "../acp-commands/trace-fixtures.mjs";
 import { privateBoundaryFixture } from "../acp-plan/private-boundary.fixture.mjs";
-import { addPostPromptInformationRead } from "../observability/runtime-information-run-fixtures.mjs";
+import {
+  addPostPromptInformationRead,
+  addToolLifecycleReceipt,
+} from "../observability/runtime-information-run-fixtures.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { cancellationFixture } from "./tool-cancellation.fixture.mjs";
 
@@ -123,6 +126,12 @@ export function progressTraceFixture(
     set(call, "antnest.run.id", "run");
     run.duration = end(call) - run.startTime + 1000;
   } else {
+    if (heldDiscovery)
+      addToolLifecycleReceipt(trace, call, {
+        heldDiscovery: true,
+        cancelledClients: ["discover"],
+        cancelledServers: ["discover"],
+      });
     tool = find("runtime.mcp.tool");
     operation = trace.spans.find(
       (span) => span.spanID === tool.references[0].spanID,

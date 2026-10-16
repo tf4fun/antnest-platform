@@ -38,7 +38,9 @@ controlled producer to exercise all twelve paths: 28 separate initializations,
 scenario checks; cancellation Trace fixtures cover both Runtime protocol-error
 timings and held discovery responses. They do not prove real Runtime processes
 stopped. `trace.mjs` now composes the complete private Run/prompt inspection for
-all twelve paths, including their twenty model calls. The main client still
+all twelve paths, including their twenty model calls. The owning collector now
+archives requests and original cancel notifications with complete source
+receipts. The main client still
 uses the previous Gateway flow and must be migrated to the new collector
 signature. Host-owned Runtime gates, candidate deployment, entry-point wiring
 and Docker acceptance remain pending; these local checks do not complete the
@@ -112,8 +114,27 @@ and events inside their own spans. Existing exact same-Node sub-millisecond
 endpoint observations and Rust integer-microsecond representation observations
 remain attached to their original values. Warnings remain visible and keep
 `strict_trace` failed; no timestamps or raw diagnostics are rewritten. The
-remaining collector integration must archive complete original sources and
-retain every failed attempt, rather than storing only summary counts.
+collector archives complete original query bytes, including failed attempts.
+
+`control-trace.mjs` checks all five barrier-admission reads and the exact
+`runtime_barrier_required` error and origin, with no Run or model work. Cancel
+notifications require the original successfully closed connector receipt, an
+INTERNAL root linked to its actual upgrade, and the committed cancellation
+transaction. The notification only proves cancellation was requested; the
+Runtime stop probe remains a separate requirement.
+
+`collector.mjs` composes these owning checks with the shared private collector.
+Initialization and empty-MCP Session setup/replay reuse the strict contracts
+already used by Cost. Every result requires three consecutive stable complete
+source samples, original query hashes and raw diagnostic inventory. Warning
+review uses the same complete-source causal policy as Cost: only the previously
+deferred same-Node endpoint observation can qualify, with explicit matching
+process identity. Unknown or cross-process warnings fail. Original errors and
+warnings retain strict failure status; reviewed known diagnostics do not erase
+them. Admission binds the exact returned result and rechecks its archived bytes,
+so copied, mutated or repeated results cannot authorize success. These collector
+checks use controlled Jaeger responses and real SDK notification receipts; the
+actual client, Runtime gates and deployment acceptance remain pending.
 
 ## Running
 
