@@ -644,6 +644,7 @@ test("tier C Stage 3a profiles keep their strict exit 2 by running the make reci
   for (const name of [
     "acp-closeout",
     "acp-session",
+    "slash-commands",
     "agent-access",
     "identity-access",
     "identity-core",

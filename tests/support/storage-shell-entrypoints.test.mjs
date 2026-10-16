@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
+import { commandHarnessArguments } from "../e2e/acp-commands/deployment.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const children = [
@@ -25,6 +26,7 @@ const children = [
   ["acp-persistence", "acp-persistence"],
   ["acp-restart", "acp-restart"],
   ["acp-session", "identity-session"],
+  ["slash-commands", "acp-commands"],
   ["identity-http", "identity-http"],
   ["agent-access", "identity-agent"],
   ["acp-closeout", "acp-closeout-normal"],
@@ -163,6 +165,7 @@ for (const [flag, directory] of [
   ["ACP_PERSISTENCE", "acp-persistence"],
   ["ACP_RESTART", "acp-restart"],
   ["ACP_SESSION", "identity-session"],
+  ["SLASH_COMMANDS", "acp-commands"],
   ["IDENTITY_CORE", "identity-http"],
   ["IDENTITY_ACCESS", "identity-http"],
   ["AGENT_ACCESS", "identity-agent"],
@@ -233,7 +236,31 @@ test("containers writing private evidence run as the evidence owner", () => {
     ),
     [`${uid}:${gid}`],
   );
-  assert(commands.length + 1 >= 3, "evidence-writing clients not found");
+  assert.match(
+    readFileSync(join(directory, "e2e-slash-commands.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-commands\/deployment\.mjs" create-harness/u,
+  );
+  const command = commandHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `commands-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:commands-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(command.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    command.flatMap((arg, index) =>
+      arg === "--user" ? [command[index + 1]] : [],
+    ),
+    [`${uid}:${gid}`],
+  );
+  assert(commands.length + 2 >= 4, "evidence-writing clients not found");
   for (const [name, command] of commands)
     assert(
       command.includes('--user "$(id -u):$(id -g)"') ||

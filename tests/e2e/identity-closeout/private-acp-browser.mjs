@@ -30,7 +30,9 @@ export async function openBrowserPrivateACP(
       typeof principal?.[field] === "string" && principal[field].length > 0,
       "original browser Principal required",
     );
-  const issued = await service.workspaceContext(accessToken, agentId);
+  const issued = await service.workspaceContext(accessToken, agentId, {
+    signal,
+  });
   signal?.throwIfAborted();
   for (const field of ["organization_id", "user_id"])
     assert(

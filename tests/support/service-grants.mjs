@@ -84,8 +84,9 @@ export function serviceClient({
   async function send(
     url,
     grant,
-    { method = "POST", body, form, context, headers = {} } = {},
+    { method = "POST", body, form, context, headers = {}, signal } = {},
   ) {
+    signal?.throwIfAborted();
     return fetch(url, {
       method,
       redirect: "manual",
@@ -96,7 +97,9 @@ export function serviceClient({
         ...headers,
       },
       body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
-      signal: AbortSignal.timeout(12000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(12000)])
+        : AbortSignal.timeout(12000),
     });
   }
   // Legacy JSON callers retain the path, status and remote error code.
@@ -144,7 +147,7 @@ export function serviceClient({
   }
   // Private ACP consumers delegate the existing browser session with the
   // route-selected workspace profile; no new login or test issuer is involved.
-  async function workspaceContext(accessToken, agentId) {
+  async function workspaceContext(accessToken, agentId, { signal } = {}) {
     assert(
       typeof agentId === "string" && agentId.trim().length > 0,
       "workspace Agent scope is required",
@@ -160,9 +163,11 @@ export function serviceClient({
             profile: "workspace",
             agent_id: agentId,
           },
+          signal,
         },
       );
     } catch {
+      signal?.throwIfAborted();
       throw new Error("Identity workspace Resolve request failed");
     }
     assert(

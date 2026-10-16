@@ -390,6 +390,9 @@ if [ "$tool_profile" = acp-session ]; then
   runtime_image="antnest/antnest-runtime:$ANTNEST_ADMISSION_TAG"
   export ANTNEST_E2E_IDENTITY_IMAGE="antnest/identity-service:$ANTNEST_ADMISSION_TAG"
   export ANTNEST_E2E_ACP_IMAGE="antnest/agent-acp-service:$ANTNEST_ADMISSION_TAG"
+elif [ "$tool_profile" = slash-commands ]; then
+  export ANTNEST_ADMISSION_TAG="commands-$ANTNEST_E2E_RUN_ID"
+  runtime_image="antnest/antnest-runtime:$ANTNEST_ADMISSION_TAG"
 else
   runtime_image=antnest/antnest-runtime:local
   docker image inspect "$runtime_image" >/dev/null
@@ -458,9 +461,9 @@ compose() {
   fi
   if [ "$slash_commands" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml -f tests/integration/deployment/compose.admission.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/support/compose.isolated-networks.yaml -f tests/integration/deployment/compose.admission.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
@@ -587,6 +590,8 @@ cleanup() {
   done
   if [ "$tool_profile" = acp-session ]; then
     node tests/e2e/identity-closeout/session-deployment.mjs cleanup || status=1
+  elif [ "$tool_profile" = slash-commands ]; then
+    node tests/e2e/acp-commands/deployment.mjs cleanup || status=1
   fi
   rm -rf -- "${temporary_root:?}" "${credentials_root:?}/credentials"
   rmdir -- "$credentials_root" 2>/dev/null || true
@@ -621,9 +626,11 @@ prepare_oidc() {
 if [ -n "$tool_profile" ]; then
   if [ "$tool_profile" = acp-session ]; then
     node tests/e2e/identity-closeout/session-deployment.mjs build
+  elif [ "$tool_profile" = slash-commands ]; then
+    node tests/e2e/acp-commands/deployment.mjs build
   fi
   if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ] || [ "$tool_profile" = acp-closeout ]; then prepare_oidc; fi
-  if [ "$tool_profile" = acp-session ]; then
+  if [ "$tool_profile" = acp-session ] || [ "$tool_profile" = slash-commands ]; then
     compose up -d --wait --no-build --pull never
   else
     compose up -d --wait

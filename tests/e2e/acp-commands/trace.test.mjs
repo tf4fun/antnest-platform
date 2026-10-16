@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as commandTraces from "./trace.mjs";
-import { fixture } from "./trace-fixtures.mjs";
+import {
+  fixture,
+  privateHTTPFixture,
+  privateHTTPRejectionFixture,
+} from "./trace-fixtures.mjs";
 import { addCompletedRead } from "../edge-gateway/resolve-cache-completed-read-fixtures.mjs";
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 import {
@@ -14,6 +18,442 @@ const { commandStrictOutcome, inspectCommandTrace, selectCommandTrace } =
   commandTraces;
 const inspect = (f) =>
   inspectCommandTrace(f.trace, f.expected, ["PRIVATE"], f.requests ?? []);
+
+for (const sameSpan of [false, true])
+  for (const [method, rejection] of [
+    ["session/new", "access_denied"],
+    ["session/load", "session_access_denied"],
+    ["session/resume", "session_access_denied"],
+    ["session/fork", "session_access_denied"],
+    ["session/prompt", "unsupported_resource_content"],
+    ["session/prompt", "unsupported_audio_content"],
+  ])
+    test(`private HTTP rejection keeps exact application and RPC cause: ${method}/${rejection}/${sameSpan}`, () => {
+      const f = privateHTTPRejectionFixture(rejection, { method, sameSpan });
+      const original = structuredClone(f.trace);
+      const result = inspect(f);
+      assert.equal(result.rejection, rejection);
+      assert.deepEqual(
+        result.owned_error_spans?.map((item) => item.span_id).sort(),
+        [f.application.spanID, f.request.spanID].sort(),
+      );
+      assert.deepEqual(f.trace, original);
+    });
+
+for (const [label, mutate] of [
+  [
+    "application starts after completed RPC",
+    (f) => {
+      f.application.startTime = f.request.startTime + f.request.duration + 5000;
+      f.application.logs[0].timestamp = f.application.startTime;
+    },
+  ],
+  [
+    "application precedes RPC",
+    (f) => {
+      f.application.startTime = f.request.startTime - 1;
+      f.application.logs[0].timestamp = f.application.startTime;
+    },
+  ],
+  [
+    "negative application duration",
+    (f) => {
+      f.application.duration = -1;
+    },
+  ],
+  [
+    "unfinished RPC",
+    (f) => {
+      f.request.duration = NaN;
+    },
+  ],
+  [
+    "missing application cause",
+    (f) => {
+      f.trace.spans = f.trace.spans.filter((s) => s !== f.application);
+    },
+  ],
+  [
+    "wrong error origin",
+    (f) => f.set(f.request, "antnest.error.origin_span_id", f.receiver.spanID),
+  ],
+  [
+    "foreign input Session",
+    (f) => f.set(f.application, "antnest.session.id", "foreign"),
+  ],
+  ["foreign Agent", (f) => f.set(f.application, "antnest.agent.id", "foreign")],
+  [
+    "RPC exception",
+    (f) => f.set(f.request, "exception.type", "UnexpectedError"),
+  ],
+  [
+    "application exception",
+    (f) => f.set(f.application, "exception.type", "UnexpectedError"),
+  ],
+  [
+    "unregistered diagnostic code",
+    (f) => f.set(f.application, "error.code", "session_access_denied"),
+  ],
+  [
+    "duplicate code",
+    (f) => f.request.tags.push({ key: "error.code", value: "-32600" }),
+  ],
+  [
+    "unowned RPC log",
+    (f) => {
+      f.request.logs = [
+        { timestamp: 3, fields: [{ key: "level", value: "WARN" }] },
+      ];
+    },
+  ],
+  [
+    "unowned application event field",
+    (f) => f.application.logs[0].fields.push({ key: "level", value: "ERROR" }),
+  ],
+  [
+    "unowned application cause",
+    (f) => {
+      f.application.logs[0].fields.find(
+        (x) => x.key === "antnest.error.causes",
+      ).value = '[{"type":"Error"}]';
+    },
+  ],
+  [
+    "missing actual rejection receipt",
+    (f) => {
+      delete f.expected.rejectionReceipt;
+    },
+  ],
+  [
+    "wrong actual rejection code",
+    (f) => {
+      f.expected.rejectionReceipt.code = "unsupported_audio_content";
+    },
+  ],
+])
+  test(`private HTTP rejection rejects ${label}`, () => {
+    const f = privateHTTPRejectionFixture();
+    mutate(f);
+    assert.throws(() => inspect(f));
+  });
+
+test("private rejection records only the existing same-Node sub-ms endpoint observation", () => {
+  const f = privateHTTPRejectionFixture();
+  f.request.startTime = 1000000;
+  f.request.duration = 200;
+  f.application.startTime = 1000000;
+  f.application.duration = 700;
+  f.application.logs[0].timestamp = 1000010;
+  const raw = structuredClone(f.trace);
+  const checked = inspect(f);
+  assert.equal(checked.time_observations.length, 1);
+  assert.equal(checked.time_observations[0].raw_difference_us, 500);
+  assert.equal(
+    checked.time_observations[0].reason,
+    "deferred-same-node-sdk-sub-ms-endpoint",
+  );
+  assert.deepEqual(f.trace, raw);
+  f.application.duration = 1200;
+  assert.throws(() => inspect(f));
+  f.application.duration = 700;
+  f.application.startTime++;
+  assert.throws(() => inspect(f));
+});
+
+for (const sameSpan of [false, true])
+  for (const kind of ["request", "command", "ordinary"])
+    test(`private HTTP ${kind}: actual CLIENT and ${sameSpan ? "shared" : "direct child"} receiver/RPC preserve business checks`, () => {
+      const f = privateHTTPFixture(kind, { sameSpan });
+      const raw = structuredClone(f.trace);
+      const result = inspect(f);
+      assert.equal(result.gateway_ancestry, undefined);
+      assert.equal(result.timing.acp_start_minus_gateway_us, undefined);
+      assert.equal(
+        result.timing.acp_start_minus_http_client_us,
+        f.request.startTime - f.client.startTime,
+      );
+      assert.equal(result.runs, kind === "request" ? 0 : 1);
+      assert.deepEqual(f.trace, raw);
+    });
+
+for (const method of ["initialize", "session/new", "session/fork"])
+  test(`private HTTP ${method} independently binds input and result Session`, () => {
+    const f = privateHTTPFixture("request", { method });
+    assert.equal(inspect(f).method, method);
+    if (method === "session/fork")
+      assert.notEqual(f.expected.inputSessionID, f.expected.sessionId);
+    f.post.rpcSessionID = "borrowed-input-session";
+    assert.throws(() => inspect(f));
+  });
+
+const httpMutations = [
+  [
+    "duplicate CLIENT HTTP status",
+    (f) => {
+      f.client.tags.push({ key: "http.response.status_code", value: 503 });
+    },
+  ],
+  [
+    "duplicate receiver HTTP status",
+    (f) => {
+      f.receiver.tags.push({ key: "http.response.status_code", value: 503 });
+    },
+  ],
+  [
+    "conflicting HTTP status alias",
+    (f) => {
+      f.client.tags.push({ key: "http.status_code", value: 503 });
+    },
+  ],
+  [
+    "unclaimed WARN event",
+    (f) => {
+      f.client.logs = [
+        { timestamp: 1, fields: [{ key: "level", value: "WARN" }] },
+      ];
+    },
+  ],
+  [
+    "unclaimed ERROR event",
+    (f) => {
+      f.receiver.logs = [
+        { timestamp: 1, fields: [{ key: "level", value: "ERROR" }] },
+      ];
+    },
+  ],
+  [
+    "duplicate event field",
+    (f) => {
+      f.client.logs = [
+        {
+          timestamp: 1,
+          fields: [
+            { key: "level", value: "INFO" },
+            { key: "level", value: "ERROR" },
+          ],
+        },
+      ];
+    },
+  ],
+  [
+    "HTTP borrowing closed WS response",
+    (f) => {
+      f.expected.closedBeforeResponse = true;
+      for (const [key, value] of Object.entries({
+        error: true,
+        "error.type": "Error",
+        "antnest.outcome": "error",
+        "antnest.operation.phase": "acp.dispatch",
+        "exception.type": "unrelated",
+      }))
+        f.set(f.request, key, value);
+    },
+  ],
+  [
+    "another CLIENT span",
+    (f) => {
+      f.expected.clientSpanID = "9".repeat(16);
+    },
+  ],
+  [
+    "another Trace",
+    (f) => {
+      f.expected.traceID = "9".repeat(32);
+    },
+  ],
+  [
+    "another JSON-RPC request",
+    (f) => {
+      f.set(f.request, "antnest.request.id", "borrowed");
+    },
+  ],
+  [
+    "another Session result",
+    (f) => {
+      f.set(f.request, "antnest.session.id", "borrowed");
+    },
+  ],
+  [
+    "another input Session",
+    (f) => {
+      f.expected.inputSessionID = "borrowed";
+    },
+  ],
+  [
+    "another Agent",
+    (f) => {
+      f.set(f.request, "antnest.agent.id", "borrowed");
+    },
+  ],
+  [
+    "missing receiver",
+    (f) => {
+      f.trace.spans = f.trace.spans.filter((span) => span !== f.receiver);
+      f.request.references[0].spanID = f.client.spanID;
+    },
+  ],
+  [
+    "indirect receiver",
+    (f) => {
+      f.add("extra", f.receiver.spanID, "extra");
+      f.request.references[0].spanID = "extra";
+    },
+  ],
+  [
+    "RPC from another process",
+    (f) => {
+      f.trace.processes.other = structuredClone(
+        f.trace.processes[f.receiver.processID],
+      );
+      f.trace.processes.other.tags.find((item) => item.key === "process.pid")
+        .value++;
+      f.request.processID = "other";
+    },
+  ],
+  [
+    "missing process identity",
+    (f) => {
+      f.trace.processes[f.request.processID].tags = [];
+    },
+  ],
+  [
+    "a WS Link",
+    (f) => {
+      f.request.references = [
+        {
+          refType: "FOLLOWS_FROM",
+          traceID: f.trace.traceID,
+          spanID: f.receiver.spanID,
+        },
+      ];
+    },
+  ],
+  [
+    "a response-header-only parent",
+    (f) => {
+      f.trace.spans = f.trace.spans.filter((span) => span !== f.client);
+      f.receiver.references = [];
+    },
+  ],
+  [
+    "an old Gateway receiver",
+    (f) => {
+      f.trace.processes[f.receiver.processID].serviceName = "edge-gateway";
+    },
+  ],
+  [
+    "control listener",
+    (f) => {
+      f.set(f.receiver, "antnest.listener", "control");
+    },
+  ],
+  [
+    "wrong route",
+    (f) => {
+      f.set(f.receiver, "http.route", "/v2/acp");
+    },
+  ],
+  [
+    "wrong protocol",
+    (f) => {
+      f.set(f.request, "antnest.protocol.version", "v2");
+    },
+  ],
+  [
+    "wrong RPC system",
+    (f) => {
+      f.set(f.request, "rpc.system.name", "grpc");
+    },
+  ],
+  [
+    "wrong RPC service",
+    (f) => {
+      f.set(f.request, "rpc.service", "other");
+    },
+  ],
+  [
+    "wrong receiver status",
+    (f) => {
+      f.set(f.receiver, "http.response.status_code", 200);
+    },
+  ],
+  [
+    "unclosed connection",
+    (f) => {
+      f.expected.httpConnection.streamJoined = false;
+    },
+  ],
+  [
+    "pending body",
+    (f) => {
+      f.post.bodyOutcome = "pending";
+    },
+  ],
+  [
+    "missing DELETE",
+    (f) => {
+      f.expected.httpConnection.requests.pop();
+    },
+  ],
+  [
+    "partial DELETE body",
+    (f) => {
+      f.expected.httpConnection.requests.at(-1).bodyOutcome = "cancelled";
+    },
+  ],
+  [
+    "failed cleanup",
+    (f) => {
+      f.expected.httpConnection.failures.push({ phase: "delete_status" });
+    },
+  ],
+  [
+    "borrowed connection ID",
+    (f) => {
+      f.post.connectionID = "other";
+    },
+  ],
+  [
+    "borrowed HTTP request ID",
+    (f) => {
+      f.post.requestID = 99;
+    },
+  ],
+  [
+    "unexplained raw error event",
+    (f) => {
+      f.client.logs = [
+        {
+          timestamp: 1,
+          fields: [{ key: "exception.type", value: "UnexpectedError" }],
+        },
+      ];
+    },
+  ],
+  [
+    "model work in command",
+    (f) => {
+      f.add("model", "run", "model.complete");
+    },
+  ],
+  [
+    "uncommitted Run",
+    (f) => {
+      f.set(
+        f.trace.spans.find((span) => span.spanID === "transaction"),
+        "antnest.transaction.outcome",
+        "rolled_back",
+      );
+    },
+  ],
+];
+for (const [label, mutate] of httpMutations)
+  test(`private HTTP rejects ${label}`, () => {
+    const f = privateHTTPFixture();
+    assert.equal(inspect(f).runs, 1);
+    mutate(f);
+    assert.throws(() => inspect(f));
+  });
 
 for (const kind of ["request", "ordinary"])
   test(`shared Session model inventory isolates the actual ${kind} Trace`, () => {
@@ -81,6 +521,27 @@ function catalogRead(f, options = {}) {
   });
   return f;
 }
+
+for (const sameSpan of [false, true])
+  test(`private HTTP retains exact completed Runtime disconnect with shared receiver=${sameSpan}`, () => {
+    const f = catalogRead(privateHTTPFixture("command", { sameSpan }), {
+      runtimeOutcome: "canceled",
+      clientOutcome: "cancelled",
+    });
+    const original = structuredClone(f.trace);
+    assert.equal(inspect(f).runtime_information_reads, 1);
+    assert(inspect(f).neutral_diagnostics.length >= 2);
+    assert.deepEqual(f.trace, original);
+    const completed = f.catalog.server.logs.find((event) =>
+      event.fields.some(
+        (field) =>
+          field.key === "event" &&
+          field.value === "Runtime HTTP request completed",
+      ),
+    );
+    completed.fields.push({ key: "exception.type", value: "UnrelatedError" });
+    assert.throws(() => inspect(f));
+  });
 
 test("command catalog exports the original read endpoint observation", () => {
   const f = catalogRead(fixture("command"));

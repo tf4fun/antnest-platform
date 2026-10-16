@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { composeListeners } from "./compose-listeners.mjs";
 import {
   grantContainerArgs,
@@ -18,6 +20,60 @@ const config = {
 };
 const pins = (args) =>
   args.filter((arg) => arg.startsWith("--add-host=")).sort();
+
+for (const held of ["headers", "body"])
+  test(
+    `workspace Resolve cancellation closes actual held ${held} IO`,
+    { timeout: 10000 },
+    async () => {
+      const started = Promise.withResolvers(),
+        closed = Promise.withResolvers();
+      const server = createServer((request, response) => {
+        request.resume();
+        response.once("close", closed.resolve);
+        if (held === "body") {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.write('{"caller_context":');
+          response.flushHeaders();
+        }
+        started.resolve();
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const controller = new AbortController();
+      const reason = new Error("workspace Resolve cancelled");
+      const client = serviceClient({
+        identityEndpoint: `http://127.0.0.1:${server.address().port}`,
+        readCredential: () => "G".repeat(43),
+      });
+      const resolving = client.workspaceContext("original-session", "agent", {
+        signal: controller.signal,
+      });
+      const rejected = assert.rejects(resolving, (error) => error === reason);
+      void rejected.catch(() => {});
+      let timer;
+      try {
+        await started.promise;
+        controller.abort(reason);
+        await Promise.race([
+          Promise.all([rejected, closed.promise]),
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(new Error("workspace Resolve did not abort actual IO")),
+              500,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+        server.closeAllConnections();
+        await resolving.catch(() => {});
+        await rejected.catch(() => {});
+        await new Promise((resolve) => server.close(resolve));
+      }
+    },
+  );
 
 test("grants pin each receiver to its Compose listener on the run's prefix", () => {
   const listeners = composeListeners();

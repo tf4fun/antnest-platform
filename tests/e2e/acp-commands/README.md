@@ -10,7 +10,6 @@ deterministic. No external API key, client MCP injection or browser is needed.
 
 ```sh
 npm --prefix services/agent-acp-service ci
-make docker-build-stage3
 make test-command-fixtures
 make e2e-slash-commands
 ```
@@ -19,8 +18,16 @@ make e2e-slash-commands
 Docker. `make e2e-slash-commands` reuses the bounded Stage 3 wrapper and must not
 target an existing development project.
 
-The fixture client has no Docker socket and never queries databases. All
-identities, Templates, Agents and ACP Sessions are created through the Gateway.
+The wrapper builds all 11 release candidates under a unique `commands-<run-id>`
+tag and starts Compose with `--no-build --pull never`. It records actual image
+IDs for the services, Runtime preparer, model fixture and command client. CI may
+supply explicitly selected images through the existing candidate-image adapter.
+
+The fixture client has no Docker socket and never queries databases. Identities,
+Templates and Agents are created through the Gateway. ACP Sessions use the
+private ACP endpoint with an Identity-issued delegation and the Agent UI workload
+grant. The client mounts only the Gateway-to-Identity and Agent-UI-to-ACP grants,
+read-only, and runs as the host evidence owner.
 Setup creates a Provider connection and Model, references the Model's stable
 identity from a Template, uses the returned Template revision and waits for the
 Agent to become executable. The command-specific Compose override ignores the
@@ -51,7 +58,7 @@ separate from the fixed Egress and Jaeger addresses.
    command and return its actual output.
 6. Jaeger must contain one distinct Trace for each recorded request: six
    command Runs, two ordinary Runs and 32 setup, restore and rejection
-   requests. Commands require Gateway ancestry, the current Run identity and
+   requests. Commands require the actual private ACP request ancestry, the current Run identity and
    committed ACP PostgreSQL writes, but no model, credential or Runtime
    operations. Runs must not call management services. Setup, restore and
    rejection Traces must contain the actual request without Run execution.
@@ -62,34 +69,59 @@ separate from the fixed Egress and Jaeger addresses.
 ## Trace collection
 
 WebSocket requests are observed at the official SDK stream boundary without
-changing messages. Their JSON-RPC IDs and connection links distinguish repeated
-prompts and resumes on one connection. HTTP uses the SDK's fetch hook to record
-each POST's Gateway response Trace ID and sends no invented Trace parent; the
-Gateway HTTP root and ACP HTTP and dispatch ancestry must be complete. Observers
+changing messages. Their JSON-RPC IDs and actual upgrade CLIENT connection links
+distinguish repeated prompts and resumes on one connection. HTTP records each
+actual fetch CLIENT span, its private ACP HTTP receiver and the dispatch ancestry.
+Initialization, POST acknowledgement, SSE and DELETE retain their original
+response and fully joined close receipts. Auxiliary transport requests do not
+increase the 40 business-request count. Fork input and resulting Session IDs are
+checked separately. Observers
 keep method, request and Session IDs, never prompt payloads. The domain-level
 resume operation can be `acp.session.resume`, while the request boundary must
 carry the actual wire method and JSON-RPC ID.
 
 All Traces require full topology, disabled payload capture and private-content
 checks. Rejection diagnostics are allowed only on the matching rejected ACP
-boundary and domain operation. Stable collection is bounded and requires three
-equal span-ID sets taken one second apart. Timing warnings are strict failures
-and make the command exit nonzero even when the business checks pass. Only
-the reviewed clock-skew warning (`clock skew adjustment disabled; not applying
-calculated delta of ...`) is reported without failing the exit.
+boundary and domain operation, with the original SDK denial receipt. Collection
+starts after each original connection is fully closed and its telemetry flushed.
+It archives the complete raw HTTP response before parsing, follows the complete
+Trace closure, and requires three stable rounds. Unrelated errors and timing
+warnings fail acceptance. Reviewed normal-close/rejection diagnostics and the
+existing Jaeger clock-skew warning policy are accounted for individually; raw
+errors, warnings and `strict_trace=failed` remain visible even when business and
+topology are accepted. The strictly sub-millisecond Node SDK investigation is
+deferred separately; raw timestamps are never rewritten.
+
+The runner exits 0 for strict success, 2 when complete business/topology checks
+pass with only reviewed strict findings, and 1 for failures. CI runs the Stage 3
+recipe directly so exit 2 retains the existing warning classification; Make can
+map a failed recipe to its own exit status. Cleanup failures always fail the run.
 
 The transcript and Trace validators have positive and deliberately corrupted
 fixtures. Missing Traces, missing persistence, duplicated replies, extra
-execution and unrelated Runtime spans must fail. Only compact final counts are
-kept, never Trace payloads, cookies or intermediate reports.
+execution and unrelated Runtime spans must fail. Raw queries, the independent
+model-request inventory, business-request inventory and intermediate reports are
+retained privately under `artifacts/verification/acp-commands/<project>/` with
+restricted permissions. Console output uses ASCII JSON summaries. Evidence and
+recovery inputs must not be stored in `.cache`.
 
 ## Cleanup
+
+After the three protocol scenarios and complete connection cleanup, the client
+waits for the host to inspect both live Agent Runtimes. The host saves the actual
+Docker inspection, matches each Agent and Runtime generation to the candidate
+image ID, and publishes a receipt bound to this run, request nonce and the raw
+inspection SHA. Only then does the successful client proceed to Agent deletion.
+The receipt does not give the client Docker access.
 
 The client uses the shared `withAgentCleanup` helper, which attempts to delete
 every created Agent and reports cleanup failures without hiding an earlier
 business failure. The wrapper then removes the whole project, including
 synthetic records, Runtime workspaces and test networks, after success or
-failure.
+failure. Inspection failure also enters this cleanup path. Remaining connections
+and telemetry are joined on every exit. Candidate image cleanup runs after
+container removal and deletes only recorded, still-owned tags; shared `:local`
+images are retained.
 
 ## Not covered
 

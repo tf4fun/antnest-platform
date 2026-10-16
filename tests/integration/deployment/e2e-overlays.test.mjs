@@ -245,7 +245,7 @@ test("Identity diagnostic polling can differ without changing retained deploymen
   );
 });
 
-test("only ACP Session appends the admission overlay for all service candidates and both Identity rebuilds", () => {
+test("ACP Session appends the admission overlay for all service candidates and both Identity rebuilds", () => {
   const selected = dispatch({ tool_profile: "acp-session" }, "config");
   const admission = "tests/integration/deployment/compose.admission.yaml";
   assert.equal(selected.files.at(-1), admission);
@@ -305,6 +305,44 @@ test("only ACP Session appends the admission overlay for all service candidates 
       ),
     );
   }
+});
+
+test("slash commands select current service and preparer candidates without Session fault overlays", () => {
+  const selected = dispatch(
+    { slash_commands: "true", tool_profile: "slash-commands" },
+    "config",
+  );
+  assert.equal(
+    selected.files.at(-1),
+    "tests/integration/deployment/compose.admission.yaml",
+  );
+  assert(!selected.files.some((file) => file.includes("identity-closeout")));
+  const config = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ANTNEST_ADMISSION_TAG: "commands-overlay-contract",
+  });
+  for (const name of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry",
+    "temporal",
+  ])
+    assert.equal(
+      config.services[name].image,
+      `antnest/${name}:commands-overlay-contract`,
+    );
+  assert.equal(
+    config.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+    "antnest/runtime-controller:commands-overlay-contract",
+  );
 });
 
 for (const [name, overlay, prefix] of [

@@ -22,7 +22,7 @@ const profiles = {
   TOOL_PROGRESS: null,
   FILE_OBSERVATIONS: null,
   STRUCTURED_PLAN: null,
-  SLASH_COMMANDS: null,
+  SLASH_COMMANDS: "acp-commands",
   MULTIMODAL: null,
   SESSION_COST: null,
   TOOL_PERMISSIONS: null,

@@ -589,7 +589,6 @@ function tierC() {
         "multimodal",
         "rpc-response-loss",
         "session-cost",
-        "slash-commands",
         "stage3-skill-delivery",
         "stage4-skill-offline-reuse",
         "stage4-skill-registry-outage",
@@ -599,6 +598,7 @@ function tierC() {
       ...[
         ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
         ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
+        ["slash-commands", "ANTNEST_E2E_SLASH_COMMANDS=true"],
         ["agent-access", "ANTNEST_E2E_AGENT_ACCESS=true"],
         ["identity-access", "ANTNEST_E2E_IDENTITY_ACCESS=true"],
         ["identity-core", "ANTNEST_E2E_IDENTITY_CORE=true"],
