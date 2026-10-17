@@ -36,7 +36,10 @@ import {
   capacityImages,
   capacityContextWindow,
 } from "./upload-capacity-workload.mjs";
-import { startHeldUpload } from "./upload-capacity-client.mjs";
+import {
+  startHeldUpload,
+  observeCapacityCancellation,
+} from "./upload-capacity-client.mjs";
 import { inspectCapacityCase } from "./upload-capacity-evidence.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -581,37 +584,52 @@ export async function runCapacity() {
               operationId: heldID,
               expectedRunId: record.accepted.runId,
             };
-      record.cancel = await http(clientB, cancelPath, { body: cancelBody });
-      work.evidence.quiescent = await poll(
-        async (samplingSignal) => {
-          const v = await observe(samplingSignal);
-          return (
-            !groupAlive(v.work.processes, work.evidence.started.work.pgid) && v
-          );
+      signal.throwIfAborted();
+      await observeCapacityCancellation({
+        cancel: async () => {
+          record.cancel = await http(clientB, cancelPath, { body: cancelBody });
+          return record.cancel;
         },
-        "original Runtime work stopped",
-        signal,
-        5000,
-        10,
-      );
-      const terminal = await b.streams[0].stream.wait((view) =>
-        view.operations.some(
-          (o) =>
-            o.operationId === heldID &&
-            o.runId === record.accepted.runId &&
-            o.phase === "uncertain" &&
-            o.errorClass === "cancelled_tool_outcome_unknown",
-        ),
-      );
-      record.terminal = {
-        operation: terminal.view.operations.find(
-          (o) => o.operationId === heldID,
-        ),
-        at_ns: stamp(),
-        at_perf_ms: performance.now(),
-        source_at_perf_ms: terminal.at,
-        source_trace_id: b.streams[0].trace_id,
-      };
+        quiescent: async () => {
+          work.evidence.quiescent = await poll(
+            async (samplingSignal) => {
+              const v = await observe(samplingSignal);
+              return (
+                !groupAlive(
+                  v.work.processes,
+                  work.evidence.started.work.pgid,
+                ) && v
+              );
+            },
+            "original Runtime work stopped",
+            signal,
+            5000,
+            10,
+          );
+          return work.evidence.quiescent;
+        },
+        terminal: async () => {
+          const terminal = await b.streams[0].stream.wait((view) =>
+            view.operations.some(
+              (o) =>
+                o.operationId === heldID &&
+                o.runId === record.accepted.runId &&
+                o.phase === "uncertain" &&
+                o.errorClass === "cancelled_tool_outcome_unknown",
+            ),
+          );
+          record.terminal = {
+            operation: terminal.view.operations.find(
+              (o) => o.operationId === heldID,
+            ),
+            at_ns: stamp(),
+            at_perf_ms: performance.now(),
+            source_at_perf_ms: terminal.at,
+            source_trace_id: b.streams[0].trace_id,
+          };
+          return record.terminal;
+        },
+      });
       for (const pool of record.pool) {
         const ref = active.find((s) => s.trace_id === pool.trace_id);
         ref.stream.assertOpen();

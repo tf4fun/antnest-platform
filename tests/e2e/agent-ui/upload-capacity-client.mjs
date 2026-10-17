@@ -99,3 +99,26 @@ export function startHeldUpload(url, headers, body, signal) {
     },
   };
 }
+
+// Callers provide bounded operations. Start all observations with the send, then
+// join every branch even on failure; a rejected HTTP request must not abandon a
+// Runtime exec or the original SSE waiter. Branches stamp their own receipts.
+export async function observeCapacityCancellation(actions) {
+  const names = ["cancel", "quiescent", "terminal"];
+  for (const name of names) assert.equal(typeof actions[name], "function");
+  const results = await Promise.allSettled(
+    names.map((name) => Promise.resolve().then(actions[name])),
+  );
+  const errors = results
+    .filter((result) => result.status === "rejected")
+    .map((result) => result.reason);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length)
+    throw new AggregateError(
+      errors,
+      "capacity cancellation observation failed",
+    );
+  return Object.fromEntries(
+    names.map((name, index) => [name, results[index].value]),
+  );
+}

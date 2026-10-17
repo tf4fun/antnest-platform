@@ -174,6 +174,11 @@ The deterministic external model advertises an 8 Mi-token context so the normal
 ACP context budget admits the three images; all Antnest services run production
 images. Independent cases use a fresh B Agent and renew streams between cases,
 while retaining the earlier cancelled operation's unresolved side effects.
+Cancellation HTTP, the original Runtime process probe and original SSE terminal
+are observed concurrently. Each records its own completion receipt; the strict
+one-second bound covers the latest complete receipt, including process
+observation, and every observer is joined on success or failure.
+
 Private raw evidence lives in `artifacts/verification/agent-ui-upload-capacity-*`.
 
 ## Dependencies
