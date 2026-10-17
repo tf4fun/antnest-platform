@@ -3,6 +3,7 @@ import test from "node:test";
 import { setImmediate as turn } from "node:timers/promises";
 import { commandFixture, setup } from "../acp-commands/connection.fixture.mjs";
 import { until } from "../acp-closeout/wait.mjs";
+import { capturePermissionConnection } from "./client-evidence.mjs";
 const { inspectPrivateNotificationReceipt } =
   await import("../identity-closeout/acp-connection.mjs");
 
@@ -114,6 +115,7 @@ for (const profile of profiles) {
       assert.equal(result.configOptions[0].currentValue, value);
       params.value = "mutated after request";
       assert.equal(client.lastRequest.requestReceipt.params.value, value);
+      assert.equal(client.lastRequest.requestParams.value, value);
     }
     await client.request(profile.version === 1 ? "load" : "resume", {
       ...setup,
@@ -146,6 +148,8 @@ for (const profile of profiles) {
     assert.equal(inventory[0].inputSessionID, null);
     assert.equal(inventory[1].inputSessionID, null);
     assert.equal(inventory[1].sessionId, sessionId);
+    for (const [index, row] of client.requestEvidence.entries())
+      assert.deepEqual(row.requestParams, f.calls[index + 1].params);
     assert.deepEqual(
       inventory[0].initializationResult,
       client.initializationResult,
@@ -195,6 +199,10 @@ for (const profile of profiles) {
       assert.throws(() => entry.answer("reject_once"), /settled/);
       assert.equal(client.pendingPermissions.length, 0);
       const outcome = await within(prompting);
+      assert.deepEqual(
+        client.lastRequest.requestParams,
+        f.calls.find((call) => call.method === "session/prompt").params,
+      );
       assert.equal(outcome.error, undefined);
       assert.deepEqual(f.permissionOutcomes, [
         {
@@ -248,6 +256,18 @@ for (const profile of profiles) {
         inspectPrivateNotificationReceipt(client.lastNotification).sessionId,
         sessionId,
       );
+      const captured = await capturePermissionConnection({
+        client,
+        version: profile.version,
+        agentId: "agent",
+        role: "owner",
+      });
+      assert.equal(
+        inspectPrivateNotificationReceipt(captured.notifications[0]).sessionId,
+        sessionId,
+      );
+      assert.deepEqual(captured.evidence, client.requestEvidence);
+      assert.deepEqual(captured.permissions, client.permissionEvidence);
       await until(
         () => f.permissionPending() === 0 && f.sockets.clients.size === 0,
         "permission peer joined",
@@ -277,6 +297,10 @@ for (const profile of profiles) {
         assert.ok((await within(prompting)).result.messageId);
       await within(client.disconnectForReplay());
       const outcome = await within(prompting);
+      assert.deepEqual(
+        client.lastRequest.requestParams,
+        f.calls.find((call) => call.method === "session/prompt").params,
+      );
       if (profile.version === 1) {
         assert.equal(client.isLocalCloseError(outcome.error), true);
         assert.equal(
@@ -326,6 +350,7 @@ for (const profile of profiles) {
     });
     assert.equal(client.lastRequest.sessionId, undefined);
     assert.equal(client.lastRequest.requestReceipt, undefined);
+    assert.deepEqual(client.lastRequest.requestParams, setup);
     assert.deepEqual(client.updates, []);
     assert.deepEqual(client.permissionEvidence, []);
     await client.closeAndWait();

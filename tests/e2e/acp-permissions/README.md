@@ -30,11 +30,34 @@ receipt. Grouped model choices and additional thinking options remain intact.
 Configuration must not run a model, Tool or permission approval. These Trace
 fixture checks still require actual consumer collection and Docker acceptance.
 
-The adapter's real SDK/TCP tests establish this client contract. The deployed
-client and Trace/deployment collectors below still need migration before this
-scenario can run against the retired-Gateway-route removal. Actual reconnection
-and repeated approval parameters, authorization modes, Tool effects and Docker
-acceptance remain consumer work; these tests do not establish them.
+The actual client now uses this adapter, retains each login Principal, joins
+connections and telemetry, and keeps both business and cleanup failures. V1
+reconnection accepts only the original unanswered prompt's local close; v2
+keeps its actual acknowledgement and still waits for the resumed terminal state.
+Both versions compare the complete original and reissued approval parameters.
+Cancellation preserves the original prompt rejection, including when connection
+cleanup also fails; a v2 acknowledgement still requires its terminal update.
+
+The client inventories six connections and initializations, 56 business RPCs,
+two original cancel-notification receipts and 18 permission deliveries. Requests
+are bound by connection and actual request ID; failed calls retain their inputs
+without acquiring a success receipt. The 26 prompt phases retain their Provider
+Trace and actual approval deliveries, including both connection identities for
+replay. A thin collector reuses the shared raw archive and three complete stable
+source samples for all 64 request/notification Traces.
+
+The private prompt inspector binds approval Tool IDs to the original Run and
+Provider call, and checks the completed/cancelled Run's quiescence and effect
+state. It retains full raw error diagnostics and allows only the exact deliberate
+permission rejection or original v1 closed-response dispatch failure. SDK end
+timestamp overlap does not block this consumer; raw diagnostics remain intact.
+The `permission_decided` record is a service stdout log, not a Span event; the
+inspector does not claim to read its decision or database parameter values.
+
+Local fixture and real TCP adapter checks establish these contracts. Complete
+Runtime information/list/Tool lifecycle checks, the independent cleanup entry,
+deployment wiring and actual Docker business acceptance remain pending. The
+current shell runner is not yet an accepted retired-route-free scenario.
 
 ## Running
 

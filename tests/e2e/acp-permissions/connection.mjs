@@ -323,6 +323,7 @@ export async function openPrivatePermissionConnection(
           original?.code === -32020 &&
           original.data?.code === "access_denied" &&
           original.data?.retryable === false;
+        row.requestParams = structuredClone(params);
         row.outcome = denied ? "rejected" : original ? "failed" : "succeeded";
         if (denied) {
           assert.deepEqual(actual.rejectionReceipt, {

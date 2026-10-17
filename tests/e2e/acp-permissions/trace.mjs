@@ -1,11 +1,54 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { tag } from "../observability/trace-tree.mjs";
 import {
   requestBoundary,
-  hasError,
+  hasDiagnosticError,
   closedV1PromptResponse,
   timingEvidence,
 } from "../acp-plan/requests.mjs";
+import { assertSessionSuccess } from "../identity-closeout/session-diagnostics.mjs";
+import {
+  diagnostics,
+  exactEvent,
+  namedEvent,
+  eventValues,
+  values,
+} from "../observability/runtime-tool-evidence.mjs";
+import { assertCostTraceSource as assertTraceSource } from "../acp-cost/trace-source.mjs";
+
+function closedResponse(span) {
+  const status = tag(span, "otel.status_code");
+  assert(["ERROR", 2].includes(status));
+  assert.equal(tag(span, "error.type"), "Error");
+  const event = namedEvent(span, "antnest.error");
+  const fields = eventValues(event);
+  const types = fields["antnest.error.cause_types"];
+  assert.deepEqual(typeof types === "string" ? JSON.parse(types) : types, []);
+  assert.deepEqual(JSON.parse(fields["antnest.error.causes"]), [
+    { type: "Error", message: "Error: unregistered message omitted" },
+  ]);
+  exactEvent(span, "antnest.error", {
+    "antnest.error.stage": "acp.dispatch",
+    "antnest.error.type": "Error",
+    "antnest.error.message": "Error: unregistered message omitted",
+    "antnest.error.cause_types": types,
+    "antnest.error.causes": fields["antnest.error.causes"],
+    "antnest.operation.phase": "acp.dispatch",
+  });
+  assert.equal(span.logs.length, 1);
+  diagnostics(
+    span,
+    {
+      "otel.status_code": status,
+      ...(tag(span, "error") === undefined ? {} : { error: true }),
+      "error.type": "Error",
+      "antnest.outcome": "error",
+      "antnest.operation.phase": "acp.dispatch",
+    },
+    new Map([[event, fields]]),
+  );
+}
 
 export function inspectPermissionTrace(
   trace,
@@ -35,6 +78,39 @@ export function inspectPermissionTrace(
     phase,
     /^v[12]-(once|once-again|deny|always|follow|reject|reject-follow|chat|read-hint|judge-safe|judge-ask|cancel|reconnect)$/,
   );
+  const privateACP = expected.boundary === "private-acp";
+  const closed = phase === "v1-reconnect";
+  if (privateACP) {
+    assertTraceSource(trace, expected.connectionTrace);
+    for (const source of [trace, expected.connectionTrace])
+      for (const span of source.spans) values(span.tags ?? []);
+    assert.equal(expected.kind, "execution");
+    assert.equal(expected.version, expected.protocolVersion);
+    assert.equal(expected.version, Number(phase[1]));
+    assert.equal(expected.inputSessionID, expected.sessionId);
+    assert.deepEqual(expected.requestParams, {
+      sessionId: expected.sessionId,
+      prompt: [{ type: "text", text: phase }],
+    });
+    assert.equal(expected.outcome, closed ? "failed" : "succeeded");
+    assert.equal(expected.closedBeforeResponse, closed ? true : undefined);
+    if (closed) assert.equal(expected.requestReceipt, undefined);
+    else {
+      assert.equal(expected.requestReceipt?.requestId, expected.requestId);
+      assert.deepEqual(expected.requestReceipt.params, expected.requestParams);
+      const result = expected.requestReceipt.result;
+      if (expected.version === 1)
+        assert.deepEqual(result, {
+          stopReason: phase.endsWith("cancel") ? "cancelled" : "end_turn",
+        });
+      else {
+        assert.deepEqual(Object.keys(result), ["messageId"]);
+        assert(
+          typeof result.messageId === "string" && result.messageId.length > 0,
+        );
+      }
+    }
+  }
   const remote = /deny|reject|cancel|chat/.test(phase) ? 0 : 1;
   const stages = /cancel|chat/.test(phase)
     ? [0]
@@ -52,6 +128,22 @@ export function inspectPermissionTrace(
   const run = single(acp("agent.run"), "Run");
   const runId = tag(run, "antnest.run.id");
   assert(runId, "Run identity missing");
+  if (privateACP) {
+    assert.equal(tag(run, "antnest.session.id"), expected.sessionId);
+    assert.equal(
+      tag(run, "run.terminal_class"),
+      phase.endsWith("cancel") ? "cancelled" : "completed",
+    );
+    assert.equal(tag(run, "run.executor_state"), "quiescent");
+    assert.equal(
+      tag(run, "run.tool_effect_state"),
+      remote ? "settled" : "none",
+    );
+    assert.equal(
+      tag(run, "antnest.outcome"),
+      phase.endsWith("cancel") ? "cancelled" : "ok",
+    );
+  }
   assert(tree.chain(run).includes(request), "Run detached from prompt");
   const inside = (span) => tree.chain(span).includes(run);
   assert(
@@ -140,7 +232,7 @@ export function inspectPermissionTrace(
     models.add(model.spanID);
     for (const span of prepared)
       assert(
-        span.startTime + span.duration <= model.startTime,
+        span.startTime + (privateACP ? 0 : span.duration) <= model.startTime,
         "preparation followed model execution",
       );
   }
@@ -153,6 +245,55 @@ export function inspectPermissionTrace(
   const waitExpected =
     /once|deny|always$|reject$|cancel|reconnect|judge-ask/.test(phase) ? 1 : 0;
   assert.equal(waits.length, waitExpected, "incorrect approval wait count");
+  if (privateACP) {
+    const deliveries = expected.permissionDeliveries ?? [];
+    assert.equal(
+      deliveries.length,
+      waitExpected ? (phase.endsWith("reconnect") ? 2 : 1) : 0,
+      "incomplete actual permission deliveries",
+    );
+    if (waitExpected) {
+      const id = createHash("sha256")
+        .update(JSON.stringify([runId, 0, phase]))
+        .digest("hex");
+      const decision = phase.endsWith("cancel")
+        ? null
+        : phase.endsWith("deny")
+          ? "reject_once"
+          : phase.endsWith("reject")
+            ? "reject_always"
+            : phase.endsWith("always")
+              ? "allow_always"
+              : "allow_once";
+      for (const [index, delivery] of deliveries.entries()) {
+        assert.equal(delivery.params.sessionId, expected.sessionId);
+        const tool =
+          expected.version === 1
+            ? delivery.params.toolCall
+            : delivery.params.subject?.toolCall;
+        assert.equal(
+          tool?.toolCallId,
+          id,
+          "permission delivery belongs to another Run call",
+        );
+        const option =
+          phase.endsWith("reconnect") && index === 0 ? null : decision;
+        assert.equal(delivery.outcome, option ? "selected" : "cancelled");
+        assert.equal(delivery.optionId, option ?? undefined);
+        if (option)
+          assert(
+            delivery.params.options.some((row) => row.optionId === option),
+          );
+      }
+      if (deliveries.length === 2)
+        assert.deepEqual(deliveries[0].params, deliveries[1].params);
+      assert.equal(
+        tag(waits[0], "tool.call_id"),
+        id,
+        "permission wait belongs to another Tool",
+      );
+    }
+  }
   for (const wait of waits) {
     assert(inside(wait), "approval detached from Run");
     assert.equal(tag(wait, "antnest.run.id"), runId, "foreign approval Run");
@@ -186,7 +327,7 @@ export function inspectPermissionTrace(
     assert(inside(call));
     for (const wait of waits)
       assert(
-        wait.startTime + wait.duration <= call.startTime,
+        wait.startTime + (privateACP ? 0 : wait.duration) <= call.startTime,
         "Tool preceded approval",
       );
     assert.equal(tag(call, "antnest.run.id"), runId);
@@ -212,10 +353,29 @@ export function inspectPermissionTrace(
     assert.equal(tag(client, "span.kind"), "client");
     assert(tree.chain(client).includes(call));
   }
-  for (const span of trace.spans.filter(hasError)) {
+  const ownedErrors = [];
+  if (privateACP)
+    for (const source of [trace, expected.connectionTrace])
+      for (const span of source.spans) {
+        if (hasDiagnosticError(span)) continue;
+        const cancelled =
+          phase.endsWith("cancel") && (span === run || waits.includes(span));
+        assertSessionSuccess(
+          span,
+          cancelled ? { "antnest.outcome": "cancelled" } : {},
+        );
+      }
+  for (const span of trace.spans.filter(hasDiagnosticError)) {
     // The reconnect client closes the socket while the v1 prompt is pending.
-    if (phase === "v1-reconnect" && closedV1PromptResponse(span, request))
+    if (closed && closedV1PromptResponse(span, request)) {
+      if (privateACP) closedResponse(span);
+      ownedErrors.push({
+        trace_id: trace.traceID,
+        span_id: span.spanID,
+        reason: "permission-replay-disconnect",
+      });
       continue;
+    }
     // A rejected permission is a deliberate decision, not a failed Run.
     assert(
       waits.includes(span) &&
@@ -228,7 +388,17 @@ export function inspectPermissionTrace(
         ),
       `unexpected error outside deliberate permission rejection: ${tree.service(span)} ${span.operationName}`,
     );
+    assertSessionSuccess({
+      ...span,
+      tags: span.tags.filter((row) => row.key !== "antnest.outcome"),
+    });
+    ownedErrors.push({
+      trace_id: trace.traceID,
+      span_id: span.spanID,
+      reason: "permission-rejection",
+    });
   }
+  const timing = timingEvidence(trace, tree, request, forwarded);
   return {
     trace_id: trace.traceID,
     run_id: runId,
@@ -239,8 +409,13 @@ export function inspectPermissionTrace(
     runtime_tool_calls: remote,
     information_reads: 1,
     catalog_reads: catalogReads,
-    gateway_ancestry: true,
+    ...(privateACP ? {} : { gateway_ancestry: true }),
     persistence: true,
-    ...timingEvidence(trace, tree, request, forwarded),
+    owned_error_spans: ownedErrors,
+    error_spans: ownedErrors.length,
+    time_observations: [],
+    ...timing,
+    strict_trace:
+      timing.warning_count || ownedErrors.length ? "failed" : "passed",
   };
 }
