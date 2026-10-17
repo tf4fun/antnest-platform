@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { inspectBridgeSessionBoundary } from "./bridge-session-trace.mjs";
 import { inspectBrowserFeedWitness } from "./browser-feed-witness.mjs";
 import { inspectOffboardingTrace } from "./offboarding-evidence.mjs";
+import { inspectUserRevocationTransaction } from "./user-revocation-evidence.mjs";
 import { verifyIdentityEvidence } from "./trace.mjs";
 import {
   inspectGatewayIdentityRejection,
@@ -72,43 +73,55 @@ function gatewayObservation(boundary, trace, root, row) {
 // This proves the original browser's authority loss, using the existing real
 // Disable workflow proof. It does not claim final closure of Bridge's shared
 // internal protocol owners; that remains the owning Session lifecycle gate.
-export function inspectMembershipBrowserClosure(
+function inspectBrowserAccessClosure(
   trace,
   expected,
   secrets,
   collection,
+  kind,
 ) {
   const b = inspectBridgeSessionBoundary(trace, expected, secrets, collection);
   assert.equal(expected.reason, "revoked");
   const { checkpoint, closure, cause, denial: response, principal } = expected;
-  assert.equal(cause.kind, "membership_deactivated");
+  assert.equal(cause.kind, kind);
+  const globalUser = kind === "user_deactivated";
   receipt(cause);
   receipt(response);
   for (const field of ["organization_id", "user_id", "membership_id"]) {
     assert(typeof principal?.[field] === "string" && principal[field]);
     assert.equal(cause.target[field], principal[field]);
   }
-  assert.equal(cause.actor.organization_id, principal.organization_id);
-  assert(
-    cause.actor.system_role === "admin" ||
-      cause.actor.organization_role === "admin",
-  );
   assert(typeof cause.actor.user_id === "string" && cause.actor.user_id);
-  assert.equal(
-    cause.path,
-    `/api/admin/directory/memberships/${encodeURIComponent(principal.membership_id)}`,
-  );
   assert.equal(cause.method, "POST");
   assert.equal(cause.status, 200);
-  const membership = cause.body?.membership;
-  assert.equal(membership?.id, principal.membership_id);
-  assert.equal(membership.user_id, principal.user_id);
-  assert.equal(membership.active, false);
+  if (globalUser) {
+    assert.equal(cause.actor.system_role, "admin");
+    assert.equal(
+      cause.path,
+      `/api/admin/directory/users/${encodeURIComponent(principal.user_id)}/active`,
+    );
+    assert.deepEqual(cause.requestBody, { active: false });
+    assert.deepEqual(cause.body, { status: "updated" });
+  } else {
+    assert.equal(cause.actor.organization_id, principal.organization_id);
+    assert(
+      cause.actor.system_role === "admin" ||
+        cause.actor.organization_role === "admin",
+    );
+    assert.equal(
+      cause.path,
+      `/api/admin/directory/memberships/${encodeURIComponent(principal.membership_id)}`,
+    );
+    const membership = cause.body?.membership;
+    assert.equal(membership?.id, principal.membership_id);
+    assert.equal(membership.user_id, principal.user_id);
+    assert.equal(membership.active, false);
+  }
   assert(
     checkpoint.at <= cause.startedMono &&
       cause.startedMono <= closure.at &&
       cause.completedMono <= response.startedMono,
-    "Membership mutation outside original closure/denial interval",
+    "directory mutation outside original closure/denial interval",
   );
   assert.equal(response.credentialScope, expected.credentialScope);
   assert.equal(response.method, "POST");
@@ -147,6 +160,16 @@ export function inspectMembershipBrowserClosure(
       sourceID: cause.traceID,
       agentID: expected.agentId,
       requestID: report.request_id,
+      ...(globalUser
+        ? {
+            ownerRevocation: {
+              event: report.owner_revocation,
+              ownerUserID: principal.user_id,
+              organizationID: "",
+              reason: kind,
+            },
+          }
+        : {}),
     },
     secrets,
   );
@@ -156,7 +179,7 @@ export function inspectMembershipBrowserClosure(
         s.operationName === "agent_controller.identity_offboarding.disable" &&
         tag(s, "agent.id") === expected.agentId,
     ),
-    "one actual Membership Disable required",
+    "one actual directory Disable required",
   );
   const identity = one(
     tree
@@ -169,8 +192,10 @@ export function inspectMembershipBrowserClosure(
     "actual Identity mutation ancestor required",
   );
   for (const [field, value] of Object.entries({
-    "http.route": "/rpc/identity/update-membership",
-    "rpc.method": "update_membership",
+    "http.route": globalUser
+      ? "/rpc/identity/set-user-active"
+      : "/rpc/identity/update-membership",
+    "rpc.method": globalUser ? "set_user_active" : "update_membership",
     "http.request.method": "POST",
     "http.response.status_code": 200,
   }))
@@ -187,10 +212,19 @@ export function inspectMembershipBrowserClosure(
   );
   assert.equal(
     tag(console, "http.route"),
-    "/api/admin/directory/memberships/{membership_id}",
+    globalUser
+      ? "/api/admin/directory/users/{user_id}/active"
+      : "/api/admin/directory/memberships/{membership_id}",
   );
   assert.equal(tag(console, "http.request.method"), "POST");
   assert.equal(tag(console, "http.response.status_code"), 200);
+  const userProof = globalUser
+    ? {
+        ...inspectUserRevocationTransaction(mutation, identity),
+        owner_revocation_sequence:
+          offboarding.owner_revocation.data.identity_revocation_sequence,
+      }
+    : {};
   const mutationRoot = one(
     mutation.spans.filter((s) => !tree.parent(s)),
     "one mutation root required",
@@ -223,7 +257,7 @@ export function inspectMembershipBrowserClosure(
   for (const decision of trace.spans
     .filter((s) => s.operationName === "gateway.identity.resolve")
     .sort((a, z) => a.startTime - z.startTime)) {
-    assert(!terminal, "Resolve after terminal Membership rejection");
+    assert(!terminal, "Resolve after terminal directory rejection");
     if (tag(decision, "antnest.identity.resolve.outcome") === "admitted")
       resolutions.push(
         inspectGatewayResolution(
@@ -275,7 +309,7 @@ export function inspectMembershipBrowserClosure(
   );
   assert(
     terminal || markers.length || feed,
-    "Membership closure lacks an original authorization termination witness",
+    "directory closure lacks an original authorization termination witness",
   );
   if (!failedTransport)
     assert.equal(
@@ -339,6 +373,7 @@ export function inspectMembershipBrowserClosure(
       mutation_trace_id: cause.traceID,
       request_id: offboarding.request_id,
       identity_server_span_id: identity.spanID,
+      ...userProof,
       ...(feed
         ? {
             feed_sequence: witness.sequence,
@@ -351,6 +386,51 @@ export function inspectMembershipBrowserClosure(
     denial,
     ...resolveTraceDiagnostics(trace, b.sources),
   };
+}
+
+export function inspectMembershipBrowserClosure(
+  trace,
+  expected,
+  secrets,
+  collection,
+) {
+  return inspectBrowserAccessClosure(
+    trace,
+    expected,
+    secrets,
+    collection,
+    "membership_deactivated",
+  );
+}
+export function inspectUserBrowserClosure(
+  trace,
+  expected,
+  secrets,
+  collection,
+) {
+  return inspectBrowserAccessClosure(
+    trace,
+    expected,
+    secrets,
+    collection,
+    "user_deactivated",
+  );
+}
+export function collectUserBrowserClosures(
+  base,
+  expectations,
+  secrets,
+  options = {},
+) {
+  return verifyIdentityEvidence(
+    base,
+    expectations.map((expected) => ({
+      ...expected,
+      relatedTraceIDs: [expected.cause.traceID, expected.denial.traceID],
+    })),
+    secrets,
+    { ...options, inspect: inspectUserBrowserClosure },
+  );
 }
 
 export function collectMembershipBrowserClosures(

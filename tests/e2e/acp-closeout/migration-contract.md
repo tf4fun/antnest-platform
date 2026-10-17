@@ -11,13 +11,19 @@ preserve:
 
 - same-organization foreign-principal and foreign-Agent Session denials;
 - exact private history, with no side effects from rejected requests;
-- owner deactivation on an existing connection, followed by automatic Disable
-  of both owned Agents;
+- global User deactivation closes both original browser SSEs and rejects real
+  original-Cookie HTTP prompts, followed by automatic Disable of both owned Agents;
+- explicit joining of private SDK connections and four separate local zero-wire
+  rejection probes, excluded from the 30-initialize/86-business request inventory;
 - owner restoration without automatic Enable, then successful explicit
   recovery.
 
-The Gateway authenticates the connection; ACP must reject foreign Agent access
-with a specific protocol error. Completed Runs, Tool effects and replay are
+Identity delegates the original browser authority to the private ACP receiver
+using the Agent UI workload grant; ACP must reject foreign Agent access with a
+specific protocol error. The Gateway authenticates the independent browser SSE
+and HTTP denial probes. User deactivation must be proved by its own committed
+Identity transaction and original Controller owner-revocation event; Membership
+or Logout receipts cannot stand in for global User loss. Completed Runs, Tool effects and replay are
 checked against current ACP records and per-message Traces, using immutable
 Runtime images and current Provider, Model and Template setup. Physical
 workspace contents must survive Disable and Enable. The other owner's Agent

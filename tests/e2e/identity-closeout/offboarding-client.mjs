@@ -139,7 +139,14 @@ export async function explicitEnable(item) {
   await sentinel(item, "read");
 }
 
-export async function waitOffboarding(item, before, response, reason, secrets) {
+export async function waitOffboarding(
+  item,
+  before,
+  response,
+  reason,
+  secrets,
+  { ownerUserID } = {},
+) {
   await until(
     async () => (await agentDetail(item)).activation_state === "disabled",
     "automatic owner Disable",
@@ -199,6 +206,17 @@ export async function waitOffboarding(item, before, response, reason, secrets) {
       sourceID: response.traceID,
       agentID: item.agent,
       requestID: operation.request_id,
+      ...(ownerUserID
+        ? {
+            ownerRevocation: {
+              event: structuredClone(cause),
+              ownerUserID,
+              organizationID:
+                reason === "user_deactivated" ? "" : item.organization,
+              reason,
+            },
+          }
+        : {}),
     },
     secrets,
   );

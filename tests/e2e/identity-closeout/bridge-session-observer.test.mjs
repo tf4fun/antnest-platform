@@ -140,7 +140,8 @@ async function fixture(t, override = {}) {
     cookie,
     denialPending: denialPending.promise,
     releaseDenial: release,
-    async open({ signal, membershipRevocation } = {}) {
+    endStream: () => stream.end(),
+    async open({ signal, membershipRevocation, userRevocation } = {}) {
       assert.equal(typeof implementation.observeBrowserSession, "function");
       observer = await implementation.observeBrowserSession(browser, client, {
         agentId: "agent-1",
@@ -148,6 +149,7 @@ async function fixture(t, override = {}) {
         issued,
         signal,
         membershipRevocation,
+        userRevocation,
       });
       return observer;
     },
@@ -416,3 +418,46 @@ test(
     assert.equal(f.requests.filter((r) => r.method === "POST").length, 1);
   },
 );
+
+for (const status of [401, 403])
+  test(`global User observation keeps original authority for HTTP ${status}`, async (t) => {
+    const f = await fixture(t, {
+      status,
+      ...(status === 403 ? { body: accessDenied } : {}),
+    });
+    const observer = await f.open({ userRevocation: true });
+    const point = observer.checkpoint("revoked");
+    f.endStream();
+    const closed = await observer.waitForClose(point);
+    assert.equal(closed.authorizationCauseVerified, false);
+    const denial = await observer.rejectPrompt();
+    assert.equal(denial.status, status);
+    assert.equal(denial.credentialScope, point.stream.credential_scope);
+    assert(f.requests.every((r) => r.cookie === f.cookie));
+    assert.equal(f.requests.length, 2);
+    assert.equal(f.browser.requests, 0);
+    assert.equal(f.client.requests.length, 1);
+  });
+for (const options of [
+  { userRevocation: true, membershipRevocation: true },
+  { userRevocation: "true" },
+  { membershipRevocation: "true" },
+])
+  test(`directory observation rejects ambiguous mode ${JSON.stringify(options)}`, async (t) => {
+    const f = await fixture(t);
+    await assert.rejects(() => f.open(options));
+    assert.equal(f.requests.length, 0);
+  });
+test("global User observation cannot label an outage as revocation", async (t) => {
+  const f = await fixture(t);
+  const observer = await f.open({ userRevocation: true });
+  assert.throws(() => observer.checkpoint("unavailable"));
+});
+test("global User observation rejects Identity unavailable as an authorization denial", async (t) => {
+  const f = await fixture(t, { status: 503, code: "identity_unavailable" });
+  const observer = await f.open({ userRevocation: true });
+  const point = observer.checkpoint("revoked");
+  f.endStream();
+  await observer.waitForClose(point);
+  await assert.rejects(() => observer.rejectPrompt());
+});

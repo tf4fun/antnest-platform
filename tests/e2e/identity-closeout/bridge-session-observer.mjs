@@ -12,8 +12,22 @@ import {
 export async function observeBrowserSession(
   browser,
   client,
-  { agentId, sessionId, issued, signal, membershipRevocation = false },
+  {
+    agentId,
+    sessionId,
+    issued,
+    signal,
+    membershipRevocation = false,
+    userRevocation = false,
+  },
 ) {
+  assert.equal(typeof membershipRevocation, "boolean");
+  assert.equal(typeof userRevocation, "boolean");
+  assert(
+    !(membershipRevocation && userRevocation),
+    "one directory revocation mode required",
+  );
+  const directoryRevocation = membershipRevocation || userRevocation;
   signal?.throwIfAborted();
   const expiresAt = Date.parse(issued?.expires_at),
     idleExpiresAt = Date.parse(issued?.idle_expires_at);
@@ -67,7 +81,7 @@ export async function observeBrowserSession(
     browser: original,
     stream,
     checkpoint(reason) {
-      if (membershipRevocation) assert.equal(reason, "revoked");
+      if (directoryRevocation) assert.equal(reason, "revoked");
       assert(!point, "one fault trigger per browser observation");
       assert(original.cookie === cookie, "original browser authority changed");
       point = bridgeSessionCheckpoint(original, client, stream, {
@@ -108,7 +122,7 @@ export async function observeBrowserSession(
       const expectedStatus =
         point.reason === "unavailable"
           ? 503
-          : membershipRevocation
+          : directoryRevocation
             ? [401, 403]
             : 401;
       const expectedCode =
@@ -133,7 +147,7 @@ export async function observeBrowserSession(
       signal?.throwIfAborted();
       try {
         if (response.status === 403) {
-          assert(membershipRevocation);
+          assert(directoryRevocation);
           assert(
             typeof response.body?.requestId === "string" &&
               response.body.requestId,
