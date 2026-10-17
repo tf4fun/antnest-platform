@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile, access } from "node:fs/promises";
-import { writeFileSync } from "node:fs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { until } from "../acp-closeout/wait.mjs";
@@ -28,11 +27,7 @@ import {
   runtimeCommandId,
   assertRuntimeOperation,
 } from "../stage3-base/contracts.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
-import { collectTrace } from "../managed-mcp/trace.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
-import { inspectLifecycle } from "../stage3-base/trace.mjs";
-import { inspectFaultTrace, persistenceStrictOutcome } from "./trace.mjs";
+import { collectPersistenceTraceEvidence } from "./collector.mjs";
 import { assertDurable, assertRecovered, assertReplay } from "./evidence.mjs";
 import { seed } from "./setup.mjs";
 import { readPersistenceExecutionState, stateReady } from "./readiness.mjs";
@@ -487,12 +482,8 @@ async function main() {
   console.log(asciiJSON(business));
   await mkdir("/tmp/persistence-traces", { recursive: true, mode: 0o700 });
   const save = (label) => (trace) =>
-    writeFileSync(
-      `/tmp/persistence-traces/${label}.json`,
-      JSON.stringify(trace),
-      { mode: 0o600 },
-    );
-  save("inputs")({
+    writeEvidenceFile(directory, `${label}.json`, JSON.stringify(trace));
+  const input = {
     requests,
     initializations,
     connections: [...connectionInventory.values()],
@@ -500,54 +491,18 @@ async function main() {
     faults,
     executionState: stateReceipts,
     modelRequests: modelResult.requests,
-  });
-  const results = [];
-  for (const expected of [...lifecycle, ...initializations, ...requests]) {
-    const label = expected.label ?? expected.kind;
-    stage = `trace:${label}`;
-    try {
-      const trace = expected.traceID
-        ? await collectTrace("http://jaeger:16686", expected.traceID, (t) => {
-            if (t) save(label)(t);
-            return t;
-          })
-        : await collectManagedTrace(
-            "http://jaeger:16686",
-            expected,
-            secrets,
-            modelResult.requests,
-            save(label),
-            (t) => t,
-          );
-      results.push(
-        expected.kind === "fault"
-          ? inspectFaultTrace(
-              trace,
-              expected,
-              faults.find((f) => f.label + "-fault" === label),
-              secrets,
-              modelResult.requests,
-            )
-          : expected.traceID
-            ? inspectLifecycle(trace, expected, secrets)
-            : inspectCommandTrace(
-                trace,
-                expected,
-                secrets,
-                modelResult.requests.filter(
-                  (r) => r.trace_id === trace.traceID,
-                ),
-              ),
-      );
-    } catch (error) {
-      results.push({
-        label,
-        strict_trace: "failed",
-        evidence_error: error.message,
-      });
-    }
-  }
-  const { accepted, ...strict } = persistenceStrictOutcome(results);
+  };
+  save("inputs")(input);
+  const { privateResults, lifecycleResults, ...strict } =
+    await collectPersistenceTraceEvidence("http://jaeger:16686", input, {
+      directory,
+      secrets,
+      flush: () => telemetry.flush(),
+      onStage(expected) {
+        stage = `trace:${expected.label ?? expected.kind}`;
+      },
+    });
+  const results = [...privateResults, ...lifecycleResults];
   save("results")(results);
   console.log(
     asciiJSON({
@@ -556,7 +511,7 @@ async function main() {
       traces: results,
     }),
   );
-  if (!accepted) process.exitCode = 1;
+  process.exitCode = strict.exit_code;
 }
 try {
   await withPrivateCommandResources(clients, telemetry, main);

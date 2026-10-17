@@ -54,8 +54,23 @@ internal errors remain failures. Validation views never alter raw evidence.
 Confirmed external SDK problems remain non-blocking, with no SDK investigation
 or workaround added by this inspector.
 
-Private Trace collection and owning Docker deployment remain pending.
-Deployment must supply the execution-state schema,
+The client now collects all 48 private request Traces through their original
+connection and request receipts, with three stable complete source samples.
+Initialization, Session creation/replay, ordinary prompts and the six injected
+faults use their owning inspectors. The complete inventory also binds all 16
+Provider requests, 12 distinct durable Runs, eight executions and eight Tools.
+Create and delete retain their separate Lifecycle and shared Resolve admission.
+All 50 business Traces must be distinct; neither policy can borrow the other's
+error claims.
+
+Every Lifecycle query retains its original response bytes, including incomplete
+or malformed bodies. Cancellation joins body cleanup; read, cancel, release and
+archive failures are retained together. Partial reports remain private when a
+later check fails, and cancellation after the final child collection cannot
+publish an accepted parent result. Controlled source fixtures cover this complete
+collection path; they do not replace the deployed recovery scenario.
+
+Owning Docker deployment remains pending. Deployment must supply the execution-state schema,
 Identity and ACP grants, and private listener reachability before this profile
 can run against the retired Gateway routes.
 
@@ -96,13 +111,13 @@ explicit drop. A proxy hold expiring is a different, failing fault outcome.
 
 ## Results and evidence
 
-Strict Trace warnings, observed error spans and missing evidence are failures
-and return nonzero even when business checks pass. Two reviewed exceptions are
-reported in `strict_trace` without failing the exit: the clock-skew warning
-(`clock skew adjustment disabled; not applying calculated delta of ...`), and a
-fault Trace whose intercepted SQL is verified and whose errors are only the
-injected `database_error` and its propagated ACP `Error` spans. Abrupt shutdown can lose
-unexported spans; the fixture reports those gaps instead of inventing them. Raw
+Internal missing spans, incomplete evidence and unowned errors remain failures
+with exit code 1. Exact injected-fault claims and confirmed external SDK
+diagnostics remain visible in the original `strict_trace` result. An accepted
+collection whose raw diagnostics failed returns exit code 2; wholly clean
+evidence returns 0. The pending deployment harness must preserve that distinction.
+No generic error-type whitelist admits an unrelated internal error, and confirmed
+SDK issues require no further investigation or workaround. Raw
 audits, fault receipts, process observations and Traces are private artifacts
 under `artifacts/verification/acp-persistence/<project>/`.
 
