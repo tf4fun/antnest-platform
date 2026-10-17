@@ -27,8 +27,8 @@ configuration message in one committed transaction. A complete output read
 must precede configuration mutation; later output reads remain allowed. SQL
 values are not exported, so the observed selection comes from the actual SDK
 receipt. Grouped model choices and additional thinking options remain intact.
-Configuration must not run a model, Tool or permission approval. These Trace
-fixture checks still require actual consumer collection and Docker acceptance.
+Configuration must not run a model, Tool or permission approval. The actual
+Docker client collects these checks with the rest of its request inventory.
 
 The actual client now uses this adapter, retains each login Principal, joins
 connections and telemetry, and keeps both business and cleanup failures. V1
@@ -76,8 +76,8 @@ to private v1 ACP. It awaits each paged Session close reply, joins the connectio
 and telemetry, and keeps its requests outside the 64 business Trace inventory.
 Controlled Identity and actual SDK/TCP checks cover delegation, pagination,
 failures and cleanup; they do not replace production authorization or Docker.
-The shell now invokes the owning private host deployment. Actual Docker business
-acceptance is still required before this migration is complete.
+The shell invokes the owning private host deployment. Both the normal business
+run and the independent crash cleanup have passed actual Docker acceptance.
 
 The owning candidate image plan uses this run's `permission-UUID` tags for ten
 services, the production Runtime base, the official managed fixture carrier and
@@ -85,9 +85,9 @@ the final Runtime image. The final fixture COPY always runs, including with CI
 provided source images. Original production layers and configuration, both
 source identities around COPY, tag ownership and captured image IDs are checked.
 Interrupted or failed builds clean only their recorded candidates in reverse
-order. These controlled image-command tests do not constitute actual builds or
-host deployment acceptance. The root shell selects the admission overlay and
-builds and cleans this plan; CI supplies the production and fixture source images.
+order. The root shell selects the admission overlay and builds and cleans this
+plan; CI supplies the production and fixture source images. The normal and crash
+Docker runs built and inspected their own candidates from the current sources.
 
 The owning host module imports this image plan and checks the actual stack.
 It precreates the model, independent cleanup container and then business client,
@@ -109,11 +109,21 @@ for the independent cleaner, retaining the model until cleanup diagnostics are
 saved. Nonzero cleaner exits, inspection and evidence errors remain failures;
 other owned removals are still attempted. Recovery uses only original create
 IDs or a unique project/run/role match, and refuses foreign or ambiguous owners.
-Controlled command and filesystem tests establish this host contract. Actual
-Docker and the independent crash run remain pending. The child shell preserves
+Controlled command and filesystem tests establish this host contract. The child shell preserves
 client exits 0/2/137 only after successful host checks and independent cleanup.
 Host failure enters cleanup immediately. Cleanup has its own ten-minute budget;
 its failure still exits 1, and the parent subsequently removes owned stack resources.
+
+The actual normal run passed all 26 scenarios with 52 Model requests and 64
+unique Traces, each archived with three complete stable source samples. Both
+Runtime inspections matched the original ACK consumed before the two completed
+Agent deletions. Its raw strict diagnostics and exit 2 remain recorded; confirmed
+external SDK issues are non-blocking. The separate crash run reached its first
+pending approval, joined the killed client with exit 137 and no OOM or Runtime
+ACK, then completed independent cleanup of the one created Agent. Both runs
+restored the original Docker container, network, volume and image inventories.
+These results cover this consumer; browser capacity and full cross-service
+integration remain separate acceptance work.
 
 ## Running
 
