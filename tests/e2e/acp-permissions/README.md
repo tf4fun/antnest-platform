@@ -3,6 +3,29 @@
 This scenario verifies Tool permission modes, approval decisions and pending
 approval recovery through the deployed ACP service on a disposable full stack.
 
+## Private transport migration
+
+The owning `openPrivatePermissionConnection` adapter now delegates the original
+browser Principal through Identity to private v1/v2 WebSocket ACP. It records
+the actual initialize and business request IDs, inputs and successful replies,
+and keeps permission delivery IDs, original parameters and decisions separately.
+Pending decisions accept only an offered option, settle once, and settle as
+cancelled when the request signal aborts. Snapshot mutation cannot alter the
+original decision. Closing joins requests and decisions and checks both wire
+inventories; cleanup errors remain failures.
+
+For the scripted reconnect case, v1 requires the original outstanding prompt's
+local close error with no reply. A completed v1 prompt cannot acquire that
+exception. V2 requires the actual completed prompt `messageId` acknowledgement;
+an acknowledgement does not settle its pending approval. Other business requests
+cannot overlap that pending decision, while a cancel notification can be sent.
+
+The adapter's real SDK/TCP tests establish this client contract. The deployed
+client and Trace/deployment collectors below still need migration before this
+scenario can run against the retired-Gateway-route removal. Actual reconnection
+and repeated approval parameters, authorization modes, Tool effects and Docker
+acceptance remain consumer work; these tests do not establish them.
+
 ## Running
 
 ```sh

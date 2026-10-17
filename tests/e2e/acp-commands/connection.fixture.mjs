@@ -135,29 +135,33 @@ export async function commandFixture(t, profile, options = {}) {
               (result) => ({ result }),
               (error) => ({ error }),
             );
-          permissionPending.add(operation);
-          try {
-            const outcome = await operation;
-            permissionOutcomes.push(outcome);
+          const observed = operation
+            .then((outcome) => {
+              permissionOutcomes.push(outcome);
+              return outcome;
+            })
+            .finally(() => permissionPending.delete(observed));
+          permissionPending.add(observed);
+          if (!options.permissionPromptResponseEarly) {
+            const outcome = await observed;
             if (Object.hasOwn(outcome, "error")) throw outcome.error;
-          } finally {
-            permissionPending.delete(operation);
           }
         }
-        await client.notify(sdk.methods.client.session.update, {
-          sessionId: params.sessionId,
-          update:
-            profile.version === 1
-              ? {
-                  sessionUpdate: "agent_message_chunk",
-                  content: { type: "text", text: "fixture help" },
-                }
-              : {
-                  sessionUpdate: "state_update",
-                  state: "idle",
-                  stopReason: "end_turn",
-                },
-        });
+        if (!options.permissionPromptResponseEarly)
+          await client.notify(sdk.methods.client.session.update, {
+            sessionId: params.sessionId,
+            update:
+              profile.version === 1
+                ? {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: "fixture help" },
+                  }
+                : {
+                    sessionUpdate: "state_update",
+                    state: "idle",
+                    stopReason: "end_turn",
+                  },
+          });
         return profile.version === 1
           ? { stopReason: "end_turn" }
           : { messageId: "help-message" };
@@ -171,6 +175,11 @@ export async function commandFixture(t, profile, options = {}) {
     agent = agent.onRequest(
       sdk.methods.agent.session.load,
       record("session/load", () => ({})),
+    );
+  if (options.setConfigOption)
+    agent = agent.onRequest(
+      sdk.methods.agent.session.setConfigOption,
+      record("session/set_config_option", options.setConfigOption),
     );
   const peer = new AcpServer({ agent });
   const http = adapters.createNodeHttpHandler(peer);
