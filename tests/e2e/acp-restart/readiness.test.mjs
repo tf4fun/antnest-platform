@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stateReady } from "./readiness.mjs";
+import { PrivateACPExecutionStateUnavailableError } from "../../support/private-acp-execution-state-error.mjs";
 
-test("rehydration retries only an explicit public state HTTP 503", async () => {
+test("rehydration retries only the exact private startup error", async () => {
   assert.equal(
     await stateReady(
       async () => ({
@@ -15,8 +16,14 @@ test("rehydration retries only an explicit public state HTTP 503", async () => {
   );
   assert.equal(await stateReady(async () => ({ availability: "ready" })), true);
   assert.equal(await stateReady(async () => ({ availability: "busy" })), false);
+  assert.equal(
+    await stateReady(async () => {
+      throw new PrivateACPExecutionStateUnavailableError();
+    }),
+    false,
+  );
   const failure = (status) => () => assert.equal(status, 200);
-  assert.equal(await stateReady(failure(503)), false);
+  await assert.rejects(stateReady(failure(503)));
   await assert.rejects(stateReady(failure(403)));
   await assert.rejects(
     stateReady(async () => {

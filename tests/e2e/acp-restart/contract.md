@@ -6,6 +6,24 @@ startup interruption cleanup. Controller tables are not an oracle for these
 facts. Committed database response loss is covered separately by the
 [ACP persistence components](../../integration/agent-acp-service/support/persistence/README.md).
 
+## Private execution state
+
+Restart reads the complete ACP-owned execution state through
+`POST /rpc/agent-acp/get-agent-execution-state`, using the original owner's
+browser session and its login Principal. Every read delegates that same session
+through Identity's workspace profile and uses the Agent UI ACP workload grant.
+Both Principal fields, the requested Agent and `access_allowed` must match.
+The retired public Gateway state route and Bridge projections are not state
+oracles for this protocol recovery scenario.
+
+The complete response is archived privately before the read returns or fails.
+Only the exact complete `execution_state_unavailable` startup 503 may be retried.
+Other 503s, malformed or partial data, denied access, changed authority and
+archive failures fail acceptance. Cancellation during read or archival is joined
+and remains a failure; read and archive errors are both retained. A valid
+`runtime_barrier_required` offline response must remain visible for the original
+unknown-effect checks and must not be treated as startup recovery.
+
 ## Process interruption and unknown Tool effects
 
 Each SDK version runs four cases in fresh Sessions: a fully completed Run, a
@@ -26,7 +44,7 @@ establish that a Tool is in flight.
   `runtime_mcp` and `service_restarted_during_tool`. Exactly one visible failed
   Tool update states that its outcome is unknown. Every earlier public event
   and snapshot is preserved.
-- With an unknown Runtime effect, public Agent execution state must be offline
+- With an unknown Runtime effect, private Agent execution state must be offline
   with `runtime_barrier_required`. A prompt in another Session must fail with
   that domain error and create no Run or Provider request.
 - Rebuild is verified through its public operation, the Runtime operation

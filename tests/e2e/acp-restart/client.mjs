@@ -4,6 +4,7 @@ import { mkdir, writeFile, access, readFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { publishCheckpoint } from "../acp-closeout/checkpoint.mjs";
 import { commandConnection } from "../acp-commands/connection.mjs";
@@ -69,14 +70,15 @@ async function archiveReady() {
     ),
   );
 }
-import { stateReady } from "./readiness.mjs";
+import { readRestartExecutionState, stateReady } from "./readiness.mjs";
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
 const connections = [],
   requests = [],
   lifecycle = [],
   faults = [],
-  journals = [];
+  journals = [],
+  stateReceipts = [];
 const secrets = [
   "stage3-admin-password",
   "restart-owner-password",
@@ -85,13 +87,25 @@ const secrets = [
 let stage = "setup",
   agentId,
   organizationId,
+  memberPrincipal,
   deleted = false,
   restarts = 0;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const agent = () => api(`/api/admin/agents/${agentId}`);
-const state = async () =>
-  (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const state = () =>
+  readRestartExecutionState(agentId, member, {
+    principal: memberPrincipal,
+    service: services,
+    receipts: stateReceipts,
+    secrets,
+    preserve: (rows) =>
+      writeEvidenceFile(
+        "/tmp/restart-traces",
+        "execution-state.private.json",
+        JSON.stringify(rows) + "\n",
+      ),
+  });
 const services = serviceClient();
 const runtimeController = "http://runtime-controller:8080";
 async function peer(base, path, body) {
@@ -530,13 +544,16 @@ async function main() {
     password: "restart-owner-password",
     role: "member",
   });
-  await member.request("/api/session/login", {
+  const ownerLogin = await member.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "restart-owner@example.com",
       password: "restart-owner-password",
     },
   });
+  memberPrincipal = structuredClone(ownerLogin.body.principal);
+  assert.equal(memberPrincipal.organization_id, organizationId);
+  assert.equal(memberPrincipal.user_id, owner.user.id);
   secrets.push(...admin.cookies.values(), ...member.cookies.values());
   const { template } = await seed(api, process.env.TEST_RUNTIME_IMAGE);
   const created = await admin.request("/api/admin/agents", {
