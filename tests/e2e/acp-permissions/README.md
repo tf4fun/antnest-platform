@@ -76,7 +76,7 @@ to private v1 ACP. It awaits each paged Session close reply, joins the connectio
 and telemetry, and keeps its requests outside the 64 business Trace inventory.
 Controlled Identity and actual SDK/TCP checks cover delegation, pagination,
 failures and cleanup; they do not replace production authorization or Docker.
-Host deployment wiring and actual Docker business acceptance remain pending.
+Shell deployment wiring and actual Docker business acceptance remain pending.
 The current shell runner is not yet an accepted retired-route-free scenario.
 
 The owning candidate image plan uses this run's `permission-UUID` tags for ten
@@ -87,6 +87,29 @@ source identities around COPY, tag ownership and captured image IDs are checked.
 Interrupted or failed builds clean only their recorded candidates in reverse
 order. These controlled image-command tests do not constitute actual builds or
 host deployment acceptance; the shell integration remains pending.
+
+The owning host module imports this image plan and checks the actual stack.
+It precreates the model, independent cleanup container and then business client,
+recording each original container ID before inspection. All three use the
+candidate ACP image as the service-auth user. Client and cleanup receive only
+two read-only grants, exact private listener pins, individual read-only contract
+files and writable `traces`/`deployment` subdirectories; the model has no grants.
+Inspection also checks the actual networks and model aliases.
+
+While waiting for the client, the host checks the original container identities
+and start times. It saves the complete two-Runtime inspection before publishing
+an ACK with the exact raw SHA, Agent IDs, image ID, generation and `StartedAt`.
+The optional browser pause stays within the overall deadline. The crash control
+recognizes only the complete `crash_ready` JSON record, kills and joins the
+original client, requires exit 137 without OOM, and publishes no Runtime ACK.
+
+Host cleanup first joins and removes the business client, then starts and waits
+for the independent cleaner, retaining the model until cleanup diagnostics are
+saved. Nonzero cleaner exits, inspection and evidence errors remain failures;
+other owned removals are still attempted. Recovery uses only original create
+IDs or a unique project/run/role match, and refuses foreign or ambiguous owners.
+Controlled command and filesystem tests establish this host contract. Actual
+Docker, the shell/CI connection and the independent crash run remain pending.
 
 ## Running
 
