@@ -18,6 +18,7 @@ import type { ConnectionBinding, ContentBlock, RunExecutionSnapshot } from "../d
 import type { RunRepository } from "../ports/run-repository.js";
 import type { RuntimeProtectionRepository } from "../ports/execution-repository.js";
 import type { ExecutionDirectory } from "./execution-directory.js";
+import { RunRecoveryRequiredError } from "../ports/acp-application.js";
 
 export type PromptCoordinatorDependencies = {
   repository: RunRepository;
@@ -202,6 +203,7 @@ export class PromptCoordinator {
         this.dependencies.recoveryRequired(
           new Error("Run acceptance could not be persisted locally", { cause: error }),
         );
+        throw new RunRecoveryRequiredError("Run acceptance requires recovery", error);
       }
       throw error;
     }

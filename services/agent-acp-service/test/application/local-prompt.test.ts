@@ -1,3 +1,4 @@
+import { RunRecoveryRequiredError } from "../../src/ports/acp-application.js";
 import { describe, expect, it, vi } from "vitest";
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
 import type { ExecutionConfiguration } from "../../src/domain/execution-configuration.js";
@@ -256,8 +257,12 @@ describe("local prompt configuration", () => {
 
   it("stops the worker on an uncertain local acceptance commit, without replaying it", async () => {
     const { coordinator, input, repository, recoveryRequired } = await setup();
-    repository.acceptRun.mockRejectedValue(new Error("commit acknowledgement lost"));
-    await expect(coordinator.accept(input)).rejects.toThrow("commit acknowledgement lost");
+    const failure = new Error("commit acknowledgement lost");
+    repository.acceptRun.mockRejectedValue(failure);
+    await expect(coordinator.accept(input)).rejects.toMatchObject({
+      name: RunRecoveryRequiredError.name,
+      cause: failure,
+    });
     expect(repository.acceptRun).toHaveBeenCalledOnce();
     expect(repository.rejectRun).not.toHaveBeenCalled();
     expect(recoveryRequired).toHaveBeenCalledOnce();

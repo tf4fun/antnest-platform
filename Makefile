@@ -149,6 +149,7 @@ test-repo:
 	$(MAKE) test-managed-mcp-fixtures
 	$(MAKE) test-rpc-response-loss-fixtures
 	$(MAKE) test-acp-persistence-fixtures
+	node --test --test-concurrency=1 tests/integration/agent-acp-service/support/persistence/*.test.mjs
 	$(MAKE) test-acp-restart-fixtures
 	$(MAKE) test-tool-progress-fixtures
 	$(MAKE) test-file-observation-fixtures

@@ -6,6 +6,7 @@ import type { PermissionConnectionsPort } from "../../../ports/tool-permissions.
 import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
 import { DomainError } from "../../../domain/errors.js";
+import { RunRecoveryRequiredError } from "../../../ports/acp-application.js";
 import { availableCommands } from "../../../domain/slash-commands.js";
 import type { ClientMcpInput } from "../../../domain/mcp.js";
 import type { ConnectionBinding, ContentBlock } from "../../../domain/types.js";
@@ -512,6 +513,15 @@ async function mapError<T>(operation: () => Promise<T>): Promise<T> {
   } catch (error) {
     if (error instanceof acp.RequestError) {
       throw error;
+    }
+    if (error instanceof RunRecoveryRequiredError) {
+      throw Object.assign(
+        new acp.RequestError(-32603, "A database operation requires service recovery", {
+          code: "database_error",
+          retryable: false,
+        }),
+        { cause: error },
+      );
     }
     if (error instanceof DomainError) {
       throw Object.assign(

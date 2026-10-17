@@ -9,6 +9,7 @@ import type { PermissionConnectionsPort } from "../../../ports/tool-permissions.
 import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
 import { DomainError } from "../../../domain/errors.js";
+import { RunRecoveryRequiredError } from "../../../ports/acp-application.js";
 import { availableCommands } from "../../../domain/slash-commands.js";
 import type { SkillCommand } from "../../../domain/skill-commands.js";
 import type { SkillCommandsPort } from "../../../ports/skill-commands.js";
@@ -426,7 +427,7 @@ export function createAcpV1Agent({
           );
           observing = true;
           outputs.invalidate(key);
-          const result = await accepted.completion;
+          const result = await mapError(() => accepted.completion);
           return promptResponse(result);
         } finally {
           observing = true;
@@ -768,6 +769,15 @@ async function mapError<Result>(operation: () => Promise<Result>): Promise<Resul
   } catch (error) {
     if (error instanceof acp.RequestError) {
       throw error;
+    }
+    if (error instanceof RunRecoveryRequiredError) {
+      throw Object.assign(
+        new acp.RequestError(-32603, "A database operation requires service recovery", {
+          code: "database_error",
+          retryable: false,
+        }),
+        { cause: error },
+      );
     }
     if (error instanceof DomainError) {
       throw Object.assign(

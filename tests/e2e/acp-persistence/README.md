@@ -70,9 +70,12 @@ later check fails, and cancellation after the final child collection cannot
 publish an accepted parent result. Controlled source fixtures cover this complete
 collection path; they do not replace the deployed recovery scenario.
 
-Owning Docker deployment remains pending. Deployment must supply the execution-state schema,
-Identity and ACP grants, and private listener reachability before this profile
-can run against the retired Gateway routes.
+Issue [#167](https://github.com/tf4fun/antnest-platform/issues/167) requires
+this persistence scenario to become ACP component tests and its platform Make
+target to be removed. The component migration uses real PostgreSQL and production
+ACP recovery with fake Runtime/model boundaries. Existing private evidence is
+retained; a new whole-platform Docker deployment is no longer planned. The legacy
+entrypoints below remain only until their replacement passes.
 
 ## Running
 

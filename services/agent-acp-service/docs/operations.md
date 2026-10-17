@@ -281,6 +281,16 @@ Collector retention. This service adds no retention service.
 - A confirmed Runtime-managed MCP error is returned to the model as a Tool
   result; an unknown transport effect still terminates the Run as unresolved.
 - PostgreSQL unavailable: readiness fails and no prompt is accepted.
+- An unconfirmed Run admission or completion write stops new Run admission and
+  requires service recovery. An unacknowledged prompt returns JSON-RPC `-32603`
+  with `code: database_error` and `retryable: false`; its public message contains
+  no database details. The original cause remains available to internal
+  diagnostics. A v2 prompt already acknowledged keeps that receipt and its
+  connection closes on completion failure; ACP does not invent a new outcome.
+  Startup classifies the durable Run without repeating model or Tool work.
+  Component coverage uses production service composition and real PostgreSQL
+  with fake outbound Runtime/model peers in
+  [`persistence-faults.postgres.test.ts`](../../../tests/integration/agent-acp-service/e2e/persistence-faults.postgres.test.ts).
 - Run worker lock unavailable: startup fails because another replica owns Run
   execution. A same-session heartbeat detects loss of the dedicated lock
   connection; loss makes readiness false, aborts startup recovery and local

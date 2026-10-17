@@ -1,3 +1,4 @@
+import { RunRecoveryRequiredError } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import { sessionConfigurationView } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import { v1Configuration } from "../../../../services/agent-acp-service/src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
@@ -28,6 +29,48 @@ const binding: ConnectionBinding = {
 };
 
 describe("ACP v1 agent mapping", () => {
+  it.each(["acceptPrompt", "execute"] as const)(
+    "returns a safe non-retryable database_error for uncertain %s persistence",
+    async (stage) => {
+      const cause = new Error("postgres://PRIVATE_DATABASE_FAILURE");
+      const failure = new RunRecoveryRequiredError(
+        "private persistence detail",
+        cause,
+      );
+      const application = createApplication({
+        [stage]: () => Promise.reject(failure),
+      });
+      const agent = createAcpV1Agent({
+        binding,
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      await acp.client().connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const result: unknown = await context
+          .request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text: "fault" }],
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        expect(result).toMatchObject({
+          code: -32603,
+          data: { code: "database_error", retryable: false },
+        });
+        expect((result as Error).message).not.toContain("private");
+        expect((result as Error).message).not.toContain(
+          "PRIVATE_DATABASE_FAILURE",
+        );
+      });
+    },
+  );
+
   it("keeps the original first connection close when a diagnostic observer throws", async () => {
     let closeFailure: ((error: unknown) => void) | undefined;
     let actual: acp.AgentConnection | undefined;
