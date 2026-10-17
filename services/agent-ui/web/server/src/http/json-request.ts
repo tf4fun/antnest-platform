@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import type { PromptInputObserver } from "../telemetry.ts";
 import { strictObject } from "../adapters/strict-json.ts";
 import { fields } from "../adapters/service-authentication.ts";
 import { copyAuthenticatedRequest } from "./trusted-identity.ts";
@@ -28,7 +29,8 @@ export function requireJsonMedia(request: IncomingMessage): void {
     encodings.length > 1 || (encodings.length === 1 && encodings[0]!.value !== "identity"))
     throw new HttpInputError(415, "unsupported_media_type");
 }
-export async function validateJsonRequest(request: Request, maximum = 64 * 1024 * 1024): Promise<Request> {
+export async function validateJsonRequest(request: Request, maximum = 64 * 1024 * 1024,
+  observe?: PromptInputObserver): Promise<Request> {
   if (Number(request.headers.get("content-length")) > maximum) throw new HttpInputError(413, "request_too_large");
   const reader = request.body?.getReader();
   if (!reader) throw new HttpInputError(400, "invalid_json");
@@ -42,9 +44,10 @@ export async function validateJsonRequest(request: Request, maximum = 64 * 1024 
       request.signal.throwIfAborted();
       const chunk = await reader.read();
       request.signal.throwIfAborted();
-      if (chunk.done) break;
+      if (chunk.done) { observe?.("body-eof", size); break; }
       size += chunk.value.length;
       if (size > maximum) throw new HttpInputError(413, "request_too_large");
+      if (chunk.value.length > 0 && size === chunk.value.length) observe?.("receive-started", size);
       chunks.push(chunk.value);
     }
     complete = true;
@@ -59,6 +62,7 @@ export async function validateJsonRequest(request: Request, maximum = 64 * 1024 
     const bytes = Buffer.concat(chunks);
     let value: Record<string, unknown>;
     try { value = strictObject(bytes); } catch { throw new HttpInputError(400, "invalid_json"); }
+    observe?.("body-parsed", bytes.byteLength);
     return { bytes, value };
   };
   // Keep cancellation outside the JSON error mapping and the reservation owned

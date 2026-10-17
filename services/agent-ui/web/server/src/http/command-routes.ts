@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { recordPromptInputPrepared } from "../telemetry.ts";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import { acpPromptRequestBytes, AgentAccessRevokedError, SessionNotFoundError } from "../adapters/acp-http.ts";
@@ -199,7 +200,9 @@ export function createCommandHandler(dependencies: {
         const accepted = await runInputWork(() => {
           if (acpPromptRequestBytes(input) > maxAcpPromptBytes)
             throw new BodyTooLargeError();
-          return authorized.operations.submit(input);
+          const accepted = authorized.operations.submit(input);
+          recordPromptInputPrepared();
+          return accepted;
         }, request.signal);
         return json(accepted, 202);
       }

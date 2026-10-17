@@ -9,7 +9,7 @@ import { Readable } from "node:stream";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { recordStreamDelegation, type BridgeTelemetry } from "../telemetry.ts";
+import { capturePromptInput, recordStreamDelegation, type BridgeTelemetry } from "../telemetry.ts";
 import { parseWorkspaceDocumentPath, type WorkspaceRoute } from "../protocol/workspace-route.ts";
 import { readWorkspacePrincipal } from "./workspace-principal.ts";
 import type { RequestAuthentication } from "./request-authentication.ts";
@@ -205,7 +205,8 @@ async function serve(
           releaseUpload = undefined;
           try {
             return await runtime.handle(await validateJsonRequest(request,
-              promptUpload ? maximumJsonRequestBytes : maximumControlRequestBytes));
+              promptUpload ? maximumJsonRequestBytes : maximumControlRequestBytes,
+              promptUpload ? capturePromptInput() : undefined));
           } finally { release?.(); }
         },
       } : runtime;

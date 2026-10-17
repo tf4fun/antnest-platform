@@ -412,6 +412,24 @@ local output and metadata updates do not trigger ACP observation GETs.
   This does not preempt an individual synchronous job or establish a general
   end-to-end latency bound; the fixed cancellation workloads below retain
   their one-second gate.
+- With telemetry enabled, each original HTTP SERVER span has
+  `antnest.ui.http.started_monotonic_ns`, a decimal string from the current
+  process's monotonic clock sampled before request handling. Calibrate it with
+  the independent client's complete request interval and the original Trace
+  and process identity; never compare clocks from different processes directly.
+  An admitted native Prompt records at most four `antnest.ui.prompt_input`
+  events with only `phase`, `bytes` and decimal-string `monotonic_ns`.
+  `receive-started` follows the first nonempty chunk actually read;
+  `body-eof` follows real EOF and the abort check; `body-parsed` follows
+  successful strict parsing. `input-prepared` follows Antnest's envelope sizing
+  serialization, canonical digest and atomic intent submission. This last
+  receipt describes the service's synchronous work, not later SDK internals
+  or the upstream response wait. Failed requests retain only their actual phase
+  prefix. Control, unadmitted and disabled requests emit no input phase events;
+  ended HTTP boundaries cannot acquire late events.
+  For the completion/parse workload, the entire calibrated cancellation-send
+  interval must fall between that upload's EOF and parsed receipts. This
+  conservative parsing interval excludes all later preparation and response wait.
 - Each owner admits at most 16 live Agent SSE observers across selected
   Sessions, keeps at most 32 Agent and 32 Session journals, and retains up to
   256 KiB of replay suffix per journal. A slow observer has a 1 MiB

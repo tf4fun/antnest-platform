@@ -155,6 +155,9 @@ Bodies of at least 1 MiB and Prompt preparation share a FIFO that gives ready
 I/O an event-loop turn between synchronous jobs. Controls bypass that queue.
 Queued requests check cancellation before parsing or submitting; their upload
 reservation and Session lease stay held until the handler finishes.
+With telemetry enabled, the original HTTP span records native upload phases
+and a process-monotonic clock sample. These bounded receipts support the
+cross-service capacity gate without recording attachment contents or credentials.
 
 ## Dependencies
 

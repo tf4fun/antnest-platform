@@ -1068,6 +1068,39 @@ test(
         );
         assert.equal(rejectedPrompt.status, 413);
         assert.equal((await rejectedPrompt.json()).code, "request_too_large");
+        const inputPhaseTraceId = randomUUID().replaceAll("-", "");
+        const inputPhaseBody = JSON.stringify({
+          intentId: "phase-witness",
+          expectedAppendVersion: 1,
+          prompt: [
+            {
+              type: "text",
+              text:
+                "PRIVATE-PHASE-CONTENT-CANARY" + "x".repeat(2 * 1024 * 1024),
+            },
+          ],
+        });
+        const inputPhaseClientStart = process.hrtime.bigint().toString();
+        const inputPhaseResponse = await fetch(
+          `${base}/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts`,
+          {
+            method: "POST",
+            headers: {
+              ...commandHeaders,
+              "idempotency-key": "phase-witness",
+              "if-match": view.selectedView.historyToken,
+              traceparent: `00-${inputPhaseTraceId}-${gatewayParentSpanId}-01`,
+            },
+            body: inputPhaseBody,
+          },
+        );
+        assert.equal(inputPhaseResponse.status, 413);
+        assert.equal(
+          (await inputPhaseResponse.json()).code,
+          "request_too_large",
+        );
+        const inputPhaseClientEnd = process.hrtime.bigint().toString();
+        assert.deepEqual(commandMutations, { prompts: 0, sessions: 0 });
         assert.deepEqual(view.promptCapabilities, {
           image: true,
           audio: false,
@@ -2300,6 +2333,83 @@ test(
                   : Number(entry.value.intValue)),
             ]),
           );
+        const inputPhaseSpans = exportedSpans.filter(
+          (span) => span.traceId === inputPhaseTraceId,
+        );
+        assert.equal(inputPhaseSpans.length, 1);
+        const inputPhaseSpan = inputPhaseSpans[0];
+        assert.equal(inputPhaseSpan.name, "agent_ui.http.request");
+        assert.equal(inputPhaseSpan.kind, 2);
+        assert.equal(inputPhaseSpan.parentSpanId, gatewayParentSpanId);
+        const inputAttributes = attributes(inputPhaseSpan.attributes);
+        assert.equal(inputAttributes["http.response.status_code"], 413);
+        const remoteStart =
+          inputAttributes["antnest.ui.http.started_monotonic_ns"];
+        assert.match(remoteStart ?? "", /^[1-9][0-9]{0,29}$/u);
+        const inputEvents = (inputPhaseSpan.events ?? []).filter(
+          (event) => event.name === "antnest.ui.prompt_input",
+        );
+        assert.deepEqual(
+          inputEvents.map((event) => attributes(event.attributes).phase),
+          ["receive-started", "body-eof", "body-parsed"],
+        );
+        let previousPhaseTime = BigInt(remoteStart);
+        for (const event of inputEvents) {
+          const values = attributes(event.attributes);
+          assert.deepEqual(Object.keys(values).sort(), [
+            "bytes",
+            "monotonic_ns",
+            "phase",
+          ]);
+          assert.match(values.monotonic_ns, /^[1-9][0-9]{0,29}$/u);
+          assert(BigInt(values.monotonic_ns) >= previousPhaseTime);
+          previousPhaseTime = BigInt(values.monotonic_ns);
+          assert(
+            Number.isSafeInteger(values.bytes) &&
+              values.bytes > 0 &&
+              values.bytes <= Buffer.byteLength(inputPhaseBody),
+          );
+          if (values.phase !== "receive-started")
+            assert.equal(values.bytes, Buffer.byteLength(inputPhaseBody));
+          assert(
+            BigInt(inputPhaseSpan.startTimeUnixNano) <=
+              BigInt(event.timeUnixNano),
+          );
+          assert(
+            BigInt(event.timeUnixNano) <=
+              BigInt(inputPhaseSpan.endTimeUnixNano),
+          );
+        }
+        assert(
+          !JSON.stringify(exportedSpans).includes(
+            "PRIVATE-PHASE-CONTENT-CANARY",
+          ),
+        );
+        await writeFile(
+          `${evidenceRoot}/native-upload-phases.json`,
+          JSON.stringify(
+            {
+              scope:
+                "production native input phases; route size rejection has no accepted intent",
+              process_instance: firstInstanceId,
+              client_clock: "process.hrtime.bigint",
+              client_send_ns: inputPhaseClientStart,
+              client_complete_ns: inputPhaseClientEnd,
+              server_minus_client_offset_ns: {
+                low: (
+                  BigInt(remoteStart) - BigInt(inputPhaseClientEnd)
+                ).toString(),
+                high: (
+                  BigInt(remoteStart) - BigInt(inputPhaseClientStart)
+                ).toString(),
+              },
+              upload_bytes: Buffer.byteLength(inputPhaseBody),
+              span: inputPhaseSpan,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
         const delegationReceipt = attributes(revocationSpan.attributes);
         assert.equal(
           delegationReceipt["antnest.ui.stream.delegation_expires_at_unix_ms"],

@@ -21,7 +21,45 @@ export type BridgeTelemetry = {
 };
 
 const HTTP_BOUNDARY = createContextKey("antnest.ui.active-http-boundary");
-type HttpBoundary = { active: boolean; span: Span; streamDelegationRecorded?: boolean };
+type PromptInputState = { next: number; bytes: number };
+type HttpBoundary = { active: boolean; span: Span; streamDelegationRecorded?: boolean;
+  inputDiagnostics: boolean; promptInput?: PromptInputState };
+export type PromptInputPhase = "receive-started" | "body-eof" | "body-parsed";
+export type PromptInputObserver = (phase: PromptInputPhase, bytes: number) => void;
+const promptInputPhases = ["receive-started", "body-eof", "body-parsed", "input-prepared"] as const;
+
+function recordPromptInput(boundary: HttpBoundary, state: PromptInputState, phase: string, bytes: number): void {
+  try {
+    if (!boundary.active || !boundary.inputDiagnostics || !boundary.span.isRecording() ||
+      boundary.promptInput !== state || phase !== promptInputPhases[state.next] ||
+      !Number.isSafeInteger(bytes) || bytes < 1 || bytes > 64 * 1024 * 1024 ||
+      (state.next === 1 && bytes < state.bytes) || (state.next >= 2 && bytes !== state.bytes)) return;
+    boundary.span.addEvent("antnest.ui.prompt_input", {
+      phase, bytes, monotonic_ns: process.hrtime.bigint().toString(),
+    });
+    state.next++; state.bytes = bytes;
+  } catch { /* Diagnostics must not change request outcomes or resource cleanup. */ }
+}
+
+/** At most one native Prompt observer, bound to the original live HTTP span. */
+export function capturePromptInput(): PromptInputObserver | undefined {
+  try {
+    const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
+    if (!boundary?.active || !boundary.inputDiagnostics || !boundary.span.isRecording() || boundary.promptInput) return;
+    const state: PromptInputState = { next: 0, bytes: 0 };
+    boundary.promptInput = state;
+    return (phase, bytes) => recordPromptInput(boundary, state, phase, bytes);
+  } catch { return; }
+}
+
+/** Antnest's wire sizing, canonical digest and intent insertion have returned. */
+export function recordPromptInputPrepared(): void {
+  try {
+    const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
+    if (boundary?.promptInput)
+      recordPromptInput(boundary, boundary.promptInput, "input-prepared", boundary.promptInput.bytes);
+  } catch { /* An observation cannot turn an accepted intent into an error. */ }
+}
 const processIdentity = Object.freeze({
   "host.name": hostname(),
   "process.pid": process.pid,
@@ -265,7 +303,9 @@ export async function startBridgeTelemetry(config: {
         kind: SpanKind.SERVER,
         attributes: { "http.request.method": method, "http.route": route },
       }, parent, async (span) => {
-        const boundary: HttpBoundary = { active: true, span };
+        const boundary: HttpBoundary = { active: true, span, inputDiagnostics: !config.disabled };
+        if (!config.disabled && span.isRecording())
+          span.setAttribute("antnest.ui.http.started_monotonic_ns", process.hrtime.bigint().toString());
         return context.with(context.active().setValue(HTTP_BOUNDARY, boundary), async () => {
           const startedAt = performance.now();
           let status = 503;
