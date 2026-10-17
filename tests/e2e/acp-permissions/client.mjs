@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { withPermissionAgentCleanup } from "./cleanup-evidence.mjs";
+import { requestPermissionRuntimeInspection } from "./runtime-inspection.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { gateway } from "../identity-closeout/acp-connection.mjs";
 import { until } from "../acp-closeout/support.mjs";
@@ -346,74 +348,94 @@ async function main() {
     process.env.TEST_RUNTIME_IMAGE,
     suffix,
   );
-  for (const version of [1, 2]) {
-    const created = await api(
-      "/api/admin/agents",
-      {
-        owner_user_id: owner.user.id,
-        name: `Permissions v${version} ${suffix}`,
-        template_id: template.template_id,
-        template_revision: template.revision,
-      },
-      202,
-    );
-    agents.push(created.agent.agent_id);
-    await operation(created.operation.request_id);
-    const agent = agents.at(-1);
-    await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
-    const denied = await connect(version, agent, stranger, "foreign");
-    await use(denied, () => assertAgentDenied(denied));
-    await exercise(version, agent, alternateModelID);
-  }
-  const modelResponse = await fetch("http://permission-model:8080/status", {
-    signal: AbortSignal.timeout(5000),
-  });
-  assert(modelResponse.ok);
-  const modelRaw = await modelResponse.text();
-  writeEvidenceFile(directory, "model-status.private.json", modelRaw);
-  const modelStatus = JSON.parse(modelRaw);
-  assert.deepEqual(modelStatus.errors, []);
-  assert.equal(outcomes.length, 26);
-  assert.equal(clients.size, 0, "Permissions connections were not joined");
-  const inventory = indexPermissionRequests({
-    agents,
-    connections,
-    outcomes,
-    models: modelStatus.requests,
-    alternateModelID,
-    defaultModel: `permission-model-${suffix}`,
-    alternateModel: `alternate-model-${suffix}`,
-  });
-  for (const [file, value] of [
-    ["connection-inventory.private.json", connections],
-    ["request-inventory.private.json", inventory.requests],
-    ["initialization-inventory.private.json", inventory.initializations],
-    ["notification-inventory.private.json", inventory.notifications],
-    ["permission-inventory.private.json", inventory.permissions],
-  ])
-    writeEvidenceFile(directory, file, JSON.stringify(value) + "\n");
-  if (process.env.TEST_BROWSER === "true") {
-    stage = "browser-validation";
-    console.log(
-      asciiJSON({ status: "browser_ready", email, agent_id: agents[0] }),
-    );
-    await until(
-      async () => {
-        const status = await fetch("http://permission-model:8080/status", {
-          signal: AbortSignal.timeout(5000),
+  const { inventory, modelStatus, runtimeInspection } =
+    await withPermissionAgentCleanup(
+      agents,
+      admin,
+      async (consumed) => {
+        for (const version of [1, 2]) {
+          const created = await api(
+            "/api/admin/agents",
+            {
+              owner_user_id: owner.user.id,
+              name: `Permissions v${version} ${suffix}`,
+              template_id: template.template_id,
+              template_revision: template.revision,
+            },
+            202,
+          );
+          agents.push(created.agent.agent_id);
+          await operation(created.operation.request_id);
+          const agent = agents.at(-1);
+          await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
+          const denied = await connect(version, agent, stranger, "foreign");
+          await use(denied, () => assertAgentDenied(denied));
+          await exercise(version, agent, alternateModelID);
+        }
+        const modelResponse = await fetch(
+          "http://permission-model:8080/status",
+          {
+            signal: AbortSignal.timeout(5000),
+          },
+        );
+        assert(modelResponse.ok);
+        const modelRaw = await modelResponse.text();
+        writeEvidenceFile(directory, "model-status.private.json", modelRaw);
+        const modelStatus = JSON.parse(modelRaw);
+        assert.deepEqual(modelStatus.errors, []);
+        assert.equal(outcomes.length, 26);
+        assert.equal(
+          clients.size,
+          0,
+          "Permissions connections were not joined",
+        );
+        const inventory = indexPermissionRequests({
+          agents,
+          connections,
+          outcomes,
+          models: modelStatus.requests,
+          alternateModelID,
+          defaultModel: `permission-model-${suffix}`,
+          alternateModel: `alternate-model-${suffix}`,
         });
-        return (await status.json()).browserReleased;
+        for (const [file, value] of [
+          ["connection-inventory.private.json", connections],
+          ["request-inventory.private.json", inventory.requests],
+          ["initialization-inventory.private.json", inventory.initializations],
+          ["notification-inventory.private.json", inventory.notifications],
+          ["permission-inventory.private.json", inventory.permissions],
+        ])
+          writeEvidenceFile(directory, file, JSON.stringify(value) + "\n");
+        if (process.env.TEST_BROWSER === "true") {
+          stage = "browser-validation";
+          console.log(
+            asciiJSON({ status: "browser_ready", email, agent_id: agents[0] }),
+          );
+          await until(
+            async () => {
+              const status = await fetch(
+                "http://permission-model:8080/status",
+                {
+                  signal: AbortSignal.timeout(5000),
+                },
+              );
+              return (await status.json()).browserReleased;
+            },
+            "browser release",
+            600000,
+          );
+        }
+        stage = "runtime-inspection";
+        const runtimeInspection = await requestPermissionRuntimeInspection(
+          agents,
+          { consumed },
+        );
+        return { inventory, modelStatus, runtimeInspection };
       },
-      "browser release",
-      600000,
+      { directory },
     );
-  }
-  // Graceful Runtime shutdown flushes OTLP before inspecting the completed Runs.
-  // The independent wrapper cleanup still covers abrupt client loss.
-  for (const agent of agents)
-    await operation(
-      (await api(`/api/admin/agents/${agent}/delete`, {}, 202)).request_id,
-    );
+  // The original two-Runtime ACK and both completed delete operations are
+  // recorded before shutdown-flushed Trace evidence is admitted.
   stage = "trace-validation";
   secrets.push(...outcomes);
   const options = {
@@ -477,6 +499,7 @@ async function main() {
       permission_deliveries: inventory.permissions.length,
       traces: checked,
       cross_user_rejections: 2,
+      runtime_containers_verified: runtimeInspection.runtimes.length,
       ...strict,
     }),
   );

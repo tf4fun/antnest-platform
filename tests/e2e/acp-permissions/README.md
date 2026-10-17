@@ -63,10 +63,17 @@ its own current execution and cannot replace the Run preparation. Only exact
 completed-connection cleanup fields receive the existing diagnostic treatment;
 unknown work and internal errors remain failures.
 
-Local fixture and real TCP adapter checks establish these contracts. The two
-Agent Runtime inspection/ACK before deletion, independent cleanup entry,
-deployment wiring and actual Docker business acceptance remain pending. The
-current shell runner is not yet an accepted retired-route-free scenario.
+Local fixture and real TCP adapter checks establish these contracts. The client
+now waits for the host's exact two-Agent Runtime inventory before deleting its
+Agents. The original ACK bytes, candidate image identity, container IDs,
+generations and original starts are bound to this project, run and nonce. Both
+complete delete responses and completed operations are retained in sequence on
+the client clock after ACK consumption. Business, deletion and evidence failures
+remain failures, and cleanup still attempts every created Agent.
+
+The independent cleanup entry, host deployment wiring and actual Docker business
+acceptance remain pending. The current shell runner is not yet an accepted
+retired-route-free scenario.
 
 ## Running
 
@@ -130,8 +137,11 @@ does not synchronize clocks, rewrite timestamps or waive unrelated diagnostics.
 
 ## Cleanup
 
-The client deletes its Agents through the Gateway and Controller before Trace
-collection, so Runtime shutdown flushes OTLP. Independent wrapper cleanup then
+After consuming the original host Runtime ACK, the client deletes both Agents
+through the Gateway and Controller and waits for both operations before Trace
+collection, so Runtime shutdown flushes OTLP. Failure paths attempt every created
+Agent while preserving the original business and cleanup errors. Independent
+wrapper cleanup then
 discovers only this invocation's UUID-qualified Agents, closes their Sessions
 through ACP and deletes them through the Gateway and Controller, even after the
 client is lost. It attempts every owned Agent and reports partial failure. The
