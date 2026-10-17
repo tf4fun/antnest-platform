@@ -5,7 +5,17 @@ import { GatewayClient } from "../identity-closeout/support.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { publishCheckpoint } from "../acp-closeout/checkpoint.mjs";
-import { commandConnection } from "../acp-commands/connection.mjs";
+import {
+  openPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "../acp-commands/connection.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import { preserveFileFailure } from "../acp-files/failure-evidence.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
+import {
+  createPersistenceRecorder,
+  indexPersistenceRequests,
+} from "./client-evidence.mjs";
 import {
   assertPromptComplete,
   replayRequest,
@@ -30,12 +40,17 @@ import { assertHeldCompletion } from "./completion.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
-const connections = [],
-  requests = [],
+const requests = [],
+  initializations = [],
   lifecycle = [],
   faults = [],
   journals = [],
   stateReceipts = [];
+const clients = new Set(),
+  recorders = new Map(),
+  connectionInventory = new Map();
+const directory = "/tmp/persistence-traces";
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
 const secrets = [
   "stage3-admin-password",
   "persistence-owner-password",
@@ -139,37 +154,50 @@ async function operation(id, kind) {
     completed: true,
   });
 }
-async function connect(version) {
-  const c = commandConnection(
-    { name: `persistence-v${version}`, version },
-    agentId,
-    member,
+async function connect(version, phase, role) {
+  const c = await openPrivateCommandConnection({ version }, agentId, member, {
+    principal: ownerPrincipal,
+    telemetry,
+    service: services,
+    secrets,
+    captureRawFrames: true,
+  });
+  clients.add(c);
+  const key = `v${version}-${phase}-${role}`;
+  assert(
+    !connectionInventory.has(key),
+    "duplicate Persistence connection role",
   );
-  connections.push(c);
-  await c.initialize();
+  const recorder = createPersistenceRecorder(
+    c,
+    { version, agentId, phase, role },
+    async (snapshot) => {
+      connectionInventory.set(key, snapshot);
+      writeEvidenceFile(
+        directory,
+        `connection-${key}.private.json`,
+        JSON.stringify(snapshot),
+      );
+    },
+  );
+  recorders.set(c, recorder);
+  connectionInventory.set(key, recorder.snapshot());
+  clients.delete(c);
+  clients.add(recorder);
   return c;
 }
-async function send(c, name, params, expected) {
-  let result;
-  try {
-    result = await c.request(name, params, 120000);
-    return result;
-  } finally {
-    requests.push({
-      ...c.lastRequest,
-      sessionId: params.sessionId ?? result?.sessionId,
-      ...expected,
-    });
-  }
+const send = (c, name, params) => recorders.get(c).request(name, params);
+async function close(c) {
+  const recorder = recorders.get(c);
+  await recorder.closeAndWait();
+  clients.delete(recorder);
 }
 async function prompt(c, version, sessionId, phase) {
   const offset = c.updates.length,
-    result = await send(
-      c,
-      "prompt",
-      { sessionId, prompt: [{ type: "text", text: phase }] },
-      { kind: "ordinary", label: phase, phase },
-    );
+    result = await send(c, "prompt", {
+      sessionId,
+      prompt: [{ type: "text", text: phase }],
+    });
   if (version === 2)
     await until(
       () =>
@@ -220,19 +248,16 @@ async function checkpoint(name) {
     90000,
   );
 }
-async function preserve(version, sessionId, before, label) {
+async function preserve(version, sessionId, before, phase) {
   const calls = (await modelState()).requests;
   let reader;
   for (let n = 1; n <= 2; n++) {
-    reader = await connect(version);
+    reader = await connect(version, phase, `replay-${n}`);
     const spec = replayRequest(version, sessionId);
-    await send(reader, spec.method, spec.params, {
-      kind: "request",
-      label: `${label}-replay-${n}`,
-    });
+    await send(reader, spec.method, spec.params);
     assertReplay(version, reader.updates, before, sessionId);
     assert.deepEqual(await saved(sessionId, before.run.run_id), before);
-    if (n === 1) await reader.close();
+    if (n === 1) await close(reader);
   }
   assert.deepEqual(
     (await modelState()).requests,
@@ -245,22 +270,15 @@ async function exercise(version, phase) {
   const label = `v${version}-${phase}`;
   stage = label;
   await ready();
-  const c = await connect(version),
-    { sessionId } = await send(
-      c,
-      "new",
-      { cwd: "/workspace", mcpServers: [] },
-      { kind: "request", label: label + "-new" },
-    );
+  const c = await connect(version, phase, "prompt"),
+    { sessionId } = await send(c, "new", { cwd: "/workspace", mcpServers: [] });
   if (phase !== "finish") await proxy("/arm", { phase, session_id: sessionId });
   let resolved = false;
   const offset = c.updates.length;
-  const pending = send(
-    c,
-    "prompt",
-    { sessionId, prompt: [{ type: "text", text: label + "-fault" }] },
-    { kind: "fault", label: label + "-fault", phase },
-  ).then(
+  const pending = send(c, "prompt", {
+    sessionId,
+    prompt: [{ type: "text", text: label + "-fault" }],
+  }).then(
     (value) => {
       resolved = true;
       return { value };
@@ -321,8 +339,15 @@ async function exercise(version, phase) {
   await checkpoint(`observing-${step}`);
   await proxy("/drop", { receipt_id: held.receipt_id });
   await checkpoint(`done-${step}`);
-  await pending;
-  await c.close();
+  const outcome = await pending;
+  if (version === 2 && phase === "finish")
+    assert(Object.hasOwn(outcome, "value"));
+  else
+    assert(
+      Object.hasOwn(outcome, "error"),
+      "unacknowledged fault prompt succeeded",
+    );
+  await close(c);
   await ready();
   const proxyState = await proxy();
   assert.deepEqual(proxyState.errors, []);
@@ -335,9 +360,9 @@ async function exercise(version, phase) {
     calls,
     "startup re-executed Provider",
   );
-  const reader = await preserve(version, sessionId, after, label);
+  const reader = await preserve(version, sessionId, after, phase);
   await prompt(reader, version, sessionId, label + "-post");
-  await reader.close();
+  await close(reader);
   assert.deepEqual(
     await saved(sessionId, held.run_id),
     after,
@@ -353,6 +378,7 @@ async function exercise(version, phase) {
     natural_exit: 1,
     replays: 2,
     terminal_observed_while_receipt_held: terminalObserved,
+    prompt_receipt: recorders.get(c).snapshot().evidence[1],
   });
   console.log(
     asciiJSON({
@@ -414,6 +440,13 @@ async function main() {
       await exercise(version, phase);
   const modelResult = await modelState();
   assert.equal(modelResult.requests.length, 16);
+  const indexed = indexPersistenceRequests({
+    agentId,
+    connections: [...connectionInventory.values()],
+  });
+  requests.push(...indexed.requests);
+  initializations.push(...indexed.initializations);
+  await telemetry.flush();
   stage = "delete";
   const removed = await admin.request(`/api/admin/agents/${agentId}/delete`, {
     body: {},
@@ -440,6 +473,9 @@ async function main() {
     model_requests: modelResult.requests.length,
     restarts,
     replays: 12,
+    connections: connectionInventory.size,
+    initialization_requests: initializations.length,
+    business_requests: requests.length,
     history_preserved: true,
     runtime_operations: journals,
   };
@@ -458,13 +494,15 @@ async function main() {
     );
   save("inputs")({
     requests,
+    initializations,
+    connections: [...connectionInventory.values()],
     lifecycle,
     faults,
     executionState: stateReceipts,
     modelRequests: modelResult.requests,
   });
   const results = [];
-  for (const expected of [...lifecycle, ...requests]) {
+  for (const expected of [...lifecycle, ...initializations, ...requests]) {
     const label = expected.label ?? expected.kind;
     stage = `trace:${label}`;
     try {
@@ -521,24 +559,30 @@ async function main() {
   if (!accepted) process.exitCode = 1;
 }
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, main);
 } catch (error) {
   console.error(
-    asciiJSON({
-      event: "persistence_failed",
-      stage,
-      error: error.message,
-      location: error.stack
-        ?.split("\n")
-        .find((line) => line.includes("file:///app/tests/e2e/")),
-    }),
+    asciiJSON(
+      await preserveFileFailure({
+        directory,
+        error,
+        stage,
+        inventory: {
+          requests,
+          initializations,
+          connections: [...recorders.values()].map((recorder) =>
+            recorder.snapshot(),
+          ),
+          lifecycle,
+          faults,
+          stateReceipts,
+        },
+        fetchStatus: () =>
+          fetch("http://persistence-model-peer:8080/status", {
+            signal: AbortSignal.timeout(5000),
+          }),
+      }),
+    ),
   );
   process.exitCode = 1;
-} finally {
-  for (const c of connections)
-    try {
-      await c.close();
-    } catch {
-      // Legacy connection cleanup is replaced with the private ACP consumer.
-    }
 }

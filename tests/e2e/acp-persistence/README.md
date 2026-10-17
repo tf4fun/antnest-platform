@@ -25,8 +25,24 @@ entrypoint preserves the existing recovery error type. Persistence loads the
 reader lazily so Restart's existing lightweight readiness import does not gain
 a schema or dependency requirement before that consumer migrates.
 
-Private ACP connection/request inventory, Trace collection, and owning Docker
-deployment remain pending. Deployment must supply the execution-state schema,
+Private ACP connections now reuse the existing shared connector, including its
+single initialization and the owner's original Principal delegation. A joined
+private recorder binds every actual outgoing request to its connection, Agent,
+protocol and input/returned Session. It preserves original inputs, results,
+failures and pre-SDK response frames after each request and after closing.
+Business and evidence/cleanup failures remain failures together. The five
+unacknowledged fault prompts must fail; v2 completion retains its actual prompt
+ACK and the separate busy-state check. No deliberate local-close exception is
+borrowed from another scenario.
+
+The six cases require exactly 18 closed connections/initializations and 30
+business requests (six new, twelve prompts, six loads and six resumes). Missing,
+duplicate, stale or foreign receipts fail the inventory check. Existing real
+SDK/TCP peers exercise the recorder; these checks do not replace natural process
+exit, database durability, replay or physical Bash effects in Docker.
+
+Private Trace collection and owning Docker deployment remain pending.
+Deployment must supply the execution-state schema,
 Identity and ACP grants, and private listener reachability before this profile
 can run against the retired Gateway routes.
 
