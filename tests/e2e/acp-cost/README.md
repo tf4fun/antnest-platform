@@ -113,6 +113,8 @@ private Node GET/101 upgrades with all three original
 The exact source identities and direct parent must match; events must have
 only their fixed names, be unique and ordered inside the same original SERVER,
 and response preparation must fall inside the original CLIENT interval.
+Phase order is checked by event name and timestamp; Jaeger's log array may use
+any enumeration order. Original event arrays are preserved without sorting.
 The production worker gate proves that the peer can accept 101 before setup
 finishes. This permits the proven post-response lifetime, without claiming
 all clock error has been excluded. Missing events, failed setup, ERROR, an

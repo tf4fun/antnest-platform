@@ -115,12 +115,38 @@ test("upgrade warning propagation retains the original source and every raw occu
   assert(result.inventory.every((item) => item.warning === warning));
 });
 
+for (const version of [1, 2])
+  for (const order of [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
+  ])
+    test(`v${version} upgrade event enumeration ${order.join("")} preserves chronological phase review`, (t) => {
+      const f = fixture(t, version, 3015);
+      f.server.logs = order.map((index) => f.server.logs[index]);
+      const before = structuredClone(f.source);
+      const result = inspectCostWarningSources([f.source]);
+      assert.equal(result.eligible_for_review, true);
+      assert.equal(result.reviewed_lifecycle_warning_count, 1);
+      assert.equal(result.deferred_warning_count, 0);
+      assert.equal(result.sources[0].classification, classification);
+      assert.deepEqual(result.sources[0].upgrade_events, f.server.logs);
+      assert.deepEqual(f.source, before);
+    });
+
 for (const [name, mutate] of [
   ["missing parent", (f) => f.source.spans.shift()],
   ["missing phase", (f) => f.server.logs.shift()],
   ["failed setup", (f) => f.server.logs.pop()],
   ["duplicate phase", (f) => f.server.logs.push(f.server.logs[2])],
-  ["out-of-order phases", (f) => f.server.logs.reverse()],
+  [
+    "duplicate phase replacing missing phase",
+    (f) => (f.server.logs[1] = structuredClone(f.server.logs[0])),
+  ],
+  ["completion before setup", (f) => (f.server.logs[2].timestamp = 599)],
   ["inverted phase times", (f) => (f.server.logs[1].timestamp = 499)],
   ["phase before source", (f) => (f.server.logs[0].timestamp = -1)],
   ["phase after source", (f) => f.server.logs[2].timestamp++],
@@ -205,41 +231,49 @@ for (const [name, collect, outcome] of [
   ["Progress", collectPrivateProgressTrace, privateProgressStrictOutcome],
 ])
   for (const version of [1, 2])
-    test(`${name} v${version} binds lifecycle review to three archived samples and keeps strict failure`, async (t) => {
-      const f = fixture(t, version);
-      for (const span of [f.client, f.server])
-        span.tags.find((item) => item.key === "http.response.status_code").key =
-          "http.status_code";
-      const before = structuredClone([...f.raw]);
-      const result = await collect("http://jaeger", f.expected, f.options);
-      const review = outcome([result]);
-      assert.equal(review.accepted, true);
-      assert.equal(review.exit_code, 2);
-      assert.equal(result.strict_trace, "failed");
-      assert.equal(result.warning_count, 1);
-      assert.deepEqual(result.warnings, [warning]);
-      assert.equal(result.complete_source_receipt.stable_samples, 3);
-      const proof = JSON.parse(
-        readFileSync(
-          join(
-            result.evidence_directory,
-            `${name.toLowerCase()}-warning-review.private.json`,
+    for (const order of ["chronological", "reversed"])
+      test(`${name} v${version} ${order} events bind lifecycle review to three archived samples and keep strict failure`, async (t) => {
+        const f = fixture(t, version);
+        if (order === "reversed") f.server.logs.reverse();
+        for (const span of [f.client, f.server])
+          span.tags.find(
+            (item) => item.key === "http.response.status_code",
+          ).key = "http.status_code";
+        const before = structuredClone([...f.raw]);
+        const result = await collect("http://jaeger", f.expected, f.options);
+        const review = outcome([result]);
+        assert.equal(review.accepted, true);
+        assert.equal(review.exit_code, 2);
+        assert.equal(result.strict_trace, "failed");
+        assert.equal(result.warning_count, 1);
+        assert.deepEqual(result.warnings, [warning]);
+        assert.equal(result.complete_source_receipt.stable_samples, 3);
+        const proof = JSON.parse(
+          readFileSync(
+            join(
+              result.evidence_directory,
+              `${name.toLowerCase()}-warning-review.private.json`,
+            ),
           ),
-        ),
-      );
-      assert(
-        proof.samples.every(
-          (sample) =>
-            sample.policy.sources[0].classification === classification,
-        ),
-      );
-      assert(
-        proof.samples.every(
-          (sample) => sample.policy.eligible_for_deferral === false,
-        ),
-      );
-      const projection = result[`${name.toLowerCase()}_warning_review`];
-      assert.equal(projection.deferred_warning_count, 0);
-      assert.equal(projection.reviewed_lifecycle_warning_count, 1);
-      assert.deepEqual([...f.raw], before);
-    });
+        );
+        assert(
+          proof.samples.every(
+            (sample) =>
+              sample.policy.sources[0].classification === classification,
+          ),
+        );
+        assert(
+          proof.samples.every(
+            (sample) => sample.policy.eligible_for_deferral === false,
+          ),
+        );
+        for (const sample of proof.samples)
+          assert.deepEqual(
+            sample.policy.sources[0].upgrade_events,
+            f.server.logs,
+          );
+        const projection = result[`${name.toLowerCase()}_warning_review`];
+        assert.equal(projection.deferred_warning_count, 0);
+        assert.equal(projection.reviewed_lifecycle_warning_count, 1);
+        assert.deepEqual([...f.raw], before);
+      });

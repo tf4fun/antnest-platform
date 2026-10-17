@@ -210,27 +210,36 @@ function reviewedNodeUpgrade(trace, child, parent, left, right) {
   ];
   if (!Array.isArray(child.logs) || child.logs.length !== names.length)
     return false;
-  let previous = child.startTime;
-  for (const [index, event] of child.logs.entries()) {
+  // Jaeger may enumerate logs in reverse order. Keep the original array
+  // intact and validate chronology by the identity of each phase instead.
+  const phases = new Map();
+  for (const event of child.logs) {
     if (
       !event ||
       !Number.isSafeInteger(event.timestamp) ||
-      event.timestamp < previous ||
+      event.timestamp < child.startTime ||
       event.timestamp > end(child) ||
       !Array.isArray(event.fields) ||
       event.fields.length !== 1 ||
       event.fields[0]?.key !== "event" ||
-      event.fields[0]?.value !== names[index] ||
+      !names.includes(event.fields[0]?.value) ||
+      phases.has(event.fields[0]?.value) ||
       ![undefined, "string"].includes(event.fields[0]?.type)
     )
       return false;
+    phases.set(event.fields[0].value, event);
+  }
+  let previous = child.startTime;
+  for (const name of names) {
+    const event = phases.get(name);
+    if (!event || event.timestamp < previous) return false;
     previous = event.timestamp;
   }
   // The real worker gate proves that setup may outlive the accepted peer
   // handshake. Original response preparation must still fall inside that
   // CLIENT, so whole-span/event clock shifts cannot borrow an arbitrary tail.
   // This is a lifecycle classification, not cross-process clock calibration.
-  return child.logs[0].timestamp <= end(parent);
+  return phases.get(names[0]).timestamp <= end(parent);
 }
 
 function runtimeCleanupSource({ trace, parents }, propagation) {
