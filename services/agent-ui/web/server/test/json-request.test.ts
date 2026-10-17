@@ -106,3 +106,33 @@ test("validation rejects an oversized clone while its sibling remains unread", {
     await validation.catch(() => {});
   }
 });
+
+for (const [label, read] of [
+  ["native validation", validateJsonRequest],
+  ["direct handler", readBody],
+] as const) {
+  test(`four completed large bodies leave I/O time before ${label} finishes`, async () => {
+    const body = '{"value":"' + "x".repeat(2 * 1024 * 1024) + '"}';
+    const events: string[] = [];
+    const pending = Array.from({ length: 4 }, async () => {
+      await read(incoming(body));
+      events.push("validated");
+    });
+    const control = turn().then(() => events.push("control"));
+    await Promise.all([...pending, control]);
+    assert.equal(events[0], "control", "large body parsing starved ready control I/O");
+  });
+  test(`disconnect after large body EOF prevents ${label} from returning a body`, async () => {
+    const abort = new AbortController(), reason = new Error("original body disconnect");
+    const request = new Request("http://workspace.internal/input", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: '{"value":"' + "x".repeat(2 * 1024 * 1024) + '"}',
+      signal: abort.signal,
+    });
+    const pending = read(request);
+    void pending.catch(() => {});
+    await turn();
+    abort.abort(reason);
+    await assert.rejects(pending, (error: unknown) => error === reason);
+  });
+}

@@ -151,6 +151,10 @@ Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
 organization. It preserves the configured single Prompt limit. Control requests
 use a separate 16 KiB body ceiling and bypass the upload pool. Capacity rejection
 is `429 upload_capacity_exceeded`; the browser does not replay a Prompt.
+Bodies of at least 1 MiB and Prompt preparation share a FIFO that gives ready
+I/O an event-loop turn between synchronous jobs. Controls bypass that queue.
+Queued requests check cancellation before parsing or submitting; their upload
+reservation and Session lease stay held until the handler finishes.
 
 ## Dependencies
 

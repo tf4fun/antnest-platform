@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { strictObject } from "../adapters/strict-json.ts";
 import { fields } from "../adapters/service-authentication.ts";
 import { copyAuthenticatedRequest } from "./trusted-identity.ts";
+import { largeInputBytes, runInputWork } from "./input-work.ts";
 
 type ValidatedJson = { value: Record<string, unknown>; byteLength: number };
 const validatedBodies = new WeakMap<Request, ValidatedJson>();
@@ -54,9 +55,16 @@ export async function validateJsonRequest(request: Request, maximum = 64 * 1024 
     if (!complete) void reader.cancel().catch(() => {});
     reader.releaseLock();
   }
-  const bytes = Buffer.concat(chunks);
-  let value: Record<string, unknown>;
-  try { value = strictObject(bytes); } catch { throw new HttpInputError(400, "invalid_json"); }
+  const parse = () => {
+    const bytes = Buffer.concat(chunks);
+    let value: Record<string, unknown>;
+    try { value = strictObject(bytes); } catch { throw new HttpInputError(400, "invalid_json"); }
+    return { bytes, value };
+  };
+  // Keep cancellation outside the JSON error mapping and the reservation owned
+  // by native dispatch until queued parsing has actually finished.
+  const { bytes, value } = size >= largeInputBytes
+    ? await runInputWork(parse, request.signal) : parse();
   // A byte-array Request constructor copies the entire upload. The owned buffer
   // already has a bounded lifetime; expose it once through a normal body stream.
   const validated = new Request(request.url, { method: request.method, headers: request.headers,

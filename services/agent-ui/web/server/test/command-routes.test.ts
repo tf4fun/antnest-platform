@@ -1,6 +1,7 @@
 import { TestRequest as Request } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { setImmediate as turn } from "node:timers/promises";
 import { HistoryTokens } from "../src/bridge/history-token.ts";
 import { createCommandHandler } from "../src/http/command-routes.ts";
 import { ReplayCapacityError } from "../src/bridge/replay-load-gate.ts";
@@ -81,9 +82,11 @@ function request(
   method = "GET",
   body?: unknown,
   extra?: Record<string, string>,
+  signal?: AbortSignal,
 ): Request {
   return new Request(`${base}${path}`, {
     method,
+    signal,
     headers: {
       "x-antnest-organization-id": scope.organizationId,
       "x-antnest-principal-id": scope.principalId,
@@ -260,4 +263,39 @@ test("prompt admission reports exhausted replay capacity explicitly", async () =
   );
   assert.equal(response?.status, 429);
   assert.equal((await response?.json()).code, "replay_capacity_exceeded");
+});
+
+for (const cause of ["disconnect", "deadline"]) {
+  test(`a prompt cancelled by ${cause} while awaiting preparation never submits and releases its lease once`, async () => {
+    const { handler, calls } = fixture();
+    const abort = new AbortController();
+    const pending = handler(request("/prompts", "POST", prompt, {
+      "if-match": tokens.issue(condition),
+      "idempotency-key": "intent-1",
+    }, abort.signal));
+    try {
+      await turn();
+      abort.abort(new Error(cause));
+      const response = await pending;
+      assert.notEqual(response?.status, 202);
+      assert.deepEqual(calls, ["authorize:session-1", "release"]);
+    } finally { abort.abort(); await pending; }
+  });
+}
+
+test("a ready cancel bypasses pending prompt preparation while its lease stays held", async () => {
+  const { handler, calls } = fixture();
+  const pending = handler(request("/prompts", "POST", prompt, {
+    "if-match": tokens.issue(condition),
+    "idempotency-key": "intent-1",
+  }));
+  try {
+    await turn();
+    assert.deepEqual(calls, ["authorize:session-1"]);
+    const cancelled = await handler(request("/operations/running/cancel", "POST", { expectedRunId: "run-1" }));
+    assert.equal(cancelled?.status, 200);
+    assert.deepEqual(calls, ["authorize:session-1", "authorize:session-1", "cancel:running:run-1", "release"]);
+    assert.equal((await pending)?.status, 202);
+    assert.deepEqual(calls.slice(-2), ["submit:intent-1", "release"]);
+  } finally { await pending; }
 });

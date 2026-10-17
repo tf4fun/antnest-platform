@@ -18,6 +18,7 @@ import { BridgeCapacityError } from "../bridge/registry.ts";
 import { bindScopeContext, verifiedRequestContext } from "./trusted-identity.ts";
 import { strictObject } from "../adapters/strict-json.ts";
 import { takeValidatedJson } from "./json-request.ts";
+import { largeInputBytes, runInputWork } from "./input-work.ts";
 
 const prefix = ["api", "app", "workspace", "v1", "agents"];
 const id = z.string().min(1).max(200);
@@ -187,19 +188,19 @@ export function createCommandHandler(dependencies: {
             "History condition is stale",
             "refresh",
           );
-        if (acpPromptRequestBytes({
+        const input = {
           sessionId,
           intentId: body.intentId,
           expectedAppendVersion: body.expectedAppendVersion,
           prompt: body.prompt as ContentBlock[],
-        }) > maxAcpPromptBytes)
-          throw new BodyTooLargeError();
-        const accepted = authorized.operations.submit({
-          sessionId,
-          intentId: body.intentId,
-          expectedAppendVersion: body.expectedAppendVersion,
-          prompt: body.prompt as ContentBlock[],
-        });
+        };
+        // Wire sizing, fingerprinting and intent insertion stay one synchronous
+        // operation. Other ready requests can run between queued preparations.
+        const accepted = await runInputWork(() => {
+          if (acpPromptRequestBytes(input) > maxAcpPromptBytes)
+            throw new BodyTooLargeError();
+          return authorized.operations.submit(input);
+        }, request.signal);
         return json(accepted, 202);
       }
       if (action === "cancel") {
@@ -353,18 +354,18 @@ export async function readBody(
     if (!complete) void reader.cancel().catch(() => {});
     reader.releaseLock();
   }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    request.signal.throwIfAborted();
-    return strictObject(bytes);
-  } catch {
-    throw new SyntaxError("Invalid JSON encoding");
-  }
+  const parse = () => {
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    try { return strictObject(bytes); }
+    catch { throw new SyntaxError("Invalid JSON encoding"); }
+  };
+  request.signal.throwIfAborted();
+  return size >= largeInputBytes ? await runInputWork(parse, request.signal) : parse();
 }
 
 async function readWhileConnected(

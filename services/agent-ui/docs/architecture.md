@@ -402,6 +402,16 @@ local output and metadata updates do not trigger ACP observation GETs.
   count to route validation; clones and direct handler requests still parse
   strictly. Payload strings use native boundary scanning, and routes retain
   their Zod validation, byte limits and same-intent content digest comparison.
+  Body copying and strict parsing at or above 1 MiB use a process-local FIFO.
+  Prompt wire sizing, content digest comparison and intent insertion use the
+  same FIFO as one synchronous job, with an event-loop turn before each job so
+  ready I/O can proceed between preparations. Each job keeps its caller's
+  async context and checks cancellation before execution. Small control paths
+  bypass the queue; queue failures do not block later requests, and dispatch
+  still owns upload reservations and Session leases until its work settles.
+  This does not preempt an individual synchronous job or establish a general
+  end-to-end latency bound; the fixed cancellation workloads below retain
+  their one-second gate.
 - Each owner admits at most 16 live Agent SSE observers across selected
   Sessions, keeps at most 32 Agent and 32 Session journals, and retains up to
   256 KiB of replay suffix per journal. A slow observer has a 1 MiB
