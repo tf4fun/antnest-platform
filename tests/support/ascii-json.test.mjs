@@ -9,6 +9,7 @@ import { planHarnessArguments } from "../e2e/acp-plan/deployment.mjs";
 import { multimodalHarnessArguments } from "../e2e/acp-multimodal/deployment.mjs";
 import { costHarnessArguments } from "../e2e/acp-cost/deployment.mjs";
 import { filesHarnessArguments } from "../e2e/acp-files/deployment.mjs";
+import { progressHarnessArguments } from "../e2e/acp-progress/deployment.mjs";
 import { asciiJSON } from "./ascii-json.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -99,6 +100,7 @@ function logReadClients() {
         "e2e-multimodal.sh",
         "e2e-session-cost.sh",
         "e2e-file-observations.sh",
+        "e2e-tool-progress.sh",
       ].includes(name)
     ) {
       const commands = name === "e2e-slash-commands.sh";
@@ -106,33 +108,38 @@ function logReadClients() {
       const multimodal = name === "e2e-multimodal.sh";
       const files = name === "e2e-file-observations.sh";
       const cost = name === "e2e-session-cost.sh";
+      const progress = name === "e2e-tool-progress.sh";
       assert.match(
         script,
-        cost
-          ? /node "\$root\/tests\/e2e\/acp-cost\/deployment\.mjs" create-harness/u
-          : files
-            ? /node "\$root\/tests\/e2e\/acp-files\/deployment\.mjs" create-harness/u
-            : plan
-              ? /node "\$root\/tests\/e2e\/acp-plan\/deployment\.mjs" create-harness/u
-              : multimodal
-                ? /node "\$root\/tests\/e2e\/acp-multimodal\/deployment\.mjs" create-harness/u
-                : commands
-                  ? /node "\$root\/tests\/e2e\/acp-commands\/deployment\.mjs" create-harness/u
-                  : /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
+        progress
+          ? /node "\$root\/tests\/e2e\/acp-progress\/deployment\.mjs" create-harness/u
+          : cost
+            ? /node "\$root\/tests\/e2e\/acp-cost\/deployment\.mjs" create-harness/u
+            : files
+              ? /node "\$root\/tests\/e2e\/acp-files\/deployment\.mjs" create-harness/u
+              : plan
+                ? /node "\$root\/tests\/e2e\/acp-plan\/deployment\.mjs" create-harness/u
+                : multimodal
+                  ? /node "\$root\/tests\/e2e\/acp-multimodal\/deployment\.mjs" create-harness/u
+                  : commands
+                    ? /node "\$root\/tests\/e2e\/acp-commands\/deployment\.mjs" create-harness/u
+                    : /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
       );
       const runID = "00000000-0000-4000-8000-000000000001";
-      const tag = `${cost ? "cost" : files ? "files" : plan ? "plan" : multimodal ? "multimodal" : commands ? "commands" : "session"}-${runID}`;
-      const harness = cost
-        ? costHarnessArguments
-        : files
-          ? filesHarnessArguments
-          : plan
-            ? planHarnessArguments
-            : multimodal
-              ? multimodalHarnessArguments
-              : commands
-                ? commandHarnessArguments
-                : sessionHarnessArguments;
+      const tag = `${progress ? "progress" : cost ? "cost" : files ? "files" : plan ? "plan" : multimodal ? "multimodal" : commands ? "commands" : "session"}-${runID}`;
+      const harness = progress
+        ? progressHarnessArguments
+        : cost
+          ? costHarnessArguments
+          : files
+            ? filesHarnessArguments
+            : plan
+              ? planHarnessArguments
+              : multimodal
+                ? multimodalHarnessArguments
+                : commands
+                  ? commandHarnessArguments
+                  : sessionHarnessArguments;
       const { client } = harness(
         {
           COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
