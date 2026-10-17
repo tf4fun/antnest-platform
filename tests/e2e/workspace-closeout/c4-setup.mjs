@@ -20,7 +20,7 @@ export async function until(check, label, signal, timeout = 120000) {
   throw new Error(`${label}: deadline exceeded`);
 }
 
-export async function setup(config, signal) {
+export async function setup(config, signal, { contextWindow = 8192 } = {}) {
   const client = new GatewayClient(config.gateway);
   const json = async (path, options) =>
     (await client.request(path, options)).body;
@@ -51,7 +51,7 @@ export async function setup(config, signal) {
           display_name: "C4 vision",
           model: {
             model: "stage3-model",
-            context_window: 8192,
+            context_window: contextWindow,
             max_output_tokens: 1024,
             supports_images: true,
           },

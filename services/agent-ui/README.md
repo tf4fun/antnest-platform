@@ -159,6 +159,23 @@ With telemetry enabled, the original HTTP span records native upload phases
 and a process-monotonic clock sample. These bounded receipts support the
 cross-service capacity gate without recording attachment contents or credentials.
 
+`make e2e-agent-ui-upload-capacity` exercises two real users against Gateway,
+Agent UI, ACP and Runtime with 64 live SSE streams: four owners, two Session
+selections per owner, eight subscribers per selection. The 65th stream must be
+rejected. User A sends three valid PNG images whose ACP envelope approaches the
+configured 16 MiB limit while User B cancels a running Bash through each control
+path. Both incomplete-body and EOF/parse scenarios retain the 1 second limit for
+the control response, cancellation-specific terminal receipt and original Runtime
+process group stopping. A cancelled Bash with unknown effects is correctly
+`uncertain`, with a quiescent executor, rather than a claim that effects rolled back.
+The gate binds original HTTP phases using before/after monotonic-clock bounds,
+replays the actual SSE frames and checks the model received every image intact.
+The deterministic external model advertises an 8 Mi-token context so the normal
+ACP context budget admits the three images; all Antnest services run production
+images. Independent cases use a fresh B Agent and renew streams between cases,
+while retaining the earlier cancelled operation's unresolved side effects.
+Private raw evidence lives in `artifacts/verification/agent-ui-upload-capacity-*`.
+
 ## Dependencies
 
 - Edge Gateway: the only supported caller; supplies verified identity.

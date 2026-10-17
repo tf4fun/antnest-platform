@@ -1,0 +1,7 @@
+# Independent model fixture; production Gateway/UI/ACP/Runtime paths remain intact.
+services:
+  stage3-model:
+    command: ["node", "/tests/e2e/agent-ui/upload-capacity-model.mjs"]
+  agent-ui:
+    environment:
+      ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES: "16777216"

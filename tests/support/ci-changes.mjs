@@ -369,6 +369,12 @@ export const suites = [
       "make e2e-gateway-security-headers",
     ],
     [
+      "agent-ui-upload-capacity",
+      "Agent UI two-user upload cancellation capacity",
+      ["agent-ui-web"],
+      "make e2e-agent-ui-upload-capacity",
+    ],
+    [
       "agent-ui-receipt",
       "Agent UI receipt contract",
       ["agent-ui-web", "chromium"],
@@ -382,12 +388,11 @@ export const suites = [
     disabled,
     strict: id === "gateway-resolve-cache",
     images: platformImages,
-    pull:
-      id === "gateway-resolve-cache"
-        ? [...observed, "caddy:2.11.7-alpine"]
-        : ["gateway-tls", "browser-sessions-https"].includes(id)
-          ? [...temporal, "caddy:2.11.7-alpine"]
-          : temporal,
+    pull: ["gateway-resolve-cache", "agent-ui-upload-capacity"].includes(id)
+      ? [...observed, "caddy:2.11.7-alpine"]
+      : ["gateway-tls", "browser-sessions-https"].includes(id)
+        ? [...temporal, "caddy:2.11.7-alpine"]
+        : temporal,
     paths: [
       "services/**",
       "deploy/tls/**",
@@ -1083,6 +1088,7 @@ export const shards = [
       "browser-sessions-https",
       "gateway-security-headers",
       "agent-ui-receipt",
+      "agent-ui-upload-capacity",
       "gateway-shutdown",
     ],
   },

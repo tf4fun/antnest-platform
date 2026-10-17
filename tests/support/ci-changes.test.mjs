@@ -706,6 +706,46 @@ test("foundation runners report strict-only findings through exit 2", () => {
   }
 });
 
+test("upload capacity runs the real two-user gate and its counterexamples in required CI", () => {
+  const suite = suites.find((item) => item.id === "agent-ui-upload-capacity");
+  assert(suite);
+  assert.equal(suite.tier, "b");
+  assert.deepEqual(suite.setup, ["agent-ui-web"]);
+  assert.deepEqual(suite.run, ["make e2e-agent-ui-upload-capacity"]);
+  assert(
+    suite.pull.includes("cr.jaegertracing.io/jaegertracing/jaeger:2.21.0"),
+  );
+  assert.deepEqual(
+    suite.images,
+    suites.find((item) => item.id === "gateway-tls").images,
+  );
+  assert(
+    shards.find((item) => item.id === "b-gateway").suites.includes(suite.id),
+  );
+  for (const path of [
+    "services/agent-ui/web/server/src/http/json-request.ts",
+    "tests/e2e/agent-ui/upload-capacity-docker.mjs",
+  ]) {
+    assert(selectSuites([path]).some((item) => item.id === suite.id));
+  }
+  const commands = execFileSync("make", ["--dry-run", "test-repo"], {
+    encoding: "utf8",
+  });
+  assert.match(
+    commands,
+    /node --test --test-concurrency=1 tests\/e2e\/agent-ui\/upload-capacity-\*\.test\.mjs/u,
+  );
+  const run = execFileSync(
+    "make",
+    ["--dry-run", "e2e-agent-ui-upload-capacity"],
+    { encoding: "utf8" },
+  );
+  assert.equal(
+    run.trim(),
+    "node tests/e2e/agent-ui/upload-capacity-docker.mjs",
+  );
+});
+
 test("resolve cache outage is a required Tier B observed HTTPS suite", () => {
   const suite = suites.find((item) => item.id === "gateway-resolve-cache");
   assert(suite);
