@@ -20,6 +20,16 @@ exception. V2 requires the actual completed prompt `messageId` acknowledgement;
 an acknowledgement does not settle its pending approval. Other business requests
 cannot overlap that pending decision, while a cancel notification can be sent.
 
+The owning configuration Trace inspector binds the original request ID,
+Session, `mode` or `model` selection and returned value. It checks the complete
+authorized Session/configuration reads, revision-checked update and visible
+configuration message in one committed transaction. A complete output read
+must precede configuration mutation; later output reads remain allowed. SQL
+values are not exported, so the observed selection comes from the actual SDK
+receipt. Grouped model choices and additional thinking options remain intact.
+Configuration must not run a model, Tool or permission approval. These Trace
+fixture checks still require actual consumer collection and Docker acceptance.
+
 The adapter's real SDK/TCP tests establish this client contract. The deployed
 client and Trace/deployment collectors below still need migration before this
 scenario can run against the retired-Gateway-route removal. Actual reconnection
