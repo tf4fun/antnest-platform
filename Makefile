@@ -315,7 +315,7 @@ e2e-multimodal:
 
 .PHONY: test-cost-fixtures e2e-session-cost
 test-cost-fixtures:
-	node --test --test-concurrency=1 tests/e2e/acp-cost/*.test.mjs
+	node --import ./tests/e2e/identity-closeout/acp-client-dependencies.fixture.mjs --test --test-concurrency=1 tests/e2e/acp-cost/*.test.mjs
 
 e2e-session-cost:
 	ANTNEST_E2E_SESSION_COST=true sh tests/e2e/e2e-stage3a.sh
