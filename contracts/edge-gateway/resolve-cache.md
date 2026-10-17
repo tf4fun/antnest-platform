@@ -126,6 +126,19 @@ The events already cover logout, password changes, role changes, User and
 Membership deactivation/deletion, and OIDC unbinding's session revocations.
 There is no implemented Organization-disable command to claim as new coverage.
 
+When a matching feed event wins cancellation of an already admitted browser
+stream, its original Gateway HTTP SERVER records one
+`antnest.stream.termination` event before ending. It has fixed
+`source=identity-session-feed`, `reason=session_revoked`, the allowlisted
+`antnest.revocation.reason`, sequence, original organization/User/Membership
+and route Agent. Valid source trace/span IDs are decoded from the producer's
+traceparent; raw traceparent, SID, Cookie and CCT are never recorded. Invalid
+diagnostics cannot delay cancellation or be exported as arbitrary text.
+The event timestamp is the winning cancellation attempt's local time.
+Parent cancellation, live-check rejection and expiry cannot be relabeled by a
+later feed event. Existing HTTP errors, status, deadlines and joined cleanup
+remain unchanged; consumers must still bind the event to its real mutation.
+
 Keep the most recent 128 applied session SIDs as SHA-256 digests in a fixed
 4096-byte window, plus a process-local application counter. This fixed metadata
 is separate from the accounted entry budget and retains no raw SID strings.

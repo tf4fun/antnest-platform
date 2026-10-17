@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/streamio"
@@ -52,6 +55,19 @@ func (h *handler) guardBrowserStream(response http.ResponseWriter, request *http
 	finish := func() {
 		guard.Close()
 		finishWrites()
+		if receipt, ok := guard.FeedTermination(); ok {
+			attributes := []attribute.KeyValue{
+				attribute.String("source", "identity-session-feed"), attribute.String("reason", "session_revoked"),
+				attribute.String("antnest.revocation.reason", receipt.Reason), attribute.Int64("antnest.revocation.sequence", receipt.Sequence),
+				attribute.String("antnest.organization.id", principal.OrganizationID), attribute.String("antnest.principal.id", principal.UserID),
+				attribute.String("antnest.membership.id", principal.MembershipID), attribute.String("antnest.agent.id", agent),
+			}
+			if receipt.Source.IsValid() {
+				attributes = append(attributes, attribute.String("antnest.revocation.trace_id", receipt.Source.TraceID().String()),
+					attribute.String("antnest.revocation.span_id", receipt.Source.SpanID().String()))
+			}
+			trace.SpanFromContext(request.Context()).AddEvent("antnest.stream.termination", trace.WithTimestamp(receipt.At), trace.WithAttributes(attributes...))
+		}
 		cancelLease()
 	}
 	return response, request.WithContext(guard.Context()), finish, nil

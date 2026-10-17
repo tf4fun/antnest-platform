@@ -40,7 +40,7 @@ func (registry *Registry) Revoke(event identity.SessionRevocation) {
 	defer registry.mu.Unlock()
 	for guard := range registry.sessions[event.TokenID] {
 		if guard.original.UserID == event.UserID && guard.original.OrganizationID == event.OrganizationID {
-			guard.cancel(ErrRejected)
+			guard.cancel(feedCause(event))
 		}
 	}
 }

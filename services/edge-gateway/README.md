@@ -18,6 +18,11 @@ Browser-supplied authentication/identity headers and cookies are removed;
 presentation hints are regenerated from the verified principal. User access
 tokens reach only Identity's authenticated credential RPCs.
 
+An active SSE closed by the session-revocation feed records its actual winning
+cause on the original HTTP span. The event keeps bounded mutation provenance
+and verified scope, with no SID, Cookie, CCT or raw traceparent. A later feed
+event cannot relabel an earlier client cancellation or live-check failure.
+
 Every HTTP proxy applies the route-specific
 [request header allowlist](../../contracts/edge-gateway/request-headers.md),
 discards browser trailers and injects verified identity after hop-by-hop filtering.
