@@ -15,6 +15,9 @@ const toolsProbe = fileURLToPath(
 const toolsEvidence = fileURLToPath(
   new URL("./runtime-tools-evidence.mjs", import.meta.url),
 );
+const upgradeProbe = fileURLToPath(
+  new URL("./upgrade-lifecycle-probe.mjs", import.meta.url),
+);
 const token = randomUUID().slice(0, 12);
 const container = `antnest-acp-read-${token}`;
 const provided = process.env.ANTNEST_ACP_TEST_IMAGE;
@@ -83,9 +86,11 @@ try {
     `type=bind,src=${toolsProbe},dst=/app/runtime-tools-probe.mjs,readonly`,
     "--mount",
     `type=bind,src=${toolsEvidence},dst=/app/runtime-tools-evidence.mjs,readonly`,
+    "--mount",
+    `type=bind,src=${upgradeProbe},dst=/app/upgrade-lifecycle-probe.mjs,readonly`,
     imageId,
     "-c",
-    "node /app/runtime-information-probe.mjs && node /app/runtime-tools-probe.mjs",
+    "node /app/runtime-information-probe.mjs && node /app/runtime-tools-probe.mjs && node /app/upgrade-lifecycle-probe.mjs",
   ]);
   const before = JSON.parse(await docker(["inspect", container]))[0];
   assert.equal(before.Image, imageId);

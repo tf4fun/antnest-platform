@@ -143,6 +143,26 @@ expresses causality. Sub-millisecond cross-host clock inversions keep their raw
 warnings and are evaluated by their actual source; they are not removed by
 adjusting business waits or timestamps.
 
+### ACP WebSocket upgrade lifecycle
+
+The original HTTP SERVER retains three fixed, content-free events:
+`antnest.http.upgrade.response.prepared` when ws emits its final headers before
+writing 101; `antnest.http.upgrade.connection.setup.started` when its successful
+upgrade callback begins after ws has submitted 101; and
+`antnest.http.upgrade.connection.setup.completed` only after ACP connection setup
+and observation both succeed. These events have no attributes. Rejected
+handshakes have none, failed setup has no completed event, and disabled telemetry
+does not record them. They do not change response handling, parentage or span end.
+
+Submission to the socket does not prove peer receipt. The private CLIENT ends
+at its actual accepted `open`, whereas the SERVER ends after its setup callback
+returns. A real peer can therefore finish its HTTP handshake while server setup
+is still running. These events describe the same original span's phases; they
+are not cross-process clock calibration or an automatic warning exemption.
+Consumers must retain raw warnings and independently validate source identities,
+phase ordering and business completion. The Node sub-millisecond deferral keeps
+its existing strict bound.
+
 ### ACP Runtime information read lifecycle
 
 The ACP adapter's `mcp.runtime.info.read` INTERNAL span owns the Runtime MCP

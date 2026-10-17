@@ -9,6 +9,14 @@ optional RPC content capture, PostgreSQL tracing, span names and known limits.
 
 - One HTTP SERVER span covers response finish, disconnect and upgrade. Extract
   W3C trace context before starting it; never propagate inbound baggage.
+  The same span records the fixed, content-free
+  [upgrade lifecycle events](../../../docs/observability-contract.md#acp-websocket-upgrade-lifecycle)
+  around ws preparing 101 and ACP connection setup. Socket submission is not
+  peer receipt; the SERVER may finish after the peer accepts the handshake.
+  Failed setup never records successful completion. The production-image
+  `runtime-information-docker.mjs` gate also exercises both protocol versions
+  with a real worker peer held across setup, setup failure, rejection and
+  telemetry disabled. Consumers still need their own warning review.
 - A common fetch wrapper creates CLIENT before injection and ends at response
   EOF, cancellation or read failure. Model and Runtime MCP use it; ordinary
   execution does not call Controller.
