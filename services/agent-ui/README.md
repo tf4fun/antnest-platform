@@ -1,5 +1,11 @@
 # Agent UI
 
+Workspace command authorization and operation reads preserve ACP's explicit
+Agent access denial as HTTP 403 with `access_denied`, `retryable: false` and
+`recovery: none`. This also applies while Gateway still holds a valid positive
+identity resolution. Missing Sessions retain 404; invalid downstream caller
+credentials and unavailable or malformed observations remain dependency errors.
+
 Agent UI is the end-user conversation workspace of Antnest Platform, served
 behind Edge Gateway at `/workspace/`. It presents Agents, Sessions, messages,
 tool activity, permission requests and attachments without owning Agent

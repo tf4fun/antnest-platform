@@ -680,6 +680,13 @@ function revision(value: unknown): value is number {
 
 async function requireSuccessfulObservation(response: Response): Promise<void> {
   if (response.ok) return;
+  if (response.status === 403) {
+    const body: unknown = await response.json().catch(() => null);
+    if (body !== null && typeof body === "object" && !Array.isArray(body) &&
+      (body as Record<string, unknown>).code === "access_denied" &&
+      (body as Record<string, unknown>).retryable === false)
+      throw new AgentAccessRevokedError();
+  }
   if (response.status === 404) {
     const body: unknown = await response.json().catch(() => null);
     if (body !== null && typeof body === "object" &&

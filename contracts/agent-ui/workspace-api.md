@@ -289,6 +289,15 @@ capacity, 503 unavailable and 504 ordinary request deadline. An exhausted
 replay queue is `replay_capacity_exceeded`; a stream snapshot or live
 selection over budget is `stream_capacity_exceeded` and requires a fresh read.
 
+A still-valid signed caller context does not override current Agent access.
+An explicit ACP workspace observation `403/access_denied` with
+`retryable: false` remains a `403/access_denied`, `recovery: none` at command
+authorization and subsequent operation reads. It must not become a transient
+503. Missing Sessions retain 404 existence hiding, while downstream caller
+authentication failures and unavailable or malformed observations remain
+dependency failures. Gateway can reject a revoked browser credential with 401
+before forwarding; a valid cached resolution can instead reach this UI 403.
+
 Prompt body admission is per Agent UI process, after workload and signed user
 authentication and before consuming or parsing the body. It reserves at most
 128 MiB / 16 concurrent requests globally and 64 MiB / 4 concurrent requests

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import { z } from "zod";
-import { acpPromptRequestBytes, SessionNotFoundError } from "../adapters/acp-http.ts";
+import { acpPromptRequestBytes, AgentAccessRevokedError, SessionNotFoundError } from "../adapters/acp-http.ts";
 import type {
   HistoryCondition,
   HistoryTokens,
@@ -137,6 +137,8 @@ export function createCommandHandler(dependencies: {
         resource === "prompts",
       );
     } catch (cause) {
+      if (cause instanceof AgentAccessRevokedError)
+        return error(403, "access_denied", "Agent access denied", "none");
       const capacity = bridgeCapacityResponse(cause);
       if (capacity !== null) return capacity;
       const missing = missingSessionResponse(cause);
@@ -212,6 +214,8 @@ export function createCommandHandler(dependencies: {
       }
       return json(await authorized.operations.read(sessionId, intentId!));
     } catch (cause) {
+      if (cause instanceof AgentAccessRevokedError)
+        return error(403, "access_denied", "Agent access denied", "none");
       const missing = missingSessionResponse(cause);
       if (missing !== null) return missing;
       if (cause instanceof BodyTooLargeError)
