@@ -181,7 +181,7 @@ function bindReceipt(result, checks, expected) {
       current.reports.flatMap((report) => report.time_observations ?? []),
     );
     assert.deepEqual(policy, current.policy);
-    assert.equal(policy.eligible_for_deferral, true);
+    assert.equal(policy.eligible_for_review, true);
     finalSources = sources;
     return {
       attempt: sample.attempt,
@@ -277,7 +277,7 @@ export async function collectPrivateCostTrace(base, expected, options = {}) {
           sources,
           reports.flatMap((report) => report.time_observations ?? []),
         );
-        if (!policy.eligible_for_deferral)
+        if (!policy.eligible_for_review)
           throw new Error("Cost warning source validation rejected", {
             cause: policy,
           });
@@ -313,6 +313,8 @@ export async function collectPrivateCostTrace(base, expected, options = {}) {
         result.complete_source_receipt.source_snapshot_sha256,
       warning_count: checked.policy.warning_count,
       deferred_warning_count: checked.policy.deferred_warning_count,
+      reviewed_lifecycle_warning_count:
+        checked.policy.reviewed_lifecycle_warning_count,
       review_sha256: hash(proof),
     };
     writeEvidenceFile(directory, "result.json", encode(result));

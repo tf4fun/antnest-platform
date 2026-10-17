@@ -1,5 +1,6 @@
 const deferred = "deferred-same-node-sdk-sub-ms-endpoint";
 const deferredHTTP = "deferred-node-http-sub-ms-endpoint";
+const reviewedUpgrade = "reviewed-node-ws-post-response-endpoint";
 const invalid = () => new Error("invalid Cost warning sources");
 const requireSource = (condition) => {
   if (!condition) throw invalid();
@@ -42,7 +43,8 @@ function topology(sources) {
     }
     for (const span of spans.values()) {
       // A WS RPC can link to a different connection Trace. Only CHILD_OF
-      // denotes a synchronous parent and can propagate an endpoint warning.
+      // supplies the parent edge used by Jaeger's warning propagation; it
+      // does not imply that a server joins its work before the peer returns.
       for (const reference of span.references) {
         requireSource(
           reference &&
@@ -119,12 +121,26 @@ function processIdentity(trace, span) {
   };
 }
 
-function deferredNodeHTTP(trace, child, parent, left, right) {
-  // The user deferred Node sub-millisecond precision investigation. Separate
-  // Node spans have independent Date.now()/performance.now() anchors. Also,
-  // a received response need not join the server's post-write completion
-  // (notably ws writes 101 before its connection setup callback returns).
-  // This bounded observation does not claim clock calibration or a cause.
+function attributes(span) {
+  if (!Array.isArray(span.tags)) return null;
+  const result = new Map();
+  for (const item of span.tags) {
+    if (!item || typeof item.key !== "string" || result.has(item.key))
+      return null;
+    result.set(item.key, item.value);
+  }
+  return result;
+}
+
+function status(fields) {
+  const current = fields.get("http.response.status_code");
+  const legacy = fields.get("http.status_code");
+  if (current !== undefined && legacy !== undefined && current !== legacy)
+    return null;
+  return current ?? legacy;
+}
+
+function nodeHTTPBoundary(trace, child, parent, left, right) {
   if (
     !left.node ||
     !right.node ||
@@ -135,30 +151,12 @@ function deferredNodeHTTP(trace, child, parent, left, right) {
     child.startTime < parent.startTime ||
     child.startTime % 1000 !== 0 ||
     parent.startTime % 1000 !== 0 ||
-    end(child) <= end(parent) ||
-    end(child) - end(parent) >= 1000
+    end(child) <= end(parent)
   )
     return false;
-  const attributes = (span) => {
-    if (!Array.isArray(span.tags)) return null;
-    const result = new Map();
-    for (const item of span.tags) {
-      if (!item || typeof item.key !== "string" || result.has(item.key))
-        return null;
-      result.set(item.key, item.value);
-    }
-    return result;
-  };
   const c = attributes(child),
     p = attributes(parent);
   if (!c || !p) return false;
-  const status = (fields) => {
-    const current = fields.get("http.response.status_code");
-    const legacy = fields.get("http.status_code");
-    if (current !== undefined && legacy !== undefined && current !== legacy)
-      return null;
-    return current ?? legacy;
-  };
   const method = c.get("http.request.method"),
     route = c.get("http.route");
   return (
@@ -173,6 +171,62 @@ function deferredNodeHTTP(trace, child, parent, left, right) {
     [101, 200, 202, 204].includes(status(c)) &&
     status(c) === status(p)
   );
+}
+
+function deferredNodeHTTP(trace, child, parent, left, right) {
+  // This existing user deferral remains strictly below one millisecond.
+  // Neither independent Node anchors nor post-write completion is claimed
+  // as the cause of an individual raw observation.
+  return (
+    end(child) - end(parent) < 1000 &&
+    nodeHTTPBoundary(trace, child, parent, left, right)
+  );
+}
+
+function reviewedNodeUpgrade(trace, child, parent, left, right) {
+  if (!nodeHTTPBoundary(trace, child, parent, left, right)) return false;
+  const c = attributes(child),
+    p = attributes(parent);
+  if (c.get("http.request.method") !== "GET" || status(c) !== 101) return false;
+  for (const fields of [c, p])
+    if (
+      ![undefined, false].includes(fields.get("error")) ||
+      ![undefined, "UNSET", "OK"].includes(fields.get("otel.status_code")) ||
+      fields.has("error.type") ||
+      fields.has("exception.type") ||
+      ["error", "failed", "cancelled", "rejected", "disconnected"].includes(
+        fields.get("antnest.outcome"),
+      )
+    )
+      return false;
+  const names = [
+    "antnest.http.upgrade.response.prepared",
+    "antnest.http.upgrade.connection.setup.started",
+    "antnest.http.upgrade.connection.setup.completed",
+  ];
+  if (!Array.isArray(child.logs) || child.logs.length !== names.length)
+    return false;
+  let previous = child.startTime;
+  for (const [index, event] of child.logs.entries()) {
+    if (
+      !event ||
+      !Number.isSafeInteger(event.timestamp) ||
+      event.timestamp < previous ||
+      event.timestamp > end(child) ||
+      !Array.isArray(event.fields) ||
+      event.fields.length !== 1 ||
+      event.fields[0]?.key !== "event" ||
+      event.fields[0]?.value !== names[index] ||
+      ![undefined, "string"].includes(event.fields[0]?.type)
+    )
+      return false;
+    previous = event.timestamp;
+  }
+  // The real worker gate proves that setup may outlive the accepted peer
+  // handshake. Original response preparation must still fall inside that
+  // CLIENT, so whole-span/event clock shifts cannot borrow an arbitrary tail.
+  // This is a lifecycle classification, not cross-process clock calibration.
+  return child.logs[0].timestamp <= end(parent);
 }
 
 function calculatedDelta(warning) {
@@ -282,7 +336,9 @@ function sourceFor(context, span, warning, observations) {
   else if (crossProcess)
     classification = deferredNodeHTTP(trace, child, parent, left, right)
       ? deferredHTTP
-      : "cross-process";
+      : reviewedNodeUpgrade(trace, child, parent, left, right)
+        ? reviewedUpgrade
+        : "cross-process";
   else if (!left.node || !right.node) classification = "unsupported-runtime";
   else if (
     child.startTime < parent.startTime ||
@@ -304,6 +360,9 @@ function sourceFor(context, span, warning, observations) {
     raw_end_beyond_parent_us: difference,
     calculated_delta_us: delta,
     classification,
+    ...(classification === reviewedUpgrade
+      ? { upgrade_events: structuredClone(child.logs) }
+      : {}),
   };
 }
 
@@ -353,11 +412,16 @@ export function inspectCostWarningSources(sources, timeObservations = []) {
     const count = inventory.filter((item) =>
       [deferred, deferredHTTP].includes(item.classification),
     ).length;
+    const reviewed = inventory.filter(
+      (item) => item.classification === reviewedUpgrade,
+    ).length;
     return {
       warning_count: inventory.length,
       deferred_warning_count: count,
-      rejected_warning_count: inventory.length - count,
+      reviewed_lifecycle_warning_count: reviewed,
+      rejected_warning_count: inventory.length - count - reviewed,
       eligible_for_deferral: inventory.length === count,
+      eligible_for_review: inventory.length === count + reviewed,
       inventory,
       sources: [...sourceMap.values()],
     };

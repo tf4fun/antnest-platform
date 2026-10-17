@@ -93,7 +93,7 @@ classification under its existing reviewed-warning rules. Unknown warnings,
 invalid pricing evidence and Go pricing diagnostics remain failures.
 
 `warning-source.mjs` inventories each original warning occurrence by Trace,
-Span and index, then follows only synchronous `CHILD_OF` edges to identify
+Span and index, then follows only `CHILD_OF` edges to identify
 its source. Asynchronous connection Links cannot substitute for a parent.
 The same-Node endpoint classification requires matching process resources,
 safe integer timestamps, a child starting within its parent, integer-millisecond
@@ -106,9 +106,23 @@ one millisecond. This is recorded as `deferred-node-http-sub-ms-endpoint`.
 Independent SDK clock anchors and server completion after writing the response
 can both contribute; the observation does not establish either cause. In
 particular, ws writes 101 before the ACP connection setup callback returns.
-Duplicate warnings, ambiguous propagation, unknown messages, missing spans,
-other cross-process boundaries and overruns at or above one millisecond remain
-rejected. The calculated Jaeger delta is retained separately from the raw end
+Overruns at or above one millisecond cannot use that deferral. A separate
+`reviewed-node-ws-post-response-endpoint` classification covers successful
+private Node GET/101 upgrades with all three original
+[ACP lifecycle events](../../../docs/observability-contract.md#acp-websocket-upgrade-lifecycle).
+The exact source identities and direct parent must match; events must have
+only their fixed names, be unique and ordered inside the same original SERVER,
+and response preparation must fall inside the original CLIENT interval.
+The production worker gate proves that the peer can accept 101 before setup
+finishes. This permits the proven post-response lifetime, without claiming
+all clock error has been excluded. Missing events, failed setup, ERROR, an
+entire SERVER/event shift beyond the peer receipt, and other cross-process
+boundaries remain rejected. Historical sources without events cannot use it.
+`reviewed_lifecycle_warning_count` is separate from `deferred_warning_count`;
+`eligible_for_review` requires every occurrence to qualify for exactly one of
+the two policies. `eligible_for_deferral` retains its original meaning.
+Duplicate warnings, ambiguous propagation, unknown messages and missing spans
+remain rejected. The calculated Jaeger delta is retained separately from the raw end
 overrun; its magnitude is not a measured clock offset or this policy's bound.
 
 The diagnostic helper alone does not grant admission. The Cost collector uses
