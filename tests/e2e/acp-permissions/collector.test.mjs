@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { permissionConfigurationFixture } from "./configuration-trace.fixture.mjs";
 import { costControlTraceFixture } from "../acp-cost/control-trace.fixture.mjs";
 import { costSessionTraceFixture } from "../acp-cost/session-trace.fixture.mjs";
+import { completePermissionRuntimeFixture } from "./trace.fixture.mjs";
 const url = new URL("./collector.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
   if (
@@ -149,4 +150,83 @@ for (const broken of [false, true])
         assert.equal(query.body_complete, true);
     }
     assert.equal(readdirSync(directory).length, 1);
+  });
+
+for (const [phase, broken] of [
+  ["v1-reconnect", false],
+  ["v2-judge-ask", false],
+  ["v2-judge-ask", true],
+])
+  test(`${phase}: collector ${broken ? "rejects missing Runtime work" : "retains original Runtime cleanup and strict result"}`, async (t) => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "antnest-permission-runtime-collector-"),
+    );
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const f = completePermissionRuntimeFixture(phase, {
+      refresh: phase.startsWith("v1"),
+      cleanup: true,
+    });
+    const ids = new Map(
+      f.trace.spans.map((span, index) => [
+        span.spanID,
+        (index + 1).toString(16).padStart(16, "0"),
+      ]),
+    );
+    for (const span of f.trace.spans) {
+      span.spanID = ids.get(span.spanID);
+      for (const ref of span.references)
+        if (ref.traceID === f.trace.traceID && ids.has(ref.spanID))
+          ref.spanID = ids.get(ref.spanID);
+      for (const entry of span.logs ?? [])
+        for (const field of entry.fields)
+          if (field.key === "span_id") field.value = span.spanID;
+    }
+    for (const request of f.requests)
+      request.model_span_id = ids.get(request.model_span_id);
+    const expected = { ...f.expected };
+    delete expected.connectionTrace;
+    delete expected.connectionSpanID;
+    if (broken) f.trace.spans = f.trace.spans.filter((span) => span !== f.work);
+    const original = structuredClone(f.trace);
+    const operation = implementation.collectPrivatePermissionTrace(
+      "http://jaeger.test:16686",
+      expected,
+      {
+        directory,
+        attempts: 3,
+        wait: async () => {},
+        requests: f.requests,
+        flush: async () => {},
+        request: async (address) => {
+          const url = new URL(address);
+          if (url.pathname === "/api/v3/trace-summaries")
+            return Response.json({ summaries: [{ traceId: f.trace.traceID }] });
+          return Response.json({
+            data: [
+              url.pathname.endsWith(expected.connectionTraceID)
+                ? f.expected.connectionTrace
+                : f.trace,
+            ],
+          });
+        },
+      },
+    );
+    if (broken) await assert.rejects(operation);
+    else {
+      const result = await operation;
+      assert.equal(result.complete_source_receipt.stable_samples, 3);
+      assert.equal(result.diagnostic_inventory_verified, true);
+      assert(result.error_spans > 0);
+      assert.equal(result.raw_error_inventory.length, result.error_spans);
+      const strict = implementation.privatePermissionStrictOutcome([result]);
+      assert.equal(strict.accepted, true);
+      assert.equal(strict.strict_trace, "failed");
+      assert.equal(strict.exit_code, 2);
+      const manifest = JSON.parse(
+        readFileSync(join(result.evidence_directory, "manifest.json"), "utf8"),
+      );
+      assert.equal(manifest.status, "collected");
+      assert.equal(manifest.queries.length, 9);
+    }
+    assert.deepEqual(f.trace, original);
   });

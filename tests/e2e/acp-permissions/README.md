@@ -54,8 +54,17 @@ timestamp overlap does not block this consumer; raw diagnostics remain intact.
 The `permission_decided` record is a service stdout log, not a Span event; the
 inspector does not claim to read its decision or database parameter values.
 
-Local fixture and real TCP adapter checks establish these contracts. Complete
-Runtime information/list/Tool lifecycle checks, the independent cleanup entry,
+The Runtime inspector checks the complete parsed information read, discovery
+and catalogue exchanges, and each actual write/read executor or managed echo
+stdio call. Chat has no catalogue access; rejected, cancelled and Chat phases
+have no Tool execution. Original Agent, Session, pinned execution, generation
+and process ownership remain required. A separate v1 completion refresh binds
+its own current execution and cannot replace the Run preparation. Only exact
+completed-connection cleanup fields receive the existing diagnostic treatment;
+unknown work and internal errors remain failures.
+
+Local fixture and real TCP adapter checks establish these contracts. The two
+Agent Runtime inspection/ACK before deletion, independent cleanup entry,
 deployment wiring and actual Docker business acceptance remain pending. The
 current shell runner is not yet an accepted retired-route-free scenario.
 

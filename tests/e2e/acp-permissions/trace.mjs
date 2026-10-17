@@ -16,6 +16,7 @@ import {
   values,
 } from "../observability/runtime-tool-evidence.mjs";
 import { assertCostTraceSource as assertTraceSource } from "../acp-cost/trace-source.mjs";
+import { inspectPermissionRuntime } from "./runtime-trace.mjs";
 
 function closedResponse(span) {
   const status = tag(span, "otel.status_code");
@@ -354,9 +355,15 @@ export function inspectPermissionTrace(
     assert(tree.chain(client).includes(call));
   }
   const ownedErrors = [];
+  const runtime = privateACP
+    ? inspectPermissionRuntime(trace, expected, request, run)
+    : undefined;
   if (privateACP)
     for (const source of [trace, expected.connectionTrace])
       for (const span of source.spans) {
+        // The Runtime inspector checks each original member and only the exact
+        // completed-connection diagnostic fields. No subtree is exempted.
+        if (source === trace && runtime.spans.has(span)) continue;
         if (hasDiagnosticError(span)) continue;
         const cancelled =
           phase.endsWith("cancel") && (span === run || waits.includes(span));
@@ -366,6 +373,7 @@ export function inspectPermissionTrace(
         );
       }
   for (const span of trace.spans.filter(hasDiagnosticError)) {
+    if (runtime?.spans.has(span)) continue;
     // The reconnect client closes the socket while the v1 prompt is pending.
     if (closed && closedV1PromptResponse(span, request)) {
       if (privateACP) closedResponse(span);
@@ -399,6 +407,7 @@ export function inspectPermissionTrace(
     });
   }
   const timing = timingEvidence(trace, tree, request, forwarded);
+  const errorCount = trace.spans.filter(hasDiagnosticError).length;
   return {
     trace_id: trace.traceID,
     run_id: runId,
@@ -412,10 +421,17 @@ export function inspectPermissionTrace(
     ...(privateACP ? {} : { gateway_ancestry: true }),
     persistence: true,
     owned_error_spans: ownedErrors,
-    error_spans: ownedErrors.length,
-    time_observations: [],
+    error_spans: errorCount,
+    ...(runtime
+      ? {
+          runtime_information_reads: runtime.informationReads,
+          post_prompt_information_reads: runtime.postPromptInformationReads,
+          runtime_lifecycles: runtime.toolLifecycles.length,
+          neutral_diagnostics: runtime.neutralDiagnostics,
+        }
+      : {}),
+    time_observations: runtime?.timeObservations ?? [],
     ...timing,
-    strict_trace:
-      timing.warning_count || ownedErrors.length ? "failed" : "passed",
+    strict_trace: timing.warning_count || errorCount ? "failed" : "passed",
   };
 }
