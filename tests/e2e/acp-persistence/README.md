@@ -41,6 +41,19 @@ duplicate, stale or foreign receipts fail the inventory check. Existing real
 SDK/TCP peers exercise the recorder; these checks do not replace natural process
 exit, database durability, replay or physical Bash effects in Docker.
 
+The private fault Trace inspector binds the held and dropped receipt to the
+original Session, Run, SQL hash and durable/recovered audit. It requires the
+complete intent/acceptance SQL inventories, including attempted rollback after
+the lost COMMIT, and recognizes only the exact SQL error and origin-linked
+transaction/application/RPC propagation. Finish faults keep the completed audit
+and original Run error together; v2 retains its actual durable-message ACK.
+Two Model requests and one Bash Tool retain complete Runtime information and
+tool proofs, including the independent v1 completion refresh. Missing parents,
+missing SQL, hidden SQL descendants, management calls inside a Run and unrelated
+internal errors remain failures. Validation views never alter raw evidence.
+Confirmed external SDK problems remain non-blocking, with no SDK investigation
+or workaround added by this inspector.
+
 Private Trace collection and owning Docker deployment remain pending.
 Deployment must supply the execution-state schema,
 Identity and ACP grants, and private listener reachability before this profile
