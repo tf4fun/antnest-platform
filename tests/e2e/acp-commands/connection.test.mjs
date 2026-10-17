@@ -782,3 +782,163 @@ test("an unsupported private HTTP protocol fails before resolving credentials", 
   assert.equal(f.identities.length, 0);
   assert.equal(f.wire.length, 0);
 });
+
+for (const profile of profiles.filter((value) => !value.http)) {
+  const toolCall = {
+    toolCallId: `permission-tool-v${profile.version}`,
+    title: "Read the selected workspace file",
+    status: "pending",
+    rawInput: { path: "/workspace/permission.txt" },
+  };
+  const permissionRequest = {
+    options: [
+      { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+      { optionId: "reject_once", name: "Reject once", kind: "reject_once" },
+    ],
+    ...(profile.version === 1
+      ? { toolCall }
+      : {
+          title: "Allow workspace read?",
+          subject: { type: "tool_call", toolCall },
+        }),
+  };
+  const prompt = (client, sessionId) =>
+    client.request("prompt", {
+      sessionId,
+      prompt: [{ type: "text", text: "Ask before reading the workspace file" }],
+    });
+
+  test(`${profile.name}: permission callback defaults to cancelled`, async (t) => {
+    const f = await commandFixture(t, profile, { permissionRequest });
+    const client = await open(f, profile);
+    const { sessionId } = await client.request("new", setup);
+    await within(prompt(client, sessionId));
+    assert.deepEqual(f.permissionRequests, [
+      { ...permissionRequest, sessionId },
+    ]);
+    assert.deepEqual(f.permissionOutcomes, [
+      { result: { outcome: { outcome: "cancelled" } } },
+    ]);
+    assert.equal(f.permissionPending(), 0);
+    await client.closeAndWait();
+  });
+
+  test(`${profile.name}: permission callback preserves the request and awaits the asynchronous decision`, async (t) => {
+    const f = await commandFixture(t, profile, { permissionRequest });
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const received = [];
+    const decision = {
+      outcome: { outcome: "selected", optionId: "allow_once" },
+    };
+    const client = await open(f, profile, {
+      requestPermission: async (request) => {
+        received.push(request);
+        entered.resolve();
+        await release.promise;
+        return decision;
+      },
+    });
+    const { sessionId } = await client.request("new", setup);
+    let finished = false;
+    const prompting = prompt(client, sessionId)
+      .then(
+        (result) => ({ result }),
+        (error) => ({ error }),
+      )
+      .finally(() => {
+        finished = true;
+      });
+    try {
+      await within(Promise.race([entered.promise, prompting]));
+      assert.equal(received.length, 1);
+      assert.deepEqual(received[0].params, { ...permissionRequest, sessionId });
+      assert(received[0].signal instanceof AbortSignal);
+      assert.equal(received[0].signal.aborted, false);
+      await turn();
+      assert.equal(finished, false);
+      assert.deepEqual(f.permissionOutcomes, []);
+      assert.equal(f.permissionPending(), 1);
+      release.resolve();
+      assert.ok((await within(prompting)).result);
+      assert.deepEqual(f.permissionOutcomes, [{ result: decision }]);
+      assert.equal(f.permissionPending(), 0);
+    } finally {
+      release.resolve();
+      await client.closeAndWait();
+      await prompting;
+    }
+  });
+
+  test(`${profile.name}: permission callback rejection stays a failed peer request`, async (t) => {
+    const f = await commandFixture(t, profile, { permissionRequest });
+    let calls = 0;
+    const client = await open(f, profile, {
+      requestPermission: async () => {
+        calls++;
+        await turn();
+        throw new Error("permission fixture rejected");
+      },
+    });
+    const { sessionId } = await client.request("new", setup);
+    await assert.rejects(within(prompt(client, sessionId)));
+    assert.equal(calls, 1);
+    assert.equal(f.permissionOutcomes.length, 1);
+    assert.ok(f.permissionOutcomes[0].error);
+    assert.equal(Object.hasOwn(f.permissionOutcomes[0], "result"), false);
+    assert.equal(f.permissionPending(), 0);
+    await client.closeAndWait();
+  });
+
+  test(`${profile.name}: permission callback receives connection cancellation and joins pending work`, async (t) => {
+    const f = await commandFixture(t, profile, { permissionRequest });
+    const entered = Promise.withResolvers();
+    const aborted = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const received = [];
+    const client = await open(f, profile, {
+      requestPermission: async (request) => {
+        received.push(request);
+        const abort = () => aborted.resolve();
+        request.signal.addEventListener("abort", abort, { once: true });
+        if (request.signal.aborted) abort();
+        entered.resolve();
+        try {
+          await Promise.race([aborted.promise, release.promise]);
+        } finally {
+          request.signal.removeEventListener("abort", abort);
+        }
+        return { outcome: { outcome: "cancelled" } };
+      },
+    });
+    const { sessionId } = await client.request("new", setup);
+    const prompting = prompt(client, sessionId).then(
+      (result) => ({ result }),
+      (error) => ({ error }),
+    );
+    try {
+      await within(Promise.race([entered.promise, prompting]));
+      assert.equal(received.length, 1);
+      assert.deepEqual(received[0].params, { ...permissionRequest, sessionId });
+      assert.equal(received[0].signal.aborted, false);
+      assert.equal(f.permissionPending(), 1);
+      await within(client.closeAndWait());
+      await within(aborted.promise);
+      assert.equal(received[0].signal.aborted, true);
+      const result = await within(prompting);
+      assert.equal(client.isLocalCloseError(result.error), true);
+      await until(
+        () => f.permissionPending() === 0 && f.sockets.clients.size === 0,
+        "permission request and socket close",
+        2000,
+      );
+      assert.equal(f.permissionOutcomes.length, 1);
+      assert.ok(f.permissionOutcomes[0].error);
+      assert.equal(Object.hasOwn(f.permissionOutcomes[0], "result"), false);
+    } finally {
+      release.resolve();
+      await client.closeAndWait();
+      await prompting;
+    }
+  });
+}

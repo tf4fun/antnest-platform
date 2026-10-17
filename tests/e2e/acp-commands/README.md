@@ -93,6 +93,16 @@ and is never automatically exported to telemetry or console output. A consumer
 must explicitly opt in and handle this payload-bearing inventory as private
 evidence; this shared facility does not establish Cost business acceptance.
 
+Private WebSocket clients accept an optional `requestPermission` callback.
+The browser-authority wrapper forwards it unchanged to the existing connection:
+it receives the SDK request's original parameters and cancellation signal, and
+an asynchronous decision or rejection reaches the peer without being replaced.
+Without a callback, the existing response remains `cancelled`. An owning
+consumer must settle its pending decisions when that signal aborts; the shared
+connection retains its existing bounded, joined transport cleanup. The v1/v2
+WS forwarding contract does not migrate the Permissions consumer or establish
+its real authorization, Tool execution or Docker acceptance.
+
 Private WebSocket clients also accept the optional boolean
 `captureNotifications`; it is disabled by default and rejected for HTTP before
 Identity delegation. With it enabled, `notify()` still returns `Promise<void>`

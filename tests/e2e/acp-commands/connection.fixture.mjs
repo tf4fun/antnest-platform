@@ -30,6 +30,9 @@ export async function commandFixture(t, profile, options = {}) {
     wire = [],
     exports = [],
     clients = [];
+  const permissionRequests = [],
+    permissionOutcomes = [],
+    permissionPending = new Set();
   const pending = new Set(),
     contexts = new Set(),
     responseStreams = new Map(),
@@ -120,6 +123,27 @@ export async function commandFixture(t, profile, options = {}) {
             code: "runtime_barrier_required",
             retryable: false,
           });
+        if (options.permissionRequest) {
+          const request = {
+            ...structuredClone(options.permissionRequest),
+            sessionId: params.sessionId,
+          };
+          permissionRequests.push(request);
+          const operation = client
+            .request(sdk.methods.client.session.requestPermission, request)
+            .then(
+              (result) => ({ result }),
+              (error) => ({ error }),
+            );
+          permissionPending.add(operation);
+          try {
+            const outcome = await operation;
+            permissionOutcomes.push(outcome);
+            if (Object.hasOwn(outcome, "error")) throw outcome.error;
+          } finally {
+            permissionPending.delete(operation);
+          }
+        }
         await client.notify(sdk.methods.client.session.update, {
           sessionId: params.sessionId,
           update:
@@ -341,6 +365,8 @@ export async function commandFixture(t, profile, options = {}) {
     try {
       await Promise.allSettled(clients.map((client) => client.closeAndWait()));
       await attempt(closePeer);
+      while (permissionPending.size)
+        await Promise.allSettled([...permissionPending]);
       await attempt(() => telemetry.shutdown());
       for (const socket of sockets.clients) socket.terminate();
       await attempt(() => new Promise((resolve) => sockets.close(resolve)));
@@ -368,6 +394,9 @@ export async function commandFixture(t, profile, options = {}) {
     service,
     secrets,
     calls,
+    permissionRequests,
+    permissionOutcomes,
+    permissionPending: () => permissionPending.size,
     identities,
     wire,
     exports,
