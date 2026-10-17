@@ -450,9 +450,25 @@ export function assertBridgeOutageCompletion(outage, reports) {
     cancellation.metadata_receipts.map(key),
     cancellation.metadata_receipts.map(key),
   );
+  const metadataExchangeKeys = new Set(
+    cancellation.metadata_receipts.flatMap((row) => [
+      key(row),
+      `${row.trace_id}:${row.server_span_id}`,
+    ]),
+  );
   for (const row of cancellation.metadata_receipts) {
     assert.equal(row.trace_id, cancellation.trace_id);
-    assert.equal(row.reason, "successful-metadata-sdk-close");
+    if (row.reason === "completed-metadata-owned-connection-close") {
+      reference(row.trace_id, row.owner_span_id);
+      assert(
+        !metadataExchangeKeys.has(`${row.trace_id}:${row.owner_span_id}`),
+        "metadata owner aliases an exchange",
+      );
+      assert(
+        !heldKeys.has(`${row.trace_id}:${row.owner_span_id}`),
+        "metadata owner aliases held work",
+      );
+    } else assert.equal(row.reason, "successful-metadata-sdk-close");
     assert.equal(row.clock_sample, false);
     reference(row.trace_id, row.span_id);
     reference(row.trace_id, row.server_span_id);

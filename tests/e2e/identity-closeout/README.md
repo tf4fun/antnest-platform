@@ -564,6 +564,32 @@ Identity mutation and Membership scope, plus its matching automatic
 Disable. This gate does not claim final closure of Bridge's shared private
 owners; that belongs to the Session lifecycle profile.
 
+Gateway feed termination is a shared diagnostic contract for browser consumers.
+Each consumer must first prove its own actual Identity mutation and original
+browser scope, then bind the event's source span, reason and positive sequence.
+Logout uses `session_revoked`; password rotation, role changes and Membership
+deactivation retain their distinct feed reasons. The event must follow the same
+Gateway process's mutation request and precede its original read failure.
+Derive Gateway time bounds from its own root and the client's send/header
+interval, not the proxied upstream HTTP Date. Preserve all raw errors and
+strict findings; no feed event can excuse the truly stopped Identity interval
+or a natural expiry. Typed feed causes require this complete witness.
+
+Outage recovery also binds completed Runtime metadata to the original UI owner:
+`session/load` requires its successful view, while `session/new` requires the
+original POST 201 creation receipt. Both retain the original login scope,
+Agent, Session, request ID and direct UI/ACP parent chain, including asynchronous
+POST 202 dispatch. The archive rechecks these owning receipts without changing
+the initialize contract. Held-tool cancellation separately proves its original
+caller abort, unreceived result and joined connection close; successful metadata
+reads and tool catalogs reuse their complete parsed-result/close inspectors.
+These receipts preserve raw errors, diagnostics and clock observations.
+Final summaries retain these owned metadata close receipts and forbid their owner
+from aliasing a held-tool span or any metadata exchange. Raw error counts exclude
+only the explicit success sentinels `error.type=""`, `antnest.error.code=""` and
+`antnest.error.class="none"`; any other error field on the same span still counts.
+Historical failed reports and raw Trace data remain unchanged.
+
 The SCIM owner logs in through the same OIDC fixture, has a peer Membership and
 Agent in A, and owns nonempty chat history in B before deletion. A stays usable
 while B is disabled. Reprovisioning keeps the User, creates a new Membership and

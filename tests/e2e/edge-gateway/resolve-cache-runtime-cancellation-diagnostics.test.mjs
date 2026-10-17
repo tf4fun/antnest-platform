@@ -16,8 +16,108 @@ for (const value of [["200"], "2e2", " 200 "])
       inspectRuntimeCancellationDiagnostics(f.trace, f.diagnosticsExpected),
     );
   });
+for (const [key, value] of [
+  ["antnest.mcp.method", "tools/call"],
+  ["antnest.runtime.execution.id", "execution"],
+])
+  test(
+    "held cancellation rejects incomplete new connection receipt: " + key,
+    () => {
+      const f = runtimeCancellationFixture();
+      inspectRuntimeCancellationDiagnostics(f.trace, f.diagnosticsExpected);
+      set(f.tool, key, value);
+      assert.throws(() =>
+        inspectRuntimeCancellationDiagnostics(f.trace, f.diagnosticsExpected),
+      );
+    },
+  );
 const inspect = (f) =>
   inspectRuntimeCancellationDiagnostics(f.trace, f.diagnosticsExpected);
+function closedCancellationFixture() {
+  const f = runtimeCancellationFixture();
+  for (const [key, value] of Object.entries({
+    "antnest.runtime.execution.id": "execution",
+    "antnest.mcp.method": "tools/call",
+    "antnest.mcp.tool_result.outcome": "not_received",
+    "antnest.mcp.connection.close.outcome": "closed",
+    "antnest.mcp.caller_cancelled": true,
+  }))
+    set(f.tool, key, value);
+  set(f.second.client, "peer.service", "antnest-runtime");
+  set(f.second.operation, "span.kind", "internal");
+  const event = (timestamp, name, extra = {}) => ({
+    timestamp,
+    fields: fields({ event: name, ...extra }),
+  });
+  f.tool.logs.push(
+    event(end(f.second.client) + 100, "antnest.mcp.discovery.ready"),
+    event(f.client.startTime - 100, "antnest.mcp.tool.dispatch.started"),
+    event(end(f.client) - 1000, "antnest.mcp.connection.close.started", {
+      "antnest.mcp.caller_cancelled": true,
+    }),
+    event(end(f.client) + 100, "antnest.mcp.connection.close.completed", {
+      outcome: "closed",
+    }),
+  );
+  return f;
+}
+test("held cancellation validates the original owned connection close and preserves its errors", () => {
+  const f = closedCancellationFixture(),
+    before = structuredClone(f.trace),
+    r = inspect(f);
+  assert.equal(r.owned_error_spans.length, 6);
+  assert.equal(r.transport_receipts.length, 2);
+  assert.equal(r.connection_close.outcome, "closed");
+  assert.equal(r.connection_close.parsed_outcome, "not_received");
+  assert.deepEqual(f.trace, before);
+});
+for (const [name, mutate] of [
+  [
+    "failed close",
+    (f) => set(f.tool, "antnest.mcp.connection.close.outcome", "failed"),
+  ],
+  [
+    "unstarted close",
+    (f) => set(f.tool, "antnest.mcp.connection.close.outcome", "not_started"),
+  ],
+  [
+    "uncancelled caller",
+    (f) => set(f.tool, "antnest.mcp.caller_cancelled", false),
+  ],
+  [
+    "parsed result",
+    (f) => set(f.tool, "antnest.mcp.tool_result.outcome", "success"),
+  ],
+  ["missing close event", (f) => f.tool.logs.pop()],
+  [
+    "duplicate close event",
+    (f) => f.tool.logs.push(structuredClone(f.tool.logs.at(-1))),
+  ],
+  [
+    "foreign execution",
+    (f) => set(f.tool, "antnest.runtime.execution.id", "other"),
+  ],
+  [
+    "foreign invocation parent",
+    (f) => {
+      f.client.references[0].spanID = f.run.spanID;
+    },
+  ],
+  [
+    "late abort",
+    (f) => {
+      f.client.logs[0].timestamp = end(f.tool) + 1000;
+    },
+  ],
+  ["unrelated close error", (f) => set(f.tool, "exception.type", "CloseError")],
+])
+  test("held connection close rejects " + name, () => {
+    const f = closedCancellationFixture();
+    inspect(f);
+    mutate(f);
+    assert.throws(() => inspect(f));
+  });
+
 test("held Runtime cancellation retains five ERROR spans and the non-ERROR HTTP error event", () => {
   const f = runtimeCancellationFixture(),
     before = structuredClone(f.trace),

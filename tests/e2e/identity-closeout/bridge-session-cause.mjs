@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { inspectBridgeSessionBoundary } from "./bridge-session-trace.mjs";
+import { inspectBrowserFeedWitness } from "./browser-feed-witness.mjs";
 import { inspectBridgeSessionOwnerClose } from "./bridge-session-owner-close.mjs";
 import { checkedAcknowledgement } from "./session-fault-lifecycle.mjs";
 import { verifyIdentityEvidence } from "./trace.mjs";
@@ -397,7 +398,7 @@ export function inspectBridgeSessionClosure(
   );
   if (end(b.root) - b.root.startTime > 10000000)
     assert(records.length > 1, "long Session stream lacks revalidation");
-  let causeProof;
+  let causeProof, feedWitness;
   if (expected.reason === "revoked") {
     assert.equal(cause.kind, "logout");
     observation(cause);
@@ -443,11 +444,28 @@ export function inspectBridgeSessionClosure(
       assert.equal(terminal.record.outcome, "rejected");
       afterCommit(terminal);
     }
+    feedWitness = inspectBrowserFeedWitness(b.root, {
+      reason: "session_revoked",
+      sourceTraceID: mutation.trace_id,
+      sourceSpanID: server.spanID,
+      principal: expected.principal,
+      agentId: expected.agentId,
+      mutationStart: root.startTime,
+      lowerBound: b.clock.lower(cause.startedMono),
+      upperBound: b.clock.upper(closure.at),
+      transportFailureAt: b.upstream.logs?.[0]?.timestamp,
+    });
     causeProof = {
       kind: "logout",
       mutation_trace_id: mutation.trace_id,
       commit_span_id: commit.spanID,
       post_close_token_read_span_id: refusal.sql.spanID,
+      ...(feedWitness.event
+        ? {
+            feed_sequence: feedWitness.sequence,
+            feed_source_span_id: feedWitness.sourceSpanID,
+          }
+        : {}),
     };
   } else if (expected.reason === "unavailable") {
     assert.equal(cause.kind, "identity-outage");
@@ -528,7 +546,9 @@ export function inspectBridgeSessionClosure(
   }
   const aborted = hasError(b.root) || hasError(b.upstream);
   if (aborted) {
-    sseDiagnostics(b.root, b.upstream);
+    sseDiagnostics(feedWitness?.root ?? b.root, b.upstream, {
+      feedTermination: Boolean(feedWitness?.event),
+    });
     allowed.add(b.root);
     allowed.add(b.upstream);
   } else {

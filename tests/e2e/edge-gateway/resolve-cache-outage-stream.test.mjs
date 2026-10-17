@@ -2141,6 +2141,226 @@ function fullRecoveryStreamFixture() {
   return neutralPublicStream(f);
 }
 
+function recoveryFeedFixture() {
+  const f = concurrentGatewayRetirement(fullRecoveryStreamFixture());
+  const processTags = fields({
+    "host.name": "gateway-host",
+    "process.pid": 23,
+    "service.instance.id": "gateway-instance",
+  });
+  f.feeds = [];
+  for (const name of ["warm", "logout", "password", "role", "deactivate"]) {
+    const p = f.parts[name + "-stream"];
+    const action = name === "warm" ? "password" : name;
+    const c = f.evidence.recovery.cases.find((c) => c.name === action);
+    const mutation = f.recoveryParts.find((p) => p.action === action);
+    // Relocate only synthetic Gateway/Identity traces into their real fixture
+    // request window. The admission code never rewrites archived evidence.
+    const delta =
+      (epoch + c.mutation.started_at + 5) * 1000 - mutation.root.startTime;
+    for (const span of mutation.trace.spans) {
+      span.startTime += delta;
+      for (const log of span.logs ?? []) log.timestamp += delta;
+    }
+    // The generic fixture leaves a 100ms root around a ~22ms request.
+    // Bound this synthetic root by its actual children to fit the 40ms receipt.
+    mutation.root.duration =
+      Math.max(
+        ...mutation.trace.spans
+          .filter((span) => span !== mutation.root)
+          .map(end),
+      ) -
+      mutation.root.startTime +
+      1;
+    for (const part of [p, mutation])
+      part.trace.processes[part.root.processID].tags =
+        structuredClone(processTags);
+    const principal =
+      name === "warm"
+        ? f.evidence.http.find((r) => r.label === "warm-login").body.principal
+        : c.login.body.principal;
+    const feed = {
+      timestamp: p.upstream.logs[0].timestamp - 1,
+      fields: fields({
+        event: "antnest.stream.termination",
+        source: "identity-session-feed",
+        reason: "session_revoked",
+        "antnest.revocation.reason": {
+          logout: "session_revoked",
+          password: "password_changed",
+          role: "role_changed",
+          deactivate: "membership_deactivated",
+        }[action],
+        "antnest.revocation.sequence": f.feeds.length + 1,
+        "antnest.revocation.trace_id": mutation.trace.traceID,
+        "antnest.revocation.span_id": mutation.server.spanID,
+        "antnest.organization.id": principal.organization_id,
+        "antnest.principal.id": principal.user_id,
+        "antnest.membership.id": principal.membership_id,
+        "antnest.agent.id": f.evidence.agent_id,
+      }),
+    };
+    p.root.logs.push(feed);
+    p.upstream.logs[0].fields.find(
+      (v) => v.key === "antnest.error.cause_types",
+    ).value = '["*browserstream.feedTerminationCause","*errors.errorString"]';
+    f.feeds.push({ name, p, c, mutation, feed });
+  }
+  return f;
+}
+
+test("recovery binds five feed retirements to complete committed mutation evidence", () => {
+  const f = recoveryFeedFixture();
+  const before = structuredClone({ evidence: f.evidence, traces: f.traces });
+  const result = check(f);
+  assert.equal(result.status, "passed");
+  for (const { name, mutation, feed } of f.feeds) {
+    assert.deepEqual(
+      result.streams.find((r) => r.name === name).feed_termination,
+      {
+        source: "identity-session-feed",
+        reason: feed.fields.find((v) => v.key === "antnest.revocation.reason")
+          .value,
+        sequence: feed.fields.find(
+          (v) => v.key === "antnest.revocation.sequence",
+        ).value,
+        mutation_trace_id: mutation.trace.traceID,
+        identity_server_span_id: mutation.server.spanID,
+      },
+    );
+  }
+  assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+});
+test("proved recovery feed retains the original generic read-error diagnostic", () => {
+  const f = recoveryFeedFixture();
+  for (const { p } of f.feeds)
+    p.upstream.logs[0].fields.find(
+      (v) => v.key === "antnest.error.cause_types",
+    ).value = '["*errors.errorString"]';
+  assert.equal(check(f).status, "passed");
+});
+for (const [name, mutate] of [
+  [
+    "wrong source span",
+    ({ feed, mutation }) => {
+      feed.fields.find((v) => v.key === "antnest.revocation.span_id").value =
+        mutation.root.spanID;
+    },
+  ],
+  [
+    "wrong mutation",
+    ({ feed }) => {
+      feed.fields.find((v) => v.key === "antnest.revocation.trace_id").value =
+        "f".repeat(32);
+    },
+  ],
+  [
+    "wrong reason",
+    ({ feed }) => {
+      feed.fields.find((v) => v.key === "antnest.revocation.reason").value =
+        "session_revoked";
+    },
+  ],
+  [
+    "foreign member",
+    ({ feed }) => {
+      feed.fields.find((v) => v.key === "antnest.membership.id").value =
+        "foreign";
+    },
+  ],
+  [
+    "missing sequence",
+    ({ feed }) => {
+      feed.fields.find((v) => v.key === "antnest.revocation.sequence").value =
+        0;
+    },
+  ],
+  [
+    "extra diagnostic",
+    ({ feed }) => {
+      feed.fields.push({ key: "error", value: true });
+    },
+  ],
+  [
+    "duplicate witness",
+    ({ p, feed }) => {
+      p.root.logs.push(structuredClone(feed));
+    },
+  ],
+  [
+    "before mutation",
+    ({ feed, mutation }) => {
+      feed.timestamp = mutation.root.startTime - 1;
+    },
+  ],
+  [
+    "after read failure",
+    ({ feed, p }) => {
+      feed.timestamp = p.upstream.logs[0].timestamp + 1;
+    },
+  ],
+  [
+    "typed cause without witness",
+    ({ p }) => {
+      p.root.logs.pop();
+    },
+  ],
+  [
+    "foreign Gateway process",
+    ({ mutation }) => {
+      mutation.trace.processes[mutation.root.processID].tags.find(
+        (v) => v.key === "process.pid",
+      ).value += 1;
+    },
+  ],
+  [
+    "missing both Gateway process identities",
+    ({ mutation, p }) => {
+      mutation.trace.processes[mutation.root.processID].tags = [];
+      p.trace.processes[p.root.processID].tags = [];
+    },
+  ],
+  [
+    "mutation outside original HTTP receipt",
+    ({ mutation }) => {
+      for (const span of mutation.trace.spans) {
+        span.startTime -= 1000000;
+        for (const log of span.logs ?? []) log.timestamp -= 1000000;
+      }
+    },
+  ],
+  [
+    "uncommitted transaction",
+    ({ mutation }) => {
+      setTag(
+        mutation.transaction,
+        "antnest.transaction.outcome",
+        "rolled_back",
+      );
+    },
+  ],
+  [
+    "missing committed feed SQL",
+    ({ mutation }) => {
+      mutation.trace.spans = mutation.trace.spans.filter(
+        (s) => s.spanID !== "session-feed-0",
+      );
+    },
+  ],
+])
+  test("recovery feed rejects " + name, () => {
+    const f = recoveryFeedFixture();
+    check(f);
+    mutate(f.feeds[0]);
+    const before = structuredClone({ evidence: f.evidence, traces: f.traces });
+    assert.throws(() =>
+      check(f, [], {
+        inspectRecovery: () => ({ status: "passed", mutations: [] }),
+      }),
+    );
+    assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+  });
+
 test("combined stream fixture supplies complete real-inspector recovery prerequisites", () => {
   const f = fullRecoveryStreamFixture();
   assert.equal(inspectRecoveryHTTP(f.evidence, f).status, "passed");
@@ -2738,6 +2958,204 @@ function completedViewRead(transport, options) {
     ...read,
   };
 }
+function completedViewLoad(shape = "queued", runtimeOutcome = "canceled") {
+  const f = completedViewRead("http", { runtimeOutcome }),
+    p = f.parts["prep-view"];
+  const load = structuredClone(f.root);
+  load.spanID = "view-session-load";
+  load.operationName =
+    shape === "queued" ? "acp session/load" : "HTTP POST /v1/acp";
+  load.logs = [];
+  for (const [key, value] of Object.entries({
+    "rpc.method": "session/load",
+    "rpc.system.name": "jsonrpc",
+    "rpc.service": "acp",
+    "antnest.protocol.version": "v1",
+    "antnest.request.id": "original-load",
+    "antnest.agent.id": f.evidence.agent_id,
+    "antnest.session.id": f.evidence.session_id,
+  }))
+    setTag(load, key, value);
+  let receiver = load;
+  if (shape === "queued") {
+    receiver = structuredClone(f.root);
+    receiver.spanID = "view-load-receiver";
+    receiver.tags = fields({
+      "span.kind": "server",
+      "http.request.method": "POST",
+      "http.route": "/v1/acp",
+      "http.response.status_code": 202,
+      "antnest.listener": "workspace",
+    });
+    receiver.duration = 1;
+    load.startTime = receiver.startTime + 1;
+    load.duration -= 1;
+    load.references[0].spanID = receiver.spanID;
+    for (const key of [
+      "http.request.method",
+      "http.route",
+      "http.response.status_code",
+      "antnest.listener",
+    ])
+      setTag(load, key, undefined);
+    p.trace.spans.push(receiver);
+  }
+  p.trace.spans.push(load);
+  f.read.references[0].spanID = load.spanID;
+  return { ...f, load, receiver, p };
+}
+function completedCreationRead(shape = "queued", outcome = "success") {
+  const f = completedViewLoad(shape, outcome),
+    p = f.p;
+  setTag(f.load, "rpc.method", "session/new");
+  setTag(f.load, "antnest.session.id", f.evidence.session_id);
+  if (shape === "queued") f.load.operationName = "acp session/new";
+  p.row.label = "prep-session-create";
+  p.row.path = "/api/app/workspace/v1/agents/agent/sessions";
+  p.row.method = "POST";
+  p.row.status = 201;
+  p.row.body = { sessionId: f.evidence.session_id };
+  p.root.operationName = "HTTP POST /api/app/workspace/v1/{path...}";
+  p.upstream.operationName = "HTTP POST agent-ui";
+  for (const span of [p.root, p.upstream, p.ui]) {
+    setTag(span, "http.request.method", "POST");
+    setTag(span, "http.response.status_code", 201);
+  }
+  const view = f.make(
+    "actual-prep-view",
+    1100,
+    1200,
+    p.row.credential_scope,
+    f.evidence.session_id,
+  );
+  view.row.label = "prep-view";
+  f.archivedTraceIDs.add(view.trace.traceID);
+  return f;
+}
+for (const shape of ["queued", "http"])
+  for (const outcome of ["success", "canceled"])
+    test(
+      "outage Session creation binds " +
+        shape +
+        " metadata with Runtime " +
+        outcome,
+      () => {
+        const f = completedCreationRead(shape, outcome),
+          before = structuredClone(f.traces);
+        const result = check(f);
+        assert.equal(result.metadata_read_receipts.length, 1);
+        assert.equal(
+          result.metadata_read_receipts[0].request_span_id,
+          f.load.spanID,
+        );
+        assert.equal(
+          result.metadata_read_receipts[0].session_id,
+          f.evidence.session_id,
+        );
+        assert.deepEqual(f.traces, before);
+      },
+    );
+for (const [name, mutate] of [
+  ["foreign Agent", (f) => setTag(f.load, "antnest.agent.id", "other")],
+  [
+    "missing request ID",
+    (f) => setTag(f.load, "antnest.request.id", undefined),
+  ],
+  [
+    "foreign UI",
+    (f) => {
+      f.receiver.references[0].spanID = f.p.root.spanID;
+    },
+  ],
+  [
+    "foreign original login",
+    (f) => {
+      f.p.row.credential_scope = "other";
+    },
+  ],
+  [
+    "foreign created Session",
+    (f) => {
+      f.p.row.body.sessionId = "other";
+    },
+  ],
+  [
+    "foreign request Session",
+    (f) => setTag(f.load, "antnest.session.id", "other"),
+  ],
+])
+  test("outage Session creation rejects " + name, () => {
+    const f = completedCreationRead();
+    check(f);
+    mutate(f);
+    assert.throws(() => check(f));
+  });
+
+for (const shape of ["queued", "http"])
+  for (const outcome of ["success", "canceled"])
+    test(
+      "outage view binds original " +
+        shape +
+        " load metadata with Runtime " +
+        outcome,
+      () => {
+        const f = completedViewLoad(shape, outcome),
+          before = structuredClone({ traces: f.traces, evidence: f.evidence });
+        const r = check(f);
+        assert.equal(r.status, "passed");
+        assert.equal(r.metadata_read_receipts.length, 1);
+        assert.equal(
+          r.metadata_read_receipts[0].request_span_id,
+          f.load.spanID,
+        );
+        assert.equal(
+          r.metadata_read_receipts[0].session_id,
+          f.evidence.session_id,
+        );
+        assert.deepEqual({ traces: f.traces, evidence: f.evidence }, before);
+      },
+    );
+for (const [name, mutate] of [
+  ["wrong Session", (f) => setTag(f.load, "antnest.session.id", "other")],
+  ["wrong Agent", (f) => setTag(f.load, "antnest.agent.id", "other")],
+  [
+    "missing request ID",
+    (f) => setTag(f.load, "antnest.request.id", undefined),
+  ],
+  ["wrong protocol", (f) => setTag(f.load, "antnest.protocol.version", "v2")],
+  ["wrong RPC service", (f) => setTag(f.load, "rpc.service", "other")],
+  [
+    "foreign UI parent",
+    (f) => {
+      f.receiver.references[0].spanID = f.p.root.spanID;
+    },
+  ],
+  [
+    "foreign ACP process",
+    (f) => {
+      f.receiver.processID = f.p.ui.processID;
+    },
+  ],
+  [
+    "foreign credential scope",
+    (f) => {
+      f.p.row.credential_scope = "foreign";
+    },
+  ],
+  ["foreign queued HTTP tags", (f) => setTag(f.load, "http.route", "/v1/acp")],
+  [
+    "queued receiver not accepted",
+    (f) => setTag(f.receiver, "http.response.status_code", 503),
+  ],
+  ["unrelated method", (f) => setTag(f.load, "rpc.method", "session/prompt")],
+])
+  test("outage view load rejects " + name, () => {
+    const f = completedViewLoad();
+    check(f);
+    mutate(f);
+    assert.throws(() => check(f));
+  });
+
 test("stream report preserves each original read endpoint once without changing error claims", () => {
   const f = completedViewRead("http"),
     baseline = check(f);

@@ -60,6 +60,117 @@ export function completedInitializeRead(trace, server, completion) {
     operation: proof.resource.operation,
   };
 }
+// Session metadata is admitted only with the original UI request and its
+// owning login scope. Keep initialize's separate contract unchanged.
+export function completedSessionLoadRead(trace, server, scope, completion) {
+  return completedSessionRead(trace, server, scope, completion, "session/load");
+}
+export function completedSessionNewRead(trace, server, scope, completion) {
+  return completedSessionRead(trace, server, scope, completion, "session/new");
+}
+function completedSessionRead(trace, server, scope, completion, method) {
+  const tree = traceTopology(trace),
+    client = tree.parent(server),
+    proof = inspectRuntimeInformationRead(trace, tree.parent(client));
+  assert.equal(
+    proof.resource.server,
+    server,
+    "foreign Runtime resource receipt",
+  );
+  assert.equal(proof.resource.client, client);
+  if (completion !== undefined)
+    assert.equal(
+      completion,
+      proof.resource.completion,
+      "foreign MCP completion",
+    );
+  for (const value of [
+    scope?.agent_id,
+    scope?.session_id,
+    scope?.ui_span_id,
+    scope?.credential_scope,
+    ...["user_id", "membership_id", "organization_id"].map(
+      (key) => scope?.principal?.[key],
+    ),
+  ])
+    assert(
+      typeof value === "string" && value.length > 0,
+      "missing original view scope",
+    );
+  const request = proof.request,
+    ui = tree.spans.get(scope.ui_span_id);
+  assert.equal(tree.service(ui), "agent-ui");
+  assert.equal(tag(ui, "span.kind"), "server");
+  assert.equal(
+    tag(ui, "http.request.method"),
+    method === "session/new" ? "POST" : "GET",
+  );
+  assert.equal(
+    tag(ui, "http.response.status_code"),
+    method === "session/new" ? 201 : 200,
+  );
+  assert.equal(proof.agentId, scope.agent_id);
+  for (const [key, value] of Object.entries({
+    "span.kind": "server",
+    "rpc.method": method,
+    "rpc.system.name": "jsonrpc",
+    "rpc.service": "acp",
+    "antnest.protocol.version": "v1",
+    "antnest.agent.id": scope.agent_id,
+    "antnest.session.id": scope.session_id,
+  }))
+    assert.equal(tag(request, key), value, "wrong original load " + key);
+  assert(
+    typeof tag(request, "antnest.request.id") === "string" &&
+      tag(request, "antnest.request.id").length > 0,
+    "missing original ACP request identity",
+  );
+  let receiver = request;
+  if (request.operationName !== "HTTP POST /v1/acp") {
+    assert.equal(request.operationName, `acp ${method}`);
+    for (const name of [
+      "http.request.method",
+      "http.route",
+      "http.response.status_code",
+      "antnest.listener",
+    ])
+      assert.equal(
+        tag(request, name),
+        undefined,
+        "HTTP attributes on queued RPC",
+      );
+    receiver = tree.parent(request);
+    assert.equal(
+      receiver?.processID,
+      request.processID,
+      "foreign ACP receiver process",
+    );
+    assert(
+      receiver.startTime <= request.startTime,
+      "queued RPC starts before its HTTP receiver",
+    );
+  }
+  assert.equal(tree.service(receiver), "agent-acp-service");
+  assert.equal(receiver.operationName, "HTTP POST /v1/acp");
+  for (const [key, value] of Object.entries({
+    "span.kind": "server",
+    "http.request.method": "POST",
+    "http.route": "/v1/acp",
+    "antnest.listener": "workspace",
+    "http.response.status_code": receiver === request ? 200 : 202,
+  }))
+    assert.equal(
+      tag(receiver, key),
+      value,
+      "wrong original load receiver " + key,
+    );
+  assert.equal(
+    tree.parent(receiver),
+    ui,
+    "Runtime read outside original UI request",
+  );
+  return { ...proof, client, server, receiver, ui };
+}
 export function inspectOutageDiagnostics(collection, gates, secrets = []) {
   assert(
     collection.traces instanceof Map &&
@@ -89,6 +200,52 @@ export function inspectOutageDiagnostics(collection, gates, secrets = []) {
         observation,
       );
   };
+  const completedRead = (trace, server, completion) => {
+    const tree = traceTopology(trace),
+      proof = inspectRuntimeInformationRead(
+        trace,
+        tree.parent(tree.parent(server)),
+      );
+    const method = tag(proof.request, "rpc.method");
+    if (!["session/load", "session/new"].includes(method))
+      return completedInitializeRead(trace, server, completion);
+    assert.equal(
+      gates.stream?.status,
+      "passed",
+      "owning stream gate incomplete",
+    );
+    const receipts = (gates.stream.metadata_read_receipts ?? []).filter(
+      (row) =>
+        row.trace_id === trace.traceID &&
+        row.read_span_id === proof.read.spanID &&
+        row.server_span_id === server.spanID,
+    );
+    assert.equal(receipts.length, 1, "one original view load receipt required");
+    const receipt = receipts[0];
+    const origins = (gates.stream.owner_inventory?.http_origins ?? []).filter(
+      (row) =>
+        row.trace_id === trace.traceID &&
+        row.ui_span_id === receipt.ui_span_id &&
+        row.kind === (method === "session/new" ? "session-create" : "view"),
+    );
+    assert.equal(origins.length, 1, "one original view owner required");
+    const bound = (
+      method === "session/new"
+        ? completedSessionNewRead
+        : completedSessionLoadRead
+    )(trace, server, receipt, completion);
+    assert.equal(
+      receipt.request_span_id,
+      bound.request.spanID,
+      "foreign load request receipt",
+    );
+    assert.equal(
+      receipt.receiver_span_id,
+      bound.receiver.spanID,
+      "foreign load receiver receipt",
+    );
+    return bound;
+  };
   for (const trace of all) {
     const warning = (items) => {
       assert(Array.isArray(items), "malformed warning inventory");
@@ -107,10 +264,16 @@ export function inspectOutageDiagnostics(collection, gates, secrets = []) {
         "unfinished raw span",
       );
       warning(span.warnings ?? []);
-      if (!hasError(span) && span.operationName === "mcp.runtime.info.read")
-        recordRead(inspectRuntimeInformationRead(trace, span));
+      if (!hasError(span) && span.operationName === "mcp.runtime.info.read") {
+        const proof = inspectRuntimeInformationRead(trace, span);
+        recordRead(
+          tag(proof.request, "rpc.method") === "session/load"
+            ? completedRead(trace, proof.resource.server)
+            : proof,
+        );
+      }
       if (!hasError(span) && tag(span, "http.transport.outcome") === "canceled")
-        recordRead(completedInitializeRead(trace, span));
+        recordRead(completedRead(trace, span));
       if (hasError(span))
         errors.set(
           key({ trace_id: trace.traceID, span_id: span.spanID }),
@@ -151,13 +314,19 @@ export function inspectOutageDiagnostics(collection, gates, secrets = []) {
               field.key === "error.type" &&
               field.value === "client_disconnected"
             ) {
-              recordRead(completedInitializeRead(trace, span, group.event));
+              const proof = completedRead(trace, span, group.event);
+              recordRead(proof);
               neutral.push({
                 trace_id: trace.traceID,
                 span_id: span.spanID,
                 event_index: span.logs.indexOf(group.event),
                 event_timestamp_us: group.event.timestamp,
-                reason: "completed-initialize-mcp-read-disconnect",
+                reason:
+                  tag(proof.request, "rpc.method") === "session/load"
+                    ? "completed-session-load-mcp-read-disconnect"
+                    : tag(proof.request, "rpc.method") === "session/new"
+                      ? "completed-session-new-mcp-read-disconnect"
+                      : "completed-initialize-mcp-read-disconnect",
               });
             } else
               assert(

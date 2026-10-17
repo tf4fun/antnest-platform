@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { tag, traceTopology } from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
+import { inspectRuntimeToolCancellationConnection } from "../observability/runtime-tool-cancellation-connection.mjs";
 
 const one = (rows, label) => {
   assert.equal(rows.length, 1, `missing or duplicate ${label}`);
@@ -309,6 +310,33 @@ export function inspectRuntimeCancellationDiagnostics(trace, expected) {
     "run.unknown_effect_source": "runtime_mcp",
   });
   events(run, []);
+  const hasConnectionReceipt =
+    [
+      "antnest.mcp.method",
+      "antnest.runtime.execution.id",
+      "antnest.mcp.tool_result.outcome",
+      "antnest.mcp.connection.close.outcome",
+      "antnest.mcp.caller_cancelled",
+    ].some((key) => tag(tool, key) !== undefined) ||
+    (tool.logs ?? []).some((event) =>
+      String(tag({ tags: event.fields }, "event")).startsWith("antnest.mcp."),
+    );
+  const connection = hasConnectionReceipt
+    ? inspectRuntimeToolCancellationConnection(
+        trace,
+        tool,
+        {
+          agentId: expected.agentID,
+          executionId: expected.runtimeExecutionID,
+        },
+        { toolName: "bash" },
+      )
+    : undefined;
+  if (connection) {
+    assert.equal(connection.invocation.client, client);
+    assert.equal(connection.invocation.server, server);
+    assert.equal(connection.invocation.generation, expected.runtimeGeneration);
+  }
   tags(tool, {
     ...acpBinding,
     ...failed,
@@ -318,8 +346,28 @@ export function inspectRuntimeCancellationDiagnostics(trace, expected) {
     "tool.name": "bash",
     "antnest.outcome": "error",
     "antnest.operation.phase": "mcp.tools.call",
+    ...(connection
+      ? {
+          "antnest.mcp.tool_result.outcome": "not_received",
+          "antnest.mcp.connection.close.outcome": "closed",
+        }
+      : {}),
   });
   events(tool, [
+    ...(connection
+      ? [
+          { event: "antnest.mcp.discovery.ready" },
+          { event: "antnest.mcp.tool.dispatch.started" },
+          {
+            event: "antnest.mcp.connection.close.started",
+            "antnest.mcp.caller_cancelled": true,
+          },
+          {
+            event: "antnest.mcp.connection.close.completed",
+            outcome: "closed",
+          },
+        ]
+      : []),
     {
       event: "antnest.error",
       "antnest.error.stage": "mcp.tools.call",
@@ -512,6 +560,21 @@ export function inspectRuntimeCancellationDiagnostics(trace, expected) {
   });
   return {
     status: "diagnostics_proved_business_admission_pending",
+    ...(connection
+      ? {
+          connection_close: {
+            outcome: "closed",
+            parsed_outcome: "not_received",
+            trace_id: trace.traceID,
+            tool_span_id: tool.spanID,
+            discovery_span_id: connection.discovery.client.spanID,
+            invocation_span_id: client.spanID,
+            close_started_at_us: connection.events.closeStarted.timestamp,
+            close_completed_at_us: connection.events.closeCompleted.timestamp,
+          },
+          connection_time_observations: connection.timeObservations,
+        }
+      : {}),
     otel_error_spans: errors.map(claim),
     owned_error_spans: rawErrors.map(claim),
     transport_receipts: [client, server].map((span) => ({

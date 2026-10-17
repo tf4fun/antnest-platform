@@ -168,6 +168,217 @@ const changeTag = (span, key, value) => {
 };
 const changeEvent = (event, key, value) =>
   changeTag({ tags: event.fields }, key, value);
+for (const method of ["session/new", "session/prompt", "mcp.runtime.info"])
+  test(
+    "archive preserves the successful metadata contract for " + method,
+    () => {
+      const f = completedRead("http", { runtimeOutcome: "success" });
+      changeTag(f.root, "rpc.method", method);
+      const before = structuredClone(f);
+      assert.equal(check(f).owned_error_count, 2);
+      assert.deepEqual(f, before);
+    },
+  );
+function completedLoad(runtimeOutcome = "canceled") {
+  const f = completedRead("http", { runtimeOutcome }),
+    trace = f.traces.get(f.root.traceID),
+    ui = structuredClone(f.root);
+  ui.spanID = "original-view";
+  ui.processID = "ui";
+  ui.operationName = "HTTP GET /view";
+  ui.tags = Object.entries({
+    "span.kind": "server",
+    "http.request.method": "GET",
+    "http.response.status_code": 200,
+  }).map(([key, value]) => ({ key, value }));
+  trace.processes.ui = { serviceName: "agent-ui" };
+  trace.spans.push(ui);
+  f.root.references = [
+    {
+      refType: "CHILD_OF",
+      traceID: trace.traceID,
+      spanID: ui.spanID,
+    },
+  ];
+  for (const [key, value] of Object.entries({
+    "rpc.method": "session/load",
+    "rpc.system.name": "jsonrpc",
+    "rpc.service": "acp",
+    "antnest.protocol.version": "v1",
+    "antnest.request.id": "original-load",
+    "antnest.session.id": "session",
+    "antnest.listener": "workspace",
+  }))
+    changeTag(f.root, key, value);
+  const receipt = {
+    trace_id: trace.traceID,
+    read_span_id: f.read.spanID,
+    server_span_id: f.server.spanID,
+    request_span_id: f.root.spanID,
+    receiver_span_id: f.root.spanID,
+    ui_span_id: ui.spanID,
+    agent_id: "agent_test",
+    session_id: "session",
+    credential_scope: "original-login",
+    principal: {
+      user_id: "user",
+      membership_id: "member",
+      organization_id: "org",
+    },
+  };
+  f.gates.stream.metadata_read_receipts = [receipt];
+  f.gates.stream.owner_inventory = {
+    http_origins: [
+      {
+        trace_id: trace.traceID,
+        ui_span_id: ui.spanID,
+        kind: "view",
+      },
+    ],
+  };
+  return { ...f, receipt, ui };
+}
+function completedCreation() {
+  const f = completedLoad();
+  changeTag(f.root, "rpc.method", "session/new");
+  changeTag(f.ui, "http.request.method", "POST");
+  changeTag(f.ui, "http.response.status_code", 201);
+  f.gates.stream.owner_inventory.http_origins[0].kind = "session-create";
+  return f;
+}
+test("archive binds Session creation metadata to its original owning receipt", () => {
+  const f = completedCreation(),
+    before = structuredClone(f);
+  assert.equal(
+    check(f).non_error_diagnostics[0].reason,
+    "completed-session-new-mcp-read-disconnect",
+  );
+  assert.deepEqual(f, before);
+});
+for (const [name, mutate] of [
+  [
+    "foreign request Session",
+    (f) => changeTag(f.root, "antnest.session.id", "other"),
+  ],
+  [
+    "foreign owner kind",
+    (f) => {
+      f.gates.stream.owner_inventory.http_origins[0].kind = "view";
+    },
+  ],
+  [
+    "missing owning receipt",
+    (f) => {
+      f.gates.stream.metadata_read_receipts = [];
+    },
+  ],
+  [
+    "wrong created status",
+    (f) => changeTag(f.ui, "http.response.status_code", 200),
+  ],
+])
+  test("archive Session creation rejects " + name, () => {
+    const f = completedCreation();
+    check(f);
+    mutate(f);
+    assert.throws(() => check(f));
+  });
+for (const outcome of ["success", "canceled"])
+  test(
+    "archive binds original view load metadata with Runtime " + outcome,
+    () => {
+      const f = completedLoad(outcome),
+        before = structuredClone(f);
+      const result = check(f);
+      assert.equal(result.owned_error_count, 2);
+      assert.deepEqual(f, before);
+      if (outcome === "canceled")
+        assert.equal(
+          result.non_error_diagnostics[0].reason,
+          "completed-session-load-mcp-read-disconnect",
+        );
+    },
+  );
+for (const [name, mutate] of [
+  [
+    "missing owning receipt",
+    (f) => {
+      f.gates.stream.metadata_read_receipts = [];
+    },
+  ],
+  [
+    "duplicate owning receipt",
+    (f) => {
+      f.gates.stream.metadata_read_receipts.push(structuredClone(f.receipt));
+    },
+  ],
+  [
+    "foreign read",
+    (f) => {
+      f.receipt.read_span_id = "other";
+    },
+  ],
+  [
+    "foreign request",
+    (f) => {
+      f.receipt.request_span_id = "other";
+    },
+  ],
+  [
+    "foreign receiver",
+    (f) => {
+      f.receipt.receiver_span_id = "other";
+    },
+  ],
+  [
+    "foreign UI",
+    (f) => {
+      f.receipt.ui_span_id = "other";
+    },
+  ],
+  [
+    "foreign Agent",
+    (f) => {
+      f.receipt.agent_id = "other";
+    },
+  ],
+  [
+    "foreign Session",
+    (f) => {
+      f.receipt.session_id = "other";
+    },
+  ],
+  [
+    "missing credential scope",
+    (f) => {
+      delete f.receipt.credential_scope;
+    },
+  ],
+  [
+    "missing original Principal",
+    (f) => {
+      delete f.receipt.principal;
+    },
+  ],
+  [
+    "missing original owner",
+    (f) => {
+      f.gates.stream.owner_inventory.http_origins = [];
+    },
+  ],
+  [
+    "unfinished owning gate",
+    (f) => {
+      f.gates.stream.status = "pending";
+    },
+  ],
+])
+  test("archive load rejects " + name, () => {
+    const f = completedLoad();
+    check(f);
+    mutate(f);
+    assert.throws(() => check(f));
+  });
 test("archive validates ACP-only read cancellation even when Runtime completed normally", () => {
   const f = completedRead("http", { runtimeOutcome: "success" });
   const before = structuredClone(f.traces);
@@ -467,3 +678,25 @@ for (const transport of ["ws", "http"])
       else changeEvent(f.completion, "antnest.result", "rejected");
       assert.throws(() => check(f));
     });
+
+for (const [key, value] of [
+  ["antnest.error.code", ""],
+  ["antnest.error.class", "none"],
+])
+  test(`outage summary reconciles successful Runtime ${key} without changing raw spans`, () => {
+    const f = fixture(),
+      trace = [...f.traces.values()][2];
+    trace.spans[0].tags.push({ key, value });
+    const before = structuredClone([...f.traces]);
+    const result = check(f);
+    assert.equal(result.error_spans, result.owned_error_count);
+    assert.equal(result.error_spans, 2);
+    assert.equal(
+      result.raw_trace_diagnostics.find((r) => r.trace_id === trace.traceID)
+        .error_spans,
+      0,
+    );
+    assert.deepEqual([...f.traces], before);
+    trace.spans[0].tags.find((field) => field.key === key).value = "internal";
+    assert.throws(() => check(f), /unclassified raw diagnostic/);
+  });

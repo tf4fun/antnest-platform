@@ -17,6 +17,8 @@ import {
 } from "../../support/gateway-resolution-evidence.mjs";
 import { tag, traceTopology } from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
+import { inspectRuntimeInformationRead } from "../observability/runtime-information-read.mjs";
+import { inspectRuntimeToolLifecycle } from "../observability/runtime-tool-lifecycle.mjs";
 
 const one = (rows, label) => {
   assert.equal(rows.length, 1, `missing or duplicate ${label}`);
@@ -49,11 +51,19 @@ const finish = (span) => {
   assert(Number.isSafeInteger(n));
   return n;
 };
-function clean(span, service) {
+function clean(span, service, provedFields = new Map()) {
   assert(!hasError(span), "unexpected cancellation error");
   finish(span);
   for (const group of [span.tags, ...(span.logs ?? []).map((e) => e.fields)])
     for (const [key, value] of Object.entries(fields(group))) {
+      if (provedFields.get(group)?.has(key)) {
+        assert.equal(
+          value,
+          provedFields.get(group).get(key),
+          "contradictory proved metadata field",
+        );
+        continue;
+      }
       if (
         key === "outcome" ||
         key.endsWith(".outcome") ||
@@ -633,6 +643,107 @@ export function inspectOutageRuntimeCancellation(
   };
   const timing = inspectRuntimeCancellationTiming(trace, expected),
     diagnostics = inspectRuntimeCancellationDiagnostics(trace, expected);
+  const provedMetadata = new Set(),
+    completedMetadata = [],
+    metadataTimeObservations = [];
+  for (const owner of trace.spans.filter(
+    (span) =>
+      span.operationName === "mcp.runtime.info.read" ||
+      (span.operationName === "mcp.tools.list" &&
+        span.tags.some((field) => field.key.startsWith("antnest.mcp."))),
+  )) {
+    assert.equal(
+      owner.processID,
+      prompt.processID,
+      "foreign metadata ACP process",
+    );
+    assert(
+      tree.chain(owner).includes(prompt),
+      "metadata detached from actual prompt",
+    );
+    const isRead = owner.operationName === "mcp.runtime.info.read";
+    const proof = isRead
+      ? inspectRuntimeInformationRead(trace, owner)
+      : inspectRuntimeToolLifecycle(trace, owner, {
+          agentId: expected.agentID,
+          executionId: expected.runtimeExecutionID,
+        });
+    if (isRead) {
+      assert.equal(proof.agentId, expected.agentID);
+      assert.equal(proof.executionId, expected.runtimeExecutionID);
+      for (const span of proof.spans) provedMetadata.add(span);
+    } else {
+      assert.equal(
+        proof.parsedOutcome,
+        "success",
+        "catalog result not successful",
+      );
+      provedMetadata.add(owner);
+      for (const pair of proof.exchanges)
+        for (const span of [pair.client, pair.server, pair.operation])
+          provedMetadata.add(span);
+    }
+    for (const source of proof.servers) {
+      assert.equal(
+        source.processID,
+        server.processID,
+        "foreign metadata Runtime process",
+      );
+      assert.equal(
+        tag(source, "antnest.runtime.generation"),
+        expected.runtimeGeneration,
+      );
+    }
+    metadataTimeObservations.push(...proof.timeObservations);
+    for (const source of proof.clients.filter(
+      (span) => tag(span, "antnest.outcome") === "cancelled",
+    )) {
+      const receiver = one(
+        trace.spans.filter((span) => tree.parent(span) === source),
+        "completed metadata SERVER",
+      );
+      completedMetadata.push({
+        trace_id: trace.traceID,
+        span_id: source.spanID,
+        owner_span_id: owner.spanID,
+        server_span_id: receiver.spanID,
+        rpc_method: tag(receiver, "rpc.method"),
+        response_bytes: tag(source, "http.response.body.size"),
+        reason: "completed-metadata-owned-connection-close",
+        clock_sample: false,
+      });
+    }
+  }
+  // Reuse the original successful-span gate for every proved member. Only
+  // exact fields already checked by its owning connection proof are admitted;
+  // unknown errors and diagnostic severity keep their previous rejection.
+  for (const span of provedMetadata) {
+    const admitted = new Map();
+    const admit = (group, entries) =>
+      admitted.set(group, new Map(Object.entries(entries)));
+    if (tag(span, "antnest.mcp.connection.close.outcome") === "closed")
+      admit(span.tags, { "antnest.mcp.connection.close.outcome": "closed" });
+    const cancelled =
+      span.operationName === "HTTP POST antnest-runtime" &&
+      tag(span, "antnest.outcome") === "cancelled";
+    if (cancelled)
+      admit(span.tags, {
+        "antnest.outcome": "cancelled",
+        "antnest.cancellation.type": "AbortError",
+      });
+    for (const event of span.logs ?? []) {
+      const name = tag({ tags: event.fields }, "event");
+      if (name === "antnest.mcp.connection.close.completed")
+        admit(event.fields, { outcome: "closed" });
+      if (cancelled && name === "antnest.cancelled")
+        admit(event.fields, {
+          event: "antnest.cancelled",
+          "antnest.cancellation.type": "AbortError",
+          "antnest.cancellation.phase": "http.send_or_read",
+        });
+    }
+    clean(span, tree.service(span), admitted);
+  }
   for (const metadataServer of trace.spans.filter(
     (s) =>
       tree.service(s) === "antnest-runtime" &&
@@ -641,11 +752,11 @@ export function inspectOutageRuntimeCancellation(
   ))
     inspectRuntimeMetadataDiagnostics(trace, metadataServer, expected);
   const claimed = new Set(
-    [...diagnostics.owned_error_spans, ...diagnostics.transport_receipts].map(
-      (c) => c.span_id,
-    ),
+    [...diagnostics.owned_error_spans, ...diagnostics.transport_receipts]
+      .map((c) => c.span_id)
+      .concat([...provedMetadata].map((span) => span.spanID)),
   );
-  const metadata = [];
+  const metadata = [...completedMetadata];
   for (const span of trace.spans)
     if (
       !claimed.has(span.spanID) &&
@@ -673,6 +784,7 @@ export function inspectOutageRuntimeCancellation(
     audit_time_observations: auditTiming,
     cancel_time_observations: cancelTiming,
     metadata_receipts: metadata,
+    metadata_connection_time_observations: metadataTimeObservations,
     gateway_resolution: {
       prompt: promptHTTP.resolution,
       cancel: cancelHTTP.resolution,

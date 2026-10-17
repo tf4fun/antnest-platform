@@ -37,6 +37,91 @@ const inspect = (f) => {
   );
 };
 
+function logoutFeedFixture() {
+  const f = bridgeSessionCauseFixture();
+  f.expected.principal.membership_id = "membership";
+  f.feed = {
+    timestamp: f.upstream.logs[0].timestamp - 1000,
+    fields: Object.entries({
+      event: "antnest.stream.termination",
+      source: "identity-session-feed",
+      reason: "session_revoked",
+      "antnest.revocation.reason": "session_revoked",
+      "antnest.revocation.sequence": 12,
+      "antnest.revocation.trace_id": f.mutation.trace.traceID,
+      "antnest.revocation.span_id": f.mutation.server.spanID,
+      "antnest.organization.id": f.expected.principal.organization_id,
+      "antnest.principal.id": f.expected.principal.user_id,
+      "antnest.membership.id": "membership",
+      "antnest.agent.id": f.expected.agentId,
+    }).map(([key, value]) => ({ key, value })),
+  };
+  f.root.logs.push(f.feed);
+  f.upstream.logs[0].fields.find(
+    (v) => v.key === "antnest.error.cause_types",
+  ).value = '["*browserstream.feedTerminationCause","*errors.errorString"]';
+  return f;
+}
+test("Session logout binds the winning feed to its original committed mutation", () => {
+  const f = logoutFeedFixture(),
+    before = structuredClone([...f.collection.traces]);
+  const result = inspect(f);
+  assert.equal(result.authorizationCauseVerified, true);
+  assert.equal(result.cause_proof.feed_sequence, 12);
+  assert.equal(
+    result.cause_proof.feed_source_span_id,
+    f.mutation.server.spanID,
+  );
+  assert.deepEqual([...f.collection.traces], before);
+});
+for (const [name, mutate] of [
+  [
+    "wrong source",
+    (f) => {
+      f.feed.fields.find((v) => v.key === "antnest.revocation.span_id").value =
+        f.mutation.root.spanID;
+    },
+  ],
+  [
+    "different reason",
+    (f) => {
+      f.feed.fields.find((v) => v.key === "antnest.revocation.reason").value =
+        "membership_deactivated";
+    },
+  ],
+  [
+    "foreign membership",
+    (f) => {
+      f.feed.fields.find((v) => v.key === "antnest.membership.id").value =
+        "foreign";
+    },
+  ],
+  [
+    "before mutation",
+    (f) => {
+      f.feed.timestamp = f.mutation.root.startTime - 1;
+    },
+  ],
+  [
+    "after original failure",
+    (f) => {
+      f.feed.timestamp = f.upstream.logs[0].timestamp + 1;
+    },
+  ],
+  [
+    "unproved typed cause",
+    (f) => {
+      f.root.logs.pop();
+    },
+  ],
+])
+  test("Session feed rejects " + name, () => {
+    const f = logoutFeedFixture();
+    inspect(f);
+    mutate(f);
+    assert.throws(() => inspect(f));
+  });
+
 for (const [key, value] of [
   ["http.response.status_code", 500],
   ["http.status_code", "500"],

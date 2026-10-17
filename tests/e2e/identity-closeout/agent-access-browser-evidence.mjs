@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { inspectBridgeSessionBoundary } from "./bridge-session-trace.mjs";
+import { inspectBrowserFeedWitness } from "./browser-feed-witness.mjs";
 import { inspectOffboardingTrace } from "./offboarding-evidence.mjs";
 import { verifyIdentityEvidence } from "./trace.mjs";
 import {
@@ -251,52 +252,21 @@ export function inspectMembershipBrowserClosure(
   }
   if (end(b.root) - b.root.startTime > 10000000) assert(resolutions.length > 1);
   const failedTransport = hasError(b.root) || hasError(b.upstream);
-  const feedMarkers = (b.root.logs ?? []).filter((event) =>
-    event.fields?.some(
-      (field) =>
-        field.key === "event" && field.value === "antnest.stream.termination",
-    ),
-  );
-  let feed;
-  if (feedMarkers.length) {
-    feed = one(feedMarkers, "one winning Gateway feed witness required");
-    const fields = Object.fromEntries(
-      feed.fields.map(({ key, value }) => [key, value]),
-    );
-    assert.equal(Object.keys(fields).length, feed.fields.length);
-    assert(
-      Number.isSafeInteger(fields["antnest.revocation.sequence"]) &&
-        fields["antnest.revocation.sequence"] > 0,
-    );
-    assert.deepEqual(fields, {
-      event: "antnest.stream.termination",
-      source: "identity-session-feed",
-      reason: "session_revoked",
-      "antnest.revocation.reason": cause.kind,
-      "antnest.revocation.sequence": fields["antnest.revocation.sequence"],
-      "antnest.revocation.trace_id": cause.traceID,
-      "antnest.revocation.span_id": identity.spanID,
-      "antnest.organization.id": principal.organization_id,
-      "antnest.principal.id": principal.user_id,
-      "antnest.membership.id": principal.membership_id,
-      "antnest.agent.id": expected.agentId,
-    });
-    assert(
-      Number.isFinite(feed.timestamp) &&
-        feed.timestamp >= b.root.startTime &&
-        feed.timestamp <= end(b.root),
-    );
-    assert(
-      feed.timestamp >= mutationRoot.startTime &&
-        feed.timestamp >= b.clock.lower(cause.startedMono) &&
-        feed.timestamp <= b.clock.upper(closure.at),
-      "feed witness outside original mutation/closure window",
-    );
-  }
-  const gatewayRoot = {
-    ...b.root,
-    logs: (b.root.logs ?? []).filter((event) => event !== feed),
-  };
+  const witness = inspectBrowserFeedWitness(b.root, {
+    reason: cause.kind,
+    sourceTraceID: cause.traceID,
+    sourceSpanID: identity.spanID,
+    principal,
+    agentId: expected.agentId,
+    mutationStart: mutationRoot.startTime,
+    lowerBound: b.clock.lower(cause.startedMono),
+    upperBound: b.clock.upper(closure.at),
+    transportFailureAt: failedTransport
+      ? b.upstream.logs?.[0]?.timestamp
+      : undefined,
+  });
+  const feed = witness.event,
+    gatewayRoot = witness.root;
   const markers = (b.ui.logs ?? []).filter((event) =>
     event.fields?.some(
       (field) =>
@@ -344,11 +314,6 @@ export function inspectMembershipBrowserClosure(
   }
   if (failedTransport) {
     sseDiagnostics(gatewayRoot, b.upstream, { feedTermination: Boolean(feed) });
-    if (feed)
-      assert(
-        feed.timestamp <= b.upstream.logs[0].timestamp,
-        "feed must precede the original upstream read failure",
-      );
     allowed.add(b.root);
     allowed.add(b.upstream);
   }
@@ -376,10 +341,8 @@ export function inspectMembershipBrowserClosure(
       identity_server_span_id: identity.spanID,
       ...(feed
         ? {
-            feed_sequence: feed.fields.find(
-              (field) => field.key === "antnest.revocation.sequence",
-            ).value,
-            feed_source_span_id: identity.spanID,
+            feed_sequence: witness.sequence,
+            feed_source_span_id: witness.sourceSpanID,
           }
         : {}),
     },

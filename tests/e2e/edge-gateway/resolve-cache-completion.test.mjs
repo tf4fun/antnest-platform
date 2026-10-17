@@ -709,3 +709,55 @@ for (const [name, mutate] of invalid)
       "failed",
     );
   });
+
+function completedMetadataReport() {
+  const r = bridgeCompletionFixture(),
+    row = gates(r).cancellation.metadata_receipts[0];
+  row.reason = "completed-metadata-owned-connection-close";
+  row.owner_span_id = "f".repeat(16);
+  return r;
+}
+test("cache completion accepts the owned successful metadata connection receipt", () => {
+  const r = completedMetadataReport(),
+    before = structuredClone(r);
+  assertBridgeCacheCompletion(r);
+  assert.deepEqual(r, before);
+});
+for (const [label, change] of [
+  ["missing owner", (row) => delete row.owner_span_id],
+  ["invalid owner", (row) => (row.owner_span_id = "invalid")],
+  ["CLIENT owner alias", (row) => (row.owner_span_id = row.span_id)],
+  ["SERVER owner alias", (row) => (row.owner_span_id = row.server_span_id)],
+  [
+    "held owner alias",
+    (row, r) =>
+      (row.owner_span_id = gates(r).cancellation.otel_error_spans[0].span_id),
+  ],
+  ["unknown reason", (row) => (row.reason = "unknown-close")],
+])
+  test(`cache completion rejects metadata ${label}`, () => {
+    const r = completedMetadataReport();
+    change(gates(r).cancellation.metadata_receipts[0], r);
+    assert.equal(isResolveCacheCompletion(r), false);
+  });
+
+function sharedMetadataOwnerReport() {
+  const r = completedMetadataReport(),
+    rows = gates(r).cancellation.metadata_receipts;
+  rows.push({
+    ...rows[0],
+    span_id: "8".repeat(16),
+    server_span_id: "9".repeat(16),
+  });
+  return r;
+}
+test("cache completion permits discovery and invocation to share their metadata owner", () => {
+  assertBridgeCacheCompletion(sharedMetadataOwnerReport());
+});
+for (const role of ["span_id", "server_span_id"])
+  test(`cache completion rejects a metadata owner aliasing another receipt ${role}`, () => {
+    const r = sharedMetadataOwnerReport(),
+      rows = gates(r).cancellation.metadata_receipts;
+    rows[0].owner_span_id = rows[1][role];
+    assert.equal(isResolveCacheCompletion(r), false);
+  });

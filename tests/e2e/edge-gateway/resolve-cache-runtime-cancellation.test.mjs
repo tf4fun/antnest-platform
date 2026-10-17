@@ -9,8 +9,167 @@ import {
   set,
 } from "./resolve-cache-runtime-cancellation-clock-fixtures.mjs";
 import { inspectOutageRuntimeCancellation } from "./resolve-cache-runtime-cancellation.mjs";
+import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
+import { addToolLifecycleReceipt } from "../observability/runtime-information-run-fixtures.mjs";
 const inspect = (f) =>
   inspectOutageRuntimeCancellation(f.evidence, f.collection, []);
+
+function completedMetadataFixture(kind = "read") {
+  const f = runtimeCancellationBusinessFixture(),
+    start = f.trace.spans.length;
+  let owner, resource;
+  if (kind === "read") {
+    const receipt = addCompletedRead(f.trace, f.prompt, "http", "agent", {
+      runtimeOutcome: "success",
+      preserveRequest: true,
+    });
+    owner = receipt.read;
+    resource = receipt.server;
+    for (const span of f.trace.spans.slice(start)) {
+      const offset = span.processID === "runtime" ? 70000 : 0;
+      span.startTime =
+        f.prompt.startTime +
+        (span.startTime - f.prompt.startTime) * 1000 +
+        offset;
+      span.duration *= 1000;
+      for (const event of span.logs ?? [])
+        event.timestamp =
+          f.prompt.startTime +
+          (event.timestamp - f.prompt.startTime) * 1000 +
+          offset;
+    }
+  } else {
+    owner = structuredClone(f.model);
+    owner.spanID = "catalog-owner";
+    owner.operationName = "mcp.tools.list";
+    owner.startTime = f.prompt.startTime + 100000;
+    owner.duration = 50000;
+    owner.tags = fields({ "span.kind": "internal" });
+    owner.logs = [];
+    f.trace.spans.push(owner);
+    const discovery = f.calibration("catalog-discover", 100000, owner.spanID);
+    const invocation = f.calibration("catalog-list", 102000, owner.spanID);
+    for (const pair of [discovery, invocation])
+      set(pair.client, "peer.service", "antnest-runtime");
+    set(invocation.server, "rpc.method", "tools/list");
+    addToolLifecycleReceipt(f.trace, owner, {
+      cancelledClients: ["discover", "tools/list"],
+    });
+    resource = invocation.server;
+  }
+  for (const span of f.trace.spans.slice(start)) {
+    if (span.operationName === "runtime.executor")
+      for (const [key, value] of Object.entries({
+        "executor.tool.name": "info",
+        "executor.outcome": "success",
+        "executor.exit.classification": "success",
+        "process.exit.code": 0,
+        "otel.status_code": "OK",
+      }))
+        set(span, key, value);
+    if (span.operationName === "runtime.mcp.operation")
+      set(
+        span,
+        "mcp.operation.name",
+        span.tags.find((item) => item.key === "rpc.method").value,
+      );
+    for (const item of [
+      ...span.tags,
+      ...(span.logs ?? []).flatMap((event) => event.fields),
+    ])
+      if (item.value === "execution_test") item.value = "execution";
+  }
+  return { ...f, metadataOwner: owner, metadataServer: resource };
+}
+for (const kind of ["read", "list"])
+  test(
+    "held cancellation binds complete " +
+      kind +
+      " metadata connection receipts",
+    () => {
+      const f = completedMetadataFixture(kind),
+        before = structuredClone(f.trace),
+        result = inspect(f);
+      assert.equal(result.owned_error_spans.length, 6);
+      assert.equal(result.metadata_receipts.length, kind === "read" ? 1 : 2);
+      assert(
+        result.metadata_receipts.every((row) => row.clock_sample === false),
+      );
+      assert.deepEqual(f.trace, before);
+    },
+  );
+for (const kind of ["read", "list"])
+  for (const [name, mutate] of [
+    [
+      "foreign execution",
+      (f) => set(f.metadataOwner, "antnest.runtime.execution.id", "other"),
+    ],
+    [
+      "foreign Agent",
+      (f) => set(f.metadataServer, "antnest.agent.id", "other"),
+    ],
+    [
+      "foreign prompt",
+      (f) => {
+        f.metadataOwner.references[0].spanID = f.trace.spans.find((s) =>
+          s.operationName.startsWith("HTTP POST /api/app/"),
+        ).spanID;
+      },
+    ],
+    [
+      "failed close",
+      (f) =>
+        set(f.metadataOwner, "antnest.mcp.connection.close.outcome", "failed"),
+    ],
+    [
+      "missing completion",
+      (f) => {
+        f.metadataOwner.logs.pop();
+      },
+    ],
+    [
+      "caller canceled",
+      (f) => set(f.metadataOwner, "antnest.mcp.caller_cancelled", true),
+    ],
+  ])
+    test("held cancellation " + kind + " metadata rejects " + name, () => {
+      const f = completedMetadataFixture(kind);
+      inspect(f);
+      mutate(f);
+      assert.throws(() => inspect(f));
+    });
+
+for (const kind of ["read", "list"])
+  for (const target of ["owner", "client"])
+    for (const [key, value] of [
+      ["severity_text", "WARN"],
+      ["severity", "FATAL"],
+      ["error_code", "unexpected"],
+      ["exception_type", "UnexpectedError"],
+    ])
+      test(
+        "completed " +
+          kind +
+          " metadata retains original " +
+          target +
+          " diagnostic gate: " +
+          key,
+        () => {
+          const f = completedMetadataFixture(kind);
+          inspect(f);
+          const span =
+            target === "owner"
+              ? f.metadataOwner
+              : f.trace.spans.find(
+                  (s) =>
+                    s.operationName === "HTTP POST antnest-runtime" &&
+                    s.references[0]?.spanID === f.metadataOwner.spanID,
+                );
+          assert(span);
+          set(span, key, value);
+          assert.throws(() => inspect(f));
+        },
+      );
 
 function joinedCancelFixture(delta = 8) {
   const f = runtimeCancellationBusinessFixture();

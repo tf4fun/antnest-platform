@@ -12,11 +12,16 @@ import {
 } from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import { inspectRecoveryHTTP } from "./resolve-cache-recovery-http.mjs";
-import { completedInitializeRead } from "./resolve-cache-outage-diagnostics.mjs";
+import {
+  completedInitializeRead,
+  completedSessionLoadRead,
+  completedSessionNewRead,
+} from "./resolve-cache-outage-diagnostics.mjs";
 import { inspectRuntimeInformationRead } from "../observability/runtime-information-read.mjs";
 import { inspectOutageOwnerInventory } from "./resolve-cache-outage-owner.mjs";
 import { cleanupInventory } from "./resolve-cache-load-close.mjs";
 import { inspectOutageACPClock } from "./resolve-cache-outage-clock.mjs";
+import { inspectBrowserFeedWitness } from "../identity-closeout/browser-feed-witness.mjs";
 
 const one = (rows, message) => {
   assert.equal(rows.length, 1, message);
@@ -65,14 +70,21 @@ function diagnostics(span, expected, event) {
     ...event,
   });
 }
-function cleanSpan(span, service, trace, validatedTermination, recordRead) {
+function cleanSpan(
+  span,
+  service,
+  trace,
+  validatedTermination,
+  recordRead,
+  completedRead,
+) {
   assert(!hasError(span), "unrelated stream trace error");
   const tags = values(span.tags ?? []);
   if (
     service === "antnest-runtime" &&
     tags["http.transport.outcome"] === "canceled"
   ) {
-    recordRead(completedInitializeRead(trace, span));
+    recordRead(completedRead(trace, span));
     return;
   }
   // These existing non-error producer records remain raw observations, never
@@ -88,7 +100,7 @@ function cleanSpan(span, service, trace, validatedTermination, recordRead) {
         : traceTopology(trace).parent(span);
     const proof = inspectRuntimeInformationRead(trace, read);
     recordRead(proof);
-    recordRead(completedInitializeRead(trace, proof.resource.server));
+    recordRead(completedRead(trace, proof.resource.server));
     assert(proof.spans.includes(span), "foreign completed-read diagnostic");
     return;
   }
@@ -237,7 +249,8 @@ export function inspectOutageStreams(
   secrets = [],
   { inspectRecovery = inspectRecoveryHTTP } = {},
 ) {
-  const timeObservations = new Map();
+  const timeObservations = new Map(),
+    metadataReads = new Map();
   const recordRead = (proof) => {
     for (const observation of proof.timeObservations)
       timeObservations.set(
@@ -252,7 +265,14 @@ export function inspectOutageStreams(
       );
   };
   const clean = (span, service, trace, validatedTermination) =>
-    cleanSpan(span, service, trace, validatedTermination, recordRead);
+    cleanSpan(
+      span,
+      service,
+      trace,
+      validatedTermination,
+      recordRead,
+      completedRead,
+    );
   assert.equal(evidence.settings.resolveTTLMS, 10000);
   assert.equal(evidence.settings.captureRpcContent, false);
   const get = (id) => {
@@ -664,6 +684,79 @@ export function inspectOutageStreams(
     "UI drained before public closure",
   );
   const ownerInventory = inspectOutageOwnerInventory(evidence, collection);
+  function completedRead(trace, server) {
+    const tree = traceTopology(trace),
+      proof = inspectRuntimeInformationRead(
+        trace,
+        tree.parent(tree.parent(server)),
+      );
+    const method = tag(proof.request, "rpc.method"),
+      creation = method === "session/new";
+    if (!["session/load", "session/new"].includes(method))
+      return completedInitializeRead(trace, server);
+    const origin = one(
+        ownerInventory.http_origins.filter(
+          (row) =>
+            row.trace_id === trace.traceID &&
+            row.kind === (creation ? "session-create" : "view"),
+        ),
+        "original load view missing",
+      ),
+      row = one(
+        evidence.http.filter((row) => row.trace_id === trace.traceID),
+        "original view response missing",
+      ),
+      login = one(
+        evidence.http.filter(
+          (login) =>
+            login.issued_credential_scope &&
+            login.issued_credential_scope === row.credential_scope,
+        ),
+        "original view login missing",
+      );
+    assert.equal(row.method, creation ? "POST" : "GET");
+    assert.equal(row.status, creation ? 201 : 200);
+    if (!creation) assert.equal(row.body?.agentId, evidence.agent_id);
+    assert(
+      typeof row.body.sessionId === "string" && row.body.sessionId,
+      "original view Session missing",
+    );
+    const base = `/api/app/workspace/v1/agents/${encodeURIComponent(evidence.agent_id)}`;
+    assert(
+      (creation
+        ? [`${base}/sessions`]
+        : [
+            `${base}/view`,
+            `${base}/sessions/${encodeURIComponent(row.body.sessionId)}/view`,
+          ]
+      ).includes(row.path),
+      "foreign load view path",
+    );
+    const scope = {
+      agent_id: evidence.agent_id,
+      session_id: row.body.sessionId,
+      ui_span_id: origin.ui_span_id,
+      credential_scope: row.credential_scope,
+      principal: Object.fromEntries(
+        ["user_id", "membership_id", "organization_id"].map((key) => [
+          key,
+          login.body.principal[key],
+        ]),
+      ),
+    };
+    const bound = (
+      creation ? completedSessionNewRead : completedSessionLoadRead
+    )(trace, server, scope);
+    metadataReads.set(`${trace.traceID}:${proof.read.spanID}`, {
+      trace_id: trace.traceID,
+      read_span_id: proof.read.spanID,
+      server_span_id: server.spanID,
+      request_span_id: bound.request.spanID,
+      receiver_span_id: bound.receiver.spanID,
+      ...scope,
+    });
+    return bound;
+  }
   // Each service/generation has its own clock. SERVER start is inside the
   // observed complete HTTP request window; SERVER finish is not necessarily
   // before the client has received the body. The 1ms bound is the Node SDK's
@@ -976,6 +1069,85 @@ export function inspectOutageStreams(
       "UI stream span ended outside actual closure interval",
     );
     const failedTransport = hasError(b.root) || hasError(b.upstream);
+    let feedWitness, feedTermination;
+    if (
+      (b.root.logs ?? []).some((event) =>
+        event.fields?.some(
+          (field) =>
+            field.key === "event" &&
+            field.value === "antnest.stream.termination",
+        ),
+      )
+    ) {
+      const receipt = one(
+        recoveryProof().mutations.filter(
+          (mutation) =>
+            mutation.action === c.name &&
+            mutation.trace_id === c.mutation.trace_id,
+        ),
+        "one complete original feed mutation required",
+      );
+      const source = get(receipt.trace_id),
+        sourceTree = traceTopology(source);
+      const mutationRoot = one(
+        source.spans.filter((span) => !sourceTree.parent(span)),
+        "one original mutation Gateway root required",
+      );
+      assert.equal(sourceTree.service(mutationRoot), "edge-gateway");
+      assert.equal(tag(mutationRoot, "span.kind"), "server");
+      const gateway = resource(b.trace, b.root),
+        mutationGateway = resource(source, mutationRoot);
+      for (const identity of [gateway, mutationGateway]) {
+        assert.equal(identity[0], "edge-gateway");
+        assert(typeof identity[1] === "string" && identity[1]);
+        assert(Number.isSafeInteger(identity[2]) && identity[2] > 0);
+        assert(typeof identity[3] === "string" && identity[3]);
+      }
+      assert.deepEqual(
+        gateway,
+        mutationGateway,
+        "feed source belongs to another Gateway process",
+      );
+      // The SSE Date is proxied from UI. Anchor this comparison in the same
+      // Gateway process using original request dispatch and header receipts.
+      const lower = (at) => b.root.startTime + (at - s.headers_at) * 1000;
+      const upper = (at) => b.root.startTime + (at - s.started_at) * 1000;
+      assert(
+        mutationRoot.startTime >= lower(c.mutation.started_at) &&
+          end(mutationRoot) <= upper(c.mutation.at),
+        "feed mutation outside original HTTP receipt",
+      );
+      const reason = {
+        logout: "session_revoked",
+        password: "password_changed",
+        role: "role_changed",
+        deactivate: "membership_deactivated",
+      }[c.name];
+      feedWitness = inspectBrowserFeedWitness(b.root, {
+        reason,
+        sourceTraceID: receipt.trace_id,
+        sourceSpanID: receipt.identity_server_span_id,
+        principal:
+          item.name === "warm"
+            ? warmLogin.body.principal
+            : c.login.body.principal,
+        agentId: evidence.agent_id,
+        mutationStart: mutationRoot.startTime,
+        lowerBound: lower(c.mutation.started_at),
+        upperBound: upper(closure.at),
+        transportFailureAt: failedTransport
+          ? b.upstream.logs?.[0]?.timestamp
+          : undefined,
+      });
+      assert(feedWitness.event);
+      feedTermination = {
+        source: "identity-session-feed",
+        reason,
+        sequence: feedWitness.sequence,
+        mutation_trace_id: receipt.trace_id,
+        identity_server_span_id: feedWitness.sourceSpanID,
+      };
+    }
     const hasTermination = (b.ui.logs ?? []).some((log) =>
       (log.fields ?? []).some(
         (field) =>
@@ -1036,7 +1208,9 @@ export function inspectOutageStreams(
       };
     }
     if (failedTransport) {
-      sseDiagnostics(b.root, b.upstream);
+      sseDiagnostics(feedWitness?.root ?? b.root, b.upstream, {
+        feedTermination: Boolean(feedWitness?.event),
+      });
       claim(b.trace, b.root, "public-sse-revoked-handler");
       claim(b.trace, b.upstream, "public-sse-revoked-response");
     }
@@ -1046,7 +1220,7 @@ export function inspectOutageStreams(
         (!failedTransport || (span !== b.root && span !== b.upstream))
       )
         clean(
-          span,
+          span === b.root && feedWitness ? feedWitness.root : span,
           b.tree.service(span),
           b.trace,
           span === b.ui ? marker : undefined,
@@ -1056,6 +1230,7 @@ export function inspectOutageStreams(
       trace_id: s.trace_id,
       ...b.resolution,
       ...(termination ? { termination } : {}),
+      ...(feedTermination ? { feed_termination: feedTermination } : {}),
     };
   });
   const closePrefix = "antnest.ui.acp.close.";
@@ -1512,6 +1687,7 @@ export function inspectOutageStreams(
     status: "passed",
     streams,
     owner_inventory: ownerInventory,
+    metadata_read_receipts: [...metadataReads.values()],
     owner_closes: ownerCloses,
     service_clocks: [...serviceClocks.values()],
     internal_watches: watches,

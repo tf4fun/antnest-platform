@@ -39,7 +39,9 @@ export function hasDiagnosticError(span) {
       ({ key, value }) =>
         (key === "error" && value === true) ||
         (/^(error\.|exception\.|antnest\.error\.)/u.test(key) &&
-          !(key === "error.type" && value === "")) ||
+          !(key === "error.type" && value === "") &&
+          !(key === "antnest.error.code" && value === "") &&
+          !(key === "antnest.error.class" && value === "none")) ||
         (key === "otel.status_code" && ["ERROR", 2].includes(value)) ||
         (key === "antnest.outcome" &&
           ["rejected", "error", "failed", "failure"].includes(value)) ||
