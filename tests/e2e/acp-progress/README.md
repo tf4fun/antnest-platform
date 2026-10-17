@@ -190,8 +190,11 @@ three original phase events are complete, ordered inside the original SERVER,
 and response preparation falls within the peer CLIENT. This classification
 has a separate count and leaves the sub-millisecond bound unchanged; see the
 [Cost warning policy](../acp-cost/README.md). Missing spans, other
-cross-process warnings and unknown warnings fail. Original errors and
-warnings retain strict failure status; reviewed known diagnostics do not erase
+cross-process warnings and unknown warnings fail. Successful parsed tools can
+also qualify for a separately reviewed HTTP cleanup tail: the complete owning
+proof, native Rust identity and operation completed within the actual CLIENT
+interval are rechecked. This does not use business-cancel stop receipts.
+Original errors and warnings retain strict failure status; reviewed known diagnostics do not erase
 them. Admission binds the exact returned result and rechecks its archived bytes,
 so copied, mutated or repeated results cannot authorize success. These collector
 checks use controlled Jaeger responses and real SDK notification receipts;

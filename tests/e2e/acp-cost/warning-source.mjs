@@ -1,6 +1,10 @@
+import { inspectRuntimeToolLifecycle } from "../observability/runtime-tool-lifecycle.mjs";
+import { namedEvent } from "../observability/runtime-tool-evidence.mjs";
+
 const deferred = "deferred-same-node-sdk-sub-ms-endpoint";
 const deferredHTTP = "deferred-node-http-sub-ms-endpoint";
 const reviewedUpgrade = "reviewed-node-ws-post-response-endpoint";
+const reviewedRuntimeCleanup = "reviewed-runtime-tool-http-cleanup";
 const invalid = () => new Error("invalid Cost warning sources");
 const requireSource = (condition) => {
   if (!condition) throw invalid();
@@ -229,6 +233,121 @@ function reviewedNodeUpgrade(trace, child, parent, left, right) {
   return child.logs[0].timestamp <= end(parent);
 }
 
+function runtimeCleanupSource({ trace, parents }, propagation) {
+  // Re-run the existing complete parsed-result proof on original objects.
+  // Rust resources are checked here in their native scope; the generic Node
+  // process policy remains unchanged. This helper alone cannot grant admission.
+  try {
+    const server = propagation.at(-1),
+      client = parents.get(server);
+    if (
+      server?.operationName !== "HTTP POST /mcp" ||
+      client?.operationName !== "HTTP POST antnest-runtime" ||
+      warnings(server).length !== 1 ||
+      server.startTime < client.startTime ||
+      end(server) <= end(client) ||
+      !processIdentity(trace, client)?.node
+    )
+      return null;
+    const fields = attributes(server);
+    const resource = attributes(trace.processes[server.processID]);
+    if (!fields || !resource) return null;
+    const agentId = fields.get("antnest.agent.id"),
+      executionId = fields.get("antnest.runtime.execution.id");
+    const generation = fields.get("antnest.runtime.generation");
+    const image = resource.get("antnest.runtime.image.id"),
+      reference = resource.get("antnest.runtime.image.reference");
+    if (
+      typeof agentId !== "string" ||
+      !agentId.trim() ||
+      typeof executionId !== "string" ||
+      !executionId.trim() ||
+      !/^[1-9]\d*$/u.test(generation) ||
+      !Number.isSafeInteger(Number(generation)) ||
+      resource.get("antnest.agent.id") !== agentId ||
+      resource.get("antnest.runtime.generation") !== generation ||
+      resource.get("telemetry.sdk.language") !== "rust" ||
+      resource.get("telemetry.sdk.name") !== "opentelemetry" ||
+      typeof image !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/u.test(image) ||
+      typeof reference !== "string" ||
+      !reference.trim() ||
+      fields.get("antnest.protocol.outcome") !== "success" ||
+      fields.get("http.transport.outcome") !== "success"
+    )
+      return null;
+    const owner = parents.get(client);
+    const proof = inspectRuntimeToolLifecycle(trace, owner, {
+      agentId,
+      executionId,
+    });
+    const pairs = proof.exchanges.filter(
+      (pair) => pair.server === server && pair.client === client,
+    );
+    if (
+      proof.parsedOutcome !== "success" ||
+      !proof.ownedCancellations.has(client) ||
+      pairs.length !== 1
+    )
+      return null;
+    const operation = pairs[0].operation;
+    const completed = namedEvent(operation, "Runtime MCP operation completed");
+    if (
+      operation.startTime < client.startTime ||
+      end(operation) > end(client) ||
+      !Number.isSafeInteger(completed.timestamp) ||
+      completed.timestamp < client.startTime ||
+      completed.timestamp > end(client)
+    )
+      return null;
+    // No other edge can borrow this HTTP tail: descendants must remain in
+    // the same original Rust process and inside their immediate parent.
+    for (const span of propagation) {
+      if (span === server) continue;
+      const parent = parents.get(span);
+      if (
+        !parent ||
+        span.processID !== server.processID ||
+        parent.processID !== server.processID ||
+        span.startTime < parent.startTime ||
+        end(span) > end(parent)
+      )
+        return null;
+    }
+    return {
+      trace_id: trace.traceID,
+      span_id: server.spanID,
+      parent_span_id: client.spanID,
+      raw_end_beyond_parent_us: end(server) - end(client),
+      classification: reviewedRuntimeCleanup,
+      runtime_cleanup: {
+        tool_span_id: owner.spanID,
+        operation_span_id: operation.spanID,
+        agent_id: agentId,
+        execution_id: executionId,
+        runtime_generation: generation,
+        runtime_image_id: image,
+        runtime_image_reference: reference,
+        runtime_process_id: server.processID,
+        client_process_id: client.processID,
+        raw_operation_end_us: end(operation),
+        raw_client_end_us: end(client),
+        raw_server_end_us: end(server),
+        owner_events: structuredClone(proof.events),
+        operation_completed: structuredClone(completed),
+        server_completed: structuredClone(
+          namedEvent(server, "Runtime HTTP request completed"),
+        ),
+        client_cancelled: structuredClone(
+          namedEvent(client, "antnest.cancelled"),
+        ),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 function calculatedDelta(warning) {
   const match =
     /^clock skew adjustment disabled; not applying calculated delta of (-?\d+(?:\.\d+)?)(ns|µs|ms|s)$/u.exec(
@@ -303,6 +422,9 @@ function sourceFor(context, span, warning, observations) {
     )
   )
     return { classification: "ambiguous-source" };
+
+  const cleanup = runtimeCleanupSource(context, propagation);
+  if (cleanup) return { ...cleanup, calculated_delta_us: delta };
 
   // Every edge in the propagation chain matters. A later cross-process or
   // inverted edge cannot borrow an earlier ancestor's endpoint observation.
@@ -412,8 +534,8 @@ export function inspectCostWarningSources(sources, timeObservations = []) {
     const count = inventory.filter((item) =>
       [deferred, deferredHTTP].includes(item.classification),
     ).length;
-    const reviewed = inventory.filter(
-      (item) => item.classification === reviewedUpgrade,
+    const reviewed = inventory.filter((item) =>
+      [reviewedUpgrade, reviewedRuntimeCleanup].includes(item.classification),
     ).length;
     return {
       warning_count: inventory.length,

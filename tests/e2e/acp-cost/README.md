@@ -121,6 +121,20 @@ boundaries remain rejected. Historical sources without events cannot use it.
 `reviewed_lifecycle_warning_count` is separate from `deferred_warning_count`;
 `eligible_for_review` requires every occurrence to qualify for exactly one of
 the two policies. `eligible_for_deferral` retains its original meaning.
+`reviewed-runtime-tool-http-cleanup` is another separate lifecycle review:
+the original Node CLIENT must belong to the complete existing parsed-success
+tool proof, with caller cancellation false, successful local close, exact
+owned HTTP cancellation and matching positive response bytes. The original
+Rust SERVER/operation must have successful protocol and transport, matching
+Agent/execution/generation/image scope, and operation completion inside the
+CLIENT interval. Local SDK close does not await the remote SERVER's completion.
+The source review reruns the owning proof on the actual spans and retains the
+original lifecycle events; it does not trust an observation supplied by a caller.
+Only contained descendants in the same Runtime process can propagate that
+source warning. An entire shifted Runtime subtree, an extra inverted edge,
+unparsed/caller-cancelled work and unknown errors cannot borrow the proof.
+This leaves generic process identity and Node timing deferral unchanged and
+does not substitute for the outer scenario's tool/error or actual-stop checks.
 Duplicate warnings, ambiguous propagation, unknown messages and missing spans
 remain rejected. The calculated Jaeger delta is retained separately from the raw end
 overrun; its magnitude is not a measured clock offset or this policy's bound.
