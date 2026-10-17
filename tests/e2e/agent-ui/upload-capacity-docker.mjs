@@ -564,7 +564,9 @@ export async function runCapacity() {
       );
       if (spec.phase === "body-completion-and-parse") {
         await upload.finish();
-        await delay(10, undefined, { signal });
+        // Leave room for the measured client/server clock uncertainty after EOF.
+        // The original native events must still prove the complete overlap.
+        await delay(20, undefined, { signal });
       }
       const cancelPath =
         spec.cancel_path === "operation-cancel"
