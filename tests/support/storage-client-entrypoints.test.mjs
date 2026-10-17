@@ -27,7 +27,7 @@ function fixture(t) {
     const block=(name)=>{fs.appendFileSync(marker,name+'\\n');throw new Error('fixture blocks '+name)};
     const pool=${JSON.stringify(poolCode)};
     const pkg=require('./package.json'), mappings={};
-    for(const specifier of [...Object.keys({...pkg.dependencies,...pkg.devDependencies}),'@agentclientprotocol/sdk/experimental/v2','@agentclientprotocol/sdk/experimental/ws-client']) {
+    for(const specifier of [...Object.keys({...pkg.dependencies,...pkg.devDependencies}),'ajv/dist/2020.js','@agentclientprotocol/sdk/experimental/v2','@agentclientprotocol/sdk/experimental/http-client','@agentclientprotocol/sdk/experimental/ws-client']) {
       try { mappings[specifier]=pathToFileURL(require.resolve(specifier)).href; } catch {}
     }
     mappings.ws=new URL("./wrapper.mjs",mappings.ws).href;
