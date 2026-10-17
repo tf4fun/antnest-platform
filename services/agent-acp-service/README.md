@@ -81,7 +81,12 @@ After workload admission, a required but absent CCT returns
 
 The [execution configuration contract](../../contracts/agent-acp/execution-api.md)
 defines how Controller publishes into ACP. Normal ACP operation makes no
-reverse access, admission, credential or finish requests to Controller. The
+reverse access, admission, credential or finish requests to Controller. Local authorization commits
+are ordered per Agent, so one Agent's input persistence cannot queue another
+Agent's cancellation checks or terminal reads. Organization configuration
+publication remains exclusive: it waits for all earlier Agent commits, and
+later access waits for the published revision before authorization. Failed
+commits release their queue position without changing the original error. The
 [workspace Bridge extension](../../contracts/agent-acp/workspace-bridge.md) is
 negotiated through `_meta["antnest.dev/bridge"]`; clients that do not negotiate
 it keep standard ACP wire behavior.
