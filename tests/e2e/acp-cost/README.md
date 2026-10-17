@@ -32,10 +32,10 @@ The private execution-state validator receives its ACP JSON Schema the same way.
 The actual Gateway Resolve TTL is checked against the value forwarded to the
 client, including a disabled cache or a non-default TTL.
 
-The child has a 30-minute total budget: 151 ACP requests and 19 pricing commands
-each require three stable full-source Trace samples, whose minimum waits alone
-total 22 minutes 40 seconds. The actual restart and health/ACK sequence has its
-own 90-second bound. CI invokes the Stage 3a recipe directly so exit 2 survives.
+The child has a 30-minute total budget for 151 ACP requests and 19 pricing
+commands, each requiring three stable full-source Trace samples. The actual
+restart and health/ACK sequence has its own 90-second bound. CI invokes the
+Stage 3a recipe directly so exit 2 survives.
 
 ## Contract
 
@@ -118,15 +118,25 @@ The diagnostic helper alone does not grant admission. The collector still
 checks the complete business sources and binds three consecutive stable samples,
 original query bytes and SHA-256 receipts. The public projection records the
 waiver count without replacing raw warnings or `strict_trace=failed`.
-Pricing has its own consumer gate; its reviewed SDK policy is migrated separately.
+Pricing uses the same fixed SDK policy on every complete Resolve sample. Its
+content validator retains topology, duration, service, header and RPC-payload
+checks after warning review; callers without that review keep the strict warning
+gate. Resolve and pricing inventory use the same raw-error predicate, so an
+empty `error.type` on a successful span remains neutral; nonempty error details
+and failed outcomes still fail.
 
 Final ACP admission requires the original returned object and unchanged report,
 manifest, raw archive and private review. Clones, accessors, delayed mutations,
 duplicate business Traces and inconsistent shared sources fail. Aggregation
 uses the private checked snapshots and counts shared warning occurrences once.
-Pricing is checked separately: Controller publication to ACP still requires
-zero warnings and errors across the complete pricing closure. Local collector
-tests do not establish a complete Docker or cross-service pass.
+Pricing separately binds the original returned object, three stable source
+samples, raw query bytes and private warning review. Controller publication to
+ACP requires zero internal errors and a committed Model price write across the
+complete pricing closure. Cloned or modified reports, changed archives, duplicate
+pricing Traces and inconsistent shared sources fail. Reviewed pricing warnings
+also preserve `strict_trace=failed` and exit 2 when all ACP diagnostics are clean;
+`pricing_reviewed_warning_occurrences` reports the distinct pricing occurrences.
+Local collector tests do not establish a complete Docker or cross-service pass.
 
 ## Cleanup
 

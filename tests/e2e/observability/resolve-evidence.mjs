@@ -2,10 +2,19 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { hasError } from "../acp-plan/requests.mjs";
-import { inspectTraceContent } from "./evidence.mjs";
+import { hasDiagnosticError as hasObservationError } from "../acp-plan/requests.mjs";
+import {
+  inspectTraceContent,
+  inspectTraceContentTopology,
+} from "./evidence.mjs";
 import { assertReceivingRPCContent } from "./rpc-content-boundaries.mjs";
-import { databaseChildrenTopology, tag, traceTree } from "./trace-tree.mjs";
+import {
+  databaseChildrenTopology,
+  tag,
+  traceTree,
+  traceTopology,
+} from "./trace-tree.mjs";
+import { checkCompleteSources } from "../../support/complete-source-inspection.mjs";
 import {
   assertGatewayResolutionAttributes,
   inspectGatewayResolution,
@@ -21,20 +30,7 @@ const failure = () =>
   new Error("observability Resolve evidence validation failed");
 const traceIDPattern = /^[a-f0-9]{32}$/u;
 const contentEvents = new Set(["antnest.request", "antnest.response"]);
-const hasObservationError = (span) =>
-  hasError(span) ||
-  [
-    ...(span.tags ?? []),
-    ...(span.logs ?? []).flatMap((event) => event.fields ?? []),
-  ].some(
-    ({ key, value }) =>
-      (key === "error" && value === true) ||
-      /^(error\.|exception\.|antnest\.error\.)/u.test(key) ||
-      (key === "otel.status_code" && ["ERROR", 2].includes(value)) ||
-      (key === "antnest.outcome" && value === "failure") ||
-      (key === "event" &&
-        ["error", "exception", "antnest.error"].includes(value)),
-  );
+const reviewedCollections = new WeakSet();
 const one = (spans) => {
   assert.equal(spans.length, 1);
   return spans[0];
@@ -71,8 +67,11 @@ function validateExpected(expected, captureRpcContent) {
 // Development RPC payloads deliberately may contain credentials. Validate
 // their boundary and complete JSON, without projecting/redacting their fields
 // or applying a secret-canary scan to the raw archive.
-function inspectContent(trace, captureRpcContent) {
-  inspectTraceContent(trace, { captureRpcContent });
+function inspectContent(trace, captureRpcContent, reviewedWarnings) {
+  const inspect = reviewedWarnings
+    ? inspectTraceContentTopology
+    : inspectTraceContent;
+  inspect(trace, { captureRpcContent });
   assertGatewayResolutionAttributes(trace);
   for (const span of trace.spans) {
     const check = ({ key, value }, event) => {
@@ -117,15 +116,22 @@ function inspectResolution(trace, expected, collection) {
   validateExpected(expected, collection.captureRpcContent);
   assert.equal(trace.traceID, expected.traceID);
   assert.equal(collection.traces.get(trace.traceID), trace);
+  const inspectTree = reviewedCollections.has(collection)
+    ? traceTopology
+    : traceTree;
   for (const [id, source] of collection.traces) {
     assert.equal(source.traceID, id);
-    traceTree(source);
-    inspectContent(source, collection.captureRpcContent);
+    inspectTree(source);
+    inspectContent(
+      source,
+      collection.captureRpcContent,
+      reviewedCollections.has(collection),
+    );
     // Sources and refresh triggers cannot inherit a workflow's declared retry
     // exceptions. The owning inspector retains authority over current work.
     if (source !== trace) assert(!source.spans.some(hasObservationError));
   }
-  const tree = traceTree(trace);
+  const tree = inspectTree(trace);
   const root = one(trace.spans.filter((span) => !tree.parent(span)));
   assert.equal(tree.service(root), "edge-gateway");
   assert.equal(tag(root, "span.kind"), "server");
@@ -180,7 +186,7 @@ function inspectResolution(trace, expected, collection) {
     sql = [];
   if (result.rpc_client_span_id) {
     const source = collection.traces.get(result.source_trace_id);
-    const sourceTree = traceTree(source);
+    const sourceTree = inspectTree(source);
     client = sourceTree.spans.get(result.rpc_client_span_id);
     server = sourceTree.spans.get(result.identity_server_span_id);
     sql = databaseChildrenTopology(source, server);
@@ -255,6 +261,7 @@ export async function collectObservabilityResolution(
     captureRpcContent,
     signal,
     inspect,
+    inspectWarnings,
     request = fetch,
     wait = delay,
   } = {},
@@ -307,6 +314,13 @@ export async function collectObservabilityResolution(
         captureRpcContent,
       });
       const collection = { ...sources, captureRpcContent, signal };
+      if (inspectWarnings !== undefined) {
+        await checkCompleteSources(inspectWarnings, {
+          sources: [...sources.traces.values()],
+          signal,
+        });
+        reviewedCollections.add(collection);
+      }
       const resolution = inspectObservabilityResolution(
         trace,
         expected,
