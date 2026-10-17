@@ -22,6 +22,8 @@ import { multimodalHarnessArguments } from "../e2e/acp-multimodal/deployment.mjs
 import { costHarnessArguments } from "../e2e/acp-cost/deployment.mjs";
 import { filesHarnessArguments } from "../e2e/acp-files/deployment.mjs";
 
+import { permissionHarnessArguments } from "../e2e/acp-permissions/deployment.mjs";
+
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const children = [
   ["managed-mcp", "managed-mcp"],
@@ -35,6 +37,7 @@ const children = [
   ["multimodal", "acp-multimodal"],
   ["session-cost", "acp-cost"],
   ["tool-progress", "acp-progress"],
+  ["tool-permissions", "acp-permissions"],
   ["file-observations", "acp-files"],
   ["identity-http", "identity-http"],
   ["agent-access", "identity-agent"],
@@ -179,6 +182,7 @@ for (const [flag, directory] of [
   ["MULTIMODAL", "acp-multimodal"],
   ["SESSION_COST", "acp-cost"],
   ["TOOL_PROGRESS", "acp-progress"],
+  ["TOOL_PERMISSIONS", "acp-permissions"],
   ["FILE_OBSERVATIONS", "acp-files"],
   ["IDENTITY_CORE", "identity-http"],
   ["IDENTITY_ACCESS", "identity-http"],
@@ -489,3 +493,49 @@ for (const [entry, consumed, variable] of dependencyEntries) {
     assert(!result.stderr.includes(value));
   });
 }
+
+test("Permissions client and independent cleanup write only their evidence subdirectories as the evidence owner", () => {
+  const shell = readFileSync(
+    join(root, "tests/e2e/e2e-tool-permissions.sh"),
+    "utf8",
+  );
+  assert.match(shell, /acp-permissions\/deployment\.mjs" create-harness/u);
+  const runID = "00000000-0000-4000-8000-000000000001";
+  const uid = String(process.getuid()),
+    gid = String(process.getgid());
+  const args = permissionHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: "permission-" + runID,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF:
+        "antnest/antnest-runtime:permission-" + runID,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  );
+  for (const role of ["client", "cleanup"]) {
+    assert.deepEqual(
+      args[role].flatMap((arg, i) =>
+        arg === "--user" ? [args[role][i + 1]] : [],
+      ),
+      [`${uid}:${gid}`],
+    );
+    assert.deepEqual(
+      args[role]
+        .flatMap((arg, i) =>
+          arg === "-v" && !args[role][i + 1].endsWith(":ro")
+            ? [args[role][i + 1]]
+            : [],
+        )
+        .sort(),
+      [
+        "/fixture/evidence/deployment:/evidence/deployment",
+        "/fixture/evidence/traces:/evidence/traces",
+      ],
+    );
+  }
+});

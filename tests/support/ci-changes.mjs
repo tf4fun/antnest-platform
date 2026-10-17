@@ -616,8 +616,7 @@ function tierC() {
         "e2e-tool-permissions",
         "tool-permissions",
         {
-          before: ["make docker-build-managed-runtime"],
-          images: [...platformImages, "antnest-runtime-managed"].sort(),
+          images: [...platformImages, "antnest-runtime-fixture"].sort(),
           ...stage3aProfile("ANTNEST_E2E_TOOL_PERMISSIONS=true"),
         },
       ],

@@ -535,7 +535,7 @@ test("tier C platform scenarios get every local image and no rebuilding target",
     (name) => typeof images[name] === "string",
   );
   const variants = {
-    "c-tool-permissions": ["antnest-runtime-managed"],
+    "c-tool-permissions": ["antnest-runtime-fixture"],
     "c-tool-progress": ["antnest-runtime-fixture"],
     ...Object.fromEntries(
       tierC
@@ -624,19 +624,18 @@ test("required suites declare every image their runners derive candidates from",
     assert.deepEqual(suites.find((suite) => suite.id === id).images, names, id);
 });
 
-test("tier C managed MCP scenarios build their fixture image first", () => {
-  const scripts = resolve(root, "tests/e2e");
-  for (const id of ["c-tool-permissions"]) {
-    const suite = suites.find((item) => item.id === id);
-    assert.equal(suite.run[0], "make docker-build-managed-runtime");
-    assert.match(
-      readFileSync(
-        resolve(scripts, `${id.replace(/^c-/u, "e2e-")}.sh`),
-        "utf8",
-      ),
-      /antnest\/antnest-runtime:managed-integration/u,
-    );
-  }
+test("Permissions CI supplies the fixture carrier while its deployment builds the current production-based final image", () => {
+  const suite = suites.find((item) => item.id === "c-tool-permissions");
+  assert(!suite.run.includes("make docker-build-managed-runtime"));
+  assert(suite.images.includes("antnest-runtime-fixture"));
+  assert(suite.images.includes("antnest-runtime"));
+  assert(!suite.images.includes("antnest-runtime-managed"));
+  const shell = readFileSync(
+    resolve(root, "tests/e2e/e2e-tool-permissions.sh"),
+    "utf8",
+  );
+  assert.match(shell, /acp-permissions\/deployment\.mjs" create-harness/u);
+  assert.doesNotMatch(shell, /managed-integration|docker\.sock|--user 0:0/u);
 });
 
 test("Progress CI supplies the fixture carrier while its deployment builds the current production-based final image", () => {
@@ -674,11 +673,7 @@ test("tier C Stage 3a profiles keep their strict exit 2 by running the make reci
     const recipe = new RegExp(`^e2e-${name}:\\n\\t(.*)$`, "mu").exec(makefile);
     assert(recipe, name);
     assert.equal(suite.run.at(-1), recipe[1], name);
-    assert.deepEqual(
-      suite.run.slice(0, -1),
-      name === "tool-permissions" ? ["make docker-build-managed-runtime"] : [],
-      name,
-    );
+    assert.deepEqual(suite.run.slice(0, -1), [], name);
     assert.equal(suite.strict, true, name);
   }
 });

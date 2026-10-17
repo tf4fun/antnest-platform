@@ -459,6 +459,44 @@ test("private Cost selects current service and preparer candidates without Sessi
   );
 });
 
+test("private Permissions selects current service and preparer candidates without Session fault overlays", () => {
+  const selected = dispatch(
+    { tool_permissions: "true", tool_profile: "tool-permissions" },
+    "config",
+  );
+  assert.equal(
+    selected.files.at(-1),
+    "tests/integration/deployment/compose.admission.yaml",
+  );
+  assert(!selected.files.some((file) => file.includes("identity-closeout")));
+  const config = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ANTNEST_ADMISSION_TAG: "permission-overlay-contract",
+  });
+  for (const name of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry",
+    "temporal",
+  ])
+    assert.equal(
+      config.services[name].image,
+      `antnest/${name}:permission-overlay-contract`,
+    );
+  assert.equal(
+    config.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+    "antnest/runtime-controller:permission-overlay-contract",
+  );
+});
+
 test("file observations select current service and preparer candidates without Session fault overlays", () => {
   const selected = dispatch(
     { file_observations: "true", tool_profile: "file-observations" },

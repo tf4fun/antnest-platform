@@ -769,9 +769,11 @@ pulled images and host setup but no platform state.
   Error spans on denial and cancellation paths
   are recorded by contract and checked by each runner's topology. The findings
   stay in the evidence artifact. The Stage 3a profiles run their make
-  recipe directly because make reports every failed recipe as 2. Tool permission and tool
-  progress first build the test-only `antnest/antnest-runtime:managed-integration`
-  image with `make docker-build-managed-runtime`.
+  recipe directly because make reports every failed recipe as 2. Tool permission
+  and tool progress build scoped Runtime candidates from the production Runtime
+  and official fixture carrier. CI supplies those source images; each owning
+  deployment still performs the final fixture COPY and verifies the original
+  production layers, configuration and source identities.
 
 Only the ten implemented service and Runtime images listed in
 [`docs/service-layout.md`](../docs/service-layout.md#current-state) are published

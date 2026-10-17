@@ -76,8 +76,8 @@ to private v1 ACP. It awaits each paged Session close reply, joins the connectio
 and telemetry, and keeps its requests outside the 64 business Trace inventory.
 Controlled Identity and actual SDK/TCP checks cover delegation, pagination,
 failures and cleanup; they do not replace production authorization or Docker.
-Shell deployment wiring and actual Docker business acceptance remain pending.
-The current shell runner is not yet an accepted retired-route-free scenario.
+The shell now invokes the owning private host deployment. Actual Docker business
+acceptance is still required before this migration is complete.
 
 The owning candidate image plan uses this run's `permission-UUID` tags for ten
 services, the production Runtime base, the official managed fixture carrier and
@@ -86,7 +86,8 @@ provided source images. Original production layers and configuration, both
 source identities around COPY, tag ownership and captured image IDs are checked.
 Interrupted or failed builds clean only their recorded candidates in reverse
 order. These controlled image-command tests do not constitute actual builds or
-host deployment acceptance; the shell integration remains pending.
+host deployment acceptance. The root shell selects the admission overlay and
+builds and cleans this plan; CI supplies the production and fixture source images.
 
 The owning host module imports this image plan and checks the actual stack.
 It precreates the model, independent cleanup container and then business client,
@@ -109,7 +110,10 @@ saved. Nonzero cleaner exits, inspection and evidence errors remain failures;
 other owned removals are still attempted. Recovery uses only original create
 IDs or a unique project/run/role match, and refuses foreign or ambiguous owners.
 Controlled command and filesystem tests establish this host contract. Actual
-Docker, the shell/CI connection and the independent crash run remain pending.
+Docker and the independent crash run remain pending. The child shell preserves
+client exits 0/2/137 only after successful host checks and independent cleanup.
+Host failure enters cleanup immediately. Cleanup has its own ten-minute budget;
+its failure still exits 1, and the parent subsequently removes owned stack resources.
 
 ## Running
 
@@ -118,12 +122,12 @@ make test-permission-fixtures
 make e2e-tool-permissions
 ```
 
-`make e2e-tool-permissions` needs the current local service images
-(`make docker-build-stage3`) and the `antnest/antnest-runtime:managed-integration`
-image. That image adds the official SDK managed MCP fixture to the production
-Runtime for unannotated Smart Approve calls; all builtin Tools still use the
-ordinary Runtime implementation. See [managed MCP](../managed-mcp/README.md) for
-how the image is built.
+`make e2e-tool-permissions` builds this invocation's service and Runtime
+candidates from the current sources. CI may supply the production Runtime and
+official managed MCP fixture carrier as local input images; the final fixture
+COPY and source/layer/configuration checks still run. This enables unannotated
+Smart Approve calls while builtin Tools use the production Runtime implementation.
+The driver does not require a separately prebuilt `managed-integration` image.
 
 The root driver creates an isolated Compose project with temporary ports,
 non-overlapping networks, synthetic credentials and RPC content capture

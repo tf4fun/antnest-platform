@@ -25,7 +25,7 @@ const profiles = {
   SLASH_COMMANDS: "acp-commands",
   MULTIMODAL: "acp-multimodal",
   SESSION_COST: "acp-cost",
-  TOOL_PERMISSIONS: null,
+  TOOL_PERMISSIONS: "acp-permissions",
 };
 let selected = false;
 for (const [flag, directory] of Object.entries(profiles)) {

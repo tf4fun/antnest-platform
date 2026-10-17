@@ -6,6 +6,8 @@ import { composeListeners } from "./compose-listeners.mjs";
 import { costHarnessArguments } from "../e2e/acp-cost/deployment.mjs";
 import { progressHarnessArguments } from "../e2e/acp-progress/deployment.mjs";
 
+import { permissionHarnessArguments } from "../e2e/acp-permissions/deployment.mjs";
+
 const root = new URL("../../", import.meta.url);
 const script = new URL("tests/support/service-hosts.sh", root).pathname;
 
@@ -49,7 +51,6 @@ test("Stage 3a test clients pin service names", () => {
     "e2e-managed-mcp.sh",
     "e2e-rpc-response-loss.sh",
     "e2e-stage3-base.sh",
-    "e2e-tool-permissions.sh",
   ]);
   for (const name of launches) {
     const source = readFileSync(new URL(name, directory), "utf8");
@@ -58,9 +59,16 @@ test("Stage 3a test clients pin service names", () => {
   }
 });
 
-for (const [name, prefix, harness, runner] of [
+for (const [name, prefix, harness, runner, consumer] of [
   ["Cost", "cost", costHarnessArguments, "e2e-session-cost.sh"],
   ["Progress", "progress", progressHarnessArguments, "e2e-tool-progress.sh"],
+  [
+    "Permissions",
+    "permission",
+    permissionHarnessArguments,
+    "e2e-tool-permissions.sh",
+    "acp-permissions",
+  ],
 ])
   test(`${name} deployment client pins its actual Compose listeners`, () => {
     const runID = "2485d43c-9cb0-42a0-9c9f-186a2dc3e855";
@@ -93,6 +101,9 @@ for (const [name, prefix, harness, runner] of [
     );
     assert.match(
       readFileSync(new URL(`tests/e2e/${runner}`, root), "utf8"),
-      new RegExp(`acp-${prefix}/deployment\\.mjs" create-harness`, "u"),
+      new RegExp(
+        `${consumer ?? `acp-${prefix}`}/deployment\\.mjs" create-harness`,
+        "u",
+      ),
     );
   });
