@@ -133,7 +133,27 @@ const operationMessage =
   "Operation failed; unclassified error text was not exported";
 export const tokenRead =
   "SELECT t.id, t.expires_at, t.idle_expires_at, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM api_tokens t JOIN users u ON u.id = t.user_id JOIN organization_memberships m ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id JOIN organizations o ON o.id = t.organization_id WHERE t.token_hash = $1 AND t.kind = 'browser' AND t.revoked_at IS NULL AND t.expires_at > $2 AND t.idle_expires_at > $2 AND m.scim_deleted_at IS NULL";
-export function sseDiagnostics(root, upstream) {
+export function sseDiagnostics(
+  root,
+  upstream,
+  { feedTermination = false } = {},
+) {
+  let causes = '["*errors.errorString"]';
+  // The caller must first bind the winning feed event to its original mutation.
+  // Preserve the raw error and admit only the exact typed wrapping introduced
+  // by that producer; all other callers retain their original diagnostics.
+  if (feedTermination) {
+    const raw = upstream.logs?.[0]?.fields?.find(
+      (field) => field.key === "antnest.error.cause_types",
+    )?.value;
+    assert(
+      [
+        causes,
+        '["*browserstream.feedTerminationCause","*errors.errorString"]',
+      ].includes(raw),
+    );
+    causes = raw;
+  }
   diagnostics(
     root,
     { ...error, "otel.status_description": "handler_aborted" },
@@ -151,7 +171,7 @@ export function sseDiagnostics(root, upstream) {
       "otel.status_description": operationMessage,
     },
     {
-      "antnest.error.cause_types": '["*errors.errorString"]',
+      "antnest.error.cause_types": causes,
       "antnest.error.message": operationMessage,
       "antnest.error.stage": "read_response",
       "error.type": "operation_failed",

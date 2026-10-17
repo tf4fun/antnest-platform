@@ -12,7 +12,7 @@ import {
 export async function observeBrowserSession(
   browser,
   client,
-  { agentId, sessionId, issued, signal },
+  { agentId, sessionId, issued, signal, membershipRevocation = false },
 ) {
   signal?.throwIfAborted();
   const expiresAt = Date.parse(issued?.expires_at),
@@ -31,7 +31,9 @@ export async function observeBrowserSession(
   assert(issuance.completedMono >= issuance.startedMono);
   assert.match(issuance.traceID ?? "", /^[a-f0-9]{32}$/u);
   assert(browser.cookie, "original browser session required");
-  const original = new GatewayClient(browser.base);
+  const original = new GatewayClient(browser.base, {
+    onStatusFailure: browser.onStatusFailure,
+  });
   original.cookies = new Map(browser.cookies);
   const cookie = original.cookie,
     credentialScope = randomUUID();
@@ -65,6 +67,7 @@ export async function observeBrowserSession(
     browser: original,
     stream,
     checkpoint(reason) {
+      if (membershipRevocation) assert.equal(reason, "revoked");
       assert(!point, "one fault trigger per browser observation");
       assert(original.cookie === cookie, "original browser authority changed");
       point = bridgeSessionCheckpoint(original, client, stream, {
@@ -102,7 +105,12 @@ export async function observeBrowserSession(
       );
       const intentId = randomUUID();
       const path = `/api/app/workspace/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/prompts`;
-      const expectedStatus = point.reason === "unavailable" ? 503 : 401;
+      const expectedStatus =
+        point.reason === "unavailable"
+          ? 503
+          : membershipRevocation
+            ? [401, 403]
+            : 401;
       const expectedCode =
         point.reason === "unavailable"
           ? "identity_unavailable"
@@ -124,7 +132,20 @@ export async function observeBrowserSession(
       // an abandoned denial probe running or report a cancelled check as passed.
       signal?.throwIfAborted();
       try {
-        assert.equal(response.body?.code, expectedCode);
+        if (response.status === 403) {
+          assert(membershipRevocation);
+          assert(
+            typeof response.body?.requestId === "string" &&
+              response.body.requestId,
+          );
+          assert.deepEqual(response.body, {
+            code: "access_denied",
+            message: "Agent access denied",
+            retryable: false,
+            recovery: "none",
+            requestId: response.body.requestId,
+          });
+        } else assert.equal(response.body?.code, expectedCode);
         assertNoStore(response.headers);
         assert.equal(response.headers.getSetCookie().length, 0);
         assert(original.cookie === cookie);
@@ -142,6 +163,9 @@ export async function observeBrowserSession(
         method: "POST",
         status: response.status,
         code: response.body.code,
+        ...(response.status === 403
+          ? { body: structuredClone(response.body) }
+          : {}),
         traceID: response.traceID,
         credentialScope,
         startedAt,

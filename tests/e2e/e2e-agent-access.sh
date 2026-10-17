@@ -23,6 +23,12 @@ compose() {
 containers=$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 docker inspect $containers >"$evidence/deployment.private.json"
 node "$root/tests/e2e/identity-closeout/deployment.mjs" "$evidence/deployment.private.json" "$COMPOSE_PROJECT_NAME"
+acp=$(compose ps -q agent-acp-service)
+case "$acp" in
+  ''|*[!0-9a-f]*) echo 'Expected one deployed ACP container' >&2; exit 1 ;;
+esac
+acp_image=$(docker inspect --format '{{.Image}}' "$acp")
+[ -n "$acp_image" ] || { echo 'Deployed ACP image is missing' >&2; exit 1; }
 directory=$(mktemp -d "${TMPDIR:-/tmp}/antnest-agent-access.XXXXXX")
 client="${COMPOSE_PROJECT_NAME}-agent-access-client"
 model="${COMPOSE_PROJECT_NAME}-agent-access-model"
@@ -51,13 +57,14 @@ docker run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJE
   --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=agent-access-model" \
   --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=agent-access-model" \
   -v "$root/tests/e2e/identity-closeout:/app/identity-closeout:ro" \
-  antnest/agent-acp-service:local node /app/identity-closeout/agent-access-model.mjs >/dev/null
+  "$acp_image" node /app/identity-closeout/agent-access-model.mjs >/dev/null
 # shellcheck disable=SC2086 # service_hosts is a list of options.
 docker create --name "$client" $service_hosts --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
-  --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" --network "${COMPOSE_PROJECT_NAME}_edge" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-ui/tokens/agent-acp-service:/run/auth/agent-ui-acp:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/agent-controller:/run/auth/console-controller:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/identity-service:/run/auth/console-identity:ro" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
@@ -67,7 +74,13 @@ docker create --name "$client" $service_hosts --user "$ANTNEST_SERVICE_AUTH_UID:
   -v "${COMPOSE_PROJECT_NAME}-oidc-certs:/test-ca:ro" \
   -v "$directory:/coordination" \
   -v "$root/tests:/app/tests:ro" -v "$directory/seed.json:/fixture-seed.json:ro" \
-  antnest/agent-acp-service:local node /app/tests/e2e/identity-closeout/agent-access-client.mjs >/dev/null
+  -v "$root/contracts/identity/identity-contract.json:/app/contracts/identity/identity-contract.json:ro" \
+  -v "$root/contracts/agent-controller/control-contract.json:/app/contracts/agent-controller/control-contract.json:ro" \
+  -v "$root/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro" \
+  -v "$root/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro" \
+  -v "$root/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro" \
+  -v "$root/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro" \
+  "$acp_image" node /app/tests/e2e/identity-closeout/agent-access-client.mjs >/dev/null
 docker network connect "${COMPOSE_PROJECT_NAME}_agent-acp-database" "$client"
 docker network connect "$ANTNEST_RUNTIME_MANAGEMENT_NETWORK" "$client"
 docker network connect "${COMPOSE_PROJECT_NAME}_controller-runtime" "$client"

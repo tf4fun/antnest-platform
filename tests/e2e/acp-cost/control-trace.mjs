@@ -100,6 +100,8 @@ export function inspectPrivateCostControlTrace(
         [
           "session/fork",
           "session/prompt",
+          "session/close",
+          "session/delete",
           expected.protocolVersion === 1 ? "session/load" : "session/resume",
         ].includes(expected.method),
       );

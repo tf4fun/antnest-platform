@@ -87,7 +87,9 @@ async function fixture(t, override = {}) {
             response.setHeader("cache-control", override.cache);
           response.writeHead(override.status ?? 401);
           response.end(
-            JSON.stringify({ code: override.code ?? "unauthenticated" }),
+            JSON.stringify(
+              override.body ?? { code: override.code ?? "unauthenticated" },
+            ),
           );
         };
         if (override.holdDenial) {
@@ -109,6 +111,7 @@ async function fixture(t, override = {}) {
   });
   const browser = new GatewayClient(
     `http://127.0.0.1:${server.address().port}`,
+    { onStatusFailure: override.onStatusFailure },
   );
   browser.cookies = new Map([
     ["antnest_session", "original-session"],
@@ -137,18 +140,78 @@ async function fixture(t, override = {}) {
     cookie,
     denialPending: denialPending.promise,
     releaseDenial: release,
-    async open({ signal } = {}) {
+    async open({ signal, membershipRevocation } = {}) {
       assert.equal(typeof implementation.observeBrowserSession, "function");
       observer = await implementation.observeBrowserSession(browser, client, {
         agentId: "agent-1",
         sessionId: "session-1",
         issued,
         signal,
+        membershipRevocation,
       });
       return observer;
     },
   };
 }
+
+const accessDenied = {
+  code: "access_denied",
+  message: "Agent access denied",
+  retryable: false,
+  recovery: "none",
+  requestId: "request-1",
+};
+test("Membership-only observation accepts the exact downstream 403 with original credentials", async (t) => {
+  const f = await fixture(t, { status: 403, body: accessDenied });
+  const observer = await f.open({ membershipRevocation: true });
+  const point = observer.checkpoint("revoked");
+  await f.browser.request("/api/session", { method: "DELETE", status: 204 });
+  await observer.waitForClose(point);
+  const result = await observer.rejectPrompt();
+  assert.equal(result.status, 403);
+  assert.deepEqual(result.body, accessDenied);
+  assert.equal(result.credentialScope, point.stream.credential_scope);
+  assert.equal(observer.browser.requests, 1);
+  assert(f.requests.every((r) => r.cookie === f.cookie));
+  assert.equal(f.client.requests.length, 1);
+});
+for (const [name, override, membershipRevocation] of [
+  ["other consumers retain 401", { status: 403, body: accessDenied }, false],
+  [
+    "Membership cannot accept 503",
+    { status: 503, code: "identity_unavailable" },
+    true,
+  ],
+  [
+    "retryable denial",
+    { status: 403, body: { ...accessDenied, retryable: true } },
+    true,
+  ],
+  [
+    "different code",
+    { status: 403, body: { ...accessDenied, code: "forbidden" } },
+    true,
+  ],
+  [
+    "recovery instruction",
+    { status: 403, body: { ...accessDenied, recovery: "retry" } },
+    true,
+  ],
+  [
+    "missing request ID",
+    { status: 403, body: { ...accessDenied, requestId: undefined } },
+    true,
+  ],
+])
+  test("original denial probe rejects " + name, async (t) => {
+    const f = await fixture(t, override);
+    const observer = await f.open({ membershipRevocation });
+    const point = observer.checkpoint("revoked");
+    await f.browser.request("/api/session", { method: "DELETE", status: 204 });
+    await observer.waitForClose(point);
+    await assert.rejects(() => observer.rejectPrompt());
+    assert.equal(observer.browser.requests, 1);
+  });
 
 test("actual logout is separate from silent observation and the rejection keeps the original Cookie", async (t) => {
   const f = await fixture(t),
@@ -208,6 +271,39 @@ test("original Identity deadlines do not assume the observer's wall clock", asyn
     false,
   );
 });
+
+for (const recorderThrows of [false, true]) {
+  test(`unexpected denial status reaches the original browser's failure recorder (recorder throws: ${recorderThrows})`, async (t) => {
+    const failures = [];
+    const f = await fixture(t, {
+      status: 503,
+      code: "identity_unavailable",
+      onStatusFailure: async (failure) => {
+        failures.push(failure);
+        if (recorderThrows) throw new Error("private recorder failure");
+      },
+    });
+    const observer = await f.open();
+    const point = observer.checkpoint("revoked");
+    await f.browser.request("/api/session", { method: "DELETE", status: 204 });
+    await observer.waitForClose(point);
+    await assert.rejects(() => observer.rejectPrompt(), {
+      code: "ERR_ASSERTION",
+      actual: 503,
+      expected: 401,
+    });
+    assert.deepEqual(failures, [
+      {
+        http_status: 503,
+        expected_status: 401,
+        trace_id: "b".repeat(32),
+        response_code: "identity_unavailable",
+      },
+    ]);
+    assert.equal(observer.browser.cookie, f.cookie);
+    assert.equal(observer.browser.requests, 1);
+  });
+}
 
 test("an actual denial cannot be probed before the remote close is observed", async (t) => {
   const f = await fixture(t),

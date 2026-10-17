@@ -186,7 +186,6 @@ export function inspectPrivateCostConfigurationTrace(
   assert.deepEqual(requests, [], "nonexecution Cost request reached Provider");
   const listing = expected.method === "session/list";
   if (listing) {
-    assert.equal(expected.protocolVersion, 1);
     assert.equal(expected.transport, "websocket");
     assert.equal(expected.inputSessionID, null);
     assert.equal(expected.sessionId, undefined);

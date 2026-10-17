@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { inspect } from "node:util";
 import {
   evidenceDirectory,
   evidenceFilePath,
@@ -7,7 +8,27 @@ import {
 } from "../../support/storage.mjs";
 import { Pool } from "pg";
 import { GatewayClient } from "./support.mjs";
-import { gateway, connectACP } from "./acp-connection.mjs";
+import { createRequestFailureRecorder } from "./request-failure.mjs";
+import { gateway } from "./acp-connection.mjs";
+import { openBrowserPrivateACP } from "./private-acp-browser.mjs";
+import { createPrivateACPTelemetry } from "./private-acp-telemetry.mjs";
+import {
+  createPrivateACPRecorder,
+  preservePrivateACPFailure,
+} from "../../support/private-acp-recorder.mjs";
+import { readPrivateExecutionState } from "../../support/private-acp-execution-state.mjs";
+import { PrivateACPExecutionStateUnavailableError } from "../../support/private-acp-execution-state-error.mjs";
+import { indexAgentAccessRequests } from "./access-private-requests.mjs";
+import {
+  collectPrivateAccessTrace,
+  privateAccessStrictOutcome,
+} from "./access-private-collector.mjs";
+import { nativePromptReceipt } from "../acp-multimodal/connection.mjs";
+import { withPrivateCommandConnection } from "../acp-commands/connection.mjs";
+import { assertWorkspaceBootstrap } from "./organization-workspace.mjs";
+import { observeBrowserSession } from "./bridge-session-observer.mjs";
+import { collectMembershipBrowserClosures } from "./agent-access-browser-evidence.mjs";
+import { closeSessionFaultResources } from "./session-fault-lifecycle.mjs";
 import {
   globalAndSCIMOffboarding,
   deniedEnable,
@@ -36,18 +57,6 @@ import {
 import { createAccessCatalog } from "./catalog.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
-import { inspectAccessRun } from "./access-run.mjs";
-import {
-  saveSessionTrace,
-  collectSessionClosure,
-  strictSessionEvidence,
-} from "./session-trace.mjs";
-import {
-  expectSilentSessionClose,
-  sessionCloseCheckpoint,
-} from "./session-close.mjs";
 import { identityEvidenceExitCode } from "./trace.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
@@ -61,8 +70,13 @@ const adminA = new GatewayClient(gateway),
   adminB = new GatewayClient(gateway),
   memberB = new GatewayClient(gateway);
 const clients = new Set(),
+  observers = new Set(),
+  recorders = [],
+  observations = [],
+  issuedSessions = new WeakMap(),
+  principalEvidence = [],
+  stateReceipts = [],
   traces = [],
-  acpRequests = [],
   revokedMessages = [],
   offboarding = [],
   resources = [],
@@ -72,6 +86,23 @@ const clients = new Set(),
     "scope-credential-a",
     "scope-credential-b",
   ];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+const onStatusFailure = createRequestFailureRecorder({
+  directory: evidenceRoot,
+  jaeger: "http://jaeger:16686",
+  secrets,
+});
+for (const browser of [adminA, adminB, memberB])
+  browser.onStatusFailure = onStatusFailure;
+const save = (name, value) =>
+  writeEvidenceFile(evidenceRoot, name, JSON.stringify(value, null, 2));
+function archiveRequests() {
+  save(
+    "private-connections.json",
+    recorders.map((recorder) => recorder.snapshot()),
+  );
+  save("private-observations.json", observations);
+}
 const pool = new Pool({
   connectionString: process.env.TEST_ACP_DATABASE_URL,
   max: 1,
@@ -97,6 +128,7 @@ async function modelState() {
   });
   assert.equal(response.status, 200);
   const state = await response.json();
+  save("provider.private.json", state);
   assert.equal(state.errors.length, 0, "model rejected unexpected activity");
   return state.requests;
 }
@@ -113,6 +145,7 @@ async function acpSnapshot() {
     result[table] = (
       await pool.query(`SELECT * FROM ${table} ORDER BY id`)
     ).rows;
+  save("acp-database.private.json", result);
   return result;
 }
 async function snapshot() {
@@ -134,8 +167,15 @@ async function snapshot() {
   return { projections, acp: await acpSnapshot(), model: await modelState() };
 }
 async function login(browser, slug, email, password) {
-  const { body } = await browser.request("/api/session/login", {
+  const startedMono = performance.now();
+  const response = await browser.request("/api/session/login", {
     body: { organization_slug: slug, email, password },
+  });
+  const { body } = response;
+  rememberPrincipal(browser, body, {
+    startedMono,
+    completedMono: performance.now(),
+    traceID: response.traceID,
   });
   secrets.push(...browser.cookies.values());
   assert.equal(
@@ -144,6 +184,62 @@ async function login(browser, slug, email, password) {
     "fixture must not be a system administrator",
   );
   return body.principal;
+}
+function rememberPrincipal(browser, body, observation) {
+  const previous = issuedSessions.get(browser)?.issued.principal;
+  if (previous)
+    for (const field of ["organization_id", "user_id"])
+      assert.equal(body.principal?.[field], previous[field]);
+  const issued = structuredClone({ ...body, observation });
+  issuedSessions.set(browser, { token: browser.accessToken, issued });
+  principalEvidence.push(issued);
+  save("original-principals.private.json", principalEvidence);
+}
+async function principalFor(browser) {
+  if (issuedSessions.get(browser)?.token !== browser.accessToken) {
+    // OIDC returns a redirect; observe that original browser session before
+    // delegating it. Re-login can replace Membership while preserving User.
+    const startedMono = performance.now();
+    const response = await browser.request("/api/session");
+    rememberPrincipal(browser, response.body, {
+      startedMono,
+      completedMono: performance.now(),
+      traceID: response.traceID,
+    });
+    secrets.push(...browser.cookies.values());
+  }
+  return issuedSessions.get(browser).issued.principal;
+}
+async function privateState(item, browser = item.owner) {
+  const principal = await principalFor(browser);
+  let state;
+  try {
+    state = await readPrivateExecutionState(item.agent, browser, {
+      principal,
+      receipts: stateReceipts,
+      secrets,
+    });
+  } catch (error) {
+    await preservePrivateACPFailure(error, () =>
+      save("private-state.json", stateReceipts),
+    );
+    throw error;
+  }
+  save("private-state.json", stateReceipts);
+  return state;
+}
+async function bootstrap(browser, agentIDs, headers = {}) {
+  const principal = await principalFor(browser);
+  const response = await browser.request("/api/app/workspace/v1/bootstrap", {
+    headers,
+  });
+  return assertWorkspaceBootstrap(
+    response.body,
+    principal,
+    { slug: principal.organization_slug, name: principal.organization_name },
+    agentIDs,
+    secrets,
+  );
 }
 async function setup() {
   const a = await login(
@@ -362,69 +458,108 @@ async function administratorIsolation() {
 async function workspaceIsolation() {
   step = "workspace_scope";
   for (const own of resources) {
-    const response = await own.owner.request("/api/app/bootstrap", {
-      headers: foreignHeaders(resources.find((r) => r !== own).organization),
-    });
-    assert.equal(response.body.principal.organization_id, own.organization);
-    assertUnchanged(
-      response.body.agents.map((item) => item.agent_id),
+    await bootstrap(
+      own.owner,
       [own.agent],
+      foreignHeaders(resources.find((r) => r !== own).organization),
     );
-    assertUnchanged(Object.keys(response.body.agents[0]).sort(), [
-      "activation_state",
-      "agent_id",
-      "lifecycle_state",
-      "name",
-      "runtime_state",
-    ]);
   }
-  assertUnchanged(
-    (
-      await adminB.request("/api/app/bootstrap", {
-        headers: foreignHeaders(resources[1].organization),
-      })
-    ).body.agents,
-    [],
-  );
-}
-function remember(client, method, details = {}) {
-  const request = client.requests.filter((r) => r.method === method).at(-1);
-  assert(request, "actual SDK request missing");
-  return {
-    ...request,
-    agentId: client.agentId,
-    transport: "websocket",
-    connectionTraceID: client.traceID,
-    kind: "request",
-    ...details,
-  };
+  await bootstrap(adminB, [], foreignHeaders(resources[1].organization));
 }
 async function rejectedAgent(version, item, browser) {
-  const client = connectACP(version, item.agent, browser.cookie, {
-    headers: foreignHeaders(item.organization),
+  const client = await open(version, item, {
+    browser,
+    purpose: "denied-agent",
   });
-  clients.add(client);
   try {
-    await client.initialize();
     await assertAgentDenied(client);
-    acpRequests.push(
-      remember(client, "session/new", { rejection: "access_denied" }),
-    );
     deniedAgents++;
   } finally {
-    close(client);
+    await close(client);
   }
 }
-async function open(version, item) {
-  const client = connectACP(version, item.agent, item.owner.cookie, {
-    injectTraceParent: false,
+async function open(
+  version,
+  item,
+  { browser = item.owner, purpose, phase } = {},
+) {
+  const principal = await principalFor(browser);
+  const raw = await openBrowserPrivateACP(version, item.agent, browser, {
+    principal,
+    telemetry,
+    secrets,
+    captureRawFrames: true,
   });
+  let recorder;
+  try {
+    recorder = createPrivateACPRecorder(
+      raw,
+      {
+        version,
+        agentId: item.agent,
+        principal,
+        purpose,
+        phase,
+        label: `connection-${recorders.length + 1}`,
+      },
+      archiveRequests,
+    );
+    recorders.push(recorder);
+    archiveRequests();
+  } catch (error) {
+    return withPrivateCommandConnection(raw, [], async () => {
+      throw error;
+    });
+  }
+  const client = {
+    agentId: item.agent,
+    version,
+    recorder,
+    get requests() {
+      return raw.requests;
+    },
+    get updates() {
+      return raw.updates;
+    },
+    closeAndWait: () => recorder.closeAndWait(),
+    async request(method, params, timeout) {
+      const listSnapshot =
+        method === "list" ? (await acpSnapshot()).acp_sessions : undefined;
+      const offset = recorder.snapshot().evidence.length;
+      const errors = [];
+      let result;
+      try {
+        result = await recorder.request(method, params, timeout);
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        const rows = recorder.snapshot().evidence.slice(offset);
+        assert.equal(
+          rows.length,
+          1,
+          "original access request was not recorded",
+        );
+        observations.push({
+          connectionTraceID: raw.connectionTraceID,
+          requestId: rows[0].requestId,
+          ...(listSnapshot ? { listSnapshot } : {}),
+        });
+        archiveRequests();
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length)
+        throw new AggregateError(errors, "Access request and archival failed");
+      return result;
+    },
+  };
   clients.add(client);
-  await client.initialize();
   return client;
 }
-function close(client) {
-  client.close();
+async function close(client) {
+  await client.closeAndWait();
   clients.delete(client);
 }
 async function replay(client, version, session) {
@@ -435,18 +570,26 @@ async function replay(client, version, session) {
     mcpServers: [],
     ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
   });
-  acpRequests.push(
-    remember(client, version === 1 ? "session/load" : "session/resume"),
-  );
   return client.updates.slice(offset);
 }
 async function baseline(version, item, phase = `v${version}-${item.key}`) {
   step = `${phase}_baseline`;
-  const client = await open(version, item);
+  await until(async () => {
+    try {
+      const state = await privateState(item);
+      return state.availability === "ready" && state.access_allowed;
+    } catch (error) {
+      if (error instanceof PrivateACPExecutionStateUnavailableError)
+        return false;
+      throw error;
+    }
+  }, "original owner private execution readiness");
+  const client = await open(version, item, { purpose: "baseline", phase });
   const session = (
     await client.request("new", { cwd: "/workspace", mcpServers: [] })
   ).sessionId;
-  await client.request(
+  const promptOffset = client.updates.length;
+  const promptResult = await client.request(
     "prompt",
     { sessionId: session, prompt: [{ type: "text", text: phase }] },
     60000,
@@ -467,9 +610,39 @@ async function baseline(version, item, phase = `v${version}-${item.key}`) {
       run.error_class === null,
     "authorized Run did not complete",
   );
-  acpRequests.push(
-    remember(client, "session/prompt", { phase, kind: "access-run" }),
+  if (version === 2)
+    await until(
+      () =>
+        client.updates
+          .slice(promptOffset)
+          .some(
+            ({ update }) =>
+              update.sessionUpdate === "state_update" &&
+              update.state === "idle",
+          ),
+      "original prompt terminal update",
+    );
+  const prompt = client.recorder.snapshot().evidence.at(-1);
+  const detail = observations.find(
+    (row) =>
+      row.connectionTraceID === prompt.connectionTraceID &&
+      row.requestId === prompt.requestId,
   );
+  Object.assign(detail, {
+    phase,
+    modelName: "scope-" + phase.at(-1),
+    promptReceipt: nativePromptReceipt(
+      {
+        version,
+        lastRequest: prompt,
+        updates: client.updates.slice(promptOffset),
+      },
+      session,
+      { result: promptResult },
+    ),
+  });
+  archiveRequests();
+  save(`${phase}-run.private.json`, run);
   const before = await acpSnapshot(),
     calls = await modelState();
   const updates = await replay(client, version, session);
@@ -526,11 +699,6 @@ async function sessionIsolation(version, own, other) {
     );
     assertNoNotifications(own.client.updates, offset);
     assertUnchanged(before, await snapshot());
-    acpRequests.push(
-      remember(own.client, `session/${method}`, {
-        rejection: "session_access_denied",
-      }),
-    );
     deniedSessions++;
   }
 }
@@ -541,24 +709,61 @@ async function membershipBoundary(version, a, b) {
     display_name: seed.shared.display_name,
     role: "member",
   };
+  const issued = issuedSessions.get(memberB).issued;
+  const observer = await observeBrowserSession(memberB, b.client, {
+    membershipRevocation: true,
+    agentId: resources[1].agent,
+    sessionId: b.session,
+    issued,
+  });
+  observers.add(observer);
   const before = await snapshot();
   const priorEvents = await agentEvents(resources[1]);
-  const beforeClose = sessionCloseCheckpoint(b.client);
+  const beforeClose = observer.checkpoint("revoked");
   const offset = b.client.updates.length;
-  const revoked = await adminB.request(
-    `/api/admin/directory/memberships/${seed.shared.id}`,
-    {
-      body: { ...update, active: false },
-    },
-  );
-  revokedMessages.push(
-    await expectSilentSessionClose(b.client, beforeClose, "revoked", "prompt", {
-      sessionId: b.session,
-      prompt: [{ type: "text", text: "inactive-membership" }],
-    }),
-  );
+  const cause = {
+    kind: "membership_deactivated",
+    method: "POST",
+    path: `/api/admin/directory/memberships/${seed.shared.id}`,
+    actor: structuredClone(await principalFor(adminB)),
+    target: structuredClone(issued.principal),
+    startedMono: performance.now(),
+    startedAt: Date.now(),
+  };
+  const browserRecord = {
+    protocolVersion: version,
+    checkpoint: beforeClose,
+    principal: structuredClone(issued.principal),
+    cause,
+  };
+  revokedMessages.push(browserRecord);
+  save("browser-revocations.private.json", revokedMessages);
+  const revoked = await adminB.request(cause.path, {
+    body: { ...update, active: false },
+  });
+  Object.assign(cause, {
+    completedMono: performance.now(),
+    completedAt: Date.now(),
+    status: revoked.status,
+    body: structuredClone(revoked.body),
+    traceID: revoked.traceID,
+    serverDate: revoked.headers.get("date"),
+  });
+  save("browser-revocations.private.json", revokedMessages);
+  const closure = await observer.waitForClose(beforeClose);
+  Object.assign(browserRecord, closure, {
+    streamRecords: structuredClone(observer.stream.records),
+  });
+  save("browser-revocations.private.json", revokedMessages);
+  const denial = await observer.rejectPrompt();
+  browserRecord.denial = denial;
+  save("browser-revocations.private.json", revokedMessages);
   assertNoNotifications(b.client.updates, offset);
-  close(b.client);
+  await observer.closeAndWait();
+  observers.delete(observer);
+  await close(b.client);
+  browserRecord.protocolClientClosedLocally = true;
+  save("browser-revocations.private.json", revokedMessages);
   await a.client.request("list", {});
   await workspaceAStillAvailable();
   offboarding.push(
@@ -570,6 +775,8 @@ async function membershipBoundary(version, a, b) {
       secrets,
     ),
   );
+  browserRecord.offboarding = offboarding.at(-1);
+  save("browser-revocations.private.json", revokedMessages);
   const after = await snapshot();
   assertUnchanged(before.acp, after.acp);
   assertUnchanged(before.model, after.model);
@@ -594,21 +801,15 @@ async function membershipBoundary(version, a, b) {
   );
   await login(memberB, "access-b", seed.shared.email, secrets[0]);
   await rejectedAgent(version, resources[1], memberB);
-  const workspace = (
-    await memberB.request("/api/app/bootstrap")
-  ).body.agents.find((agent) => agent.agent_id === resources[1].agent);
-  assert.equal(
-    workspace,
-    undefined,
-    "revoked Agent reappeared before explicit Enable",
-  );
-  const state = (
-    await memberB.request(`/api/app/agents/${resources[1].agent}/state`)
-  ).body;
+  await bootstrap(memberB, []);
+  const state = await privateState(resources[1]);
   assert.equal(state.availability, "offline");
   assert.equal(state.access_allowed, false);
   await explicitEnable(resources[1]);
-  const restored = await open(version, resources[1]);
+  const restored = await open(version, resources[1], {
+    purpose: "replay",
+    phase: `v${version}-b`,
+  });
   const beforeReplay = await acpSnapshot();
   const updates = await replay(restored, version, b.session);
   assertPrivateReplay(
@@ -620,15 +821,10 @@ async function membershipBoundary(version, a, b) {
     (await acpSnapshot()).acp_sessions.find((s) => s.id === b.session),
   );
   assertReplayIsolation(beforeReplay, await acpSnapshot(), b.session);
-  close(restored);
+  await close(restored);
 }
 async function workspaceAStillAvailable() {
-  assertUnchanged(
-    (await adminA.request("/api/app/bootstrap")).body.agents.map(
-      (item) => item.agent_id,
-    ),
-    [resources[0].agent],
-  );
+  await bootstrap(adminA, [resources[0].agent]);
 }
 
 try {
@@ -647,7 +843,7 @@ try {
     await sessionIsolation(version, a, b);
     await sessionIsolation(version, b, a);
     await membershipBoundary(version, a, b);
-    close(a.client);
+    await close(a.client);
   }
   step = "global_and_scim_offboarding";
   offboarding.push(
@@ -660,11 +856,11 @@ try {
       modelState,
       run: async (item, phase) => {
         const result = await baseline(2, item, phase);
-        close(result.client);
+        await close(result.client);
         return result.session;
       },
       replayHistory: async (item, session, phase) => {
-        const client = await open(2, item);
+        const client = await open(2, item, { purpose: "replay", phase });
         try {
           const before = await acpSnapshot();
           assertPrivateReplay(
@@ -677,7 +873,7 @@ try {
           );
           assertReplayIsolation(before, await acpSnapshot(), session);
         } finally {
-          close(client);
+          await close(client);
         }
       },
     })),
@@ -685,32 +881,47 @@ try {
   step = "trace_acceptance";
   const calls = await modelState();
   assert.equal(calls.length, 9);
+  assert.equal(deniedAdmin, 36);
+  assert.equal(deniedAgents, 8);
+  assert.equal(deniedSessions, 20);
+  assert.equal(offboarding.length, 5);
+  assert.equal(revokedMessages.length, 2);
+  assert.equal(clients.size, 0);
+  assert.equal(observers.size, 0);
+  const indexed = indexAgentAccessRequests({
+    connections: recorders.map((recorder) => recorder.snapshot()),
+    observations,
+  });
+  save("private-request-inventory.json", indexed);
+  await telemetry.flush();
   const evidence = await verifyAccessEvidence(
     "http://jaeger:16686",
     traces,
     secrets,
   );
-  for (const request of acpRequests)
-    evidence.push(
-      await collectManagedTrace(
-        "http://jaeger:16686",
-        request,
+  const privateEvidence = [];
+  for (const request of [...indexed.initializations, ...indexed.requests]) {
+    privateEvidence.push(
+      await collectPrivateAccessTrace("http://jaeger:16686", request, {
         secrets,
-        calls,
-        saveSessionTrace,
-        (trace, expected, secrets, calls) =>
-          strictSessionEvidence(
-            (request.kind === "access-run"
-              ? inspectAccessRun
-              : inspectCommandTrace)(trace, expected, secrets, calls),
-            trace,
-          ),
-      ),
+        requests: calls,
+        directory: evidenceRoot,
+        flush: () => telemetry.flush(),
+      }),
     );
-  for (const request of revokedMessages)
-    evidence.push(
-      await collectSessionClosure("http://jaeger:16686", request, secrets),
-    );
+    save("private-reports.json", privateEvidence);
+  }
+  assert.equal(privateAccessStrictOutcome(privateEvidence).accepted, true);
+  evidence.push(
+    ...privateEvidence,
+    ...(await collectMembershipBrowserClosures(
+      "http://jaeger:16686",
+      revokedMessages,
+      secrets,
+      { directory: evidenceRoot },
+    )),
+  );
+  save("reports.json", [...evidence, ...offboarding]);
   process.exitCode = identityEvidenceExitCode([...evidence, ...offboarding]);
   for (const browser of [adminA, adminB, memberB])
     await browser.request("/api/session", { method: "DELETE", status: 204 });
@@ -722,6 +933,9 @@ try {
       denied_agent_requests: deniedAgents,
       denied_session_commands: deniedSessions,
       membership_revocations: 2,
+      private_connections: indexed.initializations.length,
+      private_business_requests: indexed.requests.length,
+      browser_http_denials: revokedMessages.length,
       completed_runs: calls.length,
       offboarding,
       traces: evidence,
@@ -729,7 +943,11 @@ try {
   );
 } catch (error) {
   if (evidenceRoot)
-    writeEvidenceFile(evidenceRoot, "failure.private.txt", String(error.stack));
+    writeEvidenceFile(
+      evidenceRoot,
+      "failure.private.txt",
+      inspect(error, { depth: 12 }),
+    );
   console.error(
     asciiJSON({
       event: "agent_access_failed",
@@ -743,6 +961,21 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  for (const client of clients) client.close();
-  await pool.end();
+  try {
+    await closeSessionFaultResources({ clients, observers, pool, telemetry });
+    archiveRequests();
+  } catch (error) {
+    writeEvidenceFile(
+      evidenceRoot,
+      "cleanup-failure.private.txt",
+      inspect(error, { depth: 12 }),
+    );
+    process.exitCode = 1;
+    console.error(
+      asciiJSON({
+        event: "agent_access_cleanup_failed",
+        reason: failureCategory(error),
+      }),
+    );
+  }
 }

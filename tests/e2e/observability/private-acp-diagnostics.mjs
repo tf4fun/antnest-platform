@@ -216,7 +216,11 @@ export function privateACPRejection(
     "actual command rejection receipt required",
   );
   const method = expected.method.split("/")[1];
-  assert(["new", "load", "resume", "fork", "prompt"].includes(method));
+  assert(
+    ["new", "load", "resume", "fork", "prompt", "close", "delete"].includes(
+      method,
+    ),
+  );
   const operation = `acp.session.${method === "load" ? "resume" : method}`;
   const applications = trace.spans.filter(
     (span) =>

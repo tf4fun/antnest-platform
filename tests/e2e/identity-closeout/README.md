@@ -517,8 +517,9 @@ results.
 
 `make e2e-agent-access` uses Identity's RPC to prepare two organizations,
 separate organization administrators and one User who is an administrator in A
-and a member in B. All later Agent, catalog, membership and ACP actions go
-through the Gateway. Each organization has its own model configuration,
+and a member in B. Agent, catalog and Membership administration use the Gateway;
+official SDK requests use the private ACP boundary delegated from each original
+browser session. Each organization has its own model configuration,
 Template and Agent, and both Agents have the same User owner, so user-only
 filtering cannot pass by accident.
 
@@ -526,26 +527,42 @@ The access matrix covers scoped administrator lists, details, operations and
 events (including watch rejection), rejected foreign lifecycle commands, forged
 organization and role headers and body or query scope, member versus
 administrator surfaces, owner-only workspace lists and v1 and v2 ACP
-authorization. The Gateway authenticates the connection; ACP rejects
+authorization. Identity delegates the original browser Principal; ACP rejects
 unauthorized Agent requests with `access_denied`. Within an authorized
 connection to a local Agent, foreign Session load, resume, fork, close, delete
 and prompt must fail without history or persisted effects. Deactivating only
-B's Membership must reject B's already-open connection without invalidating the
+B's Membership must retire B's original Cookie Bridge SSE and reject a real HTTP
+prompt using that same Cookie, without invalidating the
 same User in A. The Controller must finish automatic Disable before restoration
 is tested. Restoring B keeps the Agent disabled; only an explicit Enable allows
-reconnecting with the still-valid token and replaying history.
+reconnecting with a fresh login and replaying history. Restoring Membership does
+not revive the old Cookie. The private SDK connection is separately joined;
+local SDK cleanup does not establish browser revocation.
 
-Owner offboarding is checked for both protocol versions: global User
+Membership offboarding is checked for both protocol versions. Global User
 deactivation across A and B, an unaffected second owner, and SCIM Membership
-deletion. The Runtime's own inspection API confirms `disabled/absent`, and a
+deletion retain their existing v2 Run/replay coverage. The Runtime's own
+inspection API confirms `disabled/absent`, and a
 sentinel seeded and read through the official MCP client proves workspace
 retention after Enable. The test client joins the Runtime management network
 only for this oracle. It reads Runtime state and the per-instance MCP credential
 with the disposable `controller-runtime` grant, and reads raw Controller events
 with the `console-controller` grant and a caller context resolved from the
 admin's existing Gateway session. ACP-owned read-only snapshots prove that
-Disable does not delete history or Runs. After explicit Enable, fresh Gateway
-ACP Runs prove that admission and the shared model credential still work.
+Disable does not delete history or Runs. After explicit Enable, private ACP
+Runs under fresh browser authority prove that admission and the shared model
+credential still work.
+
+The complete original SDK inventory is twenty initializations and sixty-four
+business requests, including nine successful Session creations and six lists.
+Original raw replies, SDK results/errors and scoped pre-list database snapshots
+are kept privately. Nine no-tool Runs and twelve successful history replays
+remain required. The two HTTP denial probes are separate browser evidence.
+Browser closure requires an actual UI access-denied witness, terminal Gateway
+Resolve rejection or winning Gateway session-feed event bound to the original
+Identity mutation and Membership scope, plus its matching automatic
+Disable. This gate does not claim final closure of Bridge's shared private
+owners; that belongs to the Session lifecycle profile.
 
 The SCIM owner logs in through the same OIDC fixture, has a peer Membership and
 Agent in A, and owns nonempty chat history in B before deletion. A stays usable

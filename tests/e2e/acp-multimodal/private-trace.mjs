@@ -290,10 +290,17 @@ export function inspectPrivateNativeTrace(
   const model = one(acp("model.complete"), "model attempt");
   assert.equal(tree.parent(model), run, "model is not directly owned by Run");
   assert.equal(tag(model, "model.purpose"), "response");
-  assert.equal(
-    tag(model, "model.name"),
-    failed ? "text-model" : "native-model",
+  const modelName =
+    expected.modelName === undefined
+      ? failed
+        ? "text-model"
+        : "native-model"
+      : expected.modelName;
+  assert(
+    typeof modelName === "string" && modelName.trim().length > 0,
+    "original expected model name required",
   );
+  assert.equal(tag(model, "model.name"), modelName);
   const finish = one(
     trace.spans.filter((span) =>
       /WITH finished AS \(UPDATE runs\b/u.test(
