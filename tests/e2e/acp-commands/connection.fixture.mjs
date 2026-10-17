@@ -98,12 +98,16 @@ export async function commandFixture(t, profile, options = {}) {
     )
     .onRequest(
       sdk.methods.agent.session.list,
-      record("session/list", () => ({
-        sessions: Array.from({ length: sessions }, (_, index) => ({
-          sessionId: "session-" + (index + 1),
-          cwd: "/workspace",
-        })),
-      })),
+      record(
+        "session/list",
+        options.listSessions ??
+          (() => ({
+            sessions: Array.from({ length: sessions }, (_, index) => ({
+              sessionId: "session-" + (index + 1),
+              cwd: "/workspace",
+            })),
+          })),
+      ),
     )
     .onRequest(
       sdk.methods.agent.session.resume,
@@ -180,6 +184,11 @@ export async function commandFixture(t, profile, options = {}) {
     agent = agent.onRequest(
       sdk.methods.agent.session.setConfigOption,
       record("session/set_config_option", options.setConfigOption),
+    );
+  if (options.closeSession)
+    agent = agent.onRequest(
+      sdk.methods.agent.session.close,
+      record("session/close", options.closeSession),
     );
   const peer = new AcpServer({ agent });
   const http = adapters.createNodeHttpHandler(peer);

@@ -71,9 +71,13 @@ complete delete responses and completed operations are retained in sequence on
 the client clock after ACK consumption. Business, deletion and evidence failures
 remain failures, and cleanup still attempts every created Agent.
 
-The independent cleanup entry, host deployment wiring and actual Docker business
-acceptance remain pending. The current shell runner is not yet an accepted
-retired-route-free scenario.
+The independent cleanup entry now delegates the original owner's login Principal
+to private v1 ACP. It awaits each paged Session close reply, joins the connection
+and telemetry, and keeps its requests outside the 64 business Trace inventory.
+Controlled Identity and actual SDK/TCP checks cover delegation, pagination,
+failures and cleanup; they do not replace production authorization or Docker.
+Host deployment wiring and actual Docker business acceptance remain pending.
+The current shell runner is not yet an accepted retired-route-free scenario.
 
 ## Running
 
@@ -141,10 +145,17 @@ After consuming the original host Runtime ACK, the client deletes both Agents
 through the Gateway and Controller and waits for both operations before Trace
 collection, so Runtime shutdown flushes OTLP. Failure paths attempt every created
 Agent while preserving the original business and cleanup errors. Independent
-wrapper cleanup then
-discovers only this invocation's UUID-qualified Agents, closes their Sessions
-through ACP and deletes them through the Gateway and Controller, even after the
-client is lost. It attempts every owned Agent and reports partial failure. The
+wrapper cleanup discovers only this invocation's UUID-qualified Agents, closes
+their Sessions through private ACP and deletes them through the Gateway and
+Controller, even after the client is lost. It bounds Session pagination at 100
+pages and rejects repeated cursors. A Session close failure still attempts that
+owned Agent's deletion and remains a failure. Public output uses the shared safe
+failure summary; original errors and failure inventory stay in private evidence.
+The independent entry always uses an `independent-cleanup/` subdirectory so its
+failure files cannot overwrite the business client's original failure files.
+Every fresh Agent detail, including after an active operation, must retain the
+selected Agent ID and this run's exact name before cancellation or deletion.
+It attempts every owned Agent and reports partial failure. The
 root owner then stops resource creators, removes Compose and Runtime resources
 under both scope labels, and checks for leftovers, including volumes and
 identity and catalog data. A control-plane cleanup failure stays visible even
