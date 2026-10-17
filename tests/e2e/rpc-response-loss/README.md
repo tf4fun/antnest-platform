@@ -30,7 +30,10 @@ stack; the default remains 5000 ms. The same business and strict trace gates app
 
 The Controller's `apply-execution-snapshot` and `settle-agent` calls pass
 through a private fixture proxy to the real ACP service. The Gateway and Admin
-Console still address ACP directly. The proxy holds one validated, complete
+Console still address ACP directly. The protocol client uses the private ACP
+workspace listener with the original owner's delegated Identity; execution state
+uses the authenticated private state reader. Neither path uses the retired
+Gateway ACP/state routes or the fault proxy. The proxy holds one validated, complete
 upstream HTTP 200 without sending any response headers or bytes downstream, then
 drops the held response when the scenario requests it. Retries come from the
 real publication worker or Temporal; the proxy never retries.
@@ -61,12 +64,24 @@ connect each receipt to its Controller CLIENT span and ACP SERVER span; driver
 SQL spans establish the durable effects. Each SDK request is correlated by its
 JSON-RPC ID and connection.
 
+The original SDK parameters, results/errors and full raw replies are saved
+privately after each request and after joined connection closure. The inventory
+requires 12 initializations and 22 business requests across the four cases.
+Private collection reuses the existing initialization, Session and ordinary
+request inspectors; a consumer-owned closed-admission checker requires exactly
+four reads and the original `agent_unavailable` error, with no execution.
+Post-Rebuild reads also bind their public Run to the replacement Runtime.
+
 Each publication attempt must own an `agent_controller.execution_publication`
 span and its source read. The oracle rejects missing, foreign or premature SQL.
 Strict timing warnings and unrelated ERROR spans are reported as failures,
 separately from the scoped business and topology result. Only the reviewed
 clock-skew warning (`clock skew adjustment disabled; not applying calculated
-delta of ...`) is reported without failing the exit.
+delta of ...`) and the existing private inspectors' precisely owned diagnostics
+are accepted without changing their raw strict failure. The expected two
+closed-admission rejections own their application/RPC error spans. The existing
+CLI exits zero for accepted evidence and one for rejected evidence. Confirmed
+external SDK issues are non-blocking under repository policy.
 
 Full Traces stay in the private directory
 `artifacts/verification/rpc-response-loss/<project>/rpc-traces`; console output
@@ -84,6 +99,9 @@ lifecycle writes a separate `*-after-failure.json`; it never replaces the failed
 sample or changes admission. Cleanup also saves Admin Console logs beside the
 trace directory before removing the client. These private artifacts may contain
 sensitive diagnostic data and are excluded from Git and Docker build contexts.
+The host also retains the client log, business result and before/after deployment
+inspection; a required archive failure fails the run. Model/client containers use
+the actual deployed ACP image, and the Runtime uses the parent's configured image.
 
 ## Cleanup
 

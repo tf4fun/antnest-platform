@@ -11,7 +11,11 @@ const fixture = () => ({
     },
   },
   State: { Running: true, StartedAt: "start", Health: { Status: "healthy" } },
-  HostConfig: { PortBindings: {} },
+  HostConfig: {
+    PortBindings: {},
+    ExtraHosts: ["agent-acp-control:10.241.0.34"],
+  },
+  NetworkSettings: { Networks: { "test_controller-acp": {} } },
 });
 test("fault proxy is private, healthy and owned; ACP remains the same process", () => {
   const before = fixture();
@@ -33,6 +37,9 @@ test("fault proxy is private, healthy and owned; ACP remains the same process", 
     (x) =>
       (x.HostConfig.PortBindings = { "8080/tcp": [{ HostIp: "127.0.0.1" }] }),
     (x) => (x.State.Health.Status = "unhealthy"),
+    (x) => (x.NetworkSettings.Networks = { test_edge: {} }),
+    (x) => (x.HostConfig.ExtraHosts = []),
+    (x) => (x.HostConfig.ExtraHosts = ["agent-acp-control:10.241.0.5"]),
   ]) {
     const row = fixture();
     change(row);

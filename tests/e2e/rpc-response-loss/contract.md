@@ -36,6 +36,32 @@ real socket behavior.
 
 ## Trace rules
 
+The protocol client uses the private workspace listener with the original
+owner's Identity delegation, and reads execution state through the authenticated
+private state reader. It does not use the retired Gateway ACP or state routes.
+The Controller alone uses the fault proxy; private client traffic bypasses it.
+
+The four cases own exactly 12 connections/initializations and 22 business
+requests: four new Sessions, eight completed prompts, eight load/resume replays
+and two closed-admission rejections. Each request retains its original parameters,
+SDK result/error, request ID, raw response and connection/Agent/Session/protocol
+identity. Connections and telemetry must finish before final evidence is accepted.
+Every Rebuild read binds its public Run to the replacement Runtime.
+
+A closed-admission prompt returns exactly `-32020` with
+`{code: "agent_unavailable", retryable: false}`. Its private Trace contains the
+RPC, its application span and four ordered SELECTs (Session authorization,
+client MCP revision, temporary scopes, Session reread). There is no protection
+query, transaction, write, Run, Provider or Runtime call. The single application
+DomainError event owns the RPC error origin; it is preserved as an expected
+strict failure, not rewritten as a successful Trace.
+
+Private initialization, Session and ordinary-prompt collection reuses the
+existing inspectors and stable-source collector. Raw diagnostics remain in the
+report. Confirmed external SDK issues are non-blocking under repository policy;
+this consumer adds no SDK investigation or workaround. The existing accepted
+CLI exit code remains zero, rejected evidence remains one.
+
 Trace evidence correlates propagated HTTP CLIENT span IDs with ACP SERVER spans,
 driver persistence spans and Temporal retry activities. Expected injected
 transport errors must match the recorded receipts; any other error fails.

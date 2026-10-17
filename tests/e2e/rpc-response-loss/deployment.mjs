@@ -13,6 +13,14 @@ export function inspectProxy(rows, project) {
   assert.equal(row.State.Running, true);
   assert.equal(row.State.Health.Status, "healthy");
   assert.deepEqual(Object.values(row.HostConfig.PortBindings ?? {}).flat(), []);
+  assert.deepEqual(Object.keys(row.NetworkSettings.Networks), [
+    project + "_controller-acp",
+  ]);
+  assert.equal(row.HostConfig.ExtraHosts?.length, 1);
+  assert.match(
+    row.HostConfig.ExtraHosts[0],
+    /^agent-acp-control[:=](?:[0-9]{1,3}\.){3}34$/u,
+  );
 }
 export function assertSameProcess(before, after) {
   for (const row of [before, after]) {
