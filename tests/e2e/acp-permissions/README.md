@@ -79,6 +79,15 @@ failures and cleanup; they do not replace production authorization or Docker.
 Host deployment wiring and actual Docker business acceptance remain pending.
 The current shell runner is not yet an accepted retired-route-free scenario.
 
+The owning candidate image plan uses this run's `permission-UUID` tags for ten
+services, the production Runtime base, the official managed fixture carrier and
+the final Runtime image. The final fixture COPY always runs, including with CI
+provided source images. Original production layers and configuration, both
+source identities around COPY, tag ownership and captured image IDs are checked.
+Interrupted or failed builds clean only their recorded candidates in reverse
+order. These controlled image-command tests do not constitute actual builds or
+host deployment acceptance; the shell integration remains pending.
+
 ## Running
 
 ```sh
