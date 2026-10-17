@@ -54,10 +54,10 @@ the host's SIGKILL proof. Connection, request and initialization inventories are
 private; failure output uses a safe summary while full errors and partial
 inventory remain private. Cleanup errors cannot hide the original failure.
 
-State and connection migration are local consumer batches. Private Trace
-collection and the host's required grants, networks and contract mounts are
-subsequent batches before full eight-case Docker acceptance. The previous
-platform result does not prove those pending changes.
+The host mounts the three required workload grants and the state/identity/control
+contracts read-only, and joins their private networks. The model and client use
+the deployed ACP image ID; the Runtime uses the configured deployment image.
+The client has no Docker socket, database credential or production collector.
 
 ## Trace rules
 
@@ -68,9 +68,13 @@ effect assertions must still pass. Missing Trace data is reported as
 unavailable. Wrong identities, malformed evidence and privacy violations still
 fail.
 
-Completed requests and lifecycle operations keep strict Trace checks. Before
-another SIGKILL, completed requests must pass topology, protocol and privacy
-inspection through bounded polling and then be archived. A pause in span
+Completed requests and lifecycle operations keep strict Trace checks. The
+existing private ACP collector and command, Session, initialization and barrier
+inspectors consume the recorder's original request/result evidence. Before
+another SIGKILL, every current initialization and completed request must pass
+topology, protocol and privacy inspection through bounded polling and then be
+archived, even if its connection remains open. Cached reports stay bound to the
+original request. A pause in span
 arrivals alone is not evidence, and the SDK's five-second batch interval does
 not guarantee backend visibility after five seconds. The reviewed clock-skew
 warning (`clock skew adjustment disabled; not applying calculated delta of ...`)
@@ -78,8 +82,10 @@ is reported in
 `strict_trace` but does not fail the exit.
 
 Confirmed external SDK issues are also non-blocking under the repository policy;
-retain diagnostics without adding investigations or workarounds. Internal service
-logic and the recovery business assertions still require acceptance.
+the existing private inspectors retain their owned diagnostics without adding
+investigations or workarounds. The summary preserves the original strict failure
+while keeping the existing successful exit for accepted diagnostics. Unowned errors, internal service logic
+and the recovery business assertions still require acceptance.
 
 Process observations, physical proof, public audits and raw Traces are private
 artifacts under `artifacts/verification/acp-restart/<project>/`.

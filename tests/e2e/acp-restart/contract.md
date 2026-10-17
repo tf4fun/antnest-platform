@@ -44,8 +44,7 @@ independent and mandatory.
 Closure joins the transport and all pending request archives before the final
 inventory is checked. Cleanup and archival errors remain visible alongside the
 original business failure. The complete private inventory is preserved before
-publishing success, and partial inventory is retained on failure. Private Trace
-collection and host deployment remain subsequent consumer batches.
+publishing success, and partial inventory is retained on failure.
 
 ## Process interruption and unknown Tool effects
 
@@ -105,6 +104,16 @@ relying on a fixed sleep. Completed setup, replay, denial and ordinary execution
 Traces are archived before the next SIGKILL, and a failed export blocks the next
 injection. The interrupted request is collected afterwards from its propagated
 Model Trace ID; missing active spans remain missing.
+
+Private Trace checks reuse the existing ACP collector and the owning command,
+Session, initialization and Runtime barrier inspectors. The recorder's original
+inputs and results supply their expectations. Only the precise recorded barrier
+rejection is projected from a failed RPC to the inspector's rejected outcome.
+Every current connection's initialization is archived before the next SIGKILL,
+even while that connection remains open. Completed request reports stay bound to
+their original requests; interrupted requests never enter this success path.
+The final inventory contains 26 initializations, 40 completed business requests,
+six interrupted diagnostics and four independent lifecycle operations.
 
 ## Verification order
 

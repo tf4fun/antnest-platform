@@ -8,11 +8,40 @@ import {
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { hasError, timingEvidence } from "../acp-plan/requests.mjs";
 import { clockWarningsOnly } from "../stage3-base/trace.mjs";
+import { privateACPStrictOutcome } from "../observability/private-acp-inventory.mjs";
+
+export const restartDiagnosticReasons = new Set([
+  "progress-barrier-rejection",
+  "completed-initialize-mcp-read-disconnect",
+  "completed-runtime-tool-http-disconnect",
+]);
 
 // Interrupted executions lose unexported spans by design, so only completed
 // requests and lifecycle commands are gated.
 export function restartStrictOutcome(results) {
   const gated = results.filter((r) => r.strict_trace !== "not_applicable");
+  const privateResults = gated.filter(
+    (r) => r.diagnostic_inventory_verified === true,
+  );
+  if (privateResults.length) {
+    const privateOutcome = privateACPStrictOutcome(
+      privateResults,
+      restartDiagnosticReasons,
+    );
+    const legacy = gated.filter(
+      (r) => r.diagnostic_inventory_verified !== true,
+    );
+    const legacyAccepted = clockWarningsOnly(legacy);
+    const failed = gated.some((r) => r.strict_trace !== "passed");
+    return {
+      ...privateOutcome,
+      strict_trace: failed ? "failed" : "passed",
+      accepted: privateOutcome.accepted && legacyAccepted,
+      // Restart's existing CLI accepts owned diagnostics with exit 0; the
+      // report still retains strict_trace=failed and all original evidence.
+      exit_code: privateOutcome.accepted && legacyAccepted ? 0 : 1,
+    };
+  }
   if (gated.every((r) => r.strict_trace === "passed"))
     return { strict_trace: "passed", accepted: true };
   return clockWarningsOnly(gated)

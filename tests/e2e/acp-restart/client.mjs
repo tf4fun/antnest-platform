@@ -33,16 +33,13 @@ import {
   runtimeCommandId,
   assertRuntimeOperation,
 } from "../stage3-base/contracts.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
+import { inspectInterruptedTrace, restartStrictOutcome } from "./trace.mjs";
 import {
-  inspectBarrierTrace,
-  inspectInterruptedTrace,
-  assertRuntimeBinding,
-  restartStrictOutcome,
-} from "./trace.mjs";
+  collectPrivateRestartTrace,
+  restartTraceInitializations,
+} from "./collector.mjs";
 import { captureRuntime } from "../managed-mcp/rebuild-evidence.mjs";
 import {
   assertInterrupted,
@@ -54,32 +51,25 @@ import { seed } from "./setup.mjs";
 import { archiveCompleted } from "./archive.mjs";
 import { collectInterruptedTrace } from "./collection.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
-const archive = new Map();
-const saveTrace = (label) => (trace) =>
-  writeFileSync(`/tmp/restart-traces/${label}.json`, JSON.stringify(trace), {
-    mode: 0o600,
-  });
+const archive = new Map(),
+  runtimeBindings = new Map();
+const traceRequest = (request) =>
+  runtimeBindings.has(request.label)
+    ? { ...request, runtimeBinding: runtimeBindings.get(request.label) }
+    : request;
 async function archiveReady() {
   const modelRequests = (await modelState()).requests;
-  await archiveCompleted(requests, archive, (expected) =>
-    collectManagedTrace(
-      "http://jaeger:16686",
-      expected,
-      secrets,
-      [],
-      saveTrace(expected.label),
-      (trace) => {
-        if (expected.rejection) inspectBarrierTrace(trace, expected, secrets);
-        else
-          inspectCommandTrace(
-            trace,
-            expected,
-            secrets,
-            modelRequests.filter((r) => r.trace_id === trace.traceID),
-          );
-        return trace;
-      },
-    ),
+  await archiveCompleted(
+    requests.map(traceRequest),
+    archive,
+    (expected) =>
+      collectPrivateRestartTrace("http://jaeger:16686", expected, {
+        directory: "/tmp/restart-traces",
+        flush: () => telemetry.flush(),
+        secrets,
+        requests: modelRequests,
+      }),
+    { initializations: restartTraceInitializations([...connections.values()]) },
   );
 }
 import { readRestartExecutionState, stateReady } from "./readiness.mjs";
@@ -405,19 +395,8 @@ async function exercise(version, kind, template) {
     calls.filter((r) => r.phase === phase).length,
     { completed: 2, "model-held": 1, "tool-held": 2, inflight: 1 }[kind],
   );
-  if (kind === "completed") {
-    await archiveReady();
-    const expected = requests.find((r) => r.label === phase),
-      id = calls.find((r) => r.phase === phase).trace_id;
-    await collectTrace("http://jaeger:16686", id, (t) =>
-      inspectCommandTrace(
-        t,
-        expected,
-        secrets,
-        calls.filter((r) => r.trace_id === id),
-      ),
-    );
-  } else if (version === 1)
+  if (kind === "completed") await archiveReady();
+  else if (version === 1)
     assert.equal(resolved, false, "interrupted v1 prompt already finished");
   else assertStillRunning(version, c.updates, sessionId);
   const proof = await restart(
@@ -526,16 +505,9 @@ async function exercise(version, kind, template) {
     "later Run rewrote prior audit",
   );
   if (replacement) {
-    const post = (await saved(sessionId)).run,
-      expected = requests.find((r) => r.label === label + "-post"),
-      calls = (await modelState()).requests.filter(
-        (r) => r.phase === label + "-post",
-      );
-    assert.equal(calls.length, 2);
-    await collectTrace("http://jaeger:16686", calls[0].trace_id, (trace) => {
-      const result = inspectCommandTrace(trace, expected, secrets, calls);
-      assertRuntimeBinding(trace, post, replacement);
-      return result;
+    runtimeBindings.set(label + "-post", {
+      run: (await saved(sessionId)).run,
+      runtime: replacement,
     });
   }
   await archiveReady();
@@ -620,6 +592,10 @@ async function main() {
     connections: [...connections.values()],
   });
   assert.deepEqual(requests, inventory.requests);
+  assert.deepEqual(
+    restartTraceInitializations([...connections.values()]),
+    inventory.initializations,
+  );
   for (const [file, rows] of [
     ["request-inventory.private.json", inventory.requests],
     ["initialization-inventory.private.json", inventory.initializations],
@@ -676,18 +652,29 @@ async function main() {
     });
   save("inputs")({
     requests,
+    initializations: inventory.initializations,
+    runtimeBindings: [...runtimeBindings],
     lifecycle,
     faults,
     modelRequests: modelResult.requests,
   });
   const results = [];
-  for (const expected of [...lifecycle, ...requests]) {
+  for (const expected of [
+    ...lifecycle,
+    ...inventory.initializations,
+    ...requests,
+  ]) {
     const label = expected.label ?? expected.kind;
     stage = `trace:${label}`;
     try {
       let trace;
-      if (archive.has(label)) trace = archive.get(label).trace;
-      else if (expected.kind === "interruption") {
+      if (archive.has(label)) {
+        const entry = archive.get(label);
+        assert.deepEqual(entry.request, traceRequest(expected));
+        results.push(entry.report);
+        continue;
+      }
+      if (expected.kind === "interruption") {
         const ids = [
           ...new Set(
             modelResult.requests
@@ -698,40 +685,29 @@ async function main() {
         assert.equal(ids.length, 1);
         trace = await collectInterruptedTrace("http://jaeger:16686", ids[0]);
         if (trace) save(label)(trace);
-      } else
-        trace = expected.traceID
-          ? await collectTrace("http://jaeger:16686", expected.traceID, (t) => {
-              if (t) save(label)(t);
-              return t;
-            })
-          : await collectManagedTrace(
-              "http://jaeger:16686",
+      } else {
+        assert(
+          expected.traceID,
+          "completed private request was not archived before fault or teardown",
+        );
+        trace = await collectTrace(
+          "http://jaeger:16686",
+          expected.traceID,
+          (t) => {
+            if (t) save(label)(t);
+            return t;
+          },
+        );
+      }
+      results.push(
+        expected.kind === "interruption"
+          ? inspectInterruptedTrace(
+              trace,
               expected,
               secrets,
               modelResult.requests,
-              save(label),
-              (t) => t,
-            );
-      results.push(
-        expected.rejection
-          ? inspectBarrierTrace(trace, expected, secrets)
-          : expected.kind === "interruption"
-            ? inspectInterruptedTrace(
-                trace,
-                expected,
-                secrets,
-                modelResult.requests,
-              )
-            : expected.traceID
-              ? inspectLifecycle(trace, expected, secrets)
-              : inspectCommandTrace(
-                  trace,
-                  expected,
-                  secrets,
-                  modelResult.requests.filter(
-                    (r) => r.trace_id === trace.traceID,
-                  ),
-                ),
+            )
+          : inspectLifecycle(trace, expected, secrets),
       );
     } catch (error) {
       await preserveRestartFailure(error, (original) =>
