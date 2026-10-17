@@ -54,7 +54,7 @@ fail. Clock warnings and Docker absence-probe ERROR spans are strict failures.
 
 ## Out of scope
 
-ACP database commit-receipt loss and interrupted-Run recovery belong to the
-[ACP persistence scenario](../acp-persistence/README.md). Cold credential
-rehydration after an ACP restart belongs to the
+ACP database commit-receipt loss belongs to the
+[ACP persistence components](../../integration/agent-acp-service/support/persistence/README.md).
+Interrupted-Run recovery and cold credential rehydration after an ACP restart belong to the
 [ACP restart scenario](../acp-restart/README.md).

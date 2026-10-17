@@ -45,7 +45,6 @@ test("Stage 3a test clients pin service names", () => {
     );
   assert.deepEqual(launches.sort(), [
     "e2e-acp-closeout.sh",
-    "e2e-acp-persistence.sh",
     "e2e-acp-restart.sh",
     "e2e-agent-access.sh",
     "e2e-managed-mcp.sh",

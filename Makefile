@@ -148,7 +148,6 @@ test-repo:
 	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs tests/e2e/agent-acp-service/http-close-receipt.test.mjs
 	$(MAKE) test-managed-mcp-fixtures
 	$(MAKE) test-rpc-response-loss-fixtures
-	$(MAKE) test-acp-persistence-fixtures
 	node --test --test-concurrency=1 tests/integration/agent-acp-service/support/persistence/*.test.mjs
 	$(MAKE) test-acp-restart-fixtures
 	$(MAKE) test-tool-progress-fixtures
@@ -627,13 +626,6 @@ e2e-managed-mcp-v1:
 
 e2e-managed-mcp-v2:
 	node tests/e2e/managed-mcp/secrets-docker.mjs 2
-
-.PHONY: test-acp-persistence-fixtures e2e-acp-persistence
-test-acp-persistence-fixtures:
-	node --test --test-concurrency=1 tests/e2e/acp-persistence/*.test.mjs
-
-e2e-acp-persistence:
-	ANTNEST_E2E_ACP_PERSISTENCE=true sh tests/e2e/e2e-stage3a.sh
 
 .PHONY: test-acp-restart-fixtures e2e-acp-restart
 test-acp-restart-fixtures:

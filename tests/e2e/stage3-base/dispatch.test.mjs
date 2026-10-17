@@ -20,7 +20,6 @@ for (const [flag, profile, suite] of [
   ["MULTIMODAL", "multimodal", ""],
   ["SESSION_COST", "session-cost", ""],
   ["RPC_RESPONSE_LOSS", "rpc-response-loss", ""],
-  ["ACP_PERSISTENCE", "acp-persistence", ""],
   ["ACP_RESTART", "acp-restart", ""],
   ["MANAGED_MCP", "managed-mcp", ""],
   ["IDENTITY_CORE", "identity-http", "core"],
@@ -63,4 +62,32 @@ for (const [flag, profile, suite] of [
     assert.equal(result.signal, null);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, `${profile}:${suite}`);
+  });
+
+for (const value of ["true", "invalid"])
+  test(`retired Persistence selector ${value} fails before any preparation`, () => {
+    const result = spawnSync(
+      "/bin/sh",
+      [
+        "-c",
+        `
+        node() { echo 'unexpected preparation' >&2; exit 73; }
+        docker() { echo 'unexpected Docker' >&2; exit 74; }
+        ${source}
+        `,
+        entry,
+      ],
+      {
+        env: { PATH: "/usr/bin:/bin", ANTNEST_E2E_ACP_PERSISTENCE: value },
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    assert.ifError(result.error);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Persistence E2E is retired/);
+    assert.match(result.stderr, /test-agent-acp-postgres/);
+    assert.doesNotMatch(result.stderr, /unexpected|stage3-base/);
   });

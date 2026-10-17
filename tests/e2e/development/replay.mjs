@@ -8,7 +8,7 @@ import { mkdirSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { connectOwner } from "../lifecycle-closeout/acp.mjs";
-import { assertReplay } from "../acp-persistence/evidence.mjs";
+import { assertReplay } from "../../integration/agent-acp-service/support/persistence/evidence.mjs";
 import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";

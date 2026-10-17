@@ -713,7 +713,6 @@ function tierC() {
 // component tests, or its behavior is not settled. The issue deletes the
 // target or re-admits it.
 export const outsideCI = {
-  "e2e-acp-persistence": 167,
   "e2e-lifecycle-health": 168,
   "e2e-lifecycle-interrupted": 166,
   "e2e-lifecycle-network": 168,

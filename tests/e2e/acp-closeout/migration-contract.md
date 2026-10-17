@@ -29,7 +29,7 @@ remains usable throughout.
   a completed Tool followed by a held model, and an in-flight Tool with unknown
   effect followed by a physical Rebuild) is owned by `make e2e-acp-restart`,
   which is opted in separately. The normal profile must not kill ACP.
-- ACP persistence faults are owned by `make e2e-acp-persistence`.
+- ACP persistence faults are owned by the [ACP PostgreSQL components](../../integration/agent-acp-service/support/persistence/README.md) (`make test-agent-acp-postgres`).
 - Cross-organization access and offboarding are owned by `make e2e-agent-access`.
 
 ## Verification rules

@@ -171,7 +171,7 @@ function logReadClients() {
 
 test("clients read through docker logs print ASCII JSON", () => {
   const clients = logReadClients();
-  assert(clients.length >= 15, `found only ${clients.length} clients`);
+  assert(clients.length >= 14, `found only ${clients.length} clients`);
   for (const { runner, entry } of clients) {
     const source = readFileSync(join(root, entry), "utf8");
     assert.doesNotMatch(

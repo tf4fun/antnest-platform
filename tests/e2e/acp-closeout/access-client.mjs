@@ -27,7 +27,7 @@ import {
 } from "../identity-closeout/offboarding-client.mjs";
 import { assertCatalog } from "../acp-commands/evidence.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
-import { assertReplay } from "../acp-persistence/evidence.mjs";
+import { assertReplay } from "../../integration/agent-acp-service/support/persistence/evidence.mjs";
 import {
   assertScopeDenial,
   assertReplayMetadata,

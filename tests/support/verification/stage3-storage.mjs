@@ -12,7 +12,6 @@ assert(
 const profiles = {
   MANAGED_MCP: "managed-mcp",
   RPC_RESPONSE_LOSS: "rpc-response-loss",
-  ACP_PERSISTENCE: "acp-persistence",
   ACP_RESTART: "acp-restart",
   ACP_SESSION: "identity-session",
   IDENTITY_CORE: "identity-http",

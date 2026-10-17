@@ -20,12 +20,6 @@ const same = (a, b) => {
   assert.deepEqual(a.Config.Labels, b.Config.Labels);
   assert.equal(b.State.OOMKilled, false);
 };
-export function assertStopped(before, after) {
-  same(before, after);
-  assert.equal(after.State.Running, false);
-  assert.equal(after.State.ExitCode, 1);
-  assert.equal(before.State.StartedAt, after.State.StartedAt);
-}
 export function assertRestarted(before, after) {
   same(before, after);
   assert.equal(after.State.Running, true);
@@ -45,7 +39,6 @@ if (
       process.env.COMPOSE_PROJECT_NAME,
       process.env.ANTNEST_E2E_RUN_ID,
     );
-  else if (mode === "stopped") assertStopped(a, await read(after));
   else {
     assert.equal(mode, "restarted");
     assertRestarted(a, await read(after));

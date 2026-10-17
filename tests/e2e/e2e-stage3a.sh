@@ -1,6 +1,13 @@
 #!/bin/sh
 set -eu
 
+case "${ANTNEST_E2E_ACP_PERSISTENCE:-false}" in
+  false) ;;
+  *)
+    echo 'Persistence E2E is retired; use make test-agent-acp-postgres.' >&2
+    exit 1 ;;
+esac
+
 keep_stack=${ANTNEST_E2E_KEEP_STACK:-false}
 case "${ANTNEST_E2E_SKILL_DELIVERY:-false}" in
   true|false) ;;
@@ -254,20 +261,10 @@ if [ "$tool_permissions" = true ]; then
   done
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
-acp_persistence=${ANTNEST_E2E_ACP_PERSISTENCE:-false}
-case "$acp_persistence" in true|false) ;; *) echo 'Invalid persistence profile' >&2; exit 1 ;; esac
-if [ "$acp_persistence" = true ]; then
-  for incompatible in "$tool_permissions" "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$rpc_response_loss" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
-    [ "$incompatible" = false ] || { echo 'Persistence requires a separate disposable profile' >&2; exit 1; }
-  done
-  export ANTNEST_PERSISTENCE_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
-  export ANTNEST_PERSISTENCE_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
-  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
-fi
 acp_restart=${ANTNEST_E2E_ACP_RESTART:-false}
 case "$acp_restart" in true|false) ;; *) echo 'Invalid restart profile' >&2; exit 1 ;; esac
 if [ "$acp_restart" = true ]; then
-  for incompatible in "$acp_persistence" "$tool_permissions" "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$rpc_response_loss" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
+  for incompatible in "$tool_permissions" "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$rpc_response_loss" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
     [ "$incompatible" = false ] || { echo 'Restart requires a separate disposable profile' >&2; exit 1; }
   done
   export ANTNEST_RESTART_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
@@ -283,7 +280,6 @@ tool_profile=""
 [ "$multimodal" != true ] || tool_profile=multimodal
 [ "$session_cost" != true ] || tool_profile=session-cost
 [ "$rpc_response_loss" != true ] || tool_profile=rpc-response-loss
-[ "$acp_persistence" != true ] || tool_profile=acp-persistence
 [ "$acp_restart" != true ] || tool_profile=acp-restart
 managed_mcp=${ANTNEST_E2E_MANAGED_MCP:-false}
 case "$managed_mcp" in
@@ -514,14 +510,6 @@ compose() {
       docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-restart/compose.yaml --profile stage3 --profile observability "$@"
     else
       docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-restart/compose.yaml --profile stage3 --profile observability "$@"
-    fi
-    return
-  fi
-  if [ "$acp_persistence" = true ]; then
-    if [ "$1" = up ]; then
-      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-persistence/compose.yaml --profile stage3 --profile observability "$@"
-    else
-      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-persistence/compose.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi

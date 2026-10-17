@@ -36,7 +36,7 @@ import {
   assertReplacement,
   assertBarrierRejection,
 } from "./evidence.mjs";
-import { assertReplay } from "../acp-persistence/evidence.mjs";
+import { assertReplay } from "../../integration/agent-acp-service/support/persistence/evidence.mjs";
 import { seed } from "./setup.mjs";
 import { archiveCompleted } from "./archive.mjs";
 import { collectInterruptedTrace } from "./collection.mjs";
@@ -69,7 +69,7 @@ async function archiveReady() {
     ),
   );
 }
-import { stateReady } from "../acp-persistence/readiness.mjs";
+import { stateReady } from "./readiness.mjs";
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
 const connections = [],

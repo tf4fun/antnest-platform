@@ -6,7 +6,7 @@ import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { assertCompletedExecution } from "./foundation-evidence.mjs";
 import { isBusyDenied } from "../managed-mcp/drain.mjs";
-import { assertReplay } from "../acp-persistence/evidence.mjs";
+import { assertReplay } from "../../integration/agent-acp-service/support/persistence/evidence.mjs";
 import { assertCatalog } from "../acp-commands/evidence.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";

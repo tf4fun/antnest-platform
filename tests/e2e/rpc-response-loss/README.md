@@ -95,6 +95,6 @@ successful cleanup may publish final E2E success.
 ## Not covered
 
 ACP database commit-receipt loss and interrupted-Run recovery are covered by
-the [ACP persistence scenario](../acp-persistence/README.md) and the
+the [ACP persistence components](../../integration/agent-acp-service/support/persistence/README.md) and the
 [ACP restart scenario](../acp-restart/README.md); these Controller
 acknowledgement cases do not substitute for them.

@@ -425,12 +425,15 @@ Related disposable fixtures cover narrower paths:
   active-Run Rebuild.
 - [RPC response loss](../tests/e2e/rpc-response-loss/README.md): loss of
   publication and settlement acknowledgements for both versions.
-- [ACP persistence](../tests/e2e/acp-persistence/README.md): committed-response
-  loss with scoped Trace checks.
 - [Process interruption](../tests/e2e/acp-restart/README.md): business cases,
   replays and physical Rebuilds after ACP process interruption. Its Trace
   checks separate intentional SIGKILL diagnostics from normal-request
   completeness.
+
+Committed database response loss is verified by [ACP-owned PostgreSQL
+components](../tests/integration/agent-acp-service/support/persistence/README.md),
+with fake model and Runtime boundaries, under `make test-agent-acp-postgres`.
+The old Persistence platform profile is retired.
 
 OIDC and fault profiles dispatch to their own launchers.
 `ANTNEST_E2E_KEEP_STACK=true` is not supported: the launcher rejects it before

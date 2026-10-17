@@ -32,7 +32,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 docker_cmd inspect "$acp" >"$temporary/acp-initial.json"
-node "$root/tests/e2e/acp-persistence/process.mjs" owned "$temporary/acp-initial.json"
+node "$root/tests/e2e/acp-restart/ownership.mjs" owned "$temporary/acp-initial.json"
 containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
@@ -53,7 +53,7 @@ for step in 1 2 3 4 5 6 7 8; do
     sleep 1
   done
   docker_cmd inspect "$acp" >"$temporary/before-$step.json"
-  node "$root/tests/e2e/acp-persistence/process.mjs" owned "$temporary/before-$step.json"
+  node "$root/tests/e2e/acp-restart/ownership.mjs" owned "$temporary/before-$step.json"
   node "$root/tests/e2e/acp-closeout/inflight-barrier.mjs" "$temporary/request-$step" >"$temporary/proof-$step"
   chmod 644 "$temporary/proof-$step"
   docker_cmd kill --signal KILL "$acp" >/dev/null
@@ -71,7 +71,7 @@ for step in 1 2 3 4 5 6 7 8; do
     sleep 1
   done
   docker_cmd inspect "$acp" >"$temporary/after-$step.json"
-  node "$root/tests/e2e/acp-persistence/process.mjs" restarted "$temporary/before-$step.json" "$temporary/after-$step.json"
+  node "$root/tests/e2e/acp-restart/ownership.mjs" restarted "$temporary/before-$step.json" "$temporary/after-$step.json"
   touch "$temporary/done-$step"
   echo "ACP interruption $step/8: SIGKILL 137, same container restarted healthy" >&2
   case "$step" in

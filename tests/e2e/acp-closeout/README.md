@@ -48,7 +48,7 @@ Evidence is written under `artifacts/verification/acp-closeout-normal/<project>/
 
 The normal profile never kills ACP. Crash recovery is covered by
 [ACP restart](../acp-restart/README.md) (`make e2e-acp-restart`), persistence
-faults by [ACP persistence](../acp-persistence/README.md), and cross-organization
+faults by [ACP persistence components](../../integration/agent-acp-service/support/persistence/README.md), and cross-organization
 access, SCIM and cross-organization offboarding by `make e2e-agent-access`.
 
 ## Fixture rules

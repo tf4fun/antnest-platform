@@ -4,7 +4,7 @@ This opt-in crash-recovery scenario kills the ACP service process at defined
 points and verifies recovery for both ACP protocol versions supported by the
 installed SDK. Its obligations are defined in the "Process interruption and
 unknown Tool effects" section of the
-[persistence and interruption contract](../acp-persistence/contract.md).
+[process interruption contract](contract.md).
 Identity deactivation and foreign-Agent access are covered by
 [ACP access](../acp-closeout/README.md) and
 [identity access](../identity-closeout/README.md).

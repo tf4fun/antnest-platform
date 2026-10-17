@@ -21,8 +21,16 @@ The v2 completion ACK is matched to the original durable user message.
 These components prove service behavior in process. They do not claim a natural
 OS exit code, a real Runtime effect or a whole-platform Docker journey. Those
 boundaries remain with the separate retained Restart/integration scenarios.
-The old Persistence platform target is pending removal after component admission;
-previous evidence remains private under `artifacts/verification/`.
+The old Persistence platform target, shell entrypoint and Compose profile are
+retired. Its selector fails before preparing storage or network resources.
+Previous source and evidence remain private under `artifacts/verification/`.
+The retained [Restart contract](../../../../e2e/acp-restart/contract.md) still
+covers process interruption and unknown real Runtime effects.
+
+`../../e2e/persistence-proxy.postgres.test.ts` preserves the five real PostgreSQL
+proxy checks in isolated schemas: three durable response losses, foreign and
+rolled-back transactions, and expiry distinct from an explicit drop. The normal
+ACP PostgreSQL suite discovers these checks without a separate platform target.
 
 `wire.mjs` and `evidence.mjs` retain the existing wire and durability assertions.
 The proxy releases its database listener if control-listener startup fails.
