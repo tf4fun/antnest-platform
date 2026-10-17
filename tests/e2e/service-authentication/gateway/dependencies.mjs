@@ -33,9 +33,9 @@ const profiles = {
     "agent-acp-service",
   ],
   workspace: ["agent-ui", "agent-acp-service", "agent-controller"],
-  acp: ["agent-acp-service"],
 };
 const sessions = new Map();
+const forwardingCalls = {};
 const revocations = [];
 const passwordCalls = { "local-login": 0, "change-local-password": 0 };
 const passwordCases = {};
@@ -268,7 +268,20 @@ function json(response, value, status = 200) {
 for (const [service, port] of Object.entries(fixture.ports)) {
   const server = createServer(async (request, response) => {
     try {
-      if (request.url === "/status") return json(response, { status: "ready" });
+      const path = new URL(request.url, "http://fixture").pathname;
+      if (path === "/status") return json(response, { status: "ready" });
+      // Count attempted business requests before authentication. Exclude only
+      // fixture observation and the independently scheduled private feed.
+      if (
+        !path.startsWith("/__fixture/") &&
+        !(
+          service === "identity-service" &&
+          path === "/rpc/identity/list-session-revocations"
+        )
+      ) {
+        const key = service + " " + request.method + " " + path;
+        forwardingCalls[key] = (forwardingCalls[key] ?? 0) + 1;
+      }
       if (!authenticate(request, service))
         return json(response, { code: "service_unauthenticated" }, 401);
       if (
@@ -277,7 +290,11 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         request.headers.cookie
       )
         throw Error("browser_credential_leaked");
-      const path = new URL(request.url, "http://fixture").pathname;
+      if (
+        service === "identity-service" &&
+        path === "/__fixture/forwarding-evidence"
+      )
+        return json(response, { calls: forwardingCalls });
       if (
         service === "identity-service" &&
         path === "/__fixture/password-evidence"
@@ -607,9 +624,34 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         agent = path.split("/agents/")[1].split("/")[0];
       if (service === "admin-console" && path.startsWith("/api/admin/agents/"))
         agent = path.split("/")[4];
-      if (service === "agent-acp-service")
-        agent = request.headers["x-antnest-agent-id"];
       const claims = context(request, service, agent);
+      if (service === "agent-ui") {
+        const expected = {
+          "X-Antnest-Organization-ID": claims.org,
+          "X-Antnest-Principal-ID": claims.sub,
+          "X-Antnest-User-ID": claims.sub,
+          "X-Antnest-Membership-ID": principal.membership_id,
+          "X-Antnest-Administrator": "true",
+          "X-Antnest-Organization-Slug": Buffer.from(
+            principal.organization_slug,
+          ).toString("base64url"),
+          "X-Antnest-Organization-Name": Buffer.from(
+            principal.organization_name,
+          ).toString("base64url"),
+          ...(agent === undefined ? {} : { "X-Antnest-Agent-ID": agent }),
+        };
+        for (const [name, value] of Object.entries(expected)) {
+          const values = headerValues(request, name);
+          if (values.length !== 1 || values[0] !== value)
+            throw Error("verified_Bridge_hint_invalid");
+        }
+        if (
+          agent === undefined &&
+          (claims.agt !== undefined ||
+            headerValues(request, "X-Antnest-Agent-ID").length)
+        )
+          throw Error("unscoped_Bridge_received_Agent");
+      }
       const expectedPrincipal = request.headers["x-antnest-expected-principal"];
       if (
         service === "admin-console" &&
@@ -628,24 +670,6 @@ for (const [service, port] of Object.entries(fixture.ports)) {
       if (service === "admin-console" && path.endsWith("/events/watch")) {
         response.writeHead(200, { "content-type": "text/event-stream" });
         response.write("event: ready\ndata: {}\n\n");
-        return;
-      }
-      if (service === "agent-controller")
-        return json(response, { agents: [], next_cursor: null });
-      if (service === "agent-acp-service" && path.includes("execution-state")) {
-        const state = {
-          agent_id: agent,
-          availability: "ready",
-          access_allowed: true,
-          configuration_revision: "a".repeat(64),
-          active_session_id: null,
-          unavailable_reason: null,
-        };
-        if (!path.includes("watch-")) return json(response, state);
-        response.writeHead(200, { "content-type": "text/event-stream" });
-        response.end(
-          `event: workspace_state\ndata: ${JSON.stringify(state)}\n\n`,
-        );
         return;
       }
       return json(response, {

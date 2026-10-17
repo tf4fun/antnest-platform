@@ -7,6 +7,7 @@ import type {
 import type { RuntimeInformationPort } from "../ports/runtime-information.js";
 import { DomainError } from "../domain/errors.js";
 import { safeError } from "./diagnostics.js";
+import { withRuntimeToolLifecycle } from "./runtime-tool-lifecycle.js";
 import type {
   AuthenticatedModelTransport,
   AuthenticatedModelRequest,
@@ -303,6 +304,7 @@ export class InstrumentedToolCatalog implements ToolCatalogPort {
     snapshot: Parameters<ToolCatalogPort["list"]>[0],
     signal: AbortSignal,
   ): ReturnType<ToolCatalogPort["list"]> {
+    const parent = trace.getActiveSpan();
     return observe(
       this.telemetry,
       "mcp.tools.list",
@@ -313,11 +315,15 @@ export class InstrumentedToolCatalog implements ToolCatalogPort {
       "antnest.acp.mcp.duration",
       "antnest.acp.mcp.requests",
       { operation: "list", source: "all" },
-      () => this.delegate.list(snapshot, signal),
+      () =>
+        withRuntimeToolLifecycle("tools/list", snapshot.runtime.executionId, parent, signal, () =>
+          this.delegate.list(snapshot, signal),
+        ),
     );
   }
 
   public call(input: ToolCallInput): Promise<ToolCallResult> {
+    const parent = trace.getActiveSpan();
     return observe(
       this.telemetry,
       "mcp.tools.call",
@@ -330,11 +336,17 @@ export class InstrumentedToolCatalog implements ToolCatalogPort {
       "antnest.acp.mcp.duration",
       "antnest.acp.mcp.requests",
       { operation: "call", source: input.tool.source },
-      async () => {
-        toolRequest(input);
-        const result = await this.delegate.call(input);
-        return result;
-      },
+      () =>
+        withRuntimeToolLifecycle(
+          "tools/call",
+          input.snapshot.runtime.executionId,
+          parent,
+          input.signal,
+          async () => {
+            toolRequest(input);
+            return this.delegate.call(input);
+          },
+        ),
     );
   }
 }

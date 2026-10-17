@@ -1,3 +1,4 @@
+import { addRunInformationRead } from "../observability/runtime-information-run-fixtures.mjs";
 import { stepsFor, caseFor } from "./model.mjs";
 
 export function requestFixture(
@@ -116,5 +117,8 @@ export function executionFixture(phase = "v1-execute") {
     });
     add("tool", "server", "runtime.mcp.tool", "antnest-runtime", 15);
   }
-  return { ...fixture, requests };
+  const information = addRunInformationRead(trace, {
+    version: Number(phase[1]),
+  });
+  return { ...fixture, requests, information };
 }

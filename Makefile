@@ -130,6 +130,8 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/service-authentication/identity/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/service-authentication/gateway/*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/service-authentication/controller/*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/service-authentication/acp/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs tests/e2e/skill-learning/service-calls.test.mjs tests/e2e/skill-learning/client-container.test.mjs tests/e2e/skill-learning/source-projection-check.test.mjs tests/e2e/skill-learning/maintenance-response-gate.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/key-removal-probe.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/discovery-tools-client.test.mjs
@@ -143,7 +145,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs
 	node --test tests/e2e/observability/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs tests/e2e/agent-acp-service/http-close-receipt.test.mjs
 	$(MAKE) test-managed-mcp-fixtures
 	$(MAKE) test-rpc-response-loss-fixtures
 	$(MAKE) test-acp-persistence-fixtures
@@ -161,7 +163,7 @@ test-repo:
 	$(MAKE) test-resolve-cache-fixtures
 	node --test --test-concurrency=1 tests/e2e/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs tests/e2e/edge-gateway/browser-session-revocation.test.mjs tests/e2e/edge-gateway/password-verification-evidence.test.mjs tests/e2e/edge-gateway/password-pressure.test.mjs tests/e2e/edge-gateway/password-browser-request.test.mjs tests/e2e/edge-gateway/login-admission-client.test.mjs tests/e2e/edge-gateway/login-admission-evidence.test.mjs tests/e2e/edge-gateway/login-admission-process.test.mjs tests/e2e/edge-gateway/scim-lifecycle-evidence.test.mjs
+	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs tests/e2e/edge-gateway/browser-session-revocation.test.mjs tests/e2e/edge-gateway/password-verification-evidence.test.mjs tests/e2e/edge-gateway/password-pressure.test.mjs tests/e2e/edge-gateway/password-browser-request.test.mjs tests/e2e/edge-gateway/login-admission-client.test.mjs tests/e2e/edge-gateway/login-admission-evidence.test.mjs tests/e2e/edge-gateway/login-admission-process.test.mjs tests/e2e/edge-gateway/scim-lifecycle-evidence.test.mjs tests/e2e/edge-gateway/shutdown-interruption.test.mjs
 
 .PHONY: test-resolve-cache-fixtures
 test-resolve-cache-fixtures:
@@ -313,7 +315,7 @@ e2e-multimodal:
 
 .PHONY: test-cost-fixtures e2e-session-cost
 test-cost-fixtures:
-	node --test --test-concurrency=1 tests/e2e/acp-cost/*.test.mjs
+	node --import ./tests/e2e/identity-closeout/acp-client-dependencies.fixture.mjs --test --test-concurrency=1 tests/e2e/acp-cost/*.test.mjs
 
 e2e-session-cost:
 	ANTNEST_E2E_SESSION_COST=true sh tests/e2e/e2e-stage3a.sh
@@ -524,7 +526,7 @@ e2e-skill-deployment:
 
 .PHONY: test-service-authentication-integration e2e-service-authentication-integration e2e-service-authentication-matrix
 test-service-authentication-integration:
-	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/security/run.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
+	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/support/service-grants.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/security/authenticated-peer.test.mjs tests/e2e/security/run.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
 
 .PHONY: e2e-acp-authentication
 e2e-acp-authentication:

@@ -503,3 +503,122 @@ for (const [label, change] of [
     change(value);
     assert.throws(() => inspectFreshConsumerWindow(value));
   });
+
+function bridgeConsumers() {
+  const value = consumers();
+  value.policy_revision = 4;
+  value.transport = "http-sse";
+  delete value.wire;
+  value.identity.stop_started_at = 900;
+  for (const row of value.consumer_restarts) {
+    Object.assign(row.before, {
+      project: value.project,
+      service: row.service,
+      at: 80,
+    });
+  }
+  Object.assign(value.consumer_configuration.synchronization, {
+    path: "/api/admin/execution-synchronization",
+    method: "GET",
+  });
+  Object.assign(value.consumer_configuration.state, {
+    path: "/api/app/workspace/v1/agents/agent-1/view",
+    method: "GET",
+    credential_scope: "owner-cookie",
+    set_cookie_count: 0,
+    body: { agentId: "agent-1", availability: "ready", activeSessionId: null },
+  });
+  Object.assign(value.stream, {
+    started_at: 540,
+    path: "/api/app/workspace/v1/agents/agent-1/events?sessionId=session-1",
+    credential_scope: "owner-cookie",
+    set_cookie_count: 0,
+  });
+  return value;
+}
+
+test("Bridge admissions retain both original process-start JWKS lower bounds without WSS", () => {
+  const value = bridgeConsumers();
+  const result = inspectFreshConsumerWindow(value);
+  assert.equal(result.conservative_deadline, 30100);
+  assert.deepEqual(
+    result.consumers.map((row) => row.admission_at),
+    [460, 550],
+  );
+});
+
+for (const [label, change] of [
+  ["missing consumer", (e) => e.consumer_restarts.pop()],
+  [
+    "original container replaced",
+    (e) => (e.consumer_restarts[0].after.id = "replacement"),
+  ],
+  [
+    "foreign original project",
+    (e) => (e.consumer_restarts[0].before.project = "foreign"),
+  ],
+  [
+    "unchanged process",
+    (e) =>
+      (e.consumer_restarts[0].after.started_at =
+        e.consumer_restarts[0].before.started_at),
+  ],
+  [
+    "unhealthy consumer",
+    (e) => (e.consumer_restarts[1].after.health = "unhealthy"),
+  ],
+  [
+    "synchronization before UI restart",
+    (e) => (e.consumer_restarts[1].after.at = 415),
+  ],
+  [
+    "pending configuration",
+    (e) =>
+      e.consumer_configuration.synchronization.body.synchronization
+        .applied_revision--,
+  ],
+  [
+    "wrong administrative organization",
+    (e) => (e.session_deadlines.admin.principal.organization_id = "foreign"),
+  ],
+  [
+    "wrong Agent view",
+    (e) => (e.consumer_configuration.state.body.agentId = "foreign"),
+  ],
+  [
+    "busy Agent",
+    (e) => (e.consumer_configuration.state.body.activeSessionId = "active"),
+  ],
+  ["failed Bridge state", (e) => (e.consumer_configuration.state.status = 503)],
+  ["failed SSE admission", (e) => (e.stream.status = 401)],
+  [
+    "foreign SSE credential",
+    (e) => (e.stream.credential_scope = "other-cookie"),
+  ],
+  ["SSE before state completed", (e) => (e.stream.started_at = 450)],
+  ["state after stop was requested", (e) => (e.identity.stop_started_at = 450)],
+  ["SSE after stop was requested", (e) => (e.identity.stop_started_at = 545)],
+  [
+    "exactly exhausted JWKS bound",
+    (e) => (e.identity.restart_started_at = 30100),
+  ],
+  [
+    "deadline extended from later admission",
+    (e) => (e.identity.restart_started_at = 30400),
+  ],
+  [
+    "WSS substitute for missing Bridge state",
+    (e) => {
+      e.wire = consumers().wire;
+      delete e.consumer_configuration.state;
+    },
+  ],
+])
+  test(`Bridge consumer bound rejects ${label}`, () => {
+    const value = bridgeConsumers();
+    inspectFreshConsumerWindow(value);
+    const before = JSON.stringify(value);
+    change(value);
+    assert.notEqual(JSON.stringify(value), before);
+    assert.throws(() => inspectFreshConsumerWindow(value));
+  });

@@ -22,7 +22,7 @@ type RegistryOptions<Owner extends BridgeOwner> = {
   create(
     scope: BridgeScope,
     retainWork: () => () => void,
-    identity: { epoch: string; incarnation: string },
+    identity: { epoch: string; incarnation: string; signal: AbortSignal },
   ): Owner | Promise<Owner>;
   now(): number;
   idleMs: number;
@@ -37,6 +37,8 @@ type Slot<Owner extends BridgeOwner> = {
   incarnation: string;
   observers: number;
   work: number;
+  initializing: boolean;
+  initialization: AbortController;
   idleSince?: number;
   retiring?: Promise<void>;
 };
@@ -110,6 +112,8 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
         incarnation: this.options.incarnation(),
         observers: 0,
         work: 0,
+        initializing: true,
+        initialization: new AbortController(),
       };
       const current = slot;
       this.slots.set(key, current);
@@ -126,8 +130,15 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
         const created = this.options.create(scope, retainWork, {
           epoch: this.epoch,
           incarnation: current.incarnation,
+          signal: current.initialization.signal,
         });
-        Promise.resolve(created).then(resolveOwner, rejectOwner);
+        Promise.resolve(created).then((value) => {
+          current.initializing = false;
+          resolveOwner(value);
+        }, (error) => {
+          current.initializing = false;
+          rejectOwner(error);
+        });
       } catch (error) {
         this.slots.delete(key);
         throw error;
@@ -187,7 +198,9 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
         continue;
       closings.push(this.retire(key, slot));
     }
-    await Promise.all(closings);
+    const results = await Promise.allSettled(closings);
+    const failures = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+    if (failures.length) throw new AggregateError(failures, "Bridge owner sweep failed");
   }
 
   public drain(timeoutMs: number): Promise<{ forced: boolean }> {
@@ -200,25 +213,25 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
   }
 
   private async finishDrain(deadline: number): Promise<{ forced: boolean }> {
+    const slots = [...this.slots];
+    for (const [, slot] of slots)
+      if (slot.initializing) slot.initialization.abort(new Error("Bridge is draining"));
     const streamClosures = Promise.allSettled(
-      [...this.slots.values()].map((slot) =>
+      slots.map(([, slot]) =>
         slot.owner.then((owner) => owner.beginDrain?.()),
       ),
     );
     const streamsClosed = await until(streamClosures, deadline);
-    const streamFailures =
-      streamsClosed &&
-      (await streamClosures).some((result) => result.status === "rejected");
     const idle = streamsClosed && (await this.waitForIdle(deadline));
     const closings = Promise.allSettled(
-      [...this.slots].map(([key, slot]) => this.retire(key, slot)),
+      slots.map(([key, slot]) => this.retire(key, slot)),
     );
-    const ownersClosed = await until(closings, deadline);
-    const closeFailures =
-      ownersClosed &&
-      (await closings).some((result) => result.status === "rejected");
+    // The deadline limits accepted-work waiting. Resource cleanup has its own
+    // bounded abort/join lifecycle; never leave it running behind a timed-out race.
+    const closeFailures = (await closings).some((result) => result.status === "rejected");
+    const streamFailures = (await streamClosures).some((result) => result.status === "rejected");
     return {
-      forced: !idle || !ownersClosed || streamFailures || closeFailures,
+      forced: !idle || streamFailures || closeFailures,
     };
   }
 

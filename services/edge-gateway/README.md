@@ -5,6 +5,12 @@ turns an Identity Service access credential into one trusted internal principal
 and routes the request to the owning service without owning the requested
 business operation. It is written in Go.
 
+The accepted [workspace entry decision](../../docs/architecture/browser-workspace-entry.md)
+is implemented by Gateway 24: the unused direct bootstrap, state and ACP
+browser routes return 404; the shipped Agent UI Bridge remains.
+See the [shared retirement contract](../../contracts/edge-gateway/workspace-entry-retirement.md)
+for Bridge preservation, capacity admission and pending consumer integration.
+
 The Gateway owns the browser credential boundary: cookies, CSRF, same-origin
 checks and identity revalidation. Internal dependencies receive verified
 workload authentication and the unchanged Identity-signed caller context.
@@ -32,11 +38,8 @@ Gateway still owns browser credential stripping and route authorization.
 - Separate bounded password and OIDC-source admission before calling Identity.
 - Browser OIDC discovery, start and callback, and transparent SCIM protocol
   ingress to Identity.
-- Metadata-only Agent workspace discovery (`GET /api/app/bootstrap`); ACP owns
-  per-Agent access decisions.
-- Authenticated workspace state snapshots and subscriptions with bounded leases.
-- Same-origin ACP v1/v2 WebSocket and ACP v1 Streamable HTTP routing, with
-  bounded live browser-session checks on quiet streams and per-message admission.
+- Browser-session admission and bounded live checks for retained SSE observers.
+
 - Scoped Agent UI proxy through `ANTNEST_AGENT_UI_URL`: `/workspace/` HTML,
   hashed assets, and the Workspace HTTP/SSE API with leased SSE observation.
 - Per-dependency workload credentials, route-selected caller context, verified
@@ -63,18 +66,13 @@ Gateway still owns browser credential stripping and route authorization.
 | Inbound   | `GET /api/session/external-identities`, `DELETE /api/session/external-identities/{binding_id}`, `POST /api/session/external-identities/notices/acknowledge` | Self binding inventory, explicit unbind and individual notice acknowledgment                                                                         |
 | Inbound   | `/scim/v2/*`                                                                                                                                                | Protocol-preserving SCIM proxy to Identity                                                                                                           |
 | Inbound   | `/api/admin/*` and Console application                                                                                                                      | Administrator-only BFF routes forwarded to Admin Console with CSRF checks                                                                            |
-| Inbound   | `GET /api/app/bootstrap`                                                                                                                                    | Principal display facts and accessible Agent IDs and names                                                                                           |
-| Inbound   | `/api/app/agents/{agent_id}/state`, `/state/watch`                                                                                                          | [Workspace state](docs/workspace-state.md) snapshot and SSE watch                                                                                    |
-| Inbound   | `/api/app/agents/{agent_id}/v1/acp`, `/v2/acp`, `/acp` (v1 alias)                                                                                           | ACP WebSocket (v1 and v2) and v1 Streamable HTTP relay                                                                                               |
 | Inbound   | `/workspace/*`, `/api/app/workspace/v1/*`                                                                                                                   | Agent UI HTML, assets and Workspace HTTP/SSE API                                                                                                     |
 | Inbound   | `GET /status`                                                                                                                                               | Local readiness only; it never probes another service                                                                                                |
 | Outbound  | Identity Service RPC                                                                                                                                        | Login, non-touch resolution, account/session controls, OIDC and the private session-revocation feed                                                  |
-| Outbound  | Agent Controller RPC                                                                                                                                        | Principal-scoped Agent ID/name discovery only                                                                                                        |
-| Outbound  | Agent ACP Service                                                                                                                                           | ACP protocol traffic and execution-state reads/watches                                                                                               |
 | Outbound  | Admin Console, Agent UI                                                                                                                                     | Reverse-proxied application traffic                                                                                                                  |
 
-All other service interfaces are private deployment details. ACP HTTP and
-WebSocket behavior is described in [Architecture](docs/architecture.md).
+Gateway connects only to Identity, Admin Console and Agent UI. Controller and
+ACP remain private Agent UI dependencies; see [Architecture](docs/architecture.md).
 
 Identity supplies absolute and idle deadlines plus an activity scheduling hint.
 Ordinary requests and stream checks never extend idle expiry; only the explicit
@@ -122,9 +120,9 @@ HTTPS/OIDC gate. Its admission and evidence limits are recorded in the
 Periodic stream checks discard a cache hit that was valid when the check
 started but crossed only its TTL during delivery. They may resolve once more
 within that same check's context and deadline. The expired hit cannot renew
-authority, and session expiry, the original WebSocket CCT and the independent
+authority. Returned CCT validity, session expiry and the independent
 stale-output timer remain enforced throughout the recheck. Initial requests
-and ACP message admission keep their existing rejection behavior.
+keep their existing rejection behavior.
 
 Self inventory includes the User's bindings across organizations and independently
 paginated immutable notices. Unbind and notice acknowledgment enforce the same
@@ -150,22 +148,22 @@ including that request's latency, without changing authorization scope. Organiza
 workload/CCT deployment and integration admissions are recorded in the
 [authentication rollout ledger](../../contracts/platform/service-authentication-rollout.json).
 Console and Agent UI consume the session lifecycle; `make e2e-browser-sessions-https`
-checks their shared HTTPS password, revocation and idle behavior. The unused legacy
-`/api/app/bootstrap` projection is unchanged, pending
-[#64](https://github.com/tf4fun/antnest-platform/issues/64).
+checks their shared HTTPS password, revocation and idle behavior. Gateway 24
+removes the unused legacy `/api/app/bootstrap` projection; the Bridge bootstrap
+remains owned by Agent UI.
 
 ## Configuration
 
 Internal dependencies additionally require the exact shared
 [service-authentication configuration](../../contracts/edge-gateway/service-authentication.md).
-Token mode requires Gateway's read-only callers file (normally `{}`) and five
-separate outgoing credential files. No mode is selected by default, and an
+Token mode requires Gateway's read-only callers file (normally `{}`) and three
+separate outgoing credential files for Identity, Console and Agent UI. No mode is selected by default, and an
 invalid or missing credential prevents startup. HTTPS pins each dependency's
 DNS name and service URI; HTTP requires the explicit disposable-development
 opt-in. Public Gateway readiness probes the local listener with HTTP or verified
 HTTPS according to its configured transport.
 
-Authenticated dependency requests and ACP WebSocket handshakes disable
+Authenticated dependency requests disable
 environment/default-transport proxies. Service tokens and signed caller
 context are sent directly to the configured service origin.
 
@@ -179,8 +177,6 @@ context are sent directly to the configured service origin.
 | `ANTNEST_IDENTITY_SERVICE_URL`                             | yes                         | -            | Identity Service base URL (absolute HTTP(S), no query or fragment)                                                                                                          |
 | `ANTNEST_ADMIN_CONSOLE_URL`                                | yes                         | -            | Admin Console base URL                                                                                                                                                      |
 | `ANTNEST_AGENT_UI_URL`                                     | yes                         | -            | Agent UI Node service base URL for `/workspace/` HTML, hashed assets and the Workspace HTTP/SSE API                                                                         |
-| `ANTNEST_AGENT_CONTROLLER_URL`                             | yes                         | -            | Agent Controller base URL, used for ID/name discovery only                                                                                                                  |
-| `ANTNEST_AGENT_ACP_URL`                                    | yes                         | -            | Agent ACP Service base URL                                                                                                                                                  |
 | `ANTNEST_EDGE_COOKIE_SECURE`                               | no                          | `true`       | Secure cookies; false is accepted only on a literal loopback HTTP listener                                                                                                  |
 | `ANTNEST_EDGE_CSRF_KEY_FILE`                               | yes                         | -            | exactly 32 raw private bytes in a readable regular file; shared across Gateway replicas                                                                                     |
 | `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS`                  | no                          | `false`      | compatibility for API mutations with both Origin and Fetch Metadata absent; emits a startup warning; CSRF still required                                                    |
@@ -221,9 +217,6 @@ rotation. Public TLS configuration is independent of internal service TLS.
   stream revalidation. Unavailability denies finite requests with `503` and
   closes active streams within their authorization bound, preserving cookies.
 - Admin Console: required for administrator routes.
-- Agent Controller: required only for first-load workspace discovery. ACP
-  protocol and state traffic never depends on it.
-- Agent ACP Service: required for ACP protocol traffic and workspace state.
 - Agent UI: required for `/workspace/*` and the Workspace API.
 - OTLP collector: optional, when trace export is configured.
 
@@ -235,7 +228,7 @@ the affected business request.
 Commands run from the repository root unless stated.
 
 ```sh
-# Unit and component tests (from services/edge-gateway)
+# Unit tests (from services/edge-gateway)
 GOWORK=off go test ./...
 
 # Lint all Go services
@@ -253,7 +246,7 @@ docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
 # Docker signal regression for long-lived receive streams
 node tests/e2e/edge-gateway/shutdown-docker.mjs
 
-# HTTPS Resolve-cache load batch (default 10-second TTL)
+# Historical direct-ACP load runner; Bridge migration is pending under #64
 node tests/e2e/edge-gateway/resolve-cache-docker.mjs
 ```
 
@@ -264,33 +257,35 @@ staleness bound so race-detector scheduling can establish a blocked write before
 revocation. They still require cancellation and writer cleanup within that bound;
 the guard's exact timing boundaries use Go's virtual test clock.
 Root targets: `make test-go-unit`, `make test-go` and `make test-integration-go`
-include the Gateway;
-`make e2e-stage3` runs the real-stack
-[Identity end-to-end client](../../tests/e2e/identity-closeout/README.md)
-through the public entry (browser HTTP and ACP v1/v2 logout revocation, SCIM
-provisioning, OIDC, Console projections and causal Jaeger spans);
-`make e2e-acp-session` covers post-upgrade expiry, dependency outage and
-recovery, and durable Run completion after logout or disconnect.
+include the Gateway.
 
-The standalone Resolve-cache load batch builds isolated service candidates and
-uses a fresh HTTPS session for the measured WSS connection. Dial, initialize
-and 100 sequential `session/list` exchanges must finish within eight seconds;
-the test crosses half TTL to witness an actual background refresh. It counts
-Gateway Resolve CLIENT attempts and Identity SERVER receipts independently,
-including handshake, connection probes and refresh, with a maximum of three
-each. Full raw trace closure and warnings remain in private evidence. Set
-`ANTNEST_RESOLVE_CACHE_E2E_OUTPUT` to select an unused directory under
-`artifacts/verification/`. Cleanup verifies the retained environment and removes
-owned candidates. This standalone load batch does not establish outage/recovery;
-the separate outage/recovery gate was admitted under #59, with evidence and
-limitations recorded in the [global TODO](../../TODO.md).
+The real-stack [Identity end-to-end client](../../tests/e2e/identity-closeout/README.md),
+ACP session suites and Resolve-cache Docker runner still require the separate
+#64 consumer migration before they can admit Gateway 24. Their old direct
+browser ACP calls are intentionally rejected.
+
+Historical #59 load evidence used one WSS connection, initialization and 100
+sequential ACP exchanges within eight seconds, with at most three actual
+Resolve attempts including refresh. It remains historical evidence, not proof
+of the retained Bridge path. The replacement must count 100 actual same-scope
+Bridge calls, initialization and refresh, retain the eight-second/three-Resolve
+budget and repeat the real five-second Identity outage with output and actual
+Run cancellation. That measurement needs its own cache policy revision.
+
+Agent UI capacity and final integration also remain separate gates: two real
+users, a valid near-limit attachment, independent clients and server processes,
+and the other user's same held Runtime work cancelled within one second during
+both incomplete-body reception and actual EOF parse/hash/serialization.
+Gateway's 64 SSE slots and 64 MiB body limit alone do not establish that result.
+Evidence stays under `artifacts/verification/`, with owned-resource cleanup
+and the original strict diagnostics preserved.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) - request pipeline, OIDC binding, ACP relay and failure semantics.
+- [Architecture](docs/architecture.md) - request pipeline, OIDC binding, Bridge routing and failure semantics.
 - [Operations](docs/operations.md) - configuration, diagnostics, shutdown, capacity and deployment limits.
-- [Workspace state](docs/workspace-state.md) - bootstrap and execution-state observation contract.
-- [Execution boundary](docs/execution-boundary.md) - Controller and ACP ownership split.
+- [Workspace Bridge entry](docs/workspace-state.md) - retained HTTP/SSE boundary and downstream-owned state.
+- [Execution boundary](docs/execution-boundary.md) - Gateway, Agent UI and private execution ownership.
 - [Session contract](../../contracts/edge-gateway/session-contract.json) - public browser session interface.
 - [Session security](../../contracts/edge-gateway/session-security.md) - exclusive `__Host-` cookie names in Secure mode, session-bound CSRF, key upgrade and the separate Admin-origin plan.
 - [Service admission](../../contracts/edge-gateway/service-authentication.md) - exact internal credentials, CCT scope, and pending consumers.

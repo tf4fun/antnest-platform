@@ -70,7 +70,14 @@ count as prior Skill use.
 
 Runtime information reads have an `mcp.runtime.info` client span beneath the Run
 trace, carrying admission/execution identifiers and outcome, not document content
-or credentials. Tool list/call spans retain existing instrumentation. Runtime
+or credentials. Existing tool list/call spans now own their exact connection's
+discovery-ready, dispatch-started, parsed-result and awaited-close receipts,
+following the [shared lifecycle contract](../../../docs/observability-contract.md#acp-runtime-tool-connection-lifecycle).
+Discovery readiness is the SDK's parsed result, not HTTP EOF. Tool errors,
+unknown effects, caller cancellation and failed cleanup remain separate facts;
+parsed responses do not establish Runtime quiescence. Direct/uninstrumented or
+disabled/no-op paths cannot attach these receipts to an ancestor. No tool
+arguments or returned content are recorded. Runtime
 HTTP handling and its non-root executor inherit this trace. Egress packet
 forwarding intentionally has no OTLP spans.
 
@@ -81,3 +88,18 @@ budget/truncation, malformed resources and execution mismatch, cancellation,
 history exclusion, and official SDK resource transport. Docker integration proves
 Agent configuration to Runtime child invocation and Gateway-rooted Jaeger traces;
 unit tests alone do not establish that full workflow.
+
+`node tests/e2e/agent-acp-service/runtime-information-docker.mjs` runs the
+information and tool lifecycle probes sequentially in the same candidate
+production image. The tool probe retains original OTLP and actual peer request
+identities for list/call success, tool error, HTTP error and caller cancellation.
+It holds discovery EOF until the tool request arrives, then awaits the actual
+discovery export before releasing the tool reply. Its controlled MCP peer proves
+ACP producer behavior; Session consumer admission and the real Runtime workflow
+remain separate integration gates.
+
+Prior deployment evidence used the retired Gateway ACP/state routes. That
+recorded coverage remains historical. Gateway 24 requires a separate consumer
+migration: browser journeys through the retained Agent UI Bridge and protocol
+assertions through authenticated private ACP. This ACP owning batch does not
+admit that cross-service workflow or its capacity gate.

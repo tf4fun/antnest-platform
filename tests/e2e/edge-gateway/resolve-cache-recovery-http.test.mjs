@@ -18,6 +18,15 @@ const remove = (p, span) => {
   p.trace.spans = p.trace.spans.filter((s) => s !== span);
 };
 
+for (const preparation of [undefined, { status: "passed" }]) {
+  test(`Bridge recovery HTTP requires raw Rebuild preparation evidence (${preparation ? "forged verdict" : "missing"})`, () => {
+    const f = recoveryHTTPFixture();
+    f.evidence.policy_revision = 4;
+    if (preparation) f.evidence.recovery_preparation = preparation;
+    assert.throws(() => inspect(f), /Rebuild preparation/u);
+  });
+}
+
 test("recovery HTTP binds five committed mutations and ten real refusals without changing raw diagnostics", () => {
   const f = recoveryHTTPFixture();
   action(f).root.warnings = ["raw clock diagnostic"];

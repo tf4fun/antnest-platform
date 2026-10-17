@@ -73,7 +73,7 @@ func TestHTTPHandlerCompletesTraceWhenHandlerUnwinds(t *testing.T) {
 			})
 			var logs bytes.Buffer
 			handler := HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				r.Pattern = "GET /api/app/agents/{agent_id}/v1/acp"
+				r.Pattern = "GET /fixture/stream/{id}"
 				_, child := otel.Tracer("test").Start(r.Context(), "downstream")
 				defer child.End()
 				if tc.writtenStatus != 0 {
@@ -84,7 +84,7 @@ func TestHTTPHandlerCompletesTraceWhenHandlerUnwinds(t *testing.T) {
 				}
 			}), slog.New(slog.NewJSONHandler(&logs, nil)))
 			response := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, "/api/app/agents/a/v1/acp", nil)
+			request := httptest.NewRequest(http.MethodGet, "/fixture/stream/a", nil)
 			ctx, cancel := context.WithCancel(request.Context())
 			defer cancel()
 			if tc.cancelled {
@@ -106,7 +106,7 @@ func TestHTTPHandlerCompletesTraceWhenHandlerUnwinds(t *testing.T) {
 			if child.Parent().SpanID() != root.SpanContext().SpanID() {
 				t.Fatal("child lost Gateway parent")
 			}
-			if root.Name() != "HTTP GET /api/app/agents/{agent_id}/v1/acp" {
+			if root.Name() != "HTTP GET /fixture/stream/{id}" {
 				t.Fatalf("route = %q", root.Name())
 			}
 			wantCode := codes.Unset

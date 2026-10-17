@@ -1,8 +1,8 @@
 # ACP Execution Configuration RPC
 
 This document defines the internal Agent ACP Service RPC routes that Agent
-Controller uses to publish execution configuration and settle Agents, that Edge
-Gateway uses to read workspace execution state, and that Admin Console uses to
+Controller uses to publish execution configuration and settle Agents, that
+Agent UI uses to read workspace execution state, and that Admin Console uses to
 read execution audit history. This is an internal control API, not an ACP
 extension. External ACP versions and payloads are unchanged.
 
@@ -19,7 +19,7 @@ credentials, method or query; Gateway must not expose either operation.
 Missing/invalid Controller workload returns 401 `service_unauthenticated`,
 with the token challenge; a verified wrong service returns 403
 `caller_not_allowed`. There is no per-Run credential lookup or legacy control
-token. State get/watch remain on the workspace listener for Gateway and Agent UI.
+token. State get/watch remain on the workspace listener for Agent UI.
 
 Workspace identity is derived from verified CCT `org`, `sub` and `agt`; HTTP,
 WebSocket and Session ownership are bound to that tuple. Raw `X-Antnest-*`
@@ -29,6 +29,12 @@ schemas; the signed carrier avoids encoding those identities as individual
 HTTP fields. Runtime MCP still rejects an execution ID that its fence header
 cannot carry unchanged before dispatch. A storage representation failure does
 not publish or acknowledge a new snapshot.
+
+Private ACP HTTP transport retirement uses that same immutable tuple. A valid
+DELETE acknowledges completed SDK transport cleanup, including a bounded record
+when the server closed first; it does not alter execution configuration, Session
+history or Run state. Its authentication, failure and capacity rules are defined
+in [private HTTP transport retirement](service-authentication.md#private-http-transport-retirement).
 
 ## Apply Execution Snapshot
 
@@ -226,7 +232,7 @@ The existing workspace state functionality moves from Controller to ACP.
 streams current-view changes. They are internal read-only routes under
 `/rpc/agent-acp`, not custom ACP protocol methods or admission APIs.
 
-The request is `POST` with an empty JSON object, verified Gateway/UI workload
+The request is `POST` with an empty JSON object, verified Agent UI workload
 and an Agent-scoped signed CCT. An Agent cannot be selected or an identity overridden in the
 body. `get-agent-execution-state` returns one JSON state;
 `watch-agent-execution-state` returns `text/event-stream` with `workspace_state`
@@ -272,10 +278,10 @@ credential revisions. It is a comparison token, not an increasing sequence or
 execution permission. It survives identical publication and process restart;
 unrelated Agent changes and credential rotation do not reset Session settings.
 Catalog changes remain relevant because Sessions may select any organization
-model. Gateway and Agent UI consume `configuration_revision` rather than the old
+model. Agent UI consumes `configuration_revision` rather than the old
 numeric `agent_revision`; no Controller execution-state fallback is retained.
 
-Gateway authenticates and forwards the unchanged signed CCT. ACP derives the
+Agent UI forwards the unchanged Identity-signed CCT with its own workload credential. ACP derives the
 organization/principal/Agent tuple from its verified claims. The view derives locally from current access/configuration and Agent
 execution ownership; it exposes the active Session only to its authorized
 owner. Controller retains Agent names and management metadata, but no longer
@@ -295,12 +301,12 @@ and cross-principal/organization rejection. Preserve the existing UI contract
 where possible; a consumer adjustment in Agent UI is not grounds to retain
 Controller Run state or skip this behavior.
 
-The Controller Agent list and Gateway workspace bootstrap contain authorized
+The Controller Agent list and Agent UI workspace bootstrap contain authorized
 management metadata, not `AgentAccessSubject` or Controller-derived execution
 availability. They include lifecycle, activation and Runtime state for the
 chooser. These are deployment observations,
 not ACP admission. Before ACP state arrives, execution remains unknown/connecting;
-management state cannot unlock input. Gateway does not fan out per-Agent ACP
+management state cannot unlock input. Agent UI does not fan out per-Agent ACP
 queries for bootstrap. First load and reconnect parse these management facts
 independently of the selected Agent's execution observation.
 
@@ -367,7 +373,7 @@ override defaults but not organization, Agent, Session, or model ownership.
 
 ## Rollout
 
-Controller publishes execution configuration through this API, and Gateway and
+Controller publishes execution configuration through this API, and Agent UI and
 Admin Console consume the state and audit routes directly. The former
 Controller Run APIs are removed; they are not supported as an alternative.
 Contract and single-service PostgreSQL tests do not by themselves establish

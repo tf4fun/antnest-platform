@@ -68,7 +68,7 @@ Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP ke
 | Outbound  | Skill Registry discovery and projection routes                                  | Skill discovery and source metadata delivery, when configured                          |
 | Owned     | PostgreSQL                                                                      | Sessions, messages, checkpoints, Runs, Tool attempts, permissions and learning records |
 
-Gateway and Agent UI supply an unchanged Identity-signed CCT plus their own
+Agent UI supplies an unchanged Identity-signed CCT plus its own
 verified workload credentials. ACP derives organization, principal and Agent
 from signed claims, ignores unsigned identity hints, and authorizes each resource
 method against the locally applied snapshot. It advertises no ACP `authMethods`.
@@ -183,6 +183,13 @@ and Docker end-to-end tests live in
 dependencies. `test:integration` runs official ACP and MCP protocol peers,
 HTTP, WebSocket and SSE boundaries and trace propagation. `test:postgres`
 selects the real PostgreSQL cases.
+
+The service-owned `sdk-regressions-docker.mjs` runner also revokes access through
+an actual execution publication, holds the official client's automatic DELETE
+until its connection has closed, and verifies the complete authenticated 202.
+It checks foreign scopes, invalid bodies and retired IDs against that same
+production connection, plus unchanged full Session/Run database rows. This does
+not replace Agent UI shutdown tracing or the cross-service recovery admission.
 
 Test-only variables:
 

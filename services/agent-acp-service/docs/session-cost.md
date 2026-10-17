@@ -85,3 +85,9 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
    switching, Provider precedence, no-price calls, restored/forked Sessions and
    Jaeger ancestry. Tests use deterministic USD rates; no external Provider
    spend is required.
+
+Prior deployment evidence used the retired Gateway ACP/state routes. That
+recorded coverage remains historical. Gateway 24 requires a separate consumer
+migration: browser journeys through the retained Agent UI Bridge and protocol
+assertions through authenticated private ACP. This ACP owning batch does not
+admit that cross-service workflow or its capacity gate.

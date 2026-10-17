@@ -45,6 +45,11 @@ function fixture(t, source = "shared", kind = "request") {
     const span = structuredClone(original);
     span.traceID = f.trace.traceID;
     span.startTime += f.upstream.startTime;
+    for (const event of span.logs ?? []) {
+      event.timestamp += f.upstream.startTime;
+      for (const field of event.fields ?? [])
+        if (field.key === "trace_id") field.value = f.trace.traceID;
+    }
     for (const ref of span.references) {
       ref.traceID = f.trace.traceID;
       if (ref.spanID === "forward") ref.spanID = "upstream";

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient, assertNoStore } from "../identity-closeout/support.mjs";
-import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
 import { observePrincipalRevocation } from "../identity-closeout/principal-revocation.mjs";
 import { withSessionRevocationObserver } from "./browser-session-revocation.mjs";
@@ -268,26 +267,69 @@ async function account(page) {
 
 // These observers use a real browser's delivered Cookie but have their own
 // transport lifetime. A UI unmount/local abort therefore cannot pass revocation.
-export async function quietObservers(config, agentID, client, signal) {
-  const started = Date.now(),
+export async function quietObservers(
+  config,
+  agentID,
+  client,
+  signal,
+  sessionAuthority,
+) {
+  const started = performance.now(),
     stop = new AbortController();
+  const resolveTTLMS = config.resolveTTLMS;
+  assert(
+    Number.isFinite(resolveTTLMS) &&
+      resolveTTLMS >= 0 &&
+      resolveTTLMS <= 30_000,
+    "revocation observer requires the actual deployed Resolve TTL",
+  );
+  const authorityCheckedAt = Date.now();
+  const originalDeadlines = {
+    idleExpiresAt: sessionAuthority?.idle_expires_at,
+    expiresAt: sessionAuthority?.expires_at,
+  };
+  assert(
+    Math.min(
+      Date.parse(originalDeadlines.idleExpiresAt),
+      Date.parse(originalDeadlines.expiresAt),
+    ) -
+      authorityCheckedAt >
+      60_000,
+    "original session deadlines must exclude shortened CCT expiry",
+  );
+  // These phases retain the original login/rotation deadlines and run before
+  // lowering idle policy. A cached CCT can already be TTL old, and Identity's
+  // Unix-second expiry can lose another second of its nominal 60s lifetime.
+  const naturalExpiryBoundaryMS = 59_000 - resolveTTLMS;
   const observerSignal = AbortSignal.any([signal, stop.signal]);
   const headerTimer = setTimeout(
     () => stop.abort(new Error("SSE admission deadline exceeded")),
     20_000,
   );
-  let reader, draining, owner, remoteEnd;
-  const close = async () => {
-    stop.abort();
-    try {
-      // A server-side reset puts the reader in an errored state. cancel() then
-      // rejects with that same terminal error; draining already records it.
-      await reader?.cancel().catch(() => {});
-    } finally {
-      await draining;
-      await owner?.closeAndWait();
-    }
-  };
+  let reader, draining, remoteEnd, readFailure, closing;
+  let readFailed = false;
+  const close = () =>
+    (closing ??= (async () => {
+      stop.abort();
+      let cancelFailed = false,
+        cancelFailure;
+      try {
+        await reader?.cancel();
+      } catch (error) {
+        cancelFailed = true;
+        cancelFailure = error;
+      } finally {
+        await draining;
+      }
+      // An errored reader repeats its observed read/reset error on cancel.
+      // A new cancellation failure must remain a failed cleanup.
+      if (
+        cancelFailed &&
+        !(readFailed && cancelFailure === readFailure) &&
+        cancelFailure !== observerSignal.reason
+      )
+        throw cancelFailure;
+    })());
   try {
     const response = await fetch(
       `${config.gateway}/api/app/workspace/v1/agents/${agentID}/events`,
@@ -300,84 +342,90 @@ export async function quietObservers(config, agentID, client, signal) {
       },
     );
     clearTimeout(headerTimer);
+    reader = response.body?.getReader();
     assert.equal(response.status, 200, "quiet SSE admission failed");
     assert.match(
       response.headers.get("content-type") ?? "",
       /^text\/event-stream\b/u,
     );
     assert.equal(response.headers.getSetCookie().length, 0);
-    reader = response.body.getReader();
+    assert(reader, "quiet SSE admission has no response body");
     draining = (async () => {
       try {
         while (!(await reader.read()).done) {
           /* Drain without retaining private payloads. */
         }
-      } catch {
-        /* A remote reset is a closed output channel too. */
+      } catch (error) {
+        // A remote reset is a closed output channel too.
+        readFailed = true;
+        readFailure = error;
       } finally {
-        if (!observerSignal.aborted) remoteEnd = Date.now();
+        if (!observerSignal.aborted) remoteEnd = performance.now();
       }
     })();
-    owner = connectOwner(config.gateway, agentID, client.cookie, signal);
-    await owner.initialize();
     return {
       beforeMutation() {
-        signal.throwIfAborted();
+        observerSignal.throwIfAborted();
         assert.equal(
           remoteEnd,
           undefined,
           "SSE was already closed before revocation",
         );
-        assert.equal(
-          owner.closeCode,
-          undefined,
-          "WSS was already closed before revocation",
-        );
         assert(
-          Date.now() - started < 20_000,
+          performance.now() - started < 20_000,
           "observers must be fresh before revocation",
         );
-        return Date.now();
+        return performance.now();
       },
       async revoked(at) {
         await until(
-          () => remoteEnd !== undefined && owner.closeCode !== undefined,
+          () => remoteEnd !== undefined,
           "silent stream revocation",
-          signal,
+          observerSignal,
           30_000,
         );
-        signal.throwIfAborted();
+        observerSignal.throwIfAborted();
         assert.equal(
           stop.signal.aborted,
           false,
           "local abort must not count as remote revocation",
         );
-        assert.equal(
-          owner.closeCode,
-          1008,
-          "WSS must retire with policy violation",
-        );
-        const elapsed = Date.now() - at;
+        const elapsed = remoteEnd - at;
+        assert(elapsed >= 0, "SSE closed before revocation mutation");
         assert(
           elapsed <= 30_000,
           "remote revocation exceeded the 30-second stale bound",
         );
         assert(
-          Date.now() - started < 50_000,
-          "natural 60-second CCT expiry must not explain revocation",
+          remoteEnd - started < naturalExpiryBoundaryMS,
+          "natural cached CCT expiry must not explain revocation",
         );
         return {
-          sseClosedAfterMs: remoteEnd - at,
-          bothClosedAfterMs: elapsed,
-          wssCloseCode: owner.closeCode,
+          sseClosedAfterMs: elapsed,
           localAbort: false,
           beforeNaturalCCTExpiry: true,
+          expiryProof: {
+            resolveTTLMS,
+            ...originalDeadlines,
+            authorityCheckedAt,
+            naturalExpiryBoundaryMS,
+            closedAfterStartMS: remoteEnd - started,
+          },
         };
       },
       close,
     };
   } catch (error) {
-    await close();
+    try {
+      await close();
+    } catch (cleanup) {
+      if (cleanup !== error)
+        throw new AggregateError(
+          [error, cleanup],
+          "quiet SSE admission and cleanup failed",
+          { cause: error },
+        );
+    }
     throw error;
   } finally {
     clearTimeout(headerTimer);
@@ -533,6 +581,7 @@ export async function verifyBrowserSessions({
       fixture.agentID,
       oldWorkspace,
       signal,
+      workspaceSession.metadata,
     );
     try {
       const at = observers.beforeMutation();
@@ -565,6 +614,7 @@ export async function verifyBrowserSessions({
       await signedOut(workspaceSession.page);
       await readSession(administrator.client);
       consoleSession.client = current;
+      consoleSession.metadata = replacement;
       recordPhase({
         name: "password",
         rejectedIncorrectPassword: true,
@@ -598,6 +648,7 @@ export async function verifyBrowserSessions({
       fixture.agentID,
       consoleSession.client,
       signal,
+      consoleSession.metadata,
     );
     try {
       const at = observers.beforeMutation();
@@ -653,6 +704,7 @@ export async function verifyBrowserSessions({
       fixture.agentID,
       workspaceSession.client,
       signal,
+      workspaceSession.metadata,
     );
     try {
       const at = observers.beforeMutation();
@@ -722,7 +774,13 @@ export async function verifyBrowserSessions({
       .click();
     const allStreams = await withSessionRevocationObserver(
       () =>
-        quietObservers(config, fixture.agentID, consoleSession.client, signal),
+        quietObservers(
+          config,
+          fixture.agentID,
+          consoleSession.client,
+          signal,
+          consoleSession.metadata,
+        ),
       async () => {
         // The successful current-session revocation navigates immediately. Its
         // response body can leave CDP before Playwright reads it, so prove the

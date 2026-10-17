@@ -24,6 +24,7 @@ const { createNodeHttpHandler } = await import(
 );
 
 test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable metadata", async () => {
+  const failures = [];
   const observedHeaders = [];
   let diagnosticKind = "writer";
   const gatewayTraceId = "0123456789abcdef0123456789abcdef";
@@ -466,14 +467,29 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
       bridgeHeaders(newer)["Antnest-Caller-Context"],
       "Official SDK HTTP calls use the newer verified context without replacing the connection",
     );
+  } catch (error) {
+    failures.push(error);
   } finally {
-    bridge?.close();
-    await transport.close();
-    await workload.close();
-    await telemetry.shutdown();
-    listener.closeAllConnections();
-    await new Promise((resolve, reject) =>
-      listener.close((error) => (error ? reject(error) : resolve())),
-    );
+    for (const close of [
+      () => bridge?.close(),
+      () => transport.close(),
+      () => workload.close(),
+      () => telemetry.shutdown(),
+      async () => {
+        listener.closeAllConnections();
+        await new Promise((resolve, reject) =>
+          listener.close((error) => (error ? reject(error) : resolve())),
+        );
+      },
+    ]) {
+      try {
+        await close();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length)
+      throw new AggregateError(failures, "ACP Bridge test and cleanup failed");
   }
 });

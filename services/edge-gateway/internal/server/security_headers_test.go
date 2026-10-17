@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
@@ -12,7 +14,37 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
+
+type failedFlushWriter struct {
+	*httptest.ResponseRecorder
+	failure error
+	flushes int
+}
+
+func (writer *failedFlushWriter) FlushError() error {
+	writer.flushes++
+	return writer.failure
+}
+
+func TestObservedSecurityWriterPreservesFlushFailure(t *testing.T) {
+	sentinel := errors.New("fixture flush failure")
+	response := &failedFlushWriter{ResponseRecorder: httptest.NewRecorder(), failure: sentinel}
+	h := newTestHandler(t, &identityServiceStub{}, http.NotFoundHandler(), time.Now()).(*handler)
+	var observed error
+	h.mux.HandleFunc("GET /test-observed-flush", func(w http.ResponseWriter, _ *http.Request) {
+		observed = http.NewResponseController(w).Flush()
+	})
+	telemetry.HTTPHandler(h, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(
+		response, httptest.NewRequest(http.MethodGet, "/test-observed-flush", nil),
+	)
+	if observed != sentinel || response.flushes != 1 {
+		t.Fatalf("flush error=%v calls=%d; want original failure once", observed, response.flushes)
+	}
+	assertDefaultSecurityHeaders(t, response.Header())
+}
 
 const gatewayDefaultCSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'"
 

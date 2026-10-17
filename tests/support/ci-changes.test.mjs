@@ -38,6 +38,31 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const ids = (selected) => selected.map((suite) => suite.id);
 const enabled = suites.filter((suite) => !suite.disabled);
 
+test("ACP Runtime information provenance runs against the candidate production image", () => {
+  const command =
+    "ANTNEST_ACP_TEST_IMAGE=antnest/agent-acp-service:local node tests/e2e/agent-acp-service/runtime-information-docker.mjs";
+  for (const path of [
+    "services/agent-acp-service/src/telemetry/runtime-information-read.ts",
+    "tests/integration/agent-acp-service/adapters/mcp/runtime-information-close.test.ts",
+    "tests/e2e/agent-acp-service/runtime-information-probe.mjs",
+    "tests/e2e/agent-acp-service/runtime-information-docker.mjs",
+    "services/agent-acp-service/src/telemetry/runtime-tool-lifecycle.ts",
+    "tests/integration/agent-acp-service/adapters/mcp/tool-lifecycle.test.ts",
+    "tests/e2e/agent-acp-service/runtime-tools-probe.mjs",
+    "tests/e2e/lifecycle-closeout/docker.mjs",
+    "tests/e2e/acp-closeout/docker.mjs",
+    "tests/e2e/acp-closeout/network.mjs",
+  ]) {
+    const suite = selectSuites([path]).find(({ id }) => id === "auth-acp");
+    assert(suite, `${path} must select ACP production admission`);
+    assert.equal(suite.tier, "b");
+    assert.deepEqual(suite.images, ["agent-acp-service"]);
+    assert(suite.run.includes("make e2e-acp-authentication"));
+    assert(suite.run.includes(command));
+    assert(shards.some((shard) => shard.suites.includes(suite.id)));
+  }
+});
+
 test("reference TLS proxy changes select the HTTPS browser and deployment contracts", () => {
   const selected = selectSuites(["deploy/tls/Caddyfile"]);
   assert(ids(selected).includes("gateway-tls"));
@@ -216,6 +241,42 @@ test("documented Docker admissions include encryption rotation, Gateway shutdown
         1,
       );
     });
+});
+
+test("Gateway shutdown interruption changes select the owning Docker admission", () => {
+  for (const path of [
+    "tests/e2e/edge-gateway/shutdown-interruption.mjs",
+    "tests/e2e/edge-gateway/shutdown-interruption.test.mjs",
+  ])
+    assert(
+      ids(selectSuites([path])).includes("gateway-shutdown"),
+      `${path} must select Gateway shutdown`,
+    );
+});
+
+test("Gateway shutdown declares its actual trace collector image", () => {
+  const suite = suites.find(({ id }) => id === "gateway-shutdown");
+  assert(
+    suite.pull.includes("cr.jaegertracing.io/jaegertracing/jaeger:2.21.0"),
+  );
+});
+
+test("repository admission runs the Gateway shutdown interruption tests", () => {
+  const commands = execFileSync("make", ["--dry-run", "test-repo"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 10_000,
+  }).split("\n");
+  assert(
+    commands.some(
+      (command) =>
+        /^node --test\s/u.test(command) &&
+        command
+          .split(/\s+/u)
+          .includes("tests/e2e/edge-gateway/shutdown-interruption.test.mjs"),
+    ),
+    "make test-repo must execute shutdown interruption tests",
+  );
 });
 
 test("an explicit full run selects every enabled suite without any changes", () => {
@@ -439,7 +500,10 @@ test("ACP authentication runs in the required auth shard with its CI-built image
     "postgres:17.11-bookworm",
     "node:24.21.0-bookworm-slim",
   ]);
-  assert.deepEqual(suite.run, ["make e2e-acp-authentication"]);
+  assert.deepEqual(suite.run, [
+    "make e2e-acp-authentication",
+    "ANTNEST_ACP_TEST_IMAGE=antnest/agent-acp-service:local node tests/e2e/agent-acp-service/runtime-information-docker.mjs",
+  ]);
   for (const file of [
     "services/agent-acp-service/src/server.ts",
     "services/agent-acp-service/test/fixtures/execution-configuration.ts",
@@ -472,7 +536,7 @@ test("tier C platform scenarios get every local image and no rebuilding target",
   );
   const variants = {
     "c-tool-permissions": ["antnest-runtime-managed"],
-    "c-tool-progress": ["antnest-runtime-managed"],
+    "c-tool-progress": ["antnest-runtime-fixture"],
     ...Object.fromEntries(
       tierC
         .filter((suite) => suite.id.startsWith("c-skill-learning-install-"))
@@ -562,7 +626,7 @@ test("required suites declare every image their runners derive candidates from",
 
 test("tier C managed MCP scenarios build their fixture image first", () => {
   const scripts = resolve(root, "tests/e2e");
-  for (const id of ["c-tool-permissions", "c-tool-progress"]) {
+  for (const id of ["c-tool-permissions"]) {
     const suite = suites.find((item) => item.id === id);
     assert.equal(suite.run[0], "make docker-build-managed-runtime");
     assert.match(
@@ -575,11 +639,30 @@ test("tier C managed MCP scenarios build their fixture image first", () => {
   }
 });
 
+test("Progress CI supplies the fixture carrier while its deployment builds the current production-based final image", () => {
+  const suite = suites.find((item) => item.id === "c-tool-progress");
+  assert(!suite.run.includes("make docker-build-managed-runtime"));
+  assert(suite.images.includes("antnest-runtime-fixture"));
+  assert(suite.images.includes("antnest-runtime"));
+  assert(!suite.images.includes("antnest-runtime-managed"));
+  const shell = readFileSync(
+    resolve(root, "tests/e2e/e2e-tool-progress.sh"),
+    "utf8",
+  );
+  assert.match(shell, /acp-progress\/deployment\.mjs" create-harness/u);
+  assert.doesNotMatch(shell, /managed-integration|docker\.sock|--user 0:0/u);
+});
+
 test("tier C Stage 3a profiles keep their strict exit 2 by running the make recipe directly", () => {
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   for (const name of [
     "acp-closeout",
     "acp-session",
+    "slash-commands",
+    "structured-plan",
+    "multimodal",
+    "session-cost",
+    "file-observations",
     "agent-access",
     "identity-access",
     "identity-core",
@@ -593,7 +676,7 @@ test("tier C Stage 3a profiles keep their strict exit 2 by running the make reci
     assert.equal(suite.run.at(-1), recipe[1], name);
     assert.deepEqual(
       suite.run.slice(0, -1),
-      name.startsWith("tool-") ? ["make docker-build-managed-runtime"] : [],
+      name === "tool-permissions" ? ["make docker-build-managed-runtime"] : [],
       name,
     );
     assert.equal(suite.strict, true, name);

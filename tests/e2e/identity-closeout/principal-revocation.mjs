@@ -6,64 +6,10 @@ import {
 } from "../../support/storage.mjs";
 import { assertNoStore } from "./support.mjs";
 import { assertOrganizationSession } from "./organization-session.mjs";
+import { assertRevokingWorkspaceBootstrap } from "./organization-workspace.mjs";
 
 // Persist every HTTP result before the bounded observer checks its status.
 const observedStatuses = Array.from({ length: 500 }, (_, index) => index + 100);
-
-// This deprecated Gateway DTO predates the active Agent UI display projection.
-// Its Principal has only these three fields; it has no organization labels.
-function assertLegacyBootstrap(payload) {
-  assert.deepEqual(Object.keys(payload).sort(), ["agents", "principal"]);
-  assert.deepEqual(Object.keys(payload.principal).sort(), [
-    "administrator",
-    "organization_id",
-    "user_id",
-  ]);
-  for (const key of ["user_id", "organization_id"])
-    assert(
-      typeof payload.principal[key] === "string" &&
-        payload.principal[key].length > 0,
-    );
-  assert.equal(typeof payload.principal.administrator, "boolean");
-  assert(Array.isArray(payload.agents));
-  const ids = new Set();
-  for (const agent of payload.agents) {
-    assert(
-      Object.keys(agent).every((key) =>
-        [
-          "agent_id",
-          "name",
-          "lifecycle_state",
-          "activation_state",
-          "runtime_state",
-        ].includes(key),
-      ),
-    );
-    for (const key of ["agent_id", "name"])
-      assert(typeof agent[key] === "string" && agent[key].length > 0);
-    assert(
-      ["not_created", "created", "deleted"].includes(agent.lifecycle_state),
-    );
-    assert(
-      [
-        "unknown",
-        "waiting",
-        "available",
-        "unhealthy",
-        "exited",
-        "absent",
-      ].includes(agent.runtime_state),
-    );
-    assert.equal(
-      Object.hasOwn(agent, "activation_state"),
-      agent.lifecycle_state === "created",
-    );
-    if (agent.lifecycle_state === "created")
-      assert(["enabled", "disabled"].includes(agent.activation_state));
-    assert(!ids.has(agent.agent_id));
-    ids.add(agent.agent_id);
-  }
-}
 
 // Only already-warm cross-service mutations use this observer. Local Gateway
 // mutations and cold scopes keep their immediate rejection assertions.
@@ -71,6 +17,8 @@ export async function observePrincipalRevocation({
   client,
   principal,
   path = "/api/session",
+  agentIDs,
+  secrets = [],
   committedMS,
   ttlMS,
   name,
@@ -78,7 +26,8 @@ export async function observePrincipalRevocation({
   record = () => {},
   ...timing
 }) {
-  assert(["/api/session", "/api/app/bootstrap"].includes(path));
+  const workspace = path === "/api/app/workspace/v1/bootstrap";
+  assert(path === "/api/session" || workspace);
   assert(
     principal &&
       typeof principal === "object" &&
@@ -88,6 +37,27 @@ export async function observePrincipalRevocation({
   assert(/^[a-z0-9][a-z0-9-]*$/u.test(name));
   const original = structuredClone(principal),
     cookie = client.cookie;
+  let remainingAgentIDs;
+  if (workspace) {
+    assert(
+      Array.isArray(agentIDs),
+      "initial Workspace Agent inventory required",
+    );
+    assert(agentIDs.every((id) => typeof id === "string" && id.length > 0));
+    assert.equal(new Set(agentIDs).size, agentIDs.length);
+    for (const key of [
+      "membership_id",
+      "organization_slug",
+      "organization_name",
+    ])
+      assert(
+        typeof original[key] === "string" && original[key].trim().length > 0,
+      );
+    assert(["user", "admin"].includes(original.system_role));
+    assert(["member", "admin"].includes(original.organization_role));
+    assert.equal(original.active, true);
+    remainingAgentIDs = [...agentIDs];
+  }
   assert(cookie, "original revocation Cookie required");
   directory = evidenceDirectory(directory);
   const evidence = {
@@ -95,6 +65,7 @@ export async function observePrincipalRevocation({
     committedMS,
     ttlMS,
     principal: original,
+    ...(workspace ? { agent_ids: [...agentIDs] } : {}),
     observations: [],
     complete: false,
   };
@@ -116,7 +87,10 @@ export async function observePrincipalRevocation({
       const observed = {
         ...item,
         ...(response.status === 200
-          ? { principal: response.body?.principal }
+          ? {
+              principal: response.body?.principal,
+              ...(workspace ? { agents: response.body?.agents } : {}),
+            }
           : { code: response.body?.code }),
         cache_control: response.headers.get("cache-control"),
         set_cookie_count: response.headers.getSetCookie().length,
@@ -141,17 +115,27 @@ export async function observePrincipalRevocation({
         if (response.status === 401)
           assert.equal(response.body?.code, "unauthenticated");
         else {
-          if (path === "/api/session")
-            assertOrganizationSession(response.body, "session", {
-              slug: original.organization_slug,
-              name: original.organization_name,
-            });
-          else assertLegacyBootstrap(response.body);
-          assert.deepEqual(
-            response.body.principal,
-            original,
-            "revocation changed the original Principal",
-          );
+          const organization = {
+            slug: original.organization_slug,
+            name: original.organization_name,
+          };
+          if (!workspace) {
+            assertOrganizationSession(response.body, "session", organization);
+            assert.deepEqual(
+              response.body.principal,
+              original,
+              "revocation changed the original Principal",
+            );
+          } else {
+            const current = assertRevokingWorkspaceBootstrap(
+              response.body,
+              original,
+              organization,
+              remainingAgentIDs,
+              secrets,
+            );
+            remainingAgentIDs = current.agents.map((agent) => agent.id);
+          }
         }
       } catch {
         // Upstream bodies, headers and Cookie values stay in private evidence.

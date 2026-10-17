@@ -93,11 +93,11 @@ func TestWorkspaceBridgeEventsFlushAndRevalidateBrowserSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := NewHandler(Config{
-		AdminConsoleURL: upstream.URL, AgentUIURL: upstream.URL, AgentACPURL: upstream.URL,
+		AdminConsoleURL: upstream.URL, AgentUIURL: upstream.URL,
 		IdentityURL: upstream.URL, StreamLease: time.Second,
 		RequestTimeout: time.Second,
 	}, Dependencies{
-		Identity: identityStub, Agents: &agentServiceStub{}, Execution: &executionServiceStub{},
+		Identity: identityStub,
 		Sessions: sessions, HTTPClient: upstream.Client(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {

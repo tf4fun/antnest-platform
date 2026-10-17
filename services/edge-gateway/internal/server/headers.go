@@ -18,7 +18,6 @@ var (
 	jsonRequestHeaders     = []string{"Accept", "Content-Type", "If-Match", "Idempotency-Key"}
 	eventRequestHeaders    = []string{"Accept", "Last-Event-ID"}
 	documentRequestHeaders = []string{"Accept"}
-	acpRequestHeaders      = []string{"Accept", "Content-Type", "Acp-Connection-Id", "Acp-Session-Id"}
 	scimRequestHeaders     = []string{"Accept", "Content-Type", "Authorization", "If-Match", "If-None-Match"}
 )
 

@@ -197,10 +197,17 @@ export const suites = [
     paths: [
       ...service("agent-acp-service"),
       "tests/e2e/agent-acp-service/**",
+      "tests/integration/agent-acp-service/adapters/mcp/runtime-information-close.test.ts",
+      "tests/integration/agent-acp-service/adapters/mcp/tool-lifecycle.test.ts",
+      "tests/e2e/acp-closeout/docker.mjs",
+      "tests/e2e/acp-closeout/network.mjs",
       "tests/e2e/service-authentication/acp/**",
       ...compose,
     ],
-    run: ["make e2e-acp-authentication"],
+    run: [
+      "make e2e-acp-authentication",
+      "ANTNEST_ACP_TEST_IMAGE=antnest/agent-acp-service:local node tests/e2e/agent-acp-service/runtime-information-docker.mjs",
+    ],
   },
   ...[
     ["console", "Admin Console", service("admin-console")],
@@ -401,10 +408,13 @@ export const suites = [
     tier: "b",
     setup: [],
     images: ["edge-gateway"],
-    pull: ["node:24.21.0-bookworm-slim"],
+    pull: [
+      "node:24.21.0-bookworm-slim",
+      "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0",
+    ],
     paths: [
       ...service("edge-gateway"),
-      "tests/e2e/edge-gateway/shutdown-docker.mjs",
+      "tests/e2e/edge-gateway/shutdown-*.mjs",
       ...go,
       ...compose,
     ],
@@ -575,20 +585,20 @@ function tierC() {
       ["e2e-stage3-local", "base"],
       ...[
         "acp-restart",
-        "file-observations",
-        "multimodal",
         "rpc-response-loss",
-        "session-cost",
-        "slash-commands",
         "stage3-skill-delivery",
         "stage4-skill-offline-reuse",
         "stage4-skill-registry-outage",
         "stage4-skill-restart-rebuild",
-        "structured-plan",
       ].map((name) => [`e2e-${name}`, name]),
       ...[
         ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
         ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
+        ["slash-commands", "ANTNEST_E2E_SLASH_COMMANDS=true"],
+        ["structured-plan", "ANTNEST_E2E_STRUCTURED_PLAN=true"],
+        ["multimodal", "ANTNEST_E2E_MULTIMODAL=true"],
+        ["session-cost", "ANTNEST_E2E_SESSION_COST=true"],
+        ["file-observations", "ANTNEST_E2E_FILE_OBSERVATIONS=true"],
         ["agent-access", "ANTNEST_E2E_AGENT_ACCESS=true"],
         ["identity-access", "ANTNEST_E2E_IDENTITY_ACCESS=true"],
         ["identity-core", "ANTNEST_E2E_IDENTITY_CORE=true"],
@@ -602,18 +612,23 @@ function tierC() {
         name,
         { ...options, ...stage3aProfile(profile) },
       ]),
-      ...[
-        ["tool-permissions", "ANTNEST_E2E_TOOL_PERMISSIONS=true"],
-        ["tool-progress", "ANTNEST_E2E_TOOL_PROGRESS=true"],
-      ].map(([name, profile]) => [
-        `e2e-${name}`,
-        name,
+      [
+        "e2e-tool-permissions",
+        "tool-permissions",
         {
           before: ["make docker-build-managed-runtime"],
           images: [...platformImages, "antnest-runtime-managed"].sort(),
-          ...stage3aProfile(profile),
+          ...stage3aProfile("ANTNEST_E2E_TOOL_PERMISSIONS=true"),
         },
-      ]),
+      ],
+      [
+        "e2e-tool-progress",
+        "tool-progress",
+        {
+          images: [...platformImages, "antnest-runtime-fixture"].sort(),
+          ...stage3aProfile("ANTNEST_E2E_TOOL_PROGRESS=true"),
+        },
+      ],
     ],
     "Authenticated shell": [
       ["e2e-stage2", "stage 2"],

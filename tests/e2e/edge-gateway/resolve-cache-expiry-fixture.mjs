@@ -43,8 +43,8 @@ export async function shortenIdleSession({
   const where = binding.join(" AND ");
   const id = await docker(compose(["ps", "-q", "postgres"]));
   assert.match(id, /^[a-f0-9]{64}$/u);
-  const ownership = async () => {
-    const rows = JSON.parse(await docker(["inspect", id]));
+  const ownership = async (read = docker) => {
+    const rows = JSON.parse(await read(["inspect", id]));
     assert.equal(rows.length, 1);
     const row = rows[0];
     assert.equal(row.Id, id);
@@ -52,12 +52,33 @@ export async function shortenIdleSession({
     assert.equal(row.Config.Labels["com.docker.compose.service"], "postgres");
     assert.equal(row.State.Running, true);
   };
-  const query = async (sql) => {
-    await ownership();
+  const query = async (sql, { signal, timeoutMS = 15000 } = {}) => {
+    assert(Number.isFinite(timeoutMS) && timeoutMS > 0);
+    const deadline = performance.now() + timeoutMS;
+    const bounded = AbortSignal.any(
+      [signal, AbortSignal.timeout(Math.ceil(timeoutMS))].filter(Boolean),
+    );
+    const remaining = () => {
+      bounded.throwIfAborted();
+      const value = deadline - performance.now();
+      assert(value > 0, "isolated browser expiry SQL timed out");
+      return value;
+    };
+    const read = async (args) => {
+      const result = await docker(args, false, {
+        signal: bounded,
+        timeoutMS: remaining(),
+      });
+      remaining();
+      return result;
+    };
+    await ownership(read);
     let output;
     try {
-      output = await docker([
+      output = await read([
         "exec",
+        "-e",
+        `PGOPTIONS=-c statement_timeout=${Math.max(1, Math.floor(remaining()))}`,
         id,
         "psql",
         "-X",
@@ -74,6 +95,8 @@ export async function shortenIdleSession({
       ]);
     } catch {
       // psql diagnostics may echo the token hash/binding. Do not attach cause.
+      if (bounded.aborted || performance.now() >= deadline)
+        throw new Error("isolated browser expiry SQL timed out or aborted");
       throw new Error("isolated browser expiry SQL failed");
     }
     const lines = output.split("\n").filter((line) => line.startsWith("{"));
@@ -184,12 +207,16 @@ export async function shortenIdleSession({
     ...mark(),
   };
   return {
+    containerID: id,
     evidence,
-    async read(label) {
-      const row = await query(`SELECT ${metadata("a")} || jsonb_build_object(
+    async read(label, options) {
+      const row = await query(
+        `SELECT ${metadata("a")} || jsonb_build_object(
         'expired', a.idle_expires_at <= clock_timestamp(),
         'remaining_ms', EXTRACT(EPOCH FROM (a.idle_expires_at-clock_timestamp()))*1000
-      ) FROM api_tokens a WHERE ${where}`);
+      ) FROM api_tokens a WHERE ${where}`,
+        options,
+      );
       for (const field of columns)
         assert.equal(
           row[field],

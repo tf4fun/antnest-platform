@@ -3,6 +3,62 @@
 This scenario verifies Tool permission modes, approval decisions and pending
 approval recovery through the deployed ACP service on a disposable full stack.
 
+## Private transport migration
+
+The owning `openPrivatePermissionConnection` adapter now delegates the original
+browser Principal through Identity to private v1/v2 WebSocket ACP. It records
+the actual initialize and business request IDs, inputs and successful replies,
+and keeps permission delivery IDs, original parameters and decisions separately.
+Pending decisions accept only an offered option, settle once, and settle as
+cancelled when the request signal aborts. Snapshot mutation cannot alter the
+original decision. Closing joins requests and decisions and checks both wire
+inventories; cleanup errors remain failures.
+
+For the scripted reconnect case, v1 requires the original outstanding prompt's
+local close error with no reply. A completed v1 prompt cannot acquire that
+exception. V2 requires the actual completed prompt `messageId` acknowledgement;
+an acknowledgement does not settle its pending approval. Other business requests
+cannot overlap that pending decision, while a cancel notification can be sent.
+
+The owning configuration Trace inspector binds the original request ID,
+Session, `mode` or `model` selection and returned value. It checks the complete
+authorized Session/configuration reads, revision-checked update and visible
+configuration message in one committed transaction. A complete output read
+must precede configuration mutation; later output reads remain allowed. SQL
+values are not exported, so the observed selection comes from the actual SDK
+receipt. Grouped model choices and additional thinking options remain intact.
+Configuration must not run a model, Tool or permission approval. These Trace
+fixture checks still require actual consumer collection and Docker acceptance.
+
+The actual client now uses this adapter, retains each login Principal, joins
+connections and telemetry, and keeps both business and cleanup failures. V1
+reconnection accepts only the original unanswered prompt's local close; v2
+keeps its actual acknowledgement and still waits for the resumed terminal state.
+Both versions compare the complete original and reissued approval parameters.
+Cancellation preserves the original prompt rejection, including when connection
+cleanup also fails; a v2 acknowledgement still requires its terminal update.
+
+The client inventories six connections and initializations, 56 business RPCs,
+two original cancel-notification receipts and 18 permission deliveries. Requests
+are bound by connection and actual request ID; failed calls retain their inputs
+without acquiring a success receipt. The 26 prompt phases retain their Provider
+Trace and actual approval deliveries, including both connection identities for
+replay. A thin collector reuses the shared raw archive and three complete stable
+source samples for all 64 request/notification Traces.
+
+The private prompt inspector binds approval Tool IDs to the original Run and
+Provider call, and checks the completed/cancelled Run's quiescence and effect
+state. It retains full raw error diagnostics and allows only the exact deliberate
+permission rejection or original v1 closed-response dispatch failure. SDK end
+timestamp overlap does not block this consumer; raw diagnostics remain intact.
+The `permission_decided` record is a service stdout log, not a Span event; the
+inspector does not claim to read its decision or database parameter values.
+
+Local fixture and real TCP adapter checks establish these contracts. Complete
+Runtime information/list/Tool lifecycle checks, the independent cleanup entry,
+deployment wiring and actual Docker business acceptance remain pending. The
+current shell runner is not yet an accepted retired-route-free scenario.
+
 ## Running
 
 ```sh

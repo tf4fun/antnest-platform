@@ -1,192 +1,535 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectTrace } from "./trace.mjs";
-
-function fixture() {
-  const span = (id, parent, name, service, time, tags = {}) => ({
-    spanID: id,
-    traceID: "trace",
-    operationName: name,
-    processID: service,
-    startTime: time,
-    duration: 1,
-    tags: Object.entries(tags).map(([key, value]) => ({ key, value })),
-    references: parent
-      ? [{ refType: "CHILD_OF", traceID: "trace", spanID: parent }]
-      : [],
-  });
-  const trace = {
-    traceID: "trace",
-    processes: Object.fromEntries(
-      ["edge-gateway", "agent-acp-service", "antnest-runtime"].map((name) => [
-        name,
-        { serviceName: name },
-      ]),
+import {
+  progressTraceFixture as fixture,
+  addProgressOutput,
+} from "./trace.fixture.mjs";
+import { tag } from "../observability/trace-tree.mjs";
+import { privateACPDiagnosticInventory } from "../observability/private-acp-inventory.mjs";
+const inspect = (f) =>
+  inspectTrace(f.trace, f.expected, ["progress-payload-canary"], f.requests);
+const phases = [1, 2].flatMap((version) =>
+  ["bash", "managed"].flatMap((kind) =>
+    ["success", "failure", "cancel"].map(
+      (ending) => `v${version}-${kind}-${ending}`,
     ),
-    spans: [
-      span("root", null, "acp session/prompt", "edge-gateway", 0, {
-        "rpc.method": "session/prompt",
-        "span.kind": "server",
-      }),
-      span("forward", "root", "acp session/prompt", "edge-gateway", 1, {
-        "span.kind": "producer",
-        "antnest.operation.phase": "forward",
-      }),
-      span("prompt", "forward", "acp session/prompt", "agent-acp-service", 2, {
-        "rpc.method": "session/prompt",
-        "span.kind": "server",
-      }),
-      span("run", "prompt", "agent.run", "agent-acp-service", 3, {
-        "antnest.run.id": "run-id",
-      }),
-      span("info", "run", "mcp.runtime.info", "agent-acp-service", 4),
-      span("info-http", "info", "HTTP POST /mcp", "antnest-runtime", 4),
-      span("list", "run", "mcp.tools.list", "agent-acp-service", 6),
-      span("list-http", "list", "HTTP POST /mcp", "antnest-runtime", 6),
-      span("model", "run", "model.complete", "agent-acp-service", 10),
-      span("model-http", "model", "HTTP POST model", "agent-acp-service", 10, {
-        "span.kind": "client",
-      }),
-      span("call", "run", "mcp.tools.call", "agent-acp-service", 12, {
-        "antnest.run.id": "run-id",
-      }),
-      span(
-        "call-http",
-        "call",
-        "HTTP POST antnest-runtime",
-        "agent-acp-service",
-        12,
-        { "span.kind": "client" },
+  ),
+);
+for (const phase of phases)
+  test(`${phase} accounts for successful ACP progress persistence and output under the Tool`, () => {
+    const f = fixture(phase);
+    const branches = addProgressOutput(f);
+    const before = structuredClone(f.trace);
+    const result = inspect(f);
+    assert.deepEqual(f.trace, before);
+    assert(
+      !result.owned_error_spans.some((claim) =>
+        branches.spans.some((span) => span.spanID === claim.span_id),
       ),
-      span(
-        "tool-server",
-        "call-http",
-        "HTTP POST /mcp",
-        "antnest-runtime",
-        13,
-        { "span.kind": "server", "rpc.method": "tools/call" },
-      ),
-      span("tool", "tool-server", "runtime.mcp.tool", "antnest-runtime", 14),
+    );
+  });
+for (const phase of ["v1-bash-success", "v2-managed-cancel"])
+  for (const [name, mutate] of [
+    ["failed progress SQL", (f, b) => f.set(b.statements[1], "error", true)],
+    [
+      "foreign output Session",
+      (f, b) => f.set(b.output, "antnest.session.id", "foreign"),
     ],
-  };
-  return {
-    trace,
-    requests: [
-      {
-        trace_id: "trace",
-        model_span_id: "model-http",
-        phase: "v1-bash-success",
-        stage: "tool",
+    [
+      "foreign output Agent",
+      (f, b) => f.set(b.output, "antnest.agent.id", "foreign"),
+    ],
+    [
+      "contradictory Agent alias",
+      (f, b) => f.set(b.output, "agent.id", "foreign"),
+    ],
+    [
+      "contradictory Session alias",
+      (f, b) => f.set(b.output, "session.id", "foreign"),
+    ],
+    [
+      "COMMIT starts before BEGIN",
+      (_f, b) => {
+        [b.statements[0].startTime, b.statements.at(-1).startTime] = [
+          b.statements.at(-1).startTime,
+          b.statements[0].startTime,
+        ];
       },
     ],
-  };
-}
-test("current trace correlates model HTTP to the owning Run without retired admission tags", () => {
-  const { trace, requests } = fixture();
-  const result = inspectTrace(trace, requests);
-  assert.equal(result.run_id, "run-id");
-  assert.equal(result.tool_calls, 1);
-  assert.equal(result.runtime_tool_calls, 1);
-  assert.equal(result.strict_trace, "passed");
+    [
+      "configuration starts before authorization",
+      (_f, b) => {
+        [b.reads[0].startTime, b.reads.at(-1).startTime] = [
+          b.reads.at(-1).startTime,
+          b.reads[0].startTime,
+        ];
+      },
+    ],
+    [
+      "rolled-back persistence",
+      (f, b) =>
+        f.set(b.transaction, "antnest.transaction.outcome", "rolled_back"),
+    ],
+    [
+      "missing COMMIT",
+      (f, b) => {
+        f.trace.spans = f.trace.spans.filter((s) => s !== b.statements.at(-1));
+      },
+    ],
+    [
+      "foreign SQL database",
+      (f, b) => f.set(b.reads[0], "db.namespace", "foreign"),
+    ],
+    [
+      "unrelated SELECT",
+      (f, b) => f.set(b.reads[0], "db.query.text", "SELECT * FROM unrelated"),
+    ],
+    [
+      "missing output query",
+      (f, b) => {
+        f.trace.spans = f.trace.spans.filter((s) => s !== b.reads[0]);
+      },
+    ],
+    [
+      "extra successful query",
+      (f, b) => {
+        f.trace.spans.push({
+          ...structuredClone(b.reads[0]),
+          spanID: "extra-progress-query",
+        });
+      },
+    ],
+    [
+      "wrong progress INSERT",
+      (f, b) =>
+        f.set(
+          b.statements[5],
+          "db.query.text",
+          "INSERT INTO unrelated VALUES ($1)",
+        ),
+    ],
+    [
+      "foreign output process",
+      (f, b) => {
+        b.output.processID = f.tool.processID;
+      },
+    ],
+    [
+      "unknown Tool branch",
+      (_f, b) => {
+        b.output.operationName = "unexpected.work";
+      },
+    ],
+    [
+      "hidden work below SQL",
+      (_f, b) => {
+        b.reads[1].references[0].spanID = b.reads[0].spanID;
+      },
+    ],
+    [
+      "nested protocol request",
+      (f, b) => f.set(b.reads[0], "rpc.method", "tools/call"),
+    ],
+    [
+      "SQL outlives its awaited output parent",
+      (f, b) => {
+        b.reads[0].duration =
+          b.output.startTime + b.output.duration - b.reads[0].startTime + 2000;
+      },
+    ],
+  ])
+    test(`${phase} rejects ${name} without borrowing Tool error ownership`, () => {
+      const f = fixture(phase),
+        b = addProgressOutput(f);
+      inspect(f);
+      mutate(f, b);
+      assert.throws(() => inspect(f));
+    });
+test("multiple progress writes and merged output do not require one output for each transaction", () => {
+  const f = fixture("v2-managed-cancel");
+  addProgressOutput(f);
+  const merged = addProgressOutput(f);
+  f.trace.spans = f.trace.spans.filter(
+    (span) => span !== merged.output && !merged.reads.includes(span),
+  );
+  inspect(f);
 });
-test("trace rejects wrong Run ancestry, duplicate invocation and missing parents", () => {
-  for (const mutate of [
-    (t) => {
-      t.spans.find((s) => s.spanID === "model").references[0].spanID = "prompt";
-    },
-    (t) =>
-      t.spans.push({
-        ...structuredClone(t.spans.at(-1)),
-        spanID: "second-tool",
-      }),
-    (t) => {
-      t.spans.at(-1).references[0].spanID = "missing";
-    },
-    (t) => {
-      t.spans.find((s) => s.spanID === "call").tags[0].value = "foreign-run";
-    },
-    (t) => {
-      t.spans.find((s) => s.spanID === "info").startTime = 20;
-    },
-  ]) {
-    const { trace, requests } = fixture();
-    mutate(trace);
-    assert.throws(() => inspectTrace(trace, requests));
-  }
+test("original SQL enumeration order is independent of ordered execution start times", () => {
+  const f = fixture(),
+    branches = addProgressOutput(f);
+  f.set(branches.output, "agent.id", f.expected.agentId);
+  f.set(branches.output, "session.id", f.expected.sessionId);
+  f.trace.spans.reverse();
+  inspect(f);
 });
-test("clock warnings retain strict failure while structural defects still fail", () => {
-  const { trace, requests } = fixture();
-  trace.spans[2].warnings = [
-    "clock skew adjustment disabled; not applying calculated delta of 200µs",
-  ];
-  const result = inspectTrace(trace, requests);
-  assert.equal(result.strict_trace, "failed");
-  assert.equal(result.warnings.length, 1);
-  trace.spans[2].references[0].spanID = "absent";
-  assert.throws(() => inspectTrace(trace, requests));
+test("queries with the same millisecond start preserve their original precision", () => {
+  const f = fixture(),
+    branches = addProgressOutput(f);
+  for (const span of branches.statements)
+    span.startTime = branches.transaction.startTime + 1;
+  for (const span of branches.reads)
+    span.startTime = branches.output.startTime + 1;
+  inspect(f);
 });
-test("trace rejects model correlation errors and preview/credential capture", () => {
-  for (const mutate of [
-    (t, r) => {
-      r[0].model_span_id = "call";
-    },
-    (t, r) => {
-      r[0].trace_id = "foreign";
-    },
-    (t) => {
-      t.spans[0].tags.push({
-        key: "captured",
-        value: "progress-payload-canary",
+for (const name of ["output", "transaction"])
+  test(`asynchronous progress ${name} retains an original late warning without a Tool timing exemption`, () => {
+    const f = fixture(),
+      branches = addProgressOutput(f),
+      branch = branches[name];
+    branch.duration =
+      f.call.startTime + f.call.duration - branch.startTime + 2000;
+    branch.warnings = ["original asynchronous progress endpoint warning"];
+    const before = structuredClone(f.trace),
+      result = inspect(f);
+    assert.equal(result.strict_trace, "failed");
+    assert(result.warnings.includes(branch.warnings[0]));
+    assert(
+      !result.time_observations.some((row) => row.span_id === branch.spanID),
+    );
+    assert.deepEqual(f.trace, before);
+  });
+for (const phase of phases)
+  test(`private collector accounts for every original ${phase} error`, () => {
+    const f = fixture(phase);
+    const report = inspect(f);
+    assert(Array.isArray(report.owned_error_spans));
+    const inventory = privateACPDiagnosticInventory(
+      [f.trace, f.expected.connectionTrace],
+      [report],
+      new Set([
+        "progress-replay-disconnect",
+        "progress-run-unresolved",
+        "progress-tool-cancelled",
+        "progress-managed-tool-error",
+        "completed-initialize-mcp-read-disconnect",
+        "completed-runtime-tool-http-disconnect",
+      ]),
+    );
+    assert.equal(inventory.diagnostic_inventory_verified, true);
+    assert.equal(
+      inventory.raw_error_inventory.length,
+      report.error_spans.length,
+    );
+  });
+for (const phase of phases.filter((value) => !value.endsWith("cancel")))
+  test(`${phase} parsed Tool retains its exact owned discovery cleanup`, () => {
+    const f = fixture(phase, { heldDiscovery: true });
+    const report = inspect(f);
+    const neutral = report.neutral_diagnostics.filter(
+      (row) => row.reason === "completed-runtime-tool-http-disconnect",
+    );
+    assert(neutral.length > 0);
+    assert(
+      neutral.every(
+        (row) =>
+          !report.owned_error_spans.some(
+            (claim) =>
+              claim.trace_id === row.trace_id && claim.span_id === row.span_id,
+          ),
+      ),
+      "original cleanup cannot be claimed twice as a business error",
+    );
+    privateACPDiagnosticInventory(
+      [f.trace, f.expected.connectionTrace],
+      [report],
+      new Set([
+        "progress-replay-disconnect",
+        "progress-run-unresolved",
+        "progress-tool-cancelled",
+        "progress-managed-tool-error",
+        "completed-initialize-mcp-read-disconnect",
+        "completed-runtime-tool-http-disconnect",
+      ]),
+    );
+  });
+for (const phase of phases)
+  test(`complete private Progress ${phase} retains original evidence`, () => {
+    const f = fixture(phase),
+      before = structuredClone({
+        trace: f.trace,
+        expected: f.expected,
+        requests: f.requests,
       });
-    },
-    (t) => {
-      t.spans[0].tags.push({ key: "error", value: true });
-    },
+    const report = inspect(f);
+    assert.equal(report.phase, phase);
+    assert.equal(report.transport_boundary, "private-acp");
+    assert.equal(report.gateway_ancestry, undefined);
+    assert.equal(report.tool_calls, 1);
+    assert.equal(report.runtime_tool_calls, 1);
+    assert.equal(report.model_requests, phase.endsWith("cancel") ? 1 : 2);
+    assert.equal(report.strict_trace, "passed");
+    assert.equal(
+      report.post_prompt_information_reads,
+      phase.startsWith("v1") ? 1 : 0,
+    );
+    assert.deepEqual(f.trace, before.trace);
+    assert.deepEqual(f.expected, before.expected);
+    assert.deepEqual(f.requests, before.requests);
+  });
+test("twelve complete paths have twenty original model HTTP clients", () =>
+  assert.equal(
+    phases.reduce(
+      (sum, phase) => sum + inspect(fixture(phase)).model_requests,
+      0,
+    ),
+    20,
+  ));
+for (const phase of [
+  "v1-bash-success",
+  "v1-managed-cancel",
+  "v2-bash-failure",
+  "v2-managed-failure",
+])
+  for (const [name, mutate] of [
+    [
+      "wrong actual upgrade",
+      (f) => (f.request.references[0].spanID = "f".repeat(16)),
+    ],
+    [
+      "foreign Session",
+      (f) => f.set(f.request, "antnest.session.id", "foreign"),
+    ],
+    ["foreign input Session", (f) => (f.expected.inputSessionID = "foreign")],
+    ["foreign live Tool ID", (f) => (f.expected.toolCallId = "f".repeat(64))],
+    [
+      "missing Run request",
+      (f) => f.set(f.run, "antnest.request.id", undefined),
+    ],
+    ["wrong Run terminal", (f) => f.set(f.run, "run.terminal_class", "failed")],
+    ["wrong Run effects", (f) => f.set(f.run, "run.tool_effect_state", "none")],
+    ["Run exception", (f) => f.set(f.run, "exception.type", "Injected")],
+    ["foreign model trace", (f) => (f.requests[0].trace_id = "e".repeat(32))],
+    [
+      "missing model HTTP",
+      (f) =>
+        f.trace.spans.splice(
+          f.trace.spans.findIndex(
+            (s) => s.spanID === f.requests[0].model_span_id,
+          ),
+          1,
+        ),
+    ],
+    ["duplicate observed model", (f) => f.requests.push({ ...f.requests[0] })],
+    [
+      "extra model",
+      (f) =>
+        f.trace.spans.push({
+          ...structuredClone(
+            f.trace.spans.find((s) => s.operationName === "model.complete"),
+          ),
+          spanID: "extra-model",
+        }),
+    ],
+    [
+      "unrelated SQL error",
+      (f) =>
+        f.set(
+          f.trace.spans.find((s) => s.operationName === "INSERT"),
+          "error",
+          true,
+        ),
+    ],
+    [
+      "extra Runtime work",
+      (f) =>
+        f.trace.spans.push({
+          ...structuredClone(f.work),
+          spanID: "extra-work",
+        }),
+    ],
+    ["wrong actual tool", (f) => f.set(f.call, "tool.name", "other")],
+    [
+      "extra Tool exception",
+      (f) => f.set(f.tool, "exception.type", "Injected"),
+    ],
+    [
+      "captured preview",
+      (f) => f.set(f.tool, "captured", "progress-payload-canary"),
+    ],
+  ])
+    test(`${phase} rejects ${name}`, () => {
+      const f = fixture(phase);
+      mutate(f);
+      assert.throws(() => inspect(f));
+    });
+test("v1 replay disconnect requires its exact receipt and original response failure", () => {
+  const f = fixture();
+  f.expected.closedBeforeResponse = false;
+  assert.throws(() => inspect(f));
+  for (const mutate of [
+    (g) => g.set(g.request, "antnest.error.origin_span_id", g.call.spanID),
+    (g) => g.set(g.request, "error.type", "TransportError"),
+    (g) => g.eventField(g.request.logs[0], "antnest.error.causes", "[]"),
+    (g) => g.request.logs.push(g.event(g.request.startTime + 1, "exception")),
   ]) {
-    const { trace, requests } = fixture();
-    mutate(trace, requests);
-    assert.throws(() =>
-      inspectTrace(trace, requests, ["progress-payload-canary"]),
-    );
+    const g = fixture();
+    mutate(g);
+    assert.throws(() => inspect(g));
   }
 });
-
-test("deliberate errors stay inside the Tool boundary, including cancellation", () => {
-  for (const phase of ["v1-managed-failure", "v2-bash-cancel"]) {
-    const { trace, requests } = fixture();
-    requests[0].phase = phase;
-    trace.spans.at(-1).tags.push({ key: "error", value: true });
-    assert.equal(inspectTrace(trace, requests).error_spans.length, 1);
-    trace.spans[0].tags.push({ key: "error", value: true });
-    assert.throws(() => inspectTrace(trace, requests), /unexpected error/);
+test("only deliberate v1 success disconnect may use the closed receipt", () => {
+  for (const phase of [
+    "v2-bash-success",
+    "v1-bash-failure",
+    "v1-managed-cancel",
+  ]) {
+    const f = fixture(phase);
+    f.expected.closedBeforeResponse = true;
+    assert.throws(() => inspect(f));
   }
 });
-
-test("a v1 success prompt closed before its answer may fail only its response dispatch", () => {
-  const closed = (phase, version = "v1") => {
-    const { trace, requests } = fixture();
-    requests[0].phase = phase;
-    trace.spans[2].tags.push(
-      { key: "error", value: true },
-      { key: "antnest.outcome", value: "error" },
-      { key: "antnest.operation.phase", value: "acp.dispatch" },
-      { key: "antnest.protocol.version", value: version },
-    );
-    return () => inspectTrace(trace, requests);
-  };
-  assert.equal(closed("v1-bash-success")().tool_calls, 1);
-  assert.throws(closed("v2-bash-success", "v2"), /unexpected error/);
-  assert.throws(closed("v1-managed-failure"), /unexpected error/);
+test("optional v1 refresh is inspected and v2 cannot borrow it", () => {
+  assert.equal(
+    inspect(fixture("v1-bash-failure", { refresh: false }))
+      .post_prompt_information_reads,
+    0,
+  );
+  const f = fixture("v1-bash-success");
+  f.expected.protocolVersion = 2;
+  f.expected.phase = "v2-bash-success";
+  assert.throws(() => inspect(f));
 });
-
-test("cross-service warning evidence preserves parent timing without correcting it", () => {
-  const { trace, requests } = fixture();
-  trace.spans[2].warnings = [
-    "clock skew adjustment disabled; not applying calculated delta of 200µs",
+test("closed v1 response without refresh retains precise error validation", () =>
+  assert.equal(
+    inspect(fixture("v1-bash-success", { refresh: false }))
+      .post_prompt_information_reads,
+    0,
+  ));
+test("Bash exit7 returns through a successful executor", () => {
+  const f = fixture("v2-bash-failure");
+  assert.equal(tag(f.work, "process.exit.code"), 0);
+  inspect(f);
+  f.set(f.work, "process.exit.code", 7);
+  assert.throws(() => inspect(f));
+});
+for (const [member, name] of [
+  ["work", "antnest.error"],
+  ["tool", "Managed MCP tool finished"],
+])
+  test(`managed isError requires original ${member} diagnostic`, () => {
+    const f = fixture("v2-managed-failure");
+    f[member].logs = f[member].logs.filter(
+      (entry) => tag({ tags: entry.fields }, "event") !== name,
+    );
+    assert.throws(() => inspect(f));
+  });
+test("no additional model follows cancelled execution", () => {
+  const f = fixture("v2-bash-cancel");
+  f.requests.push({ ...f.requests[0], stage: "final" });
+  assert.throws(() => inspect(f));
+});
+test("original request and actual upgrade warnings stay strict failed", () => {
+  const f = fixture("v2-managed-cancel");
+  f.work.warnings = [
+    "clock skew adjustment disabled; not applying calculated delta of 200us",
   ];
-  trace.spans[2].startTime = -199;
-  const result = inspectTrace(trace, requests);
-  assert.equal(result.warning_edges[0].child_start_minus_parent_us, -200);
-  assert.equal(result.warning_edges[0].parent_service, "edge-gateway");
-  assert.equal(trace.spans[2].startTime, -199);
+  f.expected.connectionTrace.spans[1].warnings = [
+    "clock skew adjustment disabled; not applying calculated delta of 300us",
+  ];
+  const before = structuredClone(f.trace),
+    report = inspect(f);
+  assert.equal(report.strict_trace, "failed");
+  assert.equal(report.warning_count, 2);
+  assert.deepEqual(f.trace, before);
 });
+
+test("Run resource request identity is independent of its actual SDK RPC ID", () => {
+  const f = fixture("v2-bash-success");
+  f.set(
+    f.run,
+    "antnest.request.id",
+    "request_0123456789abcdef0123456789abcdef",
+  );
+  const before = structuredClone(f.trace);
+  inspect(f);
+  assert.deepEqual(f.trace, before);
+});
+test("managed isError retains its actual stdio error type", () => {
+  const f = fixture("v2-managed-failure");
+  f.set(f.work, "error.type", "managed_tool_error");
+  const before = structuredClone(f.trace);
+  inspect(f);
+  assert.deepEqual(f.trace, before);
+});
+test("managed dispatch error must precede its completion event", () => {
+  const f = fixture("v2-managed-failure");
+  f.operation.logs[0].timestamp = f.operation.logs[1].timestamp + 1;
+  assert.throws(() => inspect(f));
+});
+for (const member of ["run", "call", "model", "http"])
+  test(`original ${member} cannot begin before its owning ACP span`, () => {
+    const f = fixture("v2-bash-success");
+    const model = f.trace.spans.find(
+      (span) => span.operationName === "model.complete",
+    );
+    const http = f.trace.spans.find(
+      (span) => span.spanID === f.requests[0].model_span_id,
+    );
+    const span = { run: f.run, call: f.call, model, http }[member];
+    const parent = { run: f.request, call: f.run, model: f.run, http: model }[
+      member
+    ];
+    const finish = span.startTime + span.duration;
+    span.startTime = parent.startTime - 1;
+    span.duration = finish - span.startTime;
+    assert.throws(() => inspect(f));
+  });
+
+for (const [name, mutate] of [
+  [
+    "negative SQL duration",
+    (f) => {
+      f.trace.spans.find((s) => s.operationName === "INSERT").duration = -1;
+    },
+  ],
+  [
+    "late model HTTP event",
+    (f) => {
+      const s = f.trace.spans.find(
+        (s) => s.spanID === f.requests[0].model_span_id,
+      );
+      s.logs = [
+        f.event(s.startTime + s.duration + 1, "ordinary completion", {
+          level: "INFO",
+        }),
+      ];
+    },
+  ],
+  [
+    "infinite connection duration",
+    (f) => {
+      f.expected.connectionTrace.spans[0].duration = Infinity;
+    },
+  ],
+  [
+    "early connection event",
+    (f) => {
+      const s = f.expected.connectionTrace.spans[1];
+      s.logs = [
+        f.event(s.startTime - 1, "ordinary completion", { level: "INFO" }),
+      ];
+    },
+  ],
+])
+  test(`complete evidence rejects ${name}`, () => {
+    const f = fixture("v2-bash-success");
+    mutate(f);
+    assert.throws(() => inspect(f));
+  });
+for (const type of [undefined, "ForeignError"])
+  test(`managed failure rejects missing or foreign stdio error type ${type}`, () => {
+    const f = fixture("v2-managed-failure");
+    f.set(f.work, "error.type", type);
+    assert.throws(() => inspect(f));
+  });
+for (const kind of ["bash", "managed"])
+  for (const protocolFailed of [false, true])
+    for (const heldDiscovery of [false, true])
+      test(`complete cancel ${kind} HTTP error=${protocolFailed} held discovery=${heldDiscovery}`, () => {
+        const f = fixture(`v2-${kind}-cancel`, {
+          protocolFailed,
+          heldDiscovery,
+        });
+        assert.equal(inspect(f).runtime_tool_calls, 1);
+      });

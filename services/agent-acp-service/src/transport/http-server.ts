@@ -119,6 +119,9 @@ export class AgentAcpHttpServer {
       noServer: true,
       maxPayload: options.maxWebSocketPayloadBytes,
     });
+    this.webSockets.on("headers", () => {
+      activeHttpSpan()?.addEvent("antnest.http.upgrade.response.prepared");
+    });
     this.server.on("upgrade", (request, socket, head) => {
       const boundary = startHttpBoundary(request);
       const onClose = () => boundary.finish();
@@ -374,6 +377,8 @@ export class AgentAcpHttpServer {
         ...identity,
       };
       this.webSockets.handleUpgrade(request, socket, head, (webSocket) => {
+        const span = activeHttpSpan();
+        span?.addEvent("antnest.http.upgrade.connection.setup.started");
         this.telemetry.count("antnest.acp.connections", { result: "accepted", protocol });
         this.connections.add(webSocket);
         webSocket.once("close", () => {
@@ -421,6 +426,7 @@ export class AgentAcpHttpServer {
             );
             this.observeConnection(connection, protocol);
           }
+          span?.addEvent("antnest.http.upgrade.connection.setup.completed");
         } catch (error) {
           this.report(error, "acp_connect");
           webSocket.close(1011, "ACP connection setup failed");

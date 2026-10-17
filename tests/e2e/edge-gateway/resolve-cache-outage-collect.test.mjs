@@ -11,6 +11,8 @@ import { collectResolveTraceEvidence } from "../../support/gateway-resolution-ev
 import { workspaceOutageFixture } from "../workspace-closeout/chat-fixtures.mjs";
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 import { inspectOutageAuthority } from "./resolve-cache-outage-authority.mjs";
+import { runtimeCancellationBusinessFixture } from "./resolve-cache-runtime-cancellation-business-fixtures.mjs";
+import { outageClockFixture } from "./resolve-cache-outage-clock-fixtures.mjs";
 
 const id = (n) => n.toString(16).padStart(32, "0");
 function sample() {
@@ -68,6 +70,8 @@ function sample() {
       feedAttempts: [{ traceID: id(9) }, { traceID: id(11) }],
       jwks: [{ traceID: id(10) }],
       refresh: [],
+      close: [],
+      deletion: [],
     },
   };
 }
@@ -176,12 +180,16 @@ function archiveHarness(
     searched = [],
     gatewayRounds = [],
     serverRounds = [],
+    closeRounds = [],
+    deleteRounds = [],
     windows = [];
   let searchFailure;
   change(fixture, {
     missing,
     gatewayRounds,
     serverRounds,
+    closeRounds,
+    deleteRounds,
     failSearch: (name) => (searchFailure = name),
   });
   const fallback = (traceID) => ({
@@ -214,15 +222,21 @@ function archiveHarness(
           windows.push({ now: options.now, lookback: query.get("lookback") });
           const tags = JSON.parse(query.get("tags"));
           const name =
-            query.get("operation") === "HTTP POST identity-service"
-              ? "feedAttempts"
-              : query.get("operation")
-                ? "refresh"
-                : query.get("service") === "edge-gateway"
-                  ? "messages"
-                  : tags["rpc.method"] === "list_session_revocations"
-                    ? "feed"
-                    : "jwks";
+            query.get("operation") === "HTTP GET /status"
+              ? "health"
+              : query.get("operation") === "agent_ui.acp.close"
+                ? "close"
+                : query.get("operation") === "HTTP DELETE /v1/acp"
+                  ? "deletion"
+                  : query.get("operation") === "HTTP POST identity-service"
+                    ? "feedAttempts"
+                    : query.get("operation")
+                      ? "refresh"
+                      : query.get("service") === "edge-gateway"
+                        ? "messages"
+                        : tags["rpc.method"] === "list_session_revocations"
+                          ? "feed"
+                          : "jwks";
           searched.push(name);
           if (name === "feedAttempts")
             assert.deepEqual(tags, {
@@ -237,6 +251,10 @@ function archiveHarness(
               "span.kind": "server",
             });
           if (name === searchFailure) throw new Error(`${name} search failed`);
+          if (name === "close" && closeRounds.length)
+            return closeRounds.shift();
+          if (name === "deletion" && deleteRounds.length)
+            return deleteRounds.shift();
           return name === "feedAttempts" && gatewayRounds.length
             ? gatewayRounds.shift()
             : name === "feed" && serverRounds.length
@@ -294,6 +312,453 @@ function withOutageChat(s) {
     evidence.audit,
   );
   return f;
+}
+
+function withHeldRuntime(s) {
+  const f = runtimeCancellationBusinessFixture();
+  withBridgeClose(s);
+  Object.assign(s.evidence, f.evidence, {
+    business_window: { run_id: f.evidence.run_id },
+    model_observations: [f.evidence.model_started, f.evidence.model_cancelled],
+  });
+  delete s.evidence.wire;
+  delete s.evidence.prep_wire;
+  for (const [id, trace] of f.collection.traces) s.traces.set(id, trace);
+  return f;
+}
+
+test("rev4 archive runs the complete single-model Runtime cancellation consumer after raw capture", async (t) => {
+  let f;
+  const h = archiveHarness(t, (s) => {
+    f = withHeldRuntime(s);
+  });
+  const report = await h.archive(),
+    gate = report.owning_gates.cancellation;
+  assert.equal(gate.status, "passed");
+  assert.equal(gate.provider_requests, 1);
+  assert.equal(gate.runtime_calls, 1);
+  assert.equal(gate.owned_error_spans.length, 6);
+  assert.equal(gate.transport_receipts.length, 2);
+  assert.equal(gate.business.runtime_quiescent, true);
+  assert.equal(gate.timing.status, "timing_proved_business_admission_pending");
+  assert.deepEqual(
+    JSON.parse(
+      readFileSync(join(h.root, "outage-traces", `${f.trace.traceID}.json`)),
+    ),
+    f.trace,
+  );
+  assert.equal(
+    report.reports.find((r) => r.trace_id === f.trace.traceID).settled_read,
+    undefined,
+  );
+});
+
+for (const mode of [
+  "passed",
+  "pending",
+  "throw",
+  "missing claims",
+  "missing receipts",
+])
+  test(`rev4 cancellation collector awaits and preserves full owning result: ${mode}`, async (t) => {
+    let called = 0,
+      delivered;
+    const h = archiveHarness(t, withHeldRuntime, undefined, undefined, {
+      async inspectRuntimeCancellation(evidence, collection, secrets) {
+        called++;
+        await Promise.resolve();
+        assert.deepEqual(secrets, ["private-canary"]);
+        assert(collection.traces.has(evidence.prompt.trace_id));
+        assert(collection.traces.has(evidence.cancel.trace_id));
+        for (const id of collection.archivedTraceIDs)
+          assert(existsSync(join(h.root, "outage-traces", `${id}.json`)));
+        if (mode === "throw")
+          throw new Error("runtime cancellation owning failure");
+        delivered = {
+          status: mode === "pending" ? "pending" : "passed",
+          trace_id: evidence.prompt.trace_id,
+          owned_error_spans: [],
+          otel_error_spans: [],
+          transport_receipts: [],
+          metadata_receipts: [],
+          business: { runtime_quiescent: true },
+          timing: { fixture: true },
+        };
+        if (mode === "missing claims") delete delivered.owned_error_spans;
+        if (mode === "missing receipts") delete delivered.transport_receipts;
+        return delivered;
+      },
+    });
+    if (mode === "passed") await h.archive();
+    else await assert.rejects(h.archive(), AggregateError);
+    assert.equal(called, 1);
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(
+      report.owning_gates.cancellation.status,
+      mode === "passed" ? "passed" : "pending",
+    );
+    if (mode === "passed")
+      assert.deepEqual(report.owning_gates.cancellation, delivered);
+    else assert.equal(report.status, "archive_failed");
+    assert(existsSync(join(h.root, "outage-traces", `${"a".repeat(32)}.json`)));
+  });
+
+test("unknown outage revision is rejected without falling back to legacy cancellation or losing raw sources", async (t) => {
+  const h = archiveHarness(t, (s) => {
+    withOutageChat(s);
+    s.evidence.policy_revision = 99;
+  });
+  await assert.rejects(h.archive(), AggregateError);
+  const report = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-archive.json")),
+  );
+  assert.equal(report.owning_gates.cancellation.status, "pending");
+  assert(
+    report.failures.some((message) =>
+      /unsupported outage policy/u.test(message),
+    ),
+  );
+  assert(existsSync(join(h.root, "outage-traces", `${"a".repeat(32)}.json`)));
+});
+
+function withBridgeClose(s) {
+  s.evidence.policy_revision = 4;
+  const sourceId = id(71),
+    closeId = id(70);
+  const ui = "1111111111111111",
+    root = "2222222222222222",
+    deletion = "3333333333333333";
+  const span = (
+    traceID,
+    spanID,
+    processID,
+    operationName,
+    tags,
+    references = [],
+  ) => ({
+    traceID,
+    spanID,
+    processID,
+    operationName,
+    startTime: 10,
+    duration: 10,
+    tags: Object.entries(tags).map(([key, value]) => ({ key, value })),
+    references,
+    logs: [],
+  });
+  const source = {
+    traceID: sourceId,
+    processes: { ui: { serviceName: "agent-ui" } },
+    spans: [
+      span(sourceId, ui, "ui", "agent_ui.http.request", {
+        "span.kind": "server",
+      }),
+    ],
+  };
+  const close = {
+    traceID: closeId,
+    processes: {
+      ui: { serviceName: "agent-ui" },
+      acp: { serviceName: "agent-acp-service" },
+    },
+    spans: [
+      span(
+        closeId,
+        root,
+        "ui",
+        "agent_ui.acp.close",
+        {
+          "span.kind": "internal",
+          "antnest.ui.acp.close.trigger": "transport_failure",
+          "antnest.ui.acp.close.outcome": "failed",
+          error: true,
+        },
+        [{ refType: "FOLLOWS_FROM", traceID: sourceId, spanID: ui }],
+      ),
+      span(
+        closeId,
+        deletion,
+        "acp",
+        "HTTP DELETE /v1/acp",
+        {
+          "span.kind": "server",
+          "http.request.method": "DELETE",
+          "http.route": "/v1/acp",
+          "antnest.listener": "workspace",
+          "http.response.status_code": 401,
+          error: true,
+        },
+        [{ refType: "CHILD_OF", traceID: closeId, spanID: root }],
+      ),
+    ],
+  };
+  s.found.close = [close];
+  s.found.deletion = [close];
+  s.traces = new Map([
+    [closeId, close],
+    [sourceId, source],
+  ]);
+  const clock = outageClockFixture();
+  s.evidence.acp_clock_probe = clock.evidence.acp_clock_probe;
+  s.found.health = clock.clockSearches.found;
+  for (const trace of s.found.health) s.traces.set(trace.traceID, trace);
+  return { close, source, sourceId, closeId };
+}
+
+test("Bridge outage archives failed close and DELETE with their actual initialization source", async (t) => {
+  const h = archiveHarness(t, withBridgeClose);
+  const report = await h.archive();
+  assert.equal(
+    report.cleanup_capture.status,
+    "captured_owning_admission_pending",
+  );
+  assert.equal(report.strict_trace, "failed");
+  for (const n of [1, 70, 71])
+    assert(existsSync(join(h.root, "outage-traces", `${id(n)}.json`)));
+  const saved = JSON.parse(
+    readFileSync(join(h.root, "outage-traces", `${id(70)}.json`)),
+  );
+  assert.equal(
+    saved.spans[1].tags.find((tag) => tag.key === "http.response.status_code")
+      .value,
+    401,
+  );
+  const search = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-search.private.json")),
+  );
+  assert.equal(search.close_searches.length, 3);
+  assert.equal(search.delete_searches.length, 3);
+  assert.equal(
+    new Set(h.windows.map((value) => JSON.stringify(value))).size,
+    1,
+  );
+});
+
+test("Bridge outage waits for late close inventory and late raw warnings", async (t) => {
+  const h = archiveHarness(t, (s, controls) => {
+    const { close } = withBridgeClose(s);
+    const early = structuredClone(close);
+    close.warnings = ["late diagnostic"];
+    controls.closeRounds.push([], [early], [close], [close], [close]);
+  });
+  const report = await h.archive();
+  assert.equal(
+    report.cleanup_capture.status,
+    "captured_owning_admission_pending",
+  );
+  assert.equal(h.searched.filter((name) => name === "close").length, 5);
+  const saved = JSON.parse(
+    readFileSync(join(h.root, "outage-traces", `${id(70)}.json`)),
+  );
+  assert.deepEqual(saved.warnings, ["late diagnostic"]);
+  assert.equal(report.strict_trace, "failed");
+});
+
+test("Bridge stream inspector receives the independent cleanup inventories and all rounds", async (t) => {
+  let observed = false;
+  const h = archiveHarness(
+    t,
+    (s) => {
+      withOutageChat(s);
+      const existing = new Map(s.traces);
+      withBridgeClose(s);
+      for (const [id, trace] of existing) s.traces.set(id, trace);
+      s.evidence.recovery_window = {};
+    },
+    undefined,
+    undefined,
+    {
+      // This test owns stream-inventory delivery; cancellation has a separate
+      // full-consumer archive fixture above.
+      inspectRuntimeCancellation: () => ({
+        status: "passed",
+        owned_error_spans: [],
+        otel_error_spans: [],
+        transport_receipts: [],
+        metadata_receipts: [],
+      }),
+      inspectRecovery: () => ({ status: "passed" }),
+      inspectRecoveryBudgets: () => ({ status: "passed" }),
+      inspectRecoveryHTTP: () => ({ status: "passed" }),
+      inspectStreams(_evidence, collection) {
+        const saved = JSON.parse(
+          readFileSync(join(h.root, "outage-trace-search.private.json")),
+        );
+        assert(
+          collection.cleanupSearches,
+          "owning stream cleanup search missing",
+        );
+        assert.deepEqual(collection.cleanupSearches.found, saved.cleanup_found);
+        assert.deepEqual(
+          collection.cleanupSearches.rounds.close,
+          saved.close_searches,
+        );
+        assert.deepEqual(
+          collection.cleanupSearches.rounds.deletion,
+          saved.delete_searches,
+        );
+        assert.deepEqual(collection.cleanupSearches.errors, []);
+        assert.equal(collection.cleanupSearches.now, saved.now);
+        assert.equal(collection.cleanupSearches.lookback, saved.lookback);
+        assert(collection.clockSearches, "owning stream health search missing");
+        assert.deepEqual(collection.clockSearches, saved.clock_searches);
+        assert.equal(collection.clockSearches.rounds.length, 3);
+        for (const trace of collection.clockSearches.found) {
+          assert(collection.archivedTraceIDs.has(trace.traceID));
+          assert.deepEqual(collection.traces.get(trace.traceID), trace);
+        }
+        observed = true;
+        return { status: "passed", owned_error_spans: [] };
+      },
+    },
+  );
+  await h.archive();
+  assert(observed);
+});
+
+test("a failed health search still archives independently known HTTP and owner traces", async (t) => {
+  const h = archiveHarness(t, (s, controls) => {
+    withBridgeClose(s);
+    controls.failSearch("health");
+  });
+  await assert.rejects(h.archive, /archive failed/);
+  for (const n of [1, 70, 71])
+    assert(existsSync(join(h.root, "outage-traces", id(n) + ".json")));
+  const saved = JSON.parse(
+    readFileSync(join(h.root, "outage-trace-search.private.json")),
+  );
+  assert.match(saved.clock_searches.errors[0], /health search failed/);
+});
+
+function completedBridgeClose(s) {
+  const fixture = withBridgeClose(s);
+  const [close, deletion] = fixture.close.spans;
+  close.tags.find(
+    (field) => field.key === "antnest.ui.acp.close.outcome",
+  ).value = "closed";
+  deletion.tags.find(
+    (field) => field.key === "http.response.status_code",
+  ).value = 202;
+  for (const span of fixture.close.spans)
+    span.tags = span.tags.filter((field) => field.key !== "error");
+  return fixture;
+}
+
+for (const missing of [true, false]) {
+  test(`Bridge outage rejects a closed owner with ${missing ? "missing" : "duplicate"} DELETE evidence`, async (t) => {
+    const h = archiveHarness(t, (s) => {
+      const { close } = completedBridgeClose(s);
+      if (missing) {
+        close.spans.pop();
+        s.found.deletion = [];
+      } else {
+        close.spans.push({
+          ...structuredClone(close.spans[1]),
+          spanID: "4444444444444444",
+        });
+      }
+    });
+    await assert.rejects(h.archive(), AggregateError);
+    for (const n of [1, 70, 71])
+      assert(existsSync(join(h.root, "outage-traces", `${id(n)}.json`)));
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(report.cleanup_capture.status, "failed");
+    assert(
+      report.failures.some((value) =>
+        value.includes("closed owner requires one complete DELETE receipt"),
+      ),
+    );
+  });
+}
+
+test("Bridge outage waits beyond an empty DELETE index for a closed owner's receipt", async (t) => {
+  const h = archiveHarness(t, (s, controls) => {
+    const { close } = completedBridgeClose(s);
+    controls.deleteRounds.push([], [], [], [close], [close], [close]);
+  });
+  const report = await h.archive();
+  assert.equal(
+    report.cleanup_capture.status,
+    "captured_owning_admission_pending",
+  );
+  assert.equal(h.searched.filter((name) => name === "deletion").length, 6);
+});
+
+for (const outcome of ["failed", "no_target"]) {
+  test(`Bridge outage preserves ${outcome} close without inventing a DELETE receipt`, async (t) => {
+    const h = archiveHarness(t, (s) => {
+      const { close } = withBridgeClose(s);
+      close.spans[0].tags.find(
+        (field) => field.key === "antnest.ui.acp.close.outcome",
+      ).value = outcome;
+      close.spans.pop();
+      s.found.deletion = [];
+    });
+    const report = await h.archive();
+    assert.equal(
+      report.cleanup_capture.status,
+      "captured_owning_admission_pending",
+    );
+    assert.deepEqual(report.cleanup_capture.delete_span_ids, []);
+  });
+}
+
+for (const failed of ["close", "deletion"]) {
+  test(`Bridge outage retains known and peer cleanup sources when ${failed} search fails`, async (t) => {
+    const h = archiveHarness(t, (s, controls) => {
+      withBridgeClose(s);
+      controls.failSearch(failed);
+    });
+    await assert.rejects(h.archive(), AggregateError);
+    for (const n of [1, 70, 71])
+      assert(existsSync(join(h.root, "outage-traces", `${id(n)}.json`)));
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(report.cleanup_capture.status, "failed");
+    assert(
+      report.failures.some((value) =>
+        value.includes(`${failed} search failed`),
+      ),
+    );
+  });
+}
+
+for (const [name, change] of [
+  [
+    "missing initialization Link",
+    ({ close }) => {
+      close.spans[0].references = [];
+    },
+  ],
+  [
+    "wrong initialization span",
+    ({ source }) => {
+      source.spans[0].operationName = "unrelated";
+    },
+  ],
+  [
+    "DELETE missing parent",
+    ({ close }) => {
+      close.spans[1].references[0].spanID = "ffffffffffffffff";
+    },
+  ],
+]) {
+  test(`Bridge outage rejects ${name} without dropping known HTTP evidence`, async (t) => {
+    const h = archiveHarness(t, (s) => {
+      change(withBridgeClose(s));
+    });
+    await assert.rejects(h.archive(), AggregateError);
+    assert(existsSync(join(h.root, "outage-traces", `${id(1)}.json`)));
+    const report = JSON.parse(
+      readFileSync(join(h.root, "outage-trace-archive.json")),
+    );
+    assert.equal(report.cleanup_capture.status, "failed");
+  });
 }
 
 test("recovery inventory failure still archives independently known observers", async (t) => {

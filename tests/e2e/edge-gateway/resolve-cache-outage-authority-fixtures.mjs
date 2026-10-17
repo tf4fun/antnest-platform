@@ -6,7 +6,7 @@ import {
 } from "../observability/gateway-resolution-fixtures.mjs";
 import { fixture } from "../workspace-closeout/request-resolution-fixtures.mjs";
 
-export function authorityFixture() {
+export function authorityFixture(policyRevision = 3) {
   const traces = new Map(),
     fixtures = {};
   let next = 1;
@@ -268,6 +268,7 @@ export function authorityFixture() {
     });
   }
   const evidence = {
+    policy_revision: policyRevision,
     agent_id: "agent",
     session_id: "session",
     run_id: "run",
@@ -289,6 +290,64 @@ export function authorityFixture() {
       restart_started_at: 6700,
     },
   };
+  if (policyRevision === 4) {
+    evidence.transport = "http-sse";
+    delete evidence.wire;
+    for (const name of ["connection", "initialize", "list"]) {
+      traces.delete(fixtures[name].trace.traceID);
+      delete fixtures[name];
+    }
+    const source = fixtures.workspaceSource;
+    setTag(source.root, "http.route", "/api/app/workspace/v1/{path...}");
+    source.trace.processes.consumer.serviceName = "agent-ui";
+    const receiver = source.trace.spans.find((s) => s.spanID === "receiver");
+    receiver.operationName = "agent_ui.http.request";
+    setTag(receiver, "http.route", "/api/app/workspace/v1/*");
+    setTag(receiver, "http.request.method", "GET");
+    setTag(receiver, "antnest.agent.id", undefined);
+    source.trace.processes.acp = { serviceName: "agent-acp-service" };
+    source.initialize = {
+      traceID: source.trace.traceID,
+      spanID: "acp-initialize",
+      processID: "acp",
+      operationName: "HTTP POST /v1/acp",
+      startTime: receiver.startTime + 100,
+      duration: 1000,
+      references: [
+        {
+          refType: "CHILD_OF",
+          traceID: source.trace.traceID,
+          spanID: receiver.spanID,
+        },
+      ],
+      tags: fields({
+        "span.kind": "server",
+        "http.route": "/v1/acp",
+        "http.request.method": "POST",
+        "http.response.status_code": 200,
+        "rpc.method": "initialize",
+        "rpc.service": "acp",
+        "antnest.agent.id": "agent",
+        "antnest.request.id": "0",
+      }),
+    };
+    source.trace.spans.push(source.initialize);
+    const ready = http.find((r) => r.label === "fresh-consumer-agent-ready");
+    ready.path = "/api/app/workspace/v1/agents/agent/view";
+    ready.body = {
+      agentId: "agent",
+      availability: "ready",
+      activeSessionId: null,
+    };
+    for (const name of ["workspaceSource", "workspaceHit", "sse"]) {
+      const f = fixtures[name];
+      f.upstream.operationName = "HTTP GET agent-ui";
+      setTag(f.upstream, "http.request.method", "GET");
+      setTag(f.upstream, "server.address", "agent-ui");
+      f.trace.spans.find((s) => s.spanID === "receiver").operationName =
+        "agent_ui.http.request";
+    }
+  }
   return {
     evidence,
     traces,

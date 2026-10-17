@@ -789,6 +789,7 @@ export async function verifyOIDCLinking({
       fixture.agentID,
       ownerWorkspace.client,
       signal,
+      ownerWorkspace.metadata,
     );
     const at = observers.beforeMutation();
     const ownerRemoved = await unbind(

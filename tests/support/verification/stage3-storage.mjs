@@ -19,12 +19,12 @@ const profiles = {
   IDENTITY_ACCESS: "identity-http",
   AGENT_ACCESS: "identity-agent",
   ACP_CLOSEOUT: "acp-closeout-normal",
-  TOOL_PROGRESS: null,
-  FILE_OBSERVATIONS: null,
-  STRUCTURED_PLAN: null,
-  SLASH_COMMANDS: null,
-  MULTIMODAL: null,
-  SESSION_COST: null,
+  TOOL_PROGRESS: "acp-progress",
+  FILE_OBSERVATIONS: "acp-files",
+  STRUCTURED_PLAN: "acp-plan",
+  SLASH_COMMANDS: "acp-commands",
+  MULTIMODAL: "acp-multimodal",
+  SESSION_COST: "acp-cost",
   TOOL_PERMISSIONS: null,
 };
 let selected = false;

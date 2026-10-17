@@ -11,12 +11,19 @@ The [caller catalog](callers.json) is the complete route policy:
 | Routes                                                                          | Verified workload          | User context                                                                                                                                       |
 | ------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Management/catalog, authorization defaults, lifecycle, events and policy writes | `admin-console`            | CCT for `agent-controller`; signed system or Organization administrator; requested Organization/actor must match signed `org`/`sub`                |
-| `POST /rpc/agent-controller/list-workspace-agents`                              | `edge-gateway`, `agent-ui` | Organization-scoped CCT; body Organization/principal match signed claims                                                                           |
+| `POST /rpc/agent-controller/list-workspace-agents`                              | `agent-ui`                | Organization-scoped CCT; body Organization/principal match signed claims                                                                           |
 | `GET /internal/agents/{agent_id}/skill-learning-policy`                         | `agent-acp-service`        | Accepted service operation: persisted Agent, exact owner/access revision and live Identity membership; request hints cannot manufacture delegation |
 | `GET /status`, `GET /rpc/agent-controller/status` (also HTTP HEAD)              | Minimal health exception   | No CCT; only `status` is returned                                                                                                                  |
 
 Agent routes require the exact signed `agt`, including body-scoped
 `set-agent-authorization`. Catalog/workspace discovery has no Agent scope.
+The [unused Gateway caller retirement](../edge-gateway/workspace-entry-retirement.md)
+removes `edge-gateway` from both Controller's entry policy and workspace reader.
+An otherwise valid configured Gateway credential returns `403 caller_not_allowed`
+before body parsing, CCT/JWKS verification or business queries, including unknown
+non-health paths. Public GET/HEAD health exceptions remain available. Agent UI's
+workload grant and the Identity workspace CCT audience for Controller remain;
+the reader's request, response and pagination semantics are unchanged.
 The transport strips raw `X-Antnest-*`, user Authorization, cookies and credentials
 before business handlers. Verified CCT is private request context and is forwarded
 unchanged only when resolving Template Skills at Registry. Provider credentials

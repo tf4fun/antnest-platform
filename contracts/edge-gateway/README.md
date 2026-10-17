@@ -6,6 +6,13 @@ workspace routes plus the trusted headers Edge Gateway may inject into internal
 services. It is a product-facing browser contract, not a public third-party
 OpenAPI.
 
+The [workspace entry retirement contract](workspace-entry-retirement.md) and
+its [policy](workspace-entry-retirement-policy.json) select removal of the
+unused direct browser stack for #64. Gateway 24 activates that retirement and
+header registry 2 removes the direct ACP profiles. Only the shipped Agent UI
+Bridge remains for browser workspace traffic. Receiver caller retirement,
+Bridge capacity, consumer migration and real integration have separate gates.
+
 The shared [login admission contract](login-admission.md) and its
 [policy](login-admission-policy.json) define independent password/OIDC budgets,
 IPv6 `/64` aggregation and bounded FIFO eviction for #2. Gateway version 23
@@ -30,6 +37,15 @@ private session-feed invalidation, resource limits and unchanged hard stream
 boundaries. The shared batch precedes Gateway implementation, trace/display
 consumers and real HTTPS outage/load admission. It does not enable caching on
 its own or add an Identity RPC.
+
+Under Gateway 24, cache policy 4 defines the replacement Bridge measurement:
+100 real sequential HTTP session-list calls, including cold initialization and
+refresh, within eight seconds and at most three actual Resolve attempts per
+independently counted CLIENT/SERVER inventory. The five-second Identity outage
+requires real Bridge SSE output and HTTP cancellation of the same held
+Run/Runtime work. Cache authority and budgets remain unchanged; policy 3's WSS
+measurement remains historical. The shared policy does not complete the
+pending test-consumer migration or actual integration admission.
 
 Revision 20 adds the three self binding/notice routes defined by
 [OIDC account linking](../identity/oidc-linking.md), with closed browser schemas,
@@ -65,8 +81,7 @@ Revision 16 adds shared Origin admission before every `/api/` route, including
 admin and session endpoints. Mutations require matching public Origin or,
 when Origin is absent, same-origin Fetch Metadata. Cross-site, same-site and
 malformed metadata reject mutations even with matching Origin. The explicit
-originless compatibility setting is off by default and never waives CSRF or
-ACP WebSocket Origin checks. See [public entry](public-entry.md) for the complete
+originless compatibility setting is off by default and never waives CSRF. See [public entry](public-entry.md) for the complete
 safe-method, header validation and compatibility rules.
 
 Revision 17 defines Secure-mode `__Host-` cookies and CSRF bound to the stable
@@ -81,7 +96,7 @@ including idle and absolute deadlines, account/session-management routes,
 explicit activity, atomic password rotation and bounded live stream checks.
 Cookies change only on login, OIDC completion, successful password rotation or
 logout. Shared schemas precede Identity, Gateway, browser and integration
-batches; revision-19 behavior remains pending those owning implementations.
+batches; their completed admissions are recorded in the [global TODO](../../TODO.md).
 
 For `/api/app/workspace/v1/{path...}`, Gateway strips every incoming
 `X-Antnest-*` identity header and injects verified `X-Antnest-Organization-ID`,
@@ -117,24 +132,23 @@ Gateway producer [#92](https://github.com/tf4fun/antnest-platform/issues/92)
 precedes Node/SSR/frontend consumer
 [#93](https://github.com/tf4fun/antnest-platform/issues/93). Only the latter
 activates the new principal in the bootstrap wire schema and runs full UI
-integration after both service admissions. The old `/api/app/bootstrap` is
-unchanged; its retirement remains tracked by
-[#64](https://github.com/tf4fun/antnest-platform/issues/64).
+integration after both service admissions. Gateway 24 removes the old
+`/api/app/bootstrap`; the retained Bridge bootstrap remains owned by Agent UI.
 
-## Workspace state
+## Workspace view and events
 
-Workspace state GET/SSE expose six ACP-owned fields: Agent ID, availability,
-access permission, nullable configuration digest, nullable active Session ID
-and nullable unavailability reason. Missing or revoked access returns a
-sanitized offline view; source failure is never reported as an idle state.
-The routes reject supplied scope and replay cursors. Identity determines the
-User and Organization; ACP determines Agent access and Session disclosure.
-Subscriptions have a bounded authentication lease and never renew inside
-Gateway. Revision 19 also requires non-touch live session checks during silent
-periods and output, with an independent maximum stale-output bound. See
-[browser lifecycle](../identity/browser-sessions.md) for the pending shared
-requirements and [Workspace state](../../services/edge-gateway/docs/workspace-state.md)
-for response validation, revocation, shutdown and client recovery requirements.
+The Bridge forwards Agent UI's authorized view/events without decoding or
+re-encoding the retired six-field ACP state projection. Agent UI owns DTOs,
+event recovery and browser behavior; ACP owns private execution state.
+Gateway retains scoped non-touch admission, the bounded Resolve cache and
+private feed, original identity/absolute limits and the 30-second source-age
+bound. Every current CCT must remain valid. Observer closure never cancels an
+accepted Run. See [Workspace Bridge entry](../../services/edge-gateway/docs/workspace-state.md).
+
+Bridge HTTP bodies remain limited to 64 MiB. There are 64 process-wide Bridge
+SSE slots, separate from ordinary commands. These do not prove Agent UI's upload
+fairness or actual Runtime cancellation; the retirement policy requires separate
+two-user reception/EOF-processing and same-execution cancellation evidence.
 
 ## OIDC and SCIM
 
@@ -148,54 +162,17 @@ SCIM requests pass through to Identity Service with their protocol Bearer
 credential intact. Browser cookies and forged trusted-principal headers are
 removed; Identity remains the sole SCIM authentication and business authority.
 
-## ACP routing
+## Retired direct browser routes
 
-Workspace bootstrap returns only Agent ID and name discovery metadata from
-Controller. It does not aggregate execution availability. Protocol and state
-requests go directly to ACP with trusted Organization, Principal and Agent
-headers, without a Controller lookup. Incoming identity headers, including the
-retired access subject, are removed. See
-[Execution boundary](../../services/edge-gateway/docs/execution-boundary.md)
-for the Gateway side of the Controller/ACP split.
+The legacy bootstrap, state/watch and `acp`, `v1/acp`, `v2/acp` registrations
+are removed. Valid outer requests, including HEAD and WebSocket upgrades, return
+`404 not_found` without Identity or upstream calls, with or without a valid
+browser session. Invalid Origin/Fetch Metadata still receives the existing
+outer rejection. The `/api/app/*` deny fallback is preserved.
 
-## WebSocket relay
-
-After upgrade, Edge terminates both WebSocket hops and relays opaque complete
-messages using the Gorilla WebSocket library. The upgrade requires a
-same-origin request. Before each client data message is forwarded, Gateway
-resolves the original cookie token under the exact CCT scope, using a still-valid
-positive snapshot only under revision 21's bounded policy. Its active User,
-Organization and Membership must match upgrade admission. Revoked, expired or
-mismatched identity closes both hops with 1008. When neither a bounded positive
-snapshot nor a successful live Resolve is available, the relay closes with 1013
-and never forwards the waiting message. No cookie is changed after upgrade;
-reconnect uses normal HTTP authentication.
-
-This applies to v1, v2 and the v1 alias without inspecting JSON methods, IDs or
-envelopes. Replies and notifications are also client data messages. Ping/pong
-are hop-local transport events. Payloads are bounded to 64 MiB per complete
-message, with one in-flight message per direction and bounded socket writes.
-ACP may impose a lower configured input limit. No prompt, payload or credential
-is recorded by the relay; admission checks retain the Gateway trace context.
-
-The check is the admission point, not a distributed revocation transaction.
-Revision 19 adds live checks for silent connections and an independent bound
-on stale output, including blocked browser writes. Idle deadlines schedule a
-fresh check because real user activity may extend them; absolute session and
-original handshake-CCT expiry remain hard caps. A process-owned session feed
-accelerates cancellation without replacing the live-check bound. These changes
-remain pending the Identity and Gateway batches described by the
-[browser lifecycle contract](../identity/browser-sessions.md). Closing a socket
-does not cancel a durable Run. ACP continues to own Agent and Session authorization.
-
-Per Gateway process, 64 upgraded or admitting connections and four buffered
-data messages bound relay concurrency (including Identity calls). Permits are
-taken after a message header is available, so idle sockets do not consume
-payload capacity. Permit waits and writes use the dependency timeout; a started
-message has an absolute one-minute assembly deadline after a buffer slot is
-acquired, unaffected by ping/pong. Capacity failure closes with 1013 (HTTP 503
-before upgrade). Compression is disabled on both hops. These are live-work
-bounds, not an RSS guarantee or per-user quota. A structurally invalid Identity
-resolution is unavailable (1013), not evidence of revocation. Checks
-overlapping revocation can authorize a message even if its eventual ACP intent
-or Run is created after the revocation response.
+Gateway no longer connects to Controller or ACP and owns no direct ACP
+connection/message or state pools. Authenticated service-internal ACP v1/v2
+remains available. Agent UI keeps its downstream workload grants and Identity
+workspace CCT audiences for Controller/ACP. Receiver grants, deployment
+credentials and consumers retire in their separate owning batches.
+See [execution ownership](../../services/edge-gateway/docs/execution-boundary.md).

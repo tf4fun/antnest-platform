@@ -298,13 +298,34 @@ test("every workload destination maps to its receiving interface and owns an all
       "http://identity-service:8080",
     );
   assert.equal(
-    base.services["edge-gateway"].environment.ANTNEST_AGENT_ACP_URL,
-    "http://agent-acp-workspace:8080",
-  );
-  assert.equal(
     base.services["agent-ui"].environment.ANTNEST_AGENT_ACP_SERVICE_URL,
     "http://agent-acp-workspace:8080",
   );
+  assert.equal(
+    base.services["agent-ui"].environment.ANTNEST_AGENT_CONTROLLER_URL,
+    "http://agent-controller:8080",
+  );
+});
+
+test("Gateway retirement removes unused direct dependencies while retaining its Bridge route", () => {
+  const gateway = base.services["edge-gateway"];
+  for (const [receiver, variable, host] of [
+    ["agent-controller", "ANTNEST_AGENT_CONTROLLER_URL", "agent-controller"],
+    ["agent-acp-service", "ANTNEST_AGENT_ACP_URL", "agent-acp-workspace"],
+  ]) {
+    assert.equal(gateway.environment[variable], undefined, variable);
+    assert.equal(gateway.depends_on[receiver], undefined, receiver);
+    assert(!gateway.extra_hosts.some((entry) => entry.startsWith(`${host}=`)));
+    assert.equal(topology.destinations["edge-gateway"][host], undefined);
+  }
+  assert.equal(gateway.networks["controller-clients"], undefined);
+  assert.equal(gateway.networks.edge.ipv4_address, "10.241.0.2");
+  assert.equal(
+    gateway.environment.ANTNEST_AGENT_UI_URL,
+    "http://agent-ui:8080",
+  );
+  assert.equal(gateway.depends_on["agent-ui"].condition, "service_healthy");
+  assert(gateway.extra_hosts.includes("agent-ui=10.241.0.4"));
 });
 
 test("RC secret bootstrap reaches Controller only through its authenticated purpose interface", () => {

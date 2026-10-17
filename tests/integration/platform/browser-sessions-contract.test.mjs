@@ -525,9 +525,10 @@ test("explicit activity returns deadlines and a bounded scheduling hint without 
   assert.equal(external({ ...value, activity_interval_ms: 0 }), false);
 });
 
-test("Console declares the active Gateway and Identity browser session revisions", () => {
+test("Console browser-session consumer adopts the current Gateway contract", () => {
   const consumer = read("admin-console/admin-contract.json").response_policy
     .account_security;
+  assert.equal(gateway.version, 24);
   assert.equal(consumer.gateway_revision, gateway.version);
   assert.equal(consumer.identity_revision, identity.revision);
   assert.equal(
@@ -538,7 +539,7 @@ test("Console declares the active Gateway and Identity browser session revisions
 
 test("Gateway owns session mutations and records cookie concurrency and stream bounds", () => {
   assert.equal(identity.revision, 18);
-  assert.equal(gateway.version, 23);
+  assert.equal(gateway.version, 24);
   assert.equal(
     gateway.browser_session_contract,
     "../identity/browser-sessions.md",

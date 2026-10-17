@@ -1,21 +1,21 @@
 package server
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 )
@@ -31,10 +31,10 @@ func boundaryNetworkGateway(t *testing.T, upstream http.Handler, principal ident
 	client := peer.Client()
 	t.Cleanup(client.CloseIdleConnections)
 	h, err := NewHandler(Config{
-		AdminConsoleURL: peer.URL, AgentUIURL: peer.URL, AgentACPURL: peer.URL, IdentityURL: peer.URL,
+		AdminConsoleURL: peer.URL, AgentUIURL: peer.URL, IdentityURL: peer.URL,
 		RequestTimeout: time.Second,
 	}, Dependencies{
-		Identity: &identityServiceStub{resolvePrincipal: principal}, Agents: &agentServiceStub{}, Execution: &executionServiceStub{},
+		Identity: &identityServiceStub{resolvePrincipal: principal},
 		Sessions: sessions, HTTPClient: client, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestHeaderBoundaryDiscardsRealChunkedTrailers(t *testing.T) {
 		{"POST", "/api/admin/agents"},
 		{"POST", "/scim/v2/Users"},
 		{"POST", "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
-		{"POST", "/api/app/agents/agent-1/v1/acp"},
+		{"POST", "/api/app/workspace/v1/agents/agent-1/commands"},
 	} {
 		t.Run(route.path, func(t *testing.T) {
 			var calls atomic.Int32
@@ -105,71 +105,6 @@ func TestHeaderBoundaryDiscardsRealChunkedTrailers(t *testing.T) {
 			_ = response.Body.Close()
 			if response.StatusCode != http.StatusNoContent || calls.Load() != 1 {
 				t.Fatalf("status=%d upstream calls=%d", response.StatusCode, calls.Load())
-			}
-		})
-	}
-}
-
-func TestHeaderBoundaryRetainsOnlyDeclaredACPWebSocketAuthority(t *testing.T) {
-	contract := readHeaderBoundaryContract(t)
-	for _, route := range []struct{ path, upstream string }{
-		{"/api/app/agents/agent-1/acp", "/v1/acp"},
-		{"/api/app/agents/agent-1/v1/acp", "/v1/acp"},
-		{"/api/app/agents/agent-1/v2/acp", "/v2/acp"},
-	} {
-		t.Run(route.path, func(t *testing.T) {
-			received := make(chan http.Header, 1)
-			upgrader := websocket.Upgrader{Subprotocols: []string{"acp-boundary"}}
-			edge := boundaryNetworkGateway(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != route.upstream {
-					t.Errorf("upstream path=%s", r.URL.Path)
-				}
-				received <- r.Header.Clone()
-				connection, err := upgrader.Upgrade(w, r, nil)
-				if err != nil {
-					return
-				}
-				defer func() { _ = connection.Close() }()
-				_ = connection.WriteMessage(websocket.TextMessage, []byte("connected"))
-			}), ordinaryPrincipal())
-			headers := boundaryAttackHeaders(t)
-			headers.Set("Origin", edge.URL)
-			headers.Set("Cookie", "antnest_session=token-1")
-			dialer := websocket.Dialer{HandshakeTimeout: time.Second, Subprotocols: []string{"acp-boundary"}}
-			connection, response, err := dialer.Dial(strings.Replace(edge.URL, "http:", "ws:", 1)+route.path, headers)
-			if response != nil && response.Body != nil {
-				_ = response.Body.Close()
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = connection.Close() }()
-			if connection.Subprotocol() != "acp-boundary" {
-				t.Fatal("declared WebSocket subprotocol was lost")
-			}
-			_ = connection.SetReadDeadline(time.Now().Add(time.Second))
-			_, payload, err := connection.ReadMessage()
-			if err != nil || string(payload) != "connected" {
-				t.Fatalf("relay payload=%q err=%v", payload, err)
-			}
-			expected := map[string][]string{
-				HeaderOrganizationID: {"org-1"}, HeaderPrincipalID: {"user-admin"}, HeaderAgentID: {"agent-1"},
-				identity.CallerContextHeader: {"trusted-issuer-context"},
-			}
-			select {
-			case actual := <-received:
-				for _, field := range contract.Headers {
-					if got := boundaryHeaderValues(actual, field.Name); !reflect.DeepEqual(got, expected[field.Name]) {
-						t.Errorf("%s: got %v, want %v", field.Name, got, expected[field.Name])
-					}
-				}
-				for _, name := range []string{"Cookie", "Authorization", "Origin", "Antnest-Future-Authority", "X-Antnest-Future-Privilege", "X-Unlisted-Browser-Header"} {
-					if len(boundaryHeaderValues(actual, name)) != 0 {
-						t.Errorf("browser field reached ACP handshake: %s", name)
-					}
-				}
-			case <-time.After(time.Second):
-				t.Fatal("ACP handshake was not observed")
 			}
 		})
 	}
@@ -224,16 +159,14 @@ func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.
 	issued := sessionFlowContext("token-1", now.Unix(), 1)
 	observed := make(chan string, 32)
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		observed <- r.URL.Path
+		select {
+		case observed <- r.URL.Path:
+		default:
+			t.Error("unexpected excess Identity calls")
+			w.WriteHeader(500)
+			return
+		}
 		expected := map[string][]string{}
-		if strings.HasPrefix(r.URL.Path, "/rpc/agent-controller/") || strings.HasPrefix(r.URL.Path, "/rpc/agent-acp/") {
-			expected[identity.CallerContextHeader] = []string{issued}
-		}
-		if strings.HasPrefix(r.URL.Path, "/rpc/agent-acp/") {
-			expected[HeaderOrganizationID] = []string{"org-1"}
-			expected[HeaderPrincipalID] = []string{"user-admin"}
-			expected[HeaderAgentID] = []string{"agent-1"}
-		}
 		for _, field := range contract.Headers {
 			if got := boundaryHeaderValues(r.Header, field.Name); !reflect.DeepEqual(got, expected[field.Name]) {
 				t.Errorf("%s: header %s got %v, want %v", r.URL.Path, field.Name, got, expected[field.Name])
@@ -261,17 +194,6 @@ func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.
 			_ = json.NewEncoder(w).Encode(map[string]any{"principal": ordinaryPrincipal(), "caller_context": issued, "expires_at": expiresAt, "idle_expires_at": idleExpiresAt, "activity_interval_ms": 30000})
 		case "/rpc/identity/revoke-access-token":
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
-		case "/rpc/agent-controller/list-workspace-agents":
-			_ = json.NewEncoder(w).Encode(map[string]any{"agents": []agentcontroller.WorkspaceAgent{}})
-		case "/rpc/agent-acp/get-agent-execution-state":
-			_ = json.NewEncoder(w).Encode(readyState())
-		case "/rpc/agent-acp/watch-agent-execution-state":
-			w.Header().Set("Content-Type", "text/event-stream")
-			body, _ := json.Marshal(readyState())
-			for range 2 {
-				_, _ = fmt.Fprintf(w, "event: workspace_state\ndata: %s\n\n", body)
-				_ = http.NewResponseController(w).Flush()
-			}
 		default:
 			t.Errorf("unexpected typed downstream path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -284,15 +206,7 @@ func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents, err := agentcontroller.NewClient(peer.URL, internalClient)
-	if err != nil {
-		t.Fatal(err)
-	}
-	execution, err := agentacp.NewClient(peer.URL, internalClient)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := newTestHandlerWithServices(t, issuer, agents, execution, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := newTestHandlerWithConfig(t, issuer, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("local handler unexpectedly invoked a proxy")
 	}), now, Config{})
 	edge := httptest.NewServer(h)
@@ -312,9 +226,6 @@ func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.
 		{"POST", "/api/session/oidc/start", `{"organization_slug":"engineering","provider_name":"fixture"}`, 200, []string{"/rpc/identity/start-oidc-login"}},
 		{"GET", "/protocol/oidc/callback?state=bound-state&code=fixture-code", "", 303, []string{"/protocol/oidc/callback"}},
 		{"GET", "/api/session", "", 200, []string{"/rpc/identity/resolve-access-token"}},
-		{"GET", "/api/app/bootstrap", "", 200, []string{"/rpc/identity/resolve-access-token", "/rpc/agent-controller/list-workspace-agents"}},
-		{"GET", "/api/app/agents/agent-1/state", "", 200, []string{"/rpc/identity/resolve-access-token", "/rpc/agent-acp/get-agent-execution-state"}},
-		{"GET", "/api/app/agents/agent-1/state/watch", "", 200, []string{"/rpc/identity/resolve-access-token", "/rpc/agent-acp/watch-agent-execution-state", "/rpc/identity/resolve-access-token"}},
 		{"DELETE", "/api/session", "", 204, []string{"/rpc/identity/resolve-access-token", "/rpc/identity/revoke-access-token"}},
 		{"GET", "/status", "", 200, nil},
 		{"GET", "/workspace", "", 307, nil},
@@ -351,9 +262,6 @@ func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.
 					}
 				}
 			}
-			if strings.HasSuffix(route.path, "/watch") && strings.Count(string(body), "event: workspace_state") != 2 {
-				t.Fatal("state watch did not emit both snapshots and revalidate")
-			}
 			for _, expected := range route.downstream {
 				select {
 				case path := <-observed:
@@ -368,6 +276,243 @@ func TestHeaderBoundaryLocalHandlersConstructTypedDownstreamRequests(t *testing.
 			case path := <-observed:
 				t.Errorf("unexpected additional downstream request: %s", path)
 			default:
+			}
+		})
+	}
+}
+
+type boundaryRejectionObserver struct {
+	IdentityService
+	rejected atomic.Int32
+}
+
+func (o *boundaryRejectionObserver) Resolve(ctx context.Context, token string) (identity.Principal, error) {
+	principal, err := o.IdentityService.Resolve(ctx, token)
+	if identity.IsCode(err, "unauthenticated") {
+		o.rejected.Add(1)
+	}
+	return principal, err
+}
+
+// Identity is a real typed HTTP client here. The CCT is a trusted issuer framing
+// fixture, not proof of signature verification at the Agent UI receiver.
+func TestHeaderBoundaryBridgeUsesLiveIdentityAndVerifiedHTTPAuthority(t *testing.T) {
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/app/workspace/v1/bootstrap"},
+		{http.MethodGet, "/api/app/workspace/v1/agents/agent-1/view?sessionId=session-1"},
+		{http.MethodGet, "/api/app/workspace/v1/agents/agent-1/events"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/commands"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
+	} {
+		t.Run(route.path, func(t *testing.T) {
+			stream := strings.HasSuffix(route.path, "/events")
+			principal := ordinaryPrincipal()
+			principal.ActivityIntervalMS = 100
+			issued := sessionFlowContext("token-1", time.Now().Unix(), 1)
+			contract := readHeaderBoundaryContract(t)
+			var resolves, forwards atomic.Int32
+			recheckStarted, releaseRecheck, upstreamStopped := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(releaseRecheck) })
+			defer release()
+			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/rpc/identity/resolve-access-token" {
+					n := resolves.Add(1)
+					for _, field := range contract.Headers {
+						if len(boundaryHeaderValues(r.Header, field.Name)) != 0 {
+							t.Errorf("browser %s reached Identity HTTP", field.Name)
+						}
+					}
+					for _, name := range []string{"Cookie", "Authorization", "Antnest-Future-Authority", "X-Antnest-Future-Privilege"} {
+						if r.Header.Get(name) != "" {
+							t.Errorf("browser %s reached Identity", name)
+						}
+					}
+					var input map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+						t.Error(err)
+						w.WriteHeader(500)
+						return
+					}
+					wantAgent := "agent-1"
+					if strings.HasSuffix(route.path, "/bootstrap") {
+						wantAgent = ""
+					}
+					agentMatches := input["agent_id"] == wantAgent || (wantAgent == "" && input["agent_id"] == nil)
+					if input["profile"] != "workspace" || !agentMatches {
+						t.Errorf("Identity scope=%v", input)
+					}
+					if stream && n > 1 {
+						if n != 2 {
+							t.Errorf("unexpected extra periodic Identity call %d", n)
+							w.WriteHeader(500)
+							return
+						}
+						close(recheckStarted)
+						select {
+						case <-releaseRecheck:
+						case <-r.Context().Done():
+							return
+						}
+						w.WriteHeader(http.StatusUnauthorized)
+						_, _ = io.WriteString(w, `{"code":"unauthenticated","message":"Session revoked"}`)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"principal": principal, "caller_context": issued, "expires_at": principal.ExpiresAt, "idle_expires_at": principal.IdleExpiresAt, "activity_interval_ms": principal.ActivityIntervalMS})
+					return
+				}
+				if forwards.Add(1) != 1 {
+					t.Error("unexpected extra Bridge upstream request")
+					w.WriteHeader(500)
+					return
+				}
+				if r.Method != route.method || r.URL.RequestURI() != route.path {
+					t.Errorf("Bridge transport changed: %s %s", r.Method, r.URL.RequestURI())
+				}
+				expected := map[string][]string{
+					HeaderOrganizationID: {principal.OrganizationID}, HeaderPrincipalID: {principal.UserID}, HeaderUserID: {principal.UserID}, HeaderMembershipID: {principal.MembershipID}, HeaderAdministrator: {"false"},
+					HeaderOrganizationSlug: {base64.RawURLEncoding.EncodeToString([]byte(principal.OrganizationSlug))}, HeaderOrganizationName: {base64.RawURLEncoding.EncodeToString([]byte(principal.OrganizationName))}, identity.CallerContextHeader: {issued},
+				}
+				if !strings.HasSuffix(route.path, "/bootstrap") {
+					expected[HeaderAgentID] = []string{"agent-1"}
+				}
+				for _, field := range contract.Headers {
+					if got := boundaryHeaderValues(r.Header, field.Name); !reflect.DeepEqual(got, expected[field.Name]) {
+						t.Errorf("Bridge %s=%v want=%v", field.Name, got, expected[field.Name])
+					}
+				}
+				for _, name := range []string{"Cookie", "Authorization", "Origin", "Antnest-Future-Authority", "X-Antnest-Future-Privilege", "X-Unlisted-Browser-Header", "Connection", "Upgrade", "Sec-WebSocket-Protocol"} {
+					if r.Header.Get(name) != "" {
+						t.Errorf("browser %s reached Bridge", name)
+					}
+				}
+				body, err := io.ReadAll(r.Body)
+				if err != nil || string(body) != `{"opaque":"payload"}` {
+					t.Errorf("Bridge body=%q error=%v", body, err)
+				}
+				if stream {
+					defer close(upstreamStopped)
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, "event: reset\ndata: {}\n\n")
+					if err := http.NewResponseController(w).Flush(); err != nil {
+						t.Error(err)
+						return
+					}
+					<-r.Context().Done()
+					return
+				}
+				_, _ = io.WriteString(w, `{"opaque":"reply"}`)
+			}))
+			defer peer.Close()
+			issuer, err := identity.NewClient(peer.URL, peer.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			observer := &boundaryRejectionObserver{IdentityService: issuer}
+			h := newNetworkBridgeTestHandler(t, observer, peer)
+			h.maximumSessionStale = 500 * time.Millisecond
+			gatewayStopped := make(chan struct{}, 3)
+			edge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer func() {
+					select {
+					case gatewayStopped <- struct{}{}:
+					default:
+						t.Error("unexpected extra Gateway request")
+					}
+				}()
+				h.ServeHTTP(w, r)
+			}))
+			defer edge.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			makeRequest := func() *http.Request {
+				r, _ := http.NewRequestWithContext(ctx, route.method, edge.URL+route.path, strings.NewReader(`{"opaque":"payload"}`))
+				r.Header = boundaryAttackHeaders(t)
+				r.Header.Set("Origin", edge.URL)
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set(session.CSRFHeaderName, testCSRFToken)
+				addSessionCookies(r, "private-token", testCSRFToken)
+				return r
+			}
+			foreign := makeRequest()
+			foreign.Header.Set("Origin", "https://foreign.example")
+			response, err := edge.Client().Do(foreign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusForbidden || resolves.Load() != 0 || forwards.Load() != 0 {
+				t.Fatal("Origin rejection reached Identity or Bridge")
+			}
+			wantResolves := int32(1)
+			if route.method == http.MethodPost {
+				badCSRF := makeRequest()
+				badCSRF.Header.Set(session.CSRFHeaderName, "forged")
+				response, err = edge.Client().Do(badCSRF)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, _ := io.ReadAll(response.Body)
+				_ = response.Body.Close()
+				if response.StatusCode != http.StatusForbidden || !strings.Contains(string(body), `"code":"csrf_failed"`) || resolves.Load() != 1 || forwards.Load() != 0 {
+					t.Fatal("CSRF rejection reached Bridge or bypassed authenticated binding")
+				}
+				wantResolves++
+			}
+			response, err = edge.Client().Do(makeRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.StatusCode != http.StatusOK || len(response.Cookies()) != 0 {
+				t.Fatalf("Bridge response=%d cookies=%v", response.StatusCode, response.Cookies())
+			}
+			if stream {
+				frame := make([]byte, len("event: reset\ndata: {}\n\n"))
+				if _, err := io.ReadFull(response.Body, frame); err != nil || string(frame) != "event: reset\ndata: {}\n\n" {
+					t.Fatalf("SSE frame=%q err=%v", frame, err)
+				}
+				select {
+				case <-recheckStarted:
+				case <-ctx.Done():
+					t.Fatal("held SSE did not perform actual Identity revalidation")
+				}
+				select {
+				case <-upstreamStopped:
+					t.Fatal("SSE ended before live Identity rejection")
+				default:
+				}
+				release()
+				_, err = io.Copy(io.Discard, response.Body)
+				if (err != nil && !errors.Is(err, io.ErrUnexpectedEOF)) || ctx.Err() != nil || observer.rejected.Load() != 1 {
+					t.Fatalf("SSE did not end from observed live rejection: read=%v client=%v rejected=%d", err, ctx.Err(), observer.rejected.Load())
+				}
+				select {
+				case <-upstreamStopped:
+				case <-ctx.Done():
+					t.Fatal("revocation did not cancel actual upstream SSE")
+				}
+				wantResolves = 2
+			} else {
+				body, err := io.ReadAll(response.Body)
+				if err != nil || string(body) != `{"opaque":"reply"}` {
+					t.Fatalf("Bridge body=%q error=%v", body, err)
+				}
+			}
+			wantRequests := 2
+			if route.method == http.MethodPost {
+				wantRequests++
+			}
+			for i := 0; i < wantRequests; i++ {
+				select {
+				case <-gatewayStopped:
+				case <-ctx.Done():
+					t.Fatal("Gateway handler did not join")
+				}
+			}
+			if resolves.Load() != wantResolves || forwards.Load() != 1 || len(h.bridgeStreams) != 0 {
+				t.Fatalf("resolves=%d forwards=%d capacity=%d", resolves.Load(), forwards.Load(), len(h.bridgeStreams))
 			}
 		})
 	}

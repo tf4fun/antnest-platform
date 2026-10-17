@@ -66,7 +66,7 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
-The browser consumes Gateway revision 23 and Identity revision 18 under the
+The browser consumes Gateway revision 24 and Identity revision 18 under the
 [browser session contract](../../contracts/identity/browser-sessions.md).
 Identity's browser-session schemas are unchanged. Gateway 22 introduced validated
 password admission errors while preserving existing cookies; #60 completed
@@ -114,16 +114,44 @@ Telemetry exports HTTP request spans plus `antnest.ui.http.requests` and
 `antnest.ui.http.duration` metrics, aggregate Bridge gauges (owners, observer
 leases, held work, retained history bytes, subscribers, journal bytes,
 replays, Node heap/RSS) with no Agent, Session or principal labels.
+Trace and metric resources share the actual `host.name`, `process.pid`, and
+a random `service.instance.id` generated once per process. Restarting the same
+container creates a new instance ID even when its hostname and PID 1 repeat.
+These identity fields override environment resource values; other deployment
+attributes from `OTEL_RESOURCE_ATTRIBUTES` are retained.
 Exporters have a 5-second timeout and are flushed after Bridge drain. A valid
 W3C `traceparent` from Gateway parents each HTTP span. Capacity and lifetime
 semantics are described in [Architecture](docs/architecture.md#bridge-capacity-and-lifetimes).
+ACP retirement waits for its complete DELETE response and execution-state
+watch cleanup before telemetry flush. A separate `agent_ui.acp.close` root
+span links to the owner's initialization HTTP span and parents DELETE; its
+outcome records actual cleanup success or failure without identity labels.
+Its final receipt separately counts DELETE attempts, response headers and
+completed bodies, records the last status (zero when none), and reports whether
+the SDK stream and pending HTTP work were joined. At most 16 failure summaries
+identify fixed stages and bounded network/abort cause classifications; the total
+failure count and any truncation remain explicit. No exception messages, remote
+response contents, credentials or identity labels enter these summaries.
+An attempted DELETE with no receiver response remains a failed close. ACP
+process shutdown does not promise a new acknowledgement; a normal UI drain
+with ACP still online requires the complete DELETE 202 response.
+Failed Agent views add `antnest.ui.agent_view.failure` to the active HTTP span,
+distinguishing owner acquisition/retirement from view preparation. Its bounded
+cause list contains fixed classifications only, without exception messages,
+stacks, credentials or identity labels; HTTP failure semantics remain unchanged.
+
+Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
+16 requests per process and 64 MiB / 4 requests per signed user in an
+organization. It preserves the configured single Prompt limit. Control requests
+use a separate 16 KiB body ceiling and bypass the upload pool. Capacity rejection
+is `429 upload_capacity_exceeded`; the browser does not replay a Prompt.
 
 ## Dependencies
 
 - Edge Gateway: the only supported caller; supplies verified identity.
 - Identity: CCT keys fetched only from its authenticated configured origin;
   cached trust expires after 30 seconds and fails closed during an outage.
-- Organization display: Gateway revision 23 supplies verified slug/name as
+- Organization display: Gateway revision 24 supplies verified slug/name as
   canonical UTF-8 Base64URL headers. Node decodes and validates the same
   principal for bootstrap and SSR; both frontend bootstrap mappings require
   these labels. The chooser and account footer render the real name with the

@@ -10,7 +10,6 @@ deterministic. No external API key, client MCP injection or browser is needed.
 
 ```sh
 npm --prefix services/agent-acp-service ci
-make docker-build-stage3
 make test-command-fixtures
 make e2e-slash-commands
 ```
@@ -19,8 +18,16 @@ make e2e-slash-commands
 Docker. `make e2e-slash-commands` reuses the bounded Stage 3 wrapper and must not
 target an existing development project.
 
-The fixture client has no Docker socket and never queries databases. All
-identities, Templates, Agents and ACP Sessions are created through the Gateway.
+The wrapper builds all 11 release candidates under a unique `commands-<run-id>`
+tag and starts Compose with `--no-build --pull never`. It records actual image
+IDs for the services, Runtime preparer, model fixture and command client. CI may
+supply explicitly selected images through the existing candidate-image adapter.
+
+The fixture client has no Docker socket and never queries databases. Identities,
+Templates and Agents are created through the Gateway. ACP Sessions use the
+private ACP endpoint with an Identity-issued delegation and the Agent UI workload
+grant. The client mounts only the Gateway-to-Identity and Agent-UI-to-ACP grants,
+read-only, and runs as the host evidence owner.
 Setup creates a Provider connection and Model, references the Model's stable
 identity from a Template, uses the returned Template revision and waits for the
 Agent to become executable. The command-specific Compose override ignores the
@@ -51,7 +58,7 @@ separate from the fixed Egress and Jaeger addresses.
    command and return its actual output.
 6. Jaeger must contain one distinct Trace for each recorded request: six
    command Runs, two ordinary Runs and 32 setup, restore and rejection
-   requests. Commands require Gateway ancestry, the current Run identity and
+   requests. Commands require the actual private ACP request ancestry, the current Run identity and
    committed ACP PostgreSQL writes, but no model, credential or Runtime
    operations. Runs must not call management services. Setup, restore and
    rejection Traces must contain the actual request without Run execution.
@@ -62,34 +69,167 @@ separate from the fixed Egress and Jaeger addresses.
 ## Trace collection
 
 WebSocket requests are observed at the official SDK stream boundary without
-changing messages. Their JSON-RPC IDs and connection links distinguish repeated
-prompts and resumes on one connection. HTTP uses the SDK's fetch hook to record
-each POST's Gateway response Trace ID and sends no invented Trace parent; the
-Gateway HTTP root and ACP HTTP and dispatch ancestry must be complete. Observers
+changing messages. Their JSON-RPC IDs and actual upgrade CLIENT connection links
+distinguish repeated prompts and resumes on one connection. HTTP records each
+actual fetch CLIENT span, its private ACP HTTP receiver and the dispatch ancestry.
+Initialization, POST acknowledgement, SSE and DELETE retain their original
+response and fully joined close receipts. Auxiliary transport requests do not
+increase the 40 business-request count. Fork input and resulting Session IDs are
+checked separately. Observers
 keep method, request and Session IDs, never prompt payloads. The domain-level
 resume operation can be `acp.session.resume`, while the request boundary must
 carry the actual wire method and JSON-RPC ID.
 
+The shared private connection helpers accept the optional boolean
+`captureRawFrames`. It is disabled by default. An owning consumer that enables
+it receives `rawFrames` containing independent copies of all incoming decoded
+JSON-RPC frames before SDK schema parsing, including initialize results, errors
+and unknown usage fields. These are decoded frames, not original wire bytes or
+a record of duplicate JSON keys. Capture follows the existing consumer's reads
+without a second background stream; cancellation preserves its reason, joins
+upstream cleanup and propagates cleanup failures. Typed SDK updates and outgoing
+request metadata remain unchanged. The inventory stays in memory after close
+and is never automatically exported to telemetry or console output. A consumer
+must explicitly opt in and handle this payload-bearing inventory as private
+evidence; this shared facility does not establish Cost business acceptance.
+
+Private WebSocket clients accept an optional `requestPermission` callback.
+The browser-authority wrapper forwards it unchanged to the existing connection:
+it receives the SDK request's original parameters and cancellation signal, and
+an asynchronous decision or rejection reaches the peer without being replaced.
+Without a callback, the existing response remains `cancelled`. An owning
+consumer must settle its pending decisions when that signal aborts; the shared
+connection retains its existing bounded, joined transport cleanup. The v1/v2
+WS forwarding contract does not migrate the Permissions consumer or establish
+its real authorization, Tool execution or Docker acceptance.
+
+Private WebSocket clients also accept the optional boolean
+`captureNotifications`; it is disabled by default and rejected for HTTP before
+Identity delegation. With it enabled, `notify()` still returns `Promise<void>`
+and sends the official SDK notification without a JSON-RPC ID. Each call has an
+independent attempt, including calls waiting for v2 initialization or queued
+behind another write. Object parameters are copied privately before entering
+the SDK, and the stream observer derives its metadata from the same private
+frame it forwards. This prevents caller mutations from changing the recorded
+Session while a write is pending. Requests and responses keep their existing
+transport behavior.
+
+`notifications` and `lastNotification` expose frozen metadata snapshots: the
+local index, method, Session, actual Agent/version and upgrade Trace/CLIENT
+identity, plus `status`, `wireObserved` and `writeOutcome`. No notification
+payload, raw exception or invented request/server ID is retained in these
+receipts. Explicit calls have `origin=notify`; other notifications actually
+seen at the SDK stream boundary have `origin=sdk`. The local index is an
+inventory position, not a protocol correlation ID.
+
+`write_completed` means only that the SDK's upstream write returned. The locked
+WS adapter calls `socket.send` without awaiting its callback; it does not prove
+peer receipt, execution or successful cancellation. Those require separate
+peer/business evidence. A pending prompt does not block a notification's write.
+`closeAndWait()` stops new notifications and joins both the tracked SDK calls
+and entered writes, including failures before the observer was reached.
+Closing during a write remains `closed_during_write`, with its eventual local
+write outcome recorded separately; it cannot turn into a successful receipt
+after close. Failures remain visible to the caller and cleanup, even after
+later successful writes.
+
+`inspectPrivateNotificationReceipt()` accepts only an original snapshot from
+the private connector, captured after successful `closeAndWait()`. It rechecks
+the complete terminal notification inventory. Clones, public recorder-factory
+snapshots, pre-close snapshots and inventories changed by a later rejected call
+cannot authorize Trace correlation. Two notifications with the same method and
+Session on one connection are ambiguous; a local index cannot distinguish them
+in production telemetry.
+
+`collectPrivateACPNotificationTrace(base, receipt, options)` in
+`identity-closeout/private-acp-trace.mjs` collects `session/cancel` separately
+from requests. The original receipt supplies Agent, Session, protocol and
+CLIENT/connection identity. The collector observes the actual exported upgrade
+SERVER and requires one INTERNAL cancellation root with no request ID or
+synchronous parent, one Link to that SERVER and the same ACP process identity.
+Duplicate candidates or conflicting attributes on the actual connection are
+rejected before selection. Ordinary request collection still requires its
+actual JSON-RPC ID.
+
+The notification collector requires an owning `inspect` callback and can call
+`inspectCompleteSources` with frozen copies of the full connection and
+notification raw plus the owning report. Hook rejection and evidence mutation
+are fatal. Every response, including failed and partial bodies, is archived
+before parsing. Admission requires three consecutive stable complete sources;
+the returned receipt records the original query byte lengths and SHA values.
+Original warnings, errors and strict failure remain visible, even if an owning
+report says passed. This shared correlation contract does not establish peer
+receipt, successful Runtime cancellation or Progress business acceptance;
+those remain consumer work.
+
 All Traces require full topology, disabled payload capture and private-content
 checks. Rejection diagnostics are allowed only on the matching rejected ACP
-boundary and domain operation. Stable collection is bounded and requires three
-equal span-ID sets taken one second apart. Timing warnings are strict failures
-and make the command exit nonzero even when the business checks pass. Only
-the reviewed clock-skew warning (`clock skew adjustment disabled; not applying
-calculated delta of ...`) is reported without failing the exit.
+boundary and domain operation, with the original SDK denial receipt. Collection
+starts after each original connection is fully closed and its telemetry flushed.
+It archives the complete raw HTTP response before parsing, follows the complete
+Trace closure, and requires three stable rounds. Unrelated errors and timing
+warnings fail acceptance. Reviewed normal-close/rejection diagnostics and the
+existing Jaeger clock-skew warning policy are accounted for individually; raw
+errors, warnings and `strict_trace=failed` remain visible even when business and
+topology are accepted. The strictly sub-millisecond Node SDK investigation is
+deferred separately; raw timestamps are never rewritten.
+
+`collectPrivateACPConsumerTrace` shares this collection lifecycle with other
+private ACP consumers. Each consumer supplies its primary-request inspector and
+allowed diagnostic reasons; the collector snapshots those reasons before any
+asynchronous work. Initialization, SSE and DELETE still use the fixed shared
+inspectors, and inventories and strict counts always come from the collected raw
+evidence. `collectPrivateCommandTrace` keeps the command policy fixed; transport
+options cannot replace its inspector or expand its allowed reasons.
+
+An optional `inspectCompleteSources` policy hook runs only after the owning
+request, fixed transport checks and complete error inventory have passed. It
+receives readonly JSON snapshots of `expected`, all `sources`, all owning
+`reports`, and the original cancellation `signal`. WebSocket includes the
+request and connection; HTTP includes the request, initialization, SSE and
+DELETE. The hook may return only `undefined`. Refusal, input rewriting or a
+damaged archive fails immediately; convergence retries cannot clear it. The
+owning inspector receives isolated inputs, and subsequent output uses the
+checked snapshots so retained references cannot change claims or timing later.
+
+Successful hook-enabled collection adds a `complete_source_receipt` for the
+actual last three consecutive stable samples. It binds full source snapshots
+and each archived query's bytes and SHA-256; WebSocket also retains its complete
+candidate snapshot. A missing sample resets convergence. The receipt describes
+collection evidence and does not itself grant diagnostic admission or clear raw
+`strict_trace=failed`. Consumers must bind their own policy decision to that
+receipt and final result. Consumers without the hook keep their existing output.
+
+The runner exits 0 for strict success, 2 when complete business/topology checks
+pass with only reviewed strict findings, and 1 for failures. CI runs the Stage 3
+recipe directly so exit 2 retains the existing warning classification; Make can
+map a failed recipe to its own exit status. Cleanup failures always fail the run.
 
 The transcript and Trace validators have positive and deliberately corrupted
 fixtures. Missing Traces, missing persistence, duplicated replies, extra
-execution and unrelated Runtime spans must fail. Only compact final counts are
-kept, never Trace payloads, cookies or intermediate reports.
+execution and unrelated Runtime spans must fail. Raw queries, the independent
+model-request inventory, business-request inventory and intermediate reports are
+retained privately under `artifacts/verification/acp-commands/<project>/` with
+restricted permissions. Console output uses ASCII JSON summaries. Evidence and
+recovery inputs must not be stored in `.cache`.
 
 ## Cleanup
+
+After the three protocol scenarios and complete connection cleanup, the client
+waits for the host to inspect both live Agent Runtimes. The host saves the actual
+Docker inspection, matches each Agent and Runtime generation to the candidate
+image ID, and publishes a receipt bound to this run, request nonce and the raw
+inspection SHA. Only then does the successful client proceed to Agent deletion.
+The receipt does not give the client Docker access.
 
 The client uses the shared `withAgentCleanup` helper, which attempts to delete
 every created Agent and reports cleanup failures without hiding an earlier
 business failure. The wrapper then removes the whole project, including
 synthetic records, Runtime workspaces and test networks, after success or
-failure.
+failure. Inspection failure also enters this cleanup path. Remaining connections
+and telemetry are joined on every exit. Candidate image cleanup runs after
+container removal and deletes only recorded, still-owned tags; shared `:local`
+images are retained.
 
 ## Not covered
 

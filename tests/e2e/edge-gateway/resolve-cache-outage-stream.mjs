@@ -13,6 +13,10 @@ import {
 import { hasError } from "../acp-plan/requests.mjs";
 import { inspectRecoveryHTTP } from "./resolve-cache-recovery-http.mjs";
 import { completedInitializeRead } from "./resolve-cache-outage-diagnostics.mjs";
+import { inspectRuntimeInformationRead } from "../observability/runtime-information-read.mjs";
+import { inspectOutageOwnerInventory } from "./resolve-cache-outage-owner.mjs";
+import { cleanupInventory } from "./resolve-cache-load-close.mjs";
+import { inspectOutageACPClock } from "./resolve-cache-outage-clock.mjs";
 
 const one = (rows, message) => {
   assert.equal(rows.length, 1, message);
@@ -36,7 +40,7 @@ const values = (fields) => {
   return result;
 };
 const errorKey =
-  /^(error($|\.)|exception\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.|stream\.termination$|http\.request_cancelled$)|otel\.status_)/u;
+  /^(error($|\.)|exception\.|http\.transport\.error\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.|stream\.termination$|http\.request_cancelled$)|otel\.status_)/u;
 function diagnostics(span, expected, event) {
   const tags = values(span.tags ?? []);
   for (const [key, value] of Object.entries(expected))
@@ -61,40 +65,31 @@ function diagnostics(span, expected, event) {
     ...event,
   });
 }
-function clean(span, service, trace, validatedTermination) {
+function cleanSpan(span, service, trace, validatedTermination, recordRead) {
   assert(!hasError(span), "unrelated stream trace error");
   const tags = values(span.tags ?? []);
   if (
     service === "antnest-runtime" &&
     tags["http.transport.outcome"] === "canceled"
   ) {
-    completedInitializeRead(trace, span);
+    recordRead(completedInitializeRead(trace, span));
     return;
   }
   // These existing non-error producer records remain raw observations, never
   // error claims. Preserve their exact shape instead of inventing a failure.
   if (
     service === "agent-acp-service" &&
-    tags["antnest.outcome"] === "cancelled"
+    (span.operationName === "mcp.runtime.info.read" ||
+      tags["antnest.outcome"] === "cancelled")
   ) {
-    assert.equal(span.operationName, "HTTP POST antnest-runtime");
-    assert.equal(tag(span, "span.kind"), "client");
-    assert.equal(tag(span, "http.request.method"), "POST");
-    assert.equal(tag(span, "http.response.status_code"), 200);
-    assert.equal(tag(span, "peer.service"), "antnest-runtime");
-    diagnostics(
-      span,
-      {
-        "antnest.outcome": "cancelled",
-        "antnest.operation.phase": "http.send_or_read",
-        "antnest.cancellation.type": "AbortError",
-      },
-      {
-        event: "antnest.cancelled",
-        "antnest.cancellation.phase": "http.send_or_read",
-        "antnest.cancellation.type": "AbortError",
-      },
-    );
+    const read =
+      span.operationName === "mcp.runtime.info.read"
+        ? span
+        : traceTopology(trace).parent(span);
+    const proof = inspectRuntimeInformationRead(trace, read);
+    recordRead(proof);
+    recordRead(completedInitializeRead(trace, proof.resource.server));
+    assert(proof.spans.includes(span), "foreign completed-read diagnostic");
     return;
   }
   for (const field of [
@@ -136,7 +131,9 @@ function clean(span, service, trace, validatedTermination) {
 const error = { error: true, "otel.status_code": "ERROR" };
 const operationMessage =
   "Operation failed; unclassified error text was not exported";
-function sseDiagnostics(root, upstream) {
+export const tokenRead =
+  "SELECT t.id, t.expires_at, t.idle_expires_at, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM api_tokens t JOIN users u ON u.id = t.user_id JOIN organization_memberships m ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id JOIN organizations o ON o.id = t.organization_id WHERE t.token_hash = $1 AND t.kind = 'browser' AND t.revoked_at IS NULL AND t.expires_at > $2 AND t.idle_expires_at > $2 AND m.scim_deleted_at IS NULL";
+export function sseDiagnostics(root, upstream) {
   diagnostics(
     root,
     { ...error, "otel.status_description": "handler_aborted" },
@@ -206,23 +203,12 @@ function transition(evidence, row, service, restart) {
     finished = Date.parse(after.finished_at),
     current = Date.parse(after.started_at);
   [old, finished, current].forEach(finite);
-  assert(
-    old < finished &&
-      before.observed_at_ms <= finished &&
-      finished <= after.observed_at_ms,
-    "unproved normal process termination",
-  );
-  if (restart)
-    assert(
-      finished < current && current <= after.observed_at_ms,
-      "consumer process did not restart",
-    );
+  // Docker's process timestamps share the daemon's clock, not the runner's
+  // wall clock. The observed state transition supplies the monotonic window.
+  assert(old < finished, "unproved normal process termination");
+  if (restart) assert(finished < current, "consumer process did not restart");
   else assert.equal(current, old, "drain process replaced");
-  return {
-    ...row,
-    process_start: old * 1000,
-    finished_upper: (finished + 1) * 1000,
-  };
+  return row;
 }
 
 export function inspectOutageStreams(
@@ -231,6 +217,22 @@ export function inspectOutageStreams(
   secrets = [],
   { inspectRecovery = inspectRecoveryHTTP } = {},
 ) {
+  const timeObservations = new Map();
+  const recordRead = (proof) => {
+    for (const observation of proof.timeObservations)
+      timeObservations.set(
+        JSON.stringify([
+          observation.trace_id,
+          observation.read_span_id,
+          observation.span_id,
+          observation.boundary,
+          observation.event_index,
+        ]),
+        observation,
+      );
+  };
+  const clean = (span, service, trace, validatedTermination) =>
+    cleanSpan(span, service, trace, validatedTermination, recordRead);
   assert.equal(evidence.settings.resolveTTLMS, 10000);
   assert.equal(evidence.settings.captureRpcContent, false);
   const get = (id) => {
@@ -303,18 +305,200 @@ export function inspectOutageStreams(
     selected.set(key, span);
     owned.push({ trace_id: trace.traceID, span_id: span.spanID, reason });
   };
-  const boundary = (id, row, receivedAt) => {
+  let completeRecovery;
+  const recoveryProof = () => {
+    // Terminal revocation always uses the complete inspector, never a supplied
+    // passed marker. Cache its immutable verdict for other stream witnesses.
+    completeRecovery ??= inspectRecoveryHTTP(evidence, collection, secrets);
+    assert.equal(
+      completeRecovery.status,
+      "passed",
+      "stream recovery not proved",
+    );
+    return completeRecovery;
+  };
+  const rejectionWitness = (
+    trace,
+    tree,
+    root,
+    upstream,
+    decision,
+    interval,
+    item,
+  ) => {
+    assert(item, "unrelated failed revalidation");
+    assert.equal(tag(decision, resolvePrefix + "outcome"), "rejected");
+    assert.equal(
+      tag(decision, resolvePrefix + "source"),
+      "rpc",
+      "stream rejection needs its actual RPC source",
+    );
+    assert(
+      decision.startTime >= upstream.startTime,
+      "initial stream admission was rejected",
+    );
+    const c = item.mutation,
+      principal =
+        item.name === "warm"
+          ? warmLogin.body.principal
+          : c.login.body.principal;
+    for (const key of ["organization_id", "user_id", "membership_id"])
+      assert(
+        principal[key] && principal[key] === c.login.body.principal[key],
+        "revocation changed another stream principal",
+      );
+    assert.equal(item.stream.credential_scope, item.scope);
+    const receipt = one(
+      recoveryProof().mutations.filter(
+        (m) => m.action === c.name && m.trace_id === c.mutation.trace_id,
+      ),
+      "one complete actual stream revocation required",
+    );
+    const mutation = get(receipt.trace_id),
+      mutationTree = traceTopology(mutation),
+      mutationServer = mutationTree.spans.get(receipt.identity_server_span_id),
+      transaction = mutationTree.spans.get(receipt.transaction_span_id);
+    assert(mutationServer && transaction, "stream mutation source missing");
+    assert.equal(mutationTree.service(mutationServer), "identity-service");
+    assert.equal(mutationTree.parent(transaction), mutationServer);
+    assert.equal(tag(transaction, "antnest.transaction.outcome"), "committed");
+    const commit = one(
+      mutation.spans.filter(
+        (s) =>
+          mutationTree.parent(s) === transaction &&
+          tag(s, "db.query.text")?.trim().toLowerCase() === "commit",
+      ),
+      "actual revocation COMMIT missing",
+    );
+    const client = one(
+      trace.spans.filter(
+        (s) =>
+          tree.parent(s) === root &&
+          tree.service(s) === "edge-gateway" &&
+          tag(s, "span.kind") === "client" &&
+          s.operationName === "HTTP POST identity-service" &&
+          s.startTime >= decision.startTime &&
+          end(s) <= end(decision),
+      ),
+      "one terminal Resolve CLIENT required",
+    );
+    const server = one(
+      trace.spans.filter(
+        (s) =>
+          tree.parent(s) === client &&
+          tree.service(s) === "identity-service" &&
+          tag(s, "span.kind") === "server",
+      ),
+      "one terminal Resolve SERVER required",
+    );
+    const sql = one(
+      databaseChildrenTopology(trace, server),
+      "one terminal token SELECT required",
+    );
+    assert.equal(tree.parent(sql), server);
+    assert.equal(sql.processID, server.processID);
+    assert.equal(
+      tag(sql, "db.query.text").replace(/\s+/gu, " ").trim(),
+      tokenRead,
+    );
+    assert.equal(
+      tag(sql, "pgx.rows_affected"),
+      0,
+      "terminal Resolve still read browser authority",
+    );
+    assert(
+      sql.startTime >= server.startTime && end(sql) <= end(server),
+      "terminal SELECT outside Identity receiver",
+    );
+    clean(sql, tree.service(sql), trace);
+    const instance = (source, span) => {
+      const resource = values(source.processes[span.processID].tags ?? []);
+      for (const key of ["service.instance.id", "host.name"])
+        assert(
+          typeof resource[key] === "string" && resource[key],
+          `missing Identity ${key}`,
+        );
+      assert(
+        Number.isSafeInteger(resource["process.pid"]) &&
+          resource["process.pid"] > 0,
+        "missing Identity PID",
+      );
+      return Object.fromEntries(
+        ["service.instance.id", "host.name", "process.pid"].map((key) => [
+          key,
+          resource[key],
+        ]),
+      );
+    };
+    const identityProcess = instance(trace, server);
+    assert.deepEqual(
+      identityProcess,
+      instance(mutation, mutationServer),
+      "revocation and denial belong to different Identity processes",
+    );
+    assert(
+      end(commit) <= sql.startTime,
+      "terminal SELECT preceded committed revocation",
+    );
+    diagnostics(decision, {
+      ...error,
+      "otel.status_description": "rejected",
+      [resolvePrefix + "outcome"]: "rejected",
+    });
+    diagnostics(client, {
+      ...error,
+      "error.type": "401",
+      "otel.status_description": "HTTP status 401",
+    });
+    const identityError = {
+      "antnest.error.cause_types": '["*domain.Error"]',
+      "antnest.error.code": "unauthenticated",
+      "antnest.error.message": "Authentication failed",
+      "antnest.error.stage": "protocol",
+      "antnest.error.type": "unauthenticated",
+      "error.type": "unauthenticated",
+    };
+    diagnostics(
+      server,
+      {
+        ...identityError,
+        "antnest.outcome": "rejected",
+        "antnest.result": "rejected",
+      },
+      identityError,
+    );
+    return {
+      spans: new Set([decision, client, server]),
+      // Identity has its own clock. Its sole qualified receiver is already
+      // bounded by same-process COMMIT/SELECT order; only Gateway uses Date.
+      inWindow: (span) =>
+        span === server ||
+        ([decision, client].includes(span) &&
+          span.startTime >= interval.lower(c.mutation.started_at) &&
+          end(span) < interval.upper(item.stream.closure.at)),
+      evidence: {
+        mutation_trace_id: receipt.trace_id,
+        transaction_span_id: transaction.spanID,
+        commit_span_id: commit.spanID,
+        token_read_span_id: sql.spanID,
+        identity_process: identityProcess,
+      },
+    };
+  };
+  const boundary = (id, row, receivedAt, item) => {
     const trace = get(id),
-      tree = traceTopology(trace);
+      tree = traceTopology(trace),
+      method = row.method ?? "GET",
+      status = row.status;
     const root = one(
       trace.spans.filter((s) => !tree.parent(s)),
       "one actual stream/view root required",
     );
     assert.equal(tree.service(root), "edge-gateway");
     assert.equal(tag(root, "span.kind"), "server");
-    assert.equal(tag(root, "http.request.method"), "GET");
+    assert.equal(tag(root, "http.request.method"), method);
     assert.equal(tag(root, "http.route"), "/api/app/workspace/v1/{path...}");
-    assert.equal(tag(root, "http.response.status_code"), 200);
+    assert.equal(tag(root, "http.response.status_code"), status);
     const ui = one(
       trace.spans.filter(
         (s) =>
@@ -324,16 +508,16 @@ export function inspectOutageStreams(
     );
     assert.equal(ui.operationName, "agent_ui.http.request");
     assert.equal(tag(ui, "http.route"), "/api/app/workspace/v1/*");
-    assert.equal(tag(ui, "http.request.method"), "GET");
-    assert.equal(tag(ui, "http.response.status_code"), 200);
+    assert.equal(tag(ui, "http.request.method"), method);
+    assert.equal(tag(ui, "http.response.status_code"), status);
     const upstream = tree.parent(ui);
     assert.equal(tree.service(upstream), "edge-gateway");
     assert.equal(tree.parent(upstream), root);
     assert.equal(tag(upstream, "span.kind"), "client");
-    assert.equal(upstream.operationName, "HTTP GET agent-ui");
-    assert.equal(tag(upstream, "http.request.method"), "GET");
+    assert.equal(upstream.operationName, `HTTP ${method} agent-ui`);
+    assert.equal(tag(upstream, "http.request.method"), method);
     assert.equal(tag(upstream, "server.address"), "agent-ui");
-    assert.equal(tag(upstream, "http.response.status_code"), 200);
+    assert.equal(tag(upstream, "http.response.status_code"), status);
     for (const span of trace.spans) {
       assert(tree.chain(span).includes(root));
       end(span);
@@ -347,26 +531,44 @@ export function inspectOutageStreams(
     const decisions = trace.spans.filter(
       (s) => s.operationName === "gateway.identity.resolve",
     );
-    for (const decision of decisions)
-      assert.equal(
-        tag(decision, resolvePrefix + "outcome"),
-        "admitted",
-        "unrelated failed revalidation",
-      );
+    const failed = decisions.filter(
+      (s) => tag(s, resolvePrefix + "outcome") !== "admitted",
+    );
+    const rejection = failed.length
+      ? rejectionWitness(
+          trace,
+          tree,
+          root,
+          upstream,
+          one(failed, "one terminal stream revalidation failure required"),
+          interval,
+          item,
+        )
+      : undefined;
     const { allowedErrors, ...resolution } = inspectWatchResolutions(
       trace,
       root,
       upstream,
-      { traceID: id, resolveTTLMS: 10000 },
+      { traceID: id, resolveTTLMS: 10000, revoked: Boolean(rejection) },
       collection,
-      () => false,
+      rejection?.inWindow ?? (() => false),
     );
-    assert.equal(allowedErrors.size, 0, "stream cannot claim failed Resolve");
+    assert.deepEqual(
+      allowedErrors,
+      rejection?.spans ?? new Set(),
+      "unrelated stream Resolve error claim",
+    );
+    if (rejection) {
+      resolution.terminal_rejection = rejection.evidence;
+      for (const span of allowedErrors)
+        claim(trace, span, "public-sse-revoked-resolve");
+    }
     for (const record of [
       resolution.gateway_resolution,
       ...resolution.gateway_revalidations,
     ]) {
       if (!record.rpc_client_span_id) continue;
+      if (record.outcome === "rejected") continue;
       const source = get(record.source_trace_id),
         sourceTree = traceTopology(source);
       const client = sourceTree.spans.get(record.rpc_client_span_id),
@@ -378,7 +580,16 @@ export function inspectOutageStreams(
       ])
         clean(span, sourceTree.service(span), source);
     }
-    return { trace, tree, root, upstream, ui, interval, resolution };
+    return {
+      trace,
+      tree,
+      root,
+      upstream,
+      ui,
+      interval,
+      resolution,
+      allowedErrors,
+    };
   };
   const streamItems = [
     {
@@ -432,13 +643,193 @@ export function inspectOutageStreams(
     streamItems.every((s) => s.stream.closure.at < drain.started_at),
     "UI drained before public closure",
   );
+  const ownerInventory = inspectOutageOwnerInventory(evidence, collection);
+  // Each service/generation has its own clock. SERVER start is inside the
+  // observed complete HTTP request window; SERVER finish is not necessarily
+  // before the client has received the body. The 1ms bound is the Node SDK's
+  // start-anchor quantization, not a tolerance for other clocks or errors.
+  const serviceClocks = new Map(),
+    quantizationUS = 1000;
+  const resource = (trace, span) => {
+    const process = trace.processes[span.processID],
+      tags = values(process.tags ?? []);
+    return [
+      process.serviceName,
+      tags["host.name"],
+      tags["process.pid"],
+      tags["service.instance.id"] ?? null,
+    ];
+  };
+  const sample = (service, generation, trace, span, row) => {
+    const identity = resource(trace, span),
+      key = `${service}:${generation}`;
+    assert.equal(identity[0], service);
+    assert(!hasError(span), "failed service clock source");
+    end(span);
+    finite(row.started_at);
+    finite(row.at);
+    assert(row.started_at <= row.at);
+    const clock = serviceClocks.get(key) ?? {
+      service,
+      generation,
+      resource: identity,
+      node_sdk_quantization_us: quantizationUS,
+      offset_min_us: -Infinity,
+      offset_max_us: Infinity,
+      samples: [],
+    };
+    assert.deepEqual(
+      clock.resource,
+      identity,
+      "clock source belongs to another service process",
+    );
+    clock.offset_min_us = Math.max(
+      clock.offset_min_us,
+      span.startTime - row.at * 1000,
+    );
+    clock.offset_max_us = Math.min(
+      clock.offset_max_us,
+      span.startTime - row.started_at * 1000 + quantizationUS,
+    );
+    assert(
+      clock.offset_min_us <= clock.offset_max_us,
+      "independent service clock windows do not intersect",
+    );
+    clock.samples.push({
+      trace_id: trace.traceID,
+      span_id: span.spanID,
+      started_at: row.started_at,
+      received_at: row.at,
+    });
+    serviceClocks.set(key, clock);
+  };
+  for (const origin of ownerInventory.http_origins) {
+    const trace = get(origin.trace_id),
+      row = one(
+        evidence.http.filter((r) => r.trace_id === origin.trace_id),
+        "clock HTTP source missing",
+      );
+    sample(
+      "agent-ui",
+      origin.generation,
+      trace,
+      trace.spans.find((s) => s.spanID === origin.ui_span_id),
+      row,
+    );
+  }
+  for (const owner of ownerInventory.owners) {
+    const trace = get(owner.origin_trace_id),
+      row = one(
+        evidence.http.filter((r) => r.trace_id === owner.origin_trace_id),
+        "initialization HTTP source missing",
+      );
+    assert(
+      owner.generation === 0
+        ? row.at <= acp.before.at
+        : row.started_at >= acp.after.at,
+      "initialization crosses observed ACP generation",
+    );
+    sample(
+      "agent-acp-service",
+      owner.generation,
+      trace,
+      trace.spans.find((s) => s.spanID === owner.initialization_span_id),
+      row,
+    );
+  }
+  // Session views await authorizeExecution -> readExecution and its complete
+  // response before returning 200. These unary SERVER starts provide further
+  // independent windows; asynchronous GET/watch starts are never clock samples.
+  for (const origin of ownerInventory.http_origins) {
+    const row = one(
+      evidence.http.filter((r) => r.trace_id === origin.trace_id),
+      "execution clock HTTP source missing",
+    );
+    if (
+      origin.kind !== "view" ||
+      !row.path.startsWith(`${base}/sessions/`) ||
+      !row.path.endsWith("/view")
+    )
+      continue;
+    const trace = get(origin.trace_id),
+      tree = traceTopology(trace),
+      uiSpan = tree.spans.get(origin.ui_span_id);
+    for (const span of trace.spans.filter(
+      (s) =>
+        tree.service(s) === "agent-acp-service" &&
+        tag(s, "rpc.method") === "read_workspace_execution",
+    )) {
+      assert.equal(span.operationName, "HTTP GET unmatched");
+      assert.deepEqual(
+        span.references,
+        [
+          {
+            refType: "CHILD_OF",
+            traceID: trace.traceID,
+            spanID: uiSpan.spanID,
+          },
+        ],
+        "execution clock needs its actual HTTP parent",
+      );
+      for (const [key, value] of Object.entries({
+        "span.kind": "server",
+        "http.request.method": "GET",
+        "http.route": "unmatched",
+        "http.response.status_code": 200,
+        "antnest.listener": "workspace",
+        "rpc.service": "agent-acp",
+        "rpc.system.name": "json-over-http",
+      }))
+        assert.equal(tag(span, key), value, `execution clock ${key} differs`);
+      clean(span, "agent-acp-service", trace);
+      assert(
+        origin.generation === 0
+          ? row.at <= acp.before.at
+          : row.started_at >= acp.after.at,
+        "execution read crosses observed ACP generation",
+      );
+      sample("agent-acp-service", origin.generation, trace, span, row);
+    }
+  }
+  if (evidence.policy_revision === 4 || evidence.acp_clock_probe) {
+    const clock = serviceClocks.get("agent-acp-service:0");
+    const proof = inspectOutageACPClock(evidence, collection, clock);
+    clock.offset_min_us = proof.offset_min_us;
+    clock.offset_max_us = proof.offset_max_us;
+    clock.outage_probe = proof;
+    clock.samples.push({
+      trace_id: proof.source_trace_id,
+      span_id: proof.source_span_id,
+      started_at: proof.started_at,
+      received_at: proof.received_at,
+    });
+  }
+  const serviceTime = (trace, span, generation, time = end(span)) => {
+    const identity = resource(trace, span),
+      clock = serviceClocks.get(`${identity[0]}:${generation}`);
+    assert(clock, "independent service clock missing");
+    assert.deepEqual(
+      clock.resource,
+      identity,
+      "span belongs to another calibrated process",
+    );
+    finite(time);
+    end(span);
+    return {
+      lower: (time - clock.offset_max_us) / 1000,
+      upper: (time + quantizationUS - clock.offset_min_us) / 1000,
+    };
+  };
   let offboarding;
   const offboardingCase = () => {
     if (offboarding) return offboarding;
     // Reuse the complete recovery gate: real HTTP responses, committed Identity
     // mutation/SQL/feed evidence, cancellation and the disabled Agent readback.
     // A close marker alone cannot establish that offboarding actually happened.
-    const proof = inspectRecovery(evidence, collection, secrets);
+    const proof =
+      inspectRecovery === inspectRecoveryHTTP
+        ? recoveryProof()
+        : inspectRecovery(evidence, collection, secrets);
     assert.equal(proof.status, "passed", "offboarding recovery not proved");
     const receipt = one(
       proof.mutations.filter((m) => m.action === "deactivate"),
@@ -543,18 +934,27 @@ export function inspectOutageStreams(
         c.mutation.started_at <= c.mutation.at &&
         c.mutation.started_at <= closure.at,
     );
-    const b = boundary(s.trace_id, s, s.headers_at);
+    const b = boundary(s.trace_id, s, s.headers_at, item);
     if (end(b.root) - b.root.startTime > evidence.settings.resolveTTLMS * 1000)
       assert(
         b.resolution.gateway_revalidations.length > 0,
         "long stream lacks actual successful revalidation",
       );
-    for (const span of [b.root, b.upstream, b.ui])
+    for (const span of [b.root, b.upstream])
       assert(
         end(span) >= b.interval.lower(c.trigger.at) &&
           end(span) < b.interval.upper(closure.at),
         "stream span ended outside actual closure interval",
       );
+    const uiEnd = serviceTime(b.trace, b.ui, 1);
+    // The remote EOF is the observed closure. Reject an incompatible UI span
+    // using its independent clock; never compare its wall time to Gateway Date.
+    assert(
+      uiEnd.upper >= c.trigger.at &&
+        uiEnd.lower < closure.at &&
+        uiEnd.upper < drain.after.at,
+      "UI stream span ended outside actual closure interval",
+    );
     const failedTransport = hasError(b.root) || hasError(b.upstream);
     const hasTermination = (b.ui.logs ?? []).some((log) =>
       (log.fields ?? []).some(
@@ -603,9 +1003,10 @@ export function inspectOutageStreams(
         marker.timestamp >= b.ui.startTime && marker.timestamp <= end(b.ui),
         "UI termination witness outside owning span",
       );
+      const markerTime = serviceTime(b.trace, b.ui, 1, marker.timestamp);
       assert(
-        marker.timestamp >= b.interval.lower(c.mutation.started_at) &&
-          marker.timestamp < b.interval.upper(closure.at),
+        markerTime.upper >= c.mutation.started_at &&
+          markerTime.lower < closure.at,
         "UI termination witness outside actual mutation/closure window",
       );
       termination = {
@@ -620,7 +1021,10 @@ export function inspectOutageStreams(
       claim(b.trace, b.upstream, "public-sse-revoked-response");
     }
     for (const span of b.trace.spans)
-      if (!failedTransport || (span !== b.root && span !== b.upstream))
+      if (
+        !b.allowedErrors.has(span) &&
+        (!failedTransport || (span !== b.root && span !== b.upstream))
+      )
         clean(
           span,
           b.tree.service(span),
@@ -634,7 +1038,109 @@ export function inspectOutageStreams(
       ...(termination ? { termination } : {}),
     };
   });
-  const views = [
+  const closePrefix = "antnest.ui.acp.close.";
+  const ownerCloses = ownerInventory.owners.map((owner) => {
+    const trace = get(owner.close_trace_id),
+      tree = traceTopology(trace),
+      span = tree.spans.get(owner.close_span_id),
+      tags = values(span.tags ?? []),
+      trigger = tags[closePrefix + "trigger"],
+      outcome = tags[closePrefix + "outcome"];
+    assert(
+      ["requested", "transport_failure"].includes(trigger),
+      "unobserved close trigger",
+    );
+    assert(
+      ["closed", "failed"].includes(outcome),
+      "unproved owner close outcome",
+    );
+    const failed = outcome === "failed",
+      receipt = {
+        trigger,
+        outcome,
+        target_observed: true,
+        delete_attempts: 1,
+        delete_responses: failed ? 0 : 1,
+        delete_completed: failed ? 0 : 1,
+        delete_status: failed ? 0 : 202,
+        pending_requests: 0,
+        stream_joined: true,
+        failures: failed ? 1 : 0,
+        diagnostics_truncated: false,
+      };
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(tags)
+          .filter(([k]) => k.startsWith(closePrefix))
+          .map(([k, v]) => [k.slice(closePrefix.length), v]),
+      ),
+      receipt,
+      "incomplete or contradictory owner close receipt",
+    );
+    const expected = Object.fromEntries(
+      Object.entries(receipt).map(([k, v]) => [closePrefix + k, v]),
+    );
+    const receivers = cleanupInventory([trace], "delete")
+      .filter((r) => tree.parent(r.span) === span)
+      .map((r) => r.span);
+    assert.equal(
+      receivers.length,
+      failed ? 0 : 1,
+      "close receipt differs from actual DELETE inventory",
+    );
+    if (failed) {
+      assert.equal(trigger, "transport_failure");
+      const event = one(
+          span.logs ?? [],
+          "one exact close failure event required",
+        ),
+        causes = values(event.fields ?? []).causes;
+      assert(typeof causes === "string");
+      assert.match(
+        causes,
+        /^\[(?:"unknown",)?"(?:connection_refused|connection_reset|broken_pipe|socket_closed)"\]$/u,
+        "unproved stopped-peer close cause",
+      );
+      diagnostics(
+        span,
+        { ...expected, ...error },
+        {
+          event: "antnest.ui.acp.close.failure",
+          stage: "delete_request",
+          causes,
+          truncated: false,
+        },
+      );
+    } else {
+      assert(!hasError(span), "successful close retains an unrelated error");
+      diagnostics(span, expected);
+      const receiver = receivers[0];
+      assert.equal(receiver.operationName, "HTTP DELETE /v1/acp");
+      for (const [k, v] of Object.entries({
+        "span.kind": "server",
+        "http.request.method": "DELETE",
+        "http.route": "/v1/acp",
+        "http.response.status_code": 202,
+        "antnest.listener": "workspace",
+      }))
+        assert.equal(tag(receiver, k), v, `wrong close receiver ${k}`);
+    }
+    for (const other of trace.spans) {
+      if (other === span) continue;
+      let parent = tree.parent(other);
+      while (parent && parent !== span) parent = tree.parent(parent);
+      assert.equal(parent, span, "unrelated span in owner close trace");
+      clean(other, tree.service(other), trace);
+    }
+    return {
+      trace_id: trace.traceID,
+      span_id: span.spanID,
+      origin_trace_id: owner.origin_trace_id,
+      reason: failed ? "failed-acp-process-exit" : "complete-delete-202",
+      delete_span_id: receivers[0]?.spanID,
+    };
+  });
+  const requiredViews = [
     {
       row: byLabel("prep-view"),
       scope: prepScope,
@@ -658,16 +1164,7 @@ export function inspectOutageStreams(
       principal: c.login.body.principal,
     })),
   ];
-  assert.equal(
-    new Set([
-      ...views.map((v) => v.row.trace_id),
-      ...streamItems.map((v) => v.stream.trace_id),
-    ]).size,
-    views.length + streams.length,
-    "reused stream/view receipt",
-  );
-  const watches = [];
-  for (const v of views) {
+  for (const v of requiredViews) {
     const row = v.row;
     sameHTTP(row);
     assert.equal(
@@ -682,33 +1179,100 @@ export function inspectOutageStreams(
       row.at < v.lifecycle.started_at,
       "view after closing lifecycle began",
     );
+    assert(
+      ownerInventory.http_origins.some((r) => r.trace_id === row.trace_id),
+      "required view has no actual UI generation witness",
+    );
+  }
+  const views = ownerInventory.http_origins.map((origin) => {
+    const row = one(
+        evidence.http.filter((r) => r.trace_id === origin.trace_id),
+        "actual owner HTTP observation missing",
+      ),
+      login = one(
+        evidence.http.filter(
+          (r) =>
+            r.issued_credential_scope &&
+            r.issued_credential_scope === row.credential_scope,
+        ),
+        "actual owner HTTP login missing",
+      );
+    return {
+      row,
+      principal: login.body.principal,
+      prep: origin.generation === 0,
+      lifecycle: origin.generation === 0 ? acp : drain,
+      kind: origin.kind,
+    };
+  });
+  assert.equal(
+    new Set([
+      ...views.map((v) => v.row.trace_id),
+      ...streamItems.map((v) => v.stream.trace_id),
+    ]).size,
+    views.length + streams.length,
+    "reused stream/view receipt",
+  );
+  const privateReceipts = new Map(
+    ownerInventory.owners.flatMap((owner) =>
+      owner.streams.map((row) => [
+        `${row.trace_id}:${row.span_id}`,
+        { ...row, owner },
+      ]),
+    ),
+  );
+  const watches = [];
+  for (const v of views) {
+    const row = v.row;
     const b = boundary(row.trace_id, row, row.at);
+    if (v.kind === "restored-denial") {
+      // Structural mapping alone cannot admit a 403. Require the complete
+      // deactivation/restoration business, transaction and denial evidence.
+      recoveryProof();
+      diagnostics(b.upstream, {
+        ...error,
+        "error.type": "403",
+        "otel.status_description": "HTTP status 403",
+      });
+      claim(b.trace, b.upstream, "restored-disabled-agent-view");
+    }
     for (const span of b.trace.spans) {
-      if (b.tree.service(span) !== "agent-acp-service" || !hasError(span)) {
+      if (v.kind === "restored-denial" && span === b.upstream) continue;
+      const receipt = privateReceipts.get(`${b.trace.traceID}:${span.spanID}`);
+      if (!receipt) {
         clean(span, b.tree.service(span), b.trace);
+        continue;
+      }
+      const privateEnd = serviceTime(b.trace, span, receipt.owner.generation),
+        initialTrace = get(receipt.owner.origin_trace_id),
+        initial = initialTrace.spans.find(
+          (s) => s.spanID === receipt.owner.initialization_span_id,
+        );
+      assert(
+        span.startTime >= initial.startTime &&
+          span.startTime < end(span) &&
+          privateEnd.upper <= v.lifecycle.after.at,
+        "private stream outside observed owning lifecycle",
+      );
+      if (!hasError(span)) {
+        clean(span, b.tree.service(span), b.trace);
+        watches.push({
+          trace_id: b.trace.traceID,
+          span_id: span.spanID,
+          reason:
+            receipt.kind === "execution-watch"
+              ? "internal-completed-execution-watch"
+              : "internal-completed-private-stream",
+        });
         continue;
       }
       assert.equal(b.tree.parent(span), b.ui, "watch not owned by actual view");
       assert.equal(tag(span, "span.kind"), "server");
       assert.equal(tag(span, "http.response.status_code"), 200);
-      assert(
-        span.startTime >= v.lifecycle.process_start &&
-          span.startTime >= b.interval.start &&
-          span.startTime < end(span),
-      );
-      const finished = end(span);
-      assert(
-        finished <
-          Math.min(
-            b.interval.upper(v.lifecycle.after.at),
-            v.lifecycle.finished_upper,
-          ),
-        "watch outside actual normal termination",
-      );
       let reason;
       const normalTermination = () =>
         assert(
-          finished >= b.interval.lower(v.lifecycle.started_at),
+          privateEnd.lower >= v.lifecycle.started_at,
           "watch before actual normal termination without close witness",
         );
       if (tag(span, "http.route") === "/v1/acp") {
@@ -757,7 +1321,12 @@ export function inspectOutageStreams(
             "antnest.organization.id": v.principal.organization_id,
           });
           assert(
-            marker.timestamp >= b.interval.lower(c.mutation.started_at),
+            serviceTime(
+              b.trace,
+              span,
+              receipt.owner.generation,
+              marker.timestamp,
+            ).lower >= c.mutation.started_at,
             "access-denial close before actual offboarding mutation",
           );
           reason = "internal-offboarding-access-denied";
@@ -835,12 +1404,100 @@ export function inspectOutageStreams(
     watches.some((w) => w.reason === "internal-acp-normal-shutdown"),
     "marked normal shutdown watch missing",
   );
+  const watchByID = new Map(
+    watches.map((w) => [`${w.trace_id}:${w.span_id}`, w]),
+  );
+  for (const [index, owner] of ownerInventory.owners.entries()) {
+    const receipt = ownerCloses[index],
+      trace = get(receipt.trace_id),
+      span = trace.spans.find((s) => s.spanID === receipt.span_id),
+      closeStart = serviceTime(trace, span, owner.generation, span.startTime),
+      closeEnd = serviceTime(trace, span, owner.generation),
+      actualWatches = owner.streams.map((r) =>
+        watchByID.get(`${r.trace_id}:${r.span_id}`),
+      );
+    assert(
+      actualWatches.every(Boolean),
+      "owner close has unvalidated private stream",
+    );
+    if (receipt.reason === "failed-acp-process-exit") {
+      assert.equal(
+        owner.generation,
+        0,
+        "failed close belongs to another ACP generation",
+      );
+      assert(
+        actualWatches.some((w) => w.reason === "internal-acp-normal-shutdown"),
+        "failed close lacks its own process-shutdown watch",
+      );
+      assert(
+        closeStart.lower >= acp.started_at && closeEnd.upper <= ui.before.at,
+        "failed close outside old ACP/UI lifecycle",
+      );
+      claim(trace, span, receipt.reason);
+    } else {
+      const lower =
+        owner.generation === 0
+          ? acp.started_at
+          : actualWatches.some(
+                (w) => w.reason === "internal-ui-drain-disconnect",
+              )
+            ? drain.started_at
+            : offboardingCase().mutation.started_at;
+      assert(
+        closeStart.lower >= lower &&
+          closeEnd.upper <=
+            (owner.generation === 0 ? ui.before.at : drain.after.at),
+        "complete close outside observed UI lifecycle",
+      );
+      const deletion = trace.spans.find(
+        (s) => s.spanID === receipt.delete_span_id,
+      );
+      const deleteStart = serviceTime(
+          trace,
+          deletion,
+          owner.generation,
+          deletion.startTime,
+        ),
+        deleteEnd = serviceTime(trace, deletion, owner.generation);
+      assert(
+        deleteStart.lower >= lower &&
+          deleteEnd.upper <=
+            (owner.generation === 0 ? acp.after.at : drain.after.at),
+        "DELETE outside observed owning lifecycle",
+      );
+      // The real parent edge and completed-body receipt establish causality.
+      // Independent clock intervals must also permit that ordering; do not
+      // equate UI and ACP timestamps to manufacture exact containment.
+      assert(
+        deleteStart.upper >= closeStart.lower &&
+          deleteEnd.lower <= closeEnd.upper,
+        "DELETE incompatible with its actual UI close",
+      );
+      receipt.delete_observed_start = deleteStart;
+      receipt.delete_observed_end = deleteEnd;
+      for (const row of owner.streams) {
+        const source = get(row.trace_id),
+          watch = source.spans.find((s) => s.spanID === row.span_id);
+        assert(
+          end(watch) <= end(deletion),
+          "private stream outlived its complete DELETE receiver",
+        );
+      }
+    }
+    receipt.observed_start = closeStart;
+    receipt.observed_end = closeEnd;
+  }
   return {
     status: "passed",
     streams,
+    owner_inventory: ownerInventory,
+    owner_closes: ownerCloses,
+    service_clocks: [...serviceClocks.values()],
     internal_watches: watches,
     owned_error_spans: owned,
     ...resolveTraceDiagnostics(first, sources),
+    time_observations: [...timeObservations.values()],
   };
 }
 

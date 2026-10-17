@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { decide as basicDecision, note } from "./browser-model.mjs";
+import {
+  cacheRuntimePhase,
+  heldCacheRuntimeDecision,
+} from "./cache-runtime-work.mjs";
 
 const held = new Set([
   "c4-browser-hold-cancel",
@@ -17,6 +21,7 @@ export function decide(payload) {
   const content = payload.messages[index]?.content;
   const phase = Array.isArray(content) ? content[0]?.text : content;
   const tail = payload.messages.slice(index + 1);
+  if (phase === cacheRuntimePhase) return heldCacheRuntimeDecision(payload);
   if (/^c4-browser-volume-[0-7][0-9]$/.test(phase ?? "")) {
     assert.equal(tail.length, 0);
     return { phase, hold: false, text: `${phase}:${"v".repeat(32 * 1024)}` };

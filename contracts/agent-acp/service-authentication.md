@@ -10,7 +10,18 @@ Console audit and Registry source reads. `ANTNEST_ACP_CONTROL_LISTEN` (default
 listener returns 404 for the two Controller paths, including unsupported methods
 and query variants, before reading their bodies. The control listener returns
 404 for every other path and denies WebSocket upgrades. State get/watch remain
-on the workspace listener because their callers are Gateway and Agent UI.
+on the workspace listener for Agent UI.
+
+The [unused Gateway caller retirement](../edge-gateway/workspace-entry-retirement.md)
+removes Gateway from all eleven workspace route grants: private ACP v1 HTTP,
+v1/v2 WebSocket, state, learning and Bridge observation. A configured valid old
+Gateway credential receives `403 caller_not_allowed` before CCT/JWKS verification
+or business work. The workload identity remains recognized; an unknown token is
+still a separate `401`. Agent UI retains its signed ordinary-member access and
+the Identity workspace CCT audience. Private protocol routes, Controller control,
+Console audit, Registry operations and public health remain. Purpose-listener
+isolation still returns 404 before authentication on the wrong listener.
+Deployment credential/network cleanup and browser integration are later batches.
 
 Control calls require verified `agent-controller` workload identity. There is
 no separate legacy control bearer, no user CCT, and no body-selected caller.
@@ -49,9 +60,39 @@ JSON POSTs require one `application/json` content type with only optional UTF-8
 charset. Strict UTF-8, duplicate members, extra documents and exact-case domain
 schemas are checked before effects; malformed JSON returns 400, oversized bodies
 413 and unsupported media/encoding 415. The SDK still owns ACP connection IDs,
-message routing, SSE and DELETE closure. Rejected DELETE bodies cannot close an
-accepted SDK connection. Credentials and CCTs are not persisted or captured in
+message routing and SSE. The authenticated Node adapter joins the SDK's close
+operation before acknowledging a valid DELETE. Rejected DELETE bodies cannot
+close an accepted SDK connection. Credentials and CCTs are not persisted or captured in
 logs, trace attributes or RPC content.
+
+## Private HTTP transport retirement
+
+For `/v1/acp`, a valid empty-body DELETE of a known connection returns 202 only
+after its SDK transport cleanup completes. A server-initiated close can precede
+the client's automatic DELETE; ACP retains that connection's immutable
+organization, principal and Agent binding and the original cleanup result for
+up to five minutes. This is a process-local cleanup acknowledgement, not a new
+ACP method or a durable Session or Run receipt. It never deletes a Session or
+cancels a Run.
+
+Every acknowledgement still requires the admitted Agent UI workload and a valid
+Identity-signed CCT for the same binding. Another binding receives 403. An unknown
+or expired connection ID receives 404; a retained cleanup failure receives 503,
+not 202. GET and POST cannot use a retired connection. DELETE body validation
+remains in force: a nonempty body is 400 and an oversized body is 413, without
+consuming the acknowledgement or extending its deadline. Clients continue to
+await the complete DELETE response and preserve non-202 failures.
+
+Initializations, live connections, pending cleanup and retained acknowledgements
+share the existing 1024-entry limit. Concurrent admitted DELETE requests join
+the same cleanup operation. A completed successful acknowledgement removes its
+ID, but the entry remains owned and counted until cleanup and all already
+admitted responses finish. Their original retirement deadline remains in force;
+other requests never renew it. Expiry removes the ID and aborts outstanding
+responses, but pending cleanup retains its capacity until it settles. Idle expiry,
+failed initialization and process shutdown do not create new acknowledgements.
+Shutdown rejects new work, aborts outstanding responses and joins cleanup;
+late SDK close callbacks cannot restore an expired or released entry.
 
 ## Provider destinations (#28)
 

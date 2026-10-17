@@ -15,8 +15,6 @@ type Config struct {
 	IdentityURL              string
 	AdminConsoleURL          string
 	AgentUIURL               string
-	AgentControllerURL       string
-	AgentACPURL              string
 	CookieSecure             bool
 	CSRFKeyFile              string
 	PublicOrigin             string
@@ -93,8 +91,6 @@ func Load(lookup func(string) string) (Config, error) {
 		IdentityURL:              strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
 		AdminConsoleURL:          strings.TrimSpace(lookup("ANTNEST_ADMIN_CONSOLE_URL")),
 		AgentUIURL:               strings.TrimSpace(lookup("ANTNEST_AGENT_UI_URL")),
-		AgentControllerURL:       strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
-		AgentACPURL:              strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_URL")),
 		CookieSecure:             cookieSecure,
 		CSRFKeyFile:              strings.TrimSpace(lookup("ANTNEST_EDGE_CSRF_KEY_FILE")),
 		PublicOrigin:             strings.TrimSpace(lookup("ANTNEST_EDGE_PUBLIC_ORIGIN")),
@@ -118,12 +114,6 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	if err := serviceURL("ANTNEST_AGENT_UI_URL", config.AgentUIURL); err != nil {
-		return Config{}, err
-	}
-	if err := serviceURL("ANTNEST_AGENT_CONTROLLER_URL", config.AgentControllerURL); err != nil {
-		return Config{}, err
-	}
-	if err := serviceURL("ANTNEST_AGENT_ACP_URL", config.AgentACPURL); err != nil {
 		return Config{}, err
 	}
 	if err := config.loadPublicEntry(lookup); err != nil {

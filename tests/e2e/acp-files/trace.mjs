@@ -1,3 +1,4 @@
+import { inspectRunInformationReads } from "../observability/runtime-information-run.mjs";
 import assert from "node:assert/strict";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { caseFor } from "./model.mjs";
@@ -64,19 +65,11 @@ export function inspectFileTrace(trace, requests, secrets = []) {
     ),
     "Run calls management service",
   );
-  const prepared = ["mcp.runtime.info", "mcp.tools.list"].map((name) => {
-    const span = single(select("agent-acp-service", name), name);
-    assert(inside(span), "preparation detached from Run");
-    assert(
-      trace.spans.some(
-        (child) =>
-          tree.service(child) === "antnest-runtime" &&
-          tree.chain(child).includes(span),
-      ),
-      "preparation missing Runtime descendant",
-    );
-    return span;
+  const information = inspectRunInformationReads(trace, {
+    request: prompt,
+    run,
   });
+  const prepared = information.prepared;
   for (const request of requests) {
     assert.equal(request.trace_id, trace.traceID, "foreign model trace");
     const http = tree.spans.get(request.model_span_id);
@@ -142,6 +135,10 @@ export function inspectFileTrace(trace, requests, secrets = []) {
     run_id: runID,
     spans: trace.spans.length,
     information_reads: 1,
+    runtime_information_reads: information.informationReads,
+    post_prompt_information_reads: information.postPromptInformationReads,
+    neutral_diagnostics: information.neutralDiagnostics,
+    time_observations: information.timeObservations,
     catalog_reads: 1,
     tool_calls: 1,
     runtime_tool_calls: 1,
@@ -221,15 +218,13 @@ export function inspectReplayRequestTrace(trace, expected, secrets = []) {
   assert.equal(tag(forwarded, "span.kind"), "producer");
   assert.equal(tag(forwarded, "antnest.operation.phase"), "forward");
   assert.equal(tree.parent(forwarded), root);
-  const runtimeInformationReads = inspectCatalogRuntime(
-    trace,
-    tree,
-    request,
-    expected,
-  );
+  const catalog = inspectCatalogRuntime(trace, tree, request, expected);
   for (const span of trace.spans) {
     assert(
-      !/^(agent\.run$|model\.|mcp\.|HTTP POST model$)/.test(span.operationName),
+      catalog.spans.has(span) ||
+        !/^(agent\.run$|model\.|mcp\.|HTTP POST model$)/.test(
+          span.operationName,
+        ),
       "replay executed a Run/model/Runtime operation",
     );
     assert(
@@ -251,7 +246,9 @@ export function inspectReplayRequestTrace(trace, expected, secrets = []) {
     method: expected.method,
     spans: trace.spans.length,
     no_execution: true,
-    runtime_information_reads: runtimeInformationReads,
+    runtime_information_reads: catalog.informationReads,
+    neutral_diagnostics: catalog.neutralDiagnostics,
+    time_observations: catalog.timeObservations,
     warning_count: warnings.length,
     warnings: [...new Set(warnings)],
     strict_trace: warnings.length ? "failed" : "passed",

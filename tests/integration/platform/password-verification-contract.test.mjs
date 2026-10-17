@@ -52,8 +52,8 @@ test("Identity's active catalog publishes both password admission failures", () 
   }
 });
 
-test("Gateway revision 23 publishes password failures only on login and password change", () => {
-  assert.equal(gateway.version, 23);
+test("Gateway revision 24 publishes password failures only on login and password change", () => {
+  assert.equal(gateway.version, 24);
   for (const name of ["login", "change_password"]) {
     const route = gateway.routes[name];
     assert.equal(

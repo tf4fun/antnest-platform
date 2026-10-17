@@ -13,6 +13,28 @@ const one = (rows, message) => {
 };
 const finite = (n) => assert(Number.isFinite(n), "observation time missing");
 
+export function recoveryStreamDeadline(c, settings) {
+  assert.equal(
+    settings?.resolveTTLMS,
+    10000,
+    "actual recovery Resolve TTL missing",
+  );
+  finite(c.stream.started_at);
+  finite(c.stream.started_at_ms);
+  assert(
+    Math.min(
+      Date.parse(c.login.body.idle_expires_at),
+      Date.parse(c.login.body.expires_at),
+    ) -
+      c.stream.started_at_ms >
+      60000,
+    "original session deadlines cannot exclude natural CCT expiry",
+  );
+  // Identity issues a 60s CCT in Unix seconds. A Gateway cached snapshot can
+  // already be one Resolve TTL old; later refreshes do not renew this SSE.
+  return c.stream.started_at + 59000 - settings.resolveTTLMS;
+}
+
 export function recoveryMembershipUpdate(entry, active) {
   const { membership } = entry;
   assert.equal(membership.user_id, entry.user.id);
@@ -84,15 +106,21 @@ export function inspectRecoveryWindow(evidence) {
     for (const key of ["user_id", "membership_id", "organization_id"])
       assert.equal(c.peer_login.body.principal[key], principal[key]);
     assert(c.login.started_at > previous);
-    for (const [start, end] of [
-      [c.wire.started_at, c.wire.upgrade.at],
-      [c.stream.started_at, c.stream.headers_at],
-    ]) {
+    response(c.session_create, `${base}/sessions`, "POST", 201);
+    assert.deepEqual(c.session_create.request, {});
+    assert.equal(c.session_create.body.sessionId, c.session_id);
+    assert.equal(c.session_create.credential_scope, scope);
+    response(c.initial_view, `${sessionPath}/view`, "GET", 200);
+    assert.equal(c.initial_view.credential_scope, scope);
+    assert.equal(c.initial_view.body.agentId, evidence.agent_id);
+    assert.equal(c.initial_view.body.sessionId, c.session_id);
+    assert(c.session_create.started_at >= c.peer_login.at);
+    assert(c.initial_view.started_at >= c.session_create.at);
+    assert(c.stream.started_at >= c.initial_view.at);
+    for (const [start, end] of [[c.stream.started_at, c.stream.headers_at]]) {
       [start, end].forEach(finite);
       assert(c.login.at <= start && start <= end && end < c.trigger.at);
     }
-    assert.equal(c.wire.upgrade.status, 101);
-    assert.equal(c.wire.credential_scope, scope);
     assert.equal(c.stream.credential_scope, scope);
     assert.equal(c.stream.status, 200);
     assert.equal(c.stream.set_cookie_count, 0);
@@ -103,6 +131,8 @@ export function inspectRecoveryWindow(evidence) {
     response(c.prompt, `${sessionPath}/prompts`, "POST", 202);
     assert.equal(c.prompt.credential_scope, scope);
     assert.equal(c.prompt.body.acceptance, "bridge");
+    assert.equal(c.prompt.body.operationId, c.intent_id);
+    assert(c.prompt.started_at >= c.stream.headers_at);
     assert(c.prompt.at < c.trigger.at);
     const held = c.stream.records
       .filter((r) => r.at >= c.prompt.started_at && r.at < c.trigger.at)
@@ -244,32 +274,37 @@ export function inspectRecoveryWindow(evidence) {
       assert(Number.isFinite(Date.parse(c.mutation.body.idle_expires_at)));
       assert(c.mutation.body.activity_interval_ms > 0);
     }
-    assert.equal(c.wss_close.localClose, false);
-    assert.equal(c.wss_close.code, 1008);
-    assert.equal(c.wss_close.reason, "session_rejected");
-    assert(
-      c.wss_close.at >= c.trigger.observed_at_ms &&
-        c.wss_close.at <= c.trigger.observed_at_ms + 30000,
-    );
     assert(
       ["remote-end", "transport-end"].includes(c.stream.closure?.kind),
       "actual remote SSE retirement missing",
     );
-    for (const at of [c.wss_close.observed_at, c.stream.closure.at]) {
+    for (const at of [c.stream.closure.at]) {
       finite(at);
       assert(
         at >= c.trigger.at && at <= c.trigger.at + 30000,
         "remote retirement outside mutation bound",
       );
     }
-    const closed = Math.max(c.wss_close.observed_at, c.stream.closure.at);
-    const sent = c.wire.frames.filter((f) => f.direction === "send");
+    const closed = c.stream.closure.at;
+    assert(
+      closed < recoveryStreamDeadline(c, evidence.settings),
+      "natural CCT expiry may explain recovery closure",
+    );
+    assert(
+      c.trigger.at - c.stream.started_at < 20000,
+      "original SSE too old before mutation",
+    );
     assert.deepEqual(
-      sent.map((f) => f.raw),
-      c.quiet_requests,
+      evidence.http.filter(
+        (r) =>
+          r.credential_scope === scope &&
+          r.started_at >= c.trigger.at &&
+          r.started_at < closed &&
+          r.trace_id !== c.mutation.trace_id,
+      ),
+      [],
       "silent observer sent a new request",
     );
-    assert(sent.every((f) => f.at < c.trigger.at));
     const rejected = (r, expectedScope = scope) => {
       response(r, "/api/session", "GET", 401);
       assert.equal(r.credential_scope, expectedScope);
@@ -329,21 +364,86 @@ export function inspectRecoveryWindow(evidence) {
       );
       const fresh = login(c.fresh_login, "admin");
       assert(c.fresh_login.started_at > c.restore.at);
+      response(c.restored_state, `${base}/view`, "GET", 403);
+      assert.equal(c.restored_state.credential_scope, fresh);
+      assert(
+        typeof c.restored_state.cache_control === "string" &&
+          c.restored_state.cache_control
+            .toLowerCase()
+            .split(",")
+            .some((value) => value.trim() === "no-store"),
+        "disabled Agent denial must be no-store",
+      );
+      assert.match(
+        c.restored_state.body.requestId ?? "",
+        /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u,
+      );
+      assert.deepEqual(c.restored_state.body, {
+        code: "access_denied",
+        message: "Agent access denied",
+        requestId: c.restored_state.body.requestId,
+        retryable: false,
+        recovery: "none",
+      });
       response(
-        c.restored_state,
-        `/api/app/agents/${encodeURIComponent(evidence.agent_id)}/state`,
+        c.restored_agent,
+        `/api/admin/agents/${encodeURIComponent(evidence.agent_id)}`,
         "GET",
         200,
       );
-      assert.equal(c.restored_state.credential_scope, fresh);
-      assert.equal(c.restored_state.body.agent_id, evidence.agent_id);
-      assert.equal(c.restored_state.body.availability, "offline");
-      assert.equal(c.restored_state.body.access_allowed, false);
-      assert.equal(c.restored_state.body.active_session_id, null);
-      assert.equal(c.restored_state.body.configuration_revision, null);
-      assert.equal(c.restored_state.body.unavailable_reason, "access_denied");
+      assert(c.restored_agent.started_at > c.restore.at);
+      for (const field of [
+        "agent_id",
+        "owner_user_id",
+        "desired_state",
+        "lifecycle_state",
+        "activation_state",
+        "runtime_state",
+      ])
+        assert.equal(
+          c.restored_agent.body[field],
+          c.disabled_agent.body[field],
+          "membership restoration changed disabled Agent",
+        );
+      assert(!c.restored_agent.body.executable_execution_revision);
       rejected(c.restored_old_session);
       assert(c.restored_old_session.started_at > c.restore.at);
+      for (const row of [c.restore_audits_before, c.restore_audits_after]) {
+        response(
+          row,
+          `/api/admin/execution-audits?agent_id=${encodeURIComponent(evidence.agent_id)}&limit=100`,
+          "GET",
+          200,
+        );
+        assert.equal(
+          row.body.next_cursor,
+          null,
+          "restore Run inventory truncated",
+        );
+        assert(Array.isArray(row.body.items), "restore Run inventory missing");
+        const original = one(
+          row.body.items.filter((run) => run.run_id === c.run_id),
+          "original Run absent from restore inventory",
+        );
+        for (const field of [
+          "run_id",
+          "agent_id",
+          "session_id",
+          "principal_id",
+          "state",
+        ])
+          assert.equal(original[field], c.audit_terminal.body[field]);
+      }
+      assert(
+        c.restore_audits_before.started_at > c.disabled_agent.at &&
+          c.restore_audits_before.at < c.restore.started_at,
+      );
+      assert(c.restore_audits_after.started_at > c.restored_old_session.at);
+      assert.deepEqual(
+        c.restore_audits_after.body,
+        c.restore_audits_before.body,
+        "membership restore created or rewrote accepted work",
+      );
     } else {
       const afterClose = model(c.model_after_close, "held");
       const original = model(c.model_started, "held");
@@ -388,14 +488,14 @@ export function inspectRecoveryWindow(evidence) {
       assert.equal(c.fresh_login.body.principal[key], principal[key]);
     previous = Math.max(
       c.audit_terminal.at,
-      c.fresh_view?.at ?? c.restored_old_session.at,
+      c.fresh_view?.at ?? c.restore_audits_after.at,
     );
     return {
       name: c.name,
       run_id: c.run_id,
       terminal,
-      wss_close_ms: c.wss_close.observed_at - c.trigger.at,
       sse_close_ms: c.stream.closure.at - c.trigger.at,
+      natural_expiry_deadline: recoveryStreamDeadline(c, evidence.settings),
     };
   });
   return { status: "passed", cases: reports };

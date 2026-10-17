@@ -19,11 +19,8 @@ func TestSessionRejectsTossedCSRFBeforeEveryAuthenticatedMutation(t *testing.T) 
 		{http.MethodPut, "/api/admin/agents/agent-1"},
 		{http.MethodPatch, "/api/admin/agents/agent-1"},
 		{http.MethodDelete, "/api/admin/agents/agent-1"},
-		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/messages"},
-		{http.MethodPost, "/api/app/agents/agent-1/acp"},
-		{http.MethodDelete, "/api/app/agents/agent-1/acp"},
-		{http.MethodPost, "/api/app/agents/agent-1/v1/acp"},
-		{http.MethodDelete, "/api/app/agents/agent-1/v1/acp"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/commands"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
 	} {
 		t.Run(route.method+route.path, func(t *testing.T) {
 			issuer := &identityServiceStub{resolvePrincipal: administratorPrincipal(), revokeStatus: identity.RevokeStatusRevoked}
@@ -52,8 +49,8 @@ func TestSessionBoundCSRFRejectsReplayAndIgnoresDeliveryCookieValue(t *testing.T
 	for _, route := range []struct{ method, path string }{
 		{http.MethodDelete, "/api/session"},
 		{http.MethodPost, "/api/admin/agents"},
-		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/messages"},
-		{http.MethodPost, "/api/app/agents/agent-1/v1/acp"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/commands"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
 	} {
 		for _, delivery := range []string{"", "planted", testCSRFToken} {
 			for _, header := range []string{testCSRFToken, secondCSRF} {

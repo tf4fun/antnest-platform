@@ -25,7 +25,7 @@ export function inspectChatTrace(trace, expected) {
 }
 
 // Diagnostics do not waive the strict warning gate or change source timestamps.
-function chatTraceBoundary(
+export function chatTraceBoundary(
   trace,
   { sessionId, requireTools = false, bridge = false },
 ) {

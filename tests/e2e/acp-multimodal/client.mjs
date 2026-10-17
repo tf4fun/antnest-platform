@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { withAgentCleanup } from "../../support/verification/agent-cleanup.mjs";
-import { summarizeFailure } from "../../support/verification/failure.mjs";
+import { withMultimodalAgentCleanup } from "./cleanup-evidence.mjs";
+import { preserveFileFailure as preserveNativeFailure } from "../acp-files/failure-evidence.mjs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
@@ -13,7 +13,23 @@ import {
   assertTranscript,
   transcript,
 } from "../acp-commands/evidence.mjs";
-import { commandConnection } from "../acp-commands/connection.mjs";
+import {
+  withPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "../acp-commands/connection.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import {
+  evidenceDirectory,
+  shellStoragePreflight,
+  writeEvidenceFile,
+} from "../../support/storage.mjs";
+import {
+  openPrivateNativeConnection,
+  nativeRequestIdentity,
+  nativeRequestKey,
+  nativePromptReceipt,
+} from "./connection.mjs";
+import { requestMultimodalRuntimeInspection } from "./runtime-inspection.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { seedNative } from "./setup.mjs";
@@ -25,7 +41,10 @@ import {
   imageData,
   marker,
 } from "./fixtures.mjs";
-import { collectNativeTrace, nativeStrictOutcome } from "./trace.mjs";
+import {
+  collectPrivateNativeTrace,
+  privateNativeStrictOutcome,
+} from "./collector.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
@@ -33,7 +52,28 @@ const admin = new GatewayClient(gateway),
   stranger = new GatewayClient(gateway);
 const agents = [],
   traces = [],
+  initializationRequests = [],
+  connectionInventory = [],
   outcomes = [];
+const clients = new Set(),
+  issuedSessions = new WeakMap(),
+  recordings = new WeakMap();
+const secrets = [
+  marker,
+  audioData,
+  pdfData,
+  imageData,
+  "native-model-test",
+  "stage3-admin-password",
+  "native-owner-password",
+  "native-stranger-password",
+  "F09_PRIVATE_PDF",
+];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+const directory = evidenceDirectory(
+  process.env.ANTNEST_MULTIMODAL_EVIDENCE_DIR,
+);
+let modelStatusCount = 0;
 const setup = { cwd: "/workspace", mcpServers: [] };
 const validators = [v1Schema, v2Schema].map((schema) =>
   new Ajv2020({ strict: false, validateFormats: false }).compile({
@@ -45,10 +85,14 @@ let stage = "setup",
   textModelID;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
-const login = (client, email, password) =>
-  client.request("/api/session/login", {
+const login = async (client, email, password) => {
+  const result = await client.request("/api/session/login", {
     body: { organization_slug: "stage3", email, password },
   });
+  issuedSessions.set(client, result.body);
+  secrets.push(client.accessToken, ...client.cookies.values());
+  return result;
+};
 
 async function operation(id) {
   await until(
@@ -63,26 +107,47 @@ async function operation(id) {
 }
 
 function record(client, label, kind = "request", extra = {}) {
-  assert(
-    client.lastRequest?.method.startsWith("session/"),
-    "actual SDK request missing",
-  );
-  traces.push({ ...client.lastRequest, label, kind, ...extra });
+  assert(clients.has(client), "native connection is not active");
+  const recorded = nativeRequestIdentity(client, label, kind, extra);
+  recordings.get(client).push(recorded);
+  traces.push(recorded);
 }
 async function connect(profile, agent = agents[0], browser = member) {
-  const client = commandConnection(profile, agent, browser);
+  const issued = issuedSessions.get(browser);
+  assert(issued, "original browser login receipt missing");
+  const client = await openPrivateNativeConnection(profile, agent, browser, {
+    principal: issued.principal,
+    telemetry,
+    secrets,
+  });
+  clients.add(client);
+  initializationRequests.push(client.initializationRequest);
+  recordings.set(client, [client.initializationRequest]);
+  return client;
+}
+async function use(client, action) {
   try {
-    const result = await client.initialize();
-    const capabilities =
-      profile.version === 1
-        ? result.agentCapabilities.promptCapabilities
-        : result.capabilities.session.prompt;
-    for (const name of ["image", "audio", "embeddedContext"])
-      assert(capabilities[name], `missing ${name} capability`);
-    return client;
-  } catch (error) {
-    client.close();
-    throw error;
+    return await withPrivateCommandConnection(
+      client,
+      recordings.get(client),
+      action,
+    );
+  } finally {
+    connectionInventory.push({
+      version: client.version,
+      agent_id: client.agentId,
+      transport: client.transport,
+      initialization_result: structuredClone(client.initializationResult),
+      updates: structuredClone(client.updates),
+      ...(client.transport === "http"
+        ? { http_connection: client.httpSnapshot() }
+        : {
+            connection_trace_id: client.connectionTraceID,
+            client_span_id: client.clientSpanID,
+            requests: structuredClone(client.requests),
+          }),
+    });
+    clients.delete(client);
   }
 }
 function validate(client, profile) {
@@ -96,8 +161,13 @@ async function modelStatus() {
   const response = await fetch("http://acp-closeout-model:8080/status", {
     signal: AbortSignal.timeout(5000),
   });
-  assert.equal(response.status, 200);
   const status = await response.json();
+  writeEvidenceFile(
+    directory,
+    `model-status-${String(++modelStatusCount).padStart(3, "0")}.private.json`,
+    JSON.stringify(status) + "\n",
+  );
+  assert.equal(response.status, 200);
   assert.deepEqual(status.errors, [], "model fixture rejected request");
   assert.equal(status.referenceRequests, 0, "resource link was fetched");
   return status.requests;
@@ -105,16 +175,19 @@ async function modelStatus() {
 async function send(client, profile, sessionId, prompt, fails = false) {
   client.updates.length = 0;
   const request = client.request("prompt", { sessionId, prompt }, 120000);
+  let result = null,
+    failure = null;
   if (fails && profile.version === 1) {
     await assert.rejects(request, (error) => {
+      failure = error;
       assert.equal(error.code, -32022);
       assert.equal(error.data?.code, "model_unsupported_content");
       assert.equal(error.data?.retryable, false);
       return true;
     });
   } else {
-    const response = await request;
-    if (profile.version === 1) assert.equal(response.stopReason, "end_turn");
+    result = await request;
+    if (profile.version === 1) assert.equal(result.stopReason, "end_turn");
     else {
       await until(
         () =>
@@ -158,7 +231,14 @@ async function send(client, profile, sessionId, prompt, fails = false) {
     client,
     `${profile.name}:${fails ? "mismatch" : prompt[0].text.split(" ").at(-1)}`,
     fails ? "local-failure" : "native",
-    { phase: prompt[0].text, version: profile.version },
+    {
+      phase: prompt[0].text,
+      promptReceipt: nativePromptReceipt(client, sessionId, {
+        result,
+        error: failure,
+        failed: fails,
+      }),
+    },
   );
   validate(client, profile);
   assert(
@@ -254,7 +334,7 @@ async function restore(profile, sessionId, history) {
     assertTranscript(client.updates, id, history);
     validate(client, profile);
   };
-  try {
+  return use(client, async () => {
     await replay(sessionId);
     client.updates.length = 0;
     const fork = await client.request("fork", { ...setup, sessionId });
@@ -265,13 +345,11 @@ async function restore(profile, sessionId, history) {
     await catalog(fork.sessionId);
     assertTranscript(client.updates, fork.sessionId, []);
     await replay(fork.sessionId);
-  } finally {
-    client.close();
-  }
+  });
 }
 async function rejectForeign(profile, sessionId) {
   const client = await connect(profile, agents[1]);
-  try {
+  return use(client, async () => {
     for (const name of [
       profile.version === 1 ? "load" : "resume",
       "fork",
@@ -294,9 +372,7 @@ async function rejectForeign(profile, sessionId) {
       });
     }
     assert.equal(client.updates.length, 0, "foreign Session leaked data");
-  } finally {
-    client.close();
-  }
+  });
 }
 async function exercise(profile) {
   stage = `${profile.name}:native`;
@@ -304,7 +380,7 @@ async function exercise(profile) {
     client = await connect(profile),
     history = [];
   let sessionId;
-  try {
+  await use(client, async () => {
     ({ sessionId } = await client.request("new", setup));
     record(client, `${profile.name}:new`, "request", { sessionId });
     await until(
@@ -368,12 +444,11 @@ async function exercise(profile) {
       foreign_session_rejections: 3,
     });
     console.log(asciiJSON({ status: "transport_passed", ...outcomes.at(-1) }));
-  } finally {
-    client.close();
-  }
+  });
 }
 
 async function main() {
+  shellStoragePreflight(directory);
   assert(process.env.TEST_RUNTIME_IMAGE, "test Runtime image required");
   await login(admin, "stage3-admin@example.com", "stage3-admin-password");
   const user = await api("/api/admin/directory/users", {
@@ -397,82 +472,142 @@ async function main() {
   const seeded = await seedNative(api, process.env.TEST_RUNTIME_IMAGE);
   const template = seeded.template;
   textModelID = seeded.textModelID;
-  await withAgentCleanup(agents, api, async () => {
-    for (const name of ["Native", "Other Agent"]) {
-      const created = await api(
-        "/api/admin/agents",
-        {
-          owner_user_id: user.user.id,
-          name,
-          template_id: template.template_id,
-          template_revision: template.revision,
-        },
-        202,
-      );
-      agents.push(created.agent.agent_id);
-      await operation(created.operation.request_id);
-      await waitForAgentReady(() => api(`/api/admin/agents/${agents.at(-1)}`));
-    }
-    for (const profile of [
-      { name: "v1-ws", version: 1 },
-      { name: "v2-ws", version: 2 },
-      { name: "v1-http", version: 1, http: true },
-    ]) {
-      const foreign = await connect(profile, agents[0], stranger);
-      try {
-        await assertAgentDenied(foreign);
-        record(foreign, `${profile.name}:foreign-user`, "request", {
-          rejection: "access_denied",
-        });
-      } finally {
-        foreign.close();
+  const { requests, runtimeInspection } = await withMultimodalAgentCleanup(
+    agents,
+    admin,
+    async (consumed) => {
+      for (const name of ["Native", "Other Agent"]) {
+        const created = await api(
+          "/api/admin/agents",
+          {
+            owner_user_id: user.user.id,
+            name,
+            template_id: template.template_id,
+            template_revision: template.revision,
+          },
+          202,
+        );
+        agents.push(created.agent.agent_id);
+        await operation(created.operation.request_id);
+        await waitForAgentReady(() =>
+          api(`/api/admin/agents/${agents.at(-1)}`),
+        );
       }
-      await exercise(profile);
-    }
-  });
-  const requests = await modelStatus();
-  assert.equal(requests.length, 9);
-  assert.deepEqual(
-    requests.map((item) => item.phase),
-    ["v1-ws", "v2-ws", "v1-http"].flatMap((profile) =>
-      ["native", "continue", "restored"].map((phase) => `${profile} ${phase}`),
-    ),
+      for (const profile of [
+        { name: "v1-ws", version: 1 },
+        { name: "v2-ws", version: 2 },
+        { name: "v1-http", version: 1, http: true },
+      ]) {
+        const foreign = await connect(profile, agents[0], stranger);
+        await use(foreign, async () => {
+          await assertAgentDenied(foreign);
+          record(foreign, `${profile.name}:foreign-user`, "request", {
+            rejection: "access_denied",
+          });
+        });
+        await exercise(profile);
+      }
+      const requests = await modelStatus();
+      assert.equal(requests.length, 9);
+      assert.deepEqual(
+        requests.map((item) => item.phase),
+        ["v1-ws", "v2-ws", "v1-http"].flatMap((profile) =>
+          ["native", "continue", "restored"].map(
+            (phase) => `${profile} ${phase}`,
+          ),
+        ),
+      );
+      assert.equal(new Set(requests.map((item) => item.trace_id)).size, 9);
+      assert.equal(traces.length, 48);
+      assert.equal(
+        traces.filter((trace) => trace.kind === "request").length,
+        36,
+      );
+      assert.equal(traces.filter((trace) => trace.rejection).length, 18);
+      assert.equal(
+        traces.filter((trace) => trace.kind === "request" && !trace.rejection)
+          .length,
+        18,
+      );
+      assert.equal(traces.filter((trace) => trace.kind === "native").length, 9);
+      assert.equal(
+        traces.filter((trace) => trace.kind === "local-failure").length,
+        3,
+      );
+      secrets.push(
+        ...requests.map((item) => item.phase),
+        ...admin.cookies.values(),
+        ...member.cookies.values(),
+        ...stranger.cookies.values(),
+      );
+      assert.equal(
+        clients.size,
+        0,
+        "all original native connections must be joined",
+      );
+      assert.equal(initializationRequests.length, 12);
+      assert.equal(connectionInventory.length, 12);
+      for (const profile of ["v1-ws", "v2-ws", "v1-http"]) {
+        assert.equal(
+          traces.filter((item) => item.label.startsWith(profile + ":")).length,
+          16,
+        );
+        assert.equal(
+          initializationRequests.filter((item) =>
+            item.label.startsWith(profile + ":"),
+          ).length,
+          4,
+        );
+      }
+      const wire = connectionInventory.flatMap((connection) =>
+        connection.transport === "http"
+          ? connection.http_connection.requests.filter(
+              (item) => item.method === "POST",
+            )
+          : connection.requests,
+      );
+      assert.equal(
+        wire.length,
+        60,
+        "all actual SDK requests must be inventoried",
+      );
+      const identities = [...traces, ...initializationRequests].map(
+        nativeRequestKey,
+      );
+      assert.equal(
+        new Set(identities).size,
+        60,
+        "duplicate native request inventory",
+      );
+      for (const [name, value] of [
+        ["model-requests.private.json", requests],
+        ["request-inventory.private.json", traces],
+        ["initialization-inventory.private.json", initializationRequests],
+        ["connection-inventory.private.json", connectionInventory],
+      ])
+        writeEvidenceFile(directory, name, JSON.stringify(value) + "\n");
+      stage = "runtime-inspection";
+      const runtimeInspection = await requestMultimodalRuntimeInspection(
+        agents,
+        { consumed },
+      );
+      return { requests, runtimeInspection };
+    },
+    { directory },
   );
-  assert.equal(new Set(requests.map((item) => item.trace_id)).size, 9);
-  assert.equal(traces.length, 48);
-  assert.equal(traces.filter((trace) => trace.kind === "request").length, 36);
-  assert.equal(traces.filter((trace) => trace.kind === "native").length, 9);
-  assert.equal(
-    traces.filter((trace) => trace.kind === "local-failure").length,
-    3,
-  );
-  const secrets = [
-    marker,
-    audioData,
-    pdfData,
-    imageData,
-    "native-model-test",
-    "native-owner-password",
-    "native-stranger-password",
-    "F09_PRIVATE_PDF",
-    ...requests.map((item) => item.phase),
-    ...admin.cookies.values(),
-    ...member.cookies.values(),
-    ...stranger.cookies.values(),
-  ];
   const checked = [];
-  for (const expected of traces) {
+  for (const expected of [...traces, ...initializationRequests]) {
     stage = `trace:${expected.label}`;
     checked.push(
-      await collectNativeTrace(
-        "http://jaeger:16686",
-        expected,
+      await collectPrivateNativeTrace("http://jaeger:16686", expected, {
+        directory,
+        flush: () => telemetry.flush(),
         secrets,
         requests,
-      ),
+      }),
     );
   }
-  assert.equal(new Set(checked.map((trace) => trace.trace_id)).size, 48);
+  assert.equal(new Set(checked.map((trace) => trace.trace_id)).size, 60);
   assert.equal(
     new Set(checked.map((trace) => trace.run_id).filter(Boolean)).size,
     12,
@@ -485,28 +620,47 @@ async function main() {
     ),
     new Set(requests.map((item) => item.trace_id)),
   );
-  const { accepted, ...strict } = nativeStrictOutcome(checked);
+  const { exit_code: exitCode, ...strict } =
+    privateNativeStrictOutcome(checked);
   console.log(
     asciiJSON({
       status: "business_passed",
       ...strict,
+      scenarios: outcomes.length,
       outcomes,
       model_requests: requests.length,
+      business_requests: traces.length,
+      initialization_requests: initializationRequests.length,
+      connections: connectionInventory.length,
+      runtime_inspection: runtimeInspection,
       cross_user_rejections: 3,
-      traces: checked,
+      traces: checked.slice(0, traces.length),
+      initialization_traces: checked.slice(traces.length),
     }),
   );
-  if (!accepted) process.exitCode = 1;
+  process.exitCode = exitCode;
 }
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, main);
 } catch (error) {
   console.error(
-    asciiJSON({
-      status: "failed",
-      stage,
-      ...summarizeFailure(error),
-    }),
+    asciiJSON(
+      await preserveNativeFailure({
+        directory,
+        error,
+        stage,
+        inventory: {
+          connectionInventory,
+          initializationRequests,
+          traces,
+          outcomes,
+        },
+        fetchStatus: () =>
+          fetch("http://acp-closeout-model:8080/status", {
+            signal: AbortSignal.timeout(5000),
+          }),
+      }),
+    ),
   );
   process.exitCode = 1;
 }

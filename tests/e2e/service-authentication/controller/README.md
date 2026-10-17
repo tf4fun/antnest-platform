@@ -15,6 +15,16 @@ startup rejection, normal SIGTERM/SIGINT and restart. The separate Go component
 gate exercises all five concrete dependency clients, including Egress and token
 rotation. These owning-service checks do not claim cross-service acceptance.
 
+The retired Gateway caller remains a configured, cryptographically valid workload
+in this fixture. Signed, missing and forged CCT requests, malformed JSON, unknown
+paths and a wrong method must all return `403 caller_not_allowed` before any cold
+JWKS request. The receipt records the actual Controller image and dependency key
+request/failure counters; unrelated background revocation/publication polling is
+not treated as request effects. Raw-handler unit tests separately assert zero
+workspace business queries. A real signed ordinary-member Agent UI request keeps
+working with the original workspace audience, exact scope and no-store response;
+the actor mismatch negative uses Agent UI after Gateway's grant is retired.
+
 The real Controller also creates an Agent against RC/Egress/ACP protocol peers.
 It prepares Skills, completes asynchronous provisioning, resolves exact private
 Runtime authority and publishes it through the production composition. Each normal
@@ -34,6 +44,10 @@ continuity across both service rotations belongs to the final integration batch.
 The project, volumes, networks and private credentials are cleaned in finally;
 only bounded results and redacted failure diagnostics remain under ignored
 artifacts/verification/.
+Every generated or supplied CCT remains only in memory for response/log checks
+and failure-log redaction, including earlier contexts. Response parsing and
+header/error-code failures use fixed messages that do not retain upstream data.
+The response diagnostic canaries run in `make test-repo` without Docker.
 No real Provider credentials or model inference are used.
 
 Provider checks also exercise production creation, saved/draft model-only

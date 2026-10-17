@@ -18,9 +18,13 @@ They describe the last observed deployment state, not ACP busy/idle, transport
 connectivity or permission to submit a prompt. No Runtime or ACP request is made
 to populate the list. Runtime available must never unlock chat input by itself.
 
-Only Gateway and Agent UI workloads can call this reader. Controller verifies the
+Only the Agent UI workload can call this reader. Controller verifies the
 Organization-scoped CCT and compares the requested Organization and principal
 with its signed claims before querying. Raw identity headers grant nothing.
+The unused direct Gateway workload grant is retired: even a configured valid
+Gateway credential receives `403 caller_not_allowed` before CCT key lookup or
+query execution. Gateway reaches workspace discovery through Agent UI; Identity
+continues to include Controller in workspace CCT audiences for that delegation.
 Queries require the requested organization and principal, an active access binding,
 and a non-revoked owner authorization watermark. Deleted desired state is excluded
 immediately, including pending or failed deletion. Disabled, starting and unavailable
@@ -49,5 +53,8 @@ Controller tests cover exact JSON fields, no-store, empty results, keyset
 pagination, organization/principal/binding/revocation scope, desired deletion,
 discovery after Runtime loss, absent execution-state routes and listing without
 any Run table. Management event and default-authorization revocation tests
-also apply. Cross-service cancellation, reconnect and Jaeger checks belong to
+also apply. Raw-handler tests assert zero workspace queries and JWKS requests
+for the retired Gateway, with a signed ordinary-member Agent UI success control.
+The service Docker gate retains a known Gateway token to prove explicit policy
+denial before a cold JWKS lookup. Cross-service cancellation, reconnect and Jaeger checks belong to
 the root E2E suites.

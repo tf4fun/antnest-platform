@@ -20,7 +20,7 @@ import (
 )
 
 func TestShutdownWaitsForTelemetryAfterDeadline(t *testing.T) {
-	for _, path := range []string{"/api/admin/overview", "/api/app/agents/agent-1/v1/acp"} {
+	for _, path := range []string{"/api/admin/overview", "/api/app/workspace/v1/agents/agent-1/events"} {
 		t.Run(path, func(t *testing.T) { testGatewayTraceDrain(t, path) })
 	}
 }
@@ -55,7 +55,19 @@ func testGatewayTraceDrain(t *testing.T, path string) {
 	defer cancel()
 	defer release()
 	done := make(chan error, 1)
-	go func() { done <- serveHTTP(ctx, server, listener, lifecycle, 100*time.Millisecond) }()
+	serverStopped := make(chan struct{})
+	go func() {
+		defer close(serverStopped)
+		done <- serveHTTP(ctx, server, listener, lifecycle, 100*time.Millisecond)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		release()
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+		awaitGatewaySignal(t, serverStopped)
+	})
 	clientDone := make(chan struct{})
 	go func() {
 		defer close(clientDone)
@@ -108,11 +120,14 @@ func (e *gatewayDrainExporter) ExportSpans(context.Context, []sdktrace.ReadOnlyS
 
 func (*gatewayDrainExporter) Shutdown(context.Context) error { return nil }
 
-func TestACPHTTPCommandsKeepGracefulDrain(t *testing.T) {
-	for _, path := range []string{"/api/app/agents/agent-1/v1/acp", "/api/app/agents/agent-1/acp"} {
-		for _, method := range []string{http.MethodPost, http.MethodDelete} {
-			t.Run(method+path, func(t *testing.T) { testGatewayCommandDrain(t, method, path) })
-		}
+func TestWorkspaceCommandsKeepGracefulDrain(t *testing.T) {
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/commands"},
+		{http.MethodPost, "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts"},
+		{http.MethodDelete, "/api/session"},
+		{http.MethodDelete, "/api/admin/agents/agent-1"},
+	} {
+		t.Run(route.method+route.path, func(t *testing.T) { testGatewayCommandDrain(t, route.method, route.path) })
 	}
 }
 
@@ -135,7 +150,16 @@ func testGatewayCommandDrain(t *testing.T, method, path string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveHTTP(ctx, server, listener, lifecycle, time.Second) }()
+	serverStopped := make(chan struct{})
+	go func() { defer close(serverStopped); done <- serveHTTP(ctx, server, listener, lifecycle, time.Second) }()
+	t.Cleanup(func() {
+		cancel()
+		releaseOnce()
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+		awaitGatewaySignal(t, serverStopped)
+	})
 	responses := make(chan int, 1)
 	clientDone := make(chan struct{})
 	go func() {
@@ -168,12 +192,12 @@ func testGatewayCommandDrain(t *testing.T, method, path string) {
 	select {
 	case requestContext = <-started:
 	case <-time.After(2 * time.Second):
-		t.Fatal("ACP command did not begin")
+		t.Fatal("command did not begin")
 	}
 	cancel()
 	select {
 	case <-requestContext.Done():
-		t.Fatal("stop cancelled an ordinary ACP HTTP command")
+		t.Fatal("stop cancelled an ordinary HTTP command")
 	case <-time.After(50 * time.Millisecond):
 	}
 	releaseOnce()
@@ -193,8 +217,7 @@ func testGatewayCommandDrain(t *testing.T, method, path string) {
 
 func TestReceiveShutdownUnblocksSlowReader(t *testing.T) {
 	for _, path := range []string{
-		"/api/app/agents/agent-1/state/watch", "/api/app/agents/agent-1/v1/acp",
-		"/api/app/agents/agent-1/acp", "/api/admin/agents/agent-1/events/watch",
+		"/api/app/workspace/v1/agents/agent-1/events", "/api/admin/agents/agent-1/events/watch",
 	} {
 		t.Run(path, func(t *testing.T) { testGatewaySlowReader(t, path) })
 	}
@@ -218,7 +241,16 @@ func testGatewaySlowReader(t *testing.T, path string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveHTTP(ctx, server, listener, lifecycle, time.Second) }()
+	serverStopped := make(chan struct{})
+	go func() { defer close(serverStopped); done <- serveHTTP(ctx, server, listener, lifecycle, time.Second) }()
+	t.Cleanup(func() {
+		cancel()
+
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+		awaitGatewaySignal(t, serverStopped)
+	})
 	connection, err := net.DialTCP("tcp", nil, listener.Addr().(*net.TCPAddr))
 	if err != nil {
 		t.Fatal(err)

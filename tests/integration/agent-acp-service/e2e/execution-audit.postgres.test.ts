@@ -71,7 +71,7 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
     if (address == null || typeof address === "string")
       throw new Error("No listening address");
     const identity: Record<string, string> = { ...headers, ...override };
-    if (caller === "edge-gateway") delete identity["X-Antnest-User-ID"];
+    if (caller === "agent-ui") delete identity["X-Antnest-User-ID"];
     return fetch(`http://127.0.0.1:${address.port}/rpc/agent-acp/${path}`, {
       method: "POST",
       headers: testHeaders(identity, caller),
@@ -149,7 +149,7 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
           "X-Antnest-Principal-ID": "owner-1",
           "X-Antnest-Agent-ID": "deleted-agent",
         },
-        "edge-gateway",
+        "agent-ui",
       );
       expect(execution.status).toBe(503);
       expect(await execution.json()).toMatchObject({

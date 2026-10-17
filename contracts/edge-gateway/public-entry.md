@@ -60,8 +60,8 @@ and DELETE, follow these rules:
 Rejection is `403` with code `forbidden` and message
 `Request origin is not allowed`, retaining the Gateway security headers.
 Passing Origin admission never bypasses the independent session, authorization
-or CSRF checks. ACP WebSocket upgrades additionally require a matching Origin,
-even with same-origin Fetch Metadata or the compatibility setting enabled.
+or CSRF checks. Retired direct ACP upgrade requests receive 404 after this
+outer admission; Gateway exposes no browser ACP WebSocket route.
 OIDC callbacks under `/protocol/oidc/`, SCIM and document/assets routes remain
 outside this API admission rule and retain their protocol-specific checks.
 
@@ -85,14 +85,14 @@ diagnostics. Downstream requests discard all incoming `X-Forwarded-*`,
 and configured public origin. They never carry the caller's claimed chain.
 
 HTTPS public origins emit `Strict-Transport-Security: max-age=31536000` on
-Gateway responses, including errors and WebSocket handshakes. Subdomains and
+Gateway responses, including errors and retired-route responses. Subdomains and
 preload are not implicitly included.
 
 ## Certificate rotation and health
 
 Replace the certificate and key files, then send `SIGHUP` to Gateway. It loads
 and validates both files before atomically publishing the new pair. Existing
-HTTP and WebSocket connections stay open. A failed reload retains the last
+HTTP connections stay open. A failed reload retains the last
 valid pair and emits a bounded error classification without key material.
 
 `--healthcheck` probes the actual local listener, using HTTPS in native TLS
@@ -106,10 +106,12 @@ external HTTPS readiness is verified separately through the proxy.
 
 1. Gateway unit/contract tests cover unsafe startup, exact origin comparison,
    proxy spoofing, malformed address chains, forwarding headers and HSTS.
-2. A real native-TLS listener test rotates certificates with an active WebSocket,
-   retains the old certificate after an invalid replacement and verifies health.
+2. A real native-TLS listener test uses a generic test-only WebSocket to verify
+   that active TLS connections survive reload. It retains the old certificate
+   after an invalid replacement and verifies health. This fixture is not an
+   exposed browser ACP route.
 3. Compose examples cover native TLS and the reference TLS proxy. Docker/browser
-   acceptance covers actual login cookies, Console, Workspace, ACP WebSocket and
+   acceptance covers actual login cookies, Console, Workspace Bridge and
    separate source limits for two clients behind the same proxy.
 
 The consumer fixtures select this public origin even when their transport uses
@@ -117,4 +119,6 @@ the private Gateway address. The `gateway-tls` CI suite executes step 3 with the
 reference proxy and verifies cleanup of its disposable environment. See
 [#57](https://github.com/tf4fun/antnest-platform/issues/57) and the API Origin
 admission in [#10](https://github.com/tf4fun/antnest-platform/issues/10).
-Cookie/session-bound CSRF and login-account policy changes remain in #62 and #2.
+Cookie/session-bound CSRF and login-account policy changes were delivered in
+#62 and #2. The #64 consumer batch must migrate old direct ACP assertions to
+the retained Bridge before readmitting the complete HTTPS workflow.

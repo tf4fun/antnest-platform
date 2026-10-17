@@ -17,7 +17,13 @@ import { inspectRecoveryHTTP as inspectRecoveryHTTPTraces } from "./resolve-cach
 import { inspectOutageFeed } from "./resolve-cache-outage-feed.mjs";
 import { inspectOutageStreams } from "./resolve-cache-outage-stream.mjs";
 import { inspectOutageDiagnostics } from "./resolve-cache-outage-diagnostics.mjs";
+import { inspectOutageRuntimeCancellation } from "./resolve-cache-runtime-cancellation.mjs";
+import { searchOutageACPClock } from "./resolve-cache-outage-clock.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
+import {
+  searchOutageCloseTraces,
+  inspectOutageCloseCapture,
+} from "./resolve-cache-outage-close-capture.mjs";
 
 function visibleSuccessfulFeed(trace) {
   return trace.spans?.some(
@@ -182,6 +188,7 @@ export async function collectOutageTraceArchive(
     inspectFeed = inspectOutageFeed,
     inspectStreams = inspectOutageStreams,
     inspectDiagnostics = inspectOutageDiagnostics,
+    inspectRuntimeCancellation = inspectOutageRuntimeCancellation,
   },
 ) {
   await wait(12000, undefined, { signal });
@@ -189,6 +196,10 @@ export async function collectOutageTraceArchive(
     found = { messages: [], feed: [], feedAttempts: [], jwks: [], refresh: [] },
     errors = [],
     ids = new Set();
+  const legacy =
+    evidence.policy_revision === undefined || evidence.policy_revision === 3;
+  if (!legacy && evidence.policy_revision !== 4)
+    errors.push(new Error("unsupported outage policy revision"));
   const retainID = (id) => {
     try {
       assert.match(id ?? "", /^[a-f0-9]{32}$/u);
@@ -215,6 +226,7 @@ export async function collectOutageTraceArchive(
       retainID(request.trace_id);
   const lookback = `${Math.ceil(now - evidence.observed_at_ms + 5000)}ms`;
   let attemptInventoryComplete = false;
+  let closeSearches, clockSearches;
   const attemptSearches = [],
     serverSearches = [],
     feedQuery = new URLSearchParams({
@@ -326,6 +338,26 @@ export async function collectOutageTraceArchive(
         if (signal.aborted) break;
       }
     }
+    if (evidence.policy_revision === 4) {
+      closeSearches = await searchOutageCloseTraces(base, {
+        search,
+        wait,
+        signal,
+        now,
+        lookback,
+        retainID,
+      });
+      errors.push(...closeSearches.errors);
+      clockSearches = await searchOutageACPClock(base, {
+        search,
+        wait,
+        signal,
+        now,
+        lookback,
+        retainID,
+      });
+      errors.push(...clockSearches.errors);
+    }
   } finally {
     const raw = JSON.stringify({
       now,
@@ -333,6 +365,21 @@ export async function collectOutageTraceArchive(
       found,
       feed_attempt_searches: attemptSearches,
       feed_server_searches: serverSearches,
+      ...(clockSearches
+        ? {
+            clock_searches: {
+              ...clockSearches,
+              errors: clockSearches.errors.map((e) => e.stack ?? String(e)),
+            },
+          }
+        : {}),
+      ...(closeSearches
+        ? {
+            cleanup_found: closeSearches.found,
+            close_searches: closeSearches.rounds.close,
+            delete_searches: closeSearches.rounds.deletion,
+          }
+        : {}),
     });
     writeEvidenceFile(directory, "outage-trace-search.private.json", raw);
     try {
@@ -355,7 +402,7 @@ export async function collectOutageTraceArchive(
   if (!found.feedAttempts.length)
     errors.push(new Error("Gateway Identity attempt inventory missing"));
   let chat;
-  if (evidence.business_window || evidence.model_cancelled)
+  if (legacy && (evidence.business_window || evidence.model_cancelled))
     try {
       chat = outageChatExpectation(evidence);
     } catch (error) {
@@ -403,6 +450,26 @@ export async function collectOutageTraceArchive(
   const archivedTraceIDs = new Set(
     reports.flatMap((row) => [row.trace_id, ...row.source_trace_ids]),
   );
+  let cleanupCapture = { status: "pending" };
+  if (closeSearches) {
+    try {
+      const traces = new Map(
+        [...archivedTraceIDs].map((id) => [
+          id,
+          JSON.parse(
+            readFileSync(
+              join(directory, "outage-traces", `${id}.json`),
+              "utf8",
+            ),
+          ),
+        ]),
+      );
+      cleanupCapture = inspectOutageCloseCapture(closeSearches, traces);
+    } catch (error) {
+      cleanupCapture = { status: "failed" };
+      errors.push(error);
+    }
+  }
   let authority = { status: "pending" },
     rejections = { status: "pending" },
     recovery = { status: "pending" },
@@ -437,6 +504,10 @@ export async function collectOutageTraceArchive(
       collection = {
         traces,
         archivedTraceIDs,
+        ...(clockSearches ? { clockSearches } : {}),
+        ...(closeSearches
+          ? { cleanupSearches: { ...closeSearches, now, lookback } }
+          : {}),
         feedAttemptTraceIDs: new Set(found.feedAttempts.map((t) => t.traceID)),
         feedSearch: {
           now,
@@ -517,9 +588,51 @@ export async function collectOutageTraceArchive(
       errors.push(error);
     }
   }
-  const cancellation = reports.find(
+  const legacyCancellation = reports.find(
     (row) => row.trace_id === chat?.traceID && row.settled_read === true,
   );
+  let cancellation = { status: "pending" };
+  if (
+    legacy &&
+    legacyCancellation &&
+    Array.isArray(legacyCancellation.owned_error_spans)
+  )
+    cancellation = {
+      status: "passed",
+      trace_id: chat.traceID,
+      owned_error_spans: legacyCancellation.owned_error_spans,
+    };
+  if (
+    evidence.policy_revision === 4 &&
+    (evidence.business_window || evidence.model_cancelled)
+  ) {
+    try {
+      assert(collection, "Runtime cancellation raw archive missing");
+      const checked = await inspectRuntimeCancellation(
+        evidence,
+        collection,
+        secrets,
+      );
+      assert.equal(
+        checked?.status,
+        "passed",
+        "Runtime cancellation owning inspector did not pass",
+      );
+      for (const field of [
+        "owned_error_spans",
+        "otel_error_spans",
+        "transport_receipts",
+        "metadata_receipts",
+      ])
+        assert(
+          Array.isArray(checked[field]),
+          `Runtime cancellation ${field} missing`,
+        );
+      cancellation = checked;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
   const gates = {
     authority,
     http_rejections: rejections,
@@ -528,14 +641,7 @@ export async function collectOutageTraceArchive(
     recovery_http: recoveryHTTP,
     feed,
     stream,
-    cancellation:
-      cancellation && Array.isArray(cancellation.owned_error_spans)
-        ? {
-            status: "passed",
-            trace_id: chat.traceID,
-            owned_error_spans: cancellation.owned_error_spans,
-          }
-        : { status: "pending" },
+    cancellation,
   };
   let diagnostics = { status: "pending" };
   if (evidence.recovery_window)
@@ -560,6 +666,7 @@ export async function collectOutageTraceArchive(
     reports,
     owning_gates: gates,
     diagnostics,
+    cleanup_capture: cleanupCapture,
     strict_trace:
       errors.length ||
       diagnostics.strict_trace === "failed" ||

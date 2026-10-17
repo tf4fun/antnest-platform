@@ -1,4 +1,6 @@
 services:
+  agent-controller:
+    image: ${ANTNEST_C4_AGENT_CONTROLLER_IMAGE:-antnest/agent-controller:local}
   agent-ui:
     image: ${ANTNEST_C4_AGENT_UI_IMAGE:-antnest/agent-ui:local}
   agent-acp-service:

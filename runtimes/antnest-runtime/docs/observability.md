@@ -130,6 +130,29 @@ HTTP, Executor, managed stdio CLIENT spans and completion logs are metadata-only
 Discrete inbound MCP requests/results use the shared RPC capture switch below.
 No packet or progress notification contents are captured.
 
+The managed stdio CLIENT lifetime includes synchronous result classification
+and its error diagnostic after the SDK request future returns. That final work
+runs inside the same span before its last exit, so the exported end encloses
+the original diagnostic timestamp. Parsed `isError` and cancellation keep their
+original status, error code and cause; no timestamp is rewritten. The real RMCP
+duplex tests in `tests/integration/antnest-runtime/managed_bridge.rs` exercise
+success, protocol error and cancellation with a controlled delay at result
+classification and check the SDK's original event and endpoint values.
+The isolated Docker check
+`python3 tests/e2e/antnest-runtime/e2e_managed_mcp.py ManagedMcpE2E.test_managed_stdio_completion_diagnostics_remain_inside_actual_span`
+uses a real Runtime and managed child for the same outcomes. It correlates
+original request IDs and the child's cancellation marker, then preserves full
+Jaeger query bytes, original diagnostics, container identity and shutdown logs
+under `artifacts/verification/runtime-managed-completion/` (override within the
+repository's `artifacts/verification/` using `ANTNEST_RUNTIME_OBSERVABILITY_EVIDENCE`).
+The companion `test_managed_stdio_failure_preserves_traces_before_removing_collector`
+interrupts the scenario after two real calls and verifies that cleanup flushes
+and archives their original traces before removing the Collector. An optional
+`ANTNEST_RUNTIME_E2E_PREFIX=antnest-mcp-e2e-<ten hex digits>` gives the coordinating
+runner an exact resource scope for interruption cleanup.
+The microsecond backend view complements
+the SDK endpoint check; it does not establish the full ACP/browser workflow.
+
 The Runtime-to-Egress packet path does not participate in distributed tracing.
 Runtime records one bounded network-session span and start/completion events,
 including transport, duration, outcome, and stable fatal error code. It does not

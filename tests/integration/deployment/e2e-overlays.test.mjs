@@ -56,7 +56,27 @@ const environment = {
   ANTNEST_LIFECYCLE_MODEL_HOST_PORT: "43113",
   ANTNEST_EDGE_PUBLIC_BASE_URL: "http://127.0.0.1:43110",
   ANTNEST_E2E_RUN_ID: "overlay-contract",
+  ANTNEST_ADMISSION_TAG: "session-overlay-contract",
 };
+
+test("HTTPS workspace consumers can select the current Controller candidate", () => {
+  const image = "antnest/agent-controller:current-browser-contract";
+  const config = composeConfig(
+    [
+      "compose.yaml",
+      "compose.debug.yaml",
+      "tests/e2e/lifecycle-closeout/compose.yaml",
+      "tests/e2e/workspace-closeout/c4.compose.yaml",
+    ],
+    {
+      ...environment,
+      ANTNEST_C4_CONTROL_DYNAMIC_RANGE: "10.242.187.128/25",
+      ANTNEST_C4_RUNTIME_DYNAMIC_RANGE: "10.243.187.128/25",
+      ANTNEST_C4_AGENT_CONTROLLER_IMAGE: image,
+    },
+  );
+  assert.equal(config.services["agent-controller"].image, image);
+});
 
 function dispatch(selection, action) {
   const result = spawnSync(
@@ -222,6 +242,258 @@ test("Identity diagnostic polling can differ without changing retained deploymen
   assert.equal(
     retained.services["agent-controller"].environment[key],
     undefined,
+  );
+});
+
+test("ACP Session appends the admission overlay for all service candidates and both Identity rebuilds", () => {
+  const selected = dispatch({ tool_profile: "acp-session" }, "config");
+  const admission = "tests/integration/deployment/compose.admission.yaml";
+  assert.equal(selected.files.at(-1), admission);
+  for (const profile of ["identity-http", "agent-access", "acp-closeout"])
+    assert(
+      !dispatch({ tool_profile: profile }, "config").files.includes(admission),
+    );
+  const child = readFileSync(
+    new URL("../../e2e/e2e-acp-session.sh", import.meta.url),
+    "utf8",
+  );
+  const childCompose = child.match(/^compose\(\) \{\n[\s\S]*?^\}/mu)?.[0];
+  assert(childCompose);
+  const files = [...childCompose.matchAll(/-f ([\w./-]+)(?:\s|$)/gu)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(files, selected.files);
+  for (const ttl of ["12h", "5s"]) {
+    const config = composeConfig(selected.files, {
+      ...environment,
+      ...selected.ranges,
+      ANTNEST_IDENTITY_ACCESS_TOKEN_TTL: ttl,
+    });
+    for (const name of [
+      "admin-console",
+      "agent-acp-service",
+      "agent-controller",
+      "agent-ui",
+      "edge-gateway",
+      "identity-service",
+      "runtime-controller",
+      "runtime-egress",
+      "skill-registry",
+      "temporal",
+    ])
+      assert.equal(
+        config.services[name].image,
+        `antnest/${name}:session-overlay-contract`,
+      );
+    assert.equal(
+      config.services["runtime-controller"].environment
+        .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+      "antnest/runtime-controller:session-overlay-contract",
+    );
+    assert.equal(
+      config.services["identity-service"].environment
+        .ANTNEST_IDENTITY_TOKEN_TTL,
+      ttl,
+    );
+    assert.equal(
+      config.services["identity-service"].environment.SSL_CERT_FILE,
+      "/test-ca/tls.crt",
+    );
+    assert(
+      config.services["identity-service"].volumes.some(
+        (volume) => volume.target === "/test-ca" && volume.read_only,
+      ),
+    );
+  }
+});
+
+test("slash commands select current service and preparer candidates without Session fault overlays", () => {
+  const selected = dispatch(
+    { slash_commands: "true", tool_profile: "slash-commands" },
+    "config",
+  );
+  assert.equal(
+    selected.files.at(-1),
+    "tests/integration/deployment/compose.admission.yaml",
+  );
+  assert(!selected.files.some((file) => file.includes("identity-closeout")));
+  const config = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ANTNEST_ADMISSION_TAG: "commands-overlay-contract",
+  });
+  for (const name of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry",
+    "temporal",
+  ])
+    assert.equal(
+      config.services[name].image,
+      `antnest/${name}:commands-overlay-contract`,
+    );
+  assert.equal(
+    config.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+    "antnest/runtime-controller:commands-overlay-contract",
+  );
+});
+
+test("structured plans select current service and preparer candidates without Session fault overlays", () => {
+  const selected = dispatch(
+    { structured_plan: "true", tool_profile: "structured-plan" },
+    "config",
+  );
+  assert.equal(
+    selected.files.at(-1),
+    "tests/integration/deployment/compose.admission.yaml",
+  );
+  assert(!selected.files.some((file) => file.includes("identity-closeout")));
+  const config = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ANTNEST_ADMISSION_TAG: "plan-overlay-contract",
+  });
+  for (const name of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry",
+    "temporal",
+  ])
+    assert.equal(
+      config.services[name].image,
+      `antnest/${name}:plan-overlay-contract`,
+    );
+  assert.equal(
+    config.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+    "antnest/runtime-controller:plan-overlay-contract",
+  );
+});
+
+test("native multimodal selects current service and preparer candidates without Session fault overlays", () => {
+  const selected = dispatch(
+    { multimodal: "true", tool_profile: "multimodal" },
+    "config",
+  );
+  assert.equal(
+    selected.files.at(-1),
+    "tests/integration/deployment/compose.admission.yaml",
+  );
+  assert(!selected.files.some((file) => file.includes("identity-closeout")));
+  const config = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ANTNEST_ADMISSION_TAG: "multimodal-overlay-contract",
+  });
+  for (const name of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry",
+    "temporal",
+  ])
+    assert.equal(
+      config.services[name].image,
+      `antnest/${name}:multimodal-overlay-contract`,
+    );
+  assert.equal(
+    config.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+    "antnest/runtime-controller:multimodal-overlay-contract",
+  );
+});
+
+test("private Cost selects current service and preparer candidates without Session fault overlays", () => {
+  const selected = dispatch(
+    { session_cost: "true", tool_profile: "session-cost" },
+    "config",
+  );
+  assert.equal(
+    selected.files.at(-1),
+    "tests/integration/deployment/compose.admission.yaml",
+  );
+  assert(!selected.files.some((file) => file.includes("identity-closeout")));
+  const config = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ANTNEST_ADMISSION_TAG: "cost-overlay-contract",
+  });
+  for (const name of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry",
+    "temporal",
+  ])
+    assert.equal(
+      config.services[name].image,
+      `antnest/${name}:cost-overlay-contract`,
+    );
+  assert.equal(
+    config.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+    "antnest/runtime-controller:cost-overlay-contract",
+  );
+});
+
+test("file observations select current service and preparer candidates without Session fault overlays", () => {
+  const selected = dispatch(
+    { file_observations: "true", tool_profile: "file-observations" },
+    "config",
+  );
+  assert.equal(
+    selected.files.at(-1),
+    "tests/integration/deployment/compose.admission.yaml",
+  );
+  assert(!selected.files.some((file) => file.includes("identity-closeout")));
+  const config = composeConfig(selected.files, {
+    ...environment,
+    ...selected.ranges,
+    ANTNEST_ADMISSION_TAG: "files-overlay-contract",
+  });
+  for (const name of [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry",
+    "temporal",
+  ])
+    assert.equal(
+      config.services[name].image,
+      `antnest/${name}:files-overlay-contract`,
+    );
+  assert.equal(
+    config.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE,
+    "antnest/runtime-controller:files-overlay-contract",
   );
 });
 

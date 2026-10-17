@@ -8,17 +8,15 @@ import { fileURLToPath } from "node:url";
 
 const label = "io.antnest.gateway-shutdown-test";
 const routes = [
-  "/api/app/agents/agent-1/state/watch",
-  "/api/app/agents/agent-1/v1/acp",
-  "/api/app/agents/agent-1/acp",
-  "/api/admin/agents/agent-1/events/watch",
   "/api/app/workspace/v1/agents/agent-1/events",
+  "/api/app/workspace/v1/agents/agent-2/events",
+  "/api/app/workspace/v1/agents/agent-3/events",
+  "/api/admin/agents/agent-1/events/watch",
+  "/api/admin/agents/agent-2/events/watch",
 ];
 
 const dependencyPorts = {
   "identity-service": 8080,
-  "agent-controller": 8081,
-  "agent-acp-service": 8082,
   "admin-console": 8083,
   "agent-ui": 8084,
 };
@@ -103,25 +101,35 @@ function upstream() {
         json({ events: [], next_sequence: input.after_sequence });
         return;
       }
-      const statePath = "/rpc/agent-acp/watch-agent-execution-state";
+      const bridge = path.startsWith("/api/app/workspace/v1/");
       if (
-        request.method !== (path === statePath ? "POST" : "GET") ||
-        ![statePath, "/v1/acp", routes[3], routes[4]].includes(path)
+        request.method !== "GET" ||
+        !routes.includes(path) ||
+        service !== (bridge ? "agent-ui" : "admin-console")
       ) {
         unexpected.push({ method: request.method, path });
         response.writeHead(404).end();
         return;
       }
-      if ([statePath, "/v1/acp", routes[4]].includes(path)) {
-        assert.equal(request.headers["x-antnest-organization-id"], "org-1");
+      const agent = path.split("/")[bridge ? 6 : 4];
+      assert.equal(request.headers["x-antnest-organization-id"], "org-1");
+      assert.equal(request.headers["x-antnest-user-id"], "user-admin");
+      assert.equal(request.headers["x-antnest-membership-id"], "member-1");
+      if (bridge) {
         assert.equal(request.headers["x-antnest-principal-id"], "user-admin");
-        assert.equal(request.headers["x-antnest-agent-id"], "agent-1");
-        assert.equal(
-          request.headers["x-antnest-agent-access-subject"],
-          undefined,
-        );
-        assert.equal(request.headers.cookie, undefined);
+        assert.equal(request.headers["x-antnest-agent-id"], agent);
+        assert.equal(request.headers["x-antnest-administrator"], "true");
+      } else {
+        assert.equal(request.headers["x-antnest-principal-id"], undefined);
+        assert.equal(request.headers["x-antnest-agent-id"], undefined);
+        assert.equal(request.headers["x-antnest-system-role"], "admin");
+        assert.equal(request.headers["x-antnest-organization-role"], "admin");
       }
+      assert.equal(
+        request.headers["x-antnest-agent-access-subject"],
+        undefined,
+      );
+      assert.equal(request.headers.cookie, undefined);
       assert(request.headers["antnest-caller-context"], "missing trusted CCT");
       opened++;
       watches.add(response);
@@ -131,18 +139,7 @@ function upstream() {
       });
       response.setHeader("Content-Type", "text/event-stream");
       response.flushHeaders();
-      if (path === statePath) {
-        response.write(
-          `event: workspace_state\ndata: ${JSON.stringify({
-            agent_id: "agent-1",
-            availability: "ready",
-            access_allowed: true,
-            configuration_revision: "a".repeat(64),
-            unavailable_reason: null,
-            active_session_id: null,
-          })}\n\n`,
-        );
-      }
+      response.write("event: ready\ndata: {}\n\n");
     });
     server.listen(port, "0.0.0.0");
     return server;
@@ -170,7 +167,7 @@ async function cleanup(project, docker) {
           .filter(Boolean);
       for (const id of await owned()) {
         await docker(
-          kind === "container" ? ["rm", "-f", id] : ["network", "rm", id],
+          kind === "container" ? ["rm", "-f", "-v", id] : ["network", "rm", id],
         );
       }
       assert.deepEqual(await owned(), [], `${kind} cleanup incomplete`);
@@ -182,8 +179,8 @@ async function cleanup(project, docker) {
     throw new AggregateError(errors, "Gateway shutdown cleanup failed");
 }
 
-async function containerURL(docker, name) {
-  const binding = await docker(["port", name, "8080/tcp"]);
+async function containerURL(docker, name, port = 8080) {
+  const binding = await docker(["port", name, `${port}/tcp`]);
   assert.match(binding, /^127\.0\.0\.1:\d+$/);
   return `http://${binding}`;
 }
@@ -205,9 +202,58 @@ async function ready(url, signal) {
   throw new Error("Gateway readiness deadline exceeded");
 }
 
-async function exercise(project, docker, signal, gatewayImage, credentials) {
+async function processIdentity(base, traceID, host, output, signal) {
+  const { evidenceFilePath } = await import("../../support/storage.mjs");
+  for (let attempt = 0; attempt < 60; attempt++) {
+    signal.throwIfAborted();
+    const response = await fetch(`${base}/api/traces/${traceID}`, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]),
+    });
+    const body = await response.json();
+    if (response.ok && body.data?.length === 1) {
+      writeFileSync(
+        evidenceFilePath(output, `${traceID}.json`),
+        JSON.stringify(body),
+        {
+          mode: 0o600,
+          flag: "wx",
+        },
+      );
+      const trace = body.data[0];
+      assert.equal(trace.traceID, traceID);
+      const processes = Object.values(trace.processes).filter(
+        (p) => p.serviceName === "edge-gateway",
+      );
+      assert.equal(processes.length, 1);
+      const fields = Object.fromEntries(
+        processes[0].tags.map(({ key, value }) => [key, value]),
+      );
+      assert.equal(Object.keys(fields).length, processes[0].tags.length);
+      assert.equal(fields["host.name"], host);
+      assert.equal(fields["process.pid"], 1);
+      assert.equal(typeof fields["service.instance.id"], "string");
+      assert(fields["service.instance.id"]);
+      assert.notEqual(fields["service.instance.id"], "forged-instance");
+      return fields["service.instance.id"];
+    }
+    assert([200, 404].includes(response.status));
+    await delay(250, undefined, { signal });
+  }
+  throw new Error("Gateway process identity Trace was not exported");
+}
+
+async function exercise(
+  project,
+  docker,
+  signal,
+  gatewayImage,
+  credentials,
+  traceOutput,
+) {
   const backend = `${project}-upstream`;
   const gateway = `${project}-edge`;
+  const collector = `${project}-collector`;
+  mkdirSync(traceOutput, { recursive: true, mode: 0o700 });
   const fixture = fileURLToPath(import.meta.url);
   await docker([
     "network",
@@ -216,6 +262,29 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
     `${label}=${project}`,
     project,
   ]);
+  await docker([
+    "run",
+    "-d",
+    "--network",
+    project,
+    "--network-alias",
+    "collector",
+    "--label",
+    `${label}=${project}`,
+    "--name",
+    collector,
+    "--read-only",
+    "--tmpfs",
+    "/tmp:rw,nosuid,nodev,noexec,size=64m",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "-p",
+    "127.0.0.1::16686",
+    "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0",
+  ]);
+  const collectorURL = await containerURL(docker, collector, 16686);
   const options = [
     "run",
     "-d",
@@ -264,8 +333,6 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
     `type=bind,source=${credentials},target=/run/auth,readonly`,
     ...Object.entries({
       IDENTITY_SERVICE: 8080,
-      AGENT_CONTROLLER: 8081,
-      AGENT_ACP: 8082,
       ADMIN_CONSOLE: 8083,
       AGENT_UI: 8084,
     }).flatMap(([service, port]) => [
@@ -286,7 +353,13 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
     "-e",
     "ANTNEST_EDGE_SHUTDOWN_TIMEOUT=2s",
     "-e",
-    "OTEL_SDK_DISABLED=true",
+    "OTEL_TRACES_EXPORTER=otlp",
+    "-e",
+    "OTEL_METRICS_EXPORTER=none",
+    "-e",
+    "OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318",
+    "-e",
+    "OTEL_RESOURCE_ATTRIBUTES=host.name=forged-host,process.pid=999999,service.instance.id=forged-instance",
     gatewayImage,
   ]);
   const image = await docker(["inspect", "--format", "{{.Image}}", gateway]);
@@ -300,10 +373,16 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
   assert.equal(image, expectedImage);
   const backendURL = await containerURL(docker, backend);
   await ready(backendURL, signal);
+  const generations = [];
   for (const [index, stopSignal] of ["SIGTERM", "SIGINT"].entries()) {
     if (index) await docker(["start", gateway]);
     const gatewayURL = await containerURL(docker, gateway);
     await ready(gatewayURL, signal);
+    const [container] = JSON.parse(await docker(["inspect", gateway]));
+    assert.equal(container.Path, "/usr/local/bin/edge-gateway");
+    assert.equal(container.Image, expectedImage.trim());
+    assert(container.State.Pid > 0);
+    const traceIDs = [];
     const receives = [];
     for (const path of routes) {
       const response = await fetch(`${gatewayURL}${path}`, {
@@ -311,17 +390,20 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
         headers: {
           Cookie: "__Host-antnest_session=fixture-token",
           Accept: "text/event-stream",
-          "Acp-Connection-Id": "fixture-connection",
         },
       });
       if (response.status !== 200) {
-        const body = await response.text();
+        await response.body?.cancel();
         const diagnostic = await fetch(`${backendURL}/test/state`, { signal });
         const state = await diagnostic.text();
         throw new Error(
-          `stream did not open: ${path} status=${response.status} response=${body} upstream=${state}`,
+          `stream did not open: ${path} status=${response.status} upstream=${state}`,
         );
       }
+      const traceID = response.headers.get("x-antnest-trace-id");
+      assert.match(traceID ?? "", /^[a-f0-9]{32}$/u);
+      assert(!traceIDs.includes(traceID));
+      traceIDs.push(traceID);
       receives.push(
         response.text().then(
           () => true,
@@ -363,30 +445,61 @@ async function exercise(project, docker, signal, gatewayImage, credentials) {
       await docker(["logs", gateway]),
       /service_failure|shutdown HTTP|context deadline exceeded/,
     );
+    const instances = [];
+    for (const traceID of traceIDs)
+      instances.push(
+        await processIdentity(
+          collectorURL,
+          traceID,
+          container.Config.Hostname,
+          traceOutput,
+          signal,
+        ),
+      );
+    assert.equal(new Set(instances).size, 1);
+    const generation = {
+      container_id: container.Id,
+      host: container.Config.Hostname,
+      started_at: container.State.StartedAt,
+      instance: instances[0],
+      trace_ids: traceIDs,
+    };
+    if (index) {
+      assert.equal(generation.container_id, generations[0].container_id);
+      assert.equal(generation.host, generations[0].host);
+      assert.notEqual(generation.started_at, generations[0].started_at);
+      assert.notEqual(generation.instance, generations[0].instance);
+    }
+    generations.push(generation);
   }
   return {
     image,
     signals: ["SIGTERM", "SIGINT"],
     restart: "passed",
     receiveRoutes: routes.length,
+    receiveFamilies: ["workspace-bridge-events", "admin-agent-watch"],
     upstreamCancellations: routes.length * 2,
     exitCodes: [0, 0],
+    processGenerations: generations,
   };
 }
 
-async function run() {
+export async function run({
+  root = fileURLToPath(new URL("../../../", import.meta.url)),
+  project = `antnest-gateway-stop-${randomUUID().slice(0, 8)}`,
+} = {}) {
   const { dockerClient } = await import("../lifecycle-closeout/docker.mjs");
-  const project = `antnest-gateway-stop-${randomUUID().slice(0, 8)}`;
+  const { shutdownInterruption } = await import("./shutdown-interruption.mjs");
+  const { evidenceDirectory } = await import("../../support/storage.mjs");
+  assert.match(project, /^antnest-gateway-stop-[a-z0-9-]+$/u);
   const gatewayImage =
     process.env.ANTNEST_GATEWAY_TEST_IMAGE ??
     `antnest/gateway-shutdown:${project}`;
-  const root = fileURLToPath(new URL("../../../", import.meta.url));
-  const credentials = resolve(
-    root,
-    "artifacts/verification/gateway-shutdown",
-    project,
-    "credentials",
+  const output = evidenceDirectory(
+    resolve(root, "artifacts/verification/gateway-shutdown", project),
   );
+  const credentials = evidenceDirectory(resolve(output, "credentials"));
+  const traceOutput = evidenceDirectory(resolve(output, "traces"));
   mkdirSync(resolve(credentials, "outgoing"), { recursive: true, mode: 0o700 });
   const hashes = {};
   for (const service of Object.keys(dependencyPorts)) {
@@ -403,19 +516,14 @@ async function run() {
   writeFileSync(resolve(credentials, "csrf.key"), randomBytes(32), {
     mode: 0o600,
   });
-  const abort = new AbortController();
-  const interrupt = () =>
-    abort.abort(new Error("Gateway shutdown regression interrupted"));
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", interrupt);
-  const timer = setTimeout(interrupt, 180000);
+  const lifecycle = shutdownInterruption();
   let failure, result;
   console.error(`Disposable Gateway shutdown project: ${project}`);
   try {
     if (!process.env.ANTNEST_GATEWAY_TEST_IMAGE)
       await dockerClient(
         process.env,
-        abort.signal,
+        lifecycle.signal,
         180000,
       )([
         "build",
@@ -427,10 +535,11 @@ async function run() {
       ]);
     result = await exercise(
       project,
-      dockerClient(process.env, abort.signal, 180000),
-      abort.signal,
+      dockerClient(process.env, lifecycle.signal, 180000),
+      lifecycle.signal,
       gatewayImage,
       credentials,
+      traceOutput,
     );
   } catch (error) {
     failure = error;
@@ -445,13 +554,17 @@ async function run() {
       // The container may not have been created yet.
     }
   } finally {
-    abort.abort();
+    lifecycle.beginCleanup();
     try {
       await cleanup(project, dockerClient(process.env, undefined, 60000));
     } catch (error) {
       failure = failure ? new AggregateError([failure, error]) : error;
     }
-    rmSync(credentials, { recursive: true, force: true });
+    try {
+      rmSync(credentials, { recursive: true, force: true });
+    } catch (error) {
+      failure = failure ? new AggregateError([failure, error]) : error;
+    }
     if (!process.env.ANTNEST_GATEWAY_TEST_IMAGE) {
       try {
         await dockerClient(
@@ -463,9 +576,7 @@ async function run() {
         failure = failure ? new AggregateError([failure, error]) : error;
       }
     }
-    clearTimeout(timer);
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", interrupt);
+    failure = lifecycle.finish(failure);
   }
   if (failure) throw failure;
   console.log(
@@ -479,4 +590,8 @@ async function run() {
 }
 
 if (process.argv.includes("--upstream")) upstream();
-else await run();
+else if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+)
+  await run();

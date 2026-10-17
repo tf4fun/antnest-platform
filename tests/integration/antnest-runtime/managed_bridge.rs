@@ -58,6 +58,199 @@ impl ServerHandler for Fixture {
     }
 }
 
+// A scheduler can delay synchronous result classification after the last poll
+// of the request future. Make that boundary deterministic without changing the
+// production clock or the exported event timestamps.
+struct DelayManagedClassification;
+
+impl<S> tracing_subscriber::Layer<S> for DelayManagedClassification
+where
+    S: tracing::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
+{
+    fn on_record(
+        &self,
+        id: &tracing::span::Id,
+        record: &tracing::span::Record<'_>,
+        context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        struct TerminalStatus(bool);
+        impl tracing::field::Visit for TerminalStatus {
+            fn record_debug(&mut self, field: &tracing::field::Field, _: &dyn std::fmt::Debug) {
+                self.0 |= field.name() == "otel.status_code";
+            }
+        }
+        let mut terminal = TerminalStatus(false);
+        record.record(&mut terminal);
+        if terminal.0
+            && context
+                .span(id)
+                .is_some_and(|span| span.metadata().name() == "runtime.mcp.stdio")
+        {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
+async fn assert_managed_completion_span(mode: &str) {
+    use opentelemetry::trace::{SpanKind, Status, TracerProvider as _};
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+    use tracing::Instrument as _;
+    use tracing_subscriber::prelude::*;
+
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    crate::test_tracing::stabilize_callsite_registry();
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            tracing_opentelemetry::layer().with_tracer(provider.tracer("managed-completion-test")),
+        )
+        .with(DelayManagedClassification);
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (client_io, server_io) = tokio::io::duplex(65536);
+    let fixture = Fixture {
+        calls: calls.clone(),
+    };
+    let serve = tokio::spawn(async move { fixture.serve(server_io).await.unwrap() });
+    let mut client = ().serve(client_io).await.unwrap();
+    let mut child = serve.await.unwrap();
+    let mut catalog = Catalog::default();
+    catalog
+        .add_server("fixture", client.peer().clone(), Default::default())
+        .await
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let parent = tracing::info_span!("managed.call.test");
+    let input = if mode == "cancel" { "wait" } else { mode };
+    let call = catalog.call(
+        "mcp__fixture__read",
+        Some(json!({"value": input}).as_object().unwrap().clone()),
+        cancel.clone(),
+        Duration::from_secs(2),
+    );
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        let (result, ()) = tokio::join!(call.instrument(parent.clone()), async {
+            if mode == "cancel" {
+                // The original peer must have entered the held invocation.
+                while calls.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+                cancel.cancel();
+            }
+        });
+        result
+    })
+    .await;
+    drop(parent);
+    let closed_client = client.close().await;
+    let closed_child = child.close().await;
+    provider.force_flush().unwrap();
+    let spans = exporter.get_finished_spans().unwrap();
+    provider.shutdown().unwrap();
+    closed_client.unwrap();
+    closed_child.unwrap();
+    let result = result.expect("actual managed invocation must join");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    if mode == "cancel" {
+        let error = result.unwrap_err();
+        assert_eq!(error.code, crate::tool_error::ToolErrorCode::OutcomeUnknown);
+        assert_eq!(
+            error.effect_state,
+            crate::tool_error::ToolEffectState::Unknown
+        );
+    } else {
+        assert_eq!(result.unwrap().is_error == Some(true), mode == "fail");
+    }
+    let clients: Vec<_> = spans
+        .iter()
+        .filter(|span| span.name == "runtime.mcp.stdio")
+        .collect();
+    assert_eq!(clients.len(), 1);
+    let span = clients[0];
+    let parent = spans
+        .iter()
+        .find(|span| span.name == "managed.call.test")
+        .unwrap();
+    assert_eq!(span.span_kind, SpanKind::Client);
+    assert_eq!(span.parent_span_id, parent.span_context.span_id());
+    assert_eq!(span.span_context.trace_id(), parent.span_context.trace_id());
+    assert!(parent.start_time <= span.start_time && span.end_time <= parent.end_time);
+    let failed = mode != "success";
+    assert_eq!(matches!(span.status, Status::Error { .. }), failed);
+    let expected_error = if mode == "cancel" {
+        "outcome_unknown"
+    } else {
+        "managed_tool_error"
+    };
+    let attribute = |key: &str| {
+        span.attributes
+            .iter()
+            .find(|field| field.key.as_str() == key)
+            .map(|field| field.value.as_str().into_owned())
+    };
+    assert_eq!(
+        attribute("antnest.protocol.outcome").as_deref(),
+        Some(if failed { "error" } else { "success" })
+    );
+    assert_eq!(
+        attribute("mcp.tool.name").as_deref(),
+        Some("mcp__fixture__read")
+    );
+    assert_eq!(
+        attribute("error.type").as_deref(),
+        failed.then_some(expected_error)
+    );
+    assert_eq!(span.events.len(), usize::from(failed));
+    for event in span.events.iter() {
+        assert_eq!(event.name, "antnest.error");
+        let field = |key: &str| {
+            event
+                .attributes
+                .iter()
+                .find(|field| field.key.as_str() == key)
+                .map(|field| field.value.as_str().into_owned())
+        };
+        assert_eq!(field("antnest.error.stage").as_deref(), Some("mcp.stdio"));
+        assert_eq!(field("antnest.error.type").as_deref(), Some(expected_error));
+        assert_eq!(field("antnest.error.code").as_deref(), Some(expected_error));
+        if mode == "cancel" {
+            assert!(event.attributes.iter().any(|field| field.key.as_str()
+                == "antnest.error.cause_types"
+                && field.value
+                    == opentelemetry::Value::Array(opentelemetry::Array::String(vec![
+                        "canceled".into()
+                    ]))));
+        }
+        assert!(
+            span.start_time <= event.timestamp,
+            "{mode}: diagnostic precedes its span"
+        );
+        assert!(
+            event.timestamp <= span.end_time,
+            "{mode}: diagnostic exported after its span ended: event={:?}, end={:?}",
+            event.timestamp,
+            span.end_time
+        );
+    }
+}
+
+#[tokio::test]
+async fn managed_completion_success_preserves_status_and_parent() {
+    assert_managed_completion_span("success").await;
+}
+
+#[tokio::test]
+async fn managed_completion_protocol_error_is_inside_original_span() {
+    assert_managed_completion_span("fail").await;
+}
+
+#[tokio::test]
+async fn managed_completion_cancellation_error_is_inside_original_span() {
+    assert_managed_completion_span("cancel").await;
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn managed_schema_drives_http_parameter_header_validation() {

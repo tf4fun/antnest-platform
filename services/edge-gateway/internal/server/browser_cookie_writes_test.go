@@ -14,7 +14,7 @@ import (
 )
 
 func TestGatewayBrowserOrdinaryAuthenticationFailuresNeverWriteCookies(t *testing.T) {
-	for _, path := range []string{"/api/session", "/api/admin/directory", "/api/app/bootstrap", "/workspace/agent-1"} {
+	for _, path := range []string{"/api/session", "/api/admin/directory", "/api/app/workspace/v1/bootstrap", "/workspace/agent-1"} {
 		for _, reason := range []string{"invalid-cookie", "revoked", "inactive"} {
 			t.Run(path+"/"+reason, func(t *testing.T) {
 				principal := ordinaryPrincipal()

@@ -1,12 +1,15 @@
-import { context, createContextKey, metrics, propagation, ROOT_CONTEXT,
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
+import { context, createContextKey, isSpanContextValid, metrics, propagation, ROOT_CONTEXT,
   SpanKind, SpanStatusCode, trace, type Span } from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import { core, NodeSDK, tracing } from "@opentelemetry/sdk-node";
+import { core, NodeSDK, resources, tracing } from "@opentelemetry/sdk-node";
 import type { BridgeRuntimeMetrics } from "./workspace-runtime.ts";
 import type { BridgeScope } from "./bridge/registry.ts";
 import type { StreamTermination } from "./bridge/stream-journal.ts";
+import type { AcpCloseReceipt } from "./adapters/acp-close-diagnostics.ts";
 
 export type BridgeTelemetry = {
   observeHttp(method: string, route: string, work: () => Promise<number>,
@@ -18,7 +21,123 @@ export type BridgeTelemetry = {
 };
 
 const HTTP_BOUNDARY = createContextKey("antnest.ui.active-http-boundary");
-type HttpBoundary = { active: boolean; span: Span };
+type HttpBoundary = { active: boolean; span: Span; streamDelegationRecorded?: boolean };
+const processIdentity = Object.freeze({
+  "host.name": hostname(),
+  "process.pid": process.pid,
+  "service.instance.id": randomUUID(),
+});
+
+/** The original verified SSE delegation, never renewed by later requests. */
+export function recordStreamDelegation(expiresAtUnixMs: number): void {
+  try {
+    const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
+    if (boundary?.active !== true || boundary.streamDelegationRecorded || !boundary.span.isRecording()) return;
+    const remainingMs = expiresAtUnixMs - Date.now();
+    if (!Number.isSafeInteger(expiresAtUnixMs) || expiresAtUnixMs <= 0 ||
+      !Number.isSafeInteger(remainingMs) || remainingMs <= 0) return;
+    boundary.streamDelegationRecorded = true;
+    boundary.span.setAttributes({
+      "antnest.ui.stream.delegation_expires_at_unix_ms": expiresAtUnixMs,
+      "antnest.ui.stream.delegation_remaining_ms": remainingMs,
+    });
+  } catch { /* Diagnostics never change authentication or stream delivery. */ }
+}
+
+const agentViewFailureCodes = new Map([
+  ["Bridge owner cleanup failed", "owner_cleanup_failed"],
+  ["ACP cleanup failed", "acp_cleanup_failed"],
+  ["ACP DELETE cleanup failed", "acp_delete_failed"],
+  ["ACP response body cleanup failed", "acp_body_cleanup_failed"],
+  ["HTTP response body cleanup failed", "body_cleanup_failed"],
+  ["ACP cleanup deadline exceeded", "acp_cleanup_timeout"],
+  ["ACP cleanup target has no unique DELETE receipt", "acp_delete_receipt_missing"],
+  ["caller_context_invalid", "caller_context_invalid"],
+  ["caller_context_scope_conflict", "caller_context_scope_conflict"],
+  ["ACP Bridge connection is unavailable", "acp_connection_unavailable"],
+  ["Bridge owner is retired", "owner_retired"],
+  ["Bridge owner is draining or retired", "owner_draining"],
+  ["ACP Agent access was revoked", "agent_access_revoked"],
+  ["ACP workspace access is unavailable", "acp_access_unavailable"],
+]);
+
+/** Records only fixed classifications; remote exception contents are private. */
+export function recordAgentViewFailure(stage: "owner" | "view", cause: unknown): void {
+  try {
+    const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
+    if (boundary?.active !== true || !boundary.span.isRecording()) return;
+    const pending = [cause];
+    const causes: string[] = [];
+    let truncated = false;
+    try {
+      while (pending.length && causes.length < 16) {
+        const current = pending.shift();
+        const message = current instanceof Error ? current.message : undefined;
+        causes.push(typeof message === "string" && message.length <= 160
+          ? agentViewFailureCodes.get(message) ?? "unknown" : "unknown");
+        if (current instanceof AggregateError && Array.isArray(current.errors)) {
+          pending.push(...current.errors.slice(0, 16));
+          truncated ||= current.errors.length > 16;
+        }
+        if (current instanceof Error && current.cause !== undefined) pending.push(current.cause);
+      }
+      truncated ||= pending.length > 0;
+    } catch {
+      causes.push("classification_failed");
+      truncated = true;
+    }
+    boundary.span.addEvent("antnest.ui.agent_view.failure", {
+      stage, causes: causes.slice(0, 16), truncated,
+    });
+  } catch { /* Diagnostics must preserve the original response and failure. */ }
+}
+
+export type AcpCloseTrigger = "requested" | "transport_failure" | "initialization_failure";
+
+export function captureAcpCloseTrace() {
+  const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
+  const source = boundary?.active ? boundary.span.spanContext() : undefined;
+  return (trigger: AcpCloseTrigger) => {
+    const span = trace.getTracer("antnest-agent-ui-bridge").startSpan("agent_ui.acp.close", {
+      kind: SpanKind.INTERNAL,
+      links: source && isSpanContextValid(source) ? [{ context: source }] : [],
+      attributes: { "antnest.ui.acp.close.trigger": trigger },
+    }, ROOT_CONTEXT);
+    const closingContext = trace.setSpan(ROOT_CONTEXT, span);
+    return {
+      fetch(fetchImpl: typeof fetch, input: Parameters<typeof fetch>[0], init?: RequestInit) {
+        const headers = new Headers(input instanceof Request ? input.headers : undefined);
+        new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+        headers.delete("traceparent");
+        headers.delete("tracestate");
+        propagation.inject(closingContext, headers, {
+          set: (carrier, key, value) => carrier.set(key, value),
+        });
+        // ROOT_CONTEXT has no HTTP boundary: an old async callback or unrelated
+        // request cannot overwrite the actual cleanup parent in bridgeFetch.
+        return context.with(closingContext, () => fetchImpl(input, { ...init, headers }));
+      },
+      finish(outcome: "closed" | "no_target" | "failed", receipt: AcpCloseReceipt) {
+        span.setAttribute("antnest.ui.acp.close.outcome", outcome);
+        if (outcome === "failed") span.setStatus({ code: SpanStatusCode.ERROR });
+        span.setAttributes({
+          "antnest.ui.acp.close.target_observed": receipt.targetObserved,
+          "antnest.ui.acp.close.delete_attempts": receipt.deleteAttempts,
+          "antnest.ui.acp.close.delete_responses": receipt.deleteResponses,
+          "antnest.ui.acp.close.delete_completed": receipt.deleteCompleted,
+          "antnest.ui.acp.close.delete_status": receipt.deleteStatus,
+          "antnest.ui.acp.close.pending_requests": receipt.pendingRequests,
+          "antnest.ui.acp.close.stream_joined": receipt.streamJoined,
+          "antnest.ui.acp.close.failures": receipt.failures.count,
+          "antnest.ui.acp.close.diagnostics_truncated": receipt.failures.truncated,
+        });
+        for (const failure of receipt.failures.entries)
+          span.addEvent("antnest.ui.acp.close.failure", failure);
+        span.end();
+      },
+    };
+  };
+}
 
 export function captureStreamTermination(scope: BridgeScope): (value: unknown) => void {
   const boundary = context.active().getValue(HTTP_BOUNDARY) as HttpBoundary | undefined;
@@ -65,6 +184,10 @@ export async function startBridgeTelemetry(config: {
   if (!config.disabled && config.endpoint) {
     sdk = new NodeSDK({
       serviceName: config.serviceName,
+      // Last detector wins: deployment attributes remain, but process identity
+      // cannot be supplied by the environment or repeated on a PID 1 restart.
+      resourceDetectors: [resources.envDetector, resources.processDetector,
+        resources.hostDetector, { detect: () => ({ attributes: processIdentity }) }],
       textMapPropagator: new core.W3CTraceContextPropagator(),
       spanProcessors: [new tracing.BatchSpanProcessor(
         new OTLPTraceExporter({ url: signalUrl(config.endpoint, "traces"), timeoutMillis: 5_000 }),

@@ -8,8 +8,21 @@ import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertDeniedSessionError } from "../identity-closeout/agent-access-evidence.mjs";
 import { gateway } from "../identity-closeout/acp-connection.mjs";
 import { until } from "../acp-closeout/support.mjs";
-import { commandConnection } from "./connection.mjs";
-import { collectCommandTrace, commandStrictOutcome } from "./trace.mjs";
+import {
+  openPrivateCommandConnection,
+  withPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "./connection.mjs";
+import {
+  collectPrivateCommandTrace,
+  privateCommandStrictOutcome,
+} from "./collector.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import {
+  evidenceDirectory,
+  shellStoragePreflight,
+  writeEvidenceFile,
+} from "../../support/storage.mjs";
 import { seedCommands } from "./setup.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
@@ -20,6 +33,7 @@ import {
   transcript,
 } from "./evidence.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+import { requestCommandRuntimeInspection } from "./runtime-inspection.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -29,6 +43,18 @@ const agents = [],
   traces = [],
   outcomes = [];
 const marker = "F08_PRIVATE_ATTACHMENT";
+const clients = new Set(),
+  issuedSessions = new WeakMap(),
+  recordings = new WeakMap();
+const secrets = [
+  marker,
+  "acp-closeout-model",
+  "stage3-admin-password",
+  "commands-owner-password",
+  "commands-stranger-password",
+];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+const directory = evidenceDirectory(process.env.ANTNEST_COMMAND_EVIDENCE_DIR);
 const validators = [v1Schema, v2Schema].map((schema) =>
   new Ajv2020({ strict: false, validateFormats: false }).compile({
     $ref: "#/$defs/SessionUpdate",
@@ -38,10 +64,14 @@ const validators = [v1Schema, v2Schema].map((schema) =>
 let stage = "setup";
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
-const login = (client, email, password) =>
-  client.request("/api/session/login", {
+const login = async (client, email, password) => {
+  const result = await client.request("/api/session/login", {
     body: { organization_slug: "stage3", email, password },
   });
+  issuedSessions.set(client, result.body);
+  secrets.push(...client.cookies.values());
+  return result;
+};
 
 async function operation(id) {
   await until(
@@ -60,16 +90,32 @@ function record(client, label, kind = "request", extra = {}) {
     client.lastRequest?.method.startsWith("session/"),
     "actual SDK request missing",
   );
-  traces.push({ ...client.lastRequest, label, kind, ...extra });
+  const recorded = { ...client.lastRequest, label, kind, ...extra };
+  assert(clients.has(client), "command connection is not active");
+  recordings.get(client).push(recorded);
+  traces.push(recorded);
 }
 async function connect(profile, agent, browser = member) {
-  const client = commandConnection(profile, agent, browser);
+  const issued = issuedSessions.get(browser);
+  assert(issued, "original browser login receipt missing");
+  const client = await openPrivateCommandConnection(profile, agent, browser, {
+    principal: issued.principal,
+    telemetry,
+    secrets,
+  });
+  clients.add(client);
+  recordings.set(client, []);
+  return client;
+}
+async function use(client, action) {
   try {
-    await client.initialize();
-    return client;
-  } catch (error) {
-    client.close();
-    throw error;
+    return await withPrivateCommandConnection(
+      client,
+      recordings.get(client),
+      action,
+    );
+  } finally {
+    clients.delete(client);
   }
 }
 
@@ -156,7 +202,7 @@ async function restore(profile, agent, sessionId, history) {
     await catalog(client, id, profile.version);
     assertTranscript(client.updates, id, history);
   };
-  try {
+  await use(client, async () => {
     await replay(sessionId);
     client.updates.length = 0;
     await client.request("resume", { ...setup, sessionId });
@@ -171,15 +217,13 @@ async function restore(profile, agent, sessionId, history) {
     });
     await catalog(client, fork.sessionId, profile.version);
     await replay(fork.sessionId);
-  } finally {
-    client.close();
-  }
+  });
 }
 
 async function rejectForeign(profile, sessionId) {
   const client = await connect(profile, agents[1]);
   const method = profile.version === 1 ? "load" : "resume";
-  try {
+  await use(client, async () => {
     for (const name of [method, "fork", "prompt"]) {
       await assert.rejects(
         client.request(
@@ -202,9 +246,7 @@ async function rejectForeign(profile, sessionId) {
       0,
       "foreign Session leaked notifications",
     );
-  } finally {
-    client.close();
-  }
+  });
 }
 
 async function exercise(profile) {
@@ -213,7 +255,7 @@ async function exercise(profile) {
     history = [];
   const client = await connect(profile, agents[0]);
   let sessionId;
-  try {
+  await use(client, async () => {
     ({ sessionId } = await client.request("new", setup));
     record(client, `${profile.name}:new`, "request", { sessionId });
     await catalog(client, sessionId, profile.version);
@@ -288,9 +330,7 @@ async function exercise(profile) {
       );
       history.push({ role: "user", content }, ...replies);
     }
-  } finally {
-    client.close();
-  }
+  });
   stage = `${profile.name}:restore`;
   await restore(profile, agents[0], sessionId, history);
   stage = `${profile.name}:isolation`;
@@ -311,7 +351,7 @@ async function exercise(profile) {
   if (profile.http) return;
   stage = `${profile.name}:ordinary-run`;
   const ordinary = await connect(profile, agents[0]);
-  try {
+  await use(ordinary, async () => {
     await ordinary.request("resume", { ...setup, sessionId });
     record(ordinary, `${profile.name}:ordinary-resume`);
     await catalog(ordinary, sessionId, profile.version);
@@ -328,12 +368,13 @@ async function exercise(profile) {
     );
     assertOrdinaryTool(ordinary.updates, profile.version, phase);
     record(ordinary, `${profile.name}:ordinary-run`, "ordinary", { phase });
-  } finally {
-    ordinary.close();
-  }
+  });
 }
 
 async function main() {
+  assert(directory, "command evidence directory required");
+  shellStoragePreflight(directory);
+  shellStoragePreflight(process.env.ANTNEST_COMMAND_RUNTIME_CHECKPOINT_DIR);
   assert(process.env.TEST_RUNTIME_IMAGE, "test Runtime image required");
   await login(admin, "stage3-admin@example.com", "stage3-admin-password");
   const user = await api("/api/admin/directory/users", {
@@ -355,7 +396,7 @@ async function main() {
     "commands-stranger-password",
   );
   const template = await seedCommands(api, process.env.TEST_RUNTIME_IMAGE);
-  await withAgentCleanup(agents, api, async () => {
+  const runtimeInspection = await withAgentCleanup(agents, api, async () => {
     for (const name of ["Commands", "Other agent"]) {
       const created = await api(
         "/api/admin/agents",
@@ -377,16 +418,21 @@ async function main() {
       { name: "v1-http", version: 1, http: true },
     ]) {
       const foreign = await connect(profile, agents[0], stranger);
-      try {
+      await use(foreign, async () => {
         await assertAgentDenied(foreign);
         record(foreign, `${profile.name}:foreign-user`, "request", {
           rejection: "access_denied",
         });
-      } finally {
-        foreign.close();
-      }
+      });
       await exercise(profile);
     }
+    stage = "runtime-inspection";
+    assert.equal(
+      clients.size,
+      0,
+      "join all command connections before Runtime inspection",
+    );
+    return requestCommandRuntimeInspection(agents);
   });
   stage = "trace-verification";
   const requests = await modelStatus();
@@ -403,23 +449,40 @@ async function main() {
   assert.equal(traces.filter((trace) => trace.kind === "command").length, 6);
   assert.equal(traces.filter((trace) => trace.kind === "request").length, 32);
   assert.equal(traces.filter((trace) => trace.kind === "ordinary").length, 2);
-  const secrets = [
-    marker,
-    "acp-closeout-model",
-    ...admin.cookies.values(),
-    ...member.cookies.values(),
-    ...stranger.cookies.values(),
-  ];
+  assert.equal(
+    clients.size,
+    0,
+    "all original connections must be joined before collection",
+  );
+  for (const [profile, count] of [
+    ["v1-ws", 14],
+    ["v2-ws", 14],
+    ["v1-http", 12],
+  ])
+    assert.equal(
+      traces.filter((item) => item.label.startsWith(profile + ":")).length,
+      count,
+    );
+  writeEvidenceFile(
+    directory,
+    "model-requests.private.json",
+    JSON.stringify(requests) + "\n",
+  );
+  writeEvidenceFile(
+    directory,
+    "request-inventory.private.json",
+    JSON.stringify(traces) + "\n",
+  );
   const checked = [];
   for (const expected of traces) {
     stage = `trace:${expected.label}`;
     checked.push(
-      await collectCommandTrace(
-        "http://jaeger:16686",
-        expected,
+      await collectPrivateCommandTrace("http://jaeger:16686", expected, {
+        directory,
+        flush: () => telemetry.flush(),
         secrets,
-        expected.kind === "ordinary" ? requests : [],
-      ),
+        requests,
+      }),
     );
   }
   assert.equal(new Set(checked.map((trace) => trace.trace_id)).size, 40);
@@ -432,23 +495,26 @@ async function main() {
     new Set(checked.map((trace) => trace.run_id).filter(Boolean)).size,
     8,
   );
-  const { accepted, ...strict } = commandStrictOutcome(checked);
+  const { exit_code: exitCode, ...strict } =
+    privateCommandStrictOutcome(checked);
   console.log(
     asciiJSON({
       status: "business_passed",
       ...strict,
+      scenarios: outcomes.length,
       outcomes,
       model_requests: requests.length,
+      runtime_inspection: runtimeInspection,
       cross_user_rejections: 3,
       traces: checked.filter((trace) => trace.kind !== "ordinary"),
       normal_traces: normal,
     }),
   );
-  if (!accepted) process.exitCode = 1;
+  process.exitCode = exitCode;
 }
 
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, main);
 } catch (error) {
   console.error(
     asciiJSON({

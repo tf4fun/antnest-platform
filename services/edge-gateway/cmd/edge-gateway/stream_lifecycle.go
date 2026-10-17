@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-
-	"github.com/gorilla/websocket"
 )
 
 // Count all handlers through telemetry completion; cancel only receive streams.
@@ -54,11 +52,9 @@ func (lifecycle *streamLifecycle) ServeHTTP(response http.ResponseWriter, reques
 			<-cancelled
 		}
 	}()
-	if !websocket.IsWebSocketUpgrade(request) {
-		writer, finish := cancelHTTPStreamWrites(ctx, response, lifecycle.logger)
-		defer finish()
-		response = writer
-	}
+	writer, finish := cancelHTTPStreamWrites(ctx, response, lifecycle.logger)
+	defer finish()
+	response = writer
 	lifecycle.next.ServeHTTP(response, request.WithContext(ctx))
 }
 
@@ -94,9 +90,6 @@ func (lifecycle *streamLifecycle) wait(ctx context.Context) error {
 }
 
 func managedStream(request *http.Request) bool {
-	if websocket.IsWebSocketUpgrade(request) {
-		return true
-	}
 	if request.Method != http.MethodGet {
 		return false
 	}
@@ -117,12 +110,5 @@ func managedStream(request *http.Request) bool {
 		return false
 	}
 	receivePath := strings.Join(parts[4:], "/")
-	switch parts[1] {
-	case "app":
-		return receivePath == "state/watch" || receivePath == "v1/acp" || receivePath == "acp"
-	case "admin":
-		return receivePath == "events/watch"
-	default:
-		return false
-	}
+	return parts[1] == "admin" && receivePath == "events/watch"
 }

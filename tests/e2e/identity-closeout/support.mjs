@@ -101,6 +101,18 @@ export class GatewayClient {
         ...transportFailure(error),
       });
     }
+    // Explicit private evidence collection observes the complete decoded body
+    // before status admission. It gets no headers and cannot change the response
+    // or replace the original HTTP assertion if recording itself fails.
+    try {
+      await options.onResponse?.({
+        status: response.status,
+        traceID: response.headers.get("x-antnest-trace-id"),
+        text,
+      });
+    } catch {
+      // Observers own evidence failures; HTTP status admission stays authoritative.
+    }
     // Deliberately exclude response bodies and request headers from failures.
     try {
       if (Array.isArray(status))
@@ -134,7 +146,7 @@ export class GatewayClient {
       if (value) this.cookies.set(name, value);
       else this.cookies.delete(name);
     }
-    let parsed = null;
+    let parsed;
     try {
       parsed = responseType === "text" ? text : text ? JSON.parse(text) : null;
     } catch {

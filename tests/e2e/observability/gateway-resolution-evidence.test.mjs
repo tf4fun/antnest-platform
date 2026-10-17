@@ -33,6 +33,191 @@ function fixture(t) {
   };
 }
 
+function independentSeed(f) {
+  const traceID = "d".repeat(32);
+  const root = f.trace.spans.find(
+    (span) =>
+      !(span.references ?? []).some((ref) => ref.refType === "CHILD_OF"),
+  );
+  const seed = {
+    traceID,
+    processes: structuredClone(f.trace.processes),
+    spans: [{ ...structuredClone(root), traceID, references: [] }],
+  };
+  f.traces.set(traceID, seed);
+  return seed;
+}
+
+for (const withException of [false, true])
+  test(`independent cancellation retains its actual error classification (exception=${withException})`, async (t) => {
+    const f = fixture(t),
+      seed = independentSeed(f);
+    seed.spans[0].tags.push({
+      key: "antnest.outcome",
+      type: "string",
+      value: "cancelled",
+    });
+    if (withException)
+      seed.spans[0].tags.push({
+        key: "exception.type",
+        type: "string",
+        value: "TypeError",
+      });
+    const [result] = await collectResolveTraceEvidence(
+      "http://jaeger",
+      [{ traceID: f.trace.traceID, relatedTraceIDs: [seed.traceID] }],
+      [],
+      {
+        ...f,
+        inspect: () => ({ strict_trace: "passed" }),
+      },
+    );
+    assert.equal(result.error_spans, withException ? 1 : 0);
+    assert.equal(result.strict_trace, withException ? "failed" : "passed");
+    assert(result.source_trace_ids.includes(seed.traceID));
+  });
+
+for (const [label, diagnostic] of [
+  [
+    "numeric OTel ERROR",
+    { tag: { key: "otel.status_code", type: "int64", value: 2 } },
+  ],
+  [
+    "exception type",
+    { tag: { key: "exception.type", type: "string", value: "TypeError" } },
+  ],
+  [
+    "exception event",
+    { event: { key: "event", type: "string", value: "exception" } },
+  ],
+])
+  test(`independent seed ${label} remains a strict raw failure`, async (t) => {
+    const f = fixture(t),
+      seed = independentSeed(f);
+    if (diagnostic.tag) seed.spans[0].tags.push(diagnostic.tag);
+    else
+      (seed.spans[0].logs ??= []).push({
+        timestamp: seed.spans[0].startTime + 1,
+        fields: [diagnostic.event],
+      });
+    const [result] = await collectResolveTraceEvidence(
+      "http://jaeger",
+      [{ traceID: f.trace.traceID, relatedTraceIDs: [seed.traceID] }],
+      [],
+      {
+        ...f,
+        inspect: () => ({ strict_trace: "passed" }),
+      },
+    );
+    assert.equal(result.error_spans, 1);
+    assert.equal(result.strict_trace, "failed");
+  });
+
+test("independent mutation seeds participate in the same complete three-snapshot closure", async (t) => {
+  const f = fixture(t),
+    seed = independentSeed(f);
+  let queried = 0;
+  const request = async (url, options) => {
+    if (new URL(url).pathname.endsWith(seed.traceID)) {
+      queried++;
+      if (queried >= 2) seed.warnings = ["late independent mutation warning"];
+    }
+    return f.request(url, options);
+  };
+  const [result] = await collectResolveTraceEvidence(
+    "http://jaeger",
+    [{ traceID: f.trace.traceID, relatedTraceIDs: [seed.traceID] }],
+    [],
+    {
+      ...f,
+      request,
+      attempts: 4,
+      inspect: (trace, _expected, _secrets, collection) => {
+        assert(collection.archivedTraceIDs.has(seed.traceID));
+        assert(collection.traces.has(seed.traceID));
+        assert(
+          trace.spans.every(
+            (span) =>
+              !(span.references ?? []).some(
+                (ref) => ref.traceID === seed.traceID,
+              ),
+          ),
+          "independent seed must not invent a parent or Link",
+        );
+        return { strict_trace: "passed" };
+      },
+    },
+  );
+  assert.equal(queried, 4);
+  assert.equal(result.strict_trace, "failed");
+  assert.deepEqual(result.warnings, ["late independent mutation warning"]);
+  assert(result.source_trace_ids.includes(seed.traceID));
+});
+
+test("a missing explicit related trace cannot become a complete closure", async (t) => {
+  const f = fixture(t),
+    seed = independentSeed(f);
+  await assert.rejects(
+    collectResolveTraceEvidence(
+      "http://jaeger",
+      [{ traceID: f.trace.traceID, relatedTraceIDs: [seed.traceID] }],
+      [],
+      {
+        ...f,
+        request: (url, options) =>
+          new URL(url).pathname.endsWith(seed.traceID)
+            ? Promise.resolve(Response.json({ data: [] }, { status: 404 }))
+            : f.request(url, options),
+        inspect: () => ({ strict_trace: "passed" }),
+      },
+    ),
+  );
+});
+
+test("explicit related trace content is checked for secrets before owning inspection", async (t) => {
+  const f = fixture(t),
+    seed = independentSeed(f);
+  seed.warnings = ["private-mutation-canary"];
+  let inspected = 0;
+  await assert.rejects(
+    collectResolveTraceEvidence(
+      "http://jaeger",
+      [{ traceID: f.trace.traceID, relatedTraceIDs: [seed.traceID] }],
+      ["private-mutation-canary"],
+      {
+        ...f,
+        inspect: () => {
+          inspected++;
+          return { strict_trace: "passed" };
+        },
+      },
+    ),
+  );
+  assert.equal(inspected, 0);
+});
+
+for (const relatedTraceIDs of [
+  null,
+  "invalid",
+  ["secret-invalid-id"],
+  ["d".repeat(32), "d".repeat(32)],
+])
+  test(`invalid explicit seed inventory is rejected before network: ${JSON.stringify(relatedTraceIDs)}`, async (t) => {
+    const f = fixture(t);
+    await assert.rejects(
+      collectResolveTraceEvidence(
+        "http://jaeger",
+        [{ traceID: f.trace.traceID, relatedTraceIDs }],
+        [],
+        {
+          ...f,
+          inspect: () => ({ strict_trace: "passed" }),
+        },
+      ),
+    );
+    assert.deepEqual(f.requests, []);
+  });
+
 for (const inspectorStrict of ["passed", "failed"])
   for (const sourceWarning of [false, true])
     test(`shared collector preserves ${inspectorStrict} business evidence with source warning=${sourceWarning}`, async (t) => {

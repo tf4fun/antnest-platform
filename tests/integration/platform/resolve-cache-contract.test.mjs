@@ -13,12 +13,199 @@ const gateway = contract("edge-gateway/session-contract.json");
 const identity = contract("identity/identity-contract.json");
 const policy = () => contract("edge-gateway/resolve-cache-policy.json");
 
+test("outage ACP clock uses its own complete control probe and unchanged old process", () => {
+  const value = policy().admission.outage_owner_close.pre_restart_acp_clock;
+  assert(value, "outage must independently calibrate the old ACP process");
+  assert.deepEqual(value.probe, {
+    method: "GET",
+    route: "/status",
+    listener: "control",
+    status: 200,
+    complete_ready_body: true,
+    timing: "runner-monotonic-send-through-complete-response",
+    before_actual_restart: true,
+  });
+  assert.deepEqual(value.process_binding, [
+    "container-id",
+    "unchanged-started-at",
+    "host-name",
+    "process-pid",
+    "service-instance-id",
+  ]);
+  assert.equal(value.coarse_anchor, "verified-complete-same-generation-http");
+  assert.equal(
+    value.pairing,
+    "unique-candidate-intersecting-coarse-probe-window",
+  );
+  assert.equal(value.clock, "intersect-all-independent-same-process-bounds");
+});
+
+test("outage ACP clock requires stable complete raw inventory without relaxing closure", () => {
+  const value = policy().admission.outage_owner_close.pre_restart_acp_clock;
+  assert(value, "outage clock needs an explicit fail-closed evidence contract");
+  assert.deepEqual(value.inventory, {
+    service: "agent-acp-service",
+    operation: "HTTP GET /status",
+    fixed_query_window: true,
+    search_limit: 500,
+    reject_saturation_and_unread_pages: true,
+    stable_complete_rounds: 3,
+    raw_archive: "bidirectional-inventory-and-exact-snapshot-equality",
+    retain_all_candidates_and_exclusions: true,
+  });
+  assert.equal(value.missing_ambiguous_or_foreign_evidence, "reject");
+  assert.equal(value.nearest_timestamp_or_synthetic_parent, false);
+  assert.equal(value.entire_closure_interval_inside_observed_lifecycle, true);
+  assert.equal(value.preserve_original_diagnostics, true);
+});
+
+test("current cache completion joins full HTTP load and actual Bridge Runtime admission", () => {
+  const value = policy().admission.suite_completion;
+  assert(value, "policy 4 needs an explicit whole-suite completion contract");
+  assert.equal(value.policy_revision, 4);
+  assert.deepEqual(value.load, {
+    transport: "http",
+    requires_full_load_admission: true,
+    requires_owner_restored: true,
+  });
+  assert.deepEqual(value.outage, {
+    transport: "http-sse",
+    bind_business_to: "cancellation.business",
+    requires_same_run_and_runtime: true,
+    requires_runtime_quiescent_before_restart: true,
+    requires_pre_restart_acp_clock: true,
+    requires_all_owning_gates: [
+      "authority",
+      "http_rejections",
+      "recovery_runs",
+      "recovery_authority",
+      "recovery_http",
+      "feed",
+      "stream",
+      "cancellation",
+    ],
+  });
+});
+
+test("current cache completion retains recovery bindings and complete raw ownership", () => {
+  const value = policy().admission.suite_completion;
+  assert(value, "suite completion must bind independent owning reports");
+  assert.deepEqual(value.recovery, {
+    cases: ["logout", "password", "role", "deactivate"],
+    bind_business_to: "recovery_runs.business",
+    bind_runs_to: "recovery_runs.runs",
+    remote_sse_close_max_ms: 30000,
+  });
+  assert.deepEqual(value.raw_evidence, {
+    trace_inventory: "complete-unique-archived-closure",
+    error_claims: "exact-union-of-owning-gate-claims",
+    preserve_original_strict_result: true,
+  });
+});
+
+test("current cache completion requires cleanup and rejects partial or mixed revisions", () => {
+  const value = policy().admission.suite_completion;
+  assert(value, "suite completion needs fail-closed finalization");
+  assert.equal(value.cleanup, "verified");
+  assert.equal(value.unknown_or_mixed_revision, "reject");
+  assert.equal(value.policy_3, "historical-only");
+  assert.equal(value.missing_pending_or_failed_evidence, "reject");
+});
+
+test("Runtime outage cancellation binds the actual single model and original held bash", () => {
+  const value = policy().admission.outage_runtime_cancellation;
+  assert(value, "held Runtime cancellation needs its own evidence contract");
+  assert.equal(value.phase, "c4-cache-runtime-outage");
+  assert.deepEqual(value.model, { requests: 1, stage: "tool", outcome: "ok" });
+  assert.deepEqual(value.tool, { calls: 1, name: "bash", source: "runtime" });
+  assert.deepEqual(value.binding, [
+    "actual-prompt-and-cancel-http",
+    "same-organization-user-agent-session-run",
+    "same-runtime-execution-generation-image-and-process-group",
+    "original-run-storage-and-terminal-audit",
+  ]);
+  assert.deepEqual(value.terminal, {
+    state: "unresolved",
+    executor: "quiescent",
+    effects: "unknown",
+    source: "runtime_mcp",
+    error_class: "cancelled_tool_outcome_unknown",
+  });
+  assert.equal(value.model_disconnect_is_runtime_cancellation, false);
+});
+
+test("Runtime outage cancellation owns exact errors and neutral transport receipts separately", () => {
+  const value = policy().admission.outage_runtime_cancellation?.diagnostics;
+  assert(value, "Runtime cancellation diagnostics must be explicit");
+  assert.deepEqual(value.error_spans, [
+    "agent.run",
+    "mcp.tools.call",
+    "runtime.mcp.operation",
+    "runtime.mcp.tool",
+    "runtime.executor",
+  ]);
+  assert.deepEqual(value.non_error_spans, [
+    "acp-http-client-abort",
+    "runtime-tools-call-http-disconnect",
+  ]);
+  assert.equal(value.require_exact_tags_events_and_causes, true);
+  assert.equal(value.duplicate_or_additional_diagnostics_allowed, false);
+  assert.equal(value.response_bytes, "positive-and-equal-on-both-ends");
+  assert.equal(value.claims, "exact-original-trace-and-span-identifiers");
+  assert.equal(value.preserve_raw_errors_warnings_and_strict_verdict, true);
+  assert.equal(value.initialize_read_exception_reused, false);
+});
+
+test("Runtime outage cancellation proves timing without extending Node quantization deferral", () => {
+  const value = policy().admission.outage_runtime_cancellation?.timing;
+  assert(value, "Runtime cancellation timing must have owning evidence");
+  assert.equal(value.cancel_span, "same-process-internal-acp-session-cancel");
+  assert.equal(value.terminal_sql_joined_run, true);
+  assert.equal(
+    value.runtime_event_precision,
+    "jaeger-microsecond-half-open-representation-intervals",
+  );
+  assert.deepEqual(value.acp_order, [
+    "same-process-model-end-before-tool-start",
+    "cancel-rpc-start-before-tool-end",
+    "tool-end-before-terminal-sql-start",
+    "terminal-sql-end-joined-before-run-end",
+    "run-and-terminal-sql-end-before-cancel-rpc-end",
+  ]);
+  assert.equal(
+    value.runtime_tree,
+    "same-process-server-operation-tool-executor",
+  );
+  assert.equal(
+    value.runtime_clock,
+    "completed-same-runtime-rpc-request-response-intervals",
+  );
+  assert.deepEqual(value.clock_samples, {
+    before_and_after_cancellation: true,
+    anchor: "runtime-server-start-within-acp-client-send-to-complete-eof",
+    successful_protocol_and_equal_positive_bytes: true,
+    client_cancellation_or_errors_allowed: false,
+    all_eligible_samples_required: true,
+    empty_intersection_allowed: false,
+    cancelled_tool_as_anchor_allowed: false,
+  });
+  assert.equal(
+    value.teardown,
+    "calibrated-cancel-window-and-actual-process-group-quiescence",
+  );
+  assert.equal(value.raw_cross_service_end_comparison, false);
+  assert.equal(value.runtime_end_interval, "entire-interval-inside-cancel-rpc");
+  assert.equal(value.blanket_clock_skew_or_end_tolerance, false);
+  assert.equal(value.node_sub_ms_deferral, "same-acp-integer-ms-anchor-only");
+});
+
 test("Gateway cache revision reuses the issued Identity wire contract", () => {
-  assert.equal(gateway.version, 23);
+  assert.equal(gateway.version, 24);
   assert.equal(gateway.identity_resolve_cache, "resolve-cache-policy.json");
   const value = policy();
   assert.equal(value.contract, "antnest.edge-gateway.resolve-cache");
-  assert.equal(value.revision, 3);
+  assert.equal(value.revision, 4);
+  assert.equal(value.gateway_session_revision, gateway.version);
   assert.equal(value.identity_revision, identity.revision);
   assert.equal(identity.revision, 18);
   assert.equal(
@@ -217,7 +404,17 @@ test("stream provenance separates real authority age, RPC duration and probe sch
   ]);
   assert.equal(streams.probe_start_updates_authority_age, false);
   assert.equal(streams.cache_age_is_rpc_duration, false);
-  assert.equal(streams.original_handshake_cct_hard_cap, true);
+  assert.equal(
+    Object.hasOwn(streams, "original_handshake_cct_hard_cap"),
+    false,
+  );
+  const bridge = contract("agent-ui/workspace-api.json");
+  assert.deepEqual(streams.workspace_sse, {
+    gateway_revalidation: "current-cct-and-original-sid-identities-roles",
+    gateway_absolute_deadline: "original-session-expiry",
+    delegation_owner: "agent-ui",
+    delegation_deadline: bridge.sse_delegation_deadline,
+  });
   assert.equal(streams.accepted_run_cancelled_by_revocation, false);
   assert.equal(
     gateway.session_lifecycle.stream_revalidation.feed_dependency,
@@ -246,7 +443,7 @@ test("only a periodic cache hit crossing its reuse deadline permits one bounded 
       "all-resolve-trace-decisions",
     ],
     expired_result_admitted: false,
-    initial_or_message_retry: false,
+    initial_or_request_retry: false,
   });
   assert.equal(
     gateway.session_lifecycle.stream_revalidation.expired_hit_recheck,
@@ -301,12 +498,282 @@ test("outage and load admission have exact scope, deadlines and actual RPC count
     "cold-agent",
     "expired-cache-or-authority",
   ]);
-  assert.equal(admission.load_messages, 100);
+  assert.equal(admission.load_calls, 100);
   assert.equal(admission.load_window_max_ms, 8000);
   assert.equal(admission.load_actual_resolve_calls_max, 3);
-  assert.equal(admission.load_count_includes_handshake_and_refresh, true);
+  assert.equal(admission.load_count_includes_initialization_and_refresh, true);
   assert.equal(admission.load_count_excludes_feed_activity_and_jwks, true);
   assert.equal(admission.raw_evidence_required, true);
+});
+
+test("Bridge load measures cold sequential HTTP responses using the owning session DTO", () => {
+  const { admission, configuration } = policy();
+  const bridge = contract("agent-ui/workspace-api.json");
+  const route = bridge.routes.sessions;
+  const schema = contract("agent-ui/workspace-api.schema.json");
+  assert.deepEqual(admission.load_request, {
+    method: route.method,
+    path: bridge.base_path + route.path,
+    profile: "workspace",
+    response_contract: "../agent-ui/workspace-api.json",
+    response: route.response,
+  });
+  assert.equal(admission.load_request.method, "GET");
+  assert.equal(admission.load_request.response, "sessionPage");
+  assert.deepEqual(schema.$defs.sessionPage.required, ["items", "nextCursor"]);
+  assert.deepEqual(schema.$defs.sessionSummary.required, [
+    "sessionId",
+    "title",
+    "updatedAt",
+    "activeOperationId",
+  ]);
+  assert.deepEqual(admission.load_measurement, {
+    order: "sequential",
+    scope: "same-token-profile-and-agent",
+    initial_scope: "cold",
+    owner_prewarmed: false,
+    activity_during_window: false,
+    clock: "client-monotonic",
+    start: "before-first-http-request",
+    end: "after-final-complete-response-body",
+    initialization: "first-http-request-includes-real-bridge-acp-initialize",
+    initialization_is_extra_public_request: false,
+    ttl_ms: configuration.ttl.default_ms,
+    final_request_after_half_ttl: true,
+    final_request_refresh_required: true,
+  });
+  assert.equal(admission.load_measurement.ttl_ms, 10000);
+});
+
+test("Bridge load retains actual RPC attempts and the complete refresh source closure", () => {
+  const { admission } = policy();
+  assert.deepEqual(admission.load_resolve_count, {
+    independent_counters: [
+      "gateway-resolve-client-attempts",
+      "identity-resolve-server-calls",
+    ],
+    includes: [
+      "initialization",
+      "foreground",
+      "background-refresh",
+      "failed-attempts",
+    ],
+    refresh_completion_after_http_window_counted: true,
+    cache_hit_metric_is_rpc_count: false,
+  });
+  assert.deepEqual(admission.load_trace, {
+    requests: "each-actual-http-trace-id",
+    upstream: "gateway-client-to-agent-ui-server",
+    profile: "workspace",
+    business_receipt: "actual-acp-session-list",
+    include_first_initialize: true,
+    source_search: "independent-client-and-server-inventories",
+    closure_stable_rounds: 3,
+    reject_saturated_search: true,
+    include_late_refresh: true,
+    owner_close_required: true,
+    preserve_raw_strict_diagnostics: true,
+  });
+});
+
+test("Bridge load drains only its original UI after all responses and restores it before outage", () => {
+  assert.deepEqual(policy().admission.load_owner_lifecycle, {
+    baseline: "selected-image-and-container-process-before-first-request",
+    after: "all-100-complete-http-responses",
+    measured_window_ends_before_drain: true,
+    stopped_service: "agent-ui",
+    stop_deadline_ms: 30000,
+    require_exit_zero: true,
+    require_complete_stdout_stderr: true,
+    reject_forced_or_failed_cleanup: true,
+    collection: "after-clean-stop-before-restoration",
+    restore: {
+      target: "same-agent-ui-container",
+      image_and_configuration: "unchanged",
+      deadline_ms: 30000,
+      readiness: "healthy",
+      before: "outage-scenario",
+      on_collection_failure: true,
+    },
+    other_participants: "same-container-image-configuration-and-process",
+    exit_is_protocol_cleanup_receipt: false,
+  });
+});
+
+test("Bridge load archives the exact owner close root and real DELETE receipt", () => {
+  assert.deepEqual(policy().admission.load_owner_close, {
+    count: 1,
+    service: "agent-ui",
+    operation: "agent_ui.acp.close",
+    kind: "internal",
+    synchronous_parent: "none",
+    trigger: "requested",
+    outcome: "closed",
+    link: "exact-first-initialization-agent-ui-http-span",
+    delete: {
+      count: 1,
+      service: "agent-acp-service",
+      method: "DELETE",
+      route: "/v1/acp",
+      kind: "server",
+      parent: "owner-close-root",
+      status: 202,
+      complete_response_required: true,
+      synthetic_client_span_allowed: false,
+    },
+    independent_searches: ["agent-ui-close-roots", "acp-delete-servers"],
+    source_archive_and_stability:
+      "same-three-round-closure-as-http-and-refresh",
+    private_streams: {
+      require_complete: true,
+      normal_error_ownership: "exact-stream-scope-and-owner-close-lifecycle",
+      clock_correlation: "same-service-clock-and-actual-stop-interval",
+      enumerate_all_receipts: true,
+      fixed_stream_count: false,
+      watch_may_finish_before_close_root: true,
+      reject_early_eof_and_unclassified_errors: true,
+      preserve_original_strict_errors: true,
+    },
+  });
+});
+
+test("Bridge outage inventories actual owners and every reused-owner stream", () => {
+  const close = policy().admission.outage_owner_close;
+  assert(close, "outage owner cleanup needs its own admission contract");
+  assert.equal(
+    close.owners,
+    "actual-acp-initializations-and-initializing-http-origins",
+  );
+  assert.equal(close.link, "exact-first-initialization-agent-ui-http-span");
+  assert.equal(close.fixed_owner_count, false);
+  assert.deepEqual(close.independent_searches, [
+    "agent-ui-close-roots",
+    "acp-delete-servers",
+  ]);
+  assert.equal(
+    close.source_archive_and_stability,
+    "same-three-round-closure-as-http-and-refresh",
+  );
+  assert.equal(
+    close.private_streams,
+    "all-actual-get-and-execution-state-watch-receipts",
+  );
+  assert.equal(close.later_receipts_under_reused_owner, true);
+  assert.equal(close.normal_close, "load-owner-close-complete-delete-202");
+  assert.equal(close.no_target_is_admission, false);
+});
+
+test("Bridge outage shutdown failure requires an attempted and fully joined cleanup", () => {
+  assert.deepEqual(policy().admission.outage_owner_close?.failed_shutdown, {
+    trigger: "transport_failure",
+    outcome: "failed",
+    witness:
+      "same-owner-process-shutdown-watch-and-normal-old-acp-process-exit",
+    clock_correlation: "same-service-clock-and-observed-lifecycle",
+    receipt: {
+      target_observed: true,
+      delete_attempts: 1,
+      delete_responses: 0,
+      delete_completed: 0,
+      delete_status: 0,
+      pending_requests: 0,
+      stream_joined: true,
+      failures: 1,
+      diagnostics_truncated: false,
+    },
+    failure_event: {
+      count: 1,
+      stage: "delete_request",
+      supported_leaf_causes: [
+        "connection_refused",
+        "connection_reset",
+        "broken_pipe",
+        "socket_closed",
+      ],
+      leaf_count: 1,
+      leading_unknown_wrapper_max: 1,
+      unknown_only_allowed: false,
+      other_causes_allowed: false,
+      truncated: false,
+    },
+    delete_server_count: 0,
+    retain_error_and_drain_warning: true,
+    shutdown_acknowledgement_added: false,
+  });
+  assert.equal(policy().admission.load_owner_close.outcome, "closed");
+  assert.equal(policy().admission.load_owner_close.delete.status, 202);
+});
+
+test("Bridge outage terminal revalidation rejection requires the real committed revocation", () => {
+  assert.deepEqual(policy().admission.outage_terminal_rejection, {
+    initial_resolution: "admitted",
+    source: "rpc",
+    terminal: true,
+    mutation: "complete-recovery-http-admission-for-this-mutation",
+    credential: "actual-stream-dispatch-and-mutation-observations",
+    principal: ["organization_id", "user_id", "membership_id"],
+    identity_process: ["service.instance.id", "host.name", "process.pid"],
+    identity_order: "committed-mutation-before-zero-row-original-token-select",
+    gateway_window: "http-date-and-observed-mutation-to-remote-closure",
+    error_claims: [
+      "rejected-resolve-decision",
+      "resolve-client-401",
+      "identity-unauthenticated-server",
+    ],
+    unrelated_errors_allowed: false,
+    shared_or_unavailable_admitted_by_this_rule: false,
+    preserve_original_strict_errors: true,
+  });
+});
+
+test("Bridge outage cancels the same held Runtime work while Identity remains stopped", () => {
+  const { admission } = policy();
+  const bridge = contract("agent-ui/workspace-api.json");
+  assert.deepEqual(admission.outage_bridge, {
+    output: bridge.base_path + bridge.routes.events.path,
+    cancel_method: bridge.routes.cancel.method,
+    cancel_path: bridge.base_path + bridge.routes.cancel.path,
+    target: [
+      "organization",
+      "user",
+      "agent",
+      "session",
+      "run",
+      "runtime-instance",
+      "actual-runtime-work",
+    ],
+    work: "held-until-correlated-cancellation",
+    output_required: "new-real-output-during-identity-outage",
+    completion:
+      "same-run-terminal-and-runtime-quiescent-before-identity-restart",
+    local_abort_is_remote_close: false,
+    natural_completion_is_cancel: false,
+    preserve_cold_scope_deadline_and_recovery_checks: true,
+  });
+});
+
+test("retired WSS measurements remain historical and cannot admit the current Bridge", () => {
+  const value = policy();
+  const retirement = contract(
+    "edge-gateway/workspace-entry-retirement-policy.json",
+  );
+  assert.deepEqual(value.historical_measurement, {
+    revision: retirement.wire_baseline.resolve_cache_revision,
+    transport: "gateway-direct-acp-websocket",
+    load_messages: 100,
+    load_count_includes_handshake_and_refresh: true,
+    original_handshake_cct_hard_cap: true,
+    decision_parent: "current-http-or-acp-message-root",
+    semantics: "resolve-cache.md#historical-direct-acp-measurement",
+    admits_current_bridge: false,
+  });
+  assert.equal(value.historical_measurement.revision, 3);
+  assert(value.revision > value.historical_measurement.revision);
+  assert.equal(Object.hasOwn(value.admission, "load_messages"), false);
+  assert.equal(
+    Object.hasOwn(value.admission, "load_count_includes_handshake_and_refresh"),
+    false,
+  );
 });
 
 test("cache trace evidence cannot excuse a missing Gateway parent or unrelated SQL", () => {
@@ -314,7 +781,7 @@ test("cache trace evidence cannot excuse a missing Gateway parent or unrelated S
   assert(diagnostics, "resolution provenance must be a shared trace contract");
   assert.equal(diagnostics.decision_span, "gateway.identity.resolve");
   assert.deepEqual(diagnostics.sources, ["rpc", "cache", "shared"]);
-  assert.equal(diagnostics.parent, "current-http-or-acp-message-root");
+  assert.equal(diagnostics.parent, "current-http-request-root");
   assert.equal(diagnostics.preserve_actual_rpc_parent, true);
   assert.deepEqual(diagnostics.cache_required_facts, [
     "profile",

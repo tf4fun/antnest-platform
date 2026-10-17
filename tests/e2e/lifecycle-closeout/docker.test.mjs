@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   composeArgs,
   dockerClient,
@@ -264,3 +272,110 @@ test("a Docker call can run with its own environment under the client deadline",
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("explicit log collection preserves both streams without truncating early shutdown warnings", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "docker-client-log-"));
+  try {
+    writeFileSync(
+      join(directory, "stderr.txt"),
+      "Bridge drain did not close cleanly\n" + "x".repeat(70000),
+    );
+    writeFileSync(
+      join(directory, "docker"),
+      '#!/bin/sh\necho "Agent UI Bridge listening"\ncat "$LOG_FIXTURE" >&2\n',
+      { mode: 0o700 },
+    );
+    const docker = dockerClient(
+      {
+        PATH: `${directory}:${process.env.PATH}`,
+        LOG_FIXTURE: join(directory, "stderr.txt"),
+      },
+      undefined,
+      60000,
+    );
+    assert.equal(await docker(["logs", "owned"]), "Agent UI Bridge listening");
+    const logs = await docker(["logs", "owned"], false, {
+      captureStderr: true,
+    });
+    assert(logs.includes("Agent UI Bridge listening"));
+    assert(logs.includes("Bridge drain did not close cleanly"));
+    assert(logs.endsWith("x".repeat(70000)));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+for (const mode of ["abort", "deadline"])
+  test(`a Docker operation ${mode} terminates and joins its actual subprocess group`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), "docker-operation-"));
+    const receipt = join(directory, "pids.json");
+    let pids;
+    let work;
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        if (error.code === "ESRCH") return false;
+        throw error;
+      }
+    };
+    try {
+      writeFileSync(
+        join(directory, "docker"),
+        `#!${process.execPath}
+const { spawn } = require("node:child_process");
+if (process.argv[2] === "quick") process.stdout.write("ready");
+else {
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { stdio: "inherit" });
+  child.once("spawn", () => require("node:fs").writeFileSync(process.env.PID_RECEIPT, JSON.stringify([process.pid, child.pid])));
+  setTimeout(() => {}, 5000);
+}
+`,
+        { mode: 0o700 },
+      );
+      const docker = dockerClient(
+        {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          PID_RECEIPT: receipt,
+        },
+        undefined,
+        10000,
+      );
+      const operation = new AbortController();
+      work = docker(["sample"], false, {
+        signal: operation.signal,
+        timeoutMS: mode === "deadline" ? 2000 : 10000,
+      }).then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      const readyDeadline = Date.now() + 4000;
+      while (!existsSync(receipt)) {
+        assert(Date.now() < readyDeadline, "actual subprocess did not start");
+        await delay(10);
+      }
+      pids = JSON.parse(readFileSync(receipt, "utf8"));
+      assert(pids.every(alive));
+      if (mode === "abort") operation.abort(new Error("operation cancelled"));
+      const result = await work;
+      assert(result.error, "cancelled sampling was reported as success");
+      assert.match(result.error.message, /interrupted|timed out|cancelled/u);
+      const reapDeadline = Date.now() + 2000;
+      while (pids.some(alive) && Date.now() < reapDeadline) await delay(10);
+      assert.deepEqual(pids.map(alive), [false, false]);
+      assert.equal(await docker(["quick"]), "ready");
+    } finally {
+      if (!pids && existsSync(receipt))
+        pids = JSON.parse(readFileSync(receipt, "utf8"));
+      if (pids?.[0])
+        try {
+          process.kill(-pids[0], "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      await work;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });

@@ -4,13 +4,22 @@ Run `node tests/e2e/service-authentication/gateway/run.mjs` from the repository
 root. This owning-service acceptance builds the real Gateway image against
 authenticated dependency doubles, with distinct temporary CSPRNG token files
 and an Ed25519 test issuer. It covers login, session JSON privacy, server-owned
-CCT profiles and Agent scopes, forged headers, CSRF, discovery, ACP HTTP, SCIM,
+CCT profiles and Agent scopes, forged headers, CSRF, Bridge HTTP, SCIM,
 credential rotation, missing/replaced credentials and recovery. It also checks
 the revision 20 browser boundary: account projection, explicit non-cookie-writing
 activity, independent public session IDs/pagination, self revocation, wrong-password
 classification, password cookie/CSRF rotation with inherited absolute expiry,
 old-session rejection and the explicit logout matrix. Ordinary and upstream
 responses cannot overwrite session cookies.
+
+Gateway 24 retirement covers all ten old registrations, implicit HEAD and valid
+wire upgrades with both anonymous and live sessions. Requests return 404 without
+Cookie/credential leakage. Invalid outer Origin still returns 403. Authenticated
+private before/after counters prove no Identity or application request; only
+health, private fixture observation and the process-owned revocation feed are
+excluded. The fixture has no Controller/ACP listener, URL or outgoing credential.
+Bridge calls retain the workspace CCT audiences needed by Agent UI's downstream
+Controller/ACP calls and verify signed scope plus exact regenerated hints.
 
 The revision 22 password matrix exercises both real Gateway entry points with
 validated busy/rate failures and malformed status, body and Retry-After values.
@@ -60,11 +69,11 @@ The harness
 removes containers, its network and all generated credential files on exit;
 only private result evidence remains in `artifacts/verification/`.
 
-Go service tests cover real TLS/mTLS receiver identity checks, five HTTP receive
-paths, both WebSocket directions and socket cancellation. The separate
-`tests/e2e/edge-gateway/shutdown-docker.mjs` regression covers SIGTERM, restart
-and SIGINT with five active receives. Real Identity, Console, Agent UI and
-two-browser HTTPS session behavior has separate #58 integration evidence. The
-real Identity/Console/Agent UI linking workflow remains the explicit #61
-integration batch after the owning-service admissions; these dependency doubles
-do not complete that workflow.
+Go service tests cover real TLS/mTLS receiver identity checks, both retained SSE
+families, blocked HTTP writes and socket cancellation. The separate
+\`tests/e2e/edge-gateway/shutdown-docker.mjs\` regression covers SIGTERM, restart
+and SIGINT with five simultaneous receives across those two families. Its CCT
+is a framing fixture; this authentication suite uses an actual Ed25519 issuer.
+Neither double establishes the complete real Identity/Agent UI/ACP workflow,
+receiver grant retirement, Bridge load/outage or two-user Runtime cancellation.
+Those remain explicit #64 consumer and cross-service integration gates.

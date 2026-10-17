@@ -102,6 +102,25 @@ cannot restore data that was never captured or was truncated at the source.
 - Disabling export does not stop context propagation. The standard SDK exports
   asynchronously in batches, and export failures must not change business results.
 
+### Agent UI original stream delegation
+
+The Agent UI HTTP SERVER for an authenticated Workspace SSE records the original
+verified delegation once, before subscription setup. The fixed numeric fields
+`antnest.ui.stream.delegation_expires_at_unix_ms` and
+`antnest.ui.stream.delegation_remaining_ms` are respectively the verified CCT
+expiry in Unix milliseconds and that same expiry minus one local `Date.now()`
+sample. Both must be positive safe integers. They remain bound to that SERVER
+and its existing Gateway parent; later credentials and Resolve checks cannot
+renew the receipt. Ordinary requests, rejected authentication and completed
+HTTP boundaries do not receive it. Diagnostic failure does not alter HTTP/SSE
+behavior. No CCT, browser session identifier, token/hash or request-supplied
+diagnostic value is captured, regardless of payload-capture settings.
+
+Consumers use their original request-send monotonic time plus `remaining_ms`
+as a conservative delegation deadline. They must still prove the actual stream
+identity and the independent close cause; a deadline alone is not revocation or
+Identity outage evidence.
+
 ### ACP messages and asynchronous Runs
 
 The Gateway WebSocket message root span covers only admission and forwarding,
@@ -123,6 +142,110 @@ protocol behavior. An asynchronous child span that ends after its parent still
 expresses causality. Sub-millisecond cross-host clock inversions keep their raw
 warnings and are evaluated by their actual source; they are not removed by
 adjusting business waits or timestamps.
+
+### ACP WebSocket upgrade lifecycle
+
+The original HTTP SERVER retains three fixed, content-free events:
+`antnest.http.upgrade.response.prepared` when ws emits its final headers before
+writing 101; `antnest.http.upgrade.connection.setup.started` when its successful
+upgrade callback begins after ws has submitted 101; and
+`antnest.http.upgrade.connection.setup.completed` only after ACP connection setup
+and observation both succeed. These events have no attributes. Rejected
+handshakes have none, failed setup has no completed event, and disabled telemetry
+does not record them. They do not change response handling, parentage or span end.
+
+Submission to the socket does not prove peer receipt. The private CLIENT ends
+at its actual accepted `open`, whereas the SERVER ends after its setup callback
+returns. A real peer can therefore finish its HTTP handshake while server setup
+is still running. These events describe the same original span's phases; they
+are not cross-process clock calibration or an automatic warning exemption.
+Consumers must retain raw warnings and independently validate source identities,
+phase ordering and business completion. The Node sub-millisecond deferral keeps
+its existing strict bound.
+
+### ACP Runtime information read lifecycle
+
+The ACP adapter's `mcp.runtime.info.read` INTERNAL span owns the Runtime MCP
+connection, one resource read and its awaited cleanup. On that same span,
+`antnest.mcp.discovery.ready` is recorded only after the actual SDK connection
+has succeeded, including discovery validation. Next,
+`antnest.mcp.resource.read.started` is recorded immediately before invoking the
+resource read. Neither event has content attributes or proves that an HTTP
+request has reached the peer. A parsed SSE discovery response can make the
+connection ready while its HTTP response stream remains open; HTTP EOF must not
+be used as the prerequisite for resource dispatch.
+
+`antnest.mcp.resource.validated` follows successful SDK read and execution-fenced
+resource parsing. `antnest.mcp.connection.close.started` and `.completed` bracket
+the actual awaited close. Connection failure emits no ready, read or close
+receipt. Read failure retains ready/read-start and its original diagnostic,
+but no validated event. Close failure retains its own diagnostic and failed
+completion without replacing the original read result or error. Caller
+cancellation remains an independent fact on the actual path taken.
+
+Consumers must bind the original same-span sequence to the exact HTTP children,
+Runtime execution and service process. Preserve HTTP lifetimes, cancellation,
+errors and raw clock diagnostics. Historical traces without the readiness and
+dispatch receipts do not prove this sequence. The ACP producer gate admits
+these receipts; migration of shared read inspectors and Session, Run, catalog
+and stream consumers requires their own subsequent integration evidence.
+
+### ACP Runtime tool connection lifecycle
+
+The existing `mcp.tools.list` and `mcp.tools.call` INTERNAL spans own their
+respective Runtime connections. Lifecycle receipts belong only to the explicitly
+bound instrumented operation, its exact Runtime execution and fixed
+`antnest.mcp.method=tools/list|tools/call`. Direct adapter calls, disabled or
+no-op telemetry must not attach receipts to an unrelated active ancestor. Each
+operation claims its connection receipt once; resource-read receipts cannot be
+borrowed by tool operations.
+
+On that owning span, `antnest.mcp.discovery.ready` follows successful SDK
+connect. `antnest.mcp.tool.dispatch.started` immediately precedes the actual
+SDK list/call invocation. Discovery HTTP EOF is not a dispatch prerequisite:
+the SDK can validate discovery while its response stream remains open.
+Dispatch proves an invocation attempt, not arrival at the peer.
+`antnest.mcp.tool.result.parsed` follows the SDK adapter's parsed return, with
+fixed `outcome=success|tool_error`. The span's
+`antnest.mcp.tool_result.outcome` begins as `not_received` and records the same
+parsed outcome. A parsed `isError:true` response is still a tool failure;
+parsing does not prove application validation, successful effects or Runtime
+quiescence. Preserve the existing effect-state and stopping evidence.
+
+`antnest.mcp.connection.close.started` and `.completed` bracket the actual
+awaited close, with `antnest.mcp.connection.close.outcome=not_started|closed|failed`.
+Connection failure emits no ready, dispatch, parsed or close receipt. Failure
+after dispatch emits no parsed receipt; cancellation after connect but before
+dispatch retains ready and actual cleanup only. Close failures retain their
+diagnostic and failed completion without replacing the original result/error.
+`antnest.mcp.caller_cancelled` independently records the final caller signal;
+close-start also records its then-current value. No event includes tool
+arguments, returned content, credentials or error messages.
+
+Consumers must bind these original receipts to the actual operation's HTTP
+children, execution and process, retaining raw lifetimes, errors and clock
+diagnostics. Historical traces without their own tool receipts remain
+insufficient. ACP producer checks precede consumer migration and a new actual
+Session run; they do not establish the complete business workflow.
+
+Run consumers retain one complete raw Runtime inventory. The default inspector
+requires parsed tool results and an uncancelled caller for both list and call.
+An owning consumer may explicitly compose a separate `tools/call` inspector;
+`tools/list`, preparation reads and v1 completion refresh remain fixed. This is
+a code-level composition boundary, not a skip flag or filtered Trace supplied
+through expected data. Every original call must be inspected once, and its
+returned inventory must reference that exact owner and all actual direct
+CLIENT, SERVER and operation objects with the original execution and generation.
+Missing, duplicated, cloned or borrowed members and unowned Runtime work fail.
+The owning inspector must not rewrite raw evidence. Its cancellation and
+diagnostic claims can name only members of its own proven exchanges.
+
+Cancellation is a separate owning outcome: `not_received` never becomes a
+parsed result, and a returned local close never proves that the Runtime process
+stopped. Cancellation failures remain original errors and cannot be relabeled
+as successful connection-cleanup diagnostics. Each consumer must check its
+specific Run, Tool, executor or managed-child behavior and actual stopping
+evidence in its subsequent integration batch.
 
 ### ACP HTTP access-revocation closure
 

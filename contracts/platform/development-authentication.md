@@ -35,10 +35,16 @@ share that pair's credential; public, health, fallback and delegate records do
 not create grants. Unknown callers, catalog/service mismatches and self-calls
 without an explicit workload grant fail before writing credentials.
 
-The nine current static workloads produce 25 pairs. The count is a reviewed
+The nine current static workloads produce 23 pairs. The count is a reviewed
 result of the catalogs, not a hardcoded authorization table. No static
 `antnest-runtime` token is produced: RC owns its separate per-Agent/generation
 issuance under the [instance connection contract](../runtime/instance-connection.md).
+
+The [unused Gateway workspace entry retirement](../edge-gateway/workspace-entry-retirement.md)
+removes Gateway's direct Controller and ACP grants. Fresh provisioning creates
+neither outgoing token for Gateway and neither receiver admits that caller.
+Agent UI retains its independent Controller/ACP credentials and signed user
+context. Historical deployment counts below describe their original revisions.
 
 Each pair receives 32 CSPRNG bytes, encoded as exactly 43 canonical unpadded
 base64url ASCII bytes, with no newline. The receiver's `callers.json` stores

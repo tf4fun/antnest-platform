@@ -7,7 +7,8 @@ import {
   resolveTraceSources,
   resolveTraceDiagnostics,
 } from "../../support/gateway-resolution-evidence.mjs";
-import { hasError } from "../acp-plan/requests.mjs";
+import { hasDiagnosticError, hasError } from "../acp-plan/requests.mjs";
+import { inspectWorkspaceFailureSource } from "../workspace-closeout/watch-resolution.mjs";
 import {
   tag,
   traceTopology,
@@ -28,15 +29,17 @@ const fields = (rows) => {
   );
   return values;
 };
+const diagnosticKey =
+  /^(error($|\.)|exception\.|http\.transport\.error\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.|stream\.termination$|http\.request_cancelled$)|otel\.status_)/u;
 function errorTags(span, expected) {
   const actual = fields(span.tags ?? []);
   for (const [key, value] of Object.entries(expected))
     assert.equal(actual[key], value, `missing or wrong refusal ${key}`);
   for (const [key, value] of Object.entries(actual))
     if (
-      /^(error($|\.)|exception\.|db\.response\.status_code$|antnest\.(error\.|outcome$|result$|operation\.phase$|cancellation\.)|otel\.status_)/u.test(
-        key,
-      )
+      diagnosticKey.test(key) ||
+      key === "outcome" ||
+      key.endsWith(".outcome")
     ) {
       assert(Object.hasOwn(expected, key), "unrelated refusal error metadata");
       assert.equal(value, expected[key], "unrelated refusal error metadata");
@@ -70,6 +73,7 @@ function errorEvent(span, expected, process) {
 function decisionError(span, outcome) {
   errorTags(span, {
     error: true,
+    [prefix + "outcome"]: outcome,
     "otel.status_code": "ERROR",
     "otel.status_description": outcome,
   });
@@ -151,6 +155,282 @@ const end = (s) => {
   );
   return s.startTime + s.duration;
 };
+
+// Shared by the original SSE revalidation and its later independent HTTP
+// denial. This proves an actual Resolve failure, not why the browser closed.
+export function inspectWorkspaceFailureReceipt(
+  trace,
+  root,
+  decision,
+  collection,
+  requestTimeoutMs,
+) {
+  const selected = inspectWorkspaceFailureSource(
+    trace,
+    root,
+    decision,
+    collection,
+  );
+  const { trace: source, tree, span: client, record } = selected;
+  decisionError(decision, record.outcome);
+  const currentSpans = new Set([decision]);
+  if (source === trace) currentSpans.add(client);
+  const receivers = source.spans.filter((s) => tree.parent(s) === client);
+  if (record.outcome === "unavailable") {
+    assert.equal(
+      receivers.length,
+      0,
+      "unavailable transport invented receiver work",
+    );
+    assert.equal(tag(client, "http.response.status_code"), undefined);
+    const timeout = tag(client, "antnest.request.timeout_ms");
+    assert(Number.isSafeInteger(requestTimeoutMs) && requestTimeoutMs > 0);
+    assert(
+      Number.isSafeInteger(timeout) &&
+        timeout >= 0 &&
+        timeout <= requestTimeoutMs,
+      "failed Identity CLIENT exceeds its request budget",
+    );
+    const failure = transportFailure(
+      client,
+      "send",
+      "workspace",
+      source.processes[client.processID],
+    );
+    assert(
+      ["network_error", "dns_error", "deadline_exceeded"].includes(
+        failure.type,
+      ),
+      "caller cancellation cannot prove Identity outage",
+    );
+    if (record.cancel_kind === "shared-deadline")
+      assert.deepEqual(
+        failure,
+        {
+          type: "deadline_exceeded",
+          causes: ["context.deadlineExceededError"],
+        },
+        "shared deadline does not match its completed actual CLIENT",
+      );
+    return {
+      ...selected,
+      client,
+      currentSpans,
+      failure,
+      record: { ...record, database_spans: 0, transport_failure: failure },
+    };
+  }
+  const server = one(receivers, "one actual rejected Identity SERVER required");
+  assert.equal(tree.service(server), "identity-service");
+  assert.equal(tag(server, "span.kind"), "server");
+  assert.equal(tag(server, "http.request.method"), "POST");
+  assert.equal(tag(server, "http.route"), "/rpc/identity/resolve-access-token");
+  assert.equal(tag(server, "rpc.method"), "resolve_access_token");
+  assert.equal(tag(server, "http.response.status_code"), 401);
+  assert.equal(tag(client, "http.response.status_code"), 401);
+  errorTags(client, {
+    error: true,
+    "error.type": "401",
+    "otel.status_code": "ERROR",
+    "otel.status_description": "HTTP status 401",
+  });
+  assert.equal(client.logs?.length ?? 0, 0);
+  const protocolError = {
+    "antnest.error.cause_types": '["*domain.Error"]',
+    "antnest.error.code": "unauthenticated",
+    "antnest.error.message": "Authentication failed",
+    "antnest.error.stage": "protocol",
+    "antnest.error.type": "unauthenticated",
+    "error.type": "unauthenticated",
+  };
+  errorTags(server, {
+    ...protocolError,
+    "antnest.outcome": "rejected",
+    "antnest.result": "rejected",
+  });
+  errorEvent(server, protocolError, source.processes[server.processID]);
+  const sql = one(
+    databaseChildrenTopology(source, server),
+    "one actual rejected token SELECT required",
+  );
+  assert.equal(tree.parent(sql), server);
+  assert.equal(sql.processID, server.processID);
+  assert(
+    sql.startTime >= server.startTime && end(sql) <= end(server),
+    "token SELECT outside its Identity receiver",
+  );
+  assert.equal(tag(sql, "db.operation.name"), "SELECT");
+  assert.equal(
+    tag(sql, "db.query.text").replace(/\s+/gu, " ").trim(),
+    "SELECT t.id, t.expires_at, t.idle_expires_at, u.id, m.organization_id, m.id, u.system_role, m.role, u.active, m.active, o.active, o.slug, o.name FROM api_tokens t JOIN users u ON u.id = t.user_id JOIN organization_memberships m ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id JOIN organizations o ON o.id = t.organization_id WHERE t.token_hash = $1 AND t.kind = 'browser' AND t.revoked_at IS NULL AND t.expires_at > $2 AND t.idle_expires_at > $2 AND m.scim_deleted_at IS NULL",
+  );
+  assert.equal(tag(sql, "pgx.rows_affected"), 0);
+  assert(!hasDiagnosticError(sql), "rejected token SELECT failed");
+  assert.equal(sql.logs?.length ?? 0, 0);
+  for (const [key, value] of Object.entries(fields(sql.tags ?? [])))
+    if (
+      diagnosticKey.test(key) ||
+      key === "outcome" ||
+      key.endsWith(".outcome")
+    )
+      assert(
+        (key === "error" && value === false) ||
+          (key === "error.type" && value === "") ||
+          (key === "antnest.error.class" && value === "none") ||
+          (key === "otel.status_code" &&
+            ["OK", "UNSET", 0, 1].includes(value)) ||
+          ((key === "antnest.result" ||
+            key === "outcome" ||
+            key.endsWith(".outcome")) &&
+            value === "success"),
+        "unrelated rejected token SELECT diagnostic",
+      );
+  const synchronous = new Set([client, server, sql]);
+  assert(
+    source.spans
+      .filter((span) => tree.chain(span).includes(client))
+      .every((span) => synchronous.has(span)),
+    "rejected RPC contains unrelated synchronous work",
+  );
+  if (source === trace) {
+    currentSpans.add(server);
+    currentSpans.add(sql);
+  }
+  return {
+    ...selected,
+    client,
+    server,
+    sql,
+    currentSpans,
+    record: {
+      ...record,
+      database_spans: 1,
+      identity_server_span_id: server.spanID,
+      token_read_span_id: sql.spanID,
+    },
+  };
+}
+
+export function inspectGatewayIdentityRejection(
+  trace,
+  expected,
+  collection,
+  secrets = [],
+) {
+  assert.equal(expected.traceID, trace.traceID);
+  assert.equal(expected.method, "POST");
+  assert.match(
+    expected.path ?? "",
+    /^\/api\/app\/workspace\/v1\/agents\/[^/]+\/sessions\/[^/]+\/prompts$/u,
+  );
+  assert.equal(expected.profile, "workspace");
+  assert([401, 503].includes(expected.status));
+  assert.equal(
+    expected.code,
+    expected.status === 401 ? "unauthenticated" : "identity_unavailable",
+  );
+  assert(
+    collection.archivedTraceIDs?.has(trace.traceID),
+    "actual HTTP denial not archived",
+  );
+  const sources = resolveTraceSources(trace, secrets, collection);
+  for (const source of sources) {
+    assertGatewayResolutionAttributes(source);
+    for (const span of source.spans) {
+      end(span);
+      fields(span.tags ?? []);
+      for (const event of span.logs ?? []) fields(event.fields ?? []);
+    }
+  }
+  const tree = traceTopology(trace);
+  const root = one(
+    trace.spans.filter((s) => !tree.parent(s)),
+    "one actual denial HTTP root required",
+  );
+  assert.equal(tree.service(root), "edge-gateway");
+  for (const [key, value] of Object.entries({
+    "span.kind": "server",
+    "http.route": "/api/app/workspace/v1/{path...}",
+    "http.request.method": "POST",
+    "http.response.status_code": expected.status,
+  }))
+    assert.equal(tag(root, key), value);
+  const decision = one(
+    trace.spans.filter((s) => s.operationName === "gateway.identity.resolve"),
+    "one failed HTTP Resolve decision required",
+  );
+  const failure = inspectWorkspaceFailureReceipt(
+    trace,
+    root,
+    decision,
+    collection,
+    expected.requestTimeoutMs,
+  );
+  assert.equal(
+    failure.record.outcome,
+    expected.status === 401 ? "rejected" : "unavailable",
+  );
+  if (expected.status === 401) {
+    const message =
+      "Operation failed; unclassified error text was not exported";
+    errorTags(root, {
+      error: true,
+      "error.type": "operation_failed",
+      "otel.status_code": "ERROR",
+      "otel.status_description": message,
+    });
+    errorEvent(
+      root,
+      {
+        "error.type": "operation_failed",
+        "antnest.error.stage": "request",
+        "antnest.error.message": message,
+        "antnest.error.cause_types": '["*errors.errorString"]',
+      },
+      trace.processes[root.processID],
+    );
+  } else {
+    const rootFailure = transportFailure(
+      root,
+      "request",
+      "workspace",
+      trace.processes[root.processID],
+    );
+    assert.equal(rootFailure.type, failure.failure.type);
+    if (
+      rootFailure.type === "deadline_exceeded" &&
+      rootFailure.causes.length === 1 &&
+      rootFailure.causes[0] === "context.deadlineExceededError"
+    ) {
+      // Retained Resolve work returns its context deadline directly after
+      // transport cleanup. Keep the selected actual CLIENT and its complete
+      // deadline receipt; a bare request error alone proves no dependency fault.
+      assert.deepEqual(
+        failure.failure.causes,
+        ["context.deadlineExceededError"],
+        "unwrapped HTTP deadline does not match its completed actual CLIENT",
+      );
+    } else
+      assert.deepEqual(
+        rootFailure.causes,
+        ["*fmt.wrapError", "*url.Error", ...failure.failure.causes].slice(0, 4),
+        "HTTP failure does not wrap the selected actual CLIENT",
+      );
+  }
+  const required = new Set([root, ...failure.currentSpans]);
+  assert(
+    trace.spans.every((s) => required.has(s)),
+    "denied prompt reached unrelated work or execution",
+  );
+  return {
+    trace_id: trace.traceID,
+    root_span_id: root.spanID,
+    status: expected.status,
+    no_execution: true,
+    resolution: failure.record,
+    ...resolveTraceDiagnostics(trace, sources),
+  };
+}
 const scopeID = (value) =>
   assert.match(
     value ?? "",
@@ -165,7 +445,56 @@ const route = (path) =>
         ? "/api/app/agents/{agent_id}/v1/acp"
         : path;
 
+// Match the retained Gateway caller selection, including decoded Agent IDs
+// and bootstrap's empty Agent key. Trace labels cannot redefine this key.
+function historyKey(path) {
+  const pathname = decodeURIComponent(
+    new URL(path, "http://evidence.invalid").pathname,
+  );
+  if (pathname === "/api/session" || pathname.startsWith("/api/session/"))
+    return { profile: "session", agent: "" };
+  if (pathname.startsWith("/api/admin/"))
+    return { profile: "console", agent: "" };
+  const base = "/api/app/workspace/v1/";
+  assert(pathname.startsWith(base), "unknown protected cache-key history path");
+  const relative = pathname.slice(base.length);
+  if (relative === "bootstrap") return { profile: "workspace", agent: "" };
+  const parts = relative.split("/");
+  assert(
+    parts.length >= 3 &&
+      parts[0] === "agents" &&
+      parts[1].length > 0 &&
+      parts[1].length <= 200 &&
+      !/[\\\0\r\n]/u.test(parts[1]),
+    "workspace cache-key history lacks the actual Agent path",
+  );
+  return { profile: "workspace", agent: parts[1] };
+}
+
 export function inspectOutageRejections(evidence, collection, secrets = []) {
+  assert(
+    [3, 4].includes(evidence.policy_revision),
+    "unsupported outage evidence revision",
+  );
+  const bridge = evidence.policy_revision === 4;
+  if (bridge) assert.equal(evidence.transport, "http-sse");
+  else
+    assert(
+      evidence.transport !== "http-sse" &&
+        !evidence.http.some((r) =>
+          ["stopped-cold-profile", "stopped-cold-agent"].includes(r.label),
+        ),
+      "Bridge evidence requires revision 4",
+    );
+  const noStore = (r) =>
+    assert(
+      typeof r.cache_control === "string" &&
+        r.cache_control
+          .toLowerCase()
+          .split(",")
+          .some((directive) => directive.trim() === "no-store"),
+      "actual refusal must contain a complete no-store directive",
+    );
   const config = evidence.rejections;
   assert.equal(config.request_timeout_ms, 2000);
   assert.equal(evidence.settings.resolveTTLMS, 10000);
@@ -187,8 +516,18 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     collection,
   );
   const selected = [],
-    owned = [];
+    owned = [],
+    actualRequests = new Map();
   const raw = (observation) => {
+    const previous = actualRequests.get(observation.trace_id);
+    if (previous) {
+      assert.equal(
+        previous.observation,
+        observation,
+        "actual HTTP Trace reused by different request receipts",
+      );
+      return previous.result;
+    }
     assert(
       collection.archivedTraceIDs.has(observation.trace_id),
       "actual HTTP Trace not archived",
@@ -208,7 +547,9 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     trace.spans.forEach(end);
     assertGatewayResolutionAttributes(trace);
     selected.push(trace);
-    return { trace, tree, root };
+    const result = { trace, tree, root };
+    actualRequests.set(observation.trace_id, { observation, result });
+    return result;
   };
   const login = (label) => {
     const r = row(label);
@@ -227,13 +568,14 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
   };
   const consoleScope = login("cold-console-login"),
     workspaceScope = login("cold-workspace-login"),
-    expiredScope = login("short-idle-login");
+    expiredScope = login("short-idle-login"),
+    warmScope = login("warm-login");
   assert.equal(
     new Set([
       consoleScope,
       workspaceScope,
       expiredScope,
-      login("warm-login"),
+      warmScope,
       login("audit-login"),
     ]).size,
     5,
@@ -334,6 +676,112 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
         fixture.after[key],
         "ordinary reads changed browser authority",
       );
+  let history;
+  if (bridge) {
+    const agent = evidence.cold_agent,
+      setup = evidence.cold_agent_setup;
+    assert(
+      typeof agent?.agent_id === "string" &&
+        agent.agent_id.length > 0 &&
+        agent.agent_id !== evidence.agent_id,
+      "cold cache key requires a distinct ready Agent",
+    );
+    const owner = row("warm-login").body?.principal?.user_id;
+    assert(typeof owner === "string" && owner.length > 0, "warm owner missing");
+    assert.equal(
+      agent.owner_user_id,
+      owner,
+      "cold Agent has a different owner",
+    );
+    assert.equal(agent.desired_state, "enabled");
+    assert.equal(agent.activation_state, "enabled");
+    assert.equal(agent.runtime_state, "available");
+    assert(
+      typeof agent.executable_execution_revision === "string" &&
+        agent.executable_execution_revision.length > 0,
+    );
+    assert.equal(
+      agent.last_successful_execution_revision,
+      agent.executable_execution_revision,
+    );
+    assert.equal(setup?.agent_id, agent.agent_id, "different cold Agent setup");
+    assert.equal(setup.owner_user_id, owner);
+    assert.equal(
+      setup.executable_execution_revision,
+      agent.executable_execution_revision,
+    );
+    assert(
+      Number.isFinite(setup.ready_at) && setup.ready_at < start,
+      "cold Agent must be ready before the stop",
+    );
+    const hit = row("warm-workspace-hit");
+    assert.equal(hit.credential_scope, warmScope, "warm credential differs");
+    assert.equal(hit.method, "GET");
+    assert.equal(
+      hit.path,
+      `/api/app/workspace/v1/agents/${encodeURIComponent(evidence.agent_id)}/sessions/${encodeURIComponent(evidence.session_id)}/view`,
+    );
+    assert.equal(hit.status, 200);
+    assert.equal(hit.set_cookie_count, 0);
+    assert.equal(hit.issued_credential_scope, undefined);
+    assert(
+      Number.isFinite(hit.started_at) &&
+        Number.isFinite(hit.at) &&
+        hit.started_at > row("warm-login").at &&
+        hit.at >= hit.started_at &&
+        hit.at < start,
+      "warm cache hit must complete before the stop",
+    );
+    const { trace, root } = raw(hit);
+    assert(
+      trace.spans.every((s) => !hasError(s)),
+      "warm cache hit contains a failure",
+    );
+    const decision = one(
+      trace.spans.filter((s) => s.operationName === "gateway.identity.resolve"),
+      "warm workspace Resolve decision missing",
+    );
+    const resolution = inspectGatewayResolution(
+      trace,
+      {
+        rootSpanID: root.spanID,
+        decisionSpanID: decision.spanID,
+        profile: "workspace",
+        ttlMs: 10000,
+      },
+      collection,
+    );
+    assert.equal(resolution.source, "cache");
+
+    // SSE is a separate public request inventory. Its admission, rather than
+    // its eventual closure, can warm the same Cookie/profile/Agent cache key.
+    const streams = [
+      evidence.stream,
+      ...(evidence.recovery?.cases ?? []).map((c) => c.stream),
+    ]
+      .filter(Boolean)
+      .map((stream) => {
+        scopeID(stream.credential_scope);
+        return { ...stream, method: "GET" };
+      });
+    history = [...evidence.http, ...streams];
+    for (const request of history) {
+      assert(
+        Number.isFinite(request.started_at),
+        "cache-key history lacks request time",
+      );
+      assert(
+        typeof request.path === "string" && request.path.startsWith("/"),
+        "cache-key history lacks request path",
+      );
+      if (request.credential_scope !== null) scopeID(request.credential_scope);
+      else
+        assert(
+          request.path === "/api/session/login" && request.method === "POST",
+          "unauthenticated history must be an actual login request",
+        );
+    }
+  }
   const cases = [
     [
       "stopped-cold-console",
@@ -349,13 +797,26 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       "GET",
       workspaceScope,
     ],
-    [
-      "stopped-cold-acp",
-      "acp",
-      `/api/app/agents/${encodeURIComponent(evidence.agent_id)}/v1/acp`,
-      "POST",
-      workspaceScope,
-    ],
+    ...(bridge
+      ? [
+          ["stopped-cold-profile", "session", "/api/session", "GET", warmScope],
+          [
+            "stopped-cold-agent",
+            "workspace",
+            `/api/app/workspace/v1/agents/${encodeURIComponent(evidence.cold_agent.agent_id)}/sessions`,
+            "GET",
+            warmScope,
+          ],
+        ]
+      : [
+          [
+            "stopped-cold-acp",
+            "acp",
+            `/api/app/agents/${encodeURIComponent(evidence.agent_id)}/v1/acp`,
+            "POST",
+            workspaceScope,
+          ],
+        ]),
     ["stopped-new-login", null, "/api/session/login", "POST", null],
     ["stopped-expired-session", "session", "/api/session", "GET", expiredScope],
   ];
@@ -373,21 +834,63 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       "complete HTTP failure must be inside original five-second stop",
     );
     assert.equal(r.status, 503);
+    if (bridge) noStore(r);
     assert.equal(r.body?.code, "identity_unavailable");
     assert(
       typeof r.body.message === "string" && r.body.message.length > 0,
       "actual HTTP error message missing",
     );
     assert.equal(r.set_cookie_count, 0);
-    assert.equal(r.credential_scope, scope);
+    assert.equal(
+      r.credential_scope,
+      scope,
+      scope === warmScope
+        ? "original warm credential required"
+        : "wrong refusal credential",
+    );
     assert.equal(r.issued_credential_scope, undefined);
-    if (label.startsWith("stopped-cold-"))
+    if (bridge && scope === warmScope) {
+      for (const prior of history.filter(
+        (other) =>
+          other !== r &&
+          other.credential_scope === scope &&
+          other.started_at < r.started_at,
+      )) {
+        const key = historyKey(prior.path);
+        const { trace, tree, root } = raw(prior);
+        const decisions = trace.spans.filter(
+          (s) => s.operationName === "gateway.identity.resolve",
+        );
+        if (prior.status >= 200 && prior.status < 300)
+          assert(
+            decisions.length > 0,
+            "protected history response lacks actual Resolve admission",
+          );
+        for (const decision of decisions) {
+          assert.equal(tree.service(decision), "edge-gateway");
+          assert.equal(tree.parent(decision), root);
+          assert.equal(
+            tag(decision, prefix + "profile"),
+            key.profile,
+            "history Resolve differs from server-selected profile",
+          );
+        }
+        if (key.profile !== profile) continue;
+        if (profile === "session")
+          assert.fail("cold profile was already used by the warm credential");
+        assert.notEqual(
+          key.agent,
+          evidence.cold_agent.agent_id,
+          "cold Agent was already used by the warm credential",
+        );
+      }
+    } else if (label.startsWith("stopped-cold-"))
       assert(
-        !evidence.http.some(
+        !(bridge ? history : evidence.http).some(
           (other) =>
             other !== r &&
             other.credential_scope === scope &&
-            other.started_at < start,
+            other.started_at < (bridge ? r.started_at : start),
         ),
         "cold credential was already used before stop",
       );
@@ -541,6 +1044,7 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
   );
   assert.equal(recovered.credential_scope, expiredScope);
   assert.equal(recovered.status, 401);
+  if (bridge) noStore(recovered);
   assert.equal(recovered.set_cookie_count, 0);
   assert.equal(recovered.body?.code, "unauthenticated");
   assert(

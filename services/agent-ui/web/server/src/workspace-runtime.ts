@@ -25,6 +25,7 @@ import { createPermissionHandler } from "./http/permission-routes.ts";
 import { createBootstrapHandler, type BootstrapScope } from "./http/bootstrap-routes.ts";
 import { createSessionHandler } from "./http/session-routes.ts";
 import { createViewHandler } from "./http/view-routes.ts";
+import { recordAgentViewFailure } from "./telemetry.ts";
 
 export type BridgeRuntimeMetrics = {
   owners: number;
@@ -45,6 +46,7 @@ export function createWorkspaceRuntime(input: {
   connect(
     scope: BridgeScope,
     callbacks: AcpBridgeCallbacks,
+    signal?: AbortSignal,
   ): Promise<AcpBridgePort>;
   tokenKey?: Buffer;
   now?: () => number;
@@ -81,6 +83,7 @@ export function createWorkspaceRuntime(input: {
     create: async (scope, retainWork, identity) => {
       const owner = await AgentBridgeOwner.open({
         scope,
+        signal: identity.signal,
         retainWork,
         now: input.now, idleMs: input.idleMs, incarnation: input.incarnation,
         connect: input.connect,
@@ -103,7 +106,7 @@ export function createWorkspaceRuntime(input: {
           latestAgentProjections.get(owner)?.delete(selectedSessionId ?? "");
         },
       });
-      owners.add(owner);
+      if (!owner.isClosed) owners.add(owner);
       return owner;
     },
     now: input.now ?? Date.now,
@@ -428,13 +431,18 @@ export function createWorkspaceRuntime(input: {
   });
   const agentViews = createAgentViewHandler({
     async read(scope, sessionId, readLearningStatus) {
-      const lease = await registry.observe(scope);
+      let lease: BridgeLease<AgentBridgeOwner>;
+      try { lease = await registry.observe(scope); }
+      catch (cause) { recordAgentViewFailure("owner", cause); throw cause; }
       try {
         const projection = await prepareAgentView(scope, lease, sessionId, readLearningStatus);
         const journal = lease.owner.agentJournal(sessionId);
         rememberAgentProjection(lease.owner, sessionId, projection);
         return journal.snapshot((cursor) =>
           currentAgentProjection(lease.owner, sessionId)(cursor)).view;
+      } catch (cause) {
+        recordAgentViewFailure("view", cause);
+        throw cause;
       } finally {
         lease.release();
       }

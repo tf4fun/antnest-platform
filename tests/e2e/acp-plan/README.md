@@ -6,9 +6,9 @@ does not change production ACP or Runtime behavior.
 
 ## Running
 
-Build the current ACP and Runtime images (other service images must already
-match the source; `make docker-build-stage3` builds all of them), then run
-serially:
+Run serially. The parent builds eleven independent release candidates from the
+current source, selects their exact image IDs and uses the admission override
+after the normal isolated Compose configuration:
 
 ```sh
 make test-plan-fixtures
@@ -43,7 +43,10 @@ only after completion is not enough. The gate is a fixture, not a product API.
 The only remote execution is the explicit Runtime write; `update_plan` stays
 local. Fixtures cannot write SQL or access Docker.
 
-New connections load, resume and fork the persisted stream through the Gateway.
+Private v1/v2 WebSocket connections use the original browser Principal, an
+Identity-issued workspace CCT and the read-only Agent UI→ACP service grant.
+New connections load, resume and fork the persisted stream through this private
+entry. Gateway and Console remain responsible for setup and administrative APIs.
 Plan and Tool updates, including IDs and order, are compared against the live
 stream; an empty matching subset is not success. Another user receives the exact
 ACP `access_denied` error with no private updates, and a successful
@@ -60,10 +63,17 @@ ordering. Each protocol version has its own Tool event shape: v1 starts with
 
 ## Trace checks
 
-- Execution Trace IDs come from the actual model HTTP requests and are
-  correlated with their prompt, Agent, Session and Gateway connection link. The
-  HTTP CLIENT span is matched through `model.complete` to its owning `agent.run`
-  and Run ID.
+- The original SDK wire ID selects each request and its exported private
+  CLIENT→upgrade→RPC boundary. The actual model HTTP inventory independently
+  checks all 12 Runs, 22 model requests and two Runtime writes. The model HTTP
+  CLIENT is matched through `model.complete` to its owning `agent.run` and Run ID.
+- The 26 replay/denial requests and two successful session creations bring the
+  business inventory to 40. Fourteen initialization requests are inspected
+  separately. Fork input and returned Session IDs are independently bound.
+- Every original connection is closed and joined before collection. Complete
+  raw query responses, source hashes, exact error ownership and strict verdicts
+  are kept under `artifacts/verification/acp-plan/<project>/traces/`. Three stable
+  samples are required; initialization diagnostics join the final inventory.
 - Every Run needs committed PostgreSQL persistence with a real driver write and
   fresh Runtime information and catalog reads before model execution.
   Management calls inside a Run are forbidden.
@@ -82,12 +92,23 @@ ordering. Each protocol version has its own Tool event shape: v1 starts with
   exports. IP forwarding is outside the tracing scope. Collection uses bounded
   stable-span sampling, which cannot rule out arbitrarily late telemetry.
 
-Strict timing warnings make the command exit nonzero, except the reviewed
-clock-skew warning (`clock skew adjustment disabled; not applying calculated
-delta of ...`), which is reported without failing the exit.
+Raw warnings and strict failures are preserved. Exit 0 means strict success;
+exit 2 preserves reviewed Jaeger clock-skew warnings with valid business and
+ownership evidence; other failures exit 1. CI runs the parent script directly
+so Make does not erase this distinction. The deferred same-Node SDK endpoint
+observation is limited to strictly less than 1 ms and does not waive
+cross-process warnings or missing telemetry.
 
 ## Cleanup
 
-The parent removes all of its containers, volumes and networks on success or
-failure and never touches other deployments. Only final counts and verdicts are
+Before Agent deletion, the client waits for a host receipt binding both live
+Runtimes to their Agents, generations, project/run, candidate image IDs and
+original inspection hash. The host also verifies all running service candidates
+and both harness containers. Client and model run with only the two necessary
+read-only grants; the evidence writer uses the host evidence owner.
+
+The client joins Prompt and connection cleanup even after an early-plan gate
+failure. Agent cleanup attempts every created Agent and preserves all failures.
+The parent removes its containers, volumes, networks and recorded candidate
+tags on success or failure and never adopts images from other deployments. Only final counts and verdicts are
 printed, never raw events, credentials or Trace dumps.

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { inspectPermissionTrace } from "./trace.mjs";
 import { requestFixture } from "../acp-plan/trace-fixture.mjs";
+import { privateBoundaryFixture } from "../acp-plan/private-boundary.fixture.mjs";
 
 function fixture(phase = "v1-once") {
   const f = requestFixture("session/prompt");
@@ -211,4 +213,266 @@ test("Chat explicitly forbids tool catalog access while other modes require it",
     (s) => !["list", "list-runtime"].includes(s.spanID),
   );
   assert.throws(() => inspect(approve));
+});
+
+function privateFixture(phase = "v1-once") {
+  const version = Number(phase[1]);
+  const f = privateBoundaryFixture(fixture(phase), { version });
+  const { expected, field } = f;
+  Object.assign(expected, {
+    version,
+    kind: "execution",
+    inputSessionID: "session",
+    outcome: "succeeded",
+    requestParams: {
+      sessionId: "session",
+      prompt: [{ type: "text", text: phase }],
+    },
+  });
+  const closed = phase === "v1-reconnect";
+  if (closed)
+    Object.assign(expected, { outcome: "failed", closedBeforeResponse: true });
+  else
+    expected.requestReceipt = {
+      requestId: expected.requestId,
+      params: structuredClone(expected.requestParams),
+      result:
+        version === 1
+          ? { stopReason: phase.endsWith("cancel") ? "cancelled" : "end_turn" }
+          : { messageId: `message-${phase}` },
+    };
+  const id = createHash("sha256")
+    .update(JSON.stringify(["run", 0, phase]))
+    .digest("hex");
+  const run = f.trace.spans.find((s) => s.spanID === "run");
+  for (const [key, value] of Object.entries({
+    "antnest.session.id": "session",
+    "antnest.outcome": phase.endsWith("cancel") ? "cancelled" : "ok",
+    "run.terminal_class": phase.endsWith("cancel") ? "cancelled" : "completed",
+    "run.executor_state": "quiescent",
+    "run.tool_effect_state": /deny|reject|cancel|chat/.test(phase)
+      ? "none"
+      : "settled",
+  }))
+    field(run, key, value);
+  const wait = f.trace.spans.find((s) => s.spanID === "wait");
+  if (wait) {
+    const choice = phase.endsWith("cancel")
+      ? null
+      : phase.endsWith("deny")
+        ? "reject_once"
+        : phase.endsWith("reject")
+          ? "reject_always"
+          : phase.endsWith("always")
+            ? "allow_always"
+            : "allow_once";
+    const toolCall = {
+      toolCallId: id,
+      rawInput: phase.includes("judge-")
+        ? { value: phase }
+        : { path: `${phase}.txt`, content: `${phase}\n` },
+    };
+    const params = {
+      sessionId: "session",
+      options: [
+        "allow_once",
+        "allow_always",
+        "reject_once",
+        "reject_always",
+      ].map((optionId) => ({ optionId })),
+      ...(version === 1
+        ? { toolCall }
+        : { subject: { type: "tool_call", toolCall } }),
+    };
+    const delivery = (optionId, requestId) => ({
+      requestId,
+      params: structuredClone(params),
+      outcome: optionId ? "selected" : "cancelled",
+      ...(optionId ? { optionId } : {}),
+    });
+    expected.permissionDeliveries = phase.endsWith("reconnect")
+      ? [delivery(null, "original"), delivery("allow_once", "reissued")]
+      : [delivery(choice, "approval")];
+    for (const [key, value] of Object.entries({
+      "run.id": "run",
+      "session.id": "session",
+      "tool.call_id": id,
+    }))
+      field(wait, key, value);
+  }
+  return f;
+}
+
+test("private Permissions uses the actual WS boundary and retains full rejected-decision diagnostics", () => {
+  for (const version of [1, 2])
+    for (const phase of [
+      "once",
+      "once-again",
+      "deny",
+      "always",
+      "follow",
+      "reject",
+      "reject-follow",
+      "chat",
+      "read-hint",
+      "judge-safe",
+      "judge-ask",
+      "cancel",
+      "reconnect",
+    ]) {
+      const f = privateFixture(`v${version}-${phase}`);
+      const result = inspect(f);
+      assert.equal(result.transport_boundary, "private-acp");
+      assert.equal(result.gateway_ancestry, undefined);
+      assert.equal(
+        result.error_spans,
+        ["deny", "reject"].includes(phase) ? 1 : 0,
+      );
+      assert.equal(result.owned_error_spans.length, result.error_spans);
+    }
+});
+
+for (const [name, mutate] of Object.entries({
+  "unrelated prompt input": (f) =>
+    (f.expected.requestParams.prompt[0].text = "other"),
+  "foreign success receipt": (f) =>
+    (f.expected.requestReceipt.requestId = "other"),
+  "wrong Run Session": (f) =>
+    f.field(
+      f.trace.spans.find((s) => s.spanID === "run"),
+      "antnest.session.id",
+      "foreign",
+    ),
+  "unfinished Run": (f) =>
+    f.field(
+      f.trace.spans.find((s) => s.spanID === "run"),
+      "run.executor_state",
+      "running",
+    ),
+  "missing actual permission": (f) => delete f.expected.permissionDeliveries,
+  "approval for another Tool": (f) =>
+    f.field(
+      f.trace.spans.find((s) => s.spanID === "wait"),
+      "tool.call_id",
+      "foreign",
+    ),
+  "permission decision mismatch": (f) =>
+    (f.expected.permissionDeliveries[0].optionId = "reject_once"),
+  "missing actual permission decision": (f) =>
+    delete f.expected.permissionDeliveries[0].optionId,
+  "numeric error status": (f) =>
+    f.field(
+      f.trace.spans.find((s) => s.spanID === "insert"),
+      "otel.status_code",
+      2,
+    ),
+  "error type without boolean": (f) =>
+    f.field(
+      f.trace.spans.find((s) => s.spanID === "insert"),
+      "error.type",
+      "DatabaseError",
+    ),
+  "exception event without boolean": (f) =>
+    (f.trace.spans.find((s) => s.spanID === "insert").logs = [
+      { timestamp: 4, fields: [{ key: "event", value: "exception" }] },
+    ]),
+}))
+  test(`private Permissions rejects ${name}`, () => {
+    const f = privateFixture();
+    mutate(f);
+    assert.throws(() => inspect(f));
+  });
+
+test("private reconnect cannot waive dispatch failure without its actual unanswered close", () => {
+  const f = privateFixture("v1-reconnect");
+  for (const [key, value] of Object.entries({
+    error: true,
+    "antnest.outcome": "error",
+    "antnest.operation.phase": "acp.dispatch",
+  }))
+    f.field(f.request, key, value);
+  delete f.expected.closedBeforeResponse;
+  assert.throws(() => inspect(f));
+});
+
+for (const [name, phase, mutate] of [
+  ...["ERROR", "WARN", "FATAL"].map((level) => [
+    `${level} log without boolean error`,
+    "v1-once",
+    (f) => {
+      f.trace.spans.find((s) => s.spanID === "insert").logs = [
+        { timestamp: 4, fields: [{ key: "level", value: level }] },
+      ];
+    },
+  ]),
+  [
+    "duplicate rejected wait outcome",
+    "v1-deny",
+    (f) =>
+      f.trace.spans
+        .find((s) => s.spanID === "wait")
+        .tags.push({ key: "antnest.outcome", value: "failed" }),
+  ],
+  [
+    "negative SQL duration",
+    "v1-once",
+    (f) => (f.trace.spans.find((s) => s.spanID === "insert").duration = -1),
+  ],
+])
+  test(`private Permissions rejects ${name}`, () => {
+    const f = privateFixture(phase);
+    mutate(f);
+    assert.throws(() => inspect(f));
+  });
+
+test("private unanswered v1 reconnect owns only its complete original dispatch error", () => {
+  const f = privateFixture("v1-reconnect");
+  for (const [key, value] of Object.entries({
+    error: true,
+    "otel.status_code": "ERROR",
+    "error.type": "Error",
+    "antnest.outcome": "error",
+    "antnest.operation.phase": "acp.dispatch",
+  }))
+    f.field(f.request, key, value);
+  const fields = {
+    event: "antnest.error",
+    "antnest.error.stage": "acp.dispatch",
+    "antnest.error.type": "Error",
+    "antnest.error.message": "Error: unregistered message omitted",
+    "antnest.error.cause_types": "[]",
+    "antnest.error.causes": JSON.stringify([
+      { type: "Error", message: "Error: unregistered message omitted" },
+    ]),
+    "antnest.operation.phase": "acp.dispatch",
+  };
+  f.request.logs = [
+    {
+      timestamp: 30,
+      fields: Object.entries(fields).map(([key, value]) => ({ key, value })),
+    },
+  ];
+  f.request.duration = 30;
+  assert.deepEqual(inspect(f).owned_error_spans, [
+    {
+      trace_id: f.trace.traceID,
+      span_id: f.request.spanID,
+      reason: "permission-replay-disconnect",
+    },
+  ]);
+  f.request.logs[0].fields.push({
+    key: "exception.type",
+    value: "DatabaseError",
+  });
+  assert.throws(() => inspect(f));
+});
+
+test("private permission ordering retains SDK endpoint overlap but rejects a Tool starting before its wait", () => {
+  const f = privateFixture();
+  const wait = f.trace.spans.find((s) => s.spanID === "wait");
+  const call = f.trace.spans.find((s) => s.spanID === "call");
+  wait.duration = 3;
+  assert.equal(inspect(f).runtime_tool_calls, 1);
+  call.startTime = wait.startTime - 1;
+  assert.throws(() => inspect(f));
 });

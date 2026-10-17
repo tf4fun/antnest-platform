@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { connectOwner } from "../lifecycle-closeout/acp.mjs";
 import { observedHeldRun } from "../workspace-closeout/browser-control.mjs";
 import { observeWorkspaceStream } from "./resolve-cache-stream.mjs";
 import { joinRecoveryRun } from "./resolve-cache-recovery-cleanup.mjs";
@@ -9,6 +8,7 @@ import {
   inspectRecoveryWindow,
   recoveryCases,
   recoveryMembershipUpdate,
+  recoveryStreamDeadline,
 } from "./resolve-cache-recovery.mjs";
 
 const mark = () => ({ at: performance.now(), observed_at_ms: Date.now() });
@@ -51,7 +51,12 @@ export async function verifyRecovery({
   const update = (active) => recoveryMembershipUpdate(entry, active);
   for (const { name, phase } of recoveryCases) {
     console.log(JSON.stringify({ phase: "recovery", check: name }));
-    const c = { name, phase };
+    const c = {
+      name,
+      phase,
+      agent_id: fixture.agentID,
+      owner_id: fixture.ownerID,
+    };
     evidence.recovery.cases.push(c);
     const { client, response: signedIn } = await login(
       current,
@@ -64,16 +69,7 @@ export async function verifyRecovery({
     );
     c.peer_login = peerLogin;
     const frozen = freezeClient(client);
-    const owner = connectOwner(
-      config.gateway,
-      fixture.agentID,
-      client.cookie,
-      signal,
-      { captureWire: true, injectTraceParent: false },
-    );
-    owner.wire.credential_scope = credentialScope(client.cookie);
-    c.wire = owner.wire;
-    let stream, closeWork, failure;
+    let stream, failure;
     const saveStream = () => {
       if (stream)
         c.stream = {
@@ -84,18 +80,15 @@ export async function verifyRecovery({
         };
     };
     try {
-      await owner.initialize({
-        "antnest.dev/bridge": {
-          intentReceipt: 1,
-          targetCancel: 1,
-          deliveryMark: 1,
-        },
-      });
-      c.session_id = (
-        await owner.request("new", { cwd: "/workspace", mcpServers: [] })
-      ).sessionId;
-      assert(c.session_id);
       const base = `/api/app/workspace/v1/agents/${encodeURIComponent(fixture.agentID)}`;
+      c.session_create = await http(client, `${base}/sessions`, {
+        body: {},
+        status: 201,
+        label: `recovery-${name}-session-create`,
+      });
+      c.session_create.request = {};
+      c.session_id = c.session_create.body.sessionId;
+      assert(c.session_id);
       const path = `${base}/sessions/${encodeURIComponent(c.session_id)}`;
       const view = await http(client, `${path}/view`, {
         label: `recovery-${name}-initial-view`,
@@ -109,6 +102,7 @@ export async function verifyRecovery({
         { credentialScope },
       );
       saveStream();
+      const naturalDeadline = recoveryStreamDeadline(c, evidence.settings);
       await stream.wait((v) => v.selectedView?.sessionId === c.session_id);
       c.intent_id = randomUUID();
       c.prompt = await http(client, `${path}/prompts`, {
@@ -148,11 +142,11 @@ export async function verifyRecovery({
       });
       assert.equal(c.audit_before.body.state, "running");
       stream.assertOpen();
-      assert.equal(owner.closeCode, undefined);
-      c.quiet_requests = c.wire.frames
-        .filter((f) => f.direction === "send")
-        .map((f) => f.raw);
       c.trigger = mark();
+      assert(
+        c.trigger.at - c.stream.started_at < 20000,
+        "recovery observer no longer fresh",
+      );
       if (name === "logout") {
         c.mutation = await http(client, "/api/session", {
           method: "DELETE",
@@ -183,25 +177,13 @@ export async function verifyRecovery({
           body: update(name !== "deactivate"),
           label: `recovery-${name}-mutation`,
         });
-      // Both waits are observed and joined even when one fails. No local close
-      // runs until their remote outcomes (or bounded failures) have settled.
-      closeWork = Promise.allSettled([
-        owner
-          .waitForClose(Math.max(1, c.trigger.at + 30000 - performance.now()))
-          .then((event) => {
-            c.wss_close = { ...event, observed_at: performance.now() };
-            return c.wss_close;
-          }),
-        stream.waitClosed(
-          Math.max(1, c.trigger.at + 30000 - performance.now()),
+      // The original reader must end remotely before local observer cleanup.
+      await stream.waitClosed(
+        Math.max(
+          1,
+          Math.min(c.trigger.at + 30000, naturalDeadline) - performance.now(),
         ),
-      ]);
-      const closures = await closeWork;
-      const failures = closures
-        .filter((r) => r.status === "rejected")
-        .map((r) => r.reason);
-      if (failures.length)
-        throw new AggregateError(failures, `${name} remote retirement failed`);
+      );
       saveStream();
       c.old_session = await http(frozen, "/api/session", {
         status: 401,
@@ -269,20 +251,33 @@ export async function verifyRecovery({
           signal,
           30000,
         );
+        const inventoryPath = `/api/admin/execution-audits?agent_id=${encodeURIComponent(fixture.agentID)}&limit=100`;
+        c.restore_audits_before = await http(administrator, inventoryPath, {
+          label: "recovery-before-membership-restore-audits",
+        });
         c.restore = await http(administrator, mutationPath, {
           body: update(true),
           label: "recovery-restore-membership",
         });
         const fresh = await login(current, "recovery-reactivated-login");
         c.fresh_login = fresh.response;
-        c.restored_state = await http(
-          fresh.client,
-          `/api/app/agents/${encodeURIComponent(fixture.agentID)}/state`,
-          { label: "recovery-reactivated-agent-state" },
+        c.restored_state = await http(fresh.client, `${base}/view`, {
+          status: 403,
+          label: "recovery-reactivated-agent-state",
+        });
+        c.restored_agent = await http(
+          administrator,
+          `/api/admin/agents/${encodeURIComponent(fixture.agentID)}`,
+          {
+            label: "recovery-restored-disabled-agent",
+          },
         );
         c.restored_old_session = await http(frozen, "/api/session", {
           status: 401,
           label: "recovery-restored-old-session",
+        });
+        c.restore_audits_after = await http(administrator, inventoryPath, {
+          label: "recovery-after-membership-restore-audits",
         });
       } else {
         c.model_after_close = await model();
@@ -327,14 +322,19 @@ export async function verifyRecovery({
       c.failure = { message: error.message };
       throw error;
     } finally {
-      if (closeWork) await closeWork;
       const errors = [];
-      if (failure && c.run_id && c.prompt)
+      if (failure && c.prompt?.status === 202)
         try {
           await joinRecoveryRun({
             c,
             signal,
             model,
+            lookupIntent: (requestSignal) =>
+              http(
+                client,
+                `/api/app/workspace/v1/agents/${encodeURIComponent(fixture.agentID)}/sessions/${encodeURIComponent(c.session_id)}/operations/${encodeURIComponent(c.intent_id)}`,
+                { requestSignal, label: `recovery-${name}-failure-intent` },
+              ),
             release: async (requestSignal) => {
               const started_at = performance.now();
               const response = await fetch(`${config.model}/release/${phase}`, {
@@ -363,11 +363,6 @@ export async function verifyRecovery({
         } catch (error) {
           errors.push(error);
         }
-      try {
-        await owner.closeAndWait();
-      } catch (error) {
-        errors.push(error);
-      }
       saveStream();
       if (errors.length)
         c.cleanup_errors = errors.map((error) => error.message);

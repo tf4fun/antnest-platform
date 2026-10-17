@@ -66,7 +66,7 @@ ConnectionBinding
   agent_id
 ```
 
-ACP verifies Gateway/UI workload and Identity-signed CCT before deriving the
+ACP verifies Agent UI workload and Identity-signed CCT before deriving the
 identity tuple. Raw identity headers never authenticate the caller. ACP does not
 query Controller to establish a connection. Each resource method authorizes
 against the current local organization configuration. Access revision is a fact
@@ -520,7 +520,7 @@ exits non-zero for platform replacement.
 
 ## Connection Identity
 
-Gateway/UI forwards the unchanged Identity-signed CCT with its own workload
+Agent UI forwards the unchanged Identity-signed CCT with its own workload
 credential. ACP verifies both and derives organization/principal/Agent from
 signed claims, then authorizes against the locally applied current snapshot.
 Unsigned identity hints and the old opaque subject grant nothing. Identity's
@@ -641,7 +641,7 @@ workload identity and route-specific caller context. The
 [ACP authentication contract](../../../contracts/agent-acp/service-authentication.md)
 places publication and settlement on a separate Controller listener. Workspace
 returns 404 for those paths; state get/watch remain available only to verified
-Gateway/UI plus signed user context. TLS and exact per-receiver credentials are
+Agent UI plus signed user context. TLS and exact per-receiver credentials are
 mandatory before listening. JSON parsing fails before effects on ambiguous media,
 duplicate members, malformed UTF-8 or extra documents.
 

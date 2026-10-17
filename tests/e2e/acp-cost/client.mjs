@@ -1,16 +1,34 @@
 import assert from "node:assert/strict";
-import { withAgentCleanup } from "../../support/verification/agent-cleanup.mjs";
-import { summarizeFailure } from "../../support/verification/failure.mjs";
+import { withCostAgentCleanup } from "./cleanup-evidence.mjs";
+import { requestCostRuntimeInspection } from "./runtime-inspection.mjs";
+import { preserveFileFailure } from "../acp-files/failure-evidence.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { gateway } from "../identity-closeout/acp-connection.mjs";
 import { assertDeniedSessionError } from "../identity-closeout/agent-access-evidence.mjs";
 import { until } from "../acp-closeout/support.mjs";
 import { transcript } from "../acp-commands/evidence.mjs";
-import { collectTrace } from "../managed-mcp/trace.mjs";
+import { collectPrivateCostTrace } from "./collector.mjs";
 import {
-  collectNativeTrace,
-  nativeStrictOutcome,
-} from "../acp-multimodal/trace.mjs";
+  collectCostPricingTrace,
+  costStrictOutcome,
+} from "./pricing-collector.mjs";
+import {
+  withPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "../acp-commands/connection.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import {
+  evidenceDirectory,
+  shellStoragePreflight,
+  writeEvidenceFile,
+} from "../../support/storage.mjs";
+import {
+  bindCostPrompt,
+  bindCostList,
+  withFrozenCostPrompt,
+  costCompletionFields,
+} from "./client-evidence.mjs";
+import { readPrivateExecutionState } from "./execution-state.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import {
@@ -27,7 +45,6 @@ import {
   usageUpdates,
   assertModelSelection,
 } from "./evidence.mjs";
-import { inspectPricingTrace } from "./trace.mjs";
 import {
   connect as rawConnect,
   profiles,
@@ -44,9 +61,69 @@ const agents = [],
   saved = [],
   expectedAttempts = [],
   traces = [],
-  pricingTraces = [];
-const connect = (profile, agent, browser) =>
-  rawConnect(profile, agent, browser, traces);
+  pricingTraces = [],
+  initializationRequests = [],
+  connectionInventory = [],
+  stateReceipts = [];
+const completedOutcomes = [];
+const clients = new Set(),
+  issuedSessions = new WeakMap();
+const secrets = [
+  "cost-model-test",
+  "stage3-admin-password",
+  "cost-owner-password",
+  "cost-stranger-password",
+];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+const directory = evidenceDirectory(process.env.ANTNEST_COST_EVIDENCE_DIR);
+let modelStatusCount = 0;
+async function connect(profile, agent, browser) {
+  const issued = issuedSessions.get(browser);
+  assert(issued?.principal, "original Cost browser login receipt missing");
+  const client = await rawConnect(profile, agent, browser, traces, {
+    principal: issued.principal,
+    telemetry,
+    secrets,
+  });
+  clients.add(client);
+  initializationRequests.push(client.initializationRequest);
+  return client;
+}
+async function use(client, action) {
+  const errors = [];
+  let result;
+  try {
+    result = await withPrivateCommandConnection(client, [], action);
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    connectionInventory.push({
+      version: client.version,
+      agent_id: client.agentId,
+      transport: client.transport,
+      initialization_result: structuredClone(client.initializationResult),
+      raw_frames: structuredClone(client.frames),
+      ...(client.transport === "http"
+        ? { http_connection: client.httpSnapshot() }
+        : {
+            connection_trace_id: client.connectionTraceID,
+            client_span_id: client.clientSpanID,
+            requests: structuredClone(client.requests),
+          }),
+    });
+  } catch (error) {
+    errors.push(error);
+  }
+  clients.delete(client);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length)
+    throw new AggregateError(
+      errors,
+      "Cost business, connection and inventory failed",
+    );
+  return result;
+}
 const rates = {
   currency: "USD",
   input_per_million: 2,
@@ -87,16 +164,26 @@ function assertObserver() {
 }
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
-const login = (client, email, password) =>
-  client.request("/api/session/login", {
+const login = async (client, email, password) => {
+  const result = await client.request("/api/session/login", {
     body: { organization_slug: "stage3", email, password },
   });
+  issuedSessions.set(client, result.body);
+  secrets.push(client.accessToken, ...client.cookies.values());
+  return result;
+};
 async function modelStatus() {
   const response = await fetch("http://acp-closeout-model:8080/status", {
     signal: AbortSignal.timeout(5000),
   });
+  const raw = await response.text();
+  writeEvidenceFile(
+    directory,
+    `model-status-${String(++modelStatusCount).padStart(4, "0")}.private.json`,
+    raw,
+  );
   assert.equal(response.status, 200);
-  const result = await response.json();
+  const result = JSON.parse(raw);
   assert.deepEqual(result.errors, [], "model fixture rejected request");
   return result;
 }
@@ -112,7 +199,20 @@ async function operation(id) {
   );
 }
 async function publicationState() {
-  return (await stranger.request(`/api/app/agents/${agents[0]}/state`)).body;
+  try {
+    return await readPrivateExecutionState(agents[0], stranger, {
+      principal: issuedSessions.get(stranger)?.principal,
+      receipts: stateReceipts,
+      secrets,
+      signal: AbortSignal.timeout(10000),
+    });
+  } finally {
+    writeEvidenceFile(
+      directory,
+      "execution-state.private.json",
+      JSON.stringify(stateReceipts) + "\n",
+    );
+  }
 }
 async function createModel(name, pricing) {
   const before = agents.length ? await publicationState() : undefined;
@@ -205,7 +305,7 @@ async function send(client, profile, sessionId, action, expected) {
     .join("");
   assert.equal(assistant, `${phase} verified`);
   const usage = assertCost(client.updates, sessionId, expected);
-  Object.assign(client.lastRequest, { kind: "native", phase, label: phase });
+  bindCostPrompt(client, sessionId, result, phase);
   expectedAttempts.push({
     phase,
     ...(profile.http
@@ -254,29 +354,25 @@ async function frozenAdmission(client, profile) {
     sessionId,
     `profile:${model.model_profile_id}`,
   );
-  // Change the price only after the actual model request has reached the fixture.
-  // Attaching a rejection observer immediately prevents unhandled-rejection noise
-  // if the prompt fails while the coordinator is waiting for that checkpoint.
-  const pending = send(client, profile, sessionId, "admission", 0.0028).then(
-    (value) => ({ value }),
-    (error) => ({ error }),
+  await withFrozenCostPrompt(
+    send(client, profile, sessionId, "admission", 0.0028),
+    async () => {
+      await until(
+        async () =>
+          (await modelStatus()).blocked === `${profile.name}:admission`,
+        "admitted model request",
+        15000,
+      );
+      await reviseModel(model);
+    },
+    async () => {
+      const released = await fetch("http://acp-closeout-model:8080/release", {
+        method: "POST",
+        signal: AbortSignal.timeout(5000),
+      });
+      assert.equal(released.status, 200);
+    },
   );
-  try {
-    await until(
-      async () => (await modelStatus()).blocked === `${profile.name}:admission`,
-      "admitted model request",
-      15000,
-    );
-    await reviseModel(model);
-  } finally {
-    const released = await fetch("http://acp-closeout-model:8080/release", {
-      method: "POST",
-      signal: AbortSignal.timeout(5000),
-    });
-    const outcome = await pending;
-    if (outcome.error) throw outcome.error;
-    assert.equal(released.status, 200);
-  }
   await send(client, profile, sessionId, "after-admission", 0.0084);
 }
 
@@ -285,7 +381,7 @@ async function exercise(profile) {
     agent = await createAgent(profile, model);
   const client = await connect(profile, agent, member),
     history = [];
-  try {
+  await use(client, async () => {
     const { sessionId } = await client.request("new", setup);
     await setModel(
       client,
@@ -394,15 +490,13 @@ async function exercise(profile) {
       freshHistory,
       forkHistory,
     });
-  } finally {
-    client.close();
-  }
+  });
 }
 async function restore(item) {
   const { profile, model, agent, sessionId, history } = item;
   stage = `${profile.name}:post-restart-replay`;
   const client = await connect(profile, agent, member);
-  try {
+  await use(client, async () => {
     await replay(
       client,
       profile,
@@ -466,21 +560,20 @@ async function restore(item) {
       [...item.forkHistory, forkNext],
       `profile:${model.model_profile_id}`,
     );
-  } finally {
-    client.close();
-  }
+  });
+  completedOutcomes.push({ transport: profile.name, restored_sessions: 3 });
 }
 async function isolation(item, otherAgent) {
   const { profile, agent, sessionId } = item;
   stage = `${profile.name}:isolation`;
   const foreign = await connect(profile, agent, stranger);
-  try {
+  await use(foreign, async () => {
     await assertAgentDenied(foreign);
-  } finally {
-    foreign.close();
-  }
+    assert.equal(foreign.lastRequest.rejection, "access_denied");
+    foreign.initializationRequest.agentAccessDenied = true;
+  });
   const client = await connect(profile, otherAgent, member);
-  try {
+  await use(client, async () => {
     for (const method of [
       profile.version === 1 ? "load" : "resume",
       "fork",
@@ -500,12 +593,11 @@ async function isolation(item, otherAgent) {
       );
     }
     assert.equal(client.updates.length, 0, "foreign Session leaked usage");
-  } finally {
-    client.close();
-  }
+  });
 }
 
 async function main() {
+  shellStoragePreflight(directory);
   assert(process.env.TEST_RUNTIME_IMAGE, "Runtime image required");
   await login(admin, "stage3-admin@example.com", "stage3-admin-password");
   for (const [role, client] of [
@@ -553,125 +645,233 @@ async function main() {
       .pricing,
     freeModel.model.pricing,
   );
-  await withAgentCleanup(agents, api, async () => {
-    try {
-      const observerModel = await createModel("Observer fixture", rates);
-      const observerAgent = await createAgent(
-        { name: "Observer" },
-        observerModel,
-        strangerID,
+  const { requests, runtimeInspection, all } = await withCostAgentCleanup(
+    agents,
+    admin,
+    async (consumed) => {
+      try {
+        const observerModel = await createModel("Observer fixture", rates);
+        const observerAgent = await createAgent(
+          { name: "Observer" },
+          observerModel,
+          strangerID,
+        );
+        const observerClient = await connect(
+          profiles[0],
+          observerAgent,
+          stranger,
+        );
+        observer = { client: observerClient };
+        let observerSession, observerModes, observerUsage;
+        await use(observerClient, async () => {
+          ({ sessionId: observerSession, modes: observerModes } =
+            await observerClient.request("new", setup));
+          observerUsage = await send(
+            observerClient,
+            profiles[0],
+            observerSession,
+            "observer",
+            0.77,
+          );
+          observer.sessionId = observerSession;
+          observer.modeId = observerModes.currentModeId;
+          observer.baseline = structuredClone(observerClient.updates);
+          for (const profile of profiles) await exercise(profile);
+          for (let index = 0; index < saved.length; index++)
+            await isolation(
+              saved[index],
+              saved[(index + 1) % saved.length].agent,
+            );
+          assertAttempts((await modelStatus()).requests, expectedAttempts);
+          await observerClient.request("list", {});
+          bindCostList(observerClient, [observerSession]);
+          assertObserver();
+        });
+        observer = undefined;
+        assert.equal(
+          clients.size,
+          0,
+          "original Cost connections must close before restart",
+        );
+        const restartFingerprint = (await publicationState())
+          .configuration_revision;
+        stage = "waiting-for-ACP-restart";
+        assert.equal(
+          (
+            await fetch("http://acp-closeout-model:8080/restart", {
+              method: "POST",
+              signal: AbortSignal.timeout(5000),
+            })
+          ).status,
+          200,
+        );
+        await until(
+          async () => (await modelStatus()).checkpoint === "restarted",
+          "ACP container restart",
+          120000,
+        );
+        stage = "waiting-for-ACP-configuration";
+        await waitForRestoredConfiguration(
+          publicationState,
+          restartFingerprint,
+        );
+        stage = "observer:restart-replay";
+        const observerRestored = await connect(
+          profiles[0],
+          observerAgent,
+          stranger,
+        );
+        observer = { client: observerRestored };
+        await use(observerRestored, async () => {
+          await replay(
+            observerRestored,
+            profiles[0],
+            observerSession,
+            [observerUsage],
+            "agent_default",
+          );
+          observer.sessionId = observerSession;
+          observer.modeId = observerModes.currentModeId;
+          observer.baseline = structuredClone(observerRestored.updates);
+          for (const item of saved) await restore(item);
+          await observerRestored.request("list", {});
+          bindCostList(observerRestored, [observerSession]);
+          assertObserver();
+        });
+      } finally {
+        observer = undefined;
+      }
+      const requests = (await modelStatus()).requests;
+      assertAttempts(requests, expectedAttempts);
+      assert.equal(requests.length, 52);
+      secrets.push(
+        ...requests.map((r) => r.phase),
+        ...admin.cookies.values(),
+        ...member.cookies.values(),
+        ...stranger.cookies.values(),
       );
-      const observerClient = await connect(
-        profiles[0],
-        observerAgent,
-        stranger,
-      );
-      observer = { client: observerClient };
-      const { sessionId: observerSession, modes: observerModes } =
-        await observerClient.request("new", setup);
-      const observerUsage = await send(
-        observerClient,
-        profiles[0],
-        observerSession,
-        "observer",
-        0.77,
-      );
-      observer.sessionId = observerSession;
-      observer.modeId = observerModes.currentModeId;
-      observer.baseline = structuredClone(observerClient.updates);
-      for (const profile of profiles) await exercise(profile);
-      for (let index = 0; index < saved.length; index++)
-        await isolation(saved[index], saved[(index + 1) % saved.length].agent);
-      assertAttempts((await modelStatus()).requests, expectedAttempts);
-      await observerClient.request("list", {});
-      assertObserver();
-      observerClient.close();
-      observer = undefined;
-      const restartFingerprint = (await publicationState())
-        .configuration_revision;
-      stage = "waiting-for-ACP-restart";
+      assert.equal(traces.length, 137);
+      assert.equal(traces.filter((t) => t.rejection).length, 12);
+      assert.equal(clients.size, 0, "all Cost connections must be joined");
+      assert.equal(initializationRequests.length, 14);
+      assert.equal(connectionInventory.length, 14);
       assert.equal(
-        (
-          await fetch("http://acp-closeout-model:8080/restart", {
-            method: "POST",
-            signal: AbortSignal.timeout(5000),
-          })
-        ).status,
-        200,
+        connectionInventory.filter((c) => c.transport === "http").length,
+        4,
       );
-      await until(
-        async () => (await modelStatus()).checkpoint === "restarted",
-        "ACP container restart",
-        120000,
+      assert.equal(
+        initializationRequests.filter((r) => r.agentAccessDenied).length,
+        3,
       );
-      stage = "waiting-for-ACP-configuration";
-      await waitForRestoredConfiguration(publicationState, restartFingerprint);
-      stage = "observer:restart-replay";
-      const observerRestored = await connect(
-        profiles[0],
-        observerAgent,
-        stranger,
+      for (const [methods, count] of [
+        [["session/new"], 10],
+        [["session/load", "session/resume"], 28],
+        [["session/fork"], 3],
+        [["session/set_config_option"], 30],
+        [["session/list"], 2],
+        [["session/prompt"], 52],
+      ])
+        assert.equal(
+          traces.filter((r) => !r.rejection && methods.includes(r.method))
+            .length,
+          count,
+        );
+      const all = [...traces, ...initializationRequests];
+      const key = (item) =>
+        item.transport === "http"
+          ? `http:${item.traceID}:${item.clientSpanID}:${item.requestId}`
+          : `websocket:${item.connectionTraceID}:${item.requestId}`;
+      const indexed = new Map(all.map((item) => [key(item), item]));
+      assert.equal(indexed.size, 151, "duplicate Cost request identity");
+      const seen = new Set();
+      for (const connection of connectionInventory) {
+        const http = connection.transport === "http";
+        const wire = http
+          ? connection.http_connection.requests.filter(
+              (row) => row.method === "POST",
+            )
+          : connection.requests;
+        if (http) {
+          assert.equal(connection.http_connection.streamJoined, true);
+          assert.equal(connection.http_connection.pendingRequests, 0);
+        }
+        assert.equal(
+          wire.filter(
+            (row) => (http ? row.rpcMethod : row.method) === "initialize",
+          ).length,
+          1,
+        );
+        for (const row of wire) {
+          const identity = key(
+            http
+              ? { ...row, transport: "http", requestId: String(row.requestID) }
+              : { ...row, connectionTraceID: connection.connection_trace_id },
+          );
+          const actual = indexed.get(identity);
+          assert(
+            actual && !seen.has(identity),
+            "uninventoried or duplicate actual Cost SDK request",
+          );
+          seen.add(identity);
+          assert.equal(actual.method, http ? row.rpcMethod : row.method);
+          assert.equal(
+            actual.inputSessionID,
+            (http ? row.rpcSessionID : row.sessionId) ?? null,
+          );
+          assert.equal(actual.agentId, connection.agent_id);
+          assert.equal(actual.protocolVersion, connection.version);
+        }
+      }
+      assert.equal(
+        seen.size,
+        indexed.size,
+        "Cost inventory has no actual SDK request",
       );
-      observer = { client: observerRestored };
-      await replay(
-        observerRestored,
-        profiles[0],
-        observerSession,
-        [observerUsage],
-        "agent_default",
+      assert.equal(pricingTraces.length, 19);
+      assert.equal(new Set(pricingTraces.map((r) => r.traceID)).size, 19);
+      for (const [name, value] of [
+        ["model-requests.private.json", requests],
+        ["request-inventory.private.json", traces],
+        ["initialization-inventory.private.json", initializationRequests],
+        ["connection-inventory.private.json", connectionInventory],
+        ["pricing-inventory.private.json", pricingTraces],
+      ])
+        writeEvidenceFile(directory, name, JSON.stringify(value) + "\n");
+      console.log(
+        asciiJSON({
+          status: "business_complete",
+          model_requests: requests.length,
+          request_traces: traces.length,
+          initialization_requests: initializationRequests.length,
+          pricing_commands: pricingTraces.length,
+          acp_restarts: 1,
+        }),
       );
-      observer.sessionId = observerSession;
-      observer.modeId = observerModes.currentModeId;
-      observer.baseline = structuredClone(observerRestored.updates);
-      for (const item of saved) await restore(item);
-      await observerRestored.request("list", {});
-      assertObserver();
-    } finally {
-      observer?.client.close();
-      observer = undefined;
-    }
-  });
-  const requests = (await modelStatus()).requests;
-  assertAttempts(requests, expectedAttempts);
-  assert.equal(requests.length, 52);
-  const secrets = [
-    "cost-model-test",
-    "cost-owner-password",
-    "cost-stranger-password",
-    ...requests.map((r) => r.phase),
-    ...admin.cookies.values(),
-    ...member.cookies.values(),
-    ...stranger.cookies.values(),
-  ];
-  assert.equal(traces.length, 137);
-  assert.equal(traces.filter((t) => t.rejection).length, 12);
-  assert.equal(pricingTraces.length, 19);
-  console.log(
-    asciiJSON({
-      status: "business_complete",
-      model_requests: requests.length,
-      request_traces: traces.length,
-      pricing_commands: pricingTraces.length,
-      acp_restarts: 1,
-    }),
+      stage = "runtime-inspection";
+      const runtimeInspection = await requestCostRuntimeInspection(agents, {
+        consumed,
+      });
+      return { requests, runtimeInspection, all };
+    },
+    { directory },
   );
   const checked = [];
   assert.equal(traces.filter((t) => t.kind === "native").length, 52);
-  for (const expected of traces) {
+  for (const expected of all) {
     stage = `trace:${expected.label}`;
     checked.push(
-      await collectNativeTrace(
-        "http://jaeger:16686",
-        expected,
+      await collectPrivateCostTrace("http://jaeger:16686", expected, {
+        directory,
         secrets,
         requests,
-      ),
+        flush: () => telemetry.flush(),
+      }),
     );
   }
   console.log(
     asciiJSON({ status: "request_traces_checked", count: checked.length }),
   );
-  assert.equal(new Set(checked.map((t) => t.trace_id)).size, traces.length);
+  assert.equal(new Set(checked.map((t) => t.trace_id)).size, all.length);
   assert.equal(new Set(checked.map((t) => t.run_id).filter(Boolean)).size, 52);
   assert.deepEqual(
     new Set(checked.filter((t) => t.kind === "native").map((t) => t.trace_id)),
@@ -681,40 +881,61 @@ async function main() {
   for (const expected of pricingTraces) {
     stage = "pricing-trace";
     pricing.push(
-      await collectTrace("http://jaeger:16686", expected.traceID, (trace) =>
-        inspectPricingTrace(trace, expected, secrets),
-      ),
+      await collectCostPricingTrace("http://jaeger:16686", expected, {
+        directory,
+        secrets,
+      }),
     );
   }
-  const { accepted, ...strict } = nativeStrictOutcome([...checked, ...pricing]);
+  const { exit_code: exitCode, ...strict } = costStrictOutcome(
+    checked,
+    pricing,
+  );
   console.log(
     asciiJSON({
       status: "business_passed",
       ...strict,
-      transports: profiles.map((p) => p.name),
+      ...costCompletionFields(completedOutcomes),
       model_requests: requests.length,
-      restored_sessions: saved.length * 3,
       cross_agent_rejections: 9,
       cross_user_rejections: 3,
       acp_restarts: 1,
       active_foreign_observer_cost: 0.77,
       usage_private_fields: false,
-      request_traces: checked.length,
-      traces: checked,
+      request_traces: traces.length,
+      initialization_requests: initializationRequests.length,
+      connections: connectionInventory.length,
+      runtime_inspection: runtimeInspection,
+      traces: checked.slice(0, traces.length),
+      initialization_traces: checked.slice(traces.length),
       pricing_traces: pricing,
     }),
   );
-  if (!accepted) process.exitCode = 1;
+  process.exitCode = exitCode;
 }
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, main);
 } catch (error) {
   console.error(
-    asciiJSON({
-      status: "failed",
-      stage,
-      ...summarizeFailure(error),
-    }),
+    asciiJSON(
+      await preserveFileFailure({
+        directory,
+        error,
+        stage,
+        inventory: {
+          traces,
+          initializationRequests,
+          connectionInventory,
+          stateReceipts,
+          pricingTraces,
+          expectedAttempts,
+        },
+        fetchStatus: () =>
+          fetch("http://acp-closeout-model:8080/status", {
+            signal: AbortSignal.timeout(5000),
+          }),
+      }),
+    ),
   );
   process.exitCode = 1;
 }

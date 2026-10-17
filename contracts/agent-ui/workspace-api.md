@@ -288,6 +288,22 @@ The error envelope has stable `code`, non-secret `message`, `requestId`,
 capacity, 503 unavailable and 504 ordinary request deadline. An exhausted
 replay queue is `replay_capacity_exceeded`; a stream snapshot or live
 selection over budget is `stream_capacity_exceeded` and requires a fresh read.
+
+Prompt body admission is per Agent UI process, after workload and signed user
+authentication and before consuming or parsing the body. It reserves at most
+128 MiB / 16 concurrent requests globally and 64 MiB / 4 concurrent requests
+per `(organization, user)`, shared across Agents and login sessions. A known
+Content-Length reserves its declared bytes; a chunked/unknown length reserves
+the full 64 MiB request maximum. Reservations remain until the body and owning
+HTTP dispatch settle, including rejection, disconnect and deadline cleanup.
+This bounds admitted wire bytes, not the process RSS or accepted ACP Run state.
+Exhaustion returns `429 upload_capacity_exceeded`, `Retry-After: 1`, no-store,
+and refresh recovery before any business dispatch; requests are not replayed.
+Control requests, including both cancel paths, bypass this upload budget and
+have a 16 KiB native JSON body ceiling (smaller route limits still apply).
+The four concurrent legal near-16 MiB uploads used by capacity admission must
+remain admitted; the budget does not replace their cancellation deadline test.
+
 A new scope denied because every Bridge owner slot is busy receives
 `bridge_capacity_exceeded`; a cold owner may be retired to admit it.
 A missing/expired durable
@@ -343,8 +359,8 @@ Duplicates are ignored, while a gap, expired suffix, changed epoch or changed
 projection receives `reset` plus a fresh snapshot. A cursor is only a resume
 hint. The browser must rebootstrap after an EventSource error to distinguish
 network failure, 401 login expiry and 403 access revocation; it stops
-reconnecting on the latter two. Gateway's existing Agent-state SSE behavior
-is separate and still rejects `Last-Event-ID` until its own contract changes.
+reconnecting on the latter two. The unused Gateway Agent-state SSE routes are
+retired; browser consumers use this Bridge stream contract.
 
 Each subscriber has a 1 MiB pending-byte limit. Replaceable updates may be
 coalesced; operation terminal facts and permission inbox remain in the next
@@ -369,6 +385,21 @@ setup. It does not produce a browser-session 401. The browser obtains a fresh
 authorized View and stream through the usual reconnect path without replaying
 a Prompt. Reconnection and ordinary reads never report browser activity.
 Disconnecting an observer never cancels an ACP Run.
+
+After authenticating the original SSE request and before starting its
+subscription, the Agent UI HTTP SERVER span records
+`antnest.ui.stream.delegation_expires_at_unix_ms` from that request's verified
+CCT `exp`, and `antnest.ui.stream.delegation_remaining_ms` from the same deadline
+minus one local wall-clock sample. Both values are positive safe integer
+milliseconds, frozen once per request. Revalidation, owner reuse or a subsequent
+request with a newer CCT cannot replace them. Rejected authentication and ordinary
+HTTP requests do not publish this stream receipt. It contains no CCT, session
+identifier, token hash or caller-provided diagnostic header.
+An observer can add the recorded remaining duration to its own request-send
+monotonic time to establish a conservative deadline without assuming synchronized
+service clocks. The receipt identifies the original stream's delegation budget;
+it does not prove the cause of a remote close or replace the actual Identity
+fault, revocation and Resolve evidence.
 
 ## Related contracts
 

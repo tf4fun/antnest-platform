@@ -1,26 +1,30 @@
 import assert from "node:assert/strict";
-import { access, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
-import { connectACP, gateway } from "./acp-connection.mjs";
+import { gateway } from "./acp-connection.mjs";
 import { GatewayClient } from "./support.mjs";
-import { waitForExpiry } from "./expiry.mjs";
+import { openBrowserPrivateACP } from "./private-acp-browser.mjs";
+import { createPrivateACPTelemetry } from "./private-acp-telemetry.mjs";
+import { collectPrivateACPTrace } from "./private-acp-trace.mjs";
+import { observeBrowserSession } from "./bridge-session-observer.mjs";
 import {
   assertCompletedRun,
   assertEmptySession,
 } from "./acp-session-evidence.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
-import { collectSessionClosure, saveSessionTrace } from "./session-trace.mjs";
+import { inspectCommandTraceFromRequests } from "../acp-commands/trace.mjs";
+import { collectBridgeSessionOwnerEvidence } from "./bridge-session-owner-collect.mjs";
 import {
-  expectSilentSessionClose,
-  sessionCloseCheckpoint,
-} from "./session-close.mjs";
+  closeSessionFaultResources,
+  finishSessionFault,
+  logoutSession,
+  requestIdentitySessionTransition,
+} from "./session-fault-lifecycle.mjs";
 import { identityEvidenceExitCode } from "./trace.mjs";
 import { createAccessCatalog } from "./catalog.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertStoredSessionEffects } from "./acp-session-effects.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+import { withSessionOwnerDrain } from "./session-owner-drain.mjs";
 
 const credentials = {
   organization_slug: "stage3",
@@ -30,6 +34,9 @@ const credentials = {
 const browser = new GatewayClient(gateway),
   admin = new GatewayClient(gateway);
 const clients = new Set(),
+  observers = new Set(),
+  issuedSessions = new WeakMap(),
+  identityTransitions = [],
   denied = [],
   execution = [],
   restored = [],
@@ -38,6 +45,7 @@ const clients = new Set(),
     "stage3-admin-password",
     "acp-session-private-key",
   ];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
 const pool = new Pool({
   connectionString: process.env.TEST_ACP_DATABASE_URL,
   max: 1,
@@ -58,38 +66,52 @@ async function until(probe, label, timeout = 45000) {
   throw new Error(`Timed out: ${label}`);
 }
 async function checkpoint(number) {
-  await writeFile(`/checkpoints/request-${number}`, "ready\n");
-  await until(
-    async () => {
-      try {
-        await access(`/checkpoints/done-${number}`);
-        return true;
-      } catch (error) {
-        if (error.code === "ENOENT") return false;
-        throw error;
-      }
-    },
-    `coordinator step ${number}`,
-    90000,
+  const receipt = await requestIdentitySessionTransition(
+    number,
+    identityTransitions.at(-1),
   );
+  identityTransitions.push(receipt);
+  return receipt;
 }
 async function login(target = browser) {
+  const startedMono = performance.now();
   const result = await target.request("/api/session/login", {
     body: credentials,
   });
+  const issued = {
+    ...result.body,
+    observation: {
+      startedMono,
+      completedMono: performance.now(),
+      traceID: result.traceID,
+    },
+  };
   secrets.push(...target.cookies.values());
-  return result.body;
+  issuedSessions.set(target, issued);
+  return issued;
 }
-async function open(version, cookie = browser.cookie) {
-  const client = connectACP(version, agent, cookie, {
-    injectTraceParent: false,
+async function open(version, target = browser) {
+  const issued = issuedSessions.get(target);
+  assert(issued, "original browser login receipt missing");
+  const client = await openBrowserPrivateACP(version, agent, target, {
+    principal: issued.principal,
+    telemetry,
+    secrets,
   });
   clients.add(client);
-  await client.initialize();
   return client;
 }
-function close(client) {
-  client.close();
+async function observe(client, sessionId, target = browser) {
+  const observer = await observeBrowserSession(target, client, {
+    agentId: agent,
+    sessionId,
+    issued: issuedSessions.get(target),
+  });
+  observers.add(observer);
+  return observer;
+}
+async function close(client) {
+  await client.closeAndWait();
   clients.delete(client);
 }
 function remember(client, method, details = {}) {
@@ -100,6 +122,9 @@ function remember(client, method, details = {}) {
   return {
     ...request,
     agentId: agent,
+    boundary: "private-acp",
+    protocolVersion: client.version,
+    clientSpanID: client.clientSpanID,
     transport: "websocket",
     connectionTraceID: client.traceID,
     kind: "request",
@@ -170,20 +195,25 @@ function unchanged(before, after) {
     "denied request or replay mutated durable state",
   );
 }
-async function rejectedPrompt(client, sessionId, reason, checkpoint, before) {
+async function rejectedPrompt(
+  client,
+  observer,
+  sessionId,
+  checkpoint,
+  cause,
+  before,
+) {
   assert.equal(
     before.runs.length,
     0,
     "denial probe must use idle unused Session",
   );
   denied.push(
-    await expectSilentSessionClose(client, checkpoint, reason, "prompt", {
-      sessionId,
-      prompt: [{ type: "text", text: "denied-must-not-run" }],
-    }),
+    await finishSessionFault({ client, observer, checkpoint, cause }),
   );
   unchanged(before, await snapshot(sessionId));
-  close(client);
+  clients.delete(client);
+  observers.delete(observer);
 }
 async function modelState() {
   const response = await fetch("http://acp-session-model:8080/status", {
@@ -270,14 +300,21 @@ async function logoutIdle() {
     const client = await open(version);
     const { sessionId } = await createSession(client);
     assertEmptySession(client.updates, sessionId, version, "new");
+    const observer = await observe(client, sessionId);
     const beforeState = await snapshot(sessionId);
-    const beforeClose = sessionCloseCheckpoint(client);
-    await browser.request("/api/session", { method: "DELETE", status: 204 });
+    const beforeClose = observer.checkpoint("revoked");
+    const cause = await logoutSession(
+      browser,
+      observer,
+      beforeClose,
+      observer.principal,
+    );
     await rejectedPrompt(
       client,
+      observer,
       sessionId,
-      "revoked",
       beforeClose,
+      cause,
       beforeState,
     );
     await login();
@@ -288,7 +325,7 @@ async function logoutIdle() {
       version,
       "replay",
     );
-    close(restored);
+    await close(restored);
   }
 }
 async function outageAndExpiry() {
@@ -297,22 +334,24 @@ async function outageAndExpiry() {
   for (const version of [1, 2]) {
     const client = await open(version);
     const { sessionId } = await createSession(client);
-    connected.push({ version, client, sessionId });
+    const observer = await observe(client, sessionId);
+    connected.push({ version, client, observer, sessionId });
   }
   step = "identity_outage";
   for (const item of connected) {
     item.beforeState = await snapshot(item.sessionId);
-    item.beforeClose = sessionCloseCheckpoint(item.client);
+    item.beforeClose = item.observer.checkpoint("unavailable");
   }
-  await checkpoint(1);
+  const stopped = await checkpoint(1);
   // Observe both remote closures without sending a message to trigger admission.
   await Promise.all(
     connected.map((item) =>
       rejectedPrompt(
         item.client,
+        item.observer,
         item.sessionId,
-        "unavailable",
         item.beforeClose,
+        { kind: "identity-outage", transition: stopped },
         item.beforeState,
       ),
     ),
@@ -324,24 +363,29 @@ async function outageAndExpiry() {
   step = "identity_recovery_and_natural_expiry";
   await checkpoint(2);
   for (const { version, sessionId } of connected) {
-    const recovered = await open(version, longCookie);
+    assert.equal(browser.cookie, longCookie);
+    const recovered = await open(version);
     const updates = await replay(recovered, version, sessionId);
     assertEmptySession(updates, sessionId, version, "replay");
-    close(recovered);
+    await close(recovered);
     const short = new GatewayClient(gateway);
     const issued = await login(short);
-    const shortClient = await open(version, short.cookie);
+    const shortClient = await open(version, short);
     const created = await createSession(shortClient);
     await shortClient.request("list", {});
+    const observer = await observe(shortClient, created.sessionId, short);
     const beforeState = await snapshot(created.sessionId);
-    const beforeClose = sessionCloseCheckpoint(shortClient);
-    beforeClose.expiresAt = Date.parse(issued.expires_at);
-    await waitForExpiry(issued.expires_at);
+    const beforeClose = observer.checkpoint("expired");
     await rejectedPrompt(
       shortClient,
+      observer,
       created.sessionId,
-      "expired",
       beforeClose,
+      {
+        kind: "absolute-expiry",
+        expiresAt: Date.parse(issued.expires_at),
+        transition: identityTransitions[1],
+      },
       beforeState,
     );
   }
@@ -360,6 +404,7 @@ async function admittedRun(version) {
   step = `v${version}_admitted_run`;
   const client = await open(version);
   const { sessionId } = await createSession(client);
+  const observer = await observe(client, sessionId);
   const phase = `v${version}-admitted`;
   // Attach handlers immediately: v1 completes only after the Run, v2 acknowledges admission.
   const pending = prompt(client, sessionId, phase).then(
@@ -384,13 +429,24 @@ async function admittedRun(version) {
       closedBeforeResponse: version === 1,
     }),
   );
-  const beforeClose = sessionCloseCheckpoint(client);
-  await browser.request("/api/session", { method: "DELETE", status: 204 });
-  denied.push(
-    await expectSilentSessionClose(client, beforeClose, "revoked", "list", {}),
+  const beforeClose = observer.checkpoint("revoked");
+  const cause = await logoutSession(
+    browser,
+    observer,
+    beforeClose,
+    observer.principal,
   );
-  await pending;
-  close(client);
+  denied.push(
+    await finishSessionFault({
+      client,
+      observer,
+      checkpoint: beforeClose,
+      cause,
+      pending,
+    }),
+  );
+  clients.delete(client);
+  observers.delete(observer);
   const release = await fetch(
     `http://acp-session-model:8080/release/${phase}`,
     { method: "POST", signal: AbortSignal.timeout(5000) },
@@ -453,7 +509,7 @@ async function admittedRun(version) {
     next.tools.find((tool) => tool.run_id === nextRun.id).result_summary,
     nextPhase,
   );
-  close(recovered);
+  await close(recovered);
 }
 
 try {
@@ -461,32 +517,79 @@ try {
   await logoutIdle();
   await outageAndExpiry();
   for (const version of [1, 2]) await admittedRun(version);
-  step = "trace_acceptance";
+  step = "owner_drain";
   const state = await modelState();
   assert.equal(state.requests.length, 8, "model request count mismatch");
-  const traces = [];
-  for (const expected of denied)
-    traces.push(
-      await collectSessionClosure("http://jaeger:16686", expected, secrets),
-    );
-  const executionTraces = [];
-  for (const expected of [...restored, ...execution])
-    executionTraces.push(
-      await collectManagedTrace(
+  const {
+    traces,
+    executionTraces,
+    ownerLifecycle,
+    ownerClose,
+    traceDiagnostics,
+  } = await withSessionOwnerDrain(
+    {
+      agentId: agent,
+      clients,
+      observers,
+      closures: denied,
+      identityTransitions,
+      modelRequests: state.requests.length,
+    },
+    async (ownerLifecycle) => {
+      step = "trace_acceptance";
+      const {
+        traces,
+        ownerClose,
+        diagnostics: traceDiagnostics,
+      } = await collectBridgeSessionOwnerEvidence(
         "http://jaeger:16686",
-        expected,
+        {
+          agentId: agent,
+          ownerLifecycle,
+          closures: denied.map((expected) => ({
+            ...expected,
+            identityTransitions,
+            ownerLifecycle,
+            deployment: {
+              project: process.env.COMPOSE_PROJECT_NAME,
+              runID: process.env.ANTNEST_E2E_RUN_ID,
+            },
+          })),
+        },
         secrets,
-        state.requests,
-        saveSessionTrace,
-        inspectCommandTrace,
-      ),
-    );
+      );
+      const executionTraces = [];
+      for (const expected of [...restored, ...execution])
+        executionTraces.push(
+          await collectPrivateACPTrace("http://jaeger:16686", expected, {
+            directory: process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+            flush: () => telemetry.flush(),
+            secrets,
+            inspect: (trace, bound, canaries) =>
+              inspectCommandTraceFromRequests(
+                trace,
+                bound,
+                canaries,
+                state.requests,
+              ),
+          }),
+        );
+      return {
+        traces,
+        executionTraces,
+        ownerLifecycle,
+        ownerClose,
+        traceDiagnostics,
+      };
+    },
+  );
   process.exitCode = identityEvidenceExitCode([...traces, ...executionTraces]);
   await browser.request("/api/session", { method: "DELETE", status: 204 });
   await admin.request("/api/session", { method: "DELETE", status: 204 });
   process.stdout.write(
     asciiJSON({
       status: "business_passed",
+      agent_id: agent,
       versions: [1, 2],
       silent_closures: denied.length,
       post_close_requests_blocked: denied.length,
@@ -494,6 +597,10 @@ try {
       continued_runs: 2,
       recovered_runs: 2,
       model_requests: state.requests.length,
+      identity_transitions: identityTransitions,
+      owner_lifecycle: ownerLifecycle,
+      owner_close: ownerClose,
+      trace_diagnostics: traceDiagnostics,
       traces,
       execution_traces: executionTraces,
     }) + "\n",
@@ -508,6 +615,10 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  for (const client of clients) client.close();
-  await pool.end();
+  try {
+    await closeSessionFaultResources({ clients, observers, pool, telemetry });
+  } catch {
+    console.error(asciiJSON({ event: "acp_session_cleanup_failed" }));
+    process.exitCode = 1;
+  }
 }
