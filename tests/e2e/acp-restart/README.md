@@ -44,10 +44,20 @@ unknown-effect Runtime barrier stays observable independently of readiness.
 Only the disposable host wrapper sends SIGKILL, checks processes, proves Runtime
 retirement and cleans up.
 
-The state-reader migration is a local consumer batch. Private ACP connections,
-request/Trace inventories and the host's required grants, networks and contract
-mounts are subsequent batches before the full eight-case Docker acceptance.
-The previous platform result does not prove those pending changes.
+ACP connections also use the same original owner through the shared private
+opener, which initializes each connection once. The recorder preserves original
+inputs, SDK results and errors, raw replies and late updates. Closing joins the
+transport and pending request archives before checking the complete inventory:
+26 connections/initializations and 46 business requests, including 18 replays.
+The original v1 interruption errors and v2 message ID ACKs remain distinct from
+the host's SIGKILL proof. Connection, request and initialization inventories are
+private; failure output uses a safe summary while full errors and partial
+inventory remain private. Cleanup errors cannot hide the original failure.
+
+State and connection migration are local consumer batches. Private Trace
+collection and the host's required grants, networks and contract mounts are
+subsequent batches before full eight-case Docker acceptance. The previous
+platform result does not prove those pending changes.
 
 ## Trace rules
 

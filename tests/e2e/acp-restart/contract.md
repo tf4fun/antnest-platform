@@ -24,6 +24,29 @@ and remains a failure; read and archive errors are both retained. A valid
 `runtime_barrier_required` offline response must remain visible for the original
 unknown-effect checks and must not be treated as startup recovery.
 
+## Private ACP requests
+
+Connections delegate the original owner login through the shared private ACP
+opener. Its initialization is the only initialization on that connection.
+Original inputs, SDK results and errors, raw replies and updates are privately
+archived, including on failure. Request IDs are scoped to the actual connection;
+the original input and returned Session, Agent and protocol must agree. No
+request may borrow a reply from another connection or a local-close exception.
+
+The eight cases require 26 connections/initializations and 46 business requests:
+10 Session creations, 18 history replays, 16 execution prompts and two Runtime
+barrier refusals. Each case uses its original connection and two reconnects;
+the two in-flight cases add one reconnect after Rebuild. Interrupted v1 prompts
+retain their original rejection; v2 prompts retain their original message ID
+ACK, which does not establish completion. The host's SIGKILL proof remains
+independent and mandatory.
+
+Closure joins the transport and all pending request archives before the final
+inventory is checked. Cleanup and archival errors remain visible alongside the
+original business failure. The complete private inventory is preserved before
+publishing success, and partial inventory is retained on failure. Private Trace
+collection and host deployment remain subsequent consumer batches.
+
 ## Process interruption and unknown Tool effects
 
 Each SDK version runs four cases in fresh Sessions: a fully completed Run, a
