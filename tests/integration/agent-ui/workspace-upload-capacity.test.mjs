@@ -7,14 +7,18 @@ import { test } from "node:test";
 import { createAuthFixture } from "../../../services/agent-ui/web/server/test/support/auth-fixture.mjs";
 import { acpPromptRequestBytes } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
 import { buildPromptBlocks } from "../../../services/agent-ui/web/src/lib/prompt.ts";
-import { calibrate, startFixture } from "./capacity/process.mjs";
+import {
+  assertUploadOverlap,
+  calibrate,
+  startFixture,
+} from "./capacity/process.mjs";
 import { parseCapacityResponse } from "./capacity/response.mjs";
 
 const fixture = await createAuthFixture({ built: true });
+const { "Antnest-Service-Authorization": workloadAuthorization } =
+  fixture.workloadHeaders();
 const privateValues = new Set([
-  fixture
-    .workloadHeaders()
-    ["Antnest-Service-Authorization"].slice("Bearer ".length),
+  workloadAuthorization.slice("Bearer ".length),
   ...readdirSync(`${fixture.directory}/tokens`).map((name) =>
     readFileSync(`${fixture.directory}/tokens/${name}`, "utf8"),
   ),
@@ -392,6 +396,9 @@ for (const uploadCount of [1, 4]) {
               const uploadId = `${aIntent}-${index}`;
               return {
                 receiving: receiving[index],
+                receivingObservedNs: bridge
+                  .observedAt(receiving[index])
+                  .toString(),
                 eof: await bridge.wait(
                   "body-eof",
                   (value) => value.uploadId === uploadId,
@@ -412,31 +419,45 @@ for (const uploadCount of [1, 4]) {
             (value) => value.intentId === aIntent,
           );
           const afterClock = await calibrate(bridge);
-          // Both brackets cover the measured interval; conservatively use their
-          // union, including any drift, when proving that cancellation overlapped.
-          const low =
-            BigInt(beforeClock.low) < BigInt(afterClock.low)
-              ? BigInt(beforeClock.low)
-              : BigInt(afterClock.low);
+          // Actual IPC receipt establishes that cancellation follows the upload
+          // boundary. The union's upper bound still proves it precedes completion.
           const high =
             BigInt(beforeClock.high) > BigInt(afterClock.high)
               ? BigInt(beforeClock.high)
               : BigInt(afterClock.high);
-          const cancelEarliest = cancelSent + low;
           const cancelLatest = cancelSent + high;
+          const eofObservedNs = bridge.observedAt(eof);
+          t.diagnostic(
+            JSON.stringify({
+              scope: "capacity overlap observation",
+              phase,
+              cancelPath,
+              uploadCount,
+              uploads,
+              eof,
+              handler,
+              clientEofObservedNs: eofObservedNs.toString(),
+              clientCancelSentNs: cancelSent.toString(),
+              childCancelLatestNs: cancelLatest.toString(),
+              beforeClock,
+              afterClock,
+            }),
+          );
           if (phase === "body-completion-and-parse") {
-            assert.ok(
-              cancelEarliest >= BigInt(eof.ns),
-              "cancel must be sent after actual EOF",
-            );
-            assert.ok(
-              cancelLatest < BigInt(handler.ns),
-              "cancel must overlap strict parsing, not an upstream wait",
-            );
+            assertUploadOverlap({
+              observedAt: eofObservedNs,
+              cancelSent,
+              cancelLatest,
+              completedAt: BigInt(handler.ns),
+            });
           } else {
             for (const item of uploads) {
-              assert.ok(cancelEarliest >= BigInt(item.receiving.ns));
-              assert.ok(cancelLatest < BigInt(item.eof.ns));
+              assertUploadOverlap({
+                observedAt: bridge.observedAt(item.receiving),
+                cancelSent,
+                cancelLatest,
+                completedAt: BigInt(item.eof.ns),
+              });
             }
           }
           assert.ok(BigInt(handler.ns) < BigInt(serialized.ns));
@@ -484,6 +505,7 @@ for (const uploadCount of [1, 4]) {
               released,
               summary,
               clientCancelSentNs: cancelSent.toString(),
+              clientEofObservedNs: eofObservedNs.toString(),
               clientTerminalObservedNs: observed.toString(),
               beforeClock,
               afterClock,

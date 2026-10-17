@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { request as httpRequest, type ClientRequest } from "node:http";
+import { request as httpRequest, type ClientRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { setImmediate as turn } from "node:timers/promises";
 import { test } from "node:test";
 import { createWorkspaceHttpServer } from "../src/http/node-server.ts";
@@ -16,9 +16,17 @@ async function fixture(work: (input: {
   }>;
   calls(): number;
   releaseDispatch(): void;
-}) => Promise<void>, requestDeadlineMs = 2000) {
+}) => Promise<void>, requestDeadlineMs = 2000, beforeAuthenticate?: (request: IncomingMessage) => Promise<void>) {
   let calls = 0;
   const dispatch = Promise.withResolvers<void>();
+  const authentication = testAuthentication();
+  if (beforeAuthenticate) {
+    const admit = authentication.admit.bind(authentication);
+    authentication.admit = async (request: IncomingMessage) => {
+      await beforeAuthenticate(request);
+      return admit(request);
+    };
+  }
   const server = createWorkspaceHttpServer({
     async handle(request) {
       const body = request.method === "POST" ? await readBody(request) as { hold?: boolean; fail?: boolean } : {};
@@ -27,7 +35,7 @@ async function fixture(work: (input: {
       if (body.fail) throw new Error("Deliberate dispatch failure");
       return Response.json({ ok: true });
     },
-  }, { authentication: testAuthentication(), requestDeadlineMs });
+  }, { authentication, requestDeadlineMs });
   const clients: ClientRequest[] = [];
   const closures: Promise<void>[] = [];
   const tasks: Promise<Result>[] = [];
@@ -46,8 +54,21 @@ async function fixture(work: (input: {
       calls: () => calls,
       releaseDispatch: () => dispatch.resolve(),
       async start(user, agent, bytes = 2, body, action = "sessions/s/prompts") {
-        const received = once(server, "request");
         const pending = Promise.withResolvers<Result>();
+        const consuming = Promise.withResolvers<void>();
+        let unobserve = () => {};
+        const observe = (incoming: IncomingMessage, outgoing: ServerResponse) => {
+          if (incoming.socket.remotePort !== client.socket?.localPort) return;
+          server.off("request", observe);
+          const resumed = () => {
+            // The server acquires the upload budget before consuming the body.
+            // Automatic draining after a rejection is not an admission.
+            if (!outgoing.headersSent && !outgoing.writableEnded) consuming.resolve();
+          };
+          incoming.once("resume", resumed);
+          unobserve = () => { incoming.off("resume", resumed); };
+        };
+        server.on("request", observe);
         const client = httpRequest(`${origin}/api/app/workspace/v1/agents/${agent}/${action}`, {
           method: "POST", agent: false,
           headers: { ...headers(user, agent), "content-type": "application/json",
@@ -64,11 +85,15 @@ async function fixture(work: (input: {
         clients.push(client); closures.push(closed); tasks.push(pending.promise);
         void pending.promise.catch(() => {});
         client.on("error", () => pending.reject(new Error("Upload admission client closed")));
-        if (body === undefined) client.write("{");
-        else client.end(body);
-        await received;
-        await turn();
-        return { response: pending.promise, close: async () => { client.destroy(); await closed; } };
+        try {
+          if (body === undefined) client.write("{");
+          else client.end(body);
+          await Promise.race([consuming.promise, pending.promise]);
+          return { response: pending.promise, close: async () => { client.destroy(); await closed; } };
+        } finally {
+          server.off("request", observe);
+          unobserve();
+        }
       },
     });
   } finally {
@@ -121,6 +146,36 @@ test("a user's byte budget rejects before the request count limit", { timeout: 1
     busy(await (await start("one", "another-agent", 40 * mib)).response);
     assert.equal(calls(), 0);
     assert.equal((await (await start("other-user", "a", 2, "{}")).response).status, 200);
+  });
+});
+
+test("upload fixture waits for actual admission while signed authentication is pending", { timeout: 10_000 }, async () => {
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  await fixture(async ({ start, calls }) => {
+    let settled = false;
+    const first = start("one", "auth-held", 40 * mib).finally(() => { settled = true; });
+    void first.catch(() => {});
+    try {
+      await Promise.race([entered.promise, first]);
+      await turn();
+      await turn();
+      assert.equal(settled, false, "a received request is not an admitted upload");
+      release.resolve();
+      await first;
+      busy(await (await start("one", "another-agent", 40 * mib)).response);
+      assert.equal(calls(), 0);
+      assert.equal((await (await start("other-user", "a", 2, "{}")).response).status, 200);
+      assert.equal(calls(), 1);
+    } finally {
+      release.resolve();
+      await first.catch(() => {});
+    }
+  }, 2000, async (request) => {
+    if (request.method === "POST" && request.url === "/api/app/workspace/v1/agents/auth-held/sessions/s/prompts") {
+      entered.resolve();
+      await release.promise;
+    }
   });
 });
 

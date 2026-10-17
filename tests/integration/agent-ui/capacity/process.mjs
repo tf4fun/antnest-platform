@@ -18,6 +18,7 @@ export async function startFixture(configuration, cleanup) {
 
 export function observeFixtureProcess(child) {
   const receipts = [];
+  const observations = new WeakMap();
   const waiters = new Set();
   let exited;
   let failure;
@@ -41,6 +42,7 @@ export function observeFixtureProcess(child) {
     for (const waiter of waiters) waiter();
   });
   child.on("message", (message) => {
+    observations.set(message, process.hrtime.bigint());
     receipts.push(message);
     if (message.kind === "fixture-error")
       failure = new Error("Capacity fixture reported an internal failure");
@@ -123,7 +125,37 @@ export function observeFixtureProcess(child) {
     })();
     return closing;
   }
-  return { child, receipts, wait, stop };
+  return {
+    child,
+    receipts,
+    wait,
+    stop,
+    observedAt(receipt) {
+      assert.ok(
+        observations.has(receipt),
+        "capacity receipt was not observed by this process",
+      );
+      return observations.get(receipt);
+    },
+  };
+}
+
+// IPC establishes the start boundary on the parent clock. The conservative
+// child-clock upper bound still proves cancellation preceded completion.
+export function assertUploadOverlap({
+  observedAt,
+  cancelSent,
+  cancelLatest,
+  completedAt,
+}) {
+  assert.ok(
+    observedAt <= cancelSent,
+    "cancel must follow the observed upload boundary",
+  );
+  assert.ok(
+    cancelLatest < completedAt,
+    "cancel must overlap unfinished upload processing",
+  );
 }
 
 // A ping brackets a child monotonic sample with independent client samples.

@@ -56,6 +56,74 @@ test("capacity cleanup sees stderr delivered between exit and close without hash
   assert.equal(inspect(result).includes("late-private-canary"), false);
 });
 
+test("capacity receipts retain their actual parent observation time without rewriting child evidence", async () => {
+  const child = childDouble();
+  const observed = observeFixtureProcess(child);
+  const receipt = {
+    kind: "body-eof",
+    uploadId: "upload-a",
+    ns: "1",
+    observedAt: "forged-child-time",
+  };
+  const original = structuredClone(receipt);
+  const pending = observed.wait("body-eof");
+  const before = process.hrtime.bigint();
+  child.emit("message", receipt);
+  const after = process.hrtime.bigint();
+  assert.strictEqual(await pending, receipt);
+  assert.equal(typeof observed.observedAt, "function");
+  const actual = observed.observedAt(receipt);
+  assert.equal(typeof actual, "bigint");
+  assert.ok(before <= actual && actual <= after);
+  await nextTurn();
+  child.emit("message", {
+    kind: "handler-enter",
+    uploadId: "upload-a",
+    ns: "2",
+  });
+  assert.strictEqual(await observed.wait("body-eof"), receipt);
+  assert.equal(observed.observedAt(receipt), actual);
+  assert.deepEqual(receipt, original);
+});
+
+test("capacity observation time cannot be borrowed by a cloned or foreign receipt", async () => {
+  const firstChild = childDouble();
+  const secondChild = childDouble();
+  const first = observeFixtureProcess(firstChild);
+  const second = observeFixtureProcess(secondChild);
+  const receipt = { kind: "body-eof", uploadId: "upload-a", ns: "1" };
+  firstChild.emit("message", receipt);
+  assert.equal(typeof first.observedAt, "function");
+  assert.equal(typeof second.observedAt, "function");
+  assert.throws(
+    () => first.observedAt(structuredClone(receipt)),
+    /not observed/u,
+  );
+  assert.throws(() => second.observedAt(receipt), /not observed/u);
+  assert.strictEqual(await first.wait("body-eof"), receipt);
+});
+
+for (const [name, overrides, accepted] of [
+  ["actual local receipt precedes cancellation", {}, true],
+  ["cancellation before receipt observation", { observedAt: 102n }, false],
+  ["cancellation at completion", { completedAt: 504n }, false],
+  ["cancellation after completion", { completedAt: 503n }, false],
+]) {
+  test(`capacity overlap ${accepted ? "accepts" : "rejects"} ${name}`, async () => {
+    const { assertUploadOverlap } = await import("./process.mjs");
+    assert.equal(typeof assertUploadOverlap, "function");
+    const input = {
+      observedAt: 100n,
+      cancelSent: 101n,
+      cancelLatest: 504n,
+      completedAt: 600n,
+      ...overrides,
+    };
+    if (accepted) assert.doesNotThrow(() => assertUploadOverlap(input));
+    else assert.throws(() => assertUploadOverlap(input), /cancel must/u);
+  });
+}
+
 const secret = "private-response-canary-9d3af";
 for (const [name, bytes] of [
   ["malformed JSON", `{"message":"${secret}`],
