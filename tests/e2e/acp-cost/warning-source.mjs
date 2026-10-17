@@ -5,6 +5,8 @@ const deferred = "deferred-same-node-sdk-sub-ms-endpoint";
 const deferredHTTP = "deferred-node-http-sub-ms-endpoint";
 const reviewedUpgrade = "reviewed-node-ws-post-response-endpoint";
 const reviewedRuntimeCleanup = "reviewed-runtime-tool-http-cleanup";
+const waivedExternalSDK = "waived-external-node-otel-timing";
+const waivedRuntimeSDK = "waived-external-otel-timing";
 const invalid = () => new Error("invalid Cost warning sources");
 const requireSource = (condition) => {
   if (!condition) throw invalid();
@@ -412,11 +414,48 @@ function hasExactObservation(trace, child, parent, identity, observations) {
   );
 }
 
-function sourceFor(context, span, warning, observations) {
+function sourceFor(context, span, warning, observations, waiveExternalSDK) {
   const delta = calculatedDelta(warning);
   if (delta === null) return { classification: "unknown-warning" };
   if (!span) return { classification: "unattributed-warning" };
   const { trace, parents } = context;
+  const identity = processIdentity(trace, span);
+  const diagnosticParent = parents.get(span);
+  const process = trace.processes[span.processID];
+  const resource = attributes(process);
+  const externalSDK =
+    identity?.node &&
+    ["agent-acp-service", "antnest-private-acp-client"].includes(
+      process.serviceName,
+    )
+      ? "opentelemetry-js"
+      : process?.serviceName === "antnest-runtime" &&
+          resource?.get("telemetry.sdk.name") === "opentelemetry" &&
+          resource.get("telemetry.sdk.language") === "rust"
+        ? "opentelemetry-rust"
+        : null;
+  if (
+    waiveExternalSDK &&
+    externalSDK &&
+    diagnosticParent &&
+    warnings(span).length === 1
+  )
+    return {
+      trace_id: trace.traceID,
+      span_id: span.spanID,
+      parent_span_id: diagnosticParent.spanID,
+      raw_end_beyond_parent_us: end(span) - end(diagnosticParent),
+      calculated_delta_us: delta,
+      classification:
+        externalSDK === "opentelemetry-js"
+          ? waivedExternalSDK
+          : waivedRuntimeSDK,
+      // This identifies the observed SDK diagnostic, not a unique causal
+      // edge or a clock calibration. Business inspection remains mandatory.
+      diagnostic_process_id: span.processID,
+      external_sdk: externalSDK,
+      source_kind: "diagnostic-occurrence",
+    };
   const ancestors = [];
   for (let current = span; current; current = parents.get(current))
     ancestors.push(current);
@@ -500,6 +539,17 @@ function sourceFor(context, span, warning, observations) {
 // This private diagnostic inventory does not prove archive completeness, own
 // errors, or grant admission. Its caller must bind raw sources to collection.
 export function inspectCostWarningSources(sources, timeObservations = []) {
+  return inspectWarnings(sources, timeObservations, false);
+}
+
+// Delivery policy: confirmed external SDK timing diagnostics remain visible
+// but cannot block internal-service acceptance. The strict inspector above
+// retains the historical technical classifications for diagnostics only.
+export function reviewCostWarningSources(sources, timeObservations = []) {
+  return inspectWarnings(sources, timeObservations, true);
+}
+
+function inspectWarnings(sources, timeObservations, waiveExternalSDK) {
   try {
     requireSource(Array.isArray(timeObservations));
     const contexts = topology(sources);
@@ -514,6 +564,7 @@ export function inspectCostWarningSources(sources, timeObservations = []) {
             item === trace ? null : item,
             warning,
             timeObservations,
+            waiveExternalSDK,
           );
           const occurrence = {
             trace_id: trace.traceID,
@@ -546,13 +597,17 @@ export function inspectCostWarningSources(sources, timeObservations = []) {
     const reviewed = inventory.filter((item) =>
       [reviewedUpgrade, reviewedRuntimeCleanup].includes(item.classification),
     ).length;
+    const waived = inventory.filter((item) =>
+      [waivedExternalSDK, waivedRuntimeSDK].includes(item.classification),
+    ).length;
     return {
       warning_count: inventory.length,
       deferred_warning_count: count,
       reviewed_lifecycle_warning_count: reviewed,
-      rejected_warning_count: inventory.length - count - reviewed,
+      waived_external_sdk_warning_count: waived,
+      rejected_warning_count: inventory.length - count - reviewed - waived,
       eligible_for_deferral: inventory.length === count,
-      eligible_for_review: inventory.length === count + reviewed,
+      eligible_for_review: inventory.length === count + reviewed + waived,
       inventory,
       sources: [...sourceMap.values()],
     };

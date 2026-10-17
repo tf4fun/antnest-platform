@@ -259,7 +259,8 @@ for (const [name, collect, outcome] of [
         assert(
           proof.samples.every(
             (sample) =>
-              sample.policy.sources[0].classification === classification,
+              sample.policy.sources[0].classification ===
+              "waived-external-node-otel-timing",
           ),
         );
         assert(
@@ -267,13 +268,23 @@ for (const [name, collect, outcome] of [
             (sample) => sample.policy.eligible_for_deferral === false,
           ),
         );
-        for (const sample of proof.samples)
+        for (const sample of result.complete_source_receipt.samples) {
+          const sources = sample.queries.flatMap((query) => {
+            const data = JSON.parse(
+              readFileSync(join(result.evidence_directory, query.file)),
+            ).data;
+            return Array.isArray(data) ? data : [];
+          });
           assert.deepEqual(
-            sample.policy.sources[0].upgrade_events,
+            sources
+              .find((source) => source.traceID === f.source.traceID)
+              .spans.find((span) => span.spanID === f.server.spanID).logs,
             f.server.logs,
           );
+        }
         const projection = result[`${name.toLowerCase()}_warning_review`];
         assert.equal(projection.deferred_warning_count, 0);
-        assert.equal(projection.reviewed_lifecycle_warning_count, 1);
+        assert.equal(projection.reviewed_lifecycle_warning_count, 0);
+        assert.equal(projection.waived_external_sdk_warning_count, 1);
         assert.deepEqual([...f.raw], before);
       });

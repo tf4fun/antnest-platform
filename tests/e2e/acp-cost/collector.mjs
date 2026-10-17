@@ -9,7 +9,7 @@ import {
 } from "../observability/private-acp-inventory.mjs";
 import { canonicalCompleteSources } from "../../support/complete-source-inspection.mjs";
 import { evidenceFilePath, writeEvidenceFile } from "../../support/storage.mjs";
-import { inspectCostWarningSources } from "./warning-source.mjs";
+import { reviewCostWarningSources } from "./warning-source.mjs";
 import { inspectPrivateCostRunTrace } from "./run-trace.mjs";
 import { inspectPrivateCostConfigurationTrace } from "./configuration-trace.mjs";
 import { inspectPrivateCostSessionTrace } from "./session-trace.mjs";
@@ -176,7 +176,7 @@ function bindReceipt(result, checks, expected) {
       return traces.get(id);
     });
     assert.equal(sourceHash(sources), sample.source_snapshot_sha256);
-    const policy = inspectCostWarningSources(
+    const policy = reviewCostWarningSources(
       sources,
       current.reports.flatMap((report) => report.time_observations ?? []),
     );
@@ -273,7 +273,7 @@ export async function collectPrivateCostTrace(base, expected, options = {}) {
       inspectCompleteSources: ({ expected: bound, sources, reports }) => {
         for (const [key, value] of Object.entries(originalExpected))
           if (value !== undefined) assert.deepEqual(bound[key], value);
-        const policy = inspectCostWarningSources(
+        const policy = reviewCostWarningSources(
           sources,
           reports.flatMap((report) => report.time_observations ?? []),
         );
@@ -315,6 +315,8 @@ export async function collectPrivateCostTrace(base, expected, options = {}) {
       deferred_warning_count: checked.policy.deferred_warning_count,
       reviewed_lifecycle_warning_count:
         checked.policy.reviewed_lifecycle_warning_count,
+      waived_external_sdk_warning_count:
+        checked.policy.waived_external_sdk_warning_count,
       review_sha256: hash(proof),
     };
     writeEvidenceFile(directory, "result.json", encode(result));

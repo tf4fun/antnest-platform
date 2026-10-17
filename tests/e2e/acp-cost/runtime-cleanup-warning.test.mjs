@@ -258,7 +258,7 @@ for (const version of [1, 2])
     assert.deepEqual(result.warnings, [warning]);
     assert.equal(result.progress_warning_review.deferred_warning_count, 0);
     assert.equal(
-      result.progress_warning_review.reviewed_lifecycle_warning_count,
+      result.progress_warning_review.waived_external_sdk_warning_count,
       1,
     );
     const archived = JSON.parse(
@@ -269,7 +269,8 @@ for (const version of [1, 2])
     assert.equal(archived.samples.length, 3);
     assert(
       archived.samples.every(
-        (s) => s.policy.sources[0].classification === reason,
+        (s) =>
+          s.policy.sources[0].classification === "waived-external-otel-timing",
       ),
     );
     assert.deepEqual([...f.raw], before);

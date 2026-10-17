@@ -61,7 +61,7 @@ test("Cost warning admission fixtures use real OTLP Span identity shapes", (t) =
 });
 
 for (const profile of profiles)
-  test(`Cost warning admission binds an actual owning sub-ms observation ${JSON.stringify(profile)}`, async (t) => {
+  test(`Cost warning admission retains the owning observation and waives the known SDK diagnostic ${JSON.stringify(profile)}`, async (t) => {
     const f = deferredFixture(t, profile);
     const original = structuredClone([...f.raw]);
     const result = await collect(f);
@@ -77,7 +77,11 @@ for (const profile of profiles)
           item.reason === "deferred-same-node-sdk-sub-ms-endpoint",
       ),
     );
-    assert.equal(result.cost_warning_review.deferred_warning_count, 1);
+    assert.equal(result.cost_warning_review.deferred_warning_count, 0);
+    assert.equal(
+      result.cost_warning_review.waived_external_sdk_warning_count,
+      1,
+    );
     assert.equal(result.complete_source_receipt.samples.length, 3);
     const reviewed = outcome(result);
     assert.equal(reviewed.accepted, true);
@@ -363,8 +367,16 @@ for (const profile of profiles)
     );
     for (const sample of proof.samples) {
       assert.equal(sample.policy.inventory.length, 2);
-      assert.equal(sample.policy.sources.length, 1);
-      assert.equal(sample.policy.sources[0].span_id, f.transaction.spanID);
-      assert.equal(sample.policy.sources[0].occurrences.length, 2);
+      assert.equal(sample.policy.waived_external_sdk_warning_count, 2);
+      assert.equal(sample.policy.sources.length, 2);
+      assert.deepEqual(
+        new Set(sample.policy.sources.map((source) => source.span_id)),
+        new Set([f.transaction.spanID, f.queries[0].spanID]),
+      );
+      assert(
+        sample.policy.sources.every(
+          (source) => source.occurrences.length === 1,
+        ),
+      );
     }
   });

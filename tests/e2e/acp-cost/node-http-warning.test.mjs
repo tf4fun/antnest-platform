@@ -171,7 +171,9 @@ for (const [name, collect, outcome] of [
       );
       assert(
         proof.samples.every(
-          (sample) => sample.policy.sources[0].classification === deferred,
+          (sample) =>
+            sample.policy.sources[0].classification ===
+            "waived-external-node-otel-timing",
         ),
       );
       assert.deepEqual([...f.raw], raw);

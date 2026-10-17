@@ -50,8 +50,10 @@ itself joins close before reading the original notifications. Runtime gates now
 use a file channel serviced by one host loop, followed by the final four-Runtime
 inspection. Timeout diagnostics now use the original closed connector and
 archived private Trace sources. Candidate deployment and shell entry points now
-use the owning deployment helper. Full Docker acceptance remains pending;
-local checks do not complete the migration.
+use the owning deployment helper. Full Docker acceptance covers all 76 Traces,
+the twelve business scenarios and four actual stops; its current evidence is
+recorded in [TODO.md](../../../TODO.md). Local checks alone do not complete the
+migration.
 
 The deployment builds ten service candidates, a production Runtime base and
 the managed MCP fixture source, then copies only the fixture executable into
@@ -180,25 +182,21 @@ Runtime stop probe remains a separate requirement.
 `collector.mjs` composes these owning checks with the shared private collector.
 Initialization and empty-MCP Session setup/replay reuse the strict contracts
 already used by Cost. Every result requires three consecutive stable complete
-source samples, original query hashes and raw diagnostic inventory. Warning
-review uses the same complete-source policy as Cost: the existing same-Node
-endpoint observation and the user's deferred complete private Node HTTP endpoint
-overrun strictly below one millisecond can qualify. The latter binds both actual
-processes and the HTTP boundary without claiming clock calibration or a cause.
-Successful WS upgrades can separately qualify for lifecycle review when their
-three original phase events are complete, ordered inside the original SERVER,
-and response preparation falls within the peer CLIENT. This classification
-has a separate count and leaves the sub-millisecond bound unchanged; see the
-[Cost warning policy](../acp-cost/README.md). Missing spans, other
-cross-process warnings and unknown warnings fail. Successful parsed tools can
-also qualify for a separately reviewed HTTP cleanup tail: the complete owning
-proof, native Rust identity and operation completed within the actual CLIENT
-interval are rechecked. This does not use business-cancel stop receipts.
-Original errors and warnings retain strict failure status; reviewed known diagnostics do not erase
-them. Admission binds the exact returned result and rechecks its archived bytes,
-so copied, mutated or repeated results cannot authorize success. These collector
-checks use controlled Jaeger responses and real SDK notification receipts;
-deployment acceptance remains pending.
+source samples, original query hashes and raw diagnostic inventory. The
+repository policy makes confirmed external SDK issues non-blocking. The shared
+[Cost warning policy](../acp-cost/README.md) records the known Node and Runtime
+Rust OpenTelemetry timestamp diagnostics without an endpoint threshold or
+additional per-edge proofs.
+This does not waive internal errors, missing spans, invalid business outcomes
+or actual-stop requirements. Runtime success and cancellation still use their
+owning tool proofs.
+
+Original errors and warnings retain their raw strict failure status. Admission
+binds the exact returned result and rechecks its archived bytes, so copied,
+mutated or repeated results cannot authorize success. These collector checks
+use controlled Jaeger responses and real SDK notification receipts. The full
+deployment separately verifies actual business results, Runtime identities,
+execution stopping and cleanup.
 
 Timeout diagnostics reuse the shared v3 search/v1 detail collector, including
 three consecutive complete stable samples and private raw query bytes/SHA.
@@ -218,8 +216,9 @@ acceptance.
 ## Running
 
 The main entry point is wired to the host driver and candidate deployment.
-`make e2e-tool-progress` runs the complete stack; its Docker acceptance is still
-pending for this checkpoint.
+`make e2e-tool-progress` runs the complete stack. Successful business acceptance
+retains exit 2 when reviewed original diagnostics are present; cleanup must still
+complete successfully.
 The local fixture command remains available:
 
 ```sh

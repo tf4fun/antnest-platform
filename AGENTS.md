@@ -23,6 +23,11 @@ consumer work instead of editing multiple service implementations in one batch.
 Run cross-service integration after the service batches have passed their local
 gates; do not describe one completed producer as a complete business workflow.
 
+Focus delivery work on logic owned by Antnest services. Confirmed external SDK
+issues are non-blocking: retain their diagnostics and continue internal-service
+and business acceptance without adding SDK investigations or workarounds.
+This rule supersedes earlier SDK timing investigation deferrals.
+
 ## Test source and evidence storage
 
 Never author, stage, or keep project test scripts, fixtures, source snapshots,

@@ -86,68 +86,39 @@ connection is joined before restart or successful cleanup. Completed transport
 outcomes are recorded only after replay, subsequent execution and connection
 closure, and supply the final CI scenario count.
 
-Strict Jaeger timing and ordering failures keep a nonzero exit even when the
-business, privacy and ancestry checks pass. Strict-only findings retain raw
-exit 2. CI can accept that result only after complete business evidence and
-classification under its existing reviewed-warning rules. Unknown warnings,
-invalid pricing evidence and Go pricing diagnostics remain failures.
+Strict Jaeger diagnostics retain their original nonzero exit 2. Delivery focuses
+on internal-service logic: confirmed external SDK issues are non-blocking under
+the repository policy in [AGENTS.md](../../../AGENTS.md). Unknown diagnostics,
+missing spans, incorrect parentage, internal errors and incomplete business
+evidence still fail.
 
-`warning-source.mjs` inventories each original warning occurrence by Trace,
-Span and index, then follows only `CHILD_OF` edges to identify
-its source. Asynchronous connection Links cannot substitute for a parent.
-The same-Node endpoint classification requires matching process resources,
-safe integer timestamps, a child starting within its parent, integer-millisecond
-starts, an end overrun strictly below one millisecond and exactly one matching
-observation for that edge. The user's Node sub-millisecond investigation deferral
-also covers a complete private Node CLIENT to ACP Node HTTP SERVER pair: both
-process identities, route, method, status and direct parent must match, starts
-must be integer milliseconds, and the raw end overrun must be strictly below
-one millisecond. This is recorded as `deferred-node-http-sub-ms-endpoint`.
-Independent SDK clock anchors and server completion after writing the response
-can both contribute; the observation does not establish either cause. In
-particular, ws writes 101 before the ACP connection setup callback returns.
-Overruns at or above one millisecond cannot use that deferral. A separate
-`reviewed-node-ws-post-response-endpoint` classification covers successful
-private Node GET/101 upgrades with all three original
-[ACP lifecycle events](../../../docs/observability-contract.md#acp-websocket-upgrade-lifecycle).
-The exact source identities and direct parent must match; events must have
-only their fixed names, be unique and ordered inside the same original SERVER,
-and response preparation must fall inside the original CLIENT interval.
-Phase order is checked by event name and timestamp; Jaeger's log array may use
-any enumeration order. Original event arrays are preserved without sorting.
-The production worker gate proves that the peer can accept 101 before setup
-finishes. This permits the proven post-response lifetime, without claiming
-all clock error has been excluded. Missing events, failed setup, ERROR, an
-entire SERVER/event shift beyond the peer receipt, and other cross-process
-boundaries remain rejected. Historical sources without events cannot use it.
-`reviewed_lifecycle_warning_count` is separate from `deferred_warning_count`;
-`eligible_for_review` requires every occurrence to qualify for exactly one of
-the two policies. `eligible_for_deferral` retains its original meaning.
-`reviewed-runtime-tool-http-cleanup` is another separate lifecycle review:
-the original Node CLIENT must belong to the complete existing parsed-success
-tool proof, with caller cancellation false, successful local close, exact
-owned HTTP cancellation and matching positive response bytes. The original
-Rust SERVER/operation must have successful protocol and transport, matching
-Agent/execution/generation/image scope, and operation completion inside the
-CLIENT interval. Local SDK close does not await the remote SERVER's completion.
-The source review reruns the owning proof on the actual spans and retains the
-original lifecycle events; it does not trust an observation supplied by a caller.
-Only contained descendants in the same Runtime process can propagate that
-source warning. An entire shifted Runtime subtree, an extra inverted edge,
-unparsed/caller-cancelled work and unknown errors cannot borrow the proof.
-This leaves generic process identity and Node timing deferral unchanged and
-does not substitute for the outer scenario's tool/error or actual-stop checks.
-Duplicate warnings, ambiguous propagation, unknown messages and missing spans
-remain rejected. The calculated Jaeger delta is retained separately from the raw end
-overrun; its magnitude is not a measured clock offset or this policy's bound.
+The Cost and Progress collectors call `reviewCostWarningSources` for both live
+inspection and archive revalidation. Standard Jaeger clock-skew diagnostics on
+identified ACP/private-client Node OpenTelemetry spans are recorded as
+`waived-external-node-otel-timing`. This known SDK timestamp family does not
+require an endpoint threshold, a unique candidate edge or additional per-edge
+proofs. Each original occurrence is retained and counted once in
+`waived_external_sdk_warning_count`; its process and direct parent remain
+recorded without claiming a unique clock-skew origin. The same standard timing
+diagnostics on the Runtime's identified Rust OpenTelemetry spans are recorded as
+`waived-external-otel-timing`, including normal server completion after client
+cancellation. Unidentified SDKs and other warning families are not relabeled.
 
-The diagnostic helper alone does not grant admission. The Cost collector uses
-the fixed complete-source hook for the main Trace, connection and every HTTP
-auxiliary source. An unproved warning immediately fails collection; a later
-clean sample cannot hide it. The private warning review binds the actual final
-three consecutive stable samples, original query bytes and SHA-256 receipts,
-owning reports and their timing observations. The public projection identifies
-that review without replacing the raw warnings or `strict_trace=failed`.
+`inspectCostWarningSources` remains a technical diagnostic inventory. Its
+historical sub-millisecond and WebSocket phase classifications do not impose
+additional delivery gates on waived SDK findings. Phase checks use event names
+and timestamps and preserve Jaeger's original array order. The separate Runtime
+HTTP cleanup classification retains its historical parsed-tool proof. Delivery
+still requires the owning success or cancellation proof; a timestamp warning
+cannot authorize a failed tool, unexpected error or missing actual-stop
+evidence. The raw calculated Jaeger delta and original span
+timestamps are never rewritten.
+
+The diagnostic helper alone does not grant admission. The collector still
+checks the complete business sources and binds three consecutive stable samples,
+original query bytes and SHA-256 receipts. The public projection records the
+waiver count without replacing raw warnings or `strict_trace=failed`.
+Pricing has its own consumer gate; its reviewed SDK policy is migrated separately.
 
 Final ACP admission requires the original returned object and unchanged report,
 manifest, raw archive and private review. Clones, accessors, delayed mutations,
