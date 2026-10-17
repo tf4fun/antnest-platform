@@ -251,7 +251,7 @@ docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
 # Docker signal regression for long-lived receive streams
 node tests/e2e/edge-gateway/shutdown-docker.mjs
 
-# Historical direct-ACP load runner; Bridge migration is pending under #64
+# Real Bridge load/outage admission
 node tests/e2e/edge-gateway/resolve-cache-docker.mjs
 ```
 
@@ -264,26 +264,26 @@ the guard's exact timing boundaries use Go's virtual test clock.
 Root targets: `make test-go-unit`, `make test-go` and `make test-integration-go`
 include the Gateway.
 
-The real-stack [Identity end-to-end client](../../tests/e2e/identity-closeout/README.md),
-ACP session suites and Resolve-cache Docker runner still require the separate
-#64 consumer migration before they can admit Gateway 24. Their old direct
-browser ACP calls are intentionally rejected.
+The real-stack [Identity end-to-end client](../../tests/e2e/identity-closeout/README.md)
+and ACP session suites exercise browser behavior through the Bridge and owning
+protocol behavior through authenticated private ACP entrypoints. The
+Resolve-cache Docker runner counts 100 actual same-scope Bridge calls within
+eight seconds and at most three actual Resolve calls, including initialization
+and refresh. It also exercises the real five-second Identity outage, output,
+Runtime cancellation and recovery under the active cache policy.
 
-Historical #59 load evidence used one WSS connection, initialization and 100
-sequential ACP exchanges within eight seconds, with at most three actual
-Resolve attempts including refresh. It remains historical evidence, not proof
-of the retained Bridge path. The replacement must count 100 actual same-scope
-Bridge calls, initialization and refresh, retain the eight-second/three-Resolve
-budget and repeat the real five-second Identity outage with output and actual
-Run cancellation. That measurement needs its own cache policy revision.
+`make e2e-agent-ui-upload-capacity` runs two real users and Agents with independent
+clients and production Gateway, Agent UI, ACP and Runtime processes. With 64
+active SSE streams, one user submits a valid near-limit attachment while the
+other cancels the same held Runtime work through direct cancel or `/stop`.
+Original HTTP phase receipts prove both incomplete-body and EOF-processing
+overlap. Admission requires accepted cancellation, the original Run's terminal
+state and observed Runtime process-group quiescence within one second. See the
+[Agent UI capacity gate](../agent-ui/README.md) for limits and evidence.
 
-Agent UI capacity and final integration also remain separate gates: two real
-users, a valid near-limit attachment, independent clients and server processes,
-and the other user's same held Runtime work cancelled within one second during
-both incomplete-body reception and actual EOF parse/hash/serialization.
-Gateway's 64 SSE slots and 64 MiB body limit alone do not establish that result.
-Evidence stays under `artifacts/verification/`, with owned-resource cleanup
-and the original strict diagnostics preserved.
+Each consumer retains its own Docker admission; complete integration CI remains
+a separate merge gate. Evidence stays under `artifacts/verification/`, with
+owned-resource cleanup and the original strict diagnostics preserved.
 
 ## Documentation
 

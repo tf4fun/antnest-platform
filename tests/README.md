@@ -678,9 +678,10 @@ retains raw frames without reconnecting, and distinguishes remote closure from
 local cleanup. The ACP helper can negotiate delivery marks and target a cancel
 at the observed Run. A passed business window and raw archive do not establish
 complete outage/recovery admission. Authority, cancellation and HTTP rejection
-have separate owning results. Recovery Run and original-authority gates are
-also separate; mutation HTTP receipts, stream retirement diagnostics, stopped
-feed errors and complete CI registration/admission remain pending. Successful
+have separate owning results. Recovery Run, original-authority gates, mutation
+HTTP receipts, stream retirement diagnostics and stopped-feed errors each retain
+their separate owning results.
+Complete integration CI remains a separate admission gate. Successful
 Run telemetry uses `outcome=ok` with `terminal_class=completed`. Explicit
 principal-revocation cancellation permits the observed `DomainError` /
 `access_denied` Provider rejection with its exact event and ModelError origin;

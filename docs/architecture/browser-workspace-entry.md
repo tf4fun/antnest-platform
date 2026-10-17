@@ -17,12 +17,13 @@ browser DTOs and Bridge lifecycle. ACP retains protocol, Session and Run
 authority through its authenticated private interfaces. Retiring a Gateway
 path does not remove private ACP v1/v2 or change accepted-Run semantics.
 
-The policy precedes implementation. The shared batch leaves active Gateway
-revision 23 intact; the Gateway owning batch activates revision 24. Test
-consumers must move their business assertions to real Bridge DTOs and commands.
-Private protocol tests use authenticated owning-service entrypoints instead
-of recreating a public browser relay. The old route table remains descriptive
-of the active service until the owning activation updates it.
+Gateway revision 24 and header registry revision 2 implement the retirement.
+The active route and caller catalogs retain the Bridge and reject the old direct
+paths before downstream forwarding. Browser consumers use real Bridge DTOs and
+commands; private protocol tests use authenticated owning-service entrypoints.
+Receiver catalogs and deployment credentials remove the unused Gateway grants.
+Service batches and consumer Docker admissions are recorded separately in the
+[delivery queue](../../TODO.md); complete integration CI remains a merge gate.
 
 Deleting the old global four-message semaphore does not fix or prove Bridge
 capacity. Review its global stream/owner budgets and body-processing costs,
