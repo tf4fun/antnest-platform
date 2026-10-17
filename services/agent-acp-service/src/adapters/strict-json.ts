@@ -9,24 +9,28 @@ export function strictJson(raw: Uint8Array | string): unknown {
   const whitespace = () => {
     while (/[\t\n\r ]/u.test(text[position] ?? "x")) position++;
   };
-  const string = (): string => {
+  const stringBoundary = /["\\]/gu;
+  const string = (decode: boolean): string => {
     const start = position++;
-    while (position < text.length) {
-      const character = text[position++];
-      if (character === "\\") {
-        position++;
-        continue;
-      }
-      if (character === '"') return JSON.parse(text.slice(start, position)) as string;
+    stringBoundary.lastIndex = position;
+    for (;;) {
+      // Scan attachment text natively instead of visiting every character in JS.
+      // Only keys need decoding here; the final native parse validates all value
+      // escapes, control characters and grammar without decoding values twice.
+      const boundary = stringBoundary.exec(text);
+      if (!boundary) throw new Error("invalid_json");
+      position = stringBoundary.lastIndex;
+      if (boundary[0] === '"')
+        return decode ? (JSON.parse(text.slice(start, position)) as string) : "";
+      stringBoundary.lastIndex = ++position;
     }
-    throw new Error("invalid_json");
   };
   const value = (depth: number): void => {
     if (depth > 64) throw new Error("invalid_json");
     whitespace();
     const character = text[position];
     if (character === '"') {
-      string();
+      string(false);
       return;
     }
     if (character === "{" || character === "[") {
@@ -42,7 +46,7 @@ export function strictJson(raw: Uint8Array | string): unknown {
         if (character === "{") {
           whitespace();
           if (text[position] !== '"') throw new Error("invalid_json");
-          const key = string();
+          const key = string(true);
           if (keys.has(key)) throw new Error("invalid_json");
           keys.add(key);
           whitespace();

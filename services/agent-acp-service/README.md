@@ -7,6 +7,12 @@ Tools on the Agent's Runtime. It is written in TypeScript on Node.js 24 and uses
 the official `@agentclientprotocol/sdk` and `@modelcontextprotocol/client`
 packages.
 
+Strict JSON admission rejects duplicate decoded keys, invalid UTF-8 and nesting
+beyond 64 levels. Large attachment strings use native delimiter scanning; only
+object keys are decoded during the duplicate-key pass, while the final native
+parser validates all values. This avoids repeated value decoding and JavaScript
+per-character scanning before another Agent's control request can run.
+
 Each endpoint fixes its protocol version for the whole connection. Stable v1
 and draft v2 are separate adapters over one application core. The unversioned
 `/acp` path does not exist, so protocol selection is never implicit. ACP does
