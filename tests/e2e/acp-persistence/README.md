@@ -6,6 +6,30 @@ It runs for both installed official ACP SDK versions. The [contract](contract.md
 defines the recovery obligations. Process interruption and unknown Tool effects
 are covered separately by [ACP restart](../acp-restart/README.md).
 
+## Private transport migration
+
+The client reads execution state through the private
+`/rpc/agent-acp/get-agent-execution-state` endpoint. Every read delegates the
+original owner's login Principal and Agent scope through Identity, uses the
+existing workload grant, and validates the complete execution-state schema.
+Every completed read writes the original response to private evidence, including
+failed reads. Read and archive errors are both retained; an archive failure
+cannot become a successful readiness check or a recovery retry. Denied owner
+access and cancellation during the joined archive remain failures. Foreign
+Agents and malformed states fail immediately. Only ACP's exact
+startup-unavailable response is retried while waiting for readiness; the held
+completion check still requires an actual busy state.
+
+The shared reader comes from the already verified Cost consumer. Its Cost
+entrypoint preserves the existing recovery error type. Persistence loads the
+reader lazily so Restart's existing lightweight readiness import does not gain
+a schema or dependency requirement before that consumer migrates.
+
+Private ACP connection/request inventory, Trace collection, and owning Docker
+deployment remain pending. Deployment must supply the execution-state schema,
+Identity and ACP grants, and private listener reachability before this profile
+can run against the retired Gateway routes.
+
 ## Running
 
 ```sh

@@ -9,7 +9,6 @@ import { commandConnection } from "../acp-commands/connection.mjs";
 import {
   assertPromptComplete,
   replayRequest,
-  assertStillRunning,
 } from "../managed-mcp/protocol.mjs";
 import {
   waitForAgentReady,
@@ -26,7 +25,7 @@ import { inspectLifecycle } from "../stage3-base/trace.mjs";
 import { inspectFaultTrace, persistenceStrictOutcome } from "./trace.mjs";
 import { assertDurable, assertRecovered, assertReplay } from "./evidence.mjs";
 import { seed } from "./setup.mjs";
-import { stateReady } from "./readiness.mjs";
+import { readPersistenceExecutionState, stateReady } from "./readiness.mjs";
 import { assertHeldCompletion } from "./completion.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 const admin = new GatewayClient("http://edge-gateway:8080"),
@@ -35,7 +34,8 @@ const connections = [],
   requests = [],
   lifecycle = [],
   faults = [],
-  journals = [];
+  journals = [],
+  stateReceipts = [];
 const secrets = [
   "stage3-admin-password",
   "persistence-owner-password",
@@ -43,14 +43,27 @@ const secrets = [
 ];
 let stage = "setup",
   agentId,
-  organizationId,
+  ownerPrincipal,
   deleted = false,
   restarts = 0;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const agent = () => api(`/api/admin/agents/${agentId}`);
-const state = async () =>
-  (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const state = () =>
+  readPersistenceExecutionState(agentId, member, {
+    principal: ownerPrincipal,
+    service: services,
+    receipts: stateReceipts,
+    secrets,
+    async preserve(rows) {
+      await mkdir("/tmp/persistence-traces", { recursive: true, mode: 0o700 });
+      await writeFile(
+        "/tmp/persistence-traces/execution-state.private.json",
+        JSON.stringify(rows),
+        { mode: 0o600 },
+      );
+    },
+  });
 const services = serviceClient();
 const runtimeController = "http://runtime-controller:8080";
 async function peer(base, path, body) {
@@ -355,27 +368,27 @@ async function main() {
     process.env.TEST_RUNTIME_IMAGE ?? "",
     /^antnest\/antnest-runtime:[\w.-]+$/,
   );
-  const login = await admin.request("/api/session/login", {
+  await admin.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "stage3-admin@example.com",
       password: "stage3-admin-password",
     },
   });
-  organizationId = login.body.principal.organization_id;
   const owner = await api("/api/admin/directory/users", {
     email: "persistence-owner@example.com",
     display_name: "Persistence owner",
     password: "persistence-owner-password",
     role: "member",
   });
-  await member.request("/api/session/login", {
+  const ownerLogin = await member.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "persistence-owner@example.com",
       password: "persistence-owner-password",
     },
   });
+  ownerPrincipal = ownerLogin.body.principal;
   secrets.push(...admin.cookies.values(), ...member.cookies.values());
   const { template } = await seed(api, process.env.TEST_RUNTIME_IMAGE);
   const created = await admin.request("/api/admin/agents", {
@@ -436,7 +449,7 @@ async function main() {
     mode: 0o600,
   });
   console.log(asciiJSON(business));
-  await mkdir("/tmp/persistence-traces", { mode: 0o700 });
+  await mkdir("/tmp/persistence-traces", { recursive: true, mode: 0o700 });
   const save = (label) => (trace) =>
     writeFileSync(
       `/tmp/persistence-traces/${label}.json`,
@@ -447,6 +460,7 @@ async function main() {
     requests,
     lifecycle,
     faults,
+    executionState: stateReceipts,
     modelRequests: modelResult.requests,
   });
   const results = [];
@@ -524,5 +538,7 @@ try {
   for (const c of connections)
     try {
       await c.close();
-    } catch {}
+    } catch {
+      // Legacy connection cleanup is replaced with the private ACP consumer.
+    }
 }
