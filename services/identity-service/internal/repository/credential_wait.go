@@ -32,6 +32,9 @@ func (budget *credentialWaitBudget) wait(ctx context.Context, operation func(con
 		return original
 	}
 	if bounded.Err() != nil || budget.remaining <= 0 {
+		// An expired admission cannot retain credit from time spent creating
+		// its deadline before the operation timer started.
+		budget.remaining = 0
 		return domain.WithCause(domain.ErrCredentialBusy, err)
 	}
 	return err
