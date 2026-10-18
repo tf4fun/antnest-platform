@@ -9,7 +9,9 @@ and results, not worker leases or attempt counters.
 
 Docker inspection is used only as independent physical evidence and to place
 or read a synthetic workspace sentinel. It never updates service databases or
-fabricates lifecycle outcomes.
+fabricates lifecycle outcomes. The independent storage-only suite seeds its
+own recovery fixtures after all application writers have stopped; it does not
+claim business lifecycle or ACP acceptance.
 
 The fixture environment explicitly supplies fixed database passwords and the
 `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in through a test-only Compose override.
@@ -25,19 +27,27 @@ COMPOSE_PARALLEL_LIMIT=1 make docker-build-stage3 -j1
 make e2e-lifecycle
 ```
 
-| Target                           | Profile                                                   | Contract                                                               |
-| -------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `make e2e-lifecycle`             | Foundation, including the active-Run drain                | [migration-contract.md](migration-contract.md)                         |
-| `make e2e-lifecycle-shutdown`    | Whole-platform stream shutdown and restart                | [shutdown-migration-contract.md](shutdown-migration-contract.md)       |
-| `make e2e-lifecycle-health`      | Runtime health and observation                            | [health-migration-contract.md](health-migration-contract.md)           |
-| `make e2e-lifecycle-restore`     | Offline backup and restore                                | [restore-migration-contract.md](restore-migration-contract.md)         |
-| `make e2e-lifecycle-interrupted` | Interrupted Runtime update with a lost committed response | [interrupted-migration-contract.md](interrupted-migration-contract.md) |
-| `make e2e-lifecycle-network`     | Runtime network policy on the real packet path            | [network-migration-contract.md](network-migration-contract.md)         |
-| `make e2e-lifecycle-loss`        | Unplanned Runtime loss, live and cold                     | [loss-migration-contract.md](loss-migration-contract.md)               |
-| `make e2e-lifecycle-crash`       | Opt-in Runtime Controller crash during reconstruction     | [crash-contract.md](crash-contract.md)                                 |
+| Target                                  | Profile                                                   | Contract                                                                    |
+| --------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `make e2e-lifecycle`                    | Foundation, including the active-Run drain                | [migration-contract.md](migration-contract.md)                              |
+| `make e2e-lifecycle-shutdown`           | Whole-platform stream shutdown and restart                | [shutdown-migration-contract.md](shutdown-migration-contract.md)            |
+| `make e2e-lifecycle-health`             | Runtime health and observation                            | [health-migration-contract.md](health-migration-contract.md)                |
+| `make e2e-lifecycle-restore`            | Offline backup and restore                                | [restore-migration-contract.md](restore-migration-contract.md)              |
+| `make e2e-stage4-skill-storage-restore` | Independent Skill storage recovery                        | [restore-migration-contract.md](restore-migration-contract.md#recovery-set) |
+| `make e2e-lifecycle-interrupted`        | Interrupted Runtime update with a lost committed response | [interrupted-migration-contract.md](interrupted-migration-contract.md)      |
+| `make e2e-lifecycle-network`            | Runtime network policy on the real packet path            | [network-migration-contract.md](network-migration-contract.md)              |
+| `make e2e-lifecycle-loss`               | Unplanned Runtime loss, live and cold                     | [loss-migration-contract.md](loss-migration-contract.md)                    |
+| `make e2e-lifecycle-crash`              | Opt-in Runtime Controller crash during reconstruction     | [crash-contract.md](crash-contract.md)                                      |
 
 The workspace protocol profile reuses the same Foundation runner; see
 [its contract](../workspace-closeout/protocol-migration-contract.md).
+
+The independent Skill storage target builds fresh candidate images and checks
+all fifteen services and nine application image IDs. It restores eight databases,
+five project-owned volumes and three saved keys with zero ACP Sessions or Runs.
+Private evidence retains both recovery plans, original storage fingerprints and
+replacement PostgreSQL identity. Original execution, archival and cleanup errors
+remain failures; failed Docker cleanup retains the private recovery inputs.
 
 Set `ANTNEST_E2E_CONTROLLER_IMAGE=<image-or-immutable-ID>` or
 `ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE=<image-or-immutable-ID>` to test a

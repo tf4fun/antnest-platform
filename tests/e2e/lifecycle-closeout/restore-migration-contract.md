@@ -58,6 +58,16 @@ Do not reduce this collection to currently mounted volumes. The independent
 and five volumes (two workspaces, ready, ready-empty and candidate), with no ACP
 requests or Runs; neither business profile replaces that storage evidence.
 
+The independent target builds fresh Runtime and application candidates, verifies
+the original fifteen-service deployment and nine application image IDs, and
+opens no private ACP connection. Its five fixture volumes are project-scoped;
+reject an existing name or foreign ownership before writing any fixture bytes.
+Keep the before/after database-derived recovery plans, fingerprints, saved-key
+digests and original/replacement PostgreSQL identities in private evidence.
+Preserve partial evidence and every original failure, including startup before
+configuration returns. Remove recovery inputs only after owned Docker cleanup
+succeeds; a cleanup or archive failure cannot produce passing admission.
+
 ## Required behavior
 
 - Application writers stop normally, then Temporal, and the complete clean-exit

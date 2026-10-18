@@ -32,6 +32,10 @@ const owners = [
   "temporal",
 ];
 const entrypoints = {
+  "stage4-skill-storage-restore": [
+    "node",
+    "tests/e2e/lifecycle-closeout/restore-stage4-storage-docker.mjs",
+  ],
   "stage4-skill-restore": [
     "node",
     "tests/e2e/lifecycle-closeout/run.mjs",

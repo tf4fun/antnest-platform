@@ -201,6 +201,12 @@ independent collection/cleanup errors. Skill-restore and its independent storage
 suite have separate admission; see the
 [Restore contract](e2e/lifecycle-closeout/restore-migration-contract.md).
 
+`make e2e-stage4-skill-storage-restore` builds fresh candidates and independently
+restores eight databases, five owned volumes and three saved keys, with zero ACP
+Sessions or Runs. It checks storage fingerprints, permissions and replacement
+PostgreSQL identity. Partial evidence and original failures remain private;
+failed Docker cleanup keeps the recovery inputs for inspection.
+
 `make e2e-skill-discovery-caller` waits up to 90 seconds for the source Agent's
 projection acknowledgement before starting its caller Run. Registry recovery,
 live discovery results and the peer Agent's acknowledgement do not establish

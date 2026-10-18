@@ -215,7 +215,7 @@ e2e-lifecycle-restore:
 
 .PHONY: e2e-stage4-skill-storage-restore
 e2e-stage4-skill-storage-restore:
-	node tests/e2e/lifecycle-closeout/restore-stage4-storage-docker.mjs
+	node tests/support/authenticated-shell-e2e.mjs stage4-skill-storage-restore
 
 .PHONY: e2e-stage4-skill-restore
 e2e-stage4-skill-restore:
