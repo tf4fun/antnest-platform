@@ -19,6 +19,11 @@ and draft v2 are separate adapters over one application core. The unversioned
 not construct Agents or Runtimes; Agent Controller publishes the current
 execution configuration into it.
 
+Normal process shutdown sends WebSocket close code `1001` on both protocol
+endpoints and joins the peer close before retiring the listeners. New upgrades
+are rejected once shutdown begins. A peer that does not acknowledge within five
+seconds is disconnected, so it cannot exhaust the process shutdown deadline.
+
 Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP keys under the [development secret policy](../../contracts/platform/development-secrets.md). The exact independent `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits one variable-only WARN per affected setting and enables neither Skill learning debug mode nor removed Registry bearers.
 
 ## Responsibilities

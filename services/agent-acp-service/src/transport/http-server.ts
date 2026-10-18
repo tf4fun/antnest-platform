@@ -177,11 +177,28 @@ export class AgentAcpHttpServer {
     return this.closePromise;
   }
 
+  private isClosing(): boolean {
+    return this.closePromise !== undefined;
+  }
+
   private async closeOnce(): Promise<void> {
     await this.httpTransport.close();
-    for (const socket of this.connections) {
-      socket.terminate();
-    }
+    await Promise.all(
+      [...this.connections].map(
+        (socket) =>
+          new Promise<void>((resolve) => {
+            // Give responsive peers the normal going-away frame. A stalled
+            // peer cannot consume the process's entire shutdown deadline.
+            const timer = setTimeout(() => socket.terminate(), 5_000);
+            timer.unref();
+            socket.once("close", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+            socket.close(1001, "Service shutting down");
+          }),
+      ),
+    );
     await new Promise<void>((resolve) => {
       this.webSockets.close(() => resolve());
     });
@@ -342,6 +359,7 @@ export class AgentAcpHttpServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<number> {
+    if (this.isClosing()) return rejectUpgrade(socket, 503, "Service Unavailable");
     const admission = await this.options.authentication.admit(request, true);
     if ("status" in admission) return rejectAuthenticatedUpgrade(socket, admission);
     const protocol = acpProtocol(request.url);
@@ -350,7 +368,7 @@ export class AgentAcpHttpServer {
       return rejectUpgrade(socket, 404, "Not Found");
     }
     try {
-      if (!(await this.options.ready())) {
+      if (!(await this.options.ready()) || this.isClosing()) {
         this.telemetry.count("antnest.acp.connections", {
           result: "rejected",
           reason: "not_ready",
