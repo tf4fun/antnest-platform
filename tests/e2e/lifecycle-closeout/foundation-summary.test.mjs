@@ -50,7 +50,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   );
   assert.match(
     source,
-    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: result/u,
+    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: profile === "network"\s*\? networkPublicResult\(result\)\s*: result/u,
   );
   const archiveIndex = source.indexOf(
     'writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result))',
@@ -60,5 +60,19 @@ test("Foundation public summary excludes original RPC and state bodies without c
       archiveIndex <
         source.indexOf("admission = foundationPrivateAdmission(result)"),
     "raw business evidence must survive a rejected admission",
+  );
+  const networkFailureIndex = source.indexOf(
+    "networkFailures(result.networkErrors)",
+  );
+  assert(
+    networkFailureIndex > archiveIndex &&
+      networkFailureIndex <
+        source.indexOf("admission = networkPrivateAdmission(result)"),
+    "Network preserves business receipts before propagating collection and cleanup failures",
+  );
+  assert.match(
+    source,
+    /"failure\.private\.txt",\s*inspect\(failure, \{ depth: 8 \}\)/u,
+    "first failure receipt must contain the combined error even if the final rewrite fails",
   );
 });

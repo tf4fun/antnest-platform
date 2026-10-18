@@ -41,6 +41,11 @@ const entrypoints = {
     "tests/e2e/lifecycle-closeout/run.mjs",
     "health",
   ],
+  "lifecycle-network": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "network",
+  ],
 };
 
 export function shellEntrypoint(profile) {

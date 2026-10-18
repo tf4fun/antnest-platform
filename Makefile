@@ -259,7 +259,7 @@ e2e-lifecycle-interrupted:
 
 .PHONY: e2e-lifecycle-network
 e2e-lifecycle-network:
-	node tests/e2e/lifecycle-closeout/run.mjs network
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-network
 
 .PHONY: e2e-lifecycle-loss
 e2e-lifecycle-loss:

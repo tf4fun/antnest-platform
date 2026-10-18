@@ -39,7 +39,8 @@ has an isolated project and ownership-checked cleanup. Private logs and results
 remain under ignored `artifacts/verification/dependency-secrets/`.
 
 `make e2e-stage1`, `make e2e-stage2`, `make e2e-runtime-controller` and
-`make e2e-lifecycle` use `tests/support/authenticated-shell-e2e.mjs`. It builds
+`make e2e-lifecycle`, `make e2e-lifecycle-health` and `make e2e-lifecycle-network`
+use `tests/support/authenticated-shell-e2e.mjs`. It builds
 uniquely tagged images from the current checkout, provisions private workload
 tokens/CCT keys for an isolated project, and removes its containers, volumes,
 networks, credentials and candidate tags afterward. Stage1 selects base Compose

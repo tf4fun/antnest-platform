@@ -6,6 +6,18 @@ import {
 } from "./authenticated-shell-e2e.mjs";
 import * as shell from "./authenticated-shell-e2e.mjs";
 
+test("Network gets fresh candidate images and its original business profile", () => {
+  assert.deepEqual(
+    shellComposeFiles("lifecycle-network"),
+    shellComposeFiles("lifecycle-health"),
+  );
+  assert.deepEqual(shell.shellEntrypoint("lifecycle-network"), [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "network",
+  ]);
+});
+
 test("Health gets a fresh scoped candidate and its own business profile", () => {
   assert.deepEqual(shellComposeFiles("lifecycle-health"), [
     "compose.yaml",

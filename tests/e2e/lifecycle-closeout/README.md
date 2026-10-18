@@ -303,11 +303,18 @@ Runtime mutation is covered by the opt-in crash profile.
 
 Two Agents run real ACP v1 prompts that execute Runtime `bash` as UID/GID 1000
 and open raw TCP connections. The target is an isolated TCP fixture on the
-Egress test network only. A test-only DNAT rule in the disposable Egress
-namespace maps `1.1.1.1:18080` from its TUN to the fixture. The Rust policy still
-evaluates the original external address before writing to the TUN. A fail-closed
-forwarding guard ensures that losing the DNAT rule never sends traffic to the
-Internet. No host route, host firewall or production policy rule changes.
+Egress test network only. A scoped route in the disposable Egress namespace
+preserves the synthetic public destination `1.1.1.1:18080` through the production
+policy and kernel gates. A fail-closed forwarding guard permits only this
+fixture destination. No host route, host firewall or production policy rule
+changes, and no Internet endpoint is used.
+
+The original member Session and Principal delegate six private v1 connections;
+each initializes once, creates one Session and runs one Bash Prompt. All six
+initialize and twelve business requests retain raw wire receipts and independent
+Trace evidence. The two held Prompts stay concurrent across deny and stale CAS.
+The fresh candidate-image wrapper checks seventeen services and the original
+nine application images, including the confined host telemetry receiver.
 
 The test requires:
 
@@ -331,7 +338,15 @@ traces are archived and converge over three complete snapshots; raw source
 errors and warnings remain strict failures. The collector uses the caller's
 abort signal and waits for active requests and response bodies. The existing
 409 and idempotent-replay business assertions are unchanged; these requests do
-not acquire additional Trace coverage through this adapter.
+not acquire additional Trace coverage through this adapter. Their actual 409
+and exact replay receipts remain part of private admission. Six public Run IDs,
+twelve phase-bound Provider requests, six Bash calls, four successful policy
+writes and four lifecycle operations must all agree with the original wire
+inventory. Clients, pending Prompts and telemetry are fully joined; independent
+collection continues and original collection/archive/cleanup errors remain
+available together. Public summaries exclude raw request and identity bodies.
+Reviewed external SDK/clock diagnostics keep their strict status and raw spans;
+unknown internal diagnostics still fail admission.
 
 ## Unplanned Runtime Loss
 

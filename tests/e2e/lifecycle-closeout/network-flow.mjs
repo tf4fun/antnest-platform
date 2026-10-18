@@ -3,16 +3,24 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { assertNetworkRun } from "./network-current.mjs";
-import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
+import { createFoundationPrivateAccess } from "./foundation-private-access.mjs";
 import { saveFoundationFailure } from "./foundation-trace.mjs";
 import { inspectPolicyResolution } from "./policy-resolution.mjs";
 import { inspectAccessTraceTopology } from "../identity-closeout/agent-access-evidence.mjs";
-import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
+import {
+  assertNetworkOwner,
+  createNetworkSessions,
+  networkPromptResult,
+  networkFailures,
+  collectNetworkTraces,
+  recordNetworkFailures,
+  afterNetworkRequestsClosed,
+  closeNetworkConnection,
+} from "./network-private-session.mjs";
 import {
   barrierDiagnostic,
   inspectProbe,
@@ -43,7 +51,7 @@ export async function runNetwork({
 }) {
   const fixture = await networkFixture(config, docker);
   const owner = new GatewayClient(config.gateway);
-  await owner.request("/api/session/login", {
+  const login = await owner.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "lifecycle-owner@example.com",
@@ -56,21 +64,7 @@ export async function runNetwork({
     "lifecycle-owner-password",
     ...owner.cookies.values(),
   ];
-  const requests = [];
-  function remember(client, agentId, method, details) {
-    const request = client.requests.filter((r) => r.method === method).at(-1);
-    assert(request, "actual SDK request missing");
-    const expected = {
-      ...request,
-      agentId,
-      connectionTraceID: client.connectionTraceID,
-      transport: "websocket",
-      kind: "request",
-      ...details,
-    };
-    requests.push(expected);
-    return expected;
-  }
+  const ownerPrincipal = login.body.principal;
   const agents = [];
   for (const name of ["Network Agent A", "Network Agent B"]) {
     const created = await command("create", undefined, { ...agentBody, name });
@@ -81,6 +75,9 @@ export async function runNetwork({
       ip: tunnelIP(initial.container),
     });
   }
+  agents.forEach((agent) =>
+    assertNetworkOwner(ownerPrincipal, principal, agent),
+  );
   const [a, b] = agents;
   assert.notEqual(a.ip, b.ip);
   const exec = (agent, script) =>
@@ -117,47 +114,42 @@ export async function runNetwork({
     assert.equal(saved.action, action);
     assert.equal(saved.resource_version, response.body.resource_version);
     assert.equal(saved.attachment.state, "open");
-    policies.push({ traceID: response.traceID, agentID: agent.id, action });
+    policies.push({
+      traceID: response.traceID,
+      agentID: agent.id,
+      action,
+      path,
+      options,
+      status: response.status,
+      response: response.body,
+    });
     return { path, options, response: response.body };
   };
   await policy(a, "allow_all");
   const bAllow = await policy(b, "allow_all");
-  const probes = [],
-    clients = [],
-    pending = [];
-  const start = async (agent, phase, target) => {
-    signal.throwIfAborted();
-    const input = { phase, nonce: randomUUID(), ...(target ? { target } : {}) };
-    const client = connectOwner(config.gateway, agent.id, owner.cookie, signal);
-    clients.push(client);
-    await client.initialize();
-    const sessionId = (
-      await client.request("new", { cwd: "/workspace", mcpServers: [] })
-    ).sessionId;
-    remember(client, agent.id, "session/new", { sessionId });
-    // Separate WebSocket roots keep each Run's trace evidence unambiguous.
-    const promise = client
-      .request(
-        "prompt",
-        { sessionId, prompt: [{ type: "text", text: JSON.stringify(input) }] },
-        65000,
-      )
-      .then(
-        (value) => ({ value }),
-        (error) => ({ error }),
-      );
-    pending.push(promise);
-    const probe = { input, agent, promise, client, sessionId };
-    probes.push(probe);
-    return probe;
-  };
+  const access = await createFoundationPrivateAccess(config, {
+    signal,
+    secrets,
+  });
+  const sessions = createNetworkSessions({
+    access,
+    owner,
+    principal: ownerPrincipal,
+    creationPrincipal: principal,
+    signal,
+  });
+  const probes = sessions.probes,
+    heldReceipts = [],
+    errors = [],
+    collectionErrors = [];
+  const start = (agent, phase, target) =>
+    sessions.start(agent, {
+      phase,
+      nonce: randomUUID(),
+      ...(target ? { target } : {}),
+    });
   const finish = async (probe) => {
-    const { value, error } = await probe.promise;
-    signal.throwIfAborted();
-    assert(
-      !error,
-      `${probe.input.phase}: ACP prompt failed: ${error?.data?.code ?? "unknown"}`,
-    );
+    const value = await networkPromptResult(probe, signal);
     assert.equal(value.stopReason, "end_turn");
     const text = probe.client.updates
       .filter(
@@ -177,13 +169,8 @@ export async function runNetwork({
       `/api/admin/execution-audits/${audit.items[0].run_id}`,
     );
     assertNetworkRun([run], probe.agent.initial.agent, probe.sessionId);
-    remember(probe.client, probe.agent.id, "session/prompt", {
-      sessionId: probe.sessionId,
-      kind: "ordinary",
-      phase: probe.input.phase,
-      runId: run.run_id,
-    });
-    probe.client.close();
+    probe.runId = run.run_id;
+    await closeNetworkConnection(probe.client, errors);
     console.error(`Network ${probe.input.phase}: real ACP tool completed`);
   };
   const hold = async (agent, phase) => {
@@ -208,7 +195,7 @@ export async function runNetwork({
     throw new Error(`${phase}: real socket barrier not reached (${detail})`);
   };
   let evidence;
-  let modelRequests;
+  let modelRequests, output, staleCAS, replay;
   try {
     await finish(await start(a, "allowed"));
     const heldA = await hold(a, "held-a"),
@@ -217,6 +204,7 @@ export async function runNetwork({
       originalB = await fixture.conntrack(b.ip);
     for (const tuples of [originalA, originalB])
       assert.equal(tuples.filter((t) => t.state === "ESTABLISHED").length, 1);
+    heldReceipts.push(sessions.held("before-deny", heldA, heldB));
     const denied = await policy(a, "deny_all");
     console.error(
       "Network deny ACK: checking original connections and reverse push",
@@ -231,7 +219,7 @@ export async function runNetwork({
       originalB,
       "A denial changed B's original conntrack",
     );
-    const conflict = await json(bAllow.path, {
+    const conflictOptions = {
       ...bAllow.options,
       status: 409,
       body: {
@@ -239,13 +227,21 @@ export async function runNetwork({
         expected_resource_version: bAllow.response.resource_version - 1,
       },
       headers: { ...bAllow.options.headers, "Idempotency-Key": randomUUID() },
-    });
-    assert.equal(conflict.code, "resource_version_conflict");
+    };
+    const conflict = await api(bAllow.path, conflictOptions);
+    staleCAS = {
+      path: bAllow.path,
+      options: conflictOptions,
+      status: conflict.status,
+      response: conflict.body,
+    };
+    assert.equal(conflict.body.code, "resource_version_conflict");
     assert.deepEqual(
       await fixture.conntrack(b.ip),
       originalB,
       "stale conflict disrupted B",
     );
+    heldReceipts.push(sessions.held("after-stale-cas", heldA, heldB));
     for (const held of [heldA, heldB])
       assert.deepEqual(
         await fixture.control(`/push/${held.input.nonce}`, "POST"),
@@ -259,7 +255,14 @@ export async function runNetwork({
     await finish(heldA);
     await finish(heldB);
     await finish(await start(a, "denied"));
-    assert.deepEqual(await json(denied.path, denied.options), denied.response);
+    const repeated = await api(denied.path, denied.options);
+    assert.deepEqual(repeated.body, denied.response);
+    replay = {
+      path: denied.path,
+      options: denied.options,
+      status: repeated.status,
+      response: repeated.body,
+    };
     await policy(a, "allow_all");
     await finish(await start(a, "restored"));
     await finish(await start(a, "private", fixture.ip));
@@ -312,72 +315,113 @@ export async function runNetwork({
       runtime_unchanged: true,
       target_requests: history.requests.length,
     };
-  } finally {
-    for (const client of clients) client.close();
-    for (const promise of pending) await promise;
-  }
-  for (const agent of agents) {
-    const since = new Date(Date.now() - 1000).toISOString();
-    await command("delete", agent.id, {});
-    assert.deepEqual(await resources(agent.id), {
-      containers: [],
-      volumes: [],
-    });
-    await runtimeExitEvidence(
-      config,
-      docker,
-      agent.initial.container.Id,
-      since,
-    );
-  }
-  const producersStopped = await flushTraceProducers(config, docker);
-  const requestTraces = await collectLifecycleEvidence(
-    requests.map((r) => ({ ...r, agentID: r.agentId, requestID: r.requestId })),
-    (expected) =>
-      collectLifecycleACPTrace(
-        config,
-        expected,
-        secrets,
-        expected.kind === "ordinary"
-          ? modelRequests.filter((r) => r.phase === expected.phase)
-          : [],
-        (trace, expected, secrets, calls) => {
-          const result = inspectCommandTrace(trace, expected, secrets, calls);
-          if (expected.runId)
-            assert.equal(
-              result.run_id,
-              expected.runId,
-              "trace belongs to another Run",
-            );
-          return strictSessionEvidence(result, trace);
-        },
+    output = await afterNetworkRequestsClosed(sessions, errors, async () => {
+      for (const agent of agents) {
+        const since = new Date(Date.now() - 1000).toISOString();
+        await command("delete", agent.id, {});
+        assert.deepEqual(await resources(agent.id), {
+          containers: [],
+          volumes: [],
+        });
+        await runtimeExitEvidence(
+          config,
+          docker,
+          agent.initial.container.Id,
+          since,
+        );
+      }
+      const producersStopped = await flushTraceProducers(config, docker);
+      const requests = access.snapshots().flatMap((connection, i) => [
+        connection.initialization,
+        ...connection.evidence.map((row) => ({
+          ...row,
+          ...(row.kind === "ordinary" ? { runId: probes[i].runId } : {}),
+        })),
+      ]);
+      const requestTraces = await collectNetworkTraces(
+        requests,
+        (expected) =>
+          access.collect(
+            expected,
+            expected.kind === "ordinary"
+              ? modelRequests.filter((row) => row.phase === expected.phase)
+              : [],
+          ),
+        (expected, error) =>
+          saveFoundationFailure(
+            config,
+            { traceID: expected.connectionTraceID },
+            error,
+          ),
         signal,
-      ),
-    (expected, error) =>
-      saveFoundationFailure(
-        config,
-        { traceID: expected.traceID ?? expected.connectionTraceID },
-        error,
-      ),
-    signal,
+        collectionErrors,
+      );
+      const policyTraces = await collectNetworkTraces(
+        policies,
+        (item) => collectPolicyTrace(config, item, secrets, signal),
+        (item, error) => saveFoundationFailure(config, item, error),
+        signal,
+        collectionErrors,
+      );
+      if (signal.aborted) networkFailures([...collectionErrors, signal.reason]);
+      return {
+        ...evidence,
+        request_traces: requestTraces,
+        model_requests: modelRequests.length,
+        completed_runs: probes.length,
+        policy_traces: policyTraces,
+        trace_producers_stopped: producersStopped,
+        runtimes_cleanly_exited: agents.length,
+        deleted_before_teardown: true,
+        private_network: {
+          principal: ownerPrincipal,
+          creation_principal: principal,
+          agents: agents.map(({ id, initial }) => ({
+            id,
+            initial: { agent: initial.agent },
+          })),
+          probes: probes.map((probe) => ({
+            phase: probe.input.phase,
+            input: probe.input,
+            agent_id: probe.agent.id,
+            session_id: probe.sessionId,
+            connection_trace_id: probe.client.connectionTraceID,
+            run_id: probe.runId,
+          })),
+          held: heldReceipts,
+          policies,
+          stale_cas: staleCAS,
+          replay,
+          provider_requests: modelRequests.map(
+            ({ phase, stage, trace_id }) => ({
+              phase,
+              stage,
+              trace_id,
+            }),
+          ),
+        },
+      };
+    });
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    await sessions.closeAndWait(errors);
+    try {
+      await access.closeAndWait();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (signal.aborted) errors.push(signal.reason);
+  }
+  if (!output) networkFailures([...collectionErrors, ...errors]);
+  return recordNetworkFailures(
+    {
+      ...output,
+      private_connections: access.snapshots(),
+      private_cleanup_completed: errors.length === 0,
+    },
+    [...collectionErrors, ...errors],
   );
-  const policyTraces = await collectLifecycleEvidence(
-    policies,
-    (item) => collectPolicyTrace(config, item, secrets, signal),
-    (item, error) => saveFoundationFailure(config, item, error),
-    signal,
-  );
-  signal.throwIfAborted();
-  return {
-    ...evidence,
-    request_traces: requestTraces,
-    model_requests: modelRequests.length,
-    completed_runs: probes.length,
-    policy_traces: policyTraces,
-    trace_producers_stopped: producersStopped,
-    runtimes_cleanly_exited: agents.length,
-    deleted_before_teardown: true,
-  };
 }
 
 export async function collectPolicyTrace(
@@ -455,6 +499,7 @@ export function inspectPolicyTrace(
       warnings: [...new Set(warnings)],
       strict_trace: warnings.length ? "failed" : "passed",
       action: item.action,
+      agent_id: item.agentID,
       ...inspectAccessTraceTopology(
         trace,
         {

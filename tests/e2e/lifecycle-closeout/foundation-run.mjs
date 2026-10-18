@@ -30,6 +30,12 @@ import {
   healthPrivateAdmission,
   healthPublicResult,
 } from "./health-private-evidence.mjs";
+import { inspectNetworkPrivateDeployment } from "./network-private-deployment.mjs";
+import { networkFailures } from "./network-private-session.mjs";
+import {
+  networkPrivateAdmission,
+  networkPublicResult,
+} from "./network-private-evidence.mjs";
 import {
   foundationTraceExitCode,
   foundationAcceptedTraceExitCode,
@@ -85,6 +91,7 @@ export async function runFoundation(
     }
     configureFoundation(config);
     if (profile === "foundation") configureFoundationPrivate(config);
+    if (profile === "network") configureFoundationPrivate(config);
     if (profile === "health") configureHealthPrivate(config);
     if (
       [
@@ -154,15 +161,9 @@ export async function runFoundation(
         ? inspectFoundationPrivateDeployment(rows, config)
         : profile === "health"
           ? inspectHealthPrivateDeployment(rows, config)
-          : rows;
-    if (profile === "network") {
-      const { inspectNetworkTarget } = await import("./network-current.mjs");
-      inspectNetworkTarget(rows, config);
-      baseRows = rows.filter(
-        (r) =>
-          r.Config.Labels["com.docker.compose.service"] !== "network-target",
-      );
-    }
+          : profile === "network"
+            ? inspectNetworkPrivateDeployment(rows, config)
+            : rows;
     if (profile === "interrupted") {
       const { inspectUpdateProxyDeployment } =
         await import("./interrupted-current.mjs");
@@ -229,14 +230,24 @@ export async function runFoundation(
     if (profile === "foundation")
       admission = foundationPrivateAdmission(result);
     if (profile === "health") admission = healthPrivateAdmission(result);
+    if (profile === "network") {
+      networkFailures(result.networkErrors);
+      admission = networkPrivateAdmission(result);
+    }
   } catch (error) {
-    failure = error;
+    failure =
+      profile === "network" && result?.networkErrors?.length
+        ? new AggregateError(
+            [...new Set([...result.networkErrors, error])],
+            "Network evidence and final admission failed",
+          )
+        : error;
     if (config?.evidence) {
       try {
         writeEvidenceFile(
           config.evidence,
           "failure.private.txt",
-          inspect(error, { depth: 8 }),
+          inspect(failure, { depth: 8 }),
         );
       } catch (archiveError) {
         failure = new AggregateError(
@@ -346,7 +357,9 @@ export async function runFoundation(
         ? foundationPublicResult(result)
         : profile === "health"
           ? healthPublicResult(result)
-          : result),
+          : profile === "network"
+            ? networkPublicResult(result)
+            : result),
       ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",

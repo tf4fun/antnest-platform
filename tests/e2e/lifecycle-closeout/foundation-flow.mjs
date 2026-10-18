@@ -23,6 +23,10 @@ import {
 import { withHeldRun } from "./foundation-drain.mjs";
 import { assertReplayHistory } from "./replay-history.mjs";
 import {
+  collectNetworkTraces,
+  recordNetworkFailures,
+} from "./network-private-session.mjs";
+import {
   waitForAgentReady,
   assertAgentDisabled,
 } from "../../support/verification/agent-state.mjs";
@@ -303,14 +307,26 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       ready,
       traceSecrets,
     });
-    const traces = await collectLifecycleEvidence(
+    const collect =
+      result.profile === "lifecycle-real-network"
+        ? async (...args) => {
+            const errors = [];
+            const traces = await collectNetworkTraces(...args, errors);
+            recordNetworkFailures(result, errors);
+            return traces;
+          }
+        : collectLifecycleEvidence;
+    const traces = await collect(
       admitted,
       (operation) =>
         collectFoundationLifecycle(config, operation, traceSecrets, signal),
       (operation, error) => saveFoundationFailure(config, operation, error),
       signal,
     );
-    return { ...result, operations: admitted.length, traces };
+    const complete = { ...result, operations: admitted.length, traces };
+    return result.profile === "lifecycle-real-network"
+      ? recordNetworkFailures(complete, result.networkErrors)
+      : complete;
   }
   const created = await command("create", undefined, agentBody);
   const agentID = created.agentID;
