@@ -62,7 +62,6 @@ async function fixture(t, options = {}) {
       response
         .writeHead(reply.status, {
           "content-type": "application/json",
-          "x-antnest-trace-id": "1".repeat(32),
         })
         .end(JSON.stringify(reply.body));
     })().catch((error) => {
@@ -156,6 +155,20 @@ test("Workspace access uses separate original authority scopes for actual privat
     scopes.every(
       (row) => row.receipts.length === 1 && row.receipts[0].status === 200,
     ),
+  );
+  for (let index = 0; index < scopes.length; index++) {
+    const row = scopes[index].receipts[0];
+    assert.equal(row.response_trace_id, null);
+    assert.match(row.traceID, /^[a-f0-9]{32}$/u);
+    assert.match(row.clientSpanID, /^[a-f0-9]{16}$/u);
+    assert.equal(
+      f.identities[index].headers.traceparent,
+      `00-${row.traceID}-${row.clientSpanID}-01`,
+    );
+  }
+  assert.equal(
+    new Set(scopes.map((scope) => scope.receipts[0].traceID)).size,
+    2,
   );
   assert.equal(f.access.snapshots()[0].authority_scope, scopes[0].operation_id);
   assert.equal(

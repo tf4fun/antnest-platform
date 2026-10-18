@@ -146,19 +146,26 @@ export function createPrivateACPTelemetry(endpoint) {
   const tracer = provider.getTracer(service);
   let shutdown;
   return Object.freeze({
-    startHTTP(method) {
+    startHTTP(method, peer = "agent-acp-workspace") {
       assert(!shutdown, "private CLIENT telemetry is shut down");
+      assert(
+        peer === "agent-acp-workspace" ||
+          (peer === "identity-service" && method === "POST"),
+        "unsupported private HTTP peer or operation",
+      );
       assert(
         ["GET", "POST", "DELETE"].includes(method),
         "unsupported private HTTP method",
       );
       const span = tracer.startSpan(
-        `HTTP ${method} agent-acp-workspace`,
+        `HTTP ${method} ${peer}`,
         {
           kind: SpanKind.CLIENT,
           attributes: {
             "http.request.method": method,
-            "antnest.protocol.version": "v1",
+            ...(peer === "agent-acp-workspace"
+              ? { "antnest.protocol.version": "v1" }
+              : {}),
           },
         },
         ROOT_CONTEXT,
@@ -194,7 +201,12 @@ export function createPrivateACPTelemetry(endpoint) {
           span.setAttribute("antnest.http.body.outcome", bodyOutcome);
           if (outcome === "failed" || status >= 400) {
             span.setStatus({ code: SpanStatusCode.ERROR });
-            span.setAttribute("error.type", "ACPHTTPError");
+            span.setAttribute(
+              "error.type",
+              peer === "identity-service"
+                ? "IdentityHTTPError"
+                : "ACPHTTPError",
+            );
           }
           active.delete(context);
           span.end();

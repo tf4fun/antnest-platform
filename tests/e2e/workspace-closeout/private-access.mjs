@@ -208,6 +208,7 @@ export async function createWorkspacePrivateAccess(
       principal,
       signal,
       secrets,
+      telemetry,
       preserve: (rows) => archive(preserveAuthority, scopeOf(entry), rows),
     });
     entries.push(entry);

@@ -68,7 +68,6 @@ async function fixture(
         response
           .writeHead(200, {
             "content-type": "application/json",
-            "x-antnest-trace-id": "1".repeat(32),
           })
           .end(
             JSON.stringify({
@@ -103,12 +102,23 @@ async function fixture(
       response.destroy();
     });
   });
+  let authority, telemetry;
+  t.after(async () => {
+    try {
+      await authority?.closeAndWait().catch(() => {});
+      await telemetry?.shutdown();
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+    assert.deepEqual(failures, []);
+  });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const origin = "http://127.0.0.1:" + server.address().port;
-  const telemetry = createPrivateACPTelemetry(origin + "/v1/traces");
+  telemetry = createPrivateACPTelemetry(origin + "/v1/traces");
   const secrets = [];
-  const authority = createWorkspaceAuthority({
+  authority = createWorkspaceAuthority({
     service: serviceClient({
       identityEndpoint: origin,
       readCredential: (grant) =>
@@ -120,14 +130,8 @@ async function fixture(
     principal,
     signal: abort.signal,
     secrets,
+    telemetry,
     preserve() {},
-  });
-  t.after(async () => {
-    await authority.closeAndWait().catch(() => {});
-    await telemetry.shutdown();
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-    assert.deepEqual(failures, []);
   });
   const options = {
     endpoint: origin + path,
@@ -199,6 +203,22 @@ test("Workspace state binds original authority, complete raw body and an actual 
   );
   assert.deepEqual(f.saved.at(-1), row);
   assert.equal(f.authority.snapshot().length, 1);
+  const identity = f.authority.snapshot()[0];
+  assert.equal(identity.response_trace_id, null);
+  assert.notEqual(identity.traceID, row.traceID);
+  assert(
+    spans.some(
+      (span) =>
+        span.traceId === identity.traceID &&
+        span.spanId === identity.clientSpanID &&
+        span.name === "HTTP POST identity-service",
+    ),
+  );
+  assert.equal(
+    f.requests.find((request) => request.path.includes("resolve-access-token"))
+      .headers.traceparent,
+    `00-${identity.traceID}-${identity.clientSpanID}-01`,
+  );
   assert.equal(
     f.requests.filter((r) => r.path.includes("resolve-access-token")).length,
     1,

@@ -36,9 +36,11 @@ export function createWorkspaceAuthority({
   principal: original,
   signal,
   secrets,
+  telemetry,
   preserve,
 }) {
   assert.equal(typeof preserve, "function");
+  assert.equal(typeof telemetry?.startHTTP, "function");
   assert(Array.isArray(secrets));
   const target = new URL(identityEndpoint);
   assert(
@@ -97,13 +99,24 @@ export function createWorkspaceAuthority({
       path,
       request_body: { profile: "workspace", agent_id: agentId },
       request_started_at: Date.now(),
+      body_outcome: "failed",
+      client_ended: false,
       errors: [],
     };
     rows.push(row);
     operation = (async () => {
       const errors = [];
-      let issued, rejection;
+      let issued, rejection, client;
       try {
+        client = telemetry.startHTTP("POST", "identity-service");
+        row.traceID = client.traceID;
+        row.clientSpanID = client.clientSpanID;
+        assert.match(row.traceID, /^[a-f0-9]{32}$/u);
+        assert.match(row.clientSpanID, /^[a-f0-9]{16}$/u);
+        assert.equal(
+          client.traceparent,
+          `00-${row.traceID}-${row.clientSpanID}-01`,
+        );
         const response = await base.send(
           target.origin + path,
           "gateway-identity",
@@ -114,6 +127,7 @@ export function createWorkspaceAuthority({
               agent_id: agentId,
             },
             signal: parent,
+            headers: { traceparent: client.traceparent },
           },
         );
         row.status = response.status;
@@ -125,7 +139,13 @@ export function createWorkspaceAuthority({
         row.response_completed_at = Date.now();
         row.body_bytes = raw.length;
         row.raw_body_base64 = raw.toString("base64");
+        row.body_outcome = "eof";
         parent?.throwIfAborted();
+        if (row.response_trace_id !== null)
+          assert(
+            row.response_trace_id === row.traceID,
+            "Identity response Trace differs from the actual CLIENT",
+          );
         if (response.status === 200) {
           const value = decode(row);
           assert(
@@ -154,6 +174,20 @@ export function createWorkspaceAuthority({
         resourceErrors.push(error);
         row.errors.push(inspect(error, { depth: 8 }));
       }
+      if (client)
+        try {
+          client.end(
+            row.status,
+            errors.length ? "failed" : "eof",
+            row.body_bytes ?? 0,
+            row.body_outcome,
+          );
+          row.client_ended = true;
+        } catch (error) {
+          errors.push(error);
+          resourceErrors.push(error);
+          row.errors.push(inspect(error, { depth: 8 }));
+        }
       try {
         await archive();
       } catch (error) {
@@ -209,7 +243,15 @@ export function assertWorkspaceResolveDenied(receipt, expected) {
     401,
     "owner revocation requires original Identity 401",
   );
-  assert.match(receipt.response_trace_id, /^[a-f0-9]{32}$/u);
+  assert.match(receipt.traceID, /^[a-f0-9]{32}$/u);
+  assert.match(receipt.clientSpanID, /^[a-f0-9]{16}$/u);
+  if (receipt.response_trace_id !== null)
+    assert(
+      receipt.response_trace_id === receipt.traceID,
+      "Identity response Trace differs from the actual CLIENT",
+    );
+  assert.equal(receipt.body_outcome, "eof");
+  assert.equal(receipt.client_ended, true);
   assert(/^application\/json(?:\s*;|$)/iu.test(receipt.content_type));
   assert.deepEqual(receipt.errors, []);
   assert(

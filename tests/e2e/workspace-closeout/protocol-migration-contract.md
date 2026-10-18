@@ -106,8 +106,11 @@ prove no new Run, Provider or Tool activity. Only after these observations may
 the consumer close and join the idle private WebSocket.
 
 A new connection attempt must preserve Identity's actual workspace Resolve
-denial, including status, original body and response Trace ID, using the
-original login token. A generic thrown Error, dependency 503, network failure,
+denial, including status, original body and actual exported Identity HTTP
+CLIENT Trace/span IDs, using the original login token. Pass that CLIENT's
+`traceparent` on the real Resolve request. Identity does not supply a Trace
+response header; preserve its observed absence, and require a matching Trace
+if a header is present. A generic thrown Error, dependency 503, network failure,
 caller abort or expired CCT cannot substitute for the original revocation
 evidence. ACP's existing `1008 caller_context_expired` policy is unchanged;
 this migration adds no new idle-WebSocket revocation behavior.
@@ -126,7 +129,8 @@ sources. Private ACP ancestry starts at its exported CLIENT and actual ACP
 receiver; no retired Gateway forwarding or public watch Resolve chain is
 invented. Preserve complete persistence and execution bindings, including
 cancellation. Read the Runtime's actual ready status (`agent_id`, `generation`
-and `execution_id`) and bind it to the observed container and Agent. Take
+and `execution_id`) and bind its Agent and generation to the observed container's
+`io.antnest.agent-id` and `io.antnest.runtime-generation` labels. Take
 `runtime_revision` from that same Agent's Runtime projection, then bind the
 execution ID and revision to model spans. The Runtime status does not contain
 `runtime_revision`; public Agent summaries redact the execution ID. These are

@@ -27,7 +27,9 @@ tests:
   original Error and connection-close receipt.
 - `private-watch.mjs` preserves raw private SSE, stable event indices and a
   pre-revocation boundary; the denied terminal state must end at remote EOF.
-- `private-authority.mjs` records each operation's actual Identity response.
+- `private-authority.mjs` records each operation's actual Identity response and
+  exports an Identity HTTP CLIENT with its original outgoing `traceparent`.
+  The real service does not return a Trace header; its absence is preserved.
   `private-state.mjs` binds complete response bytes to its own exported HTTP
   CLIENT and preserves original reader and cleanup errors.
 - `private-access.mjs` gives each connection, watch or state read a distinct
@@ -36,6 +38,11 @@ tests:
   state reads, closes connections and watches, then joins existing collectors
   before shutting down the exporter. Collector, archive and late parent-abort
   failures remain failures after their callers have observed them.
+- `private-denial-trace.mjs` checks the original `access_denied` Prompt response
+  and its three admission SELECTs, with no Run, Provider or Tool activity.
+- `current-evidence.mjs` binds each actual Runtime ready response to the same
+  container's Agent and generation before associating its execution ID with
+  the Agent's Runtime revision.
 
 Business-flow wiring, private Trace admission and protocol Docker acceptance
 remain pending. The subsequent C4 browser batch separately proves the retained

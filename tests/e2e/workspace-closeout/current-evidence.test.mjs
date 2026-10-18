@@ -118,24 +118,63 @@ test("recovery and replay cannot rewrite unknown Run or event history", () => {
   );
 });
 
-test("Runtime execution identity comes from the actual ready process, not redacted public Agent fields", () => {
-  const observed = {
-    agent: { agent_id: "agent", runtime: { runtime_revision: "revision" } },
-    container: { Config: { Labels: { "io.antnest.agent-id": "agent" } } },
+function runtimeFixture() {
+  return {
+    observed: {
+      agent: { agent_id: "agent", runtime: { runtime_revision: "revision" } },
+      container: {
+        Config: {
+          Labels: {
+            "io.antnest.agent-id": "agent",
+            "io.antnest.runtime-generation": "3",
+          },
+        },
+      },
+    },
+    status: {
+      status: "ready",
+      agent_id: "agent",
+      generation: 3,
+      execution_id: "process",
+    },
   };
-  assert.deepEqual(
-    runtimeBinding(observed, { status: "ready", execution_id: "process" }),
-    { runtime_revision: "revision", runtime_execution_id: "process" },
-  );
-  for (const status of [
-    { status: "ready" },
-    { status: "starting", execution_id: "process" },
-    { status: "ready", execution_id: "" },
-  ])
-    assert.throws(() => runtimeBinding(observed, status));
-  const foreign = structuredClone(observed);
-  foreign.container.Config.Labels["io.antnest.agent-id"] = "foreign";
-  assert.throws(() =>
-    runtimeBinding(foreign, { status: "ready", execution_id: "process" }),
-  );
+}
+
+test("Runtime execution identity binds the ready process to the observed Agent and container generation", () => {
+  const { observed, status } = runtimeFixture();
+  assert.deepEqual(runtimeBinding(observed, status), {
+    runtime_revision: "revision",
+    runtime_execution_id: "process",
+  });
 });
+
+for (const [label, mutate] of Object.entries({
+  foreign_status_agent: (f) => (f.status.agent_id = "foreign"),
+  missing_status_agent: (f) => delete f.status.agent_id,
+  foreign_container_agent: (f) =>
+    (f.observed.container.Config.Labels["io.antnest.agent-id"] = "foreign"),
+  missing_generation: (f) => delete f.status.generation,
+  foreign_generation: (f) => (f.status.generation = 4),
+  string_generation: (f) => (f.status.generation = "3"),
+  zero_generation: (f) => (f.status.generation = 0),
+  fractional_generation: (f) => (f.status.generation = 3.5),
+  unsafe_generation: (f) => (f.status.generation = Number.MAX_SAFE_INTEGER + 1),
+  missing_container_generation: (f) =>
+    delete f.observed.container.Config.Labels["io.antnest.runtime-generation"],
+  noncanonical_container_generation: (f) =>
+    (f.observed.container.Config.Labels["io.antnest.runtime-generation"] =
+      "03"),
+  starting_process: (f) => (f.status.status = "starting"),
+  missing_execution_id: (f) => delete f.status.execution_id,
+  empty_execution_id: (f) => (f.status.execution_id = ""),
+  blank_execution_id: (f) => (f.status.execution_id = " \n"),
+  missing_runtime_revision: (f) =>
+    delete f.observed.agent.runtime.runtime_revision,
+  blank_runtime_revision: (f) =>
+    (f.observed.agent.runtime.runtime_revision = " \n"),
+}))
+  test(`Runtime binding rejects ${label}`, () => {
+    const fixture = runtimeFixture();
+    mutate(fixture);
+    assert.throws(() => runtimeBinding(fixture.observed, fixture.status));
+  });

@@ -28,12 +28,21 @@ const contains = (error, original) =>
 
 async function fixture(
   t,
-  { status = 200, body, preserve, service, signal } = {},
+  {
+    status = 200,
+    body,
+    preserve,
+    service,
+    signal,
+    telemetry,
+    traceHeader = null,
+  } = {},
 ) {
   assert.equal(typeof implementation.createWorkspaceAuthority, "function");
   const requests = [],
     saved = [],
-    secrets = [];
+    secrets = [],
+    ended = [];
   const actual =
     body ?? (status === 200 ? { caller_context: context, principal } : denied);
   const raw = JSON.stringify(actual) + "\n";
@@ -48,7 +57,7 @@ async function fixture(
       response
         .writeHead(status, {
           "content-type": "application/json",
-          "x-antnest-trace-id": "a".repeat(32),
+          ...(traceHeader ? { "x-antnest-trace-id": traceHeader } : {}),
         })
         .end(raw);
     })().catch(() => response.destroy());
@@ -66,6 +75,18 @@ async function fixture(
     principal,
     signal,
     secrets,
+    telemetry: telemetry ?? {
+      startHTTP(method, peer) {
+        assert.equal(method, "POST");
+        assert.equal(peer, "identity-service");
+        return {
+          traceID: "a".repeat(32),
+          clientSpanID: "b".repeat(16),
+          traceparent: `00-${"a".repeat(32)}-${"b".repeat(16)}-01`,
+          end: (...args) => ended.push(args),
+        };
+      },
+    },
     preserve: preserve ?? ((value) => saved.push(structuredClone(value))),
   });
   t.after(async () => {
@@ -73,7 +94,7 @@ async function fixture(
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   });
-  return { scope, requests, saved, secrets, raw };
+  return { scope, requests, saved, secrets, raw, ended };
 }
 const expected = (after = 0) => ({
   agentID: "agent",
@@ -98,7 +119,15 @@ test("Workspace authority preserves the original HTTP response and per-operation
   assert.equal(row.status, 200);
   assert.equal(row.raw_body_base64, Buffer.from(f.raw).toString("base64"));
   assert.equal(row.body_bytes, Buffer.byteLength(f.raw));
-  assert.equal(row.response_trace_id, "a".repeat(32));
+  assert.equal(row.response_trace_id, null);
+  assert.equal(row.traceID, "a".repeat(32));
+  assert.equal(row.clientSpanID, "b".repeat(16));
+  assert.equal(
+    f.requests[0].headers.traceparent,
+    `00-${row.traceID}-${row.clientSpanID}-01`,
+  );
+  assert.equal(row.body_outcome, "eof");
+  assert.deepEqual(f.ended, [[200, "eof", Buffer.byteLength(f.raw), "eof"]]);
   assert.equal(row.session_digest, expected().session_digest);
   assert.deepEqual(f.saved.at(-1), [row]);
   assert(f.secrets.includes(token) && f.secrets.includes(context));
@@ -172,9 +201,9 @@ for (const [name, mutate] of [
     },
   ],
   [
-    "missing response Trace",
+    "missing actual CLIENT Trace",
     (r) => {
-      r.response_trace_id = null;
+      r.traceID = null;
     },
   ],
   [
@@ -218,6 +247,74 @@ test("Workspace authority refuses foreign scope before sending and preserves one
   await f.scope.service.workspaceContext(token, "agent");
   await assert.rejects(f.scope.service.workspaceContext(token, "agent"));
   assert.equal(f.requests.length, 1);
+});
+
+test("Identity may omit a Trace response header; a foreign header cannot substitute for the actual CLIENT", async (t) => {
+  const f = await fixture(t, { status: 401, traceHeader: "c".repeat(32) });
+  await assert.rejects(f.scope.service.workspaceContext(token, "agent"));
+  await assert.rejects(f.scope.closeAndWait());
+  const [row] = f.scope.snapshot();
+  assert.equal(row.response_trace_id, "c".repeat(32));
+  assert.equal(row.traceID, "a".repeat(32));
+  assert.throws(() =>
+    implementation.assertWorkspaceResolveDenied(row, expected()),
+  );
+  assert.equal(f.ended.length, 1);
+  assert.equal(f.ended[0][1], "failed");
+});
+
+test("Identity CLIENT end failure retains original authority evidence and joins the archive", async (t) => {
+  const original = new Error("original Identity CLIENT end failure");
+  const f = await fixture(t, {
+    telemetry: {
+      startHTTP: () => ({
+        traceID: "a".repeat(32),
+        clientSpanID: "b".repeat(16),
+        traceparent: `00-${"a".repeat(32)}-${"b".repeat(16)}-01`,
+        end() {
+          throw original;
+        },
+      }),
+    },
+  });
+  await assert.rejects(
+    f.scope.service.workspaceContext(token, "agent"),
+    (error) => contains(error, original),
+  );
+  await assert.rejects(f.scope.closeAndWait(), (error) =>
+    contains(error, original),
+  );
+  const [row] = f.scope.snapshot();
+  assert.equal(row.status, 200);
+  assert.equal(row.body_outcome, "eof");
+  assert.equal(row.raw_body_base64, Buffer.from(f.raw).toString("base64"));
+  assert.deepEqual(f.saved.at(-1), [row]);
+});
+
+test("Identity Trace header mismatch keeps secret contents only in private receipts", async (t) => {
+  const f = await fixture(t, { status: 401, traceHeader: context });
+  await assert.rejects(
+    f.scope.service.workspaceContext(token, "agent"),
+    (error) => {
+      assert(
+        !inspect(error).includes(context),
+        "Identity response header leaked into diagnostic",
+      );
+      return true;
+    },
+  );
+  const [row] = f.scope.snapshot();
+  assert.equal(row.response_trace_id, context);
+  assert.throws(
+    () => implementation.assertWorkspaceResolveDenied(row, expected()),
+    (error) => {
+      assert(
+        !inspect(error).includes(context),
+        "Identity denial header leaked into diagnostic",
+      );
+      return true;
+    },
+  );
 });
 
 test("Workspace authority retains both original transport and archive failures and joins them", async (t) => {

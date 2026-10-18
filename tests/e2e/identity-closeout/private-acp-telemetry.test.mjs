@@ -139,6 +139,47 @@ test("HTTP and WS CLIENT exports carry one actual process identity across provid
   assert.equal(instances.size, 1);
 });
 
+test("Identity Resolve CLIENT exports its actual peer and wire carrier without ACP protocol attributes", async (t) => {
+  const c = await collector(t);
+  const telemetry = create(c.url);
+  t.after(() => telemetry.shutdown());
+  const clients = [200, 401].map(() =>
+    telemetry.startHTTP("POST", "identity-service"),
+  );
+  clients[0].end(200, "eof", 40);
+  clients[1].end(401, "eof", 70);
+  await telemetry.flush();
+  const records = exported(c.records);
+  assert.equal(records.length, 2);
+  for (let index = 0; index < clients.length; index++) {
+    const client = clients[index];
+    const record = records.find(
+      (item) => item.span.spanId === client.clientSpanID,
+    );
+    assert.equal(
+      client.traceparent,
+      `00-${client.traceID}-${client.clientSpanID}-01`,
+    );
+    assert.equal(record.span.traceId, client.traceID);
+    assert.equal(record.span.name, "HTTP POST identity-service");
+    assert.equal(record.span.kind, 3);
+    assert(!record.span.parentSpanId);
+    assert.equal(record.attributes["antnest.protocol.version"], undefined);
+    assert.equal(record.attributes["http.request.method"], "POST");
+    assert.equal(record.attributes["antnest.http.body.outcome"], "eof");
+    assert.equal(
+      Number(record.attributes["http.response.body.size"]),
+      index === 0 ? 40 : 70,
+    );
+    if (index === 1) {
+      assert.equal(record.span.status.code, 2);
+      assert.equal(record.attributes["error.type"], "IdentityHTTPError");
+    }
+  }
+  assert.throws(() => telemetry.startHTTP("POST", "foreign"));
+  assert.throws(() => telemetry.startHTTP("GET", "identity-service"));
+});
+
 test("a separate actual Node process exports a distinct CLIENT process identity", async (t) => {
   const c = await collector(t);
   const telemetry = create(c.url);
