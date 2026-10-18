@@ -192,6 +192,15 @@ and a subsequent HTTP 401. Its private request inventory, state responses,
 Logout observations and logs are archived before cleanup; archival or cleanup
 failure cannot inherit a diagnostic-only exit code.
 
+Default `e2e-lifecycle-restore` uses fresh candidate images and private ACP with
+the original member identity. It preserves the complete seven-database,
+two-volume and three-key recovery, then uses a distinct real login Session for
+history replay and the untouched Session's new Tool Run. Both connections,
+eight requests and four lifecycle operations retain raw private evidence and
+independent collection/cleanup errors. Skill-restore and its independent storage
+suite have separate admission; see the
+[Restore contract](e2e/lifecycle-closeout/restore-migration-contract.md).
+
 `make e2e-skill-discovery-caller` waits up to 90 seconds for the source Agent's
 projection acknowledgement before starting its caller Run. Registry recovery,
 live discovery results and the peer Agent's acknowledgement do not establish

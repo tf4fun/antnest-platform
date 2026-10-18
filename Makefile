@@ -211,7 +211,7 @@ e2e-lifecycle-health:
 
 .PHONY: e2e-lifecycle-restore
 e2e-lifecycle-restore:
-	node tests/e2e/lifecycle-closeout/run.mjs restore
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-restore
 
 .PHONY: e2e-stage4-skill-storage-restore
 e2e-stage4-skill-storage-restore:

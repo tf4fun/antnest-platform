@@ -47,6 +47,11 @@ const entrypoints = {
     "network",
   ],
   "lifecycle-loss": ["node", "tests/e2e/lifecycle-closeout/run.mjs", "loss"],
+  "lifecycle-restore": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "restore",
+  ],
 };
 
 export function shellEntrypoint(profile) {

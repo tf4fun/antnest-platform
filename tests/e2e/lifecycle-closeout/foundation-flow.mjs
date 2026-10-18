@@ -31,6 +31,10 @@ import {
   recordLossFailures,
 } from "./loss-private-session.mjs";
 import {
+  collectRestoreTraces,
+  recordRestoreFailures,
+} from "./restore-private-session.mjs";
+import {
   waitForAgentReady,
   assertAgentDisabled,
 } from "../../support/verification/agent-state.mjs";
@@ -311,6 +315,23 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       ready,
       traceSecrets,
     });
+    if (result.profile === "offline-restore") {
+      result.private_restore.lifecycle_admissions = structuredClone(admitted);
+      const errors = [];
+      const traces = await collectRestoreTraces(
+        admitted,
+        (operation) =>
+          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, error) => saveFoundationFailure(config, operation, error),
+        signal,
+        errors,
+      );
+      recordRestoreFailures(result, errors);
+      return recordRestoreFailures(
+        { ...result, operations: admitted.length, traces },
+        result.restoreErrors,
+      );
+    }
     if (result.profile === "runtime-loss") {
       result.private_loss.lifecycle_admissions = structuredClone(admitted);
       const errors = [];

@@ -11,6 +11,7 @@ import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
 import { saveFoundationFailure } from "./foundation-trace.mjs";
 import { flushTraceProducers } from "./network-support.mjs";
 import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
+import { runPrivateRestore } from "./restore-private-flow.mjs";
 import { lines } from "./docker.mjs";
 import {
   keyNames,
@@ -48,7 +49,7 @@ async function loginOwner(config) {
       password: "lifecycle-owner-password",
     },
   });
-  return { owner, principal: response.body.principal };
+  return { owner, principal: response.body.principal, response };
 }
 
 async function history(client, sessionId) {
@@ -72,19 +73,22 @@ async function history(client, sessionId) {
     );
 }
 
-async function prompt(client, sessionId, text) {
+async function prompt(client, sessionId, text, toolName) {
   const result = await client.request(
     "prompt",
     { sessionId, prompt: [{ type: "text", text }] },
     60000,
+    { kind: "ordinary", phase: text, toolName },
   );
   assert.equal(result.stopReason, "end_turn");
 }
 
 export async function runRestore(input) {
-  const directory = await mkdtemp(
-    join(temporaryStorageRoot(), "antnest-restore-"),
-  );
+  // Retain the storage-policy rejection before selecting or opening transport.
+  const storageRoot = temporaryStorageRoot();
+  if (!input.config.skillRestore)
+    return runPrivateRestore(input, restoreScenario);
+  const directory = await mkdtemp(join(storageRoot, "antnest-restore-"));
   await chmod(directory, 0o700);
   let client;
   try {
@@ -115,12 +119,14 @@ async function restoreScenario(
   },
   directory,
   setClient,
+  adapter,
 ) {
   console.error(
     "Restore: creating a real Session, Tool effect and persistent filesystem fixtures",
   );
   const requests = [];
   const remember = (client, method, details) => {
+    if (adapter) return adapter.remember(client, method, details);
     const actual = client.requests.filter((r) => r.method === method).at(-1);
     assert(actual, "actual restore SDK request missing");
     requests.push({
@@ -141,6 +147,7 @@ async function restoreScenario(
     assert.equal(response.status, 200);
     const state = await response.json();
     assert.deepEqual(state.errors, []);
+    adapter?.modelInventory(state.requests);
     return state.requests;
   };
   const expectedKeys = keyDigests(config.env);
@@ -200,6 +207,7 @@ async function restoreScenario(
     );
   }
   const first = await loginOwner(config);
+  adapter?.login(first);
   traceSecrets.push(
     "lifecycle-owner-password",
     ...first.owner.cookies.values(),
@@ -212,20 +220,21 @@ async function restoreScenario(
     );
     assert.equal(page.next_cursor, null);
     assert.equal(page.items.length, 1);
-    return assertRestoreRun(
+    const run = assertRestoreRun(
       [await json(`/api/admin/execution-audits/${page.items[0].run_id}`)],
       agent,
       sessionId,
     );
+    adapter?.recordRun(run);
+    return run;
   };
-  let client = connectOwner(
-    config.gateway,
-    created.agentID,
-    first.owner.cookie,
-    signal,
-  );
-  setClient(client);
-  await client.initialize();
+  let client = adapter
+    ? await adapter.open(created.agentID, first.owner, first.principal)
+    : connectOwner(config.gateway, created.agentID, first.owner.cookie, signal);
+  if (!adapter) {
+    setClient(client);
+    await client.initialize();
+  }
   const sessionId = (
     await client.request("new", { cwd: "/workspace", mcpServers: [] })
   ).sessionId;
@@ -234,12 +243,17 @@ async function restoreScenario(
     await client.request("new", { cwd: "/workspace", mcpServers: [] })
   ).sessionId;
   remember(client, "session/new", { sessionId: untouchedSessionId });
-  await prompt(client, sessionId, "c5-before-backup");
+  await prompt(client, sessionId, "c5-before-backup", "bash");
   const beforeRun = await completedRun(sessionId, initial.agent);
+  const preservedBeforeRun = async () => {
+    const run = await json(`/api/admin/execution-audits/${beforeRun.run_id}`);
+    return adapter ? adapter.preservedRun(run) : run;
+  };
   remember(client, "session/prompt", {
     sessionId,
     kind: "ordinary",
     phase: "c5-before-backup",
+    toolName: "bash",
     runId: beforeRun.run_id,
   });
   const beforeAudits = await json(auditPath);
@@ -253,6 +267,7 @@ async function restoreScenario(
     ],
   );
   const beforeHistory = await history(client, sessionId);
+  adapter?.history(beforeHistory);
   remember(client, "session/load", { sessionId });
   assertReplayAudits(beforeAudits, await json(auditPath));
   assert.deepEqual(await modelState(), beforeModel);
@@ -260,7 +275,8 @@ async function restoreScenario(
     beforeHistory.some((event) => event.update.sessionUpdate === "tool_call"),
   );
   assert(JSON.stringify(beforeHistory).includes("c5-before-backup completed"));
-  client.close();
+  if (adapter) await adapter.close(client);
+  else client.close();
 
   await docker([
     "exec",
@@ -317,6 +333,7 @@ async function restoreScenario(
   console.error(
     "Restore: stopping every writer and exporting the complete recovery set",
   );
+  await adapter?.beforeQuiesce();
   await docker(
     config.compose([
       "stop",
@@ -383,6 +400,7 @@ async function restoreScenario(
   );
   if (config.skillRestore)
     await docker(config.compose(["stop", "-t", "20", "skill-registry"]), true);
+  await adapter?.afterRestore();
 
   console.error(
     "Restore: checking authentication, saved policy/configuration, history and new Tool execution",
@@ -428,11 +446,9 @@ async function restoreScenario(
   assert.equal(restoredPolicy.attachment.state, "closed");
   assert.deepEqual(await json(eventPath), beforeEvents);
   assertReplayAudits(beforeAudits, await json(auditPath));
-  assert.deepEqual(
-    await json(`/api/admin/execution-audits/${beforeRun.run_id}`),
-    beforeRun,
-  );
+  assert.deepEqual(await preservedBeforeRun(), beforeRun);
   const second = await loginOwner(config);
+  adapter?.login(second);
   traceSecrets.push(...second.owner.cookies.values());
   assert.deepEqual(second.principal, first.principal);
   await command("enable", created.agentID, {});
@@ -477,21 +493,24 @@ async function restoreScenario(
     );
   }
   assert.deepEqual(await modelState(), []);
-  client = connectOwner(
-    config.gateway,
-    created.agentID,
-    second.owner.cookie,
-    signal,
-  );
-  setClient(client);
-  await client.initialize();
-  assert.deepEqual(await history(client, sessionId), beforeHistory);
+  client = adapter
+    ? await adapter.open(created.agentID, second.owner, second.principal)
+    : connectOwner(
+        config.gateway,
+        created.agentID,
+        second.owner.cookie,
+        signal,
+      );
+  if (!adapter) {
+    setClient(client);
+    await client.initialize();
+  }
+  const restoredHistory = await history(client, sessionId);
+  adapter?.history(restoredHistory);
+  assert.deepEqual(restoredHistory, beforeHistory);
   remember(client, "session/load", { sessionId });
   assertReplayAudits(beforeAudits, await json(auditPath));
-  assert.deepEqual(
-    await json(`/api/admin/execution-audits/${beforeRun.run_id}`),
-    beforeRun,
-  );
+  assert.deepEqual(await preservedBeforeRun(), beforeRun);
   assert.deepEqual(
     await modelState(),
     [],
@@ -499,7 +518,7 @@ async function restoreScenario(
   );
   // This Session has never been loaded/resumed since creation. Prompt must open
   // its original encrypted MCP revision, not a replacement written by load.
-  await prompt(client, untouchedSessionId, "c5-after-restore");
+  await prompt(client, untouchedSessionId, "c5-after-restore", "read");
   const afterRun = await completedRun(untouchedSessionId, enabled.agent);
   assert.notEqual(afterRun.run_id, beforeRun.run_id);
   assert.notEqual(
@@ -516,10 +535,7 @@ async function restoreScenario(
   const afterAudits = await json(auditPath);
   assert.equal(afterAudits.next_cursor, null);
   assert.equal(afterAudits.items.length, 2);
-  assert.deepEqual(
-    await json(`/api/admin/execution-audits/${beforeRun.run_id}`),
-    beforeRun,
-  );
+  assert.deepEqual(await preservedBeforeRun(), beforeRun);
   assert.deepEqual(
     (await modelState()).map(({ phase, stage }) => [phase, stage]),
     [
@@ -668,7 +684,8 @@ async function restoreScenario(
       runId: unaffectedRun.run_id,
     });
   }
-  client.close();
+  if (adapter) await adapter.close(client);
+  else client.close();
   assert.equal(
     await docker([
       "exec",
@@ -715,37 +732,40 @@ async function restoreScenario(
       "second Agent retained Skill or workspace volumes after Delete",
     );
   }
-  await flushTraceProducers(config, docker);
-  const requestTraces = await collectLifecycleEvidence(
-    requests,
-    (expected) =>
-      collectLifecycleACPTrace(
-        config,
-        expected,
-        traceSecrets,
-        expected.kind === "ordinary"
-          ? calls.filter((c) => c.phase === expected.phase)
-          : [],
-        (trace, expected, secrets, modelCalls) => {
-          const evidence = inspectCommandTrace(
-            trace,
-            expected,
-            secrets,
-            modelCalls,
-          );
-          if (expected.runId) assert.equal(evidence.run_id, expected.runId);
-          return strictSessionEvidence(evidence, trace);
-        },
-        signal,
-      ),
-    (expected, error) =>
-      saveFoundationFailure(
-        config,
-        { traceID: expected.traceID ?? expected.connectionTraceID },
-        error,
-      ),
-    signal,
-  );
+  let requestTraces = [];
+  if (!adapter) {
+    await flushTraceProducers(config, docker);
+    requestTraces = await collectLifecycleEvidence(
+      requests,
+      (expected) =>
+        collectLifecycleACPTrace(
+          config,
+          expected,
+          traceSecrets,
+          expected.kind === "ordinary"
+            ? calls.filter((c) => c.phase === expected.phase)
+            : [],
+          (trace, expected, secrets, modelCalls) => {
+            const evidence = inspectCommandTrace(
+              trace,
+              expected,
+              secrets,
+              modelCalls,
+            );
+            if (expected.runId) assert.equal(evidence.run_id, expected.runId);
+            return strictSessionEvidence(evidence, trace);
+          },
+          signal,
+        ),
+      (expected, error) =>
+        saveFoundationFailure(
+          config,
+          { traceID: expected.traceID ?? expected.connectionTraceID },
+          error,
+        ),
+      signal,
+    );
+  }
   return {
     profile: config.skillRestore ? "offline-skill-restore" : "offline-restore",
     request_traces: requestTraces,

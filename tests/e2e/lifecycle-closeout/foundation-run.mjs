@@ -33,6 +33,11 @@ import {
 import { inspectNetworkPrivateDeployment } from "./network-private-deployment.mjs";
 import { networkFailures } from "./network-private-session.mjs";
 import { lossFailures } from "./loss-private-session.mjs";
+import { restoreFailures } from "./restore-private-session.mjs";
+import {
+  restorePrivateAdmission,
+  restorePublicResult,
+} from "./restore-private-evidence.mjs";
 import {
   lossPrivateAdmission,
   lossPublicResult,
@@ -98,6 +103,7 @@ export async function runFoundation(
     if (profile === "foundation") configureFoundationPrivate(config);
     if (profile === "network") configureFoundationPrivate(config);
     if (profile === "loss") configureFoundationPrivate(config);
+    if (profile === "restore") configureFoundationPrivate(config);
     if (profile === "health") configureHealthPrivate(config);
     if (
       [
@@ -171,7 +177,9 @@ export async function runFoundation(
             ? inspectNetworkPrivateDeployment(rows, config)
             : profile === "loss"
               ? inspectFoundationPrivateDeployment(rows, config)
-              : rows;
+              : profile === "restore"
+                ? inspectFoundationPrivateDeployment(rows, config)
+                : rows;
     if (profile === "interrupted") {
       const { inspectUpdateProxyDeployment } =
         await import("./interrupted-current.mjs");
@@ -246,6 +254,10 @@ export async function runFoundation(
       lossFailures(result.lossErrors);
       admission = lossPrivateAdmission(result);
     }
+    if (profile === "restore") {
+      restoreFailures(result.restoreErrors);
+      admission = restorePrivateAdmission(result);
+    }
   } catch (error) {
     failure =
       profile === "network" && result?.networkErrors?.length
@@ -258,7 +270,12 @@ export async function runFoundation(
               [...new Set([...result.lossErrors, error])],
               "Loss evidence and final admission failed",
             )
-          : error;
+          : profile === "restore" && result?.restoreErrors?.length
+            ? new AggregateError(
+                [...new Set([...result.restoreErrors, error])],
+                "Restore evidence and final admission failed",
+              )
+            : error;
     if (config?.evidence) {
       try {
         writeEvidenceFile(
@@ -378,7 +395,9 @@ export async function runFoundation(
             ? networkPublicResult(result)
             : profile === "loss"
               ? lossPublicResult(result)
-              : result),
+              : profile === "restore"
+                ? restorePublicResult(result)
+                : result),
       ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",

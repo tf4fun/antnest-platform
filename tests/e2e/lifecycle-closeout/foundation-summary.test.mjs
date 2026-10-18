@@ -50,7 +50,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   );
   assert.match(
     source,
-    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: profile === "network"\s*\? networkPublicResult\(result\)\s*: profile === "loss"\s*\? lossPublicResult\(result\)\s*: result/u,
+    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: profile === "network"\s*\? networkPublicResult\(result\)\s*: profile === "loss"\s*\? lossPublicResult\(result\)\s*: profile === "restore"\s*\? restorePublicResult\(result\)\s*: result/u,
   );
   const archiveIndex = source.indexOf(
     'writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result))',
@@ -65,6 +65,15 @@ test("Foundation public summary excludes original RPC and state bodies without c
     "networkFailures(result.networkErrors)",
   );
   const lossFailureIndex = source.indexOf("lossFailures(result.lossErrors)");
+  const restoreFailureIndex = source.indexOf(
+    "restoreFailures(result.restoreErrors)",
+  );
+  assert(
+    restoreFailureIndex > archiveIndex &&
+      restoreFailureIndex <
+        source.indexOf("admission = restorePrivateAdmission(result)"),
+    "Restore must preserve raw evidence before propagating original failures",
+  );
   assert(
     lossFailureIndex > archiveIndex &&
       lossFailureIndex <

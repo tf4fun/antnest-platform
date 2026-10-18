@@ -90,7 +90,7 @@ diagnostics are both retained. Source errors cannot inherit clock-only or
 workflow-restart diagnostic exceptions. Clock-only acceptance requires zero raw
 errors; a restart exception requires the exact reviewed total.
 
-The shutdown and restore ACP request collectors select
+The shutdown and Skill-restore ACP request collectors select
 the actual message using its observed connection and request
 identity, then validate the `acp` Resolve source. They retain the owning Run,
 model phase, durable-write and rejection checks. Selection records the actual
@@ -254,6 +254,25 @@ Public audit and Agent event history must survive. Replaying a Session makes no
 model call or new Run. A prompt on an untouched restored Session uses its saved
 encrypted MCP revision and runs one new Tool Run. See the
 [backup and restore procedure](../../../docs/docker-backup-restore.md).
+
+Default Restore runs through the fresh-image authenticated wrapper and delegates
+the original member Session through private ACP v1. After storage recovery it
+requires the original second login with the same Principal and a distinct
+Session, then binds that Session to the second connection. Its two initialize
+and six business requests retain the actual SDK wire receipts, two public Runs,
+four Provider requests and Bash/read calls. The untouched Session is never
+loaded before its first post-restore Prompt. The pre-restore model inventory is
+saved before recreating the model process.
+
+All pre-restore connections close and join before writer shutdown. Raw inspect
+receipts prove the relay, host telemetry receiver and Jaeger keep their identity,
+start time and endpoints across storage replacement. Eight request collections
+and four lifecycle collections preserve independent failures; exporter and
+temporary-directory cleanup errors remain failures. Private evidence is archived
+before final admission and excluded from the public summary. Strict diagnostics
+remain separate from admission, with no semantic-denial allowance. Skill-restore
+and the independent eight-database/five-volume storage suite remain separate
+delivery and verification batches.
 
 ## Runtime Health and Observation
 
