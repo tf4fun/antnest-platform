@@ -183,6 +183,13 @@ U+FFFD. These clients therefore print every JSON line through
 characters; `support/ascii-json.test.mjs` finds the clients from the runners
 and rejects raw `JSON.stringify` output.
 
+The [Stage 3 base client](e2e/stage3-base/README.md) uses private ACP for
+protocol checks and complete execution state, with the original member
+Session and Principal. Logout acceptance uses the actual browser Bridge SSE
+and a subsequent HTTP 401. Its private request inventory, state responses,
+Logout observations and logs are archived before cleanup; archival or cleanup
+failure cannot inherit a diagnostic-only exit code.
+
 `make e2e-skill-discovery-caller` waits up to 90 seconds for the source Agent's
 projection acknowledgement before starting its caller Run. Registry recovery,
 live discovery results and the peer Agent's acknowledgement do not establish

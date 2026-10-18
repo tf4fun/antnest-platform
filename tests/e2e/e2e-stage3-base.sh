@@ -5,6 +5,10 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 . "$root/tests/support/service-hosts.sh"
 evidence="$root/artifacts/verification/stage3-base/$COMPOSE_PROJECT_NAME"
 node "$root/tests/support/storage.mjs" "$evidence"
+umask 077
+mkdir -p "$evidence"
+client_created=false
+model_created=false
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
 docker_cmd() { node "$root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 model="${COMPOSE_PROJECT_NAME}-base-model"
@@ -13,23 +17,37 @@ legacy_helper="${COMPOSE_PROJECT_NAME}-legacy-inventory-helper"
 fault_proxy="${COMPOSE_PROJECT_NAME}-rc-fault-proxy"
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage3-base.XXXXXX")
 cleanup() {
-  status=$?
+  entry_status=$?
+  status=$entry_status
+  archive_status=0
+  cleanup_status=0
   trap - EXIT INT TERM
   export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+60000))')
+  if [ "$client_created" = true ]; then
+    docker_cmd logs "$client" >"$evidence/client.log" 2>&1 || archive_status=1
+  fi
+  if [ "$model_created" = true ]; then
+    docker_cmd logs "$model" >"$evidence/model.log" 2>&1 || archive_status=1
+  fi
   if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ]; then
     race_proxy=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --filter 'label=com.docker.compose.service=skill-docker-proxy')
     if [ -n "$race_proxy" ] && docker_cmd cp "$race_proxy:/proxy/race.json" "$temporary/race.json" >/dev/null 2>&1; then
-      node "$root/tests/e2e/stage3-base/skill-mount-race-cleanup.mjs" "$temporary/race.json" "$COMPOSE_PROJECT_NAME" || status=1
+      node "$root/tests/e2e/stage3-base/skill-mount-race-cleanup.mjs" "$temporary/race.json" "$COMPOSE_PROJECT_NAME" || cleanup_status=1
     fi
   fi
-  docker_cmd rm -f "$client" "$model" >/dev/null 2>&1 || status=1
+  docker_cmd rm -f "$client" "$model" >/dev/null 2>&1 || cleanup_status=1
   if [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ]; then
-    docker_cmd rm -f "$fault_proxy" >/dev/null 2>&1 || status=1
+    docker_cmd rm -f "$fault_proxy" >/dev/null 2>&1 || cleanup_status=1
   fi
   if [ -n "${legacy_helper_id:-}" ]; then
-    docker_cmd rm -f "$legacy_helper" >/dev/null 2>&1 || status=1
+    docker_cmd rm -f "$legacy_helper" >/dev/null 2>&1 || cleanup_status=1
   fi
   rm -rf "$temporary"
+  printf '{"entry_status":%s,"archive_status":%s,"cleanup_status":%s,"client_status":%s}\n' "$entry_status" "$archive_status" "$cleanup_status" "${client_status:-null}" >"$evidence/cleanup.json" || archive_status=1
+  if [ "$archive_status" -ne 0 ] || [ "$cleanup_status" -ne 0 ]; then
+    echo "Stage3 evidence or cleanup failed (original status $entry_status)" >&2
+    status=1
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -38,13 +56,22 @@ trap 'exit 143' TERM
 containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 # IDs originate from Docker and contain no shell metacharacters.
 docker_cmd inspect $containers >"$temporary/deployment.json"
+cp "$temporary/deployment.json" "$evidence/deployment.json"
 node "$root/tests/e2e/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
+acp_container=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --filter 'label=com.docker.compose.service=agent-acp-service')
+# Docker-produced IDs are whitespace-separated, with no shell metacharacters.
+# shellcheck disable=SC2086
+set -- $acp_container
+[ "$#" -eq 1 ] || { echo 'Exactly one deployed ACP container required' >&2; exit 1; }
+acp_image=$(docker_cmd inspect --format '{{.Image}}' "$1")
+case "$acp_image" in sha256:*) ;; *) echo 'Deployed ACP image identity missing' >&2; exit 1 ;; esac
+printf '%s\n' "$acp_image" >"$evidence/acp-image.txt"
 if [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ]; then
   docker_cmd run -d --name "$fault_proxy" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
     --network "${COMPOSE_PROJECT_NAME}_controller-runtime" --network-alias stage3-rc-proxy \
     -e "ANTNEST_E2E_SKILL_RESTART_REBUILD=${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" \
     -v "$root/tests:/app/tests:ro" \
-    antnest/agent-acp-service:local node /app/tests/e2e/stage3-base/rc-fault-proxy.mjs >/dev/null
+    "$acp_image" node /app/tests/e2e/stage3-base/rc-fault-proxy.mjs >/dev/null
 fi
 image=antnest/antnest-runtime:local
 docker_cmd image inspect "$image" >/dev/null
@@ -60,7 +87,7 @@ legacy_helper_id=
 if [ "${ANTNEST_E2E_LEGACY_INVENTORY:-false}" = true ]; then
   printf '%s' 'Legacy shared Skill volume content awaiting explicit migration.' > "$temporary/legacy-note.txt"
   legacy_helper_id=$(docker_cmd create --name "$legacy_helper" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-    --network none -v "$ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:/legacy" antnest/agent-acp-service:local)
+    --network none -v "$ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:/legacy" "$acp_image")
   docker_cmd cp "$temporary/legacy-note.txt" "$legacy_helper:/legacy/legacy-note.txt"
 fi
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
@@ -75,7 +102,8 @@ docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_P
   -e "ANTNEST_E2E_SKILL_START_RESPONSE_LOSS=${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" \
   -e "ANTNEST_E2E_REGISTRY_IP=$registry_ip" \
   -v "$root/tests:/app/tests:ro" \
-  antnest/agent-acp-service:local node /app/tests/e2e/stage3-base/model-server.mjs >/dev/null
+  "$acp_image" node /app/tests/e2e/stage3-base/model-server.mjs >/dev/null
+model_created=true
 fault_network=
 if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ]; then
   fault_network="--network ${COMPOSE_PROJECT_NAME}_skill-fault"
@@ -85,6 +113,7 @@ fi
 # shellcheck disable=SC2086 # fault_network and service_hosts are option lists.
 docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" \
+  --network "${COMPOSE_PROJECT_NAME}_edge" \
   --network "${COMPOSE_PROJECT_NAME}_controller-runtime" \
   --network "${COMPOSE_PROJECT_NAME}_controller-clients" \
   --network "${COMPOSE_PROJECT_NAME}_identity-clients" \
@@ -95,6 +124,16 @@ docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.pr
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/agent-controller:/run/auth/console-controller:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-ui/tokens/agent-acp-service:/run/auth/agent-ui-acp:ro" \
+  -v "$root/contracts/identity/identity-contract.json:/app/contracts/identity/identity-contract.json:ro" \
+  -v "$root/contracts/agent-controller/control-contract.json:/app/contracts/agent-controller/control-contract.json:ro" \
+  -v "$root/services/runtime-controller/api/control-contract.json:/app/services/runtime-controller/api/control-contract.json:ro" \
+  -v "$root/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro" \
+  -v "$root/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro" \
+  -v "$root/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro" \
+  -v "$root/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro" \
+  -v "$evidence:/evidence" \
+  -e ANTNEST_STAGE3_EVIDENCE_DIR=/evidence \
   -e "TEST_RUNTIME_IMAGE=$image" \
   -e "ANTNEST_E2E_SKILL_DELIVERY=${ANTNEST_E2E_SKILL_DELIVERY:-false}" \
   -e "ANTNEST_E2E_SKILL_READY_LOSS=${ANTNEST_E2E_SKILL_READY_LOSS:-false}" \
@@ -111,7 +150,8 @@ docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.pr
   -e "ANTNEST_E2E_LEGACY_INVENTORY=${ANTNEST_E2E_LEGACY_INVENTORY:-false}" \
   -e "ANTNEST_E2E_LEGACY_HELPER_ID=$legacy_helper_id" \
   -v "$root/tests:/app/tests:ro" \
-  antnest/agent-acp-service:local node /app/tests/e2e/stage3-base/client.mjs >/dev/null
+  "$acp_image" node /app/tests/e2e/stage3-base/client.mjs >/dev/null
+client_created=true
 docker_cmd start "$client" >/dev/null
 fault_volume=
 verified_fault=false
@@ -222,10 +262,11 @@ while [ "$(docker_cmd inspect --format '{{.State.Running}}' "$client")" = true ]
   fi
   sleep 1
 done
-status=$(docker_cmd inspect --format '{{.State.ExitCode}}' "$client")
-docker_cmd logs "$client"
+client_status=$(docker_cmd inspect --format '{{.State.ExitCode}}' "$client")
+status=$client_status
+docker_cmd logs "$client" || status=1
 if [ "$status" -ne 0 ] && { [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ]; }; then
-  docker_cmd logs "$fault_proxy" >&2
+  docker_cmd logs "$fault_proxy" >&2 || status=1
 fi
 if [ "${ANTNEST_E2E_SKILL_RESTART_REBUILD:-false}" = true ] && [ "$verified_rebuild_restart" != true ]; then
   echo 'Fenced Skill Rebuild restart was not verified' >&2
@@ -251,12 +292,8 @@ if [ "${ANTNEST_E2E_SKILL_OFFLINE_REUSE:-false}" = true ] && [ "$reuse_registry_
   echo 'Offline Skill reuse was not verified' >&2
   status=1
 fi
-umask 077
-mkdir -p "$evidence"
-docker_cmd cp "$client:/tmp/stage3-traces" "$evidence/" >/dev/null 2>&1 || true
-if docker_cmd cp "$client:/tmp/stage3-business.json" "$temporary/business.json" >/dev/null 2>&1; then
-  node -e 'const assert=require("node:assert/strict"); const b=require(process.argv[1]); if(process.env.ANTNEST_E2E_SKILL_INITIALIZE_RACE==="true") { assert.equal(b.status,"skill_initialize_race_unknown"); assert.equal(b.rc_state,"unknown"); assert.equal(b.acp_admission_closed,true); } else if(process.env.ANTNEST_E2E_SKILL_MOUNT_RACE==="true") { const loss=process.env.ANTNEST_E2E_SKILL_MOUNT_RESPONSE_LOSS==="true"; assert.equal(b.status,"skill_mount_race_unknown"); assert.equal(b.rc_state,"unknown"); assert.equal(b.rc_error_code,loss?"skill_mount_verification_failed":"storage_ownership_conflict"); assert.equal(b.accepted_replay_preserved_unknown,!loss); assert.equal(b.create_response_dropped,loss); assert.equal(b.recovery_inspect_seen,loss); assert.equal(b.controller_state,"running"); assert.equal(b.acp_admission_closed,true); } else { assert.equal(b.status,"business_passed"); assert.equal(b.deleted,true); if(process.env.ANTNEST_E2E_SKILL_START_RESPONSE_LOSS==="true") { assert.equal(b.start_response_loss?.status,"running_skill_mount_recovered"); assert.equal(b.start_response_loss.start_response_dropped,true); assert.equal(b.start_response_loss.recovery_inspect_seen,true); } if(process.env.ANTNEST_E2E_SKILL_FENCED_INVALIDATION==="true") assert.equal(b.fenced_skill_invalidation?.status,"fenced_skill_invalidation_recovered"); if(process.env.ANTNEST_E2E_SKILL_TARGET_DRIFT==="true") assert.equal(b.target_skill_drift?.status,"target_skill_drift_recovered"); if(process.env.ANTNEST_E2E_SKILL_REGISTRY_OUTAGE==="true") assert.equal(b.registry_outage?.status,"registry_outage_recovered"); if(process.env.ANTNEST_E2E_SKILL_OFFLINE_REUSE==="true") assert.equal(b.offline_skill_reuse?.status,"offline_skill_reuse_passed"); }' "$temporary/business.json"
-  cp "$temporary/business.json" "$evidence/business.json"
+if [ -f "$evidence/business.json" ]; then
+  node -e 'const assert=require("node:assert/strict"); const b=require(process.argv[1]); if(process.env.ANTNEST_E2E_SKILL_INITIALIZE_RACE==="true") { assert.equal(b.status,"skill_initialize_race_unknown"); assert.equal(b.rc_state,"unknown"); assert.equal(b.acp_admission_closed,true); } else if(process.env.ANTNEST_E2E_SKILL_MOUNT_RACE==="true") { const loss=process.env.ANTNEST_E2E_SKILL_MOUNT_RESPONSE_LOSS==="true"; assert.equal(b.status,"skill_mount_race_unknown"); assert.equal(b.rc_state,"unknown"); assert.equal(b.rc_error_code,loss?"skill_mount_verification_failed":"storage_ownership_conflict"); assert.equal(b.accepted_replay_preserved_unknown,!loss); assert.equal(b.create_response_dropped,loss); assert.equal(b.recovery_inspect_seen,loss); assert.equal(b.controller_state,"running"); assert.equal(b.acp_admission_closed,true); } else { assert.equal(b.status,"business_passed"); assert.equal(b.deleted,true); if(process.env.ANTNEST_E2E_SKILL_START_RESPONSE_LOSS==="true") { assert.equal(b.start_response_loss?.status,"running_skill_mount_recovered"); assert.equal(b.start_response_loss.start_response_dropped,true); assert.equal(b.start_response_loss.recovery_inspect_seen,true); } if(process.env.ANTNEST_E2E_SKILL_FENCED_INVALIDATION==="true") assert.equal(b.fenced_skill_invalidation?.status,"fenced_skill_invalidation_recovered"); if(process.env.ANTNEST_E2E_SKILL_TARGET_DRIFT==="true") assert.equal(b.target_skill_drift?.status,"target_skill_drift_recovered"); if(process.env.ANTNEST_E2E_SKILL_REGISTRY_OUTAGE==="true") assert.equal(b.registry_outage?.status,"registry_outage_recovered"); if(process.env.ANTNEST_E2E_SKILL_OFFLINE_REUSE==="true") assert.equal(b.offline_skill_reuse?.status,"offline_skill_reuse_passed"); }' "$evidence/business.json"
   if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" != true ] && [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" != true ]; then
     [ -z "$(docker_cmd ps -aq --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME")" ] || { echo 'Deleted Agent retained a Runtime container' >&2; exit 1; }
     [ -z "$(docker_cmd volume ls -q --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME")" ] || { echo 'Deleted Agent retained a Runtime volume' >&2; exit 1; }

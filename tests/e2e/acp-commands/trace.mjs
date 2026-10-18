@@ -148,7 +148,7 @@ export function inspectPrivateCommandHTTPBoundary(
     expected.inputSessionID,
     "wrong HTTP input Session",
   );
-  if (["initialize", "session/new"].includes(expected.method))
+  if (["initialize", "session/new", "session/list"].includes(expected.method))
     assert.equal(expected.inputSessionID, null);
   else {
     assert(
@@ -159,8 +159,10 @@ export function inspectPrivateCommandHTTPBoundary(
       assert.notEqual(expected.sessionId, expected.inputSessionID);
     else assert.equal(expected.sessionId, expected.inputSessionID);
   }
+  if (expected.method === "session/list")
+    assert.equal(expected.sessionId, undefined);
   const mayOmitSession =
-    expected.method === "initialize" ||
+    ["initialize", "session/list"].includes(expected.method) ||
     (expected.method === "session/new" &&
       expected.rejection === "access_denied");
   if (!mayOmitSession || expected.sessionId !== undefined)

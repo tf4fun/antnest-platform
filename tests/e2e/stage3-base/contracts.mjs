@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { assertWorkspaceBootstrap } from "../identity-closeout/organization-workspace.mjs";
 
 // This assertion applies to fresh resources in a disposable deployment only.
 // Product consumers continue to treat already-issued IDs as opaque strings.
@@ -11,12 +12,25 @@ export function assertResourceId(kind, value) {
   );
 }
 
-export function assertWorkspaceProjection(bootstrap, state, agentId) {
-  const agent = bootstrap.agents.find((item) => item.agent_id === agentId);
+export function assertWorkspaceProjection(
+  bootstrap,
+  state,
+  agentId,
+  principal,
+  secrets = [],
+) {
+  assertWorkspaceBootstrap(
+    bootstrap,
+    principal,
+    { slug: principal.organization_slug, name: principal.organization_name },
+    [agentId],
+    secrets,
+  );
+  const agent = bootstrap.agents.find((item) => item.agentId === agentId);
   assert(agent, "Agent missing from management discovery");
-  assert.equal(agent.lifecycle_state, "created");
-  assert.equal(agent.activation_state, "enabled");
-  assert.equal(agent.runtime_state, "available");
+  assert.equal(agent.lifecycle, "created");
+  assert.equal(agent.activation, "enabled");
+  assert.equal(agent.runtime, "available");
   assert(
     !Object.hasOwn(agent, "availability"),
     "bootstrap must not own execution availability",

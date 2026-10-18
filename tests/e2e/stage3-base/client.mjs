@@ -11,7 +11,21 @@ import {
   assertAgentDeleted,
 } from "../../support/verification/agent-state.mjs";
 import { waitForPublication } from "../acp-cost/setup.mjs";
-import { collectCommandTrace } from "../acp-commands/trace.mjs";
+import {
+  collectPrivateCommandTrace,
+  privateCommandStrictOutcome,
+} from "../acp-commands/collector.mjs";
+import {
+  withPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "../acp-commands/connection.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import { readPrivateExecutionState } from "../../support/private-acp-execution-state.mjs";
+import {
+  evidenceDirectory,
+  writeEvidenceFile,
+} from "../../support/storage.mjs";
+import { collectStage3Logouts } from "./logout-trace.mjs";
 import { collectLifecycleAdmissionTrace } from "./resolve-trace.mjs";
 import { identity, gateway, login } from "./identity.mjs";
 import { catalog, editCatalog } from "./catalog.mjs";
@@ -81,8 +95,35 @@ let restartRebuildEvidence;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const agent = () => api(`/api/admin/agents/${agentId}`);
-const state = async () =>
-  (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const directory = evidenceDirectory(process.env.ANTNEST_STAGE3_EVIDENCE_DIR);
+assert(directory, "Stage3 durable evidence directory required");
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+const clients = new Set(),
+  connections = [],
+  logouts = [],
+  stateReceipts = [];
+const workspaceOptions = {
+  telemetry,
+  clients,
+  connections,
+  logouts,
+  secrets,
+  directory,
+};
+const saveState = () =>
+  writeEvidenceFile(
+    directory,
+    "execution-state.json",
+    JSON.stringify(stateReceipts, null, 2),
+  );
+const state = () =>
+  withPrivateCommandConnection({ closeAndWait: saveState }, [], () =>
+    readPrivateExecutionState(agentId, member, {
+      principal: workspaceOptions.principal,
+      receipts: stateReceipts,
+      secrets,
+    }),
+  );
 const services = serviceClient();
 const runtimeController = "http://runtime-controller:8080";
 // Runtime Controller admits only the Agent Controller workload; Agent
@@ -616,7 +657,7 @@ async function verifyPostCreateSkillMountRace(body, targetDigest) {
     acp_admission_closed: true,
     trace_id: admitted.traceID,
   };
-  await writeFile("/tmp/stage3-business.json", JSON.stringify(receipt));
+  await writeFile(directory + "/business.json", JSON.stringify(receipt));
   console.log(asciiJSON(receipt));
   expectedUnknown = true;
 }
@@ -844,6 +885,7 @@ async function admitRebuildAfterRegistryOutage(kind, body) {
     member,
     "registry-outage",
     requests,
+    workspaceOptions,
   );
   assert.equal(
     (await state()).availability,
@@ -994,7 +1036,7 @@ async function main() {
     /^antnest\/antnest-runtime:[\w.-]+$/,
   );
   const { principal, ownerId } = await identity(admin, secrets);
-  await login(member);
+  workspaceOptions.principal = (await login(member)).body.principal;
   secrets.push(...member.cookies.values());
   stage = "catalog";
   const firstSkill = skillMode ? await publishSkill(admin, 1) : undefined;
@@ -1099,7 +1141,7 @@ async function main() {
         rc_error_code: rc.error_code,
         acp_admission_closed: true,
       };
-      await writeFile("/tmp/stage3-business.json", JSON.stringify(receipt));
+      await writeFile(directory + "/business.json", JSON.stringify(receipt));
       console.log(asciiJSON(receipt));
       expectedUnknown = true;
       return;
@@ -1147,12 +1189,19 @@ async function main() {
       ),
     );
     await eventStream();
-    const bootstrap = (await member.request("/api/app/bootstrap")).body;
+    const bootstrap = (await member.request("/api/app/workspace/v1/bootstrap"))
+      .body;
     await until(
       async () => (await state()).availability === "ready",
       "ACP publication ready",
     );
-    assertWorkspaceProjection(bootstrap, await state(), agentId);
+    assertWorkspaceProjection(
+      bootstrap,
+      await state(),
+      agentId,
+      workspaceOptions.principal,
+      secrets,
+    );
     const html = await member.request("/workspace/", { responseType: "text" });
     assert(html.body.includes("Antnest Workspace"));
     stage = "v1-workspace";
@@ -1162,6 +1211,7 @@ async function main() {
       member,
       "v1-baseline",
       requests,
+      workspaceOptions,
     );
     stage = "catalog-edits";
     const beforePublication = (await state()).configuration_revision;
@@ -1179,6 +1229,7 @@ async function main() {
       member,
       "v2-baseline",
       requests,
+      workspaceOptions,
     );
     stage = "http-workspace";
     await exerciseWorkspace(
@@ -1187,6 +1238,7 @@ async function main() {
       member,
       "http-baseline",
       requests,
+      workspaceOptions,
     );
     if (mountRaceMode) {
       stage = "docker-skill-mount-race";
@@ -1243,6 +1295,7 @@ async function main() {
         member,
         "offline-reuse",
         requests,
+        workspaceOptions,
       );
       offlineReuseEvidence = {
         status: "offline_skill_reuse_passed",
@@ -1362,6 +1415,7 @@ async function main() {
       member,
       "after-rebuild",
       requests,
+      workspaceOptions,
     );
     stage = "logout-revocation";
     const revocations = [];
@@ -1373,6 +1427,7 @@ async function main() {
           requests,
           secrets,
           deliveredSkills,
+          workspaceOptions,
         ),
       );
     await transition("delete");
@@ -1452,11 +1507,11 @@ async function main() {
         : {}),
       revocations,
     };
-    await writeFile("/tmp/stage3-business.json", JSON.stringify(business));
+    await writeFile(directory + "/business.json", JSON.stringify(business));
     console.log(asciiJSON(business));
     const lifecycleTraces = [],
       sessionTraces = [];
-    await mkdir("/tmp/stage3-traces", { mode: 0o700 });
+    await mkdir(directory + "/traces", { mode: 0o700, recursive: true });
     for (const expected of lifecycle) {
       stage = `trace:${expected.kind}`;
       lifecycleTraces.push(
@@ -1465,51 +1520,108 @@ async function main() {
           expected,
           secrets,
           {
-            directory: "/tmp/stage3-traces",
+            directory: directory + "/traces",
             inspect: inspectLifecycle,
           },
         ),
       );
     }
-    for (const expected of requests) {
+    const privateRequests = connections.flatMap((client) => [
+      client.initializationRequest,
+      ...client.records,
+    ]);
+    assert.equal(
+      connections.length,
+      registryOutageMode || offlineReuseMode ? 15 : 13,
+    );
+    assert.equal(
+      privateRequests.length,
+      requests.length + connections.length + 2,
+    );
+    const originals = new Set(requests);
+    assert.deepEqual(
+      privateRequests
+        .filter((row) => row.method !== "initialize" && !originals.has(row))
+        .map((row) => row.label),
+      ["logout-v1:new", "logout-v2:new"],
+    );
+    writeEvidenceFile(
+      directory,
+      "private-inventory.json",
+      JSON.stringify(
+        { requests: privateRequests, provider_requests: providerRequests },
+        null,
+        2,
+      ),
+    );
+    for (const expected of privateRequests) {
       stage = `trace:${expected.label}`;
       sessionTraces.push(
-        await collectCommandTrace(
-          "http://jaeger:16686",
-          expected,
+        await collectPrivateCommandTrace("http://jaeger:16686", expected, {
+          directory: directory + "/traces",
+          flush: () => telemetry.flush(),
           secrets,
-          expected.kind === "ordinary" ? providerRequests : [],
-        ),
+          requests: expected.kind === "ordinary" ? providerRequests : [],
+        }),
       );
     }
     assert.equal(
-      new Set(sessionTraces.map((t) => t.trace_id)).size,
-      requests.length,
+      new Set(sessionTraces.map((row) => row.trace_id)).size,
+      privateRequests.length,
     );
-    const strict = [...lifecycleTraces, ...sessionTraces].some(
-      (t) => t.strict_trace === "failed",
+    for (const observation of logouts)
+      observation.closingLifecycle = lifecycle.find(
+        (row) => row.kind === "delete",
+      );
+    writeEvidenceFile(
+      directory,
+      "logout-observations.json",
+      JSON.stringify(logouts, null, 2),
+    );
+    stage = "trace:logout";
+    const logoutTraces = await collectStage3Logouts(
+      "http://jaeger:16686",
+      logouts,
+      secrets,
+      { directory: directory + "/traces" },
+    );
+    assert.equal(logoutTraces.length, 2);
+    const privateOutcome = privateCommandStrictOutcome(sessionTraces);
+    assert.equal(
+      privateOutcome.accepted,
+      true,
+      "unowned private ACP diagnostic",
+    );
+    const lifecycleAccepted = restartRebuildMode
+      ? reviewedFencedRestartOnly(lifecycleTraces)
+      : clockWarningsOnly(lifecycleTraces);
+    const strict = [...lifecycleTraces, ...sessionTraces, ...logoutTraces].some(
+      (row) => row.strict_trace === "failed",
     )
       ? "failed"
       : "passed";
-    const acceptedKnownTraceExceptions =
-      strict === "failed" &&
-      (restartRebuildMode
-        ? reviewedFencedRestartOnly([...lifecycleTraces, ...sessionTraces])
-        : clockWarningsOnly([...lifecycleTraces, ...sessionTraces]));
-    console.log(
-      asciiJSON({
-        status: "topology_passed",
-        strict_trace: strict,
-        ...(acceptedKnownTraceExceptions
-          ? restartRebuildMode
-            ? { reviewed_restart_cancellation_accepted: true }
-            : { clock_warnings_accepted: true }
-          : {}),
-        lifecycle_traces: lifecycleTraces,
-        session_traces: sessionTraces,
-      }),
+    const report = {
+      status: "topology_passed",
+      strict_trace: strict,
+      lifecycle_diagnostics_accepted: lifecycleAccepted,
+      private_acp: privateOutcome,
+      lifecycle_traces: lifecycleTraces,
+      session_traces: sessionTraces,
+      logout_traces: logoutTraces,
+    };
+    writeEvidenceFile(
+      directory,
+      "report.json",
+      JSON.stringify(report, null, 2),
     );
-    if (strict === "failed" && !acceptedKnownTraceExceptions)
+    console.log(asciiJSON(report));
+    // Keep raw strict failures visible; confirmed external SDK diagnostics do
+    // not invalidate the owning business/transport admissions.
+    if (
+      !lifecycleAccepted ||
+      privateOutcome.exit_code === 2 ||
+      logoutTraces.some((row) => row.strict_trace === "failed")
+    )
       process.exitCode = 2;
   } catch (error) {
     primaryFailure = error;
@@ -1520,15 +1632,44 @@ async function main() {
       try {
         await transition("delete");
       } catch (error) {
-        if (!primaryFailure) throw error;
+        if (primaryFailure)
+          throw new AggregateError(
+            [primaryFailure, error],
+            "Stage3 business and Agent cleanup failed",
+          );
+        throw error;
       }
       stage = failedStage;
     }
   }
 }
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, () =>
+    withPrivateCommandConnection({ closeAndWait: saveState }, [], main),
+  );
 } catch (error) {
+  try {
+    writeEvidenceFile(
+      directory,
+      "failure.json",
+      JSON.stringify(
+        {
+          stage,
+          error: error.stack,
+          errors: error.errors?.map((item) => item.stack),
+        },
+        null,
+        2,
+      ),
+    );
+  } catch (archiveError) {
+    console.error(
+      asciiJSON({
+        status: "failure_archive_failed",
+        error: archiveError.message,
+      }),
+    );
+  }
   console.error(
     asciiJSON({
       status: "failed",

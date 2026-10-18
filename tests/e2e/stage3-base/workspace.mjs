@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
-import { commandConnection } from "../acp-commands/connection.mjs";
+import { withPrivateCommandConnection } from "../acp-commands/connection.mjs";
+import { openStage3Connection } from "./connection.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
+import { observeBrowserSession } from "../identity-closeout/bridge-session-observer.mjs";
+import { logoutSession } from "../identity-closeout/session-fault-lifecycle.mjs";
 import {
   assertCatalog,
   assertOrdinaryTool,
@@ -11,7 +15,6 @@ import {
   transcript,
 } from "../acp-commands/evidence.mjs";
 import { until } from "../acp-closeout/support.mjs";
-import { connectACP } from "../identity-closeout/acp-connection.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { gateway, login } from "./identity.mjs";
 
@@ -33,7 +36,37 @@ export async function modelStatus() {
 }
 function record(traces, client, label, kind = "request", extra = {}) {
   assert(client.lastRequest?.method.startsWith("session/"));
-  traces.push({ ...client.lastRequest, kind, label, ...extra });
+  Object.assign(client.lastRequest, { kind, label, ...extra });
+  traces.push(client.lastRequest);
+}
+async function connect(profile, agentId, browser, options) {
+  const index = options.connections.length;
+  const client = await openStage3Connection(profile, agentId, browser, {
+    principal: options.principal,
+    telemetry: options.telemetry,
+    secrets: options.secrets,
+    preserve: (snapshot) =>
+      writeEvidenceFile(
+        options.directory,
+        `connection-${index}.json`,
+        JSON.stringify(snapshot, null, 2),
+      ),
+  });
+  options.clients.add(client);
+  options.connections.push(client);
+  return client;
+}
+async function issuedLogin(browser) {
+  const startedMono = performance.now();
+  const response = await login(browser);
+  return {
+    ...response.body,
+    observation: {
+      startedMono,
+      completedMono: performance.now(),
+      traceID: response.traceID,
+    },
+  };
 }
 // v1 lists delivered Skills after the built-in commands; v2 does not.
 const skillCommands = (profile) =>
@@ -69,11 +102,11 @@ export async function exerciseWorkspace(
   member,
   phase,
   traces,
+  options,
 ) {
-  const client = commandConnection(profile, agentId, member);
+  const client = await connect(profile, agentId, member, options);
   let sessionId, history, terminal;
-  try {
-    await client.initialize();
+  await withPrivateCommandConnection(client, [], async () => {
     ({ sessionId } = await client.request("new", setup));
     assertResourceId("session", sessionId);
     record(traces, client, `${phase}:new`, "request", { sessionId });
@@ -118,22 +151,36 @@ export async function exerciseWorkspace(
     );
     terminal = tools(client.updates);
     assert.equal(terminal.length, 1);
-  } finally {
-    client.close();
-  }
+  });
   await restoreWorkspace(
-    { profile, agentId, member, phase, sessionId, history, terminal },
+    { profile, agentId, member, phase, sessionId, history, terminal, options },
     traces,
   );
-  return { profile, agentId, member, phase, sessionId, history, terminal };
+  return {
+    profile,
+    agentId,
+    member,
+    phase,
+    sessionId,
+    history,
+    terminal,
+    options,
+  };
 }
 export async function restoreWorkspace(saved, traces) {
-  const { profile, agentId, member, phase, sessionId, history, terminal } =
-    saved;
+  const {
+    profile,
+    agentId,
+    member,
+    phase,
+    sessionId,
+    history,
+    terminal,
+    options,
+  } = saved;
   const before = await modelStatus(),
-    client = commandConnection(profile, agentId, member);
-  try {
-    await client.initialize();
+    client = await connect(profile, agentId, member, options);
+  await withPrivateCommandConnection(client, [], async () => {
     const listed = await client.request("list", {});
     record(traces, client, `${phase}:list`);
     assert(
@@ -162,9 +209,7 @@ export async function restoreWorkspace(saved, traces) {
     await catalog(client, sessionId, skillCommands(profile));
     assertTranscript(client.updates, sessionId, []);
     assert.deepEqual(tools(client.updates), []);
-  } finally {
-    client.close();
-  }
+  });
   assert.deepEqual(
     await modelStatus(),
     before,
@@ -177,48 +222,90 @@ export async function logoutRevocation(
   traces,
   secrets,
   skills = [],
+  options,
 ) {
   const before = await modelStatus(),
     browser = new GatewayClient(gateway);
-  await login(browser);
+  const issued = await issuedLogin(browser);
   secrets.push(...browser.cookies.values());
-  const client = connectACP(version, agentId, browser.cookie);
-  let sessionId;
-  try {
-    await client.initialize();
+  const profile = { name: `v${version}-ws`, version, skills };
+  const client = await connect(profile, agentId, browser, {
+    ...options,
+    principal: issued.principal,
+  });
+  let sessionId, closure;
+  await withPrivateCommandConnection(client, [], async () => {
     ({ sessionId } = await client.request("new", setup));
-    await catalog(client, sessionId, skillCommands({ version, skills }));
+    assertResourceId("session", sessionId);
+    Object.assign(client.lastRequest, {
+      label: `logout-v${version}:new`,
+      sessionId,
+    });
+    await catalog(client, sessionId, skillCommands(profile));
     assertTranscript(client.updates, sessionId, []);
     assert.deepEqual(tools(client.updates), []);
     const updates = structuredClone(client.updates);
-    await browser.request("/api/session", { method: "DELETE", status: 204 });
-    assert.equal(browser.cookie, "");
-    await assert.rejects(
-      client.request("prompt", {
-        sessionId,
-        prompt: [{ type: "text", text: "revoked-work-must-not-run" }],
-      }),
-    );
-    assert.equal(client.closeCode, 1008);
-    assert.deepEqual(client.updates, updates);
-  } finally {
-    client.close();
-  }
-  await login(browser);
+    const observer = await observeBrowserSession(browser, client, {
+      agentId,
+      sessionId,
+      issued,
+    });
+    await withPrivateCommandConnection(observer, [], async () => {
+      const checkpoint = observer.checkpoint("revoked");
+      const cause = await logoutSession(
+        browser,
+        observer,
+        checkpoint,
+        issued.principal,
+      );
+      const closed = await observer.waitForClose(checkpoint);
+      const denial = await observer.rejectPrompt();
+      assert.equal(denial.status, 401);
+      assert.deepEqual(client.updates, updates);
+      closure = {
+        ...closed,
+        protocolVersion: version,
+        principal: issued.principal,
+        cause,
+        denial,
+        protocolClientClosedLocally: false,
+      };
+      options.logouts.push(closure);
+      writeEvidenceFile(
+        options.directory,
+        "logout-observations.json",
+        JSON.stringify(options.logouts, null, 2),
+      );
+    });
+  });
+  closure.protocolClientClosedLocally = true;
+  writeEvidenceFile(
+    options.directory,
+    "logout-observations.json",
+    JSON.stringify(options.logouts, null, 2),
+  );
+  const recovered = await issuedLogin(browser);
   secrets.push(...browser.cookies.values());
   await restoreWorkspace(
     {
-      profile: { name: `v${version}-ws`, version, skills },
+      profile,
       agentId,
       member: browser,
       phase: `logout-v${version}`,
       sessionId,
       history: [],
       terminal: [],
+      options: { ...options, principal: recovered.principal },
     },
     traces,
   );
   assert.deepEqual(await modelStatus(), before);
   await browser.request("/api/session", { method: "DELETE", status: 204 });
-  return { version, rejected: true, close_code: 1008, recovered_empty: true };
+  return {
+    version,
+    rejected: true,
+    transport: "http-sse",
+    denial_status: 401,
+    recovered_empty: true,
+  };
 }
