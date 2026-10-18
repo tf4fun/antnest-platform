@@ -1,6 +1,8 @@
 use auth::{TestAttachment as _, TestRepositoryAttachment as _};
 #[path = "../../support/egress-auth.rs"]
 mod auth;
+#[path = "postgres_pending_tests.rs"]
+mod pending_tests;
 #[path = "../../../services/runtime-egress/src/test_tracing.rs"]
 mod test_tracing;
 

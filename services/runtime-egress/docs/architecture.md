@@ -170,7 +170,7 @@ runtime_attachments
   agent_id text primary key references agent_networks
   state text not null
   resource_version bigint not null
-  runtime_endpoint inet null -- canonical IPv4; absent while closed
+  runtime_endpoint inet null -- canonical IPv4; absent while closed or pending
   updated_at timestamptz not null
 ```
 
@@ -528,3 +528,20 @@ cross-service acceptance. HTTP authentication belongs to #32. UDP inner-source
 binding [#34](https://github.com/tf4fun/antnest-platform/issues/34) and DNS
 restrictions [#36](https://github.com/tf4fun/antnest-platform/issues/36) remain
 independent work with unchanged packet format and trust limitations.
+
+## First peer pending
+
+Control revision 8 adds a durable `pending` attachment after provisioning but
+before a Runtime has a current bindable peer. It has no peer or selected key and
+uses the existing probe-only route, including after Ensure, policy updates and
+cold recovery. Prepared keys remain available only for authenticated readiness.
+Pending never grants normal uplink, downlink, DNS or flow creation.
+
+Pending is distinct from closed in the CAS value: pending-to-closed advances the
+version even though both packet gates are probe-only. A delayed first-open
+request using the pending version cannot cross that close. Opening still needs
+the exact prepared key and current peer, completes cleanup, and consumes a new
+version. Release and new key preparation continue to require closed. Migration
+0004 extends the state constraint without rewriting earlier migration checksums.
+
+Controller adoption and cross-service acceptance are separate delivery batches.

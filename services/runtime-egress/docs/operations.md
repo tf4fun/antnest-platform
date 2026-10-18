@@ -51,7 +51,7 @@ the [service README](../README.md#configuration). Configuration is immutable
 after startup. Agent policy changes use the control API and PostgreSQL rather
 than environment variables.
 
-Control contract revision 7 requires exact `ANTNEST_SERVICE_AUTH_MODE=token`
+Control contract revision 8 requires exact `ANTNEST_SERVICE_AUTH_MODE=token`
 or `mtls`; missing mode fails startup. Token mode reads a bounded receiver hash
 file from `ANTNEST_SERVICE_AUTH_CALLERS_FILE`, never a shared plaintext API key.
 The file may contain current and next hashes per caller for overlap rotation.

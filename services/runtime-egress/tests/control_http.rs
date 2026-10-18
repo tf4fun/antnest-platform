@@ -45,7 +45,7 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 7);
+    assert_eq!(contract.revision, 8);
     assert_eq!(contract.transport, "json-over-http");
     assert_eq!(
         contract.trust_boundary,

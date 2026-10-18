@@ -482,7 +482,7 @@ where
             .policy_assignment(&agent_id)
             .await
             .map_err(|error| ControlError::repository("ensure_agent_network.repository", error))?;
-        if attachment.state == AttachmentState::Closed {
+        if attachment.state != AttachmentState::Open {
             self.fence_dataplane(agent_id.clone()).await;
             self.publish_route(
                 &network,
@@ -604,8 +604,8 @@ where
                 .map_err(|_| ControlError::TunnelKeyUnavailable)?;
         }
         let attachment = match desired {
-            AttachmentState::Closed => {
-                if current.state != AttachmentState::Closed {
+            AttachmentState::Closed | AttachmentState::Pending => {
+                if current.state == AttachmentState::Open {
                     self.fence_dataplane(agent_id.clone()).await;
                     self.reset_flows_and_kernel(
                         &agent_id,
@@ -788,7 +788,7 @@ where
                 .map_err(|error| ControlError::repository("assign_policy.repository", error));
         }
         let compiled_policy = policy.spec.compile(self.config.resolver_ipv4);
-        if attachment.state == AttachmentState::Closed {
+        if attachment.state != AttachmentState::Open {
             let assignment = self
                 .repository
                 .compare_and_swap_assignment(
@@ -1109,7 +1109,7 @@ fn assignment_request_matches(
 const fn route_gate(state: AttachmentState) -> RouteGate {
     match state {
         AttachmentState::Open => RouteGate::Open,
-        AttachmentState::Closed => RouteGate::ProbeOnly,
+        AttachmentState::Closed | AttachmentState::Pending => RouteGate::ProbeOnly,
     }
 }
 

@@ -16,6 +16,7 @@ pub enum NetworkState {
 #[serde(rename_all = "snake_case")]
 pub enum AttachmentState {
     Closed,
+    Pending,
     Open,
 }
 
@@ -56,7 +57,7 @@ pub struct RuntimeAttachment {
 
 pub fn valid_runtime_endpoint(state: AttachmentState, endpoint: Option<Ipv4Addr>) -> bool {
     match state {
-        AttachmentState::Closed => endpoint.is_none(),
+        AttachmentState::Closed | AttachmentState::Pending => endpoint.is_none(),
         AttachmentState::Open => endpoint.is_some_and(|address| {
             !address.is_unspecified() && !address.is_multicast() && !address.is_broadcast()
         }),

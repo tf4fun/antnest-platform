@@ -133,6 +133,7 @@ const sourceFiles = [
   "services/runtime-egress/src/telemetry.rs",
   "services/runtime-egress/migrations/0002_runtime_peer.sql",
   "services/runtime-egress/migrations/0003_authenticated_tunnel.sql",
+  "services/runtime-egress/migrations/0004_pending_attachment.sql",
   "services/runtime-egress/src/tunnel.rs",
   "services/runtime-egress/src/dataplane/tunnel.rs",
   "services/runtime-egress/src/repository/postgres/tunnel.rs",
@@ -785,6 +786,125 @@ try {
     body: { state: "closed", expected_resource_version: 2 },
   });
   assert.equal(closed.attachment_resource_version, 3);
+  progress("pending-peer-fencing-and-recovery");
+  const pendingBody = { state: "pending", expected_resource_version: 3 };
+  const pending = await request({
+    path: attachmentPath,
+    method: "PUT",
+    auth: "next",
+    body: pendingBody,
+  });
+  assert.equal(pending.attachment_state, "pending");
+  assert.equal(pending.attachment_resource_version, 4);
+  assert.equal(pending.runtime_endpoint ?? null, null);
+  assert.equal(pending.tunnel_key_id ?? null, null);
+  assert.deepEqual(
+    await request({
+      path: attachmentPath,
+      method: "PUT",
+      auth: "next",
+      body: pendingBody,
+    }),
+    pending,
+  );
+  await invoke([...compose, "restart", "runtime-egress"], true);
+  await waitHealthy();
+  assert.deepEqual(await request({ path: networkPath, auth: "next" }), pending);
+  assert.deepEqual(
+    await request({ path: networkPath, method: "PUT", auth: "next" }),
+    pending,
+  );
+  assert.deepEqual(
+    await request({
+      path: assignmentPath,
+      method: "PUT",
+      auth: "next",
+      body: {
+        ...assignmentBody,
+        expected_resource_version: assignment.resource_version,
+      },
+    }),
+    assignment,
+  );
+  const pendingEpoch = Date.now();
+  assert.equal((await encryptedProbe("runtime-probe", "send")).ready, true);
+  const pendingMetrics = await dataSnapshot(
+    (fields) =>
+      Date.parse(fields.timestamp) >= pendingEpoch &&
+      fields["agent.fenced_packets"] >= 1,
+  );
+  assert.equal(pendingMetrics["policy.allows"], 0);
+  assert.equal(pendingMetrics["flow.active"], 0);
+  assert.equal((await peerProbe("database-probe", "count")).connections, 0);
+  await request({
+    path: networkPath + "/release",
+    method: "POST",
+    auth: "next",
+    body: { expected_resource_version: 1 },
+    status: 409,
+    code: "agent_network_unavailable",
+  });
+  const fenced = await request({
+    path: attachmentPath,
+    method: "PUT",
+    auth: "next",
+    body: { state: "closed", expected_resource_version: 4 },
+  });
+  assert.equal(fenced.attachment_resource_version, 5);
+  const firstOpen = {
+    state: "open",
+    expected_resource_version: 4,
+    runtime_endpoint: boundPeer,
+    tunnel_key_id: keyId,
+  };
+  await request({
+    path: attachmentPath,
+    method: "PUT",
+    auth: "next",
+    body: firstOpen,
+    status: 409,
+    code: "resource_version_conflict",
+  });
+  const nextPending = await request({
+    path: attachmentPath,
+    method: "PUT",
+    auth: "next",
+    body: { state: "pending", expected_resource_version: 5 },
+  });
+  assert.equal(nextPending.attachment_resource_version, 6);
+  await request({
+    path: attachmentPath,
+    method: "PUT",
+    auth: "next",
+    body: pendingBody,
+    status: 409,
+    code: "resource_version_conflict",
+  });
+  const bound = await request({
+    path: attachmentPath,
+    method: "PUT",
+    auth: "next",
+    body: { ...firstOpen, expected_resource_version: 6 },
+  });
+  assert.equal(bound.attachment_resource_version, 7);
+  assert.equal(bound.attachment_state, "open");
+  assert.deepEqual(
+    await request({
+      path: attachmentPath,
+      method: "PUT",
+      auth: "next",
+      body: { ...firstOpen, expected_resource_version: 6 },
+    }),
+    bound,
+  );
+  const finalClosed = await request({
+    path: attachmentPath,
+    method: "PUT",
+    auth: "next",
+    body: { state: "closed", expected_resource_version: 7 },
+  });
+  assert.equal(finalClosed.attachment_resource_version, 8);
+  checks += 14;
   const released = await request({
     path: networkPath + "/release",
     method: "POST",
