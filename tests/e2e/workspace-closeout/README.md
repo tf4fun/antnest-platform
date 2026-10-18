@@ -14,8 +14,38 @@ make test-workspace-fixtures
 ## Protocol profile
 
 `make e2e-workspace` runs `current-flow.mjs` against a disposable Foundation
-stack with the installed official ACP SDK. The
-[protocol contract](protocol-migration-contract.md) defines what it asserts:
+stack with the installed official ACP SDK. Its private-protocol migration is
+in progress: `current-flow.mjs` still uses retired public entries and has not
+passed the migrated Docker acceptance. The
+[protocol contract](protocol-migration-contract.md) defines the required result.
+
+Workspace-owned private components are implemented and covered by fixture
+tests:
+
+- `private-connection.mjs` records actual initialization, requests and original
+  notification receipts; its two deliberate Prompt disconnects require the
+  original Error and connection-close receipt.
+- `private-watch.mjs` preserves raw private SSE, stable event indices and a
+  pre-revocation boundary; the denied terminal state must end at remote EOF.
+- `private-authority.mjs` records each operation's actual Identity response.
+  `private-state.mjs` binds complete response bytes to its own exported HTTP
+  CLIENT and preserves original reader and cleanup errors.
+- `private-access.mjs` gives each connection, watch or state read a distinct
+  authority scope using the original login. A denied new connection requires
+  the actual Identity 401. Closing joins in-flight resource construction and
+  state reads, closes connections and watches, then joins existing collectors
+  before shutting down the exporter. Collector, archive and late parent-abort
+  failures remain failures after their callers have observed them.
+
+Business-flow wiring, private Trace admission and protocol Docker acceptance
+remain pending. The subsequent C4 browser batch separately proves the retained
+Bridge's actual remote stream closure. The required protocol inventory is five
+connections and initializations, eleven original business RPCs plus one actual
+revocation probe, one cancel notification, three Runs, five Provider requests,
+two bash calls and one read call.
+
+The original public-route scenario and historical fixtures below preserve the
+baseline checks while the private consumer is being connected:
 
 - the six-field Gateway/ACP execution state and public execution audits;
 - real bash process cancellation and explicit Rebuild recovery;

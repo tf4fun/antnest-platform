@@ -125,10 +125,12 @@ and original Identity
 sources. Private ACP ancestry starts at its exported CLIENT and actual ACP
 receiver; no retired Gateway forwarding or public watch Resolve chain is
 invented. Preserve complete persistence and execution bindings, including
-cancellation. Read the actual Runtime `execution_id` and `runtime_revision`
-from its ready status and bind them to model spans; public Agent summaries
-intentionally redact this execution binding. These are distinct from the
-Tool's operating-system PID/PGID exit evidence.
+cancellation. Read the Runtime's actual ready status (`agent_id`, `generation`
+and `execution_id`) and bind it to the observed container and Agent. Take
+`runtime_revision` from that same Agent's Runtime projection, then bind the
+execution ID and revision to model spans. The Runtime status does not contain
+`runtime_revision`; public Agent summaries redact the execution ID. These are
+distinct from the Tool's operating-system PID/PGID exit evidence.
 
 The two deliberately disconnected Prompts require their original local-close
 Error identity, missing wire response and matching connection-close receipt.
