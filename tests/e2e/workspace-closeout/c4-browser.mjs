@@ -6,6 +6,8 @@ import { member, until } from "./c4-setup.mjs";
 import { note, imageData } from "./browser-model.mjs";
 import { audioData } from "../acp-multimodal/fixtures.mjs";
 import { observedHeldRun } from "./browser-control.mjs";
+import { readC4View } from "./c4-view.mjs";
+import { c4RebuildReady } from "./c4-rebuild.mjs";
 import {
   assertReadableText,
   assertTouchTargets,
@@ -82,16 +84,13 @@ export async function runBrowser(
       .click();
     await enabled(target);
   };
-  const state = async () => {
-    const response = await gatewayBrowserRequest(
-      context,
-      `${config.gateway}/api/app/agents/${fixture.agentID}/state`,
-    );
-    assert.equal(response.status(), 200);
-    const body = await response.json();
-    frames.push(JSON.stringify(body));
-    return body;
-  };
+  const view = (sessionId = null) =>
+    readC4View(context, {
+      gateway: config.gateway,
+      agentId: fixture.agentID,
+      sessionId,
+      frames,
+    });
   const model = async (path = "/status", method = "GET") => {
     const response = await fetch(config.model + path, {
       method,
@@ -144,14 +143,7 @@ export async function runBrowser(
     await checkpoint();
   }
   const sessionInfo = async (sessionId) => {
-    const response = await gatewayBrowserRequest(
-      context,
-      `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${sessionId}`,
-    );
-    assert.equal(response.status(), 200);
-    const body = await response.json();
-    frames.push(JSON.stringify(body));
-    assert.equal(body.selectedView?.sessionId, sessionId);
+    const body = await view(sessionId);
     return {
       title: body.selectedView.title,
       updatedAt: body.selectedView.updatedAt,
@@ -402,13 +394,7 @@ export async function runBrowser(
       signal,
     );
     const heldSession = report.sessions["c4-browser-hold-cancel"];
-    const heldResponse = await gatewayBrowserRequest(
-      context,
-      `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${encodeURIComponent(heldSession)}`,
-    );
-    assert.equal(heldResponse.status(), 200);
-    report.cancelled_run_view = await heldResponse.json();
-    frames.push(JSON.stringify(report.cancelled_run_view));
+    report.cancelled_run_view = await view(heldSession);
     report.cancelled_run = observedHeldRun(
       report.cancelled_run_view,
       fixture.agentID,
@@ -447,8 +433,8 @@ export async function runBrowser(
     await held("c4-browser-hold-offline");
     const offlineURL = page.url();
     await context.setOffline(true);
-    // A navigation also closes an existing WebSocket on browsers that retain it
-    // when network emulation changes. No ACP or Gateway request is mocked.
+    // A navigation closes the page's existing Bridge event stream even when
+    // network emulation leaves established connections open.
     await page.goto(offlineURL).catch(() => {});
     await model("/release/c4-browser-hold-offline", "POST");
     await until(
@@ -488,7 +474,9 @@ export async function runBrowser(
     );
     await check("close_reopen_history_without_resubmission");
 
-    const before = await state();
+    const rebuildSession = workspaceLocation(page.url()).sessionId;
+    assert(rebuildSession, "Rebuild must retain an existing Session");
+    const before = await fixture.state();
     const beforeRebuildRequests = (await model()).requests.length;
     const rebuildDraft = "Draft retained while the Agent rebuilds";
     await input().fill(rebuildDraft);
@@ -524,14 +512,25 @@ export async function runBrowser(
     });
     await fixture.operation((rebuilt.operation ?? rebuilt).request_id);
     await fixture.ready();
+    assert.equal(
+      workspaceLocation(page.url()).sessionId,
+      rebuildSession,
+      "Rebuild lost the original browser Session",
+    );
     await until(
       async () =>
-        (await state()).configuration_revision !==
-        before.configuration_revision,
-      "rebuilt configuration",
+        c4RebuildReady(
+          before,
+          await fixture.state(),
+          await view(rebuildSession),
+          fixture.agentID,
+          rebuildSession,
+        ),
+      "rebuilt private configuration and ready browser view",
       signal,
     );
     await enabled();
+    assert.equal(workspaceLocation(page.url()).sessionId, rebuildSession);
     assert.equal(
       (await model()).requests.length,
       beforeRebuildRequests,
@@ -541,6 +540,7 @@ export async function runBrowser(
       "c4-browser-after-rebuild",
       "c4-browser-after-rebuild: retained note alpha-beta verified.",
     );
+    assert.equal(report.sessions["c4-browser-after-rebuild"], rebuildSession);
     await fixture.verifyWorkspace();
     await check("open_page_rebuild_retains_workspace_and_history");
 

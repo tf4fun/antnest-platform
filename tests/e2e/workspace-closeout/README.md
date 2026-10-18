@@ -194,6 +194,20 @@ external model through a deterministic OpenAI-compatible peer. It covers:
 C4 remains a separate pending acceptance batch. The private protocol's
 component wiring does not complete its browser Docker acceptance.
 
+Browser reads use the current `/api/app/workspace/v1/agents/{agentId}/view`
+contract, with the original browser session and exact requested Agent and
+selected Session. The retired `/api/app/agents/{agentId}/state` route is not a
+fallback. Validate the complete Bridge DTO before consuming it; private ACP
+state fields must never be added to that public view. Rebuild's private
+configuration revision is read independently through the fixture's original
+member authority, while the browser view and composer prove public readiness.
+Capture the nonempty browser Session before Rebuild and retain that exact
+selection through completion and the next prompt. A newly selected Session or
+a draft cannot stand in for retained history. The private revision changes on
+a new Rebuild even with the same template revision because it includes the
+execution identity and Runtime configuration; it is not the browser epoch or
+Session configuration token.
+
 Two real browser connections observe the same Session. Its activity time must
 change after a new prompt, both pages must display the received title and time,
 and a fresh list/load after reload must preserve those values.
