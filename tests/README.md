@@ -192,16 +192,28 @@ may wait; a missing, withdrawn or changed source fails immediately. The checks
 after the caller Run remain immediate invariants. Fixture tests cover delayed
 acknowledgement, its deadline, cancellation and invalid source states.
 
-The discovery-tools client also reads the target Agent's public execution state
-with the same member session before opening ACP. Controller readiness alone
-does not establish that ACP has applied the binding (tracked in #44). Only an
+The discovery-tools client also reads the target Agent's complete private ACP
+execution state with the same member session and Principal before opening ACP.
+Controller readiness alone does not establish that ACP has applied the binding
+(tracked in #44). Only an
 authorized target reporting `offline/agent_unavailable` may wait, for at most
 90 seconds; each read is limited to 15 seconds and the remaining deadline.
 Denied, busy, protected, malformed and HTTP-error states fail immediately. The
 first Prompt must succeed without retry, and a later `agent_unavailable` from
 session creation still fails. Failure diagnostics retain the request stage and
-last public state. This fixture precondition does not close #44's product
-readiness contract.
+the complete private state response in a 0600 evidence file. This fixture
+precondition does not close #44's product readiness contract.
+
+C4 host-side state reads use `tests/support/private-acp-execution-state-container.mjs`.
+It runs a short-lived probe from the deployed ACP image ID and delegates the
+original member session with only the `gateway-identity` and `agent-ui-acp`
+grants. The session token is passed in a read-only 0600 input file and removed
+after cleanup. The probe validates the complete state, including
+`configuration_revision`, and archives the original status and response body
+under `artifacts/verification/authenticated-e2e/<project>/execution-state/`.
+Reads have a 15-second budget; cleanup has an independent 30-second budget.
+Read, archive and cleanup errors remain failures. Installation interruption and
+stored-secret rotation use this reader to retain their original state assertions.
 
 All Skill E2E flows use a local deterministic model fixture. The browser
 targets (`e2e-workspace-browser`, `e2e-skill-learning-browser`,

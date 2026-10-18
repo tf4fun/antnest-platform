@@ -20,7 +20,19 @@ export async function until(check, label, signal, timeout = 120000) {
   throw new Error(`${label}: deadline exceeded`);
 }
 
-export async function setup(config, signal, { contextWindow = 8192 } = {}) {
+export async function setup(
+  config,
+  signal,
+  {
+    contextWindow = 8192,
+    // Container clients also import this module for member/until. Load the
+    // host-only Docker adapter only when setup actually needs a state read.
+    stateReader = async (options) =>
+      (
+        await import("../../support/private-acp-execution-state-container.mjs")
+      ).readContainerPrivateExecutionState(options),
+  } = {},
+) {
   const client = new GatewayClient(config.gateway);
   const json = async (path, options) =>
     (await client.request(path, options)).body;
@@ -101,9 +113,17 @@ export async function setup(config, signal, { contextWindow = 8192 } = {}) {
   await operation(created.operation.request_id);
   await ready();
   const memberClient = new GatewayClient(config.gateway);
-  await memberClient.request("/api/session/login", { body: member });
-  const state = async () =>
-    (await memberClient.request(`/api/app/agents/${agentID}/state`)).body;
+  const memberLogin = await memberClient.request("/api/session/login", {
+    body: member,
+  });
+  const state = () =>
+    stateReader({
+      config,
+      signal,
+      agentId: agentID,
+      browser: memberClient,
+      principal: memberLogin.body.principal,
+    });
   return {
     json,
     operation,
