@@ -29,6 +29,28 @@ failed probes. CPU sampling must not cross a Runtime restart.
 
 Container health, Agent binding and ACP access are independent assertions.
 
+## Private execution state
+
+Health delegates the original member owner's Gateway Session and login Principal
+through Identity, then reads the complete ACP execution-state response. Only the
+inner project's `gateway-identity` and `agent-ui-acp` grants are permitted. The
+private reader validates the full schema, including `configuration_revision`,
+and rejects a changed Principal or Agent. It opens no ACP protocol connection.
+Only ACP and Identity diagnostic relay ports are added, on dynamic loopback
+bindings; the original fifteen services and candidate-image checks remain.
+
+Each Identity-to-ACP read shares the original fifteen-second request budget,
+bounded by the remaining sixty-second observation deadline and parent signal.
+All received response bodies, including rejected responses, are saved privately.
+The read inventory is dynamic: unhealthy, recovered and three restarted
+observations must each bind a distinct validated response. Public summaries omit
+the original state bodies and private observation records.
+
+Cancellation joins the active read before closing evidence. Business, original
+cancellation, archival and independent SIGCONT failures remain visible together;
+a cleanup failure cannot replace the original failure. Health retains its own
+three-operation admission and does not use the default Foundation ACP inventory.
+
 ## Trace and verification rules
 
 Create, Rebuild and Delete are checked with the lifecycle Trace oracles, and
