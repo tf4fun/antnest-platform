@@ -192,7 +192,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "d65ab16af8b66d3666d9af2aaadb0f622fcc3d4e7785a06645ae4905a9e561c6",
+      "sha256": "ad6bc6c0c511dcbdcf443cd965c820a521cb481ad508d2cd4d2d3151e9d1e4fd",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
