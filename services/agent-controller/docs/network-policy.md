@@ -42,6 +42,10 @@ segment. Agent identifiers follow the existing Controller identifier contract.
 Both methods reject absent, foreign-organization, deleting, and deleted Agents
 before any Egress request. A disabled Agent may save a desired policy, but this
 does not reopen its attachment. All responses use `Cache-Control: no-store`.
+The attachment observation may also be `pending`: Create has published the
+configured target while waiting for its first Runtime peer. Policy changes keep
+that independent state and cannot grant traffic or execution. The public view
+continues to omit peer addresses, tunnel keys and allocation coordinates.
 
 ## Call Sequence
 

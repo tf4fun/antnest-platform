@@ -12,8 +12,9 @@ const (
 	NetworkStateActive      = "active"
 	NetworkStateQuarantined = "quarantined"
 
-	NetworkAttachmentClosed = "closed"
-	NetworkAttachmentOpen   = "open"
+	NetworkAttachmentClosed  = "closed"
+	NetworkAttachmentPending = "pending"
+	NetworkAttachmentOpen    = "open"
 
 	NetworkReleaseQuarantined       = "quarantined"
 	NetworkReleaseAuthoritativeNone = "authoritative_absent"

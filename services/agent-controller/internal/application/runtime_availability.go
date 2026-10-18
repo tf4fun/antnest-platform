@@ -60,12 +60,17 @@ func (worker *RuntimeObservationWorker) reconcilePendingBinding(ctx, peerCtx con
 		return err
 	}
 	pending.Agent.AggregateSequence = sequence
-	if !pending.Agent.AwaitingRuntimeBinding() || !observedBindingMatches(pending.Agent, inspection) {
+	if !pending.Agent.AwaitingRuntimeBinding() {
 		return nil
 	}
+	// A starting Runtime may need its current peer bound before it can become
+	// healthy. The durable configured target is retried even without journal events.
 	if err := worker.bindObservedPeer(peerCtx, pending, inspection); err != nil {
 		worker.pendingPeers[pending.Agent.AgentID] = struct{}{}
 		return err
+	}
+	if !observedBindingMatches(pending.Agent, inspection) {
+		return nil
 	}
 	now := time.Now().UTC()
 	execution := ports.ExecutionRecord{

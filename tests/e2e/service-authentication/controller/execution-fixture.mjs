@@ -7,6 +7,7 @@ export function executionPeers(fixture, stats, json) {
     networks = new Map(),
     publications = new Map();
   let mode = "ready";
+  let runtimePhase = "created";
   Object.assign(stats, {
     resolves: 0,
     rejectedResolves: 0,
@@ -32,6 +33,16 @@ export function executionPeers(fixture, stats, json) {
     const publicValue = { ...value };
     delete publicValue.connection_id;
     delete publicValue.token;
+    if (value.lifecycle_state === "provisioned" && runtimePhase !== "healthy") {
+      publicValue.phase = runtimePhase === "created" ? "created" : "running";
+      publicValue.health = "starting";
+      publicValue.runtime_execution_id = "";
+      publicValue.mcp_endpoint = "";
+      if (runtimePhase === "created") {
+        delete publicValue.runtime_endpoint;
+        delete publicValue.tunnel_key_id;
+      }
+    }
     return { ...publicValue, observed_at: new Date().toISOString() };
   };
   const handled = (w, value, status) => {
@@ -39,6 +50,15 @@ export function executionPeers(fixture, stats, json) {
     return true;
   };
   return {
+    setRuntimePhase(value) {
+      assert(["created", "starting", "healthy"].includes(value));
+      if (value === "healthy") {
+        assert(runtimes.size > 0);
+        for (const agent of runtimes.keys())
+          assert.equal(network(agent).attachment_state, "open");
+      }
+      runtimePhase = value;
+    },
     setConnectionMode(value) {
       assert(["ready", "wrong-endpoint", "unavailable"].includes(value));
       mode = value;
@@ -56,7 +76,7 @@ export function executionPeers(fixture, stats, json) {
             body.expected_resource_version,
             value.attachment_resource_version,
           );
-          assert(["open", "closed"].includes(body.state));
+          assert(["open", "pending", "closed"].includes(body.state));
           const peer = body.runtime_endpoint;
           const key = body.tunnel_key_id;
           if (body.state === "open")
@@ -76,6 +96,11 @@ export function executionPeers(fixture, stats, json) {
           else value.tunnel_key_id = key;
           if (peer === undefined) delete value.runtime_endpoint;
           else value.runtime_endpoint = peer;
+          stats.lastAttachment = {
+            agent_id: attachment[1],
+            state: value.attachment_state,
+            resource_version: value.attachment_resource_version,
+          };
           return handled(w, value);
         }
       }

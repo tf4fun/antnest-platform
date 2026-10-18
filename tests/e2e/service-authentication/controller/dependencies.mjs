@@ -17,6 +17,12 @@ for (const [service, port] of Object.entries(fixture.ports)) {
     try {
       const path = new URL(r.url, "http://fixture").pathname;
       if (path === "/status" || path === "/test/state") return json(w, stats);
+      if (path === "/test/runtime-phase") {
+        peers.setRuntimePhase(
+          new URL(r.url, "http://fixture").searchParams.get("phase"),
+        );
+        return json(w, stats);
+      }
       if (path === "/test/connection-mode") {
         peers.setConnectionMode(
           new URL(r.url, "http://fixture").searchParams.get("mode"),

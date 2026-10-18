@@ -33,6 +33,13 @@ responses must never reach ACP; disabling with an unavailable resolver must stil
 publish closure, settle and finish. Peer statistics retain only credential hashes
 and non-secret bindings, and public responses/logs are checked for the private token.
 These peers are Controller-owned doubles, not implementations of downstream services.
+The Runtime peer initially remains provisioned/created without peer or key.
+Create must complete with pending network and no executable revision. The peer
+then becomes running/starting without emitting a journal event; the real
+Controller must bind it before the fixture permits healthy observation. Only
+then may the original private execution publication checks succeed. This proves
+Controller ordering; real Egress packet enforcement and the final Foundation
+workflow have separate acceptance runs.
 
 Stored-secret acceptance adds an old and new master key, activates the new key,
 creates an active-key Provider alongside the existing Provider, runs the actual

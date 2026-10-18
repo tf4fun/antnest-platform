@@ -13,6 +13,13 @@ import (
 )
 
 func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.T) {
+	for _, state := range []string{"open", "pending"} {
+		t.Run(state, func(t *testing.T) { testCreateAttachmentPublication(t, state) })
+	}
+}
+
+func testCreateAttachmentPublication(t *testing.T, attachmentState string) {
+	t.Helper()
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -136,9 +143,9 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 	}
 
 	openedAttachment := attachment
-	openedAttachment.AttachmentState = ports.NetworkAttachmentOpen
+	openedAttachment.AttachmentState = attachmentState
 	openedAttachment.AttachmentResourceVersion++
-	published, err := repository.PublishAgentCreate(recoveryCtx, ports.PublishAgentCreate{
+	publication := ports.PublishAgentCreate{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
 		NetworkAttachment: openedAttachment,
 		CreatedEvent: ports.AgentEventRecord{
@@ -149,7 +156,34 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 			OccurredAt:         now.Add(3 * time.Second),
 		},
 		Now: now.Add(3 * time.Second),
-	})
+	}
+	if attachmentState == "pending" {
+		for _, change := range []string{"same_version", "later_cycle", "peer", "key", "tunnel", "resolver", "egress", "network_version"} {
+			invalid := publication
+			switch change {
+			case "same_version":
+				invalid.NetworkAttachment.AttachmentResourceVersion--
+			case "later_cycle":
+				invalid.NetworkAttachment.AttachmentResourceVersion += 2
+			case "peer":
+				invalid.NetworkAttachment.RuntimeEndpoint = "10.20.0.9"
+			case "key":
+				invalid.NetworkAttachment.TunnelKeyID = "rtk_0123456789abcdef0123456789abcdef"
+			case "tunnel":
+				invalid.NetworkAttachment.TunnelIPv4 = "100.64.0.99"
+			case "resolver":
+				invalid.NetworkAttachment.ResolverIPv4 = "100.64.0.99"
+			case "egress":
+				invalid.NetworkAttachment.EgressPort++
+			case "network_version":
+				invalid.NetworkAttachment.NetworkResourceVersion++
+			}
+			if _, err := repository.PublishAgentCreate(ctx, invalid); !errors.Is(err, ports.ErrConcurrentChange) {
+				t.Fatalf("accepted pending %s: %v", change, err)
+			}
+		}
+	}
+	published, err := repository.PublishAgentCreate(recoveryCtx, publication)
 	if err != nil {
 		t.Fatalf("publish Agent create: %v", err)
 	}
@@ -165,5 +199,12 @@ SELECT COUNT(*) FROM agent_controller.agent_events WHERE agent_id = $1`, begin.A
 	}
 	if eventCount != 2 {
 		t.Fatalf("event count = %d", eventCount)
+	}
+	if published.Operation.NetworkAttachment == nil || *published.Operation.NetworkAttachment != openedAttachment || published.Agent.ActiveOperationRequestID != "" {
+		t.Fatal("published attachment/slot mismatch", published)
+	}
+	replayedResult, err := repository.PublishAgentCreate(ctx, publication)
+	if err != nil || replayedResult.Operation.State != domain.OperationCompleted || *replayedResult.Operation.NetworkAttachment != openedAttachment {
+		t.Fatalf("completed replay changed attachment: %+v %v", replayedResult, err)
 	}
 }

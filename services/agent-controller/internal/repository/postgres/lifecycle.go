@@ -230,7 +230,7 @@ func (repository *Repository) PublishAgentCreate(
 		operation.RuntimeResult == nil || operation.NetworkAttachment == nil ||
 		input.NetworkAttachment.AgentID != operation.AgentID ||
 		input.NetworkAttachment.State != ports.NetworkStateActive ||
-		input.NetworkAttachment.AttachmentState != ports.NetworkAttachmentOpen ||
+		(input.NetworkAttachment.AttachmentState != ports.NetworkAttachmentOpen && !validPendingCreateAttachment(input.NetworkAttachment, *operation.NetworkAttachment)) ||
 		input.NetworkAttachment.NetworkResourceVersion != operation.NetworkAttachment.NetworkResourceVersion {
 		return ports.AgentCreateState{}, ports.ErrConcurrentChange
 	}
@@ -269,6 +269,15 @@ WHERE request_id = $1`, input.RequestID, networkPayload, input.Now); err != nil 
 	}
 	repository.recordEventAppend(ctx, input.CreatedEvent.EventType)
 	return state, nil
+}
+
+func validPendingCreateAttachment(current, original ports.NetworkAttachment) bool {
+	return current.AttachmentState == ports.NetworkAttachmentPending && original.AttachmentState == ports.NetworkAttachmentClosed &&
+		current.RuntimeEndpoint == "" && current.TunnelKeyID == "" && current.AgentID == original.AgentID &&
+		current.TunnelIPv4 == original.TunnelIPv4 && current.ResolverIPv4 == original.ResolverIPv4 &&
+		current.EgressIPv4 == original.EgressIPv4 && current.EgressPort == original.EgressPort && current.PacketContractRevision == original.PacketContractRevision &&
+		current.NetworkResourceVersion == original.NetworkResourceVersion && original.AttachmentResourceVersion != 0 &&
+		current.AttachmentResourceVersion > original.AttachmentResourceVersion && current.AttachmentResourceVersion-original.AttachmentResourceVersion == 1
 }
 
 func (repository *Repository) FailAgentCreate(

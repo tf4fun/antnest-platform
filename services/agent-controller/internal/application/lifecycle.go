@@ -462,11 +462,11 @@ func (service *LifecycleService) publishAgentCreate(
 	if state.Operation.NetworkAttachment == nil {
 		return ports.AgentCreateState{}, fmt.Errorf("create operation has no network attachment")
 	}
-	attachment, err := service.openRuntimeNetwork(ctx, state.Agent.AgentID, state.Operation.RuntimeResult.RuntimeRevision, *state.Operation.NetworkAttachment)
+	attachment, err := service.prepareCreateNetwork(ctx, state.Agent.AgentID, state.Operation.RuntimeResult.RuntimeRevision, *state.Operation.NetworkAttachment)
 	if err != nil {
 		return service.handleCreateDependencyFailure(ctx, state, "runtime-egress", err)
 	}
-	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
+	if !networkAttachmentReady(attachment, state.Agent.AgentID) && !pendingCreateAttachment(attachment, *state.Operation.NetworkAttachment) {
 		return service.failCreate(ctx, state, "invalid_network_attachment", "Runtime Egress did not confirm an active attachment", false)
 	}
 	if !sameNetworkCoordinates(attachment, *state.Operation.NetworkAttachment) ||
@@ -581,8 +581,12 @@ func (service *LifecycleService) handleCreateDependencyFailure(
 	ctx context.Context, state ports.AgentCreateState, serviceName string, err error,
 ) (ports.AgentCreateState, error) {
 	var dependencyFailure *ports.DependencyError
-	if !errors.As(err, &dependencyFailure) || dependencyFailure.Retryable {
-		return state, fmt.Errorf("%w: %s", ErrDependencyUnavailable, serviceName)
+	isDependencyFailure := errors.As(err, &dependencyFailure)
+	if isDependencyFailure && dependencyFailure.Service != "" {
+		serviceName = dependencyFailure.Service
+	}
+	if !isDependencyFailure || dependencyFailure.Retryable {
+		return state, fmt.Errorf("%w: %s: %w", ErrDependencyUnavailable, serviceName, err)
 	}
 	return service.failCreate(ctx, state, dependencyFailure.Code, dependencyFailure.Error(), false)
 }

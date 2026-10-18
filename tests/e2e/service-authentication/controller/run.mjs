@@ -717,6 +717,52 @@ try {
         context: callerContext(fixture, { agt: agentID }),
       })
     ).json;
+  const operation = await eventually(
+    async () =>
+      (
+        await request(
+          "/internal/agent-operations/agent-private-runtime?organization_id=org-1",
+        )
+      ).json,
+    (value) => value.state === "completed",
+    "configured Create without peer",
+  );
+  assert.equal(operation.state, "completed");
+  const configuredAgent = await getAgent();
+  assert.equal(configuredAgent.active_operation_request_id ?? "", "");
+  assert.equal(configuredAgent.executable_execution_revision ?? "", "");
+  const waitingPeer = await stats();
+  assert.equal(waitingPeer.lastAttachment.agent_id, agentID);
+  assert.equal(waitingPeer.lastAttachment.state, "pending");
+  assert.equal(waitingPeer.privateApplies, 0);
+  const runtimePhase = async (phase) => {
+    assert(["starting", "healthy"].includes(phase));
+    await docker([
+      ...compose,
+      "exec",
+      "-T",
+      "dependencies",
+      "node",
+      "-e",
+      "fetch('http://127.0.0.1:8101/test/runtime-phase?phase=" +
+        phase +
+        "').then(r=>{if(!r.ok)process.exit(1);return r.arrayBuffer()})",
+    ]);
+  };
+  await runtimePhase("starting");
+  const firstBinding = await eventually(
+    stats,
+    (value) => value.lastAttachment?.state === "open",
+    "starting peer binding without a new journal event",
+  );
+  assert.equal(
+    firstBinding.lastAttachment.resource_version,
+    waitingPeer.lastAttachment.resource_version + 1,
+  );
+  assert.equal(firstBinding.privateApplies, 0);
+  assert.equal((await getAgent()).executable_execution_revision ?? "", "");
+  await runtimePhase("healthy");
+  checks += 9;
   await eventually(
     getAgent,
     (value) => value.runtime_state === "available",
