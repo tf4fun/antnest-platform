@@ -35,6 +35,10 @@ import { networkFailures } from "./network-private-session.mjs";
 import { lossFailures } from "./loss-private-session.mjs";
 import { restoreFailures } from "./restore-private-session.mjs";
 import {
+  skillRestorePrivateAdmission,
+  skillRestorePublicResult,
+} from "./skill-restore-private-evidence.mjs";
+import {
   restorePrivateAdmission,
   restorePublicResult,
 } from "./restore-private-evidence.mjs";
@@ -104,6 +108,7 @@ export async function runFoundation(
     if (profile === "network") configureFoundationPrivate(config);
     if (profile === "loss") configureFoundationPrivate(config);
     if (profile === "restore") configureFoundationPrivate(config);
+    if (profile === "skill-restore") configureFoundationPrivate(config);
     if (profile === "health") configureHealthPrivate(config);
     if (
       [
@@ -179,7 +184,9 @@ export async function runFoundation(
               ? inspectFoundationPrivateDeployment(rows, config)
               : profile === "restore"
                 ? inspectFoundationPrivateDeployment(rows, config)
-                : rows;
+                : profile === "skill-restore"
+                  ? inspectFoundationPrivateDeployment(rows, config)
+                  : rows;
     if (profile === "interrupted") {
       const { inspectUpdateProxyDeployment } =
         await import("./interrupted-current.mjs");
@@ -258,6 +265,10 @@ export async function runFoundation(
       restoreFailures(result.restoreErrors);
       admission = restorePrivateAdmission(result);
     }
+    if (profile === "skill-restore") {
+      restoreFailures(result.restoreErrors);
+      admission = skillRestorePrivateAdmission(result);
+    }
   } catch (error) {
     failure =
       profile === "network" && result?.networkErrors?.length
@@ -270,7 +281,8 @@ export async function runFoundation(
               [...new Set([...result.lossErrors, error])],
               "Loss evidence and final admission failed",
             )
-          : profile === "restore" && result?.restoreErrors?.length
+          : ["restore", "skill-restore"].includes(profile) &&
+              result?.restoreErrors?.length
             ? new AggregateError(
                 [...new Set([...result.restoreErrors, error])],
                 "Restore evidence and final admission failed",
@@ -397,7 +409,9 @@ export async function runFoundation(
               ? lossPublicResult(result)
               : profile === "restore"
                 ? restorePublicResult(result)
-                : result),
+                : profile === "skill-restore"
+                  ? skillRestorePublicResult(result)
+                  : result),
       ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",

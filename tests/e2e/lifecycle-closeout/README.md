@@ -90,7 +90,7 @@ diagnostics are both retained. Source errors cannot inherit clock-only or
 workflow-restart diagnostic exceptions. Clock-only acceptance requires zero raw
 errors; a restart exception requires the exact reviewed total.
 
-The shutdown and Skill-restore ACP request collectors select
+The shutdown ACP request collector selects
 the actual message using its observed connection and request
 identity, then validate the `acp` Resolve source. They retain the owning Run,
 model phase, durable-write and rejection checks. Selection records the actual
@@ -270,9 +270,24 @@ start time and endpoints across storage replacement. Eight request collections
 and four lifecycle collections preserve independent failures; exporter and
 temporary-directory cleanup errors remain failures. Private evidence is archived
 before final admission and excluded from the public summary. Strict diagnostics
-remain separate from admission, with no semantic-denial allowance. Skill-restore
-and the independent eight-database/five-volume storage suite remain separate
-delivery and verification batches.
+remain separate from admission, with no semantic-denial allowance.
+
+`make e2e-stage4-skill-restore` uses its own fresh-image private ACP consumer and
+admission. Four connections delegate the two original login Sessions in order
+0/1/1/1 and retain four initializations, ten business requests, four Runs, eight
+Provider calls, one Bash and three read calls. Nine completed lifecycle
+operations belong to the two Agents. Registry stops after recovery; both Agents
+must reuse their independent pinned v1 Skill volumes. The complete eight-database
+recovery plan includes all current/lifecycle/set Skill volumes, not only mounts.
+
+The missing-volume Enable is separate from those nine operations. Its original
+five-second timeout Error or raw HTTP 503 receipt is kept with all same-key
+preparation queries. Admission binds the organization/key-derived request to
+`enable/retry_wait/skill_preparation_unavailable`, a disabled Agent, zero Runtime
+containers, only the original workspace and no recreated Skill volume. A new
+real read on the unaffected Agent and both Deletes must still complete. Raw
+failure, Registry inspect and original Skill file receipts remain private.
+The independent eight-database/five-volume storage suite is a separate gate.
 
 ## Runtime Health and Observation
 

@@ -315,8 +315,12 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       ready,
       traceSecrets,
     });
-    if (result.profile === "offline-restore") {
-      result.private_restore.lifecycle_admissions = structuredClone(admitted);
+    if (["offline-restore", "offline-skill-restore"].includes(result.profile)) {
+      const work =
+        result.profile === "offline-restore"
+          ? result.private_restore
+          : result.private_skill_restore;
+      work.lifecycle_admissions = structuredClone(admitted);
       const errors = [];
       const traces = await collectRestoreTraces(
         admitted,

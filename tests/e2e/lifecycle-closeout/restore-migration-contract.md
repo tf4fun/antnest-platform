@@ -63,7 +63,7 @@ requests or Runs; neither business profile replaces that storage evidence.
 - Application writers stop normally, then Temporal, and the complete clean-exit
   inventory is required before export.
 - Empty storage and the original roles are recreated, and all seven databases are
-  restored before any schema initializer or writer starts. Frozen data, sequence,
+  restored (all eight for Skill-restore) before any schema initializer or writer starts. Frozen data, sequence,
   ownership and ACL fingerprints must match.
 - Permission-drift probes, archive checksums, volume ownership, hidden files,
   modes, symlinks and Skills are preserved.

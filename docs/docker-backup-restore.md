@@ -19,8 +19,8 @@ Keep one protected recovery set, with a timestamp and checksums:
 | Identity           | `antnest_identity`                                | Single encryption key or complete `ANTNEST_IDENTITY_ENCRYPTION_KEYS` ring and active ID; IdP configuration, database role/DSN                                                  |
 | Agent Controller   | `antnest_agent_controller`                        | Single encryption key or complete `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEYS` ring and active ID; Provider configuration, deployment identity                                   |
 | ACP                | `antnest_agent_acp`                               | `ANTNEST_ACP_CLIENT_MCP_KEY`, durable Sessions/history/context, Skill maintenance signing keys                                                                                 |
-| Runtime Controller | `antnest_runtime_controller`                      | Instance master file, retained generation bootstrap volumes, Controller scope, network/volume names, immutable Runtime image digests, Skill maintenance verifier configuration                                                              |
-| Egress             | `antnest_egress`                                  | Private Egress tunnel master file matching the encrypted generation rows, Tunnel CIDR/resolver and deployment network configuration                                                                                                                      |
+| Runtime Controller | `antnest_runtime_controller`                      | Instance master file, retained generation bootstrap volumes, Controller scope, network/volume names, immutable Runtime image digests, Skill maintenance verifier configuration |
+| Egress             | `antnest_egress`                                  | Private Egress tunnel master file matching the encrypted generation rows, Tunnel CIDR/resolver and deployment network configuration                                            |
 | Skill Registry     | `antnest_skill_registry`                          | Receiver hash file, per-pair Identity/ACP sender files or TLS material, and pinned Identity/source configuration                                                               |
 | Temporal           | `antnest_temporal`, `antnest_temporal_visibility` | Temporal role/DSN, namespace and matching server/schema versions; restore alongside Controller data                                                                            |
 | Runtime filesystem | none                                              | Every retained `antnest-workspace-<agent-id>` volume, every referenced per-Agent Skill volume and the configured system Skills volume, including ownership, modes and symlinks |
@@ -206,7 +206,8 @@ The bounded `restore` lifecycle profile implements this procedure only for its
 own disposable test project. It uses all the actual service databases and
 synthetic credentials, never real secrets. It:
 
-- Creates Agents and a completed Tool-backed ACP Session through Gateway.
+- Creates Agents through the administrator API and a completed Tool-backed ACP
+  Session through private ACP delegated from the original browser login.
 - Disables the Agents and stops writers before snapshots.
 - Stops Temporal after application writers, then exports every database and
   volume archive plus protected encryption keys.

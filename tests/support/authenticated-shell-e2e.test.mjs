@@ -104,3 +104,11 @@ test("shell fixtures discard operator secrets and bind all private addresses to 
   assert.equal(env.ANTNEST_RUNTIME_CONTROLLER_MANAGEMENT_IPV4, "10.243.7.5");
   assert.equal(env.ANTNEST_ACP_MANAGEMENT_IPV4, "10.243.7.6");
 });
+
+test("Skill-restore fresh candidate entrypoint keeps the business profile explicit", () => {
+  assert.deepEqual(shell.shellEntrypoint("stage4-skill-restore"), [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "skill-restore",
+  ]);
+});

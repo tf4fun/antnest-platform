@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { mkdtemp, chmod, rm } from "node:fs/promises";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
-import { join } from "node:path";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
-import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
-import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
-import { saveFoundationFailure } from "./foundation-trace.mjs";
-import { flushTraceProducers } from "./network-support.mjs";
-import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import { runPrivateRestore } from "./restore-private-flow.mjs";
+import { runPrivateSkillRestore } from "./skill-restore-private-flow.mjs";
+import {
+  requestMissingSkillEnable,
+  assertMissingSkillEnable,
+  assertMissingSkillPreparation,
+} from "./skill-restore-missing-volume.mjs";
 import { lines } from "./docker.mjs";
 import {
   keyNames,
@@ -85,21 +83,10 @@ async function prompt(client, sessionId, text, toolName) {
 
 export async function runRestore(input) {
   // Retain the storage-policy rejection before selecting or opening transport.
-  const storageRoot = temporaryStorageRoot();
-  if (!input.config.skillRestore)
-    return runPrivateRestore(input, restoreScenario);
-  const directory = await mkdtemp(join(storageRoot, "antnest-restore-"));
-  await chmod(directory, 0o700);
-  let client;
-  try {
-    return await restoreScenario(input, directory, (next) => {
-      client?.close();
-      client = next;
-    });
-  } finally {
-    client?.close();
-    await rm(directory, { recursive: true, force: true });
-  }
+  temporaryStorageRoot();
+  return input.config.skillRestore
+    ? runPrivateSkillRestore(input, restoreScenario)
+    : runPrivateRestore(input, restoreScenario);
 }
 
 async function restoreScenario(
@@ -118,27 +105,31 @@ async function restoreScenario(
     traceSecrets,
   },
   directory,
-  setClient,
+  _setClient,
   adapter,
 ) {
   console.error(
     "Restore: creating a real Session, Tool effect and persistent filesystem fixtures",
   );
-  const requests = [];
-  const remember = (client, method, details) => {
-    if (adapter) return adapter.remember(client, method, details);
-    const actual = client.requests.filter((r) => r.method === method).at(-1);
-    assert(actual, "actual restore SDK request missing");
-    requests.push({
-      ...actual,
-      agentId: client.agentId,
-      agentID: client.agentId,
-      requestID: actual.requestId,
-      connectionTraceID: client.connectionTraceID,
-      transport: "websocket",
-      kind: "request",
-      ...details,
+  const remember = (client, method, details) =>
+    adapter.remember(client, method, details);
+  const readPinnedSkill = async (state) => {
+    const content = await docker([
+      "exec",
+      "--user",
+      "1000:1000",
+      state.container.Id,
+      "cat",
+      "/skills/code-review/SKILL.md",
+    ]);
+    adapter.skill("skill_files", {
+      agent_id: state.agent.agent_id,
+      container_id: state.container.Id,
+      volume: state.skillVolume,
+      path: "/skills/code-review/SKILL.md",
+      content,
     });
+    assert.match(content, /Stage 4 immutable preset version 1\./u);
   };
   const modelState = async () => {
     const response = await fetch(`${config.model}/status`, {
@@ -154,6 +145,7 @@ async function restoreScenario(
   let frozenSkill;
   if (config.skillRestore) {
     frozenSkill = await publishSkill(admin, 1);
+    adapter.skill("frozen_skill", frozenSkill);
     const revision = (
       await api(`/api/admin/templates/${agentBody.template_id}/revisions`, {
         body: {
@@ -173,17 +165,7 @@ async function restoreScenario(
   let peerCreated, peerInitial;
   if (config.skillRestore) {
     assert(initial.skillVolume);
-    assert.match(
-      await docker([
-        "exec",
-        "--user",
-        "1000:1000",
-        initial.container.Id,
-        "cat",
-        "/skills/code-review/SKILL.md",
-      ]),
-      /Stage 4 immutable preset version 1\./,
-    );
+    await readPinnedSkill(initial);
     peerCreated = await command("create", undefined, {
       ...agentBody,
       name: "Second restored Skill Agent",
@@ -194,17 +176,7 @@ async function restoreScenario(
         peerInitial.skillVolume !== initial.skillVolume,
     );
     assert.notEqual(peerInitial.volume, initial.volume);
-    assert.match(
-      await docker([
-        "exec",
-        "--user",
-        "1000:1000",
-        peerInitial.container.Id,
-        "cat",
-        "/skills/code-review/SKILL.md",
-      ]),
-      /Stage 4 immutable preset version 1\./,
-    );
+    await readPinnedSkill(peerInitial);
   }
   const first = await loginOwner(config);
   adapter?.login(first);
@@ -228,13 +200,11 @@ async function restoreScenario(
     adapter?.recordRun(run);
     return run;
   };
-  let client = adapter
-    ? await adapter.open(created.agentID, first.owner, first.principal)
-    : connectOwner(config.gateway, created.agentID, first.owner.cookie, signal);
-  if (!adapter) {
-    setClient(client);
-    await client.initialize();
-  }
+  let client = await adapter.open(
+    created.agentID,
+    first.owner,
+    first.principal,
+  );
   const sessionId = (
     await client.request("new", { cwd: "/workspace", mcpServers: [] })
   ).sessionId;
@@ -275,8 +245,7 @@ async function restoreScenario(
     beforeHistory.some((event) => event.update.sessionUpdate === "tool_call"),
   );
   assert(JSON.stringify(beforeHistory).includes("c5-before-backup completed"));
-  if (adapter) await adapter.close(client);
-  else client.close();
+  await adapter.close(client);
 
   await docker([
     "exec",
@@ -359,6 +328,7 @@ async function restoreScenario(
         peerInitial.volume,
       ])
     : { databases, volumes: [initial.volume, skills] };
+  adapter.skill?.("recovery_before", plan);
   const backup = await backupStorage(
     config,
     docker,
@@ -379,14 +349,14 @@ async function restoreScenario(
     postgres: backup.postgres.name,
     ...plan,
   });
-  if (config.skillRestore)
-    assert.deepEqual(
-      await stage4RecoveryPlan(config, docker, [
-        initial.volume,
-        peerInitial.volume,
-      ]),
-      plan,
-    );
+  if (config.skillRestore) {
+    const recoveredPlan = await stage4RecoveryPlan(config, docker, [
+      initial.volume,
+      peerInitial.volume,
+    ]);
+    adapter.skill("recovery_after", recoveredPlan);
+    assert.deepEqual(recoveredPlan, plan);
+  }
   await docker(
     config.compose([
       "up",
@@ -398,8 +368,16 @@ async function restoreScenario(
     ]),
     true,
   );
-  if (config.skillRestore)
+  if (config.skillRestore) {
     await docker(config.compose(["stop", "-t", "20", "skill-registry"]), true);
+    const registryIDs = lines(
+      await docker(config.compose(["ps", "-aq", "skill-registry"])),
+    );
+    assert.equal(registryIDs.length, 1);
+    const registry = JSON.parse(await docker(["inspect", ...registryIDs]));
+    adapter.skill("registry_stopped", registry);
+    assertQuiesced(registry, config.project, ["skill-registry"]);
+  }
   await adapter?.afterRestore();
 
   console.error(
@@ -461,17 +439,7 @@ async function restoreScenario(
       initial.skillVolume,
       "offline Enable replaced the retained Skill collection",
     );
-    assert.match(
-      await docker([
-        "exec",
-        "--user",
-        "1000:1000",
-        enabled.container.Id,
-        "cat",
-        "/skills/code-review/SKILL.md",
-      ]),
-      /Stage 4 immutable preset version 1\./,
-    );
+    await readPinnedSkill(enabled);
     await command("enable", peerCreated.agentID, {});
     peerEnabled = await ready(peerCreated.agentID);
     assert.equal(
@@ -480,31 +448,10 @@ async function restoreScenario(
       "second Agent lost its retained Skill collection",
     );
     assert.notEqual(peerEnabled.skillVolume, enabled.skillVolume);
-    assert.match(
-      await docker([
-        "exec",
-        "--user",
-        "1000:1000",
-        peerEnabled.container.Id,
-        "cat",
-        "/skills/code-review/SKILL.md",
-      ]),
-      /Stage 4 immutable preset version 1\./,
-    );
+    await readPinnedSkill(peerEnabled);
   }
   assert.deepEqual(await modelState(), []);
-  client = adapter
-    ? await adapter.open(created.agentID, second.owner, second.principal)
-    : connectOwner(
-        config.gateway,
-        created.agentID,
-        second.owner.cookie,
-        signal,
-      );
-  if (!adapter) {
-    setClient(client);
-    await client.initialize();
-  }
+  client = await adapter.open(created.agentID, second.owner, second.principal);
   const restoredHistory = await history(client, sessionId);
   adapter?.history(restoredHistory);
   assert.deepEqual(restoredHistory, beforeHistory);
@@ -544,20 +491,17 @@ async function restoreScenario(
     ],
   );
   if (peerCreated) {
-    client.close();
-    client = connectOwner(
-      config.gateway,
+    await adapter.close(client);
+    client = await adapter.open(
       peerCreated.agentID,
-      second.owner.cookie,
-      signal,
+      second.owner,
+      second.principal,
     );
-    setClient(client);
-    await client.initialize();
     const peerSessionID = (
       await client.request("new", { cwd: "/workspace", mcpServers: [] })
     ).sessionId;
     remember(client, "session/new", { sessionId: peerSessionID });
-    await prompt(client, peerSessionID, "c5-after-restore-peer");
+    await prompt(client, peerSessionID, "c5-after-restore-peer", "read");
     const peerRun = await completedRun(
       peerSessionID,
       peerEnabled.agent,
@@ -597,44 +541,34 @@ async function restoreScenario(
       ]);
     assert(!lines(await missingVolume()).includes(peerInitial.skillVolume));
     const enableKey = randomUUID();
-    let blockedEnable;
-    try {
-      blockedEnable = await fetch(
-        `${config.gateway}/api/admin/agents/${peerCreated.agentID}/enable`,
-        {
-          method: "POST",
-          signal: AbortSignal.timeout(5000),
-          headers: {
-            "content-type": "application/json",
-            Cookie: admin.cookie,
-            Origin: config.gateway,
-            "X-Antnest-CSRF-Token": admin.csrf ?? "",
-            "Idempotency-Key": enableKey,
-          },
-          body: "{}",
-        },
-      );
-    } catch (error) {
-      assert.equal(
-        error.name,
-        "TimeoutError",
-        "missing-volume Enable failed unexpectedly",
-      );
-    }
-    if (blockedEnable) {
-      assert.equal(blockedEnable.status, 503);
-      assert.equal((await blockedEnable.json()).retryable, true);
-    }
+    const blockedEnable = await requestMissingSkillEnable({
+      gateway: config.gateway,
+      agentID: peerCreated.agentID,
+      key: enableKey,
+      admin,
+      signal,
+    });
+    adapter.skill("blocked_enable", blockedEnable);
+    assertMissingSkillEnable(blockedEnable);
+    const missing = { queries: [] };
+    adapter.skill("missing_volume", missing);
     let preparation;
     for (let attempt = 0; attempt < 60; attempt++) {
-      preparation = (
-        await admin.request(
-          "/api/admin/agent-skill-preparations/by-idempotency-key",
-          {
-            headers: { "Idempotency-Key": enableKey },
-          },
-        )
-      ).body;
+      const response = await admin.request(
+        "/api/admin/agent-skill-preparations/by-idempotency-key",
+        { headers: { "Idempotency-Key": enableKey } },
+      );
+      missing.queries.push({
+        request: {
+          method: "GET",
+          path: "/api/admin/agent-skill-preparations/by-idempotency-key",
+          idempotency_key: enableKey,
+        },
+        status: response.status,
+        trace_id: response.traceID,
+        body: response.body,
+      });
+      preparation = response.body;
       if (preparation.state === "retry_wait") break;
       assert(
         ["queued", "preparing"].includes(preparation.state),
@@ -642,36 +576,36 @@ async function restoreScenario(
       );
       await delay(500);
     }
-    assert.equal(preparation.state, "retry_wait");
-    assert.equal(preparation.agent_id, peerCreated.agentID);
-    assert.equal(preparation.kind, "enable");
-    assert.equal(preparation.error_code, "skill_preparation_unavailable");
-    assert.equal(
-      (await json(`/api/admin/agents/${peerCreated.agentID}`)).activation_state,
-      "disabled",
-    );
-    const blockedResources = await resources(peerCreated.agentID);
-    assert.deepEqual(blockedResources.containers, []);
-    assert.deepEqual(blockedResources.volumes, [peerInitial.volume]);
-    assert(
-      !lines(await missingVolume()).includes(peerInitial.skillVolume),
-      "Docker silently recreated the missing Skill volume",
-    );
+    missing.agent = await json(`/api/admin/agents/${peerCreated.agentID}`);
+    missing.resources = await resources(peerCreated.agentID);
+    missing.volume_query = {
+      name: peerInitial.skillVolume,
+      lines: lines(await missingVolume()),
+    };
+    assertMissingSkillPreparation(missing, {
+      organizationID: second.principal.organization_id,
+      agentID: peerCreated.agentID,
+      key: enableKey,
+      workspace: peerInitial.volume,
+      skillVolume: peerInitial.skillVolume,
+    });
 
-    client.close();
-    client = connectOwner(
-      config.gateway,
+    await adapter.close(client);
+    client = await adapter.open(
       created.agentID,
-      second.owner.cookie,
-      signal,
+      second.owner,
+      second.principal,
     );
-    setClient(client);
-    await client.initialize();
     const unaffectedSessionID = (
       await client.request("new", { cwd: "/workspace", mcpServers: [] })
     ).sessionId;
     remember(client, "session/new", { sessionId: unaffectedSessionID });
-    await prompt(client, unaffectedSessionID, "c5-after-peer-volume-loss");
+    await prompt(
+      client,
+      unaffectedSessionID,
+      "c5-after-peer-volume-loss",
+      "read",
+    );
     const unaffectedRun = await completedRun(
       unaffectedSessionID,
       enabled.agent,
@@ -684,8 +618,7 @@ async function restoreScenario(
       runId: unaffectedRun.run_id,
     });
   }
-  if (adapter) await adapter.close(client);
-  else client.close();
+  await adapter.close(client);
   assert.equal(
     await docker([
       "exec",
@@ -732,43 +665,8 @@ async function restoreScenario(
       "second Agent retained Skill or workspace volumes after Delete",
     );
   }
-  let requestTraces = [];
-  if (!adapter) {
-    await flushTraceProducers(config, docker);
-    requestTraces = await collectLifecycleEvidence(
-      requests,
-      (expected) =>
-        collectLifecycleACPTrace(
-          config,
-          expected,
-          traceSecrets,
-          expected.kind === "ordinary"
-            ? calls.filter((c) => c.phase === expected.phase)
-            : [],
-          (trace, expected, secrets, modelCalls) => {
-            const evidence = inspectCommandTrace(
-              trace,
-              expected,
-              secrets,
-              modelCalls,
-            );
-            if (expected.runId) assert.equal(evidence.run_id, expected.runId);
-            return strictSessionEvidence(evidence, trace);
-          },
-          signal,
-        ),
-      (expected, error) =>
-        saveFoundationFailure(
-          config,
-          { traceID: expected.traceID ?? expected.connectionTraceID },
-          error,
-        ),
-      signal,
-    );
-  }
   return {
     profile: config.skillRestore ? "offline-skill-restore" : "offline-restore",
-    request_traces: requestTraces,
     completed_runs: peerCreated ? 4 : 2,
     model_requests: calls.length,
     event_history_preserved: true,
@@ -785,6 +683,7 @@ async function restoreScenario(
           restored_preset_skill: frozenSkill.skill_id,
           registry_offline_enable: true,
           restored_agents: 2,
+          peer_agent_id: peerCreated.agentID,
           independent_skill_volumes: true,
           offline_missing_skill_volume_blocked: true,
           unaffected_peer_run: true,

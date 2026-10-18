@@ -32,6 +32,11 @@ const owners = [
   "temporal",
 ];
 const entrypoints = {
+  "stage4-skill-restore": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "skill-restore",
+  ],
   stage1: ["sh", "tests/e2e/e2e-stage1.sh"],
   stage2: ["sh", "tests/e2e/e2e-stage2.sh"],
   "runtime-controller": ["sh", "tests/e2e/runtime-controller/run.sh"],
