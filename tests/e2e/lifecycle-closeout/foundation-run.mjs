@@ -32,6 +32,11 @@ import {
 } from "./health-private-evidence.mjs";
 import { inspectNetworkPrivateDeployment } from "./network-private-deployment.mjs";
 import { networkFailures } from "./network-private-session.mjs";
+import { lossFailures } from "./loss-private-session.mjs";
+import {
+  lossPrivateAdmission,
+  lossPublicResult,
+} from "./loss-private-evidence.mjs";
 import {
   networkPrivateAdmission,
   networkPublicResult,
@@ -92,6 +97,7 @@ export async function runFoundation(
     configureFoundation(config);
     if (profile === "foundation") configureFoundationPrivate(config);
     if (profile === "network") configureFoundationPrivate(config);
+    if (profile === "loss") configureFoundationPrivate(config);
     if (profile === "health") configureHealthPrivate(config);
     if (
       [
@@ -163,7 +169,9 @@ export async function runFoundation(
           ? inspectHealthPrivateDeployment(rows, config)
           : profile === "network"
             ? inspectNetworkPrivateDeployment(rows, config)
-            : rows;
+            : profile === "loss"
+              ? inspectFoundationPrivateDeployment(rows, config)
+              : rows;
     if (profile === "interrupted") {
       const { inspectUpdateProxyDeployment } =
         await import("./interrupted-current.mjs");
@@ -234,6 +242,10 @@ export async function runFoundation(
       networkFailures(result.networkErrors);
       admission = networkPrivateAdmission(result);
     }
+    if (profile === "loss") {
+      lossFailures(result.lossErrors);
+      admission = lossPrivateAdmission(result);
+    }
   } catch (error) {
     failure =
       profile === "network" && result?.networkErrors?.length
@@ -241,7 +253,12 @@ export async function runFoundation(
             [...new Set([...result.networkErrors, error])],
             "Network evidence and final admission failed",
           )
-        : error;
+        : profile === "loss" && result?.lossErrors?.length
+          ? new AggregateError(
+              [...new Set([...result.lossErrors, error])],
+              "Loss evidence and final admission failed",
+            )
+          : error;
     if (config?.evidence) {
       try {
         writeEvidenceFile(
@@ -359,7 +376,9 @@ export async function runFoundation(
           ? healthPublicResult(result)
           : profile === "network"
             ? networkPublicResult(result)
-            : result),
+            : profile === "loss"
+              ? lossPublicResult(result)
+              : result),
       ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",

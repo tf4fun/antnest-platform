@@ -90,7 +90,7 @@ diagnostics are both retained. Source errors cannot inherit clock-only or
 workflow-restart diagnostic exceptions. Clock-only acceptance requires zero raw
 errors; a restart exception requires the exact reviewed total.
 
-The shutdown, network, Runtime-loss and restore ACP request collectors select
+The shutdown and restore ACP request collectors select
 the actual message using its observed connection and request
 identity, then validate the `acp` Resolve source. They retain the owning Run,
 model phase, durable-write and rejection checks. Selection records the actual
@@ -353,6 +353,14 @@ unknown internal diagnostics still fail admission.
 Two Agents each complete a real Bash append before their idle Runtime is
 stopped and removed without force.
 
+The original member Session and Principal delegate six private v1 connections,
+with six initializations and fourteen business requests. All twenty requests
+retain their actual wire receipts and private CLIENT/upgrade/Session lineage.
+The second connection in each case remains open through Runtime removal and a
+complete private execution-state observation. The fresh candidate-image wrapper
+verifies sixteen raw services, the fifteen-service Foundation projection and
+nine application images.
+
 - In the live case, Controller observes the exit before removal and the Runtime
   journal records `runtime_deleted / docker_event`.
 - In the cold case, Runtime Controller stops before removal and on restart
@@ -366,6 +374,18 @@ Template revision restores the Agent with new compute and Runtime identity and
 the same configuration and workspace. A real `read` returns the original bytes,
 and the model sees a reset notice. Another normal Runtime Controller restart
 keeps the replacement and the loss history.
+
+Final admission binds the four public Run audits, eight phase-bound Provider
+requests, two Bash and two read calls, and six lifecycle admissions to their
+original Agent and Session. Missing-source Rebuild requires the observed old
+generation's absent Inspect followed by next-generation allocation and start.
+The expected Docker 404 remains an absent observation; historical 404 ERROR
+evidence is retained and receives no new exception. Every client and exporter
+is joined before its receiver stops. Independent request and lifecycle
+collection continues after a sibling failure, preserving original business,
+archive and cleanup errors together. Raw private wire and state bodies stay out
+of public summaries. Strict failed diagnostics are retained separately from
+business admission; unknown internal diagnostics still fail.
 
 ## Runtime Reconstruction Crash
 

@@ -73,8 +73,11 @@ absence of execution. It must not widen the Managed busy policy or count a
 different error as this denial. Missing-source Rebuild Trace evidence opts in with the physically
 observed old generation: a completed absent Inspect under the exact Runtime
 update request is required, followed by successful next-generation allocation
-and start under the same update. The source 404's raw ERROR span and strict
-failure are preserved.
+and start under the same update. The current production Inspect keeps the 404
+as an expected `absent` observation without fabricating an error. Historical
+404 ERROR spans and strict failures remain unchanged and do not receive a new
+admission exception. Additional valid absence probes do not replace the exact
+source proof or constrain the whole Trace's probe count to one.
 
 Every actual request ID, connection Trace and Session is bound to its complete
 wire receipt. The four Runs bind the original public audit to two model phases

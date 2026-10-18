@@ -31,6 +31,7 @@ export async function createFoundationPrivateAccess(
   {
     signal,
     secrets,
+    collectTrace,
     preserveConnection = (index, value) =>
       writeEvidenceFile(
         config.evidence,
@@ -46,6 +47,7 @@ export async function createFoundationPrivateAccess(
   } = {},
 ) {
   assert(Array.isArray(secrets));
+  assert(collectTrace === undefined || typeof collectTrace === "function");
   signal?.throwIfAborted();
   const privateAccess = config.privateAccess;
   assert(
@@ -165,13 +167,17 @@ export async function createFoundationPrivateAccess(
       return state;
     },
     collect(expected, requests) {
-      return collectFoundationPrivateTrace(config.jaeger, expected, {
-        directory: config.evidence + "/traces",
-        secrets,
-        requests,
-        signal,
-        flush: () => telemetry.flush(),
-      });
+      return (collectTrace ?? collectFoundationPrivateTrace)(
+        config.jaeger,
+        expected,
+        {
+          directory: config.evidence + "/traces",
+          secrets,
+          requests,
+          signal,
+          flush: () => telemetry.flush(),
+        },
+      );
     },
     closeAndWait() {
       return (closing ??= (async () => {

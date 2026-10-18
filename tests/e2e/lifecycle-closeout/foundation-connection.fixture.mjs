@@ -25,7 +25,7 @@ export const prompt = (sessionId) => ({
   prompt: [{ type: "text", text: "held" }],
 });
 
-export async function foundationConnectionFixture(t) {
+export async function foundationConnectionFixture(t, { denyPrompt } = {}) {
   const state = {
     agent_id: "agent",
     access_allowed: true,
@@ -55,6 +55,15 @@ export async function foundationConnectionFixture(t) {
     }))
     .onRequest(sdk.methods.agent.session.load, () => ({}))
     .onRequest(sdk.methods.agent.session.prompt, async ({ params, client }) => {
+      if (denyPrompt?.(params))
+        throw new sdk.RequestError(
+          -32020,
+          "Operation reported agent_unavailable",
+          {
+            code: "agent_unavailable",
+            retryable: false,
+          },
+        );
       if (active)
         throw new sdk.RequestError(-32020, "Operation reported agent_busy", {
           code: "agent_busy",

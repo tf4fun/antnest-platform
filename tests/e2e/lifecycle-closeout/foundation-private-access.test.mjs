@@ -17,7 +17,7 @@ const implementation = await import(url).catch((error) => {
     throw error;
   return {};
 });
-async function fixture(t) {
+async function fixture(t, options = {}) {
   assert.equal(typeof implementation.createFoundationPrivateAccess, "function");
   const f = await foundationConnectionFixture(t),
     connections = [],
@@ -33,6 +33,8 @@ async function fixture(t) {
   }
   const access = await implementation.createFoundationPrivateAccess(
     {
+      jaeger: f.origin,
+      evidence: credentials,
       privateAccess: {
         acp: f.origin,
         identity: f.origin,
@@ -45,6 +47,7 @@ async function fixture(t) {
       preserveConnection: (index, snapshot) =>
         connections.push({ index, snapshot }),
       preserveState: (receipts) => states.push(structuredClone(receipts)),
+      ...options,
     },
   );
   t.after(() => access.closeAndWait());
@@ -81,6 +84,32 @@ test("Foundation host uses its inner two grants, original owner and full private
     ),
   );
   assert(f.exports.length > 0);
+});
+
+test("Loss can select its own collector while retaining the original shared telemetry and request context", async (t) => {
+  const calls = [];
+  const f = await fixture(t, {
+    async collectTrace(base, expected, options) {
+      calls.push({ base, expected, options });
+      await options.flush();
+      return { loss: true, original: expected };
+    },
+  });
+  const c = f.register(await f.access.open("agent", f.browser, principal));
+  await c.closeAndWait();
+  const expected = { lossCollectorSentinel: c.snapshot().initialization };
+  const requests = [];
+  const result = await f.access.collect(expected, requests);
+  assert.deepEqual(result, { loss: true, original: expected });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].base, f.origin);
+  assert.equal(calls[0].expected, expected);
+  assert.equal(calls[0].options.requests, requests);
+  assert(calls[0].options.directory.endsWith("/traces"));
+  assert(Array.isArray(calls[0].options.secrets));
+  assert(f.exports.length > 0);
+  await f.access.closeAndWait();
+  assert.equal(f.connections.at(-1).snapshot.closed, true);
 });
 test("Foundation retains raw state when complete configuration revision validation fails", async (t) => {
   const f = await fixture(t);

@@ -50,7 +50,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   );
   assert.match(
     source,
-    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: profile === "network"\s*\? networkPublicResult\(result\)\s*: result/u,
+    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: profile === "network"\s*\? networkPublicResult\(result\)\s*: profile === "loss"\s*\? lossPublicResult\(result\)\s*: result/u,
   );
   const archiveIndex = source.indexOf(
     'writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result))',
@@ -63,6 +63,13 @@ test("Foundation public summary excludes original RPC and state bodies without c
   );
   const networkFailureIndex = source.indexOf(
     "networkFailures(result.networkErrors)",
+  );
+  const lossFailureIndex = source.indexOf("lossFailures(result.lossErrors)");
+  assert(
+    lossFailureIndex > archiveIndex &&
+      lossFailureIndex <
+        source.indexOf("admission = lossPrivateAdmission(result)"),
+    "Loss must archive original business evidence before propagating collection/cleanup failures",
   );
   assert(
     networkFailureIndex > archiveIndex &&

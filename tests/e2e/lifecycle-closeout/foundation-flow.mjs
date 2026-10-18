@@ -27,6 +27,10 @@ import {
   recordNetworkFailures,
 } from "./network-private-session.mjs";
 import {
+  collectLossTraces,
+  recordLossFailures,
+} from "./loss-private-session.mjs";
+import {
   waitForAgentReady,
   assertAgentDisabled,
 } from "../../support/verification/agent-state.mjs";
@@ -307,6 +311,23 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       ready,
       traceSecrets,
     });
+    if (result.profile === "runtime-loss") {
+      result.private_loss.lifecycle_admissions = structuredClone(admitted);
+      const errors = [];
+      const traces = await collectLossTraces(
+        admitted,
+        (operation) =>
+          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, error) => saveFoundationFailure(config, operation, error),
+        signal,
+        errors,
+      );
+      recordLossFailures(result, errors);
+      return recordLossFailures(
+        { ...result, operations: admitted.length, traces },
+        result.lossErrors,
+      );
+    }
     const collect =
       result.profile === "lifecycle-real-network"
         ? async (...args) => {

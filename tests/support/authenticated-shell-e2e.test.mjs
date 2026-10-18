@@ -6,6 +6,18 @@ import {
 } from "./authenticated-shell-e2e.mjs";
 import * as shell from "./authenticated-shell-e2e.mjs";
 
+test("Loss gets fresh candidate images and preserves its two Runtime-loss cases", () => {
+  assert.deepEqual(
+    shellComposeFiles("lifecycle-loss"),
+    shellComposeFiles("lifecycle-health"),
+  );
+  assert.deepEqual(shell.shellEntrypoint("lifecycle-loss"), [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "loss",
+  ]);
+});
+
 test("Network gets fresh candidate images and its original business profile", () => {
   assert.deepEqual(
     shellComposeFiles("lifecycle-network"),

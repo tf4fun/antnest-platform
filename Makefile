@@ -263,7 +263,7 @@ e2e-lifecycle-network:
 
 .PHONY: e2e-lifecycle-loss
 e2e-lifecycle-loss:
-	node tests/e2e/lifecycle-closeout/run.mjs loss
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-loss
 
 .PHONY: e2e-rpc-response-loss
 e2e-rpc-response-loss:
