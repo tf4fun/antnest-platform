@@ -737,7 +737,7 @@ test("upload capacity runs the real two-user gate and its counterexamples in req
   );
   const run = execFileSync(
     "make",
-    ["--dry-run", "e2e-agent-ui-upload-capacity"],
+    ["--no-print-directory", "--dry-run", "e2e-agent-ui-upload-capacity"],
     { encoding: "utf8" },
   );
   assert.equal(

@@ -66,7 +66,7 @@ func TestBrowserFeedTerminationRecordsOnlyTheWinningCause(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer response.Body.Close()
+			defer func() { _ = response.Body.Close() }()
 			if response.StatusCode != 200 {
 				t.Fatalf("stream status=%d", response.StatusCode)
 			}
@@ -147,8 +147,8 @@ func TestBrowserFeedTerminationRecordsOnlyTheWinningCause(t *testing.T) {
 			}
 			values := map[string]string{}
 			for _, attr := range item.Attributes {
-				values[string(attr.Key)] = attr.Value.Emit()
-				if strings.Contains(attr.Value.Emit(), "canary") {
+				values[string(attr.Key)] = attr.Value.String()
+				if strings.Contains(attr.Value.String(), "canary") {
 					t.Fatal("private diagnostics leaked")
 				}
 			}
