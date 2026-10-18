@@ -336,6 +336,20 @@ for (const [name, mutate] of [
     },
   ],
   [
+    "exception without an error flag",
+    (f) => {
+      f.trace.spans[2].tags.push({ key: "exception.type", value: "Unknown" });
+    },
+  ],
+  [
+    "error log without an error flag",
+    (f) => {
+      f.trace.spans[2].logs = [
+        { fields: [{ key: "event", value: "exception" }] },
+      ];
+    },
+  ],
+  [
     "no event write",
     (f) => {
       f.trace.spans = f.trace.spans.filter((s) => s.spanID !== "insert");

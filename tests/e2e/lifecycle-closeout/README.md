@@ -90,15 +90,26 @@ diagnostics are both retained. Source errors cannot inherit clock-only or
 workflow-restart diagnostic exceptions. Clock-only acceptance requires zero raw
 errors; a restart exception requires the exact reviewed total.
 
-The Foundation, shutdown, network, Runtime-loss and restore ACP request
-collectors select the actual message using its observed connection and request
+The shutdown, network, Runtime-loss and restore ACP request collectors select
+the actual message using its observed connection and request
 identity, then validate the `acp` Resolve source. They retain the owning Run,
 model phase, durable-write and rejection checks. Selection records the actual
 Trace ID before admission can fail, and the complete current/source/trigger
 closure is archived and converges over three snapshots. Raw source diagnostics
-remain in the strict result; the Foundation allowance for two `agent_busy`
-errors cannot absorb additional source errors. Cancellation waits for active
+remain in the strict result. Cancellation waits for active
 collection and the owning inspector to finish.
+
+Default Foundation delegates the original owner's member Session and Principal
+through Identity and uses private ACP v1. The actual upgrade CLIENT, connection
+and dispatched wire request select every initialize and business Trace. Both
+closed connections retain their original SDK results, raw responses and updates;
+the held Prompt and two busy probes remain concurrent on the first connection.
+Every raw diagnostic in the main and upgrade Traces must have its exact owning
+classification. Only the existing busy rejection, completed MCP information-read
+disconnect, completed Runtime Tool HTTP disconnect and Jaeger clock diagnostics
+are accepted. Unknown internal errors fail. Raw strict failures and exit 2 remain
+recorded even when the complete default inventory admits exit 0 to the outer
+runner. Other Lifecycle and Workspace consumers remain separate migration work.
 
 Controller-root Runtime observation and Identity offboarding keep their own
 admission paths. The opt-in killed-process crash collector validates the original
@@ -128,10 +139,14 @@ The foundation profile verifies:
 5. Paginated global-cursor event replay, and a Controller restart after terminal
    operations, preserve the journal and request identity.
 6. All Compose services, including Temporal, are running and healthy. The
-   application containers use the locally built image IDs. Only Gateway,
-   PostgreSQL, Jaeger and the model publish loopback ports. Temporal stays
-   private, and dynamic network allocation excludes reserved Runtime
-   infrastructure addresses.
+   application containers use the locally built image IDs. Gateway, PostgreSQL,
+   Jaeger and the model publish loopback ports. Default Foundation additionally
+   exposes private ACP and Identity through the diagnostic relay and a dedicated
+   client telemetry receiver, all on dynamic loopback ports. The host reads only
+   the inner project's gateway-identity and agent-ui-acp workload grants.
+   Temporal stays private, and dynamic network allocation excludes reserved
+   Runtime infrastructure addresses. Other profiles keep their original Compose
+   boundary.
 
 ### Runtime-start failure
 
@@ -166,6 +181,26 @@ test requires:
   without replaying the old tool.
 
 This profile covers a graceful restart. It does not claim SIGKILL recovery.
+
+Admission requires two initialized and fully joined connections, seven business
+requests (`new`, `new`, held Prompt, two busy Prompts, reconnect `load`, fresh
+Prompt), two distinct completed Runs, four original Provider calls and two real
+Runtime Tools. The complete private ACP state response, including
+`configuration_revision`, proves drain publication; no retired Gateway state
+route or browser projection substitutes for it. The original `allow_once`
+permission response and 180-second held / 60-second fresh Prompt budgets remain.
+Parent cancellation closes the socket and joins pending requests and archives;
+business, original cancellation, archival and cleanup errors are preserved.
+
+The nine lifecycle admissions (three create, one rebuild, one disable, one
+enable, three delete), one read-only failed-Runtime create replay and each
+independent Runtime observation Trace are counted separately. The final summary
+counts distinct persisted observation events and their distinct Trace roots:
+one synchronize operation may commit two condition events under the same root.
+Each event retains its own SQL provenance, and observation roots cannot reuse
+an admission, replay or ACP request Trace. The final summary
+requires all of them, private connection/exporter completion and actual Docker
+cleanup. Missing evidence cannot be accepted merely because a child exited 2.
 
 ## Whole-Platform Stream Shutdown
 

@@ -15,6 +15,14 @@ import { applicationServices, assertDeployment } from "./deployment.mjs";
 import { runFoundationFlow } from "./foundation-flow.mjs";
 import { inspectCrashProxyDeployment } from "./crash-evidence.mjs";
 import {
+  configureFoundationPrivate,
+  inspectFoundationPrivateDeployment,
+} from "./foundation-private-deployment.mjs";
+import {
+  foundationPrivateAdmission,
+  foundationPublicResult,
+} from "./foundation-private-evidence.mjs";
+import {
   foundationTraceExitCode,
   foundationAcceptedTraceExitCode,
 } from "./foundation-evidence.mjs";
@@ -44,7 +52,7 @@ export async function runFoundation(
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   const timer = setTimeout(interrupt, 900000);
-  let config, result, deployment, failure;
+  let config, result, deployment, failure, admission;
   try {
     config = await configuration(
       abort.signal,
@@ -68,6 +76,7 @@ export async function runFoundation(
       config.env.ANTNEST_ADMISSION_TAG = candidateTag;
     }
     configureFoundation(config);
+    if (profile === "foundation") configureFoundationPrivate(config);
     if (
       [
         "network",
@@ -131,7 +140,10 @@ export async function runFoundation(
       "deployment.private.json",
       JSON.stringify(rows),
     );
-    let baseRows = rows;
+    let baseRows =
+      profile === "foundation"
+        ? inspectFoundationPrivateDeployment(rows, config)
+        : rows;
     if (profile === "network") {
       const { inspectNetworkTarget } = await import("./network-current.mjs");
       inspectNetworkTarget(rows, config);
@@ -203,14 +215,24 @@ export async function runFoundation(
                         : undefined;
     result = await runFoundationFlow(config, docker, abort.signal, scenario);
     writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result));
+    if (profile === "foundation")
+      admission = foundationPrivateAdmission(result);
   } catch (error) {
     failure = error;
-    if (config?.evidence)
-      writeEvidenceFile(
-        config.evidence,
-        "failure.private.txt",
-        inspect(error, { depth: 8 }),
-      );
+    if (config?.evidence) {
+      try {
+        writeEvidenceFile(
+          config.evidence,
+          "failure.private.txt",
+          inspect(error, { depth: 8 }),
+        );
+      } catch (archiveError) {
+        failure = new AggregateError(
+          [failure, archiveError],
+          "Foundation business and failure archive failed",
+        );
+      }
+    }
     if (config?.evidence) {
       // Preserve bounded, private service diagnostics before owned cleanup.
       const diagnostics = {};
@@ -239,22 +261,47 @@ export async function runFoundation(
       } catch {
         diagnostics.retrieval = "diagnostic retrieval failed";
       }
-      writeEvidenceFile(
-        config.evidence,
-        "services.private.json",
-        JSON.stringify(diagnostics),
-      );
+      try {
+        writeEvidenceFile(
+          config.evidence,
+          "services.private.json",
+          JSON.stringify(diagnostics),
+        );
+      } catch (archiveError) {
+        failure = new AggregateError(
+          [failure, archiveError],
+          "Foundation business and service archive failed",
+        );
+      }
     }
   } finally {
     clearTimeout(timer);
     try {
       if (config) await cleanup(config);
+    } catch (cleanupError) {
+      failure = failure
+        ? new AggregateError(
+            [failure, cleanupError],
+            "Foundation business and Docker cleanup failed",
+          )
+        : cleanupError;
     } finally {
       process.removeListener("SIGINT", interrupt);
       process.removeListener("SIGTERM", interrupt);
     }
   }
   if (failure) {
+    if (config?.evidence) {
+      try {
+        writeEvidenceFile(
+          config.evidence,
+          "failure.private.txt",
+          inspect(failure, { depth: 12 }),
+        );
+      } catch {
+        /* The original archive error remains in the failure above. */
+      }
+    }
     console.error(
       "Foundation business/topology failed; diagnostics retained privately",
     );
@@ -269,8 +316,11 @@ export async function runFoundation(
     ...(result.policy_traces ?? []),
     ...(result.watch_traces ?? []),
   ];
-  const strictCode = foundationTraceExitCode(traceEvidence);
-  const code = foundationAcceptedTraceExitCode(traceEvidence, profile);
+  const strictCode =
+    admission?.strict_exit ?? foundationTraceExitCode(traceEvidence);
+  const code =
+    admission?.accepted_exit ??
+    foundationAcceptedTraceExitCode(traceEvidence, profile);
   const reviewed = strictCode === 2 && code === 0;
   console.log(
     JSON.stringify({
@@ -280,7 +330,8 @@ export async function runFoundation(
           : profile === "crash"
             ? "business_and_recovery_topology_passed"
             : "business_and_topology_passed",
-      ...result,
+      ...(profile === "foundation" ? foundationPublicResult(result) : result),
+      ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",
       strict_exit: strictCode,
