@@ -84,6 +84,7 @@ async function fixture(t, override = {}) {
           endpoint: `${transport.origin}/v${version}/acp`,
           secrets,
           signal,
+          clientCapabilities: override.clientCapabilities,
         },
       );
       clients.push(client);
@@ -126,6 +127,17 @@ for (const version of [1, 2])
     assert(f.secrets.includes("W".repeat(43)));
     assert.equal((await f.exportedSpans()).length, 1);
   });
+
+test("browser v1 preserves session notice capability on the actual private initialize request", async (t) => {
+  const clientCapabilities = { session: { notices: {} } };
+  const f = await fixture(t, { clientCapabilities });
+  await f.open(1);
+  assert.deepEqual(
+    f.messages.map((message) => message.method),
+    ["initialize"],
+  );
+  assert.deepEqual(f.messages[0].params.clientCapabilities, clientCapabilities);
+});
 
 for (const version of [1, 2])
   test(`browser v${version} retains the single actual SDK initialize result through requests and cleanup`, async (t) => {

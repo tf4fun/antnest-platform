@@ -18,6 +18,7 @@ export async function openBrowserPrivateACP(
     captureRawFrames,
     captureNotifications,
     requestPermission,
+    clientCapabilities,
   },
 ) {
   assert(
@@ -68,6 +69,7 @@ export async function openBrowserPrivateACP(
     captureRawFrames,
     captureNotifications,
     requestPermission,
+    clientCapabilities,
   });
   try {
     const initializationResult = await client.initialize();
