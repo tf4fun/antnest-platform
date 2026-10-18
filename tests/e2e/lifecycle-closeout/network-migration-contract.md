@@ -47,26 +47,58 @@ The network deployment adds exactly one healthy target on the Egress network
 only, with no host ports. It uses the immutable Runtime fixture image for Node
 and iproute2 and retains only NET_ADMIN to assign its synthetic address inside
 its namespace. Temporal stays private, and infrastructure addresses are
-reserved. All thirteen services and eight application image identities are
-verified.
+reserved. The private ACP exporter adds one infrastructure service to the
+fifteen-service Foundation deployment and its Network target: all seventeen
+services and the original nine application image identities are verified.
+Only loopback relay ports expose private ACP, Identity and telemetry to the
+host runner. Raw deployment receipts are retained before projecting those
+test-only publications for the unchanged Foundation admission checks.
+
+## Private consumer boundary
+
+The original member login supplies both its Session and Principal. Both
+created Agents must have that owner and belong to the original creating
+administrator's organization. Policy writes retain their separate administrator
+Principal. Only the existing gateway-identity and agent-ui-acp credentials are
+used by the host private client; the retired Gateway ACP route is not a positive
+test entry point.
+
+Each of the six phases (`allowed`, `held-a`, `held-b`, `denied`, `restored`,
+`private`) opens one private v1 connection and initializes it exactly once.
+Each connection has one new Session and one successful Prompt with the original
+65-second budget and `allow_once` permission. Denied and private phases are
+successful Bash Runs that prove packet rejection. A and B's held Prompts must
+both remain in flight across A's deny acknowledgement and B's stale CAS; they
+are never serialized to simplify collection.
 
 ## Trace rules
 
-Each SDK `session/new` and `session/prompt` request supplies its JSON-RPC ID and
-connection Trace link. Six completed Runs bind public execution audits to the
+All six initialize and twelve business requests retain their actual JSON-RPC
+IDs, raw wire receipts and connection Trace links. Six completed Runs bind public execution audits to the
 correct Agent, Session and immutable execution revision; their twelve model HTTP
 calls and six Runtime Bash executions descend from those Runs. Four lifecycle
 operations keep the Temporal, SQL, publication and settlement Trace checks.
 Policy writes keep Gateway, Console, Controller and Egress ancestry and the exact
 Agent identity. Raw warnings and errors stay visible, and strict status is
 reported separately from topology. Clocks, exporter intervals and raw spans are
-never changed.
+never changed. Network admission separately verifies the six connections,
+eighteen request Traces, six distinct public Run IDs, twelve phase-bound Provider
+calls, six Bash executions, four successful policy writes and four lifecycle
+operations. Missing or foreign evidence and unknown internal diagnostics fail;
+only already reviewed external SDK/clock diagnostics retain their original
+strict failure while remaining non-blocking. No busy-rejection allowance applies
+to these successful requests.
 
 ## Cleanup
 
 Both Agents are deleted through business APIs. Their original Runtime containers
 must each emit one clean exit, stop and destroy sequence, and the remaining Trace
 producers are stopped gracefully with exit zero before collection. Raw Traces and
-failures are saved privately, independent Trace failures are still collected, and
-only owned resources are removed. Negative tests come first, and local socket
-components and Docker checks run serially.
+failures are saved privately. Every pending Prompt and private connection is
+joined, and host telemetry is flushed while its receiver is available. Original
+business, cancellation, archive and cleanup errors are preserved together.
+Independent request, policy and lifecycle collection continues after a sibling
+failure unless the parent is aborted. Only owned resources are removed. Negative
+tests come first, and local socket components and fresh candidate-image Docker
+checks run serially. This batch does not migrate other Lifecycle consumers or
+claim final PR integration is complete.
