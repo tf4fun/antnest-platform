@@ -31,7 +31,7 @@ export async function temporaryAcpFlow({
         ...(mode === "restart" ? ["-d"] : []),
         "--name",
         name,
-        ...skillClientArgs(config),
+        ...skillClientArgs(config, { privateACP: true }),
         "-e",
         `ANTNEST_E2E_AGENT_ID=${targetId}`,
         "-e",

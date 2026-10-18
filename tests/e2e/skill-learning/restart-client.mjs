@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { connectACP } from "../identity-closeout/acp-connection.mjs";
+import { openSkillACP, withSkillACPClient } from "./private-client.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../workspace-closeout/c4-setup.mjs";
 
@@ -7,16 +7,16 @@ const agentId = process.env.ANTNEST_E2E_AGENT_ID;
 const sessionId = process.env.ANTNEST_E2E_SESSION_ID;
 assert(agentId && sessionId);
 const member = new GatewayClient("http://edge-gateway:8080");
-await member.request("/api/session/login", {
+const login = await member.request("/api/session/login", {
   body: {
     organization_slug: "stage3",
     email: "c4-member@example.com",
     password: "c4-member-password",
   },
 });
-const client = connectACP(1, agentId, member.cookie);
-try {
-  await client.initialize();
+const principal = login.body.principal;
+const client = await openSkillACP(1, agentId, member, { principal });
+await withSkillACPClient(client, async () => {
   await until(
     async () => {
       try {
@@ -58,6 +58,4 @@ try {
       session_id: sessionId,
     }),
   );
-} finally {
-  client.close();
-}
+});

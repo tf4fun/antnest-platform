@@ -62,6 +62,7 @@ export async function callerAcpFlow({
           "--name",
           name,
           ...skillClientArgs(config, {
+            privateACP: true,
             grants: script === "caller-client.mjs" ? CALLER_GRANTS : [],
           }),
           ...Object.entries(env).flatMap(([key, value]) => [

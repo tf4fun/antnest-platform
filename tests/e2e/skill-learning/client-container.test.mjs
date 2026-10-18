@@ -78,3 +78,36 @@ test("Registry grants join the Registry client network once", () => {
 test("unknown grants are rejected", () => {
   assert.throws(() => skillClientArgs(config, { grants: ["admin-registry"] }));
 });
+
+test("private ACP clients opt into exact workload grants and the exporter network", () => {
+  const args = skillClientArgs(config, {
+    privateACP: true,
+    grants: ["console-registry", "gateway-identity"],
+  });
+  assert.deepEqual(networks(args), [
+    "antnest-lifecycle-0000abcd_gateway-ingress",
+    "antnest-lifecycle-0000abcd_acp-provider",
+    "antnest-lifecycle-0000abcd_registry-clients",
+    "antnest-lifecycle-0000abcd_identity-clients",
+    "antnest-lifecycle-0000abcd_edge",
+    "antnest-lifecycle-0000abcd_observability",
+  ]);
+  const grants = args.filter((value) => value.includes(":/run/auth/"));
+  assert.equal(grants.length, 3);
+  assert(
+    grants.includes(
+      "/work/artifacts/credentials/agent-ui/tokens/agent-acp-service:/run/auth/agent-ui-acp:ro",
+    ),
+  );
+  assert(
+    grants.includes(
+      "/work/artifacts/credentials/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro",
+    ),
+  );
+  assert(args.includes("--add-host=agent-acp-service:10.244.7.5"));
+});
+
+test("private ACP network admission requires an explicit boolean", () => {
+  for (const privateACP of ["true", 1, null])
+    assert.throws(() => skillClientArgs(config, { privateACP }));
+});

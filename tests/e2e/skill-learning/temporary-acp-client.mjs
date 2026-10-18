@@ -1,7 +1,7 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { connectACP } from "../identity-closeout/acp-connection.mjs";
+import { openSkillACP, withSkillACPClient } from "./private-client.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
 import { temporarySkillArchive } from "../../support/temporary-skill-fixture.mjs";
@@ -10,13 +10,19 @@ const mode = process.env.ANTNEST_E2E_TEMPORARY_MODE,
 assert(agentId && ["use", "cancel", "restart", "retry"].includes(mode));
 const memberClient = new GatewayClient("http://edge-gateway:8080");
 const cookie = process.env.ANTNEST_E2E_MEMBER_COOKIE;
+let principal;
 if (cookie) {
   for (const pair of cookie.split("; ")) {
     const index = pair.indexOf("=");
     assert(index > 0);
     memberClient.cookies.set(pair.slice(0, index), pair.slice(index + 1));
   }
-} else await memberClient.request("/api/session/login", { body: member });
+  principal = (await memberClient.request("/api/session")).body.principal;
+} else {
+  principal = (
+    await memberClient.request("/api/session/login", { body: member })
+  ).body.principal;
+}
 if (mode === "use") {
   const admin = new GatewayClient(memberClient.base);
   await admin.request("/api/session/login", {
@@ -46,7 +52,8 @@ if (mode === "use") {
   assert.equal(reply.status, 201);
   assert.equal((await reply.json()).name, "temporary-procedure");
 }
-const acp = connectACP(1, agentId, memberClient.cookie, {
+const acp = await openSkillACP(1, agentId, memberClient, {
+  principal,
   requestPermission: ({ params }) => ({
     outcome: {
       outcome: "selected",
@@ -55,8 +62,7 @@ const acp = connectACP(1, agentId, memberClient.cookie, {
     },
   }),
 });
-try {
-  await acp.initialize();
+await withSkillACPClient(acp, async () => {
   const { sessionId } = await until(
     async () => {
       try {
@@ -126,6 +132,4 @@ try {
       }),
     );
   }
-} finally {
-  await acp.close();
-}
+});

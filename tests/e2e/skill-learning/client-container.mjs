@@ -1,16 +1,29 @@
+import assert from "node:assert/strict";
 import { grantContainerArgs } from "../../support/service-grants.mjs";
 
-// docker run arguments for a test client container. Every client reaches
-// edge-gateway on gateway-ingress and the model fixture on acp-provider;
-// grants add the receiver's private network and its disposable credential.
-export function skillClientArgs(config, { grants = [] } = {}) {
-  const granted = grantContainerArgs(config, grants);
+// Plain clients retain their original networks and grants. Only private ACP
+// consumers also reach Identity, ACP and the actual CLIENT trace exporter.
+export function skillClientArgs(
+  config,
+  { grants = [], privateACP = false } = {},
+) {
+  assert.equal(typeof privateACP, "boolean");
+  const wanted = [
+    ...new Set([
+      ...grants,
+      ...(privateACP ? ["gateway-identity", "agent-ui-acp"] : []),
+    ]),
+  ];
+  const granted = grantContainerArgs(config, wanted);
   return [
     "--label",
     `com.docker.compose.project=${config.project}`,
-    ...["gateway-ingress", "acp-provider", ...granted.networks].flatMap(
-      (network) => ["--network", `${config.project}_${network}`],
-    ),
+    ...[
+      "gateway-ingress",
+      "acp-provider",
+      ...granted.networks,
+      ...(privateACP ? ["observability"] : []),
+    ].flatMap((network) => ["--network", `${config.project}_${network}`]),
     ...granted.args,
   ];
 }

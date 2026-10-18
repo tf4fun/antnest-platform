@@ -11,6 +11,22 @@ const closeReasons = new Set([
   "relay_capacity",
 ]);
 
+export async function collectLearningFailureEvidence(error, captures) {
+  const errors = [error];
+  for (const capture of captures) {
+    try {
+      await capture();
+    } catch (captureError) {
+      errors.push(captureError);
+    }
+  }
+  if (errors.length === 1) throw error;
+  throw new AggregateError(
+    errors,
+    "Learning failure evidence could not be captured",
+  );
+}
+
 function notice(value) {
   if (!kinds.has(value?.kind) || !changeID.test(value?.changeId ?? ""))
     return null;
@@ -34,13 +50,17 @@ export async function learningClientFailure(
     };
   }
   const persisted = notice(persistedNotice);
+  const connectionTraceID =
+    client.boundary === "private-acp"
+      ? client.connectionTraceID
+      : client.observedConnectionTraceID;
   return {
     status: "skill_learning_client_failed",
     phase,
     started_at: startedAt,
     observed_at: now(),
-    connection_trace_id: traceID.test(client.observedConnectionTraceID ?? "")
-      ? client.observedConnectionTraceID
+    connection_trace_id: traceID.test(connectionTraceID ?? "")
+      ? connectionTraceID
       : null,
     close,
     update_count: client.updates.length,
@@ -60,24 +80,33 @@ export async function learningClientFailure(
 export function learningFailureBoundary(emit) {
   let captured = false;
   return async (client, state, run) => {
+    const errors = [];
+    let result;
     try {
-      return await run();
+      result = await run();
     } catch (error) {
+      errors.push(error);
       if (!captured) {
         captured = true;
         try {
           await emit(await learningClientFailure(client, state()));
         } catch (captureError) {
-          throw new AggregateError(
-            [error, captureError],
-            "Learning failure evidence could not be captured",
-          );
+          errors.push(captureError);
         }
       }
-      throw error;
-    } finally {
-      client.close();
     }
+    try {
+      await client.closeAndWait();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length)
+      throw new AggregateError(
+        errors,
+        "Learning work, evidence or cleanup failed",
+      );
+    return result;
   };
 }
 

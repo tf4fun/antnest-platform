@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { connectACP } from "../identity-closeout/acp-connection.mjs";
+import { openSkillACP } from "./private-client.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../workspace-closeout/c4-setup.mjs";
 import { learningFailureBoundary } from "./automatic-failure.mjs";
@@ -15,15 +15,17 @@ assert(["create", "update", "verify"].includes(mode));
 assert(!peer || mode === "create");
 const gateway = "http://edge-gateway:8080";
 const member = new GatewayClient(gateway);
-await member.request("/api/session/login", {
+const login = await member.request("/api/session/login", {
   body: {
     organization_slug: "stage3",
     email: "c4-member@example.com",
     password: "c4-member-password",
   },
 });
+const principal = login.body.principal;
 const startedAt = Date.now();
-const client = connectACP(1, agentId, member.cookie, {
+const client = await openSkillACP(1, agentId, member, {
+  principal,
   clientCapabilities: { session: { notices: {} } },
 });
 const setup = { cwd: "/workspace", mcpServers: [] };
@@ -36,7 +38,6 @@ await withFailure(
   client,
   () => ({ phase, startedAt, persistedNotice }),
   async () => {
-    await client.initialize();
     phase = `${mode}-session`;
     if (mode === "create") {
       ({ sessionId } =
@@ -262,9 +263,10 @@ await withFailure(
           ])
         assert(model.requests.includes(kind), `missing model phase: ${kind}`);
       if (!uiOffline) {
-        client.close();
+        await client.closeAndWait();
         const reconnectStartedAt = Date.now();
-        const reconnected = connectACP(1, agentId, member.cookie, {
+        const reconnected = await openSkillACP(1, agentId, member, {
+          principal,
           clientCapabilities: { session: { notices: {} } },
         });
         await withFailure(
@@ -275,7 +277,6 @@ await withFailure(
             persistedNotice,
           }),
           async () => {
-            await reconnected.initialize();
             await reconnected.request("load", { ...setup, sessionId });
             const restored = await until(
               async () => {

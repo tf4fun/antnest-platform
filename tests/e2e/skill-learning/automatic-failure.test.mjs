@@ -10,6 +10,42 @@ const traceID = "a".repeat(32);
 const changeID = "bbbbbbbb-bbbb-4bbb-abbb-bbbbbbbbbbbb";
 const privateText = "private-cookie-prompt-and-notice-body";
 
+test("host failure capture attempts every archive and retains the original failure", async () => {
+  assert.equal(typeof failures.collectLearningFailureEvidence, "function");
+  const business = new Error("container failed"),
+    log = new Error("log archive failed"),
+    query = new Error("SQL archive failed");
+  const order = [];
+  await assert.rejects(
+    () =>
+      failures.collectLearningFailureEvidence(business, [
+        async () => {
+          order.push("log");
+          throw log;
+        },
+        async () => {
+          order.push("SQL");
+          throw query;
+        },
+      ]),
+    (error) => {
+      assert.deepEqual(error.errors, [business, log, query]);
+      return true;
+    },
+  );
+  assert.deepEqual(order, ["log", "SQL"]);
+  await assert.rejects(
+    () =>
+      failures.collectLearningFailureEvidence(business, [
+        async () => {
+          order.push("saved");
+        },
+      ]),
+    (error) => error === business,
+  );
+  assert.equal(order.at(-1), "saved");
+});
+
 test("failed learning retains the actual connection, remote close and persisted notice without payloads", async () => {
   const failure = await learningClientFailure(
     {
@@ -211,6 +247,20 @@ test("the observed upgrade trace wins over the attempted parent", async () => {
   assert.equal(failure.connection_trace_id, observed);
 });
 
+test("a private learning failure uses its actual exporting CLIENT trace", async () => {
+  const actual = "c".repeat(32);
+  const failure = await learningClientFailure(
+    {
+      boundary: "private-acp",
+      connectionTraceID: actual,
+      observedConnectionTraceID: "f".repeat(32),
+      updates: [],
+    },
+    { phase: "create-live-notice", startedAt: 1000 },
+  );
+  assert.equal(failure.connection_trace_id, actual);
+});
+
 test("a missing diagnostic record is distinct from a connection without an observed trace", async () => {
   const result = await captureLearningFailureTraces({
     logs: "stderr only",
@@ -231,7 +281,7 @@ test("nested connection failure captures the reconnect before cleanup and emits 
   const client = (id, name) => ({
     observedConnectionTraceID: id,
     updates: [],
-    close() {
+    closeAndWait() {
       order.push(name);
       this.closeCode = 1000;
     },
@@ -247,7 +297,7 @@ test("nested connection failure captures the reconnect before cleanup and emits 
       original,
       () => ({ phase: "update", startedAt: 1000 }),
       async () => {
-        original.close();
+        await original.closeAndWait();
         await boundary(
           reconnect,
           () => ({ phase: "update-reconnect", startedAt: 2000 }),
@@ -278,7 +328,7 @@ test("a diagnostic emitter failure preserves the business error and still closes
     boundary(
       {
         updates: [],
-        close: () => {
+        closeAndWait: async () => {
           closed = true;
         },
       },
@@ -293,6 +343,56 @@ test("a diagnostic emitter failure preserves the business error and still closes
       actual.errors[1] === captureError,
   );
   assert.equal(closed, true);
+});
+
+test("learning failure joins asynchronous cleanup and preserves business, archive and cleanup failures", async () => {
+  const business = new Error("business failure"),
+    archive = new Error("archive failure"),
+    cleanup = new Error("cleanup failure");
+  const order = [];
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const boundary = failures.learningFailureBoundary(() => {
+    order.push("archive");
+    throw archive;
+  });
+  let completed = false;
+  const operation = boundary(
+    {
+      updates: [],
+      async closeAndWait() {
+        order.push("close-start");
+        await held;
+        order.push("close-end");
+        throw cleanup;
+      },
+    },
+    () => ({ phase: "create-prompt", startedAt: 1000 }),
+    () => {
+      throw business;
+    },
+  );
+  const observed = operation.then(
+    () => {
+      completed = true;
+      return null;
+    },
+    (error) => {
+      completed = true;
+      return error;
+    },
+  );
+  await new Promise(setImmediate);
+  assert.equal(completed, false);
+  assert.deepEqual(order, ["archive", "close-start"]);
+  release();
+  const error = await observed;
+  const flatten = (value) =>
+    value instanceof AggregateError ? value.errors.flatMap(flatten) : [value];
+  assert.deepEqual(flatten(error), [business, archive, cleanup]);
+  assert.deepEqual(order, ["archive", "close-start", "close-end"]);
 });
 
 test("an unavailable trace response cancels its held body before completing", async () => {

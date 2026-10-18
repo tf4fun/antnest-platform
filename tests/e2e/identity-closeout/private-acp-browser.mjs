@@ -77,8 +77,14 @@ export async function openBrowserPrivateACP(
     client.initializationResult = initializationResult;
     return client;
   } catch (error) {
-    await client.closeAndWait();
-    signal?.throwIfAborted();
+    try {
+      await client.closeAndWait();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Private ACP initialization and cleanup failed",
+      );
+    }
     throw error;
   }
 }

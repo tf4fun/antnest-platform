@@ -80,7 +80,7 @@ async function fixture(t, override = {}) {
         {
           principal,
           service,
-          telemetry: transport.telemetry,
+          telemetry: override.telemetry ?? transport.telemetry,
           endpoint: `${transport.origin}/v${version}/acp`,
           secrets,
           signal,
@@ -246,3 +246,101 @@ test(
     assert.equal(f.messages.length, 1);
   },
 );
+
+test("private initialization and cleanup failures retain both original errors", async (t) => {
+  const override = { initializeError: true };
+  const f = await fixture(t, override);
+  const cleanupError = new Error("controlled private close failure");
+  let failClose = true;
+  override.telemetry = {
+    ...f.telemetry,
+    startUpgrade(version) {
+      const upgrade = f.telemetry.startUpgrade(version);
+      return {
+        ...upgrade,
+        end(status, reason) {
+          upgrade.end(status, reason);
+          if (reason === "cancelled" && failClose) {
+            failClose = false;
+            throw cleanupError;
+          }
+        },
+      };
+    },
+  };
+  await assert.rejects(
+    () => f.open(1),
+    (error) => {
+      assert(error instanceof AggregateError);
+      assert.equal(error.errors.length, 2);
+      assert.equal(error.errors[0].code, -32603);
+      assert.match(error.errors[0].message, /fixture initialize refused/);
+      assert.strictEqual(error.errors[1], cleanupError);
+      return true;
+    },
+  );
+});
+
+test("a failed close diagnostic still joins the original private transport before rejecting", async (t) => {
+  const f = await privateTransportFixture(t);
+  const failure = new Error("controlled upgrade diagnostic failure");
+  let failOnce = true;
+  const client = f.connect(1, {
+    ...f.options(1),
+    telemetry: {
+      ...f.telemetry,
+      startUpgrade(version) {
+        const upgrade = f.telemetry.startUpgrade(version);
+        return {
+          ...upgrade,
+          end(status, reason) {
+            upgrade.end(status, reason);
+            if (reason === "cancelled" && failOnce) {
+              failOnce = false;
+              throw failure;
+            }
+          },
+        };
+      },
+    },
+  });
+  await client.initialize();
+  await assert.rejects(client.closeAndWait(), (error) => error === failure);
+  assert.equal(
+    typeof client.closeCode,
+    "number",
+    "the original close event must already be joined",
+  );
+  const receipt = await client.waitForClose(1);
+  assert.equal(receipt.localClose, true);
+});
+
+test("cancellation during cleanup cannot replace the original initialization rejection", async (t) => {
+  const controller = new AbortController();
+  const override = { initializeError: true };
+  const f = await fixture(t, override);
+  const cancelled = new Error("cancelled during failed initialization cleanup");
+  override.telemetry = {
+    ...f.telemetry,
+    startUpgrade(version) {
+      const upgrade = f.telemetry.startUpgrade(version);
+      return {
+        ...upgrade,
+        end(status, reason) {
+          upgrade.end(status, reason);
+          if (reason === "cancelled") controller.abort(cancelled);
+        },
+      };
+    },
+  };
+  await assert.rejects(
+    () => f.open(1, controller.signal),
+    (error) => {
+      assert.equal(error.code, -32603);
+      assert.match(error.message, /fixture initialize refused/);
+      assert.notStrictEqual(error, cancelled);
+      return true;
+    },
+  );
+  assert.equal(controller.signal.aborted, true);
+});

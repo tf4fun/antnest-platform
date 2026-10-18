@@ -253,12 +253,24 @@ export function connectACP(version, agent, cookie, options = {}) {
   const close = () => {
     notifications?.stop();
     peerClose.markLocalClose();
-    privateTransport?.upgrade.end(upgradeStatus, "cancelled");
-    const wasOpen = !connection.signal.aborted;
-    connection.close();
-    // The SDK may already have closed because of a protocol or write failure.
-    // Only the original reason created by our own close proves local closure.
-    if (wasOpen) localCloseCause = connection.signal.reason;
+    const errors = [];
+    try {
+      privateTransport?.upgrade.end(upgradeStatus, "cancelled");
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      const wasOpen = !connection.signal.aborted;
+      connection.close();
+      // The SDK may already have closed because of a protocol or write failure.
+      // Only the original reason created by our own close proves local closure.
+      if (wasOpen) localCloseCause = connection.signal.reason;
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length)
+      throw new AggregateError(errors, "ACP close and diagnostic failed");
   };
   const closeAndWait = ({ graceMs = 1000 } = {}) => {
     assert(Number.isFinite(graceMs) && graceMs > 0 && graceMs <= 5000);
@@ -267,6 +279,10 @@ export function connectACP(version, agent, cookie, options = {}) {
       let receipt;
       try {
         close();
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
         try {
           receipt = await peerClose.wait(graceMs);
         } catch {

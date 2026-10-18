@@ -44,6 +44,7 @@ import {
 } from "../security/stack.mjs";
 import { rotatePlatformKeys } from "../encryption-key-rotation/flow.mjs";
 import { skillClientArgs } from "./client-container.mjs";
+import { collectLearningFailureEvidence } from "./automatic-failure.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const debugLearning = process.env.ANTNEST_E2E_SKILL_LEARNING_DEBUG === "true";
@@ -622,7 +623,7 @@ test(
               "run",
               "--name",
               clientName,
-              ...skillClientArgs(config),
+              ...skillClientArgs(config, { privateACP: true }),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
@@ -967,6 +968,7 @@ test(
               "--name",
               clientName,
               ...skillClientArgs(config, {
+                privateACP: true,
                 grants: [
                   "acp-controller",
                   "console-controller",
@@ -1146,6 +1148,8 @@ test(
               output: propagationOutput(),
             });
           const clientName = `${config.project}-discovery-tools`;
+          const outputDir = `${root}/artifacts/verification/skill-discovery-d3-20261001`;
+          await mkdir(outputDir, { recursive: true, mode: 0o700 });
           let output;
           try {
             output = await docker(
@@ -1153,15 +1157,21 @@ test(
                 "run",
                 "--name",
                 clientName,
-                ...skillClientArgs(config),
+                ...skillClientArgs(config, { privateACP: true }),
                 "-e",
                 `ANTNEST_E2E_AGENT_ID=${targetId}`,
                 "-e",
                 `ANTNEST_E2E_SOURCE_AGENT_ID=${fixture.agentID}`,
                 "-e",
                 `ANTNEST_E2E_SKILL_TEMPORARY=${temporaryTools}`,
+                "-e",
+                `ANTNEST_E2E_PRIVATE_STATE_EVIDENCE=/private-evidence/${config.project}-state.json`,
+                "-v",
+                `${outputDir}:/private-evidence`,
                 "-v",
                 `${root}/tests:/app/tests:ro`,
+                "-v",
+                `${root}/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro`,
                 image,
                 "node",
                 "/app/tests/e2e/skill-learning/discovery-tools-client.mjs",
@@ -1169,25 +1179,26 @@ test(
               true,
             );
           } catch (error) {
-            const outputDir = `${root}/artifacts/verification/skill-discovery-d3-20261001`;
-            await mkdir(outputDir, { recursive: true, mode: 0o700 });
-            await writeFile(
-              `${outputDir}/${config.project}-tools-client.log`,
-              logs(clientName),
-              { flag: "wx", mode: 0o600 },
-            );
-            await writeFile(
-              `${outputDir}/${config.project}-tools-failure.json`,
-              JSON.stringify({
-                source_agent_id: fixture.agentID,
-                target_agent_id: targetId,
-                runs: await sql(
-                  `SELECT json_agg(json_build_object('run_id',r.id,'state',r.state,'error_class',r.error_class,'tools',(SELECT json_agg(json_build_object('name',a.tool_name,'source',a.source,'state',a.state,'effect',a.tool_effect_state)) FROM tool_attempts a WHERE a.run_id=r.id))) FROM runs r JOIN acp_sessions s ON s.id=r.session_id WHERE s.agent_id='${targetId}'`,
+            await collectLearningFailureEvidence(error, [
+              () =>
+                writeFile(
+                  `${outputDir}/${config.project}-tools-client.log`,
+                  logs(clientName),
+                  { flag: "wx", mode: 0o600 },
                 ),
-              }),
-              { flag: "wx", mode: 0o600 },
-            );
-            throw error;
+              async () =>
+                writeFile(
+                  `${outputDir}/${config.project}-tools-failure.json`,
+                  JSON.stringify({
+                    source_agent_id: fixture.agentID,
+                    target_agent_id: targetId,
+                    runs: await sql(
+                      `SELECT json_agg(json_build_object('run_id',r.id,'state',r.state,'error_class',r.error_class,'tools',(SELECT json_agg(json_build_object('name',a.tool_name,'source',a.source,'state',a.state,'effect',a.tool_effect_state)) FROM tool_attempts a WHERE a.run_id=r.id))) FROM runs r JOIN acp_sessions s ON s.id=r.session_id WHERE s.agent_id='${targetId}'`,
+                    ),
+                  }),
+                  { flag: "wx", mode: 0o600 },
+                ),
+            ]);
           }
           await docker(["rm", clientName]);
           discoveryToolEvidence = JSON.parse(output.trim().split("\n").at(-1));
@@ -1574,7 +1585,7 @@ test(
               "run",
               "--name",
               verifyClientName,
-              ...skillClientArgs(config),
+              ...skillClientArgs(config, { privateACP: true }),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",

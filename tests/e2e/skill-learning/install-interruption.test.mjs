@@ -314,7 +314,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
             "run",
             "--name",
             clientName,
-            ...skillClientArgs(config),
+            ...skillClientArgs(config, { privateACP: true }),
             "-e",
             `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
             ...env.flatMap((value) => ["-e", value]),
