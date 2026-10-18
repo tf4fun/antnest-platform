@@ -45,13 +45,14 @@ function errorEvent(span, stage, code, message, causes) {
   return event;
 }
 
-// Only the dispatched Progress cancellation path uses this proof. A closed
-// connection never changes the unknown business result into parsed success.
+// Response-start is the default Progress precondition. The Workspace consumer
+// cancels after physical process start and explicitly admits the earlier HTTP
+// abort branch, with the same complete unknown-effect execution proof.
 export function inspectProgressCancellation(
   trace,
   owner,
   identity,
-  { kind, toolName },
+  { kind, toolName, allowInvocationBeforeHeaders = false },
 ) {
   assert(["bash", "managed"].includes(kind));
   assert.equal(toolName, kind === "bash" ? "bash" : "mcp__fixture__progress");
@@ -59,7 +60,7 @@ export function inspectProgressCancellation(
     trace,
     owner,
     identity,
-    { toolName },
+    { toolName, allowInvocationBeforeHeaders },
   );
   const {
     tree,
@@ -108,14 +109,18 @@ export function inspectProgressCancellation(
   for (const pair of proof.exchanges) {
     const { client, server, operation } = pair,
       cancelled = pair === invocation;
+    const beforeHeaders =
+      allowInvocationBeforeHeaders &&
+      cancelled &&
+      tag(server, "http.response.status_code") === undefined;
     const outcome = cancelled ? "error" : "success",
       code = cancelled ? operationCode : "";
-    http200(server);
+    if (!beforeHeaders) http200(server);
     eventsInside(server, true);
     eventsInside(operation, true);
     expected(server, { "antnest.protocol.outcome": outcome });
     const bytes = tag(server, "http.response.body.size");
-    assert(Number.isSafeInteger(bytes) && bytes > 0);
+    if (!beforeHeaders) assert(Number.isSafeInteger(bytes) && bytes > 0);
     if (!cancelled)
       assert.equal(
         bytes,
@@ -162,6 +167,35 @@ export function inspectProgressCancellation(
         "discovery executed extra work",
       );
       check(operation, {}, eventMap([completed]));
+    }
+    if (beforeHeaders) {
+      // The request future ended before Runtime created HttpCompletion. Preserve
+      // absent response metadata; the child operation/tool/executor still must
+      // prove their original outcome_unknown completion below.
+      expected(client, { "http.response.status_code": undefined });
+      expected(server, {
+        "http.status_code": undefined,
+        "http.response.body.size": undefined,
+        "http.transport.outcome": undefined,
+        "http.transport.error.type": undefined,
+        "error.type": code,
+      });
+      assert([undefined, "UNSET", 0].includes(tag(server, "otel.status_code")));
+      assert(ownedCancellations.has(client));
+      assert(
+        operation.startTime >= server.startTime &&
+          end(operation) <= end(server),
+      );
+      check(
+        server,
+        {
+          "antnest.protocol.outcome": "error",
+          "error.type": code,
+        },
+        new Map(),
+      );
+      ownedCancellations.add(server);
+      continue;
     }
     // Client disconnect and dispatch completion are independently scheduled.
     // The HTTP completion event does not prove the Runtime operation joined.

@@ -29,7 +29,7 @@ export function inspectRuntimeToolCancellationConnection(
   trace,
   owner,
   identity,
-  { toolName },
+  { toolName, allowInvocationBeforeHeaders = false },
 ) {
   const proof = inspectRuntimeToolInventory(trace, owner, identity);
   const {
@@ -129,14 +129,25 @@ export function inspectRuntimeToolCancellationConnection(
 
   for (const pair of proof.exchanges) {
     const { client } = pair;
-    http200(client);
+    const beforeHeaders =
+      allowInvocationBeforeHeaders &&
+      pair === invocation &&
+      tag(client, "http.response.status_code") === undefined;
+    if (beforeHeaders)
+      expected(client, {
+        "http.status_code": undefined,
+        "http.response.body.size": undefined,
+      });
+    else {
+      http200(client);
+      assert(
+        Number.isSafeInteger(tag(client, "http.response.body.size")) &&
+          tag(client, "http.response.body.size") >= 0,
+        "missing actual received byte count",
+      );
+    }
     eventsInside(client);
     assert(client.startTime >= owner.startTime);
-    assert(
-      Number.isSafeInteger(tag(client, "http.response.body.size")) &&
-        tag(client, "http.response.body.size") >= 0,
-      "missing actual received byte count",
-    );
     nodeBefore(
       client,
       owner,

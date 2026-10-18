@@ -226,7 +226,7 @@ test-workspace-fixtures:
 	node --test --test-concurrency=1 tests/e2e/workspace-closeout/*.test.mjs
 
 e2e-workspace:
-	node tests/e2e/workspace-closeout/run.mjs
+	node tests/support/authenticated-shell-e2e.mjs workspace
 
 .PHONY: e2e-workspace-browser
 e2e-workspace-browser:

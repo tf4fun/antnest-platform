@@ -38,6 +38,8 @@ function errorStatus(span) {
   return allowed;
 }
 
+export { parsedTool as inspectProgressParsedTool };
+
 function parsedTool(trace, owner, identity, kind, ending, toolName) {
   const proof = inspectRuntimeToolLifecycle(trace, owner, identity);
   const failed = kind === "managed" && ending === "failure";

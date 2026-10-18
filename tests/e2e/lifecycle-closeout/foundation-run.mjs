@@ -36,6 +36,11 @@ import { lossFailures } from "./loss-private-session.mjs";
 import { restoreFailures } from "./restore-private-session.mjs";
 import { shutdownFailures } from "./shutdown-private-flow.mjs";
 import {
+  workspaceFailures,
+  workspacePublicResult,
+} from "../workspace-closeout/private-flow.mjs";
+import { workspacePrivateAdmission } from "../workspace-closeout/private-evidence.mjs";
+import {
   shutdownPrivateAdmission,
   shutdownPublicResult,
 } from "./shutdown-private-evidence.mjs";
@@ -115,6 +120,7 @@ export async function runFoundation(
     if (profile === "restore") configureFoundationPrivate(config);
     if (profile === "skill-restore") configureFoundationPrivate(config);
     if (profile === "shutdown") configureFoundationPrivate(config);
+    if (profile === "workspace") configureFoundationPrivate(config);
     if (profile === "health") configureHealthPrivate(config);
     if (
       [
@@ -194,7 +200,9 @@ export async function runFoundation(
                   ? inspectFoundationPrivateDeployment(rows, config)
                   : profile === "shutdown"
                     ? inspectFoundationPrivateDeployment(rows, config)
-                    : rows;
+                    : profile === "workspace"
+                      ? inspectFoundationPrivateDeployment(rows, config)
+                      : rows;
     if (profile === "interrupted") {
       const { inspectUpdateProxyDeployment } =
         await import("./interrupted-current.mjs");
@@ -281,6 +289,10 @@ export async function runFoundation(
       shutdownFailures(result.shutdownErrors);
       admission = shutdownPrivateAdmission(result);
     }
+    if (profile === "workspace") {
+      workspaceFailures(result.workspaceErrors);
+      admission = workspacePrivateAdmission(result);
+    }
   } catch (error) {
     failure =
       profile === "network" && result?.networkErrors?.length
@@ -304,7 +316,12 @@ export async function runFoundation(
                   [...new Set([...result.shutdownErrors, error])],
                   "Shutdown evidence and final admission failed",
                 )
-              : error;
+              : profile === "workspace" && result?.workspaceErrors?.length
+                ? new AggregateError(
+                    [...new Set([...result.workspaceErrors, error])],
+                    "Workspace evidence and final admission failed",
+                  )
+                : error;
     if (config?.evidence) {
       try {
         writeEvidenceFile(
@@ -401,6 +418,10 @@ export async function runFoundation(
     ...(result.active_run_rebuild?.run_traces ?? result.request_traces ?? []),
     ...(result.policy_traces ?? []),
     ...(result.watch_traces ?? []),
+    ...(result.state_traces ?? []),
+    ...(result.notification_traces ?? []),
+    ...(result.authority_traces ?? []),
+    ...(result.offboarding_traces ?? []),
   ];
   const strictCode =
     admission?.strict_exit ?? foundationTraceExitCode(traceEvidence);
@@ -430,7 +451,9 @@ export async function runFoundation(
                   ? skillRestorePublicResult(result)
                   : profile === "shutdown"
                     ? shutdownPublicResult(result)
-                    : result),
+                    : profile === "workspace"
+                      ? workspacePublicResult(result)
+                      : result),
       ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",

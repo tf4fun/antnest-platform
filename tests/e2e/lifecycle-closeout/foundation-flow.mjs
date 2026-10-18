@@ -35,6 +35,7 @@ import {
   recordRestoreFailures,
 } from "./restore-private-session.mjs";
 import { recordShutdownFailures } from "./shutdown-private-flow.mjs";
+import { collectWorkspaceLifecycles } from "../workspace-closeout/private-flow.mjs";
 import {
   waitForAgentReady,
   assertAgentDisabled,
@@ -316,6 +317,15 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       ready,
       traceSecrets,
     });
+    if (result.profile === "workspace-protocol")
+      return collectWorkspaceLifecycles(
+        result,
+        admitted,
+        (operation) =>
+          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, error) => saveFoundationFailure(config, operation, error),
+        signal,
+      );
     if (result.profile === "shutdown") {
       result.private_shutdown.lifecycle_admissions = structuredClone(admitted);
       const errors = [];

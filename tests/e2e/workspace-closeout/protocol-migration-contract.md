@@ -3,8 +3,10 @@
 `make e2e-workspace` must preserve the complete protocol scenario while moving
 the retired public execution-state and direct ACP entrances to authenticated
 private ACP. Browser, upload and layout coverage belongs to the separate C4
-browser batch. This contract defines the migration acceptance; it does not claim
-that the current protocol entry has already been migrated.
+browser batch. The protocol entry now uses the private consumer. This contract
+defines its inventory, Trace admission and Docker acceptance. Local inventory,
+admission checks and the fresh-candidate protocol Docker run have passed.
+The independent C4 browser consumer remains the next Workspace batch.
 
 ## Deployment, identity and state
 
@@ -116,10 +118,18 @@ evidence. ACP's existing `1008 caller_context_expired` policy is unchanged;
 this migration adds no new idle-WebSocket revocation behavior.
 
 Automatic offboarding disables the Runtime while retaining the workspace and
-current Skill set. Validate its source-linked Temporal Disable trace. Delete
-then removes all owned assets. A retained unknown call can still require a
-Runtime barrier without a published Runtime revision; Disable/Rebuild/Delete
-accept only the explicitly expected barrier receipt, never `not_settled`.
+current Skill set. Preserve the original owner `active: false` request and its
+plain HTTP response snapshot. The public event envelope deliberately omits
+private `data`; bind its deterministic event ID to the original Agent and
+Identity revocation sequence, the matching receive/schedule spans and the
+actual `set-user-active` source. Validate its source-linked Temporal Disable trace. Delete
+then removes all owned assets. The first Rebuild requires
+`runtime_barrier_required` for the original unknown call; the second Rebuild
+and automatic Disable require `settled` for the completed work on their current
+Runtime revisions. Delete has no published Runtime revision and therefore still
+sees the retained unknown call across revisions; it requires
+`runtime_barrier_required`. Each operation accepts its exact expected outcome,
+never `not_settled` or a choice of either success outcome.
 
 Collect all five initialize, eleven original business and one revocation-probe
 request traces, the actual cancel notification, both state watches, offboarding
@@ -144,6 +154,14 @@ Tool and Runtime diagnostics, and offline completion's response-dispatch
 failure, require separate exact Workspace ownership. Busy/barrier errors and
 the cancel transaction retain their owning service checks. Do not borrow Loss
 unavailability or Shutdown process-shutdown exceptions.
+
+Workspace cancellation waits for physical process start, which may precede
+HTTP response headers. Its invocation may therefore retain an original
+AbortError with absent status/received-byte fields, and a Runtime SERVER with
+no response metadata or HTTP completion event. This branch still requires the
+same original `outcome_unknown` operation, tool and executor completion chain.
+Discovery and Progress's default response-start checks remain unchanged;
+missing fields must never be filled with a fabricated 200 or byte count.
 
 Every raw error must have its exact owning Span and reason; unrelated errors,
 missing parents, wrong Run/Runtime, capture defects and privacy leaks fail.

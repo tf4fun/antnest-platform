@@ -6,6 +6,17 @@ import {
 } from "./authenticated-shell-e2e.mjs";
 import * as shell from "./authenticated-shell-e2e.mjs";
 
+test("Workspace protocol uses fresh candidates and its private protocol entrypoint", () => {
+  assert.deepEqual(
+    shellComposeFiles("workspace"),
+    shellComposeFiles("lifecycle-health"),
+  );
+  assert.deepEqual(shell.shellEntrypoint("workspace"), [
+    "node",
+    "tests/e2e/workspace-closeout/run.mjs",
+  ]);
+});
+
 test("Shutdown gets fresh candidate images and retains its whole-platform maintenance profile", () => {
   assert.deepEqual(
     shellComposeFiles("lifecycle-shutdown"),
