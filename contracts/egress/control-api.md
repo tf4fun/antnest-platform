@@ -26,7 +26,7 @@ Control callers propagate W3C `traceparent` and optional `tracestate` headers.
 Invalid trace context is ignored without rejecting the business request.
 Runtime Egress does not accept `baggage` as part of its control contract.
 
-This document describes control contract revision 7.
+This document describes control contract revision 8.
 
 ## Status
 
@@ -121,8 +121,31 @@ have aggregate counters without Agent labels. See the
 { "state": "open", "expected_resource_version": 7, "runtime_endpoint": "10.243.1.20", "tunnel_key_id": "rtk_0123456789abcdef0123456789abcdef" }
 ```
 
-Attachment state is `closed` or `open` and has its own monotonic resource
+Attachment state is `closed`, `pending`, or `open` and has its own monotonic resource
 version. It never rewrites the Agent's desired policy.
+
+Revision 8 adds `pending` for a provisioned target whose current Runtime has no
+bindable peer. Pending omits both peer and key (or sends both as null). It has
+exactly the same probe-only packet gate as closed; it grants no outbound traffic.
+Ensure, policy changes and Egress recovery preserve that gate. New generation-key
+preparation still requires closed; exact replay of an existing prepared key is
+unchanged. Release also requires closed.
+
+Closed-to-pending and pending-to-closed are distinct CAS transitions and each
+consumes a version. A completed lifecycle may leave its target pending without
+occupying the lifecycle slot. Controller may bind that target's first fresh,
+matching running peer using the pending version, before health becomes ready.
+It never opens closed from observation. A later lifecycle close invalidates the
+old pending version, including requests delayed beyond their caller's timeout.
+An exact lost-response retry is allowed only for the immediately preceding CAS;
+newer lifecycle cycles cannot be borrowed. Pending is not executable availability.
+
+Deploy the Egress producer before enabling the Controller consumer. Older
+consumers remain compatible with closed/open; they must not be used after a
+newer Controller has persisted pending attachments. For rollback, stop producing
+pending transitions, use the revision 8 consumer to drain all pending attachments,
+and confirm its in-flight requests have ended. Only then roll back Controller,
+followed by Egress.
 
 Revision 7 binds each open attachment to the prepared `tunnel_key_id` and `runtime_endpoint`, the canonical IPv4
 address reported by RC for that Runtime on its management network. This is an
@@ -135,10 +158,10 @@ Ensure and Egress restart preserve the committed peer binding.
 
 Controller uses the provisioned lifecycle result and reconciles RC's current
 inspection before publishing execution readiness. Runtime restart/address
-changes rebind only an already-open attachment, using its current CAS version;
+changes rebind an already-open attachment, or first bind the completed target's pending attachment, using its current CAS version;
 observation cannot reopen an attachment closed by a lifecycle operation.
 Rebuild, Enable and source restoration bind the respective Runtime address.
-An unbound open route fails closed. A closed route has no outbound access and
+An unbound open route fails closed. A closed or pending route has no outbound access and
 may answer only the fixed local readiness probe from the packet contract.
 
 - Closing first installs a hard fence, drains packet writers, and clears

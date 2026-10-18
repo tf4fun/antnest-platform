@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["state", "expected_resource_version"],
   "properties": {
-    "state": {"enum": ["closed", "open"]},
+    "state": {"enum": ["closed", "pending", "open"]},
     "expected_resource_version": {"type": "integer", "minimum": 1},
     "runtime_endpoint": {"type": ["string", "null"], "format": "ipv4"},
     "tunnel_key_id": {"type": ["string", "null"], "pattern": "^rtk_[0-9a-f]{32}$"}
