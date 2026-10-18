@@ -50,7 +50,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   );
   assert.match(
     source,
-    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: result/u,
+    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: result/u,
   );
   const archiveIndex = source.indexOf(
     'writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result))',

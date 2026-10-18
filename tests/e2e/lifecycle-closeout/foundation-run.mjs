@@ -23,6 +23,14 @@ import {
   foundationPublicResult,
 } from "./foundation-private-evidence.mjs";
 import {
+  configureHealthPrivate,
+  inspectHealthPrivateDeployment,
+} from "./health-private-deployment.mjs";
+import {
+  healthPrivateAdmission,
+  healthPublicResult,
+} from "./health-private-evidence.mjs";
+import {
   foundationTraceExitCode,
   foundationAcceptedTraceExitCode,
 } from "./foundation-evidence.mjs";
@@ -77,6 +85,7 @@ export async function runFoundation(
     }
     configureFoundation(config);
     if (profile === "foundation") configureFoundationPrivate(config);
+    if (profile === "health") configureHealthPrivate(config);
     if (
       [
         "network",
@@ -143,7 +152,9 @@ export async function runFoundation(
     let baseRows =
       profile === "foundation"
         ? inspectFoundationPrivateDeployment(rows, config)
-        : rows;
+        : profile === "health"
+          ? inspectHealthPrivateDeployment(rows, config)
+          : rows;
     if (profile === "network") {
       const { inspectNetworkTarget } = await import("./network-current.mjs");
       inspectNetworkTarget(rows, config);
@@ -217,6 +228,7 @@ export async function runFoundation(
     writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result));
     if (profile === "foundation")
       admission = foundationPrivateAdmission(result);
+    if (profile === "health") admission = healthPrivateAdmission(result);
   } catch (error) {
     failure = error;
     if (config?.evidence) {
@@ -330,7 +342,11 @@ export async function runFoundation(
           : profile === "crash"
             ? "business_and_recovery_topology_passed"
             : "business_and_topology_passed",
-      ...(profile === "foundation" ? foundationPublicResult(result) : result),
+      ...(profile === "foundation"
+        ? foundationPublicResult(result)
+        : profile === "health"
+          ? healthPublicResult(result)
+          : result),
       ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",

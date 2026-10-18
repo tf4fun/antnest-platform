@@ -269,6 +269,20 @@ a new process cannot reuse the old executable binding. An explicit rebuild
 restores availability with the same workspace and new revisions. No Run or
 model call is allowed.
 
+`make e2e-lifecycle-health` builds fresh scoped candidate images and validates
+the original fifteen-service deployment and Runtime image. Its Health-only
+relay publishes two additional loopback ports for Identity and private ACP
+state; it opens no ACP protocol connection. Each read delegates the original
+member Session/Principal, validates the complete state contract, and retains
+the raw response privately. The whole Identity and ACP read has a 15-second
+budget clipped to the remaining original 60-second convergence window.
+Five distinct confirmations bind unhealthy, same-process recovery, and three
+post-restart observations to their actual Agent snapshots. Public output omits
+raw state. Cleanup joins pending reads and preserves both original and cleanup
+failures. Admission keeps the three lifecycle operations and zero Run/model
+inventory, retaining strict diagnostics under the existing lifecycle review
+policy. Other Lifecycle consumers remain separate delivery batches.
+
 ## Interrupted Runtime Update
 
 A transparent HTTP fixture holds one Agent's completed Runtime Update response.

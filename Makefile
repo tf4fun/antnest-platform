@@ -207,7 +207,7 @@ e2e-lifecycle-shutdown:
 
 .PHONY: e2e-lifecycle-health
 e2e-lifecycle-health:
-	node tests/e2e/lifecycle-closeout/run.mjs health
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-health
 
 .PHONY: e2e-lifecycle-restore
 e2e-lifecycle-restore:

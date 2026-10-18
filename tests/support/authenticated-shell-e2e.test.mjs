@@ -4,6 +4,25 @@ import {
   shellComposeFiles,
   shellFixtureEnvironment,
 } from "./authenticated-shell-e2e.mjs";
+import * as shell from "./authenticated-shell-e2e.mjs";
+
+test("Health gets a fresh scoped candidate and its own business profile", () => {
+  assert.deepEqual(shellComposeFiles("lifecycle-health"), [
+    "compose.yaml",
+    "compose.debug.yaml",
+    "tests/integration/deployment/compose.admission.yaml",
+  ]);
+  assert.equal(typeof shell.shellEntrypoint, "function");
+  assert.deepEqual(shell.shellEntrypoint("lifecycle-health"), [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "health",
+  ]);
+  assert.deepEqual(shell.shellEntrypoint("lifecycle"), [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+  ]);
+});
 
 test("stage1 uses the base deployment without publishing diagnostic ports", () => {
   assert.deepEqual(shellComposeFiles("stage1"), [

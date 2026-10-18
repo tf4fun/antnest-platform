@@ -36,12 +36,20 @@ const entrypoints = {
   stage2: ["sh", "tests/e2e/e2e-stage2.sh"],
   "runtime-controller": ["sh", "tests/e2e/runtime-controller/run.sh"],
   lifecycle: ["node", "tests/e2e/lifecycle-closeout/run.mjs"],
+  "lifecycle-health": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "health",
+  ],
 };
 
+export function shellEntrypoint(profile) {
+  assert(Object.hasOwn(entrypoints, profile));
+  return [...entrypoints[profile]];
+}
+
 export function shellComposeFiles(profile) {
-  assert(
-    ["stage1", "stage2", "runtime-controller", "lifecycle"].includes(profile),
-  );
+  shellEntrypoint(profile);
   return [
     "compose.yaml",
     ...(profile === "stage1" ? [] : ["compose.debug.yaml"]),
@@ -209,7 +217,7 @@ export async function runShellAcceptance(profile) {
     abort.signal.throwIfAborted();
     console.log(JSON.stringify({ profile, project, stage: "business" }));
     result = await runCommand({
-      command: entrypoints[profile],
+      command: shellEntrypoint(profile),
       cwd: root,
       env,
       output,
