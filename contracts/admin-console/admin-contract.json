@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 54,
+  "version": 55,
   "scim_lifecycle_policy": "../identity/scim-lifecycle-policy.json",
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
@@ -479,6 +479,8 @@
     },
     "agent_network_policy": {
       "authority": "agent_controller_scopes_egress_assignment",
+      "attachment_states": ["open", "closed", "pending"],
+      "attachment_snapshot": "last_confirmed_read_not_live_health_or_execution",
       "input": ["action", "expected_resource_version"],
       "action": ["allow_all", "deny_all"],
       "query": "reject_all",

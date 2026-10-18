@@ -129,7 +129,7 @@ func projectNetworkPolicy(body []byte, agentID string) ([]byte, error) {
 	}
 	if json.Unmarshal(body, &source) != nil || source.AgentID != agentID || !networkPolicyKey.MatchString(source.Policy.PolicyID) || source.Policy.Revision == 0 ||
 		!browserVersionValid(source.Policy.ResourceVersion) || source.Policy.Spec.SchemaVersion != 1 || !networkActionValid(source.Policy.Spec.Action) || !networkPolicyDigest.MatchString(source.Policy.Digest) ||
-		!browserVersionValid(source.Attachment.ResourceVersion) || (source.Attachment.State != "open" && source.Attachment.State != "closed") {
+		!browserVersionValid(source.Attachment.ResourceVersion) || (source.Attachment.State != "open" && source.Attachment.State != "closed" && source.Attachment.State != "pending") {
 		return nil, fmt.Errorf("invalid policy read projection")
 	}
 	return json.Marshal(networkPolicyView{networkPolicyAssignmentView: networkPolicyAssignmentView{AgentID: agentID, Action: source.Policy.Spec.Action, ResourceVersion: source.Policy.ResourceVersion}, Attachment: source.Attachment})

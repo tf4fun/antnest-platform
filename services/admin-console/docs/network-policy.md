@@ -5,7 +5,7 @@ Console: its service boundary, browser state model and recovery rules.
 
 ## Service Boundary
 
-Console is a thin management client of Agent Controller control contract 16.
+Console is a thin management client of Agent Controller control contract 40.
 Only system or organization administrators may use these routes. Edge owns
 external authentication and CSRF enforcement; the BFF derives organization and
 actor from trusted headers, never from browser JSON or query parameters.
@@ -23,13 +23,20 @@ Controller's exact policy spec, not a policy ID/name heuristic.
 Network policy is an independently loaded Agent-detail section. Failure must
 not erase the Agent, its configuration or lifecycle history. Deleted/deleting
 Agents have no network control. Disabled Agents can save policy but do not
-resume traffic; lifecycle state/Runtime changes refresh the attachment read.
+resume traffic; lifecycle, Runtime condition/revision and executable execution
+revision changes refresh the attachment read.
 No periodic polling is introduced.
 
 The switch reflects the last confirmed desired policy, never an optimistic
 network-health assertion. A write disables duplicate actions until a conclusive
 response. Successful writes announce that the policy was saved; a closed
-attachment remains explicitly closed. The page does not certify packet flow.
+attachment remains explicitly closed. A `pending` attachment has no peer/key or
+execution authority and is shown as waiting for the Runtime, with traffic paused.
+Policy writes preserve that last confirmed attachment. A first peer can bind
+while Runtime is still starting without another Agent event; the existing manual
+refresh or later condition/ready/reconnect read observes the change. Available
+health alone never implies an open attachment. The page does not certify packet
+flow.
 
 Before PUT the browser retains its action, original expected version and request
 key in local storage keyed by organization, administrator, Agent and request ID.
@@ -86,6 +93,11 @@ sequenceDiagram
 
 Go service tests cover BFF principal/scope, projection, request identity and
 error classification. Browser component tests cover switch state, CAS conflict,
-response loss/reload, independent failures and late responses. Gateway-rooted
+response loss/reload, independent failures and late responses. Pending tests also
+cover ready publication while health remains available, manual refresh without a
+new event, and preservation of uncertain policy intent across attachment changes.
+The owning Console Docker gate exercises pending read, one policy CAS, unchanged
+pending read and independently opened refresh against signed dependency doubles.
+Gateway-rooted
 traces and real packet enforcement are verified by the platform Docker
 end-to-end suite, not by these Console tests.
