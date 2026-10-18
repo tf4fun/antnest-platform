@@ -29,8 +29,8 @@ same image is used by the [Tool progress](../acp-progress/README.md) and
 `secrets-docker.mjs 1|2` selects the SDK protocol version. The parent creates an
 isolated authenticated Compose project with separate service databases,
 uses synthetic local accounts, reads no `.env` or `.secret` file and calls no
-external LLM. Temporal has no host port; Gateway, PostgreSQL and Jaeger bind only
-to dynamically selected loopback ports. Do not run another build or test profile
+external LLM. Temporal has no host port; Gateway, PostgreSQL, Jaeger and the
+test-only private relays bind to dynamically selected loopback ports. Do not run another build or test profile
 concurrently.
 
 ## Scenario
@@ -92,19 +92,41 @@ Final lifecycle Traces prove publication, settlement and the Temporal activities
 for the same operation. Each model request identifies the HTTP CLIENT span under
 `model.complete`, with fresh Runtime information and catalog preparation, a
 pinned execution snapshot, Runtime dispatch descendants and PostgreSQL Run
-closure. SDK JSON-RPC IDs identify each independent Gateway request Trace.
-Rejections and replay must have no Run, model or Runtime execution. Privacy
+closure. SDK JSON-RPC IDs identify each private ACP request Trace and its
+actual exported CLIENT/upgrade pair. Rejections and replay must not execute
+a Run, model or Tool; replay may read the Runtime catalog. Privacy
 checks cover encoded cookies, credentials, the child environment, guidance and
 full Skill content. This profile uses the per-request oracle in
 `request-trace.mjs`; `trace.mjs` keeps the connection-wide oracle used by other
 scenarios.
 
 Business and topology diagnostics are reported separately from the strict gate.
-Strict timing warnings remain recorded as `strict_trace: failed`; the shared
-`clockWarningsOnly` rule permits only the previously reviewed clock-skew warning
-class, with no platform probe or restart errors. Topology, privacy, unexpected
+Strict diagnostics remain recorded as `strict_trace: failed`; reviewed SDK
+cleanup and clock warnings require their exact owning evidence. Topology, privacy, unexpected
 errors and missing parent spans remain blocking. Raw evidence stays in the private
 `artifacts/verification/managed-mcp-secrets/v<version>-<tag>/traces/` directory.
+
+The host client delegates its original member Session and Principal through
+Identity's workspace Resolve, using only the disposable `gateway-identity` and
+`agent-ui-acp` grants. Managed's test overlay exposes the existing private relay
+routes and a restricted OTLP ingress on dynamic loopback ports. The runner
+checks each live container's project/service ownership, health and unique
+loopback binding before supplying its endpoints. No production listener changes.
+The original host peer binding, egress outage and Runtime restart checks remain
+part of both version gates.
+
+Each version retains all 11 business requests and records the three actual
+initializations separately (one per official SDK connection). Full private
+execution-state responses retain the configuration revision and original member
+authority; the two Drain barriers still require the busy Session, running audit,
+original Runtime and exact nonretryable `agent_busy` response. Final close joins
+all requests and archives raw wire frames and immutable receipts. The private
+collector preserves request and upgrade sources and accounts for every diagnostic,
+including the deliberate alpha Tool error. Unknown internal errors fail.
+Reviewed SDK cleanup diagnostics and Jaeger clock warnings retain their original
+strict failure and child exit code 2; only the full business/Trace inventory plus
+joined connection/exporter cleanup can produce `managed-complete.json` and pass
+runner admission. Build, archive and cleanup failures are never warning exits.
 
 ## Cleanup
 
