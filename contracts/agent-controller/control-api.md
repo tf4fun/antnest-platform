@@ -124,6 +124,12 @@ and Agent scope, before applying the domain checks.
 The policy spec is read from the assignment's exact immutable revision, not
 inferred from its name or replaced with a newer revision. Attachment and policy
 are independent observations, not an atomic live-traffic health snapshot.
+`pending` means a completed Create is waiting for its first Runtime peer binding;
+it carries no peer or key and keeps ordinary traffic fenced. It is not `closed`,
+readiness, or proof of a usable execution. Policy changes preserve this attachment
+state. Consumers must accept all three states before Create starts producing
+pending targets. Reads show the last confirmed attachment; a later read or
+lifecycle/condition refresh observes convergence to `open`.
 `open` and `allow_all` describe durable desired state, not proof that a failed
 packet cleanup has recovered. Allow-all retains Egress's protected-address
 baseline; it is not permission to access deployment control networks.
@@ -383,8 +389,21 @@ return 404. Empty-set Templates remain usable.
 Lifecycle methods return the durable operation; callers inspect by request ID
 after any timeout.
 
-Create, rebuild and enable complete after Runtime resource creation and network
-attachment opening, independently of MCP readiness. A completed operation may
+Create completes after confirmed Runtime provisioning and a versioned network
+attachment: a fresh matching running peer opens it; a matching created/exited
+Runtime with neither peer nor key leaves it `pending`. Inspect failures, wrong
+targets and incomplete running peers do not authorize pending. A lost response
+may recover only this operation's immediately succeeding attachment version
+with unchanged network coordinates and network version. This recovers the
+committed pending/open result even if Runtime phase changed in the meantime.
+The completed target is reconciled on every observation pass, without requiring
+a new journal event. A fresh running peer binds pending (or refreshes an existing
+open peer) before health is required. First binding consumes exactly the saved
+pending version; closed or a later pending cycle is never opened by observation.
+Disable/Delete close pending with a new version, fencing delayed first binds.
+Rebuild and enable retain their existing open-after-provisioning path; adopting
+pending for those operations is separate consumer work.
+A completed operation may
 have a `created/enabled` Agent with `runtime_state=unknown` and no executable binding. `agent_created`,
 `agent_rebuilt` and `agent_enabled` record that completion; independent healthy
 observation publishes an ExecutionRevision and emits `agent_ready`. Only an

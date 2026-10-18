@@ -17,8 +17,7 @@
           "maxLength": 8192
         }
       }
-    }
-  ,
+    },
     "agent_skill_preparation_status": {
       "type": "object",
       "additionalProperties": false,
@@ -632,7 +631,7 @@
           "required": ["state", "resource_version"],
           "properties": {
             "state": {
-              "enum": ["open", "closed"]
+              "enum": ["open", "pending", "closed"]
             },
             "resource_version": {
               "type": "integer",
@@ -698,10 +697,7 @@
     "runtime_draft": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "image_ref",
-        "resources"
-      ],
+      "required": ["image_ref", "resources"],
       "properties": {
         "image_ref": {
           "type": "string",
@@ -720,10 +716,7 @@
     "runtime_input": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "image_ref",
-        "resources"
-      ],
+      "required": ["image_ref", "resources"],
       "properties": {
         "image_ref": {
           "type": "string",
