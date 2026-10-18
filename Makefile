@@ -203,7 +203,7 @@ e2e-organization-display:
 
 .PHONY: e2e-lifecycle-shutdown
 e2e-lifecycle-shutdown:
-	node tests/e2e/lifecycle-closeout/run.mjs shutdown
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-shutdown
 
 .PHONY: e2e-lifecycle-health
 e2e-lifecycle-health:

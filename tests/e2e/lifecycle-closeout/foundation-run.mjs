@@ -34,6 +34,11 @@ import { inspectNetworkPrivateDeployment } from "./network-private-deployment.mj
 import { networkFailures } from "./network-private-session.mjs";
 import { lossFailures } from "./loss-private-session.mjs";
 import { restoreFailures } from "./restore-private-session.mjs";
+import { shutdownFailures } from "./shutdown-private-flow.mjs";
+import {
+  shutdownPrivateAdmission,
+  shutdownPublicResult,
+} from "./shutdown-private-evidence.mjs";
 import {
   skillRestorePrivateAdmission,
   skillRestorePublicResult,
@@ -109,6 +114,7 @@ export async function runFoundation(
     if (profile === "loss") configureFoundationPrivate(config);
     if (profile === "restore") configureFoundationPrivate(config);
     if (profile === "skill-restore") configureFoundationPrivate(config);
+    if (profile === "shutdown") configureFoundationPrivate(config);
     if (profile === "health") configureHealthPrivate(config);
     if (
       [
@@ -186,7 +192,9 @@ export async function runFoundation(
                 ? inspectFoundationPrivateDeployment(rows, config)
                 : profile === "skill-restore"
                   ? inspectFoundationPrivateDeployment(rows, config)
-                  : rows;
+                  : profile === "shutdown"
+                    ? inspectFoundationPrivateDeployment(rows, config)
+                    : rows;
     if (profile === "interrupted") {
       const { inspectUpdateProxyDeployment } =
         await import("./interrupted-current.mjs");
@@ -269,6 +277,10 @@ export async function runFoundation(
       restoreFailures(result.restoreErrors);
       admission = skillRestorePrivateAdmission(result);
     }
+    if (profile === "shutdown") {
+      shutdownFailures(result.shutdownErrors);
+      admission = shutdownPrivateAdmission(result);
+    }
   } catch (error) {
     failure =
       profile === "network" && result?.networkErrors?.length
@@ -287,7 +299,12 @@ export async function runFoundation(
                 [...new Set([...result.restoreErrors, error])],
                 "Restore evidence and final admission failed",
               )
-            : error;
+            : profile === "shutdown" && result?.shutdownErrors?.length
+              ? new AggregateError(
+                  [...new Set([...result.shutdownErrors, error])],
+                  "Shutdown evidence and final admission failed",
+                )
+              : error;
     if (config?.evidence) {
       try {
         writeEvidenceFile(
@@ -411,7 +428,9 @@ export async function runFoundation(
                 ? restorePublicResult(result)
                 : profile === "skill-restore"
                   ? skillRestorePublicResult(result)
-                  : result),
+                  : profile === "shutdown"
+                    ? shutdownPublicResult(result)
+                    : result),
       ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",

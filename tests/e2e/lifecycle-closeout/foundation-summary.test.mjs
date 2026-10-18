@@ -50,7 +50,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   );
   assert.match(
     source,
-    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: profile === "network"\s*\? networkPublicResult\(result\)\s*: profile === "loss"\s*\? lossPublicResult\(result\)\s*: profile === "restore"\s*\? restorePublicResult\(result\)\s*: profile === "skill-restore"\s*\? skillRestorePublicResult\(result\)\s*: result/u,
+    /profile === "foundation"\s*\? foundationPublicResult\(result\)\s*: profile === "health"\s*\? healthPublicResult\(result\)\s*: profile === "network"\s*\? networkPublicResult\(result\)\s*: profile === "loss"\s*\? lossPublicResult\(result\)\s*: profile === "restore"\s*\? restorePublicResult\(result\)\s*: profile === "skill-restore"\s*\? skillRestorePublicResult\(result\)\s*: profile === "shutdown"\s*\? shutdownPublicResult\(result\)\s*: result/u,
   );
   const archiveIndex = source.indexOf(
     'writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result))',
@@ -63,6 +63,15 @@ test("Foundation public summary excludes original RPC and state bodies without c
   );
   const networkFailureIndex = source.indexOf(
     "networkFailures(result.networkErrors)",
+  );
+  const shutdownFailureIndex = source.indexOf(
+    "shutdownFailures(result.shutdownErrors)",
+  );
+  assert(
+    shutdownFailureIndex > archiveIndex &&
+      shutdownFailureIndex <
+        source.indexOf("admission = shutdownPrivateAdmission(result)"),
+    "Shutdown must preserve raw evidence before propagating original failures",
   );
   const lossFailureIndex = source.indexOf("lossFailures(result.lossErrors)");
   const restoreFailureIndex = source.indexOf(

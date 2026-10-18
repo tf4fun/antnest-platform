@@ -34,6 +34,7 @@ import {
   collectRestoreTraces,
   recordRestoreFailures,
 } from "./restore-private-session.mjs";
+import { recordShutdownFailures } from "./shutdown-private-flow.mjs";
 import {
   waitForAgentReady,
   assertAgentDisabled,
@@ -315,6 +316,23 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       ready,
       traceSecrets,
     });
+    if (result.profile === "shutdown") {
+      result.private_shutdown.lifecycle_admissions = structuredClone(admitted);
+      const errors = [];
+      const traces = await collectRestoreTraces(
+        admitted,
+        (operation) =>
+          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, error) => saveFoundationFailure(config, operation, error),
+        signal,
+        errors,
+      );
+      recordShutdownFailures(result, errors);
+      return recordShutdownFailures(
+        { ...result, operations: admitted.length, traces },
+        result.shutdownErrors,
+      );
+    }
     if (["offline-restore", "offline-skill-restore"].includes(result.profile)) {
       const work =
         result.profile === "offline-restore"

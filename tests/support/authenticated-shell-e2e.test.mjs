@@ -6,6 +6,18 @@ import {
 } from "./authenticated-shell-e2e.mjs";
 import * as shell from "./authenticated-shell-e2e.mjs";
 
+test("Shutdown gets fresh candidate images and retains its whole-platform maintenance profile", () => {
+  assert.deepEqual(
+    shellComposeFiles("lifecycle-shutdown"),
+    shellComposeFiles("lifecycle-health"),
+  );
+  assert.deepEqual(shell.shellEntrypoint("lifecycle-shutdown"), [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "shutdown",
+  ]);
+});
+
 test("Default Restore gets fresh images without selecting the later Skill profile", () => {
   assert.deepEqual(
     shellComposeFiles("lifecycle-restore"),

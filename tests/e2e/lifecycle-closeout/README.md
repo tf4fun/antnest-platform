@@ -214,9 +214,11 @@ cleanup. Missing evidence cannot be accepted merely because a child exited 2.
 
 ## Whole-Platform Stream Shutdown
 
-The profile creates an idle Agent and holds three connections open: the
-administrator lifecycle event watch, the owner's workspace state watch and an
-initialized ACP v1 WebSocket with an empty Session. It stops the application
+The profile builds fresh candidate images, creates an idle Agent and holds three
+connections open: the administrator lifecycle event watch, the owner's private
+ACP execution-state watch and an initialized private ACP v1 WebSocket with an
+empty Session. The same original member Session and Principal authorize both
+connections and both state watches across restart. It stops the application
 services with ordinary Compose SIGTERM, without closing clients first. Every
 service must exit zero without OOM or forced termination, and the remote ends
 must close the watches and WebSocket. Temporal stops before PostgreSQL.
@@ -226,8 +228,13 @@ observation time and delivered-event count in an immutable record. Test-owned
 close, global abort and invalid responses or events have separate causes;
 subsequent cleanup cannot relabel them as a remote transport end. A remote end
 also clears the reconnect timer that EventSource creates after its error callback.
-The watch collector validates `console` event-watch and `workspace` state-watch
-Resolve admission before their actual forwarding CLIENT. Every successful
+Gateway's cancelled proxy may close the socket without a terminal HTTP chunk.
+The observer retains that exact original body-termination Error separately;
+final admission requires its valid initial event, original Trace, stop window,
+clean Gateway exit and cancellation spans. Independent read, cancel, archive
+and parent-cancellation failures still fail the run.
+The public watch collector validates `console` event-watch Resolve admission
+before its actual forwarding CLIENT. Every successful
 revalidation proves its `rpc/cache/shared` source; linked sources and refresh
 triggers are archived and must converge over three complete raw snapshots.
 Pending shutdown cancellation has its own non-admission evidence, including the
@@ -235,9 +242,21 @@ actual stop operation, the same cleanly exited Gateway container and remote
 closure. Source errors remain strict failures and cannot inherit the current
 watch's cancellation classification. See the
 [shutdown Trace rules](shutdown-migration-contract.md#trace-rules) for timing,
-concurrency and unavailable-result limits. The separate ACP request consumer
-uses the shared request collector described above; the #59 cross-service
-Docker/HTTPS integration is still pending.
+concurrency and unavailable-result limits.
+
+The private state watch posts to ACP with a delegated credential and retains its
+actual exported CLIENT, full raw SSE body and first remote EOF. Its SERVER and
+database work must belong to the original ACP process and end before that process
+exits. Only the exact `agent.execution_state` process-shutdown error is admitted;
+the original error and strict failure remain in evidence. All watch fetches,
+readers, cancellation, ACP connections and exporters are joined before teardown.
+
+Final admission requires two initializations, `new` and `load` of the same empty
+Session, two lifecycle operations, both remote watch closures and the original
+remote WebSocket close receipt. It rechecks the eleven stopped and restarted
+container identities, both Temporal membership observations, unchanged Runtime
+and workspace bytes, empty audits/model requests and complete Delete. Partial
+business, collection, archive and cleanup errors remain private and fail admission.
 
 An HTTP stream cancelled by shutdown may end as `handler_aborted` only when the
 span also carries `antnest.http.request_cancelled=true`, keeps HTTP 200 and ends

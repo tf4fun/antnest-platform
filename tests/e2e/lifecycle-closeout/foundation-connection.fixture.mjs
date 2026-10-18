@@ -25,7 +25,10 @@ export const prompt = (sessionId) => ({
   prompt: [{ type: "text", text: "held" }],
 });
 
-export async function foundationConnectionFixture(t, { denyPrompt } = {}) {
+export async function foundationConnectionFixture(
+  t,
+  { denyPrompt, emptySessions = false } = {},
+) {
   const state = {
     agent_id: "agent",
     access_allowed: true,
@@ -44,16 +47,43 @@ export async function foundationConnectionFixture(t, { denyPrompt } = {}) {
     pending = new Set();
   let sessions = 0,
     active = false;
+  const timestamps = new Map();
+  async function notifyEmpty(client, sessionId) {
+    if (!emptySessions) return;
+    for (const update of [
+      {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          { name: "help", description: "Help /\u5e2e\u52a9" },
+        ],
+      },
+      {
+        sessionUpdate: "session_info_update",
+        title: null,
+        updatedAt: timestamps.get(sessionId),
+      },
+    ])
+      await client.notify(sdk.methods.client.session.update, {
+        sessionId,
+        update,
+      });
+  }
   const agent = sdk
     .agent({ name: "foundation-peer" })
     .onRequest(sdk.methods.agent.initialize, () => ({
       protocolVersion: 1,
       agentCapabilities: { loadSession: true },
     }))
-    .onRequest(sdk.methods.agent.session.new, () => ({
-      sessionId: `session-${++sessions}`,
-    }))
-    .onRequest(sdk.methods.agent.session.load, () => ({}))
+    .onRequest(sdk.methods.agent.session.new, async ({ client }) => {
+      const sessionId = `session-${++sessions}`;
+      timestamps.set(sessionId, new Date().toISOString());
+      await notifyEmpty(client, sessionId);
+      return { sessionId };
+    })
+    .onRequest(sdk.methods.agent.session.load, async ({ client, params }) => {
+      await notifyEmpty(client, params.sessionId);
+      return {};
+    })
     .onRequest(sdk.methods.agent.session.prompt, async ({ params, client }) => {
       if (denyPrompt?.(params))
         throw new sdk.RequestError(

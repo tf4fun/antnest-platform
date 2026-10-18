@@ -56,6 +56,11 @@ const entrypoints = {
     "network",
   ],
   "lifecycle-loss": ["node", "tests/e2e/lifecycle-closeout/run.mjs", "loss"],
+  "lifecycle-shutdown": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "shutdown",
+  ],
   "lifecycle-restore": [
     "node",
     "tests/e2e/lifecycle-closeout/run.mjs",

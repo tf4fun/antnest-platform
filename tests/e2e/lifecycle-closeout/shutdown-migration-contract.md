@@ -1,8 +1,10 @@
 # Normal shutdown and stream contract
 
 This document defines what the whole-platform shutdown profile
-(`make e2e-lifecycle-shutdown`) must prove. Production services and SDKs are
-unchanged, and SIGKILL, clock and export interval tuning are not used.
+(`make e2e-lifecycle-shutdown`) must prove. The owning ACP service separately
+verifies its normal WebSocket close handshake, bounded peer join and rejection
+of new upgrades during shutdown. SDKs are unchanged, and SIGKILL, clock and
+export interval tuning are not used.
 
 ## Setup
 

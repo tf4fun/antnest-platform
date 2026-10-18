@@ -32,6 +32,13 @@ export async function createFoundationPrivateAccess(
     signal,
     secrets,
     collectTrace,
+    watchFactory,
+    preserveWatch = (index, value) =>
+      writeEvidenceFile(
+        config.evidence,
+        `private-watch-${index}.json`,
+        JSON.stringify(value),
+      ),
     preserveConnection = (index, value) =>
       writeEvidenceFile(
         config.evidence,
@@ -48,6 +55,7 @@ export async function createFoundationPrivateAccess(
 ) {
   assert(Array.isArray(secrets));
   assert(collectTrace === undefined || typeof collectTrace === "function");
+  assert(watchFactory === undefined || typeof watchFactory === "function");
   signal?.throwIfAborted();
   const privateAccess = config.privateAccess;
   assert(
@@ -58,8 +66,7 @@ export async function createFoundationPrivateAccess(
   const acp = loopback(privateAccess.acp),
     identity = loopback(privateAccess.identity),
     otlp = loopback(privateAccess.otlp, "/v1/traces");
-  // Only the default host consumer loads the owning service's pinned packages.
-  // Other Lifecycle profiles retain their existing module/deployment boundary.
+  // Private host consumers load the owning service's pinned dependencies.
   const dependencyRoot = new URL(
     "../../../services/agent-acp-service/package.json",
     import.meta.url,
@@ -112,9 +119,13 @@ export async function createFoundationPrivateAccess(
   const telemetry = createPrivateACPTelemetry(otlp),
     clients = [],
     receipts = [],
+    watches = [],
+    openingWatches = new Set(),
+    watchErrors = [],
     archiveErrors = [];
   let closing,
-    index = 0;
+    index = 0,
+    watchIndex = 0;
   const saveState = async () => {
     try {
       await preserveState(structuredClone(receipts));
@@ -126,6 +137,50 @@ export async function createFoundationPrivateAccess(
   return {
     snapshots: () => clients.map((client) => client.snapshot()),
     stateReceipts: () => structuredClone(receipts),
+    watchSnapshots: () =>
+      watches
+        .toSorted((a, b) => a.index - b.index)
+        .map(({ watch }) => structuredClone(watch.snapshot())),
+    watch(agentId, browser, principal) {
+      assert(!closing, "Foundation private resources are closing");
+      assert.equal(
+        typeof watchFactory,
+        "function",
+        "private state watch owner required",
+      );
+      const index = ++watchIndex;
+      const opening = Promise.resolve().then(async () => {
+        try {
+          const watch = await watchFactory(agentId, browser, {
+            principal,
+            service,
+            telemetry,
+            secrets,
+            signal,
+            endpoint: acp + "/rpc/agent-acp/watch-agent-execution-state",
+            async preserve(value) {
+              try {
+                await preserveWatch(index, value);
+              } catch (error) {
+                archiveErrors.push(error);
+                throw error;
+              }
+            },
+          });
+          watches.push({ index, watch });
+          return watch;
+        } catch (error) {
+          watchErrors.push(error);
+          throw error;
+        }
+      });
+      openingWatches.add(opening);
+      void opening.then(
+        () => openingWatches.delete(opening),
+        () => openingWatches.delete(opening),
+      );
+      return opening;
+    },
     async open(agentId, browser, principal) {
       assert(!closing, "Foundation private resources are closing");
       const connection = ++index;
@@ -182,6 +237,15 @@ export async function createFoundationPrivateAccess(
     closeAndWait() {
       return (closing ??= (async () => {
         const errors = [];
+        while (openingWatches.size)
+          await Promise.allSettled([...openingWatches]);
+        for (const { watch } of watches) {
+          try {
+            await watch.closeAndWait();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
         for (const client of clients) {
           try {
             await client.closeAndWait();
@@ -199,7 +263,7 @@ export async function createFoundationPrivateAccess(
         } catch (error) {
           errors.push(error);
         }
-        errors.push(...archiveErrors);
+        errors.push(...watchErrors, ...archiveErrors);
         fail(errors);
       })());
     },

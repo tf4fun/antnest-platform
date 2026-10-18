@@ -207,6 +207,14 @@ Sessions or Runs. It checks storage fingerprints, permissions and replacement
 PostgreSQL identity. Partial evidence and original failures remain private;
 failed Docker cleanup keeps the recovery inputs for inspection.
 
+`make e2e-lifecycle-shutdown` builds fresh candidates and retains the original
+public event watch alongside a private ACP state stream and WebSocket. It stops
+and restarts the same eleven platform containers, then loads the same empty
+Session with the original login. Admission checks complete stream joins, actual
+process shutdown and remote closure, unchanged Runtime/workspace and zero Runs
+or model requests; see the
+[Shutdown contract](e2e/lifecycle-closeout/shutdown-migration-contract.md).
+
 `make e2e-skill-discovery-caller` waits up to 90 seconds for the source Agent's
 projection acknowledgement before starting its caller Run. Registry recovery,
 live discovery results and the peer Agent's acknowledgement do not establish
