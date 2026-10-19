@@ -36,7 +36,7 @@ export async function setup(
   const client = new GatewayClient(config.gateway);
   const json = async (path, options) =>
     (await client.request(path, options)).body;
-  await json("/api/session/login", {
+  const adminLogin = await client.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "stage3-admin@example.com",
@@ -126,6 +126,8 @@ export async function setup(
     });
   return {
     json,
+    request: (path, options) => client.request(path, options),
+    adminPrincipal: structuredClone(adminLogin.body.principal),
     operation,
     ready,
     state,

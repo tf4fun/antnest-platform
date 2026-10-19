@@ -208,6 +208,33 @@ a new Rebuild even with the same template revision because it includes the
 execution identity and Runtime configuration; it is not the browser epoch or
 Session configuration token.
 
+Revocation observes the actual page-owned EventSource request. Before changing
+the member, freeze one live 200 SSE response for the original Agent, Session and
+browser Cookie, including its original request path/cursor, Trace ID and HTTP
+Date. Only that request's normal remote EOF after the trigger and within 30
+seconds can satisfy browser transport closure. A host-created stream, HTTP
+failure, preclosed stream, local EventSource close, navigation, page/context
+cleanup or copied checkpoint cannot replace it. Observation must not open or
+modify network requests. Keep asynchronous observation errors and join them on
+every exit path. The transport receipt alone does not prove the revocation
+cause; its owning Trace and denial/zero-execution checks remain separate gates.
+
+Capture the actual page login response and bind its Principal and issued Cookie
+pair to that browser. The setup client's separate member login cannot replace
+this authority. Preserve the original administrator's Principal and complete
+deactivation response as the cause receipt. These are observation components;
+original-Cookie Prompt denial, complete before/after execution inventory and
+owning Trace admission still require their separate acceptance work.
+
+The browser scope owns context/browser closure and joins every finite response
+read and page observer after success, failure or interruption. A failed context
+startup still closes its browser. Business, capture, parent cancellation and
+independent cleanup errors retain their original identities; one failed cleanup
+must not skip later observers or mask the original business failure.
+Awaiting a tracked response still rejects with its original failure. Page errors
+are recorded when they arrive, so a later business failure cannot skip them;
+an unexpected browser WebSocket also remains a failure on every exit path.
+
 Two real browser connections observe the same Session. Its activity time must
 change after a new prompt, both pages must display the received title and time,
 and a fresh list/load after reload must preserve those values.

@@ -16,7 +16,7 @@ test("C4 state reads retain the original member session, Principal and complete 
       for await (const chunk of request) chunks.push(chunk);
       const text = Buffer.concat(chunks).toString();
       const body = text ? JSON.parse(text) : undefined;
-      wire.push({ path: request.url, body });
+      wire.push({ path: request.url, body, cookie: request.headers.cookie });
       let value = {},
         status = 200;
       if (request.url === "/api/session/login") {
@@ -54,6 +54,9 @@ test("C4 state reads retain the original member session, Principal and complete 
           executable_execution_revision: "execution",
           runtime: { runtime_revision: "runtime" },
         };
+      } else if (request.url === "/api/admin/directory/users/member/active") {
+        response.setHeader("x-antnest-trace-id", "a".repeat(32));
+        value = { status: "updated" };
       } else {
         status = 404;
       }
@@ -118,4 +121,18 @@ test("C4 state reads retain the original member session, Principal and complete 
     1,
   );
   assert(!wire.some((row) => row.path.includes("/api/app/")));
+  assert.deepEqual(fixture.adminPrincipal, { ...principal, user_id: "admin" });
+  const changed = await fixture.request(
+    "/api/admin/directory/users/member/active",
+    { body: { active: false } },
+  );
+  assert.equal(changed.status, 200);
+  assert.deepEqual(changed.body, { status: "updated" });
+  assert.equal(changed.traceID, "a".repeat(32));
+  assert(Number.isFinite(Date.parse(changed.headers.get("date"))));
+  assert.equal(
+    wire.at(-1).cookie,
+    "antnest_session=ADMIN-SESSION; antnest_csrf=ORIGINAL-CSRF",
+  );
+  assert.deepEqual(wire.at(-1).body, { active: false });
 });

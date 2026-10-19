@@ -8,6 +8,9 @@ import { audioData } from "../acp-multimodal/fixtures.mjs";
 import { observedHeldRun } from "./browser-control.mjs";
 import { readC4View } from "./c4-view.mjs";
 import { c4RebuildReady } from "./c4-rebuild.mjs";
+import { runC4BrowserScope } from "./c4-browser-scope.mjs";
+import { captureC4Login } from "./c4-login.mjs";
+import { observeC4PageStreams } from "./c4-stream-observer.mjs";
 import {
   assertReadableText,
   assertTouchTargets,
@@ -20,35 +23,78 @@ export async function runBrowser(
   output,
   report,
   checkpoint,
+  {
+    launch = () =>
+      chromium.launch({
+        headless: true,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
+      }),
+  } = {},
 ) {
   // The coordinator owns signals and Docker cleanup. Playwright's default
   // SIGINT handler exits the Node process before the runner's finally block.
-  const browser = await chromium.launch({
-    headless: true,
-    handleSIGINT: false,
-    handleSIGTERM: false,
-    handleSIGHUP: false,
-  });
-  const abort = () => void browser.close();
-  signal.addEventListener("abort", abort, { once: true });
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
-  });
+  return runC4BrowserScope({ signal, launch }, (scope) =>
+    runBrowserInContext(
+      config,
+      fixture,
+      signal,
+      output,
+      report,
+      checkpoint,
+      scope,
+    ),
+  );
+}
+
+async function runBrowserInContext(
+  config,
+  fixture,
+  signal,
+  output,
+  report,
+  checkpoint,
+  scope,
+) {
+  const { context } = scope;
   const frames = [];
   const errors = [];
   let browserPhase = "startup";
   const paths = [];
-  const pageTasks = [];
+  const streams = new Map();
   const track = (page) => {
+    const observer = observeC4PageStreams(page, {
+      gateway: config.gateway,
+      agentId: fixture.agentID,
+      signal,
+    });
+    streams.set(page, observer);
+    scope.addObserver({
+      async closeAndWait() {
+        try {
+          await observer.closeAndWait();
+        } finally {
+          report.page_streams = [...streams.values()].flatMap(
+            (value) => value.records,
+          );
+        }
+      },
+    });
     page.setDefaultTimeout(25000);
-    page.on("pageerror", (error) =>
+    page.on("pageerror", (error) => {
+      scope.recordFailure(error);
       errors.push({
         phase: browserPhase,
         url: page.url(),
         message: error.message,
-      }),
-    );
-    page.on("websocket", () => errors.push("unexpected browser WebSocket"));
+      });
+    });
+    page.on("websocket", () => {
+      const error = new Error("unexpected browser WebSocket");
+      scope.recordFailure(error);
+      errors.push(error.message);
+    });
     page.on("response", (response) => {
       const url = new URL(response.url());
       // SSE watches have no finite response body. Their state payloads are
@@ -60,12 +106,7 @@ export async function runBrowser(
         !response.headers()["content-type"]?.startsWith("text/event-stream")
       ) {
         paths.push(url.pathname);
-        pageTasks.push(
-          response.text().then(
-            (body) => frames.push(body),
-            () => {},
-          ),
-        );
+        scope.track(async () => frames.push(await response.text()));
       }
     });
     return page;
@@ -97,13 +138,17 @@ export async function runBrowser(
       signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
     });
     assert.equal(response.status, 200);
-    return response.json();
+    const body = await response.json();
+    if (path === "/status") report.model = body;
+    return body;
   };
   const openAgentPage = async (target) => {
-    const bootstrap = target.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname ===
-          "/api/app/workspace/v1/bootstrap" && response.status() === 200,
+    const bootstrap = scope.track(
+      target.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+            "/api/app/workspace/v1/bootstrap" && response.status() === 200,
+      ),
     );
     await target.goto(url);
     await bootstrap;
@@ -165,7 +210,23 @@ export async function runBrowser(
     await page.goto(`${config.gateway}/workspace/`);
     for (const [name, value] of Object.entries(member))
       await page.locator(`[name="${name}"]`).fill(value);
+    const loginResponse = scope.track(
+      page.waitForResponse(
+        (response) =>
+          response.url() ===
+            new URL("/api/session/login", config.gateway).href &&
+          response.request().method() === "POST",
+      ),
+    );
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    const originalLogin = await captureC4Login(page, await loginResponse, {
+      gateway: config.gateway,
+      ownerId: fixture.ownerID,
+    });
+    report.page_login = {
+      issued: originalLogin.issued,
+      receipt: originalLogin.receipt,
+    };
     await page.waitForURL("**/workspace/**");
     await page
       .getByRole("searchbox", { name: "Find a workspace" })
@@ -571,9 +632,41 @@ export async function runBrowser(
     });
     await check("mobile_layout_input_completion");
 
-    await fixture.json(`/api/admin/directory/users/${fixture.ownerID}/active`, {
+    const pageObserver = streams.get(page);
+    const beforeRevocation = await pageObserver.checkpoint({
+      sessionId: workspaceLocation(page.url()).sessionId,
+      cookies: originalLogin.cookies,
+    });
+    const cause = {
+      kind: "user_deactivated",
+      method: "POST",
+      path: `/api/admin/directory/users/${fixture.ownerID}/active`,
+      requestBody: { active: false },
+      actor: structuredClone(fixture.adminPrincipal),
+      target: structuredClone(originalLogin.issued.principal),
+      startedMono: performance.now(),
+      startedAt: Date.now(),
+    };
+    report.browser_revocation = {
+      principal: originalLogin.issued.principal,
+      checkpoint: beforeRevocation,
+      cause,
+    };
+    const revoked = await fixture.request(cause.path, {
       body: { active: false },
     });
+    Object.assign(cause, {
+      completedMono: performance.now(),
+      completedAt: Date.now(),
+      status: revoked.status,
+      body: revoked.body,
+      traceID: revoked.traceID,
+      serverDate: revoked.headers.get("date"),
+    });
+    Object.assign(
+      report.browser_revocation,
+      await pageObserver.waitForRemoteEnd(beforeRevocation),
+    );
     await until(
       async () => (await input().count()) === 0 || !(await input().isEnabled()),
       "open page loses access",
@@ -598,8 +691,8 @@ export async function runBrowser(
     });
     await check("open_page_identity_revocation");
     // Closing pages also settles response reads aborted by a navigation.
-    await context.close();
-    await Promise.all(pageTasks);
+    await scope.closeContext();
+    await scope.joinTasks();
     assert.deepEqual(errors, []);
     assert(paths.length > 0 && frames.length > 0);
     for (const body of frames)
@@ -619,19 +712,16 @@ export async function runBrowser(
     report.browser_payloads_checked = frames.length;
     await check("private_runtime_and_provider_data_absent");
   } catch (error) {
-    report.model = await model().catch(() => null);
+    scope.recordFailure(error);
+    await scope.capture(() => model());
     if (!page.isClosed()) {
-      report.failure_page = await page
-        .locator("body")
-        .innerText()
-        .catch(() => "unavailable");
-      await page
-        .screenshot({ path: `${output}/failure.png`, fullPage: true })
-        .catch(() => {});
+      await scope.capture(async () => {
+        report.failure_page = await page.locator("body").innerText();
+      });
+      await scope.capture(() =>
+        page.screenshot({ path: `${output}/failure.png`, fullPage: true }),
+      );
     }
     throw error;
-  } finally {
-    signal.removeEventListener("abort", abort);
-    await browser.close();
   }
 }
