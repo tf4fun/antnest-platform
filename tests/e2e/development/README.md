@@ -37,7 +37,7 @@ package. Install `services/agent-ui/web` dependencies before running them.
 | Driver                | Required configuration                                                                                                                                                | Effects and assertions                                                                                                                                                                                                                                                                                                                                                                    |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent-state.mjs`     | `gateway`, `envFile`, `output`, `privateAccess`, `agentId` or `browserReport`; optional `reportBasename`                                                                               | Logs in and reads management and execution state. Requires the matching Agent identity, a ready state, no active Session and allowed access. Writes `<reportBasename>.json` (default `agent-state`). Read-only: it requests no lifecycle change and no Run.                                                                                                                               |
-| `replay.mjs`          | `gateway`, `jaeger`, `envFile`, `output`, `database`, `agentId` and `sessionId` or `browserReport`                                                                    | Checks Session ownership and working directory, reads existing messages from PostgreSQL, then loads the Session through the SDK. Compares decoded history and file changes, requires unchanged row counts in the four history tables, and checks the load request and connection Trace. Writes private updates, the Trace and `replay-report.json`. Never sends a prompt.                 |
+| `replay.mjs`          | `gateway`, `jaeger`, `envFile`, `output`, `database`, `privateAccess`, `agentId` and `sessionId` or `browserReport`                                                                    | Checks Session ownership and working directory, reads existing messages from PostgreSQL, then loads the Session through the SDK. Compares decoded history and file changes, requires unchanged row counts in the four history tables, and checks the initialize/load requests and private connection Trace. Writes private updates, raw Trace sources and `replay-report.json`. Never sends a prompt.                 |
 | `trace-review.mjs`    | `jaeger`, `envFile`, `secretFile`, `output`, `sessionId` or `browserReport`, `expectedTraceCount`, `minRuntimeTraces`                                                 | Queries chat Traces for the Session and checks the expected count, topology, allowed timing diagnostic category and the minimum number of Traces that contain Runtime calls. Saves raw Traces and a separate review. Makes no model request.                                                                                                                                              |
 | `rejection-trace.mjs` | `jaeger`, `output`, `rejectedSessionId` or `metadataReport`                                                                                                           | Queries the rejected Session's single prompt Trace. Requires the expected unsupported-content category, disabled content capture, and no model HTTP or Runtime Tool call. Saves the raw Trace and its review; does not issue another prompt.                                                                                                                                              |
 | `lifecycle.mjs`       | `gateway`, `jaeger`, `envFile`, `secretFile`, `retainedAgentId`, `output`, `fixtureName`, `workspaceFile`, `workspaceMarker`, `runtimeControllerScope`                | Uses the retained Agent's Template and owner to create a temporary Agent, writes a marker file in its workspace, then disables, enables, rebuilds and deletes it. Verifies workspace and volume retention and deletion, three independent execution publications and five lifecycle Traces. Compares the retained Agent's Runtime, configuration and revisions before and after.          |
@@ -82,8 +82,24 @@ Each driver uses the original login Cookie and Principal for Identity
 authorization and validates the full private state response. The obsolete public state path
 has no fallback. `private-access.private.json` retains the original state and
 authority receipts, errors and joined cleanup result. Passing reports are written
-only after private requests, telemetry and evidence writes finish. The separate
-replay migration follows the shared contract above.
+only after private requests, telemetry and evidence writes finish.
+
+### Private Session replay
+
+`replay.mjs` requires the same `privateAccess` configuration. It checks the
+original database Session and history before login, authorizes the original login
+Cookie and Principal through Identity, then opens one private connection. The
+shared SDK initializes once; the driver sends one `session/load` and no Prompt.
+It joins that connection before comparing the four table counts, collecting the
+initialization and load Traces, and closing the exporter.
+
+`replay-updates.private.json` retains the original notifications.
+`private-access.private.json` contains connection and authority receipts, errors
+and cleanup status. `replay-trace.private.json` indexes initialization and load
+reports whose `evidence_directory` values point to the complete raw sources under
+`traces/`. Each requires three stable source samples. The passing
+`replay-report.json` is written after cleanup succeeds. Existing `traces/`
+directories and aliases are rejected before HTTP or Docker effects.
 
 ### Trace review limits
 
@@ -191,7 +207,19 @@ node tests/integration/development/replay-docker.mjs \
 
 The recovery gate image must contain `sh`, `find`, `sha256sum` and `tar`. The
 replay gate uses a disposable PostgreSQL database, the pinned SDK and local
-HTTP, WebSocket and Jaeger adapters.
+login, Identity, private ACP WebSocket and Jaeger adapters. It verifies the
+actual SDK CLIENT OTLP export and observed request IDs, with synthetic peer
+SERVER Traces. Ten cases cover normal replay, preserved Trace warnings, foreign
+Session/Principal rejection, changed history/file diffs, extra execution, empty
+or malformed history, and output aliases. This is adapter acceptance; full
+Development service deployment is verified separately.
+
+An optional `--history-root` accepts preserved `runtime-sync-20260921` and
+`temporal-sync-20260921` directories containing the original PostgreSQL dump,
+updates, report and Trace. The adapter restores the dump and checks the same
+business history. Archived Gateway reports and Traces are validated separately
+and saved unmodified in `historical-replay.private.json`; they are never rebound
+to the new private connection. Historical credentials are not rechecked.
 
 Agent UI metadata synchronization and model rejection are covered separately by
 `tests/integration/agent-ui/workspace-bridge-browser.test.mjs` and the

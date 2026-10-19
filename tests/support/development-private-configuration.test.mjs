@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
@@ -113,6 +119,16 @@ for (const profile of ["agent-state", "replay", "recover", "runtime-loss"])
       ...f.config.privateAccess,
       credentials: f.credentials,
     });
+  });
+
+for (const alias of [false, true])
+  test(`replay rejects an existing ${alias ? "aliased" : "ordinary"} Trace directory before effects`, (t) => {
+    const f = fixture(t, "replay");
+    mkdirSync(f.config.output);
+    const path = join(f.config.output, "traces");
+    if (alias) symlinkSync(join(f.root, ".cache", "traces"), path);
+    else mkdirSync(path);
+    assert.throws(() => f.read(), /replay trace directory/);
   });
 
 for (const [name, change] of [

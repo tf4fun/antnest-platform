@@ -2,8 +2,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
-import { createRequire } from "node:module";
 import {
   existsSync,
   mkdirSync,
@@ -25,13 +23,11 @@ import {
   replayAgent,
   replaySession,
   replayHistory,
-  replayTrace,
 } from "../../support/fixtures/development-replay.mjs";
 
-const require = createRequire(
-  new URL("../../../services/agent-acp-service/package.json", import.meta.url),
-);
-const { WebSocketServer } = require("ws");
+import { developmentPrivateReplayFixture } from "../../support/fixtures/development-private-replay.mjs";
+import { inspectCommandTrace } from "../../e2e/acp-commands/trace.mjs";
+import { strictSessionEvidence } from "../../e2e/identity-closeout/session-trace.mjs";
 const { values } = parseArgs({
   options: {
     output: { type: "string" },
@@ -140,6 +136,7 @@ try {
     "passed",
     "trace-warning",
     "wrong-session-agent",
+    "foreign-principal",
     "history-changed",
     "diff-changed",
     "extra-run",
@@ -236,85 +233,23 @@ try {
       history.updates[1].update.content.text = "changed";
     if (kind === "diff-changed")
       history.updates[2].update.content[1].newText = "wrong";
-    const requests = [],
-      rpc = [];
-    let trace,
-      samples = 0;
-    const server = createServer(async (request, response) => {
-      for await (const chunk of request) {
-        /* drain login */
-      }
-      requests.push(request.url);
-      response.writeHead(200, {
-        "content-type": "application/json",
-        ...(request.url === "/api/session/login"
-          ? { "set-cookie": "antnest_session=fixture-cookie; HttpOnly; Path=/" }
-          : {}),
-      });
-      if (request.url.startsWith("/api/traces/")) samples++;
-      response.end(
-        JSON.stringify(
-          request.url.startsWith("/api/traces")
-            ? { data: [trace] }
-            : { ok: true },
-        ),
-      );
+    const fixture = await developmentPrivateReplayFixture(folder, {
+      agentId,
+      sessionId,
+      updates: history.updates,
+      warning: kind === "trace-warning",
+      onLoad() {
+        if (kind === "extra-run")
+          sql("INSERT INTO runs VALUES ('unexpected');");
+      },
     });
-    const sockets = new WebSocketServer({ server });
-    sockets.on("connection", (socket, request) => {
-      const connectionTraceID = request.headers.traceparent.split("-")[1];
-      socket.on("message", (data) => {
-        const message = JSON.parse(data.toString());
-        rpc.push(message);
-        if (message.method === "initialize")
-          socket.send(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: message.id,
-              result: {
-                protocolVersion: message.params.protocolVersion,
-                agentCapabilities: { loadSession: true },
-              },
-            }),
-          );
-        else if (message.method === "session/load") {
-          trace = historical
-            ? structuredClone(savedTrace)
-            : replayTrace({
-                agentId,
-                sessionId,
-                requestId: message.id,
-                connectionTraceID,
-                warning: kind === "trace-warning",
-              });
-          if (historical)
-            for (const span of trace.spans) {
-              for (const ref of span.references ?? [])
-                if (ref.refType === "FOLLOWS_FROM")
-                  ref.traceID = connectionTraceID;
-              for (const field of span.tags ?? [])
-                if (field.key === "antnest.request.id")
-                  field.value = String(message.id);
-            }
-          for (const params of history.updates)
-            socket.send(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                method: "session/update",
-                params,
-              }),
-            );
-          if (kind === "extra-run")
-            sql("INSERT INTO runs VALUES ('unexpected');");
-          socket.send(
-            JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }),
-          );
-        }
-      });
-    });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    if (kind === "foreign-principal")
+      fixture.authority.identityPrincipal = {
+        ...fixture.authority.principal,
+        user_id: "foreign-user",
+      };
     try {
-      const origin = "http://127.0.0.1:" + server.address().port;
+      const origin = fixture.origin;
       const envFile = join(folder, "fixture.env");
       writeFileSync(
         envFile,
@@ -327,6 +262,7 @@ try {
         jaeger: origin,
         envFile,
         database,
+        privateAccess: fixture.configuration,
         agentId,
         sessionId,
       };
@@ -351,6 +287,11 @@ try {
         timeoutMs: 60000,
         graceMs: 5000,
       });
+      writeDevelopmentJSON(
+        { output: folder },
+        "adapter-receipts.private.json",
+        fixture.snapshot(),
+      );
       abort.signal.throwIfAborted();
       assert(execution.complete, kind + ": CLI did not complete");
       const result = {
@@ -371,15 +312,38 @@ try {
         assert.equal(report.notifications, history.updates.length);
         assert.equal(report.new_runs, 0);
         assert.equal(report.new_tools, 0);
+        assert.equal(report.initialization_trace.strict_trace, "passed");
         assert.equal(
           report.trace.strict_trace,
-          historical
-            ? expectedReport.trace.strict_trace
-            : kind === "trace-warning"
-              ? "failed"
-              : "passed",
+          kind === "trace-warning" ? "failed" : "passed",
         );
-        assert(samples >= 3, "raw Trace must survive convergence writes");
+        for (const [proof, wire] of [
+          [report.initialization_trace, fixture.rpc[0]],
+          [report.trace, fixture.rpc[1]],
+        ]) {
+          assert.equal(proof.method, wire.method);
+          assert.equal(proof.request_id, String(wire.id));
+          assert.equal(proof.diagnostic_inventory_verified, true);
+          assert.equal(proof.complete_source_receipt.stable_samples, 3);
+          assert(fixture.traces.has(proof.trace_id));
+          assert(fixture.details.get(proof.trace_id) >= 3);
+        }
+        const receipt = JSON.parse(
+          readFileSync(join(evidence, "private-access.private.json")),
+        );
+        assert.equal(receipt.closed, true);
+        assert.deepEqual(receipt.errors, []);
+        assert.equal(receipt.connections.length, 1);
+        assert.equal(receipt.authorities.length, 1);
+        assert.equal(receipt.authorities[0].receipts.length, 1);
+        assert.equal(fixture.upgrades.length, 1);
+        assert.equal(fixture.upgrades[0].path, "/v1/acp");
+        assert.equal(fixture.snapshot().closed, true);
+        assert.deepEqual(report.table_counts.after, report.table_counts.before);
+        assert.deepEqual(
+          JSON.parse(readFileSync(join(evidence, "replay-trace.private.json"))),
+          { initialization: report.initialization_trace, load: report.trace },
+        );
         assert.deepEqual(
           JSON.parse(
             readFileSync(join(evidence, "replay-updates.private.json")),
@@ -387,21 +351,71 @@ try {
           history.updates,
         );
         assert.deepEqual(
-          rpc.map((row) => row.method),
+          fixture.rpc.map((row) => row.method),
           ["initialize", "session/load"],
         );
-        assert.deepEqual(rpc[1].params, {
+        assert.deepEqual(fixture.rpc[1].params, {
           sessionId,
           cwd: "/workspace",
           mcpServers: [],
         });
         if (historical) {
-          assert.deepEqual(report, expectedReport, "historical report changed");
+          for (const key of [
+            "status",
+            "session_id",
+            "durable_messages",
+            "notifications",
+            "history_exact",
+            "new_runs",
+            "new_tools",
+          ])
+            assert.deepEqual(
+              report[key],
+              expectedReport[key],
+              key + " changed",
+            );
+          // Independently validate the archived Gateway proof without rebinding it
+          // to this private connection. Only its business history is replayed now.
+          const root = savedTrace.spans.find(
+            (span) =>
+              savedTrace.processes[span.processID].serviceName ===
+                "edge-gateway" &&
+              span.references.some((ref) => ref.refType === "FOLLOWS_FROM"),
+          );
+          assert(root, "archived Gateway connection link missing");
+          const originalExpected = {
+            agentId,
+            sessionId,
+            kind: "request",
+            method: "session/load",
+            transport: "websocket",
+            requestId: expectedReport.trace.request_id,
+            ...(expectedReport.trace.label
+              ? { label: expectedReport.trace.label }
+              : {}),
+            connectionTraceID: root.references.find(
+              (ref) => ref.refType === "FOLLOWS_FROM",
+            ).traceID,
+          };
           assert.deepEqual(
             JSON.parse(
-              readFileSync(join(evidence, "replay-trace.private.json")),
+              JSON.stringify(
+                strictSessionEvidence(
+                  inspectCommandTrace(savedTrace, originalExpected),
+                  savedTrace,
+                ),
+              ),
             ),
-            trace,
+            expectedReport.trace,
+            "archived Gateway proof changed",
+          );
+          writeDevelopmentJSON(
+            { output: folder },
+            "historical-replay.private.json",
+            {
+              report: expectedReport,
+              trace: savedTrace,
+            },
           );
         }
       } else {
@@ -411,6 +425,7 @@ try {
         );
         const expected = {
           "wrong-session-agent": /Session database binding/,
+          "foreign-principal": /Identity workspace authority changed/,
           "history-changed": /durable history/,
           "diff-changed": /saved file observations/,
           "extra-run": /history load created/,
@@ -427,28 +442,34 @@ try {
             "output-alias",
           ].includes(kind)
         )
-          assert.equal(requests.length, 0, "invalid inputs reached HTTP");
+          assert.equal(
+            fixture.requests.length,
+            0,
+            "invalid inputs reached HTTP",
+          );
+        if (kind === "foreign-principal") {
+          assert.equal(fixture.upgrades.length, 0);
+          assert.equal(fixture.rpc.length, 0);
+        }
       }
       checks.push({
         case: kind,
         exit_code: result.code,
         expected_failure: !success,
-        trace_samples: samples,
+        trace_samples: Object.fromEntries(fixture.details),
         ...(historical
           ? {
               database_baseline: "restored original PGDMP backup",
               durable_messages: history.rows.length,
               notifications: history.updates.length,
-              report_matches: true,
-              strict_trace: expectedReport.trace.strict_trace,
+              business_report_matches: true,
+              archived_gateway_proof_matches: true,
+              archived_strict_trace: expectedReport.trace.strict_trace,
             }
           : {}),
       });
     } finally {
-      for (const socket of sockets.clients) socket.terminate();
-      await new Promise((resolve) => sockets.close(resolve));
-      server.closeAllConnections();
-      await new Promise((resolve) => server.close(resolve));
+      await fixture.close();
     }
   }
 } finally {
@@ -466,7 +487,7 @@ const result = {
   status: "passed",
   checks,
   scope:
-    "Actual Docker PostgreSQL SELECTs, pinned ACP SDK and local HTTP/WebSocket/Jaeger fixtures. Synthetic positive/negative cases plus optional historical PGDMP restores, original notifications and saved Traces rebound only to the new connection/request. Historical credentials are not rechecked. No retained service or production ACP deployment acceptance.",
+    "Actual Docker PostgreSQL SELECTs and pinned ACP SDK with local login/Identity/private ACP/Jaeger adapters. Original CLIENT OTLP exports and observed RPC IDs bind the synthetic peer Traces. Optional historical PGDMP restores retain original history; archived Gateway proofs are checked separately without mutation. Historical credentials are not rechecked. Full service deployment acceptance remains separate.",
 };
 write("result.json", result);
 console.log(JSON.stringify(result));

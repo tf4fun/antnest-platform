@@ -1,17 +1,11 @@
-import {
-  createDevelopmentWriter,
-  readDevelopmentConfiguration,
-} from "../../support/development-configuration.mjs";
+import { readDevelopmentConfiguration } from "../../support/development-configuration.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { connectOwner } from "../lifecycle-closeout/acp.mjs";
-import { assertReplay } from "../../integration/agent-acp-service/support/persistence/evidence.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
-import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
+
+import { runDevelopmentReplay } from "./private-replay.mjs";
 
 const { values } = parseArgs({ options: { config: { type: "string" } } });
 if (!values.config) throw new Error("--config is required");
@@ -19,6 +13,7 @@ const { config, settings } = readDevelopmentConfiguration(
   values.config,
   "replay",
 );
+assert(config.privateAccess, "privateAccess is required");
 process.umask(0o077);
 mkdirSync(config.output, { recursive: true, mode: 0o700 });
 const base = config.gateway;
@@ -102,80 +97,27 @@ const counts = () =>
     "SELECT jsonb_build_array((SELECT count(*) FROM acp_sessions),(SELECT count(*) FROM runs),(SELECT count(*) FROM session_messages),(SELECT count(*) FROM tool_attempts))",
   );
 const before = counts();
-let client;
-const write = createDevelopmentWriter(config, ["replay-trace.private.json"]);
-try {
-  await admin.request("/api/session/login", {
-    body: {
-      organization_slug: settings.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG,
-      email: settings.ANTNEST_BOOTSTRAP_ADMIN_EMAIL,
-      password: settings.ANTNEST_BOOTSTRAP_ADMIN_PASSWORD,
-    },
-  });
-  const secrets = [
-    ...Object.entries(settings)
-      .filter(([k, v]) => /PASSWORD|SECRET|TOKEN|KEY/.test(k) && v?.length > 8)
-      .map(([, v]) => v),
-    ...admin.cookies.values(),
-  ];
-  client = connectOwner(
-    base,
-    agentId,
-    admin.cookie,
-    AbortSignal.timeout(90000),
-  );
-  await client.initialize();
-  await client.request("load", {
-    sessionId,
-    cwd: "/workspace",
-    mcpServers: [],
-  });
-  write("replay-updates.private.json", client.updates);
-  const tools = client.updates.filter((u) => u.update.toolCallId);
-  assert.deepEqual(
-    tools.map((u) => (u.update.content ?? []).filter((c) => c.type === "diff")),
-    files,
-    "saved file observations changed",
-  );
-  const normalized = structuredClone(client.updates);
-  for (const u of normalized)
-    if (u.update.toolCallId && u.update.content)
-      u.update.content = u.update.content.filter((c) => c.type !== "diff");
-  assertReplay(1, normalized, decoded, sessionId);
-  const loads = client.requests.filter((r) => r.method === "session/load");
-  assert.equal(loads.length, 1, "expected one actual session/load request");
-  const request = loads[0];
-  assert.equal(request.sessionId, sessionId);
-  const expected = {
-    ...request,
-    agentId,
-    sessionId,
-    kind: "request",
-    transport: "websocket",
-    connectionTraceID: client.connectionTraceID,
-  };
-  client.close();
-  assert.equal(counts(), before, "history load created execution or history");
-  const trace = await collectManagedTrace(
-    config.jaeger,
-    expected,
-    secrets,
-    [],
-    (t) => write("replay-trace.private.json", t),
-    (t, e, s, c) => strictSessionEvidence(inspectCommandTrace(t, e, s, c), t),
-  );
-  const report = {
-    status: "business_and_topology_passed",
-    session_id: sessionId,
-    durable_messages: saved.events.items.length,
-    notifications: client.updates.length,
-    history_exact: true,
-    new_runs: 0,
-    new_tools: 0,
-    trace,
-  };
-  write("replay-report.json", report);
-  console.log(JSON.stringify(report));
-} finally {
-  client?.close();
-}
+const login = await admin.request("/api/session/login", {
+  body: {
+    organization_slug: settings.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG,
+    email: settings.ANTNEST_BOOTSTRAP_ADMIN_EMAIL,
+    password: settings.ANTNEST_BOOTSTRAP_ADMIN_PASSWORD,
+  },
+});
+const secrets = [
+  ...Object.entries(settings)
+    .filter(([k, v]) => /PASSWORD|SECRET|TOKEN|KEY/.test(k) && v?.length > 8)
+    .map(([, v]) => v),
+  ...admin.cookies.values(),
+];
+const report = await runDevelopmentReplay(config, {
+  browser: admin,
+  principal: login.body.principal,
+  secrets,
+  signal: AbortSignal.timeout(90000),
+  decoded,
+  files,
+  before,
+  counts,
+});
+console.log(JSON.stringify(report));

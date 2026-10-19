@@ -397,6 +397,12 @@ export function readDevelopmentConfiguration(file, profile) {
       "recovery-report.json",
     ];
   } else if (profile === "replay") {
+    const traces = join(config.output, "traces");
+    assert(
+      !optionalStat(traces),
+      "replay trace directory already exists or is a symbolic link",
+    );
+    durablePath(traces);
     origin(config.gateway, "gateway");
     origin(config.jaeger, "jaeger");
     config.gateway = new URL(config.gateway).origin;
