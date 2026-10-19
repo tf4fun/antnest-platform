@@ -25,10 +25,7 @@ export function inspectChatTrace(trace, expected) {
 }
 
 // Diagnostics do not waive the strict warning gate or change source timestamps.
-export function chatTraceBoundary(
-  trace,
-  { sessionId, requireTools = false, bridge = false },
-) {
+export function chatRequestBoundary(trace, { sessionId, bridge = false }) {
   const tree = traceTopology(trace);
   assertCaptureDisabled(trace);
   const roots = trace.spans.filter((span) => !tree.parent(span));
@@ -94,6 +91,17 @@ export function chatTraceBoundary(
       ["agent-controller", "identity-service"].includes(tree.service(span)),
     ),
     "Run calls a management service",
+  );
+  return { tree, root, upstream, prompt, run, execution };
+}
+
+export function chatTraceBoundary(
+  trace,
+  { sessionId, requireTools = false, bridge = false },
+) {
+  const { tree, root, upstream, prompt, run, execution } = chatRequestBoundary(
+    trace,
+    { sessionId, bridge },
   );
   assert(
     execution.some(

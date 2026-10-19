@@ -353,6 +353,7 @@ async function collectHTTP(base, originalExpected, options, inspector) {
     );
   }
 }
+export { collectHTTP as collectWorkspaceHTTPTrace };
 export const collectWorkspacePrivateHTTP = (base, expected, options) =>
   collectHTTP(base, expected, options, inspectWorkspaceStateTrace);
 export const collectWorkspaceAuthorityTrace = (base, expected, options) =>

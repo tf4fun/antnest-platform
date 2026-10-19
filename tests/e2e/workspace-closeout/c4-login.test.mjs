@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import test from "node:test";
 import { member } from "./c4-setup.mjs";
+import { c4Configuration } from "./c4-configuration.mjs";
 
 const moduleURL = new URL("./c4-login.mjs", import.meta.url);
 const { captureC4Login } = await import(moduleURL).catch((error) => {
@@ -86,6 +87,32 @@ test("C4 login receipt retains the original trigger and completed response windo
   assert.equal(result.receipt.startedAt, f.startedAt);
   assert(result.receipt.completedMono >= f.startedMono);
   assert(result.receipt.completedAt >= f.startedAt);
+});
+
+test("C4 deployment creates the Organization required by its original page-login contract", async () => {
+  const config = await c4Configuration(undefined, undefined, {
+    environment: {},
+    configuration: async () => ({
+      project: "antnest-lifecycle-01234567",
+      env: {
+        ANTNEST_EGRESS_CONTROL_SUBNET: "10.242.7.0/24",
+        ANTNEST_RUNTIME_MANAGEMENT_SUBNET: "10.243.7.0/24",
+        ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG: "stage3",
+        ANTNEST_BOOTSTRAP_ORGANIZATION_NAME: "Lifecycle test",
+      },
+    }),
+  });
+  const f = fixture();
+  f.body.principal.organization_slug =
+    config.env.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG;
+  f.body.principal.organization_name =
+    config.env.ANTNEST_BOOTSTRAP_ORGANIZATION_NAME;
+  const result = await f.read();
+  assert.equal(
+    result.issued.principal.organization_slug,
+    member.organization_slug,
+  );
+  assert.equal(result.issued.principal.organization_name, "Stage 3");
 });
 
 for (const prefix of ["", "__Host-"])

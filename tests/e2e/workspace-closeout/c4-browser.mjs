@@ -10,6 +10,7 @@ import { readC4View } from "./c4-view.mjs";
 import { c4RebuildReady } from "./c4-rebuild.mjs";
 import { runC4BrowserScope } from "./c4-browser-scope.mjs";
 import { captureC4Login } from "./c4-login.mjs";
+import { captureC4PromptReceipt } from "./c4-prompt-receipt.mjs";
 import { observeC4PageStreams } from "./c4-stream-observer.mjs";
 import {
   snapshotC4Execution,
@@ -66,6 +67,8 @@ async function runBrowserInContext(
   const { context } = scope;
   const frames = [];
   const errors = [];
+  const prompts = (report.prompt_receipts = []);
+  let originalLogin;
   let browserPhase = "startup";
   const paths = [];
   const streams = new Map();
@@ -112,7 +115,26 @@ async function runBrowserInContext(
         !response.headers()["content-type"]?.startsWith("text/event-stream")
       ) {
         paths.push(url.pathname);
-        scope.track(async () => frames.push(await response.text()));
+        scope.track(async () => {
+          if (
+            url.pathname.endsWith("/prompts") &&
+            response.request().method() === "POST"
+          ) {
+            const receipt = {};
+            prompts.push(receipt);
+            await captureC4PromptReceipt(
+              page,
+              response,
+              {
+                gateway: config.gateway,
+                agentId: fixture.agentID,
+                cookies: originalLogin.cookies,
+              },
+              receipt,
+            );
+            frames.push(receipt.rawBody);
+          } else frames.push(await response.text());
+        });
       }
     });
     return page;
@@ -227,7 +249,7 @@ async function runBrowserInContext(
     const loginStartedMono = performance.now(),
       loginStartedAt = Date.now();
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    const originalLogin = await captureC4Login(page, await loginResponse, {
+    originalLogin = await captureC4Login(page, await loginResponse, {
       gateway: config.gateway,
       ownerId: fixture.ownerID,
       startedMono: loginStartedMono,
@@ -583,6 +605,7 @@ async function runBrowserInContext(
     });
     await fixture.operation((rebuilt.operation ?? rebuilt).request_id);
     await fixture.ready();
+    await fixture.captureRuntime("rebuilt");
     assert.equal(
       workspaceLocation(page.url()).sessionId,
       rebuildSession,

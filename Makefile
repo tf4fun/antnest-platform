@@ -230,7 +230,7 @@ e2e-workspace:
 
 .PHONY: e2e-workspace-browser
 e2e-workspace-browser:
-	node tests/e2e/workspace-closeout/browser-run.mjs
+	node tests/support/authenticated-shell-e2e.mjs workspace-browser
 
 .PHONY: e2e-agent-ui-upload-capacity
 e2e-agent-ui-upload-capacity:

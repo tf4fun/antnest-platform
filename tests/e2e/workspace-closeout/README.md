@@ -178,7 +178,10 @@ existing clock warning class do not rewrite raw errors or timestamps.
 ## Browser profile
 
 `c4-run.mjs` is the automated browser profile, and
-`make e2e-workspace-browser` (`browser-run.mjs`) runs it. It creates a
+`make e2e-workspace-browser` runs it through the shared fresh-candidate wrapper
+and `browser-run.mjs`. The application images and Runtime use the same isolated
+candidate tag, and the admission overlay follows the C4 image overrides.
+It creates a
 disposable project and synthetic member through the Provider, Model and Template
 APIs, uses real Gateway, ACP and Runtime services, and controls only the
 external model through a deterministic OpenAI-compatible peer. It covers:
@@ -237,6 +240,33 @@ components have local coverage. Outer-runner collection, independent failure
 archival/cleanup, complete entry admission and real Docker acceptance remain
 pending; local component success does not complete the C4 batch.
 
+The separately tested `c4-flow.mjs` orchestration retains independent business,
+collection, archival and cleanup failures. Parent cancellation joins the current
+step and prevents later business/evidence steps; an invalid collection inventory
+still reaches cleanup. Cancellation during final persistence writes back a
+failed verdict. This component still needs the concrete collectors and admission
+wired into `c4-run.mjs` before browser acceptance can pass.
+
+The original page Prompt response supplies the Trace ID even when audio is
+rejected before any Provider request. Failed response bodies and body-read
+failures retain that original ID for independent collection. The complete
+inventory requires eleven Runs, fourteen Provider requests and four Tool calls;
+it binds exact attachment input, the observed cancellation, four Sessions and
+the initial/rebuilt Runtime generations. Runtime observations read the actual
+container, retained workspace and fresh ready status before their corresponding
+Prompts. Partial collection keeps both browser and audit Provider observations,
+including conflicts, without allowing an incomplete inventory to pass. These
+inventory and Runtime components still require complete collector/admission
+wiring and real Docker acceptance.
+
+`c4-run-trace.mjs` checks each original page Prompt against its Bridge Run,
+both Run/model snapshot bindings, actual finish CTE and complete Runtime
+information/tool exchanges. The audio capability failure requires one local
+model failure and zero Provider/Tool calls. The held cancellation keeps its
+actual Run and Provider cancellation proof separate from Runtime cleanup.
+Validation views remove only independently proved diagnostics; archives and
+strict results retain the complete original traces and timing observations.
+
 The browser scope owns context/browser closure and joins every finite response
 read and page observer after success, failure or interruption. A failed context
 startup still closes its browser. Business, capture, parent cancellation and
@@ -267,12 +297,14 @@ explicit strict verdict, and unknown source warnings still fail CI review.
 
 ```sh
 node --test --test-concurrency=1 tests/e2e/workspace-closeout/*.test.mjs
-node tests/e2e/workspace-closeout/c4-run.mjs
+make e2e-workspace-browser
 ```
 
-`ANTNEST_C4_AGENT_UI_IMAGE`, `ANTNEST_C4_AGENT_ACP_IMAGE` and
-`ANTNEST_C4_EDGE_GATEWAY_IMAGE` optionally select separately built candidate
-images. The Runtime image is `antnest/antnest-runtime:local`. The runner uses
+The Make target builds fresh images and removes its candidate image references
+after acceptance. Direct `node tests/e2e/workspace-closeout/c4-run.mjs` remains a
+local development entrypoint using local images, including
+`antnest/antnest-runtime:local`. The C4 bootstrap Organization name is `Stage 3`,
+matching its page-login and stream contracts. The runner uses
 isolated subnets and no host Temporal port, so a development stack can keep
 running, and it removes its labeled resources on completion, failure or
 interruption. Reports, traces and screenshots are written to

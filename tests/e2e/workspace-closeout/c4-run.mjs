@@ -3,15 +3,15 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
-  configuration,
   dockerClient,
-  composeArgs,
   cleanup,
   scopeLabel,
   lines,
 } from "../lifecycle-closeout/docker.mjs";
+import { c4Configuration } from "./c4-configuration.mjs";
 import { setup } from "./c4-setup.mjs";
 import { runBrowser } from "./c4-browser.mjs";
+import { captureC4Runtime } from "./c4-runtime.mjs";
 import { assertWorkspaceBytes } from "./browser-control.mjs";
 import {
   collectWorkspaceChatTrace,
@@ -38,12 +38,7 @@ const checkpoint = () =>
   writeFile(`${output}/report.json`, JSON.stringify(report, null, 2));
 let config;
 try {
-  config = await configuration(abort.signal);
-  config.env.ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT = "false";
-  config.env.ANTNEST_C4_CONTROL_DYNAMIC_RANGE =
-    config.env.ANTNEST_EGRESS_CONTROL_SUBNET.replace(".0/24", ".128/25");
-  config.env.ANTNEST_C4_RUNTIME_DYNAMIC_RANGE =
-    config.env.ANTNEST_RUNTIME_MANAGEMENT_SUBNET.replace(".0/24", ".128/25");
+  config = await c4Configuration(abort.signal);
   report.project = config.project;
   report.runtime_image = config.image;
   console.error(
@@ -56,13 +51,11 @@ try {
     "inspect",
     "--format",
     "{{.Id}}",
-    config.env.ANTNEST_C4_AGENT_UI_IMAGE ?? "antnest/agent-ui:local",
+    config.agentUIImage,
   ]);
   try {
     await docker(
-      composeArgs(config.project, [
-        "-f",
-        "tests/e2e/workspace-closeout/c4.compose.yaml",
+      config.compose([
         "up",
         "-d",
         "--wait",
@@ -96,6 +89,15 @@ try {
   console.error("C4 stack healthy; creating current-contract fixture");
   const fixture = await setup(config, abort.signal);
   report.agent_id = fixture.agentID;
+  fixture.captureRuntime = (name) =>
+    captureC4Runtime(name, {
+      config,
+      fixture,
+      docker,
+      signal: abort.signal,
+      report,
+    });
+  await fixture.captureRuntime("initial");
   fixture.verifyWorkspace = async () => {
     const ids = lines(
       await docker([
@@ -160,9 +162,7 @@ try {
   if (config) {
     const docker = dockerClient(config.env, abort.signal, 30000);
     const logs = await docker(
-      composeArgs(config.project, [
-        "-f",
-        "tests/e2e/workspace-closeout/c4.compose.yaml",
+      config.compose([
         "logs",
         "--no-color",
         "--tail",

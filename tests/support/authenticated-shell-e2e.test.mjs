@@ -6,6 +6,17 @@ import {
 } from "./authenticated-shell-e2e.mjs";
 import * as shell from "./authenticated-shell-e2e.mjs";
 
+test("C4 browser enters through the fresh-candidate wrapper", () => {
+  assert.deepEqual(shell.shellEntrypoint("workspace-browser"), [
+    "node",
+    "tests/e2e/workspace-closeout/browser-run.mjs",
+  ]);
+  assert.deepEqual(
+    shellComposeFiles("workspace-browser"),
+    shellComposeFiles("workspace"),
+  );
+});
+
 test("Workspace protocol uses fresh candidates and its private protocol entrypoint", () => {
   assert.deepEqual(
     shellComposeFiles("workspace"),

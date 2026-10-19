@@ -187,6 +187,57 @@ function promptReceipt(expected, failed) {
   }
 }
 
+export function nativeBefore(
+  trace,
+  timeObservations,
+  leftSpan,
+  rightSpan,
+  left,
+  right,
+  boundary,
+) {
+  assert(Number.isFinite(left) && Number.isFinite(right));
+  if (left <= right) return;
+  assert.deepEqual(
+    privateACPProcessIdentity(trace, leftSpan),
+    privateACPProcessIdentity(trace, rightSpan),
+    "foreign native process",
+  );
+  const resource = values(trace.processes[leftSpan.processID].tags);
+  assert.equal(
+    resource["process.runtime.name"] ?? resource["telemetry.sdk.language"],
+    "nodejs",
+  );
+  if (resource["telemetry.sdk.language"] !== undefined)
+    assert.equal(resource["telemetry.sdk.language"], "nodejs");
+  if (resource["telemetry.sdk.name"] !== undefined)
+    assert.equal(resource["telemetry.sdk.name"], "opentelemetry");
+  assert(
+    [leftSpan, rightSpan].every(
+      (span) =>
+        Number.isSafeInteger(span.startTime) && span.startTime % 1000 === 0,
+    ) && left - right < 1000,
+    "native order outside deferred same-Node sub-ms boundary",
+  );
+  const [host, pid, instance] = privateACPProcessIdentity(trace, leftSpan);
+  timeObservations.push({
+    trace_id: trace.traceID,
+    span_id: leftSpan.spanID,
+    next_span_id: rightSpan.spanID,
+    process_id: leftSpan.processID,
+    host_name: host,
+    process_pid: pid,
+    service_instance_id: instance,
+    boundary,
+    raw_left_us: left,
+    raw_right_us: right,
+    raw_difference_us: left - right,
+    raw_span_start_us: leftSpan.startTime,
+    raw_next_start_us: rightSpan.startTime,
+    reason: "deferred-same-node-sdk-sub-ms-endpoint",
+  });
+}
+
 export function inspectPrivateNativeTrace(
   trace,
   expected,
@@ -328,44 +379,16 @@ export function inspectPrivateNativeTrace(
       privateACPProcessIdentity(trace, parent),
       "foreign native process",
     );
-  const before = (leftSpan, rightSpan, left, right, boundary) => {
-    assert(Number.isFinite(left) && Number.isFinite(right));
-    if (left <= right) return;
-    same(leftSpan, rightSpan);
-    const resource = values(trace.processes[leftSpan.processID].tags);
-    assert.equal(
-      resource["process.runtime.name"] ?? resource["telemetry.sdk.language"],
-      "nodejs",
-    );
-    if (resource["telemetry.sdk.language"] !== undefined)
-      assert.equal(resource["telemetry.sdk.language"], "nodejs");
-    if (resource["telemetry.sdk.name"] !== undefined)
-      assert.equal(resource["telemetry.sdk.name"], "opentelemetry");
-    assert(
-      [leftSpan, rightSpan].every(
-        (span) =>
-          Number.isSafeInteger(span.startTime) && span.startTime % 1000 === 0,
-      ) && left - right < 1000,
-      "native order outside deferred same-Node sub-ms boundary",
-    );
-    const [host, pid, instance] = privateACPProcessIdentity(trace, leftSpan);
-    timeObservations.push({
-      trace_id: trace.traceID,
-      span_id: leftSpan.spanID,
-      next_span_id: rightSpan.spanID,
-      process_id: leftSpan.processID,
-      host_name: host,
-      process_pid: pid,
-      service_instance_id: instance,
+  const before = (leftSpan, rightSpan, left, right, boundary) =>
+    nativeBefore(
+      trace,
+      timeObservations,
+      leftSpan,
+      rightSpan,
+      left,
+      right,
       boundary,
-      raw_left_us: left,
-      raw_right_us: right,
-      raw_difference_us: left - right,
-      raw_span_start_us: leftSpan.startTime,
-      raw_next_start_us: rightSpan.startTime,
-      reason: "deferred-same-node-sdk-sub-ms-endpoint",
-    });
-  };
+    );
   for (const span of [model, finish]) {
     same(span, run);
     assert(span.startTime >= run.startTime);
@@ -604,3 +627,8 @@ export function inspectPrivateNativeTrace(
     strict_trace: errors.length || timing.warning_count ? "failed" : "passed",
   };
 }
+
+export {
+  finishQuery as nativeFinishQuery,
+  boundaryFailure as nativeBoundaryFailure,
+};

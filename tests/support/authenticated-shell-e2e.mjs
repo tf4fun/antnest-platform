@@ -33,6 +33,7 @@ const owners = [
 ];
 const entrypoints = {
   workspace: ["node", "tests/e2e/workspace-closeout/run.mjs"],
+  "workspace-browser": ["node", "tests/e2e/workspace-closeout/browser-run.mjs"],
   "stage4-skill-storage-restore": [
     "node",
     "tests/e2e/lifecycle-closeout/restore-stage4-storage-docker.mjs",
