@@ -6,11 +6,7 @@ import assert from "node:assert/strict";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { mkdirSync } from "node:fs";
 import { parseArgs } from "node:util";
-import {
-  inspectChatTrace,
-  inspectChatTraceTopology,
-} from "../workspace-closeout/chat-trace.mjs";
-import { tag, traceTopology } from "../observability/trace-tree.mjs";
+import { reviewDevelopmentChatTrace } from "./chat-trace.mjs";
 
 const { values } = parseArgs({ options: { config: { type: "string" } } });
 if (!values.config) throw new Error("--config is required");
@@ -54,58 +50,7 @@ for (const trace of data) {
         .map(([, value]) => value),
     ],
   };
-  const report = inspectChatTraceTopology(trace, expected);
-  let strict = "passed";
-  try {
-    inspectChatTrace(trace, expected);
-  } catch (error) {
-    assert.equal(
-      error.message.split("\n")[0],
-      "Jaeger span warnings require review",
-    );
-    strict = "failed: Jaeger span warnings require review";
-  }
-  const warnings = [
-    ...new Set([
-      ...(trace.warnings ?? []),
-      ...trace.spans.flatMap((span) => span.warnings ?? []),
-    ]),
-  ];
-  assert(
-    warnings.every((warning) =>
-      warning.startsWith("clock skew adjustment disabled"),
-    ),
-  );
-  const tree = traceTopology(trace);
-  const anomalies = trace.spans.flatMap((span) => {
-    const parent = tree.parent(span);
-    if (!parent || !["client", "producer"].includes(tag(parent, "span.kind")))
-      return [];
-    const startDelta = span.startTime - parent.startTime;
-    const endDelta =
-      parent.startTime + parent.duration - (span.startTime + span.duration);
-    if (startDelta >= 0 && endDelta >= 0) return [];
-    return [
-      {
-        service: tree.service(span),
-        operation: span.operationName,
-        span: span.spanID,
-        parent: parent.spanID,
-        parent_service: tree.service(parent),
-        start_delta_us: startDelta,
-        end_delta_us: endDelta,
-        child_start_us: span.startTime,
-        parent_start_us: parent.startTime,
-      },
-    ];
-  });
-  result.push({
-    ...report,
-    diagnostics: undefined,
-    strict,
-    warning_messages: warnings,
-    timestamp_anomalies: anomalies,
-  });
+  result.push(reviewDevelopmentChatTrace(trace, expected));
 }
 assert(
   result.filter((item) => item.runtime_calls > 0).length >=

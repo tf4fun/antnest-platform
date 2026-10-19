@@ -361,8 +361,9 @@ Prerequisites:
 - `DEEPSEEK_API_KEY` in `../.secret`;
 - the Agent UI web dependencies and Playwright Chromium.
 
-The script accepts `--gateway`, `--env-file` and `--secret-file`; the target
-must be localhost. Real model calls incur usage.
+The script accepts `--gateway`, `--env-file`, `--secret-file` and `--output`;
+the target must be localhost. Each run requires a fresh output directory.
+Real model calls incur usage.
 
 The default flow requires empty provider, model, template and Agent
 inventories. It logs in, connects the built-in DeepSeek model, creates a
@@ -371,34 +372,46 @@ link, sends a greeting, writes and reads `/workspace/acceptance-note.txt`,
 reloads the conversation, and calls the read tool again. It also checks
 collapsed tool activity, mobile overflow and the explicit Agent chooser.
 
+Each prompt retains its original Bridge POST receipt and waits for that exact
+operation's completed Run and projected turn. The driver reads all content and
+process pages, checks the current turn's answer and completed tools, and compares
+the restored Session and history after reload. Every Prompt POST is counted,
+including failed requests, so reload cannot silently resubmit a prompt.
+
 To repeat only the chat flow on an existing Agent:
 
 ```sh
-node tests/e2e/workspace-closeout/development-browser.mjs --confirm-development --agent agent_REPLACE_ME
+node tests/e2e/workspace-closeout/development-browser.mjs --confirm-development --agent agent_REPLACE_ME --output artifacts/verification/development-repeat
 ```
 
 This creates a new Session and overwrites only the synthetic
 `/workspace/acceptance-note.txt` file. Never run it against business data.
-Metrics and credential-free screenshots are written under
-`artifacts/verification/development-acceptance/`. The stack and its data remain;
-remove them through the Agent lifecycle API.
+The default output is `artifacts/verification/development-acceptance/`.
+Original login Cookies, mutation receipts, complete views, turn pages and Trace
+sources remain in private evidence alongside screenshots. The final report is
+saved after browser tasks and resources are joined; cleanup or final-save
+cancellation prevents a passing result. The stack and its data remain; remove
+them through the Agent lifecycle API.
 
 ### Trace check
 
 The development profile queries Jaeger after a six-second export wait.
-`chat-trace.mjs` checks each prompt's Gateway SERVER -> Gateway CLIENT -> ACP
-SERVER -> Run -> model/Runtime ancestry. It rejects duplicate or missing
-parents, warnings and error spans, and verifies that content capture and
-credentials are absent. Tool prompts must contain actual Runtime `tools/call`
-SERVER spans. The profile requires RPC content capture to be disabled; the
-`--jaeger` option defaults to `http://127.0.0.1:16686`.
+`../development/chat-trace.mjs` binds exactly three Traces to the original
+Bridge receipts and completed Runs. It requires Gateway HTTP -> Agent UI
+Bridge -> ACP HTTP -> Run -> model/Runtime ancestry and matching Agent and
+Session identities. It rejects duplicate or missing parents, internal error
+spans and unreviewed warnings, and verifies that content capture and credentials
+are absent. Both tool prompts must contain actual Runtime `tools/call` SERVER
+spans. Raw sources are saved before review. The profile requires RPC content
+capture to be disabled; `--jaeger` defaults to `http://127.0.0.1:16686`.
 
 ```sh
-node --test tests/e2e/workspace-closeout/chat-trace.test.mjs
+node --test --test-concurrency=1 tests/e2e/development/chat-trace.test.mjs tests/e2e/workspace-closeout/chat-trace.test.mjs
 ```
 
-Known clock-skew warnings between services still fail the strict check;
-business, topology and timing results are reported separately.
+Known clock-skew warnings between services retain a failing strict verdict and
+their original timestamp diagnostics without blocking the reviewed Development
+result. Business, topology and timing results are reported separately.
 
 Passing the deterministic fixture suites alone does not show that a real
 external model responds correctly.

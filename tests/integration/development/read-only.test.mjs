@@ -20,6 +20,7 @@ import {
   agentId,
   sessionId,
   chatTrace,
+  bridgeChatTrace,
   managedAgent,
   executionState,
 } from "../../support/fixtures/development-read-only.mjs";
@@ -33,7 +34,7 @@ async function fixture(t, profile) {
     state: executionState(),
     traces:
       profile === "trace-review"
-        ? [chatTrace(1), chatTrace(2), chatTrace(3)]
+        ? [bridgeChatTrace(1), bridgeChatTrace(2), bridgeChatTrace(3)]
         : [chatTrace(4, true)],
     status: 200,
   };
@@ -249,6 +250,7 @@ test("trace-review retains raw bytes, strict failure and exact query scope", asy
 });
 
 for (const [name, change] of [
+  ["retired Gateway WebSocket Trace", (f) => (f.traces[0] = chatTrace(1))],
   ["missing Trace", (f) => f.traces.pop()],
   ["duplicate Trace", (f) => (f.traces[1] = f.traces[0])],
   [
@@ -272,7 +274,12 @@ for (const [name, change] of [
   ],
   [
     "too few Runtime traces",
-    (f) => f.traces.slice(0, 2).forEach((trace) => trace.spans.splice(-2)),
+    (f) =>
+      f.traces.slice(0, 2).forEach((trace) => {
+        trace.spans = trace.spans.filter(
+          (span) => !["mcp", "runtime"].includes(span.spanID),
+        );
+      }),
   ],
 ])
   test(`trace-review rejects ${name}`, async (t) => {
