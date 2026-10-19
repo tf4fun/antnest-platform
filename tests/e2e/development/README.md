@@ -1,10 +1,10 @@
 # Development deployment drivers
 
 This directory contains explicit opt-in E2E drivers that run against an
-existing development deployment. They use the deployed Gateway, the ACP SDK,
-PostgreSQL and Jaeger to check Agent state, Session replay, chat Traces,
-lifecycle operations, Runtime loss and recovery. No default `make` target runs
-them, and they never start or deploy the platform themselves.
+existing development deployment. They use the deployed Gateway, Identity,
+private ACP transport, PostgreSQL and Jaeger to check Agent state, Session replay,
+chat Traces, lifecycle operations, Runtime loss and recovery. No default `make`
+target runs them, and they never start or deploy the platform themselves.
 
 The in-progress migration of retired browser routes follows the
 [private execution consumer contract](private-contract.md). Configuration,
@@ -36,13 +36,13 @@ package. Install `services/agent-ui/web` dependencies before running them.
 
 | Driver                | Required configuration                                                                                                                                                | Effects and assertions                                                                                                                                                                                                                                                                                                                                                                    |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent-state.mjs`     | `gateway`, `envFile`, `output`, `agentId` or `browserReport`; optional `reportBasename`                                                                               | Logs in and reads management and execution state. Requires the matching Agent identity, a ready state, no active Session and allowed access. Writes `<reportBasename>.json` (default `agent-state`). Read-only: it requests no lifecycle change and no Run.                                                                                                                               |
+| `agent-state.mjs`     | `gateway`, `envFile`, `output`, `privateAccess`, `agentId` or `browserReport`; optional `reportBasename`                                                                               | Logs in and reads management and execution state. Requires the matching Agent identity, a ready state, no active Session and allowed access. Writes `<reportBasename>.json` (default `agent-state`). Read-only: it requests no lifecycle change and no Run.                                                                                                                               |
 | `replay.mjs`          | `gateway`, `jaeger`, `envFile`, `output`, `database`, `agentId` and `sessionId` or `browserReport`                                                                    | Checks Session ownership and working directory, reads existing messages from PostgreSQL, then loads the Session through the SDK. Compares decoded history and file changes, requires unchanged row counts in the four history tables, and checks the load request and connection Trace. Writes private updates, the Trace and `replay-report.json`. Never sends a prompt.                 |
 | `trace-review.mjs`    | `jaeger`, `envFile`, `secretFile`, `output`, `sessionId` or `browserReport`, `expectedTraceCount`, `minRuntimeTraces`                                                 | Queries chat Traces for the Session and checks the expected count, topology, allowed timing diagnostic category and the minimum number of Traces that contain Runtime calls. Saves raw Traces and a separate review. Makes no model request.                                                                                                                                              |
 | `rejection-trace.mjs` | `jaeger`, `output`, `rejectedSessionId` or `metadataReport`                                                                                                           | Queries the rejected Session's single prompt Trace. Requires the expected unsupported-content category, disabled content capture, and no model HTTP or Runtime Tool call. Saves the raw Trace and its review; does not issue another prompt.                                                                                                                                              |
 | `lifecycle.mjs`       | `gateway`, `jaeger`, `envFile`, `secretFile`, `retainedAgentId`, `output`, `fixtureName`, `workspaceFile`, `workspaceMarker`, `runtimeControllerScope`                | Uses the retained Agent's Template and owner to create a temporary Agent, writes a marker file in its workspace, then disables, enables, rebuilds and deletes it. Verifies workspace and volume retention and deletion, three independent execution publications and five lifecycle Traces. Compares the retained Agent's Runtime, configuration and revisions before and after.          |
-| `runtime-loss.mjs`    | All `lifecycle.mjs` fields except `runtimeControllerScope`, plus `restartSnapshot` and `composeSnapshot`                                                              | Runs the temporary-Agent lifecycle, stops the temporary Agent's Runtime normally and removes the stopped container. Verifies the exited, absent and offline observations, an explicit source-missing Rebuild, workspace retention, the expected 404 Trace behavior and publications after the Runtime Controller start time. Deletes the temporary Agent and compares the retained Agent. |
-| `recover.mjs`         | `gateway`, `jaeger`, `envFile`, `secretFile`, `output`, `retainedAgentId`, `runtimeContainerPrefix`, `runtimeControllerScope`, `workspaceVolume`, `workspaceManifest` | Explicitly rebuilds the selected Agent after checking its failure, container identity and scope, and complete read-write workspace volume. Compares configuration, workspace bytes and volume, and the recovery Trace.                                                                                                                                                                    |
+| `runtime-loss.mjs`    | All `lifecycle.mjs` fields except `runtimeControllerScope`, plus `restartSnapshot`, `composeSnapshot` and `privateAccess`                                                              | Runs the temporary-Agent lifecycle, stops the temporary Agent's Runtime normally and removes the stopped container. Verifies the exited, absent and offline observations, an explicit source-missing Rebuild, workspace retention, the expected 404 Trace behavior and publications after the Runtime Controller start time. Deletes the temporary Agent and compares the retained Agent. |
+| `recover.mjs`         | `gateway`, `jaeger`, `envFile`, `secretFile`, `output`, `retainedAgentId`, `runtimeContainerPrefix`, `runtimeControllerScope`, `workspaceVolume`, `workspaceManifest`, `privateAccess` | Explicitly rebuilds the selected Agent after checking its failure, container identity and scope, and complete read-write workspace volume. Compares configuration, workspace bytes and volume, and the recovery Trace.                                                                                                                                                                    |
 
 `publication.mjs` is not a driver. It is the shared execution-publication
 oracle used by `lifecycle.mjs`, `runtime-loss.mjs` and their integration
@@ -68,6 +68,22 @@ content capture is disabled.
 - `agent-state.mjs` requires the three bootstrap login fields in `envFile`.
   `trace-review.mjs` requires the bootstrap password and a secret environment
   file.
+
+### Private execution state
+
+`agent-state.mjs`, `recover.mjs` and `runtime-loss.mjs` require
+`privateAccess: { credentials, acp, identity, otlp }` before any HTTP or Docker
+call. `acp` and `identity` are explicit HTTP loopback origins with ports; `otlp`
+is the loopback `/v1/traces` endpoint. `credentials` names a durable directory
+containing the existing `edge-gateway/tokens/identity-service` and
+`agent-ui/tokens/agent-acp-service` workload grants.
+
+Each driver uses the original login Cookie and Principal for Identity
+authorization and validates the full private state response. The obsolete public state path
+has no fallback. `private-access.private.json` retains the original state and
+authority receipts, errors and joined cleanup result. Passing reports are written
+only after private requests, telemetry and evidence writes finish. The separate
+replay migration follows the shared contract above.
 
 ### Trace review limits
 
@@ -153,10 +169,12 @@ place.
 The driver logic is also checked without a development deployment:
 
 - `tests/integration/development/*.test.mjs` runs the drivers' CLI and local
-  HTTP checks as part of `make test`.
+  HTTP checks as part of `make test`, alongside the owning helper tests in
+  `tests/e2e/development/*.test.mjs`.
 - Opt-in Docker gates exercise the drivers against owned shell containers, real
-  workspace volumes and local Gateway and Jaeger adapters. Each requires a fresh
-  output directory and an already installed image, does not pull images, and
+  workspace volumes and local Gateway and Jaeger adapters. The migrated state
+  drivers also use original-login Identity and private ACP state adapters. Each
+  requires a fresh output directory and an already installed image, does not pull images, and
   removes its containers and volumes before comparing the remaining Docker
   resources:
 

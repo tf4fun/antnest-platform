@@ -69,7 +69,7 @@ export function executionState() {
     availability: "ready",
     active_session_id: null,
     access_allowed: true,
-    configuration_revision: "configuration-revision",
+    configuration_revision: "a".repeat(64),
     unavailable_reason: null,
   };
 }

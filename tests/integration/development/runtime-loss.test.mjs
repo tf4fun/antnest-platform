@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { developmentPrivateStateFixture } from "../../support/fixtures/development-private-state.mjs";
 import { lifecycleCliFixture } from "../../support/fixtures/development-lifecycle-cli.mjs";
 import { lifecycleKinds } from "../../support/fixtures/development-lifecycle.mjs";
 import {
@@ -18,6 +19,20 @@ import {
 async function fixture(t) {
   const f = await lifecycleCliFixture(t);
   f.entry = "tests/e2e/development/runtime-loss.mjs";
+  f.privateState = developmentPrivateStateFixture(f.root, {
+    agentId: () => f.temporaryId,
+    state: () => ({
+      agent_id: f.temporaryId,
+      access_allowed: true,
+      configuration_revision: "a".repeat(64),
+      availability: "offline",
+      active_session_id: null,
+      unavailable_reason: "agent_unavailable",
+      ...f.appState,
+    }),
+  });
+  f.privateState.principal.organization_id = f.organization;
+  f.config.privateAccess = f.privateState.configuration(f.origin);
   // Preserve deadline intervals and sample counts with a virtual polling clock.
   f.preload =
     "import timers from 'node:timers/promises';import {syncBuiltinESMExports} from 'node:module';let tick=0;const now=Date.now;Date.now=()=>now()+tick;const delay=timers.setTimeout;timers.setTimeout=(ms,...args)=>{tick+=ms;return delay(1,...args)};syncBuiltinESMExports();";
@@ -113,6 +128,11 @@ test("runtime loss preserves normal stop, source generation, five absences and p
     ["rm", "1".repeat(64)],
   );
   const paths = f.requests.map((r) => r.url);
+  assert(!paths.some((path) => path.startsWith("/api/app/agents/")));
+  const access = f.read("private-access.private.json");
+  assert.equal(access.closed, true);
+  assert.equal(access.states.length, 1);
+  assert.equal(access.states[0].joined, true);
   assert(
     paths.findIndex((p) => p.startsWith("/api/v3/trace-summaries?")) >
       paths.indexOf(`/api/admin/agents/${f.temporaryId}/delete`),
@@ -120,6 +140,7 @@ test("runtime loss preserves normal stop, source generation, five absences and p
 });
 
 for (const [name, mutate] of [
+  ["missing private access", (f) => delete f.config.privateAccess],
   [
     "invalid start time",
     (f) => (f.snapshots.restart.State.StartedAt = "invalid"),
@@ -258,11 +279,11 @@ for (const [name, mutate, error] of [
   [
     "foreign App state",
     (f) => (f.appState = { agent_id: "foreign" }),
-    /App state identity mismatch/,
+    /foreign Workspace state Agent/,
   ],
   [
     "online app",
-    (f) => (f.appState = { availability: "online" }),
+    (f) => (f.appState = { availability: "ready", unavailable_reason: null }),
     /Expected values/,
   ],
   [

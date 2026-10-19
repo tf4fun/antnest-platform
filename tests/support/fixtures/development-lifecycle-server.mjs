@@ -30,11 +30,14 @@ export async function lifecycleServer(options = {}) {
       let body = "";
       for await (const chunk of request) body += chunk;
       f.requests.push({ url: request.url, method: request.method, body });
+      if (f.privateState?.handle(request, response, body)) return;
       let value,
         status = 200,
         traceID;
       if (request.url === "/api/session/login")
-        value = { principal: { organization_id: f.organization } };
+        value = f.privateState
+          ? f.privateState.login(response)
+          : { principal: { organization_id: f.organization } };
       else if (request.url === `/api/admin/agents/${f.retainedId}`)
         value = f.retained;
       else if (
@@ -67,13 +70,6 @@ export async function lifecycleServer(options = {}) {
         };
       } else if (request.url.startsWith("/api/admin/operations/"))
         value = { state: f.operationState ?? "completed" };
-      else if (request.url === `/api/app/agents/${f.temporaryId}/state`)
-        value = {
-          agent_id: f.temporaryId,
-          availability: "offline",
-          unavailable_reason: "agent_unavailable",
-          ...f.appState,
-        };
       else if (request.url === `/api/admin/agents/${f.temporaryId}`) {
         value = lifecycleAgent(f.stage, f.temporaryId);
         if (f.agentResponse) value = f.agentResponse(value);
@@ -120,6 +116,11 @@ export async function lifecycleServer(options = {}) {
   f.close = async () => {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
+    if (f.privateState?.failures.length)
+      throw new AggregateError(
+        f.privateState.failures,
+        "private state adapter failed",
+      );
   };
   return f;
 }

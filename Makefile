@@ -142,7 +142,7 @@ test-repo:
 	node --test tests/integration/runtime-egress/peer-binding-contract.test.mjs
 	node --test tests/integration/runtime-egress/authenticated-tunnel-contract.test.mjs
 	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
-	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
+	node --test --test-concurrency=1 tests/integration/development/*.test.mjs tests/e2e/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs
 	node --test tests/e2e/observability/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs tests/e2e/agent-acp-service/http-close-receipt.test.mjs

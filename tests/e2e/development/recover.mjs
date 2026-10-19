@@ -10,6 +10,7 @@ import {
 import { workspaceManifestCommand } from "../../support/verification/workspace-manifest.mjs";
 import { inspectDevelopmentRuntime } from "../../support/verification/development-runtime.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { withDevelopmentPrivateState } from "./private-state.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
@@ -22,6 +23,7 @@ const {
   secrets: privateSettings,
   workspaceManifest,
 } = readDevelopmentConfiguration(values.config, "recover");
+assert(config.privateAccess, "privateAccess is required");
 process.umask(0o077);
 mkdirSync(config.output, { recursive: true, mode: 0o700 });
 const secrets = Object.entries({ ...settings, ...privateSettings })
@@ -68,7 +70,7 @@ function inspectRuntime() {
   });
 }
 try {
-  await admin.request("/api/session/login", {
+  const login = await admin.request("/api/session/login", {
     body: {
       organization_slug: settings.ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG,
       email: settings.ANTNEST_BOOTSTRAP_ADMIN_EMAIL,
@@ -76,81 +78,98 @@ try {
     },
   });
   secrets.push(...admin.cookies.values());
-  stage = "source";
-  const original = await read();
-  assert.equal(original.failure_code, "runtime_execution_changed");
-  const template = original.configuration?.template;
-  assert(
-    typeof template?.template_id === "string" && template.template_id,
-    "Template identity missing",
-  );
-  assert(
-    Number.isSafeInteger(template.revision) && template.revision > 0,
-    "Template revision missing",
-  );
-  const before = inspectRuntime();
-  stage = "rebuild";
-  const response = await admin.request(`/api/admin/agents/${agentId}/rebuild`, {
-    body: {
-      template_id: template.template_id,
-      template_revision: template.revision,
+  await withDevelopmentPrivateState(
+    config,
+    { browser: admin, principal: login.body.principal, secrets },
+    async (access) => {
+      stage = "source";
+      const original = await read();
+      assert.equal(original.failure_code, "runtime_execution_changed");
+      const template = original.configuration?.template;
+      assert(
+        typeof template?.template_id === "string" && template.template_id,
+        "Template identity missing",
+      );
+      assert(
+        Number.isSafeInteger(template.revision) && template.revision > 0,
+        "Template revision missing",
+      );
+      const before = inspectRuntime();
+      stage = "rebuild";
+      const response = await admin.request(
+        `/api/admin/agents/${agentId}/rebuild`,
+        {
+          body: {
+            template_id: template.template_id,
+            template_revision: template.revision,
+          },
+          status: 202,
+        },
+      );
+      const requestId = response.body?.request_id;
+      assert(
+        typeof requestId === "string" && requestId,
+        "operation request ID missing",
+      );
+      assert.match(
+        response.traceID ?? "",
+        /^[a-f0-9]{32}$/u,
+        "rebuild Trace ID missing",
+      );
+      await completed(requestId);
+      const recovered = await waitForAgentReady(read);
+      const item = {
+        kind: "rebuild",
+        traceID: response.traceID,
+        agentId,
+        requestId,
+      };
+      report.lifecycle.push(item);
+      write("lifecycle-progress.json", report);
+      console.log(
+        JSON.stringify({
+          stage: "rebuild",
+          status: "passed",
+          agent_id: agentId,
+          trace_id: item.traceID,
+        }),
+      );
+      const after = inspectRuntime();
+      assert.notEqual(after.Id, before.Id);
+      assert.equal(
+        after.State?.Running,
+        true,
+        "recovered Runtime is not running",
+      );
+      const volume = (row) =>
+        row.Mounts.find((m) => m.Destination === "/workspace").Name;
+      assert.equal(volume(after), volume(before));
+      assert.equal(
+        docker("exec", after.Id, "sh", "-c", workspaceManifestCommand) + "\n",
+        workspaceManifest,
+      );
+      assert.deepEqual(recovered.configuration, original.configuration);
+      const state = await access.state(agentId);
+      assert.equal(state.agent_id, agentId, "execution state Agent mismatch");
+      assert.equal(state.availability, "ready");
+      assert.equal(state.active_session_id, null);
+      write("recovered-runtime.json", {
+        before_id: before.Id,
+        after_id: after.Id,
+        workspace: volume(after),
+        configuration_preserved: true,
+        workspace_bytes_preserved: true,
+      });
+      item.evidence = await collectTrace(
+        config.jaeger,
+        item.traceID,
+        (trace) => {
+          write("recovery-trace.private.json", trace);
+          return inspectLifecycle(trace, item, secrets);
+        },
+      );
     },
-    status: 202,
-  });
-  const requestId = response.body?.request_id;
-  assert(
-    typeof requestId === "string" && requestId,
-    "operation request ID missing",
   );
-  assert.match(
-    response.traceID ?? "",
-    /^[a-f0-9]{32}$/u,
-    "rebuild Trace ID missing",
-  );
-  await completed(requestId);
-  const recovered = await waitForAgentReady(read);
-  const item = {
-    kind: "rebuild",
-    traceID: response.traceID,
-    agentId,
-    requestId,
-  };
-  report.lifecycle.push(item);
-  write("lifecycle-progress.json", report);
-  console.log(
-    JSON.stringify({
-      stage: "rebuild",
-      status: "passed",
-      agent_id: agentId,
-      trace_id: item.traceID,
-    }),
-  );
-  const after = inspectRuntime();
-  assert.notEqual(after.Id, before.Id);
-  assert.equal(after.State?.Running, true, "recovered Runtime is not running");
-  const volume = (row) =>
-    row.Mounts.find((m) => m.Destination === "/workspace").Name;
-  assert.equal(volume(after), volume(before));
-  assert.equal(
-    docker("exec", after.Id, "sh", "-c", workspaceManifestCommand) + "\n",
-    workspaceManifest,
-  );
-  assert.deepEqual(recovered.configuration, original.configuration);
-  const state = (await admin.request(`/api/app/agents/${agentId}/state`)).body;
-  assert.equal(state.agent_id, agentId, "execution state Agent mismatch");
-  assert.equal(state.availability, "ready");
-  assert.equal(state.active_session_id, null);
-  write("recovered-runtime.json", {
-    before_id: before.Id,
-    after_id: after.Id,
-    workspace: volume(after),
-    configuration_preserved: true,
-    workspace_bytes_preserved: true,
-  });
-  item.evidence = await collectTrace(config.jaeger, item.traceID, (trace) => {
-    write("recovery-trace.private.json", trace);
-    return inspectLifecycle(trace, item, secrets);
-  });
   report.status = "passed";
 } catch (error) {
   report.status = "failed";

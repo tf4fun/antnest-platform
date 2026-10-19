@@ -349,15 +349,23 @@ try {
           4,
         );
         assert(!containerOwned && !volumeOwned);
-        for (const trace of [
-          ...publications,
-          ...Object.values(lifecycles).map((x) => x.trace),
+        assert.equal(
+          fixture.requests.filter((r) =>
+            r.url.startsWith("/api/v3/trace-summaries?"),
+          ).length,
+          1,
+        );
+        // Publication discovery reads each summary's detail once; collection
+        // still requires the original three stable samples for every Trace.
+        for (const [trace, samples] of [
+          ...publications.map((trace) => [trace, 4]),
+          ...Object.values(lifecycles).map((x) => [x.trace, 3]),
         ])
           assert.equal(
             fixture.requests.filter(
               (r) => r.url === `/api/traces/${trace.traceID}`,
             ).length,
-            3,
+            samples,
           );
         if (history)
           assert.deepEqual(

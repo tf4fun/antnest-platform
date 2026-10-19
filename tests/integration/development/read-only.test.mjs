@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { developmentPrivateStateFixture } from "../../support/fixtures/development-private-state.mjs";
 import {
   agentId,
   sessionId,
@@ -36,10 +37,16 @@ async function fixture(t, profile) {
         : [chatTrace(4, true)],
     status: 200,
   };
+  const privateState = developmentPrivateStateFixture(root, {
+    agentId: () => agentId,
+    state: () => f.state,
+  });
+  f.privateState = privateState;
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     f.requests.push({ method: request.method, url: request.url, body });
+    if (privateState.handle(request, response, body)) return;
     const value =
       request.method === "GET" &&
       request.url.startsWith("/api/v3/trace-summaries?")
@@ -53,7 +60,7 @@ async function fixture(t, profile) {
               ),
             }
           : request.url === "/api/session/login"
-            ? { ok: true }
+            ? privateState.login(response)
             : request.url.startsWith("/api/admin/agents/")
               ? f.agent
               : f.state;
@@ -64,6 +71,7 @@ async function fixture(t, profile) {
   t.after(async () => {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
+    assert.deepEqual(privateState.failures, []);
   });
   const origin = "http://127.0.0.1:" + server.address().port;
   const envFile = join(root, "settings.env"),
@@ -77,7 +85,13 @@ async function fixture(t, profile) {
   f.config = {
     output,
     ...(profile === "agent-state"
-      ? { gateway: origin, envFile, agentId, reportBasename: "agent-before" }
+      ? {
+          gateway: origin,
+          envFile,
+          agentId,
+          reportBasename: "agent-before",
+          privateAccess: privateState.configuration(origin),
+        }
       : profile === "trace-review"
         ? {
             jaeger: origin,
@@ -113,11 +127,12 @@ test("agent-state actual CLI preserves login, state fields and custom before rep
   const result = await f.run();
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(
-    f.requests.map((r) => r.url),
+    f.requests.map((r) => r.url).filter((path) => path !== "/v1/traces"),
     [
       "/api/session/login",
       "/api/admin/agents/" + agentId,
-      "/api/app/agents/" + agentId + "/state",
+      "/rpc/identity/resolve-access-token",
+      "/rpc/agent-acp/get-agent-execution-state",
     ],
   );
   assert.deepEqual(JSON.parse(f.requests[0].body), {
@@ -130,16 +145,68 @@ test("agent-state actual CLI preserves login, state fields and custom before rep
   assert.deepEqual(report.execution_state, f.state);
   assert.equal(report.runtime_revision, "runtime-revision");
   assert.equal(report.execution_revision, "execution-revision");
+  const evidence = f.read("private-access.private.json");
+  assert.equal(evidence.closed, true);
+  assert.equal(evidence.states.length, 1);
+  assert.equal(evidence.states[0].joined, true);
+  assert.deepEqual(evidence.states[0].principal, f.privateState.principal);
+  assert.deepEqual(evidence.errors, []);
   assert.equal(
     statSync(join(f.config.output, "agent-before.json")).mode & 0o777,
     0o600,
   );
 });
 
+test("agent-state requires private inputs before any login or state call", async (t) => {
+  const f = await fixture(t, "agent-state");
+  delete f.config.privateAccess;
+  assert.notEqual((await f.run()).code, 0);
+  assert.deepEqual(f.requests, []);
+});
+
+test("agent-state rejects an Identity Principal that differs from the original login", async (t) => {
+  const f = await fixture(t, "agent-state");
+  f.privateState.identityPrincipal = {
+    ...f.privateState.principal,
+    user_id: "foreign-owner",
+  };
+  assert.notEqual((await f.run()).code, 0);
+  assert(
+    !f.requests.some(
+      (r) => r.url === "/rpc/agent-acp/get-agent-execution-state",
+    ),
+  );
+  assert(!existsSync(join(f.config.output, "agent-before.json")));
+  assert.equal(f.read("private-access.private.json").authorities.length, 1);
+});
+
 for (const [name, change] of [
-  ["not ready", (f) => (f.state.availability = "offline")],
-  ["active Session", (f) => (f.state.active_session_id = sessionId)],
-  ["access denied", (f) => (f.state.access_allowed = false)],
+  [
+    "not ready",
+    (f) =>
+      Object.assign(f.state, {
+        availability: "offline",
+        unavailable_reason: "agent_unavailable",
+      }),
+  ],
+  [
+    "active Session",
+    (f) =>
+      Object.assign(f.state, {
+        availability: "busy",
+        active_session_id: sessionId,
+      }),
+  ],
+  [
+    "access denied",
+    (f) =>
+      Object.assign(f.state, {
+        access_allowed: false,
+        availability: "offline",
+        configuration_revision: null,
+        unavailable_reason: "access_denied",
+      }),
+  ],
   ["wrong Agent", (f) => (f.state.agent_id = "agent_" + "b".repeat(32))],
   ["HTTP failure", (f) => (f.status = 503)],
 ])

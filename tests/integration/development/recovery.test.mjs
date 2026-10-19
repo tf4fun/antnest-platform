@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runCommand } from "../../support/run-command.mjs";
+import { developmentPrivateStateFixture } from "../../support/fixtures/development-private-state.mjs";
 import {
   recoveryAgent,
   recoveryScope,
@@ -37,12 +38,19 @@ async function fixture(t) {
       agent_id: recoveryAgent,
       availability: "ready",
       active_session_id: null,
+      access_allowed: true,
+      configuration_revision: "a".repeat(64),
+      unavailable_reason: null,
     },
     rebuilt: false,
     operationState: "completed",
     hashExit: 0,
     manifest: "a".repeat(64) + "  ./marker.txt\n",
   };
+  f.privateState = developmentPrivateStateFixture(root, {
+    agentId: () => recoveryAgent,
+    state: () => f.state,
+  });
   const stateFile = join(root, "docker-state.json"),
     callsFile = join(root, "docker-calls.jsonl");
   const saveDocker = () =>
@@ -58,9 +66,11 @@ async function fixture(t) {
     let body = "";
     for await (const chunk of request) body += chunk;
     f.requests.push({ url: request.url, method: request.method, body });
+    if (f.privateState.handle(request, response, body)) return;
     let value,
       status = 200;
-    if (request.url === "/api/session/login") value = {};
+    if (request.url === "/api/session/login")
+      value = f.privateState.login(response);
     else if (request.url === `/api/admin/agents/${recoveryAgent}/rebuild`) {
       f.rebuilt = true;
       saveDocker();
@@ -70,8 +80,6 @@ async function fixture(t) {
       value = f.rebuilt ? f.recovered : f.original;
     else if (request.url === "/api/admin/operations/request-test")
       value = { state: f.operationState };
-    else if (request.url === `/api/app/agents/${recoveryAgent}/state`)
-      value = f.state;
     else if (request.url === `/api/traces/${f.trace.traceID}`)
       value = { data: [f.trace] };
     else {
@@ -88,6 +96,7 @@ async function fixture(t) {
   t.after(async () => {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
+    assert.deepEqual(f.privateState.failures, []);
   });
   const origin = "http://127.0.0.1:" + server.address().port;
   const bin = join(root, "bin");
@@ -108,6 +117,7 @@ async function fixture(t) {
   writeFileSync(workspaceManifest, f.manifest);
   f.config = {
     gateway: origin,
+    privateAccess: f.privateState.configuration(origin),
     jaeger: origin,
     envFile,
     secretFile,
@@ -174,6 +184,11 @@ test("recovery CLI preserves one rebuild, workspace/configuration and stable Tra
     true,
   );
   assert.deepEqual(f.read("recovery-trace.private.json"), f.trace);
+  const access = f.read("private-access.private.json");
+  assert.equal(access.closed, true);
+  assert.equal(access.states.length, 1);
+  assert.equal(access.states[0].joined, true);
+  assert(!f.requests.some((r) => r.url.startsWith("/api/app/agents/")));
 });
 
 test("recovery retains clock warnings as a strict Trace failure", async (t) => {
@@ -188,6 +203,7 @@ test("recovery retains clock warnings as a strict Trace failure", async (t) => {
 });
 
 for (const [name, change] of [
+  ["missing private access", (f) => delete f.config.privateAccess],
   ["missing manifest", (f) => rmSync(f.config.workspaceManifest)],
   [
     "cached manifest",
@@ -309,8 +325,22 @@ for (const [name, change] of [
     (f) => (f.after.Config.Labels["io.antnest.agent-id"] = "foreign"),
   ],
   ["wrong app Agent", (f) => (f.state.agent_id = "agent_" + "e".repeat(32))],
-  ["not ready", (f) => (f.state.availability = "offline")],
-  ["active Session", (f) => (f.state.active_session_id = "foreign")],
+  [
+    "not ready",
+    (f) =>
+      Object.assign(f.state, {
+        availability: "offline",
+        unavailable_reason: "agent_unavailable",
+      }),
+  ],
+  [
+    "active Session",
+    (f) =>
+      Object.assign(f.state, {
+        availability: "busy",
+        active_session_id: "foreign",
+      }),
+  ],
 ])
   test(`recovery rejects ${name} after rebuilding`, async (t) => {
     const f = await fixture(t);
