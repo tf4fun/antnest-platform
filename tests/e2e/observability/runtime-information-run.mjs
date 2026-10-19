@@ -195,11 +195,9 @@ function inspectRunInventory(
     );
     assert.equal(protocol, "v1");
     assert.equal(tag(run, "run.terminal_class"), "failed");
-    assert.equal(
-      afterRun.length,
-      1,
-      "failed v1 response requires its actual refresh",
-    );
+    // RuntimeSkillCommands may skip its best-effort catalog read while busy
+    // or unavailable. Any actual refresh still needs the full proof below;
+    // the owning Run inspector separately validates the failed response.
   }
   assert(
     afterRun.length <= 1,

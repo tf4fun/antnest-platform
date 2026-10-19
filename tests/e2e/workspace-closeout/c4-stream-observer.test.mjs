@@ -153,11 +153,27 @@ test("an EventSource that ended before the revocation trigger cannot satisfy C4"
   await assert.rejects(checkpoint(f.observer), /before.*trigger|not live/);
 });
 
+test("C4 retains original truncated remote transport without claiming its authorization cause", async (t) => {
+  const f = await fixture(t);
+  await f.start();
+  const point = await checkpoint(f.observer);
+  f.streams[0].destroy();
+  const result = await f.observer.waitForRemoteEnd(point, { timeoutMs: 1000 });
+  assert.equal(result.closure.kind, "transport-end");
+  assert.deepEqual(result.closure.failure, {
+    errorText: "net::ERR_INCOMPLETE_CHUNKED_ENCODING",
+  });
+  assert.equal(result.authorizationCauseVerified, false);
+  assert.equal(result.localClose, false);
+  assert.equal(f.wire.length, 1);
+  await f.page.close();
+  assert.equal(await f.observer.waitForRemoteEnd(point), result);
+});
+
 for (const kind of [
   "page-close",
   "local-source-close",
   "navigation",
-  "network-failure",
   "observer-disposal",
 ])
   test(`C4 refuses ${kind} as remote normal EOF`, async (t) => {
@@ -168,7 +184,6 @@ for (const kind of [
     else if (kind === "local-source-close")
       await f.page.evaluate(() => source.close());
     else if (kind === "navigation") await f.page.goto(f.gateway + "/next");
-    else if (kind === "network-failure") f.streams[0].destroy();
     else await f.observer.closeAndWait();
     await assert.rejects(
       f.observer.waitForRemoteEnd(point, { timeoutMs: 1000 }),

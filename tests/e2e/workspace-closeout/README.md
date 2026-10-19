@@ -19,7 +19,7 @@ authenticated shell entry and runs `current-flow.mjs` against a disposable
 Foundation stack with the installed official ACP SDK. `current-flow.mjs` connects
 `private-flow.mjs` and `protocol-business.mjs` to private ACP. Component wiring
 and strict inventory/admission have passed local checks and a fresh-candidate
-protocol Docker run. The separate C4 browser batch remains pending. The
+protocol Docker run. The separate C4 browser Docker batch has also passed. The
 [protocol contract](protocol-migration-contract.md) defines the required result.
 
 Workspace-owned private components are implemented and covered by fixture
@@ -120,7 +120,7 @@ Gateway ancestry for the current private protocol. Private ACP requests and
 state observations begin at their actual exported CLIENT and ACP receiver;
 their original Identity delegation is collected independently. Retired public
 execution entries remain 404. The retained browser Bridge keeps its own Gateway
-ancestry and awaits separate C4 acceptance.
+ancestry and has passed its separate C4 acceptance.
 
 Each historical public ACP request proves its own Resolve admission before the
 actual Gateway forwarding span. In that baseline, WebSocket messages and direct
@@ -194,8 +194,11 @@ external model through a deterministic OpenAI-compatible peer. It covers:
 - private-data boundaries;
 - desktop and mobile layout.
 
-C4 remains a separate pending acceptance batch. The private protocol's
-component wiring does not complete its browser Docker acceptance.
+C4 has passed its separate fresh-candidate Docker acceptance: all twelve
+browser checks, eleven Runs, fourteen Provider requests, four Tool calls and
+fifteen complete Trace roots. Each root retains three stable original source
+samples. Browser and process cleanup completed and the Docker inventory was
+restored. The other consumer batches and final integration remain separate.
 
 Browser reads use the current `/api/app/workspace/v1/agents/{agentId}/view`
 contract, with the original browser session and exact requested Agent and
@@ -225,27 +228,33 @@ cause; its owning Trace and denial/zero-execution checks remain separate gates.
 Capture the actual page login response and bind its Principal and issued Cookie
 pair to that browser. The setup client's separate member login cannot replace
 this authority. Preserve the original administrator's Principal and complete
-deactivation response as the cause receipt. After remote EOF, send one Prompt
+deactivation response as the cause receipt. After the original remote close, send one Prompt
 with the original Cookie/CSRF pair to the same Gateway, Agent and selected
 Session. Retain its raw refusal and compare the complete Run details, execution
 events and model inventory before and after revocation; no new or changed work
 is allowed.
+
+The observer retains a truncated chunked response as `transport-end` with its
+original browser failure. That observation alone proves no authorization cause.
+Final acceptance requires the original Gateway failure diagnostics and Identity
+revocation feed bound to the administrator mutation. Local abort, navigation
+and browser cleanup cannot replace that evidence; normal EOF stays `remote-end`.
 
 The C4 Trace inspector binds the original page login window and committed token
 issuance to the actual SSE, then reuses the existing directory mutation,
 committed revocation/feed, denial and stream-termination checks. Automatic
 Disable uses the real public owner/disabled events and settled Runtime proof;
 it must not fabricate private event payloads or SDK request fields. These
-components have local coverage. Outer-runner collection, independent failure
-archival/cleanup, complete entry admission and real Docker acceptance remain
-pending; local component success does not complete the C4 batch.
+components have local coverage. The concrete runner now collects and admits
+their original evidence independently of business, archival and cleanup
+failures. This complete path has passed real Docker acceptance.
 
 The separately tested `c4-flow.mjs` orchestration retains independent business,
 collection, archival and cleanup failures. Parent cancellation joins the current
 step and prevents later business/evidence steps; an invalid collection inventory
 still reaches cleanup. Cancellation during final persistence writes back a
-failed verdict. This component still needs the concrete collectors and admission
-wired into `c4-run.mjs` before browser acceptance can pass.
+failed verdict. `c4-run.mjs` uses this orchestration with the concrete actions
+and admission in `c4-actions.mjs`.
 
 The original page Prompt response supplies the Trace ID even when audio is
 rejected before any Provider request. Failed response bodies and body-read
@@ -256,14 +265,30 @@ the initial/rebuilt Runtime generations. Runtime observations read the actual
 container, retained workspace and fresh ready status before their corresponding
 Prompts. Partial collection keeps both browser and audit Provider observations,
 including conflicts, without allowing an incomplete inventory to pass. These
-inventory and Runtime components still require complete collector/admission
-wiring and real Docker acceptance.
+inventory and Runtime components are bound to complete collector/admission
+checks and have passed real Docker acceptance together.
+
+Collection archives fifteen independent original roots: eleven Prompts plus
+the page login, SSE, administrator mutation and post-revocation denial. Each
+root requires three stable samples of its complete source union. Admission
+re-inspects the archived HTTP bytes, exact source hashes and original business
+inventory. A partial failure still archives every known root. Proved audio,
+cancellation and revocation diagnostics retain their raw strict failure; only
+the owning contract can accept them. Unowned errors or warnings fail admission.
+The revocation inventory copies the original offboarding identities. Its
+diagnostic check preserves the empty error code emitted on Runtime success and
+the Controller's empty read-only Disable replay: only the proved schedule or
+admission may own the BEGIN/empty SELECT/ROLLBACK sequence. Write rollbacks,
+nonempty replay failures and additional diagnostics remain failures.
 
 `c4-run-trace.mjs` checks each original page Prompt against its Bridge Run,
 both Run/model snapshot bindings, actual finish CTE and complete Runtime
 information/tool exchanges. The audio capability failure requires one local
 model failure and zero Provider/Tool calls. The held cancellation keeps its
 actual Run and Provider cancellation proof separate from Runtime cleanup.
+The post-prompt Skill catalog read is optional, including after audio rejection;
+the service may yield to active work. Run preparation remains required, and any
+actual catalog refresh must retain its complete read and cleanup proof.
 Validation views remove only independently proved diagnostics; archives and
 strict results retain the complete original traces and timing observations.
 

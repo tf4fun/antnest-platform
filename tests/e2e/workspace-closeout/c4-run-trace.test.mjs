@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { c4RunTraceFixture } from "./c4-run-trace.fixture.mjs";
+import { traceTopology } from "../observability/trace-tree.mjs";
+import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 
 const url = new URL("./c4-run-trace.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
@@ -15,6 +17,23 @@ const inspect = (f) => {
   assert.equal(typeof implementation.inspectC4RunTrace, "function");
   return implementation.inspectC4RunTrace(f.trace, f.expected, [], f);
 };
+test("C4 audio rejection retains its original failure when the optional catalog refresh is skipped", () => {
+  const f = c4RunTraceFixture("unsupported-audio"),
+    tree = traceTopology(f.trace);
+  f.trace.spans = f.trace.spans.filter(
+    (span) => !tree.chain(span).includes(f.post.read),
+  );
+  const original = structuredClone(f.trace),
+    result = inspect(f);
+  assert.equal(result.runtime_information_reads, 1);
+  assert.equal(result.post_prompt_information_reads, 0);
+  assert.equal(result.local_failures, 1);
+  assert.equal(result.owned_error_spans.length, 3);
+  assert.equal(result.strict_trace, "failed");
+  assert.deepEqual(f.trace, original);
+  setTag(f.run, "error.type", "unrelated");
+  assert.throws(() => inspect(f));
+});
 for (const suffix of [
   "write",
   "read",

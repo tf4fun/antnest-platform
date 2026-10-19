@@ -9,7 +9,7 @@ import { execution as fileFixture } from "../acp-files/trace-fixtures.mjs";
 import { privateBoundaryFixture } from "../acp-plan/private-boundary.fixture.mjs";
 import { addPostPromptInformationRead } from "./runtime-information-run-fixtures.mjs";
 import { setTag } from "./gateway-resolution-fixtures.mjs";
-import { tag } from "./trace-tree.mjs";
+import { tag, traceTopology } from "./trace-tree.mjs";
 import { inspectRunInformationReads } from "./runtime-information-run.mjs";
 import { addFailedV1RunResponse } from "./failed-run-response-fixture.mjs";
 import {
@@ -395,6 +395,20 @@ function failedAfterRefresh() {
     },
   };
 }
+test("failed v1 Run can omit the best-effort catalog refresh without claiming its response diagnostics", () => {
+  const f = failedAfterRefresh(),
+    tree = traceTopology(f.trace);
+  f.trace.spans = f.trace.spans.filter(
+    (span) => !tree.chain(span).includes(f.post.read),
+  );
+  const raw = structuredClone(f.trace);
+  const proof = inspectRunInformationReads(f.trace, f.owners);
+  assert.equal(proof.informationReads, 1);
+  assert.equal(proof.postPromptInformationReads, 0);
+  assert(!proof.spans.has(f.owners.request));
+  assert(!proof.spans.has(f.owners.run));
+  assert.deepEqual(f.trace, raw);
+});
 test("failed v1 Run read proof accounts only for preparation and post-prompt cleanup", () => {
   const f = failedAfterRefresh();
   const raw = structuredClone(f.trace);

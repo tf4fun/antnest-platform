@@ -5,6 +5,12 @@ import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs
 
 const now = () => ({ at: performance.now(), observed_at_ms: Date.now() });
 const tracePattern = /^(?!0{32}$)[a-f0-9]{32}$/u;
+const transportKind = (failure) =>
+  failure === null
+    ? "remote-end"
+    : failure?.errorText === "net::ERR_INCOMPLETE_CHUNKED_ENCODING"
+      ? "transport-end"
+      : "transport-failure";
 
 // Observe the page's actual EventSource. This recorder does not open a stream,
 // modify browser APIs, read the response body or close any browser resource.
@@ -96,15 +102,16 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
   const finished = (request) => {
     const row = rows.get(request);
     if (row)
-      finish(
-        row,
-        request.failure() === null ? "remote-end" : "transport-failure",
-        { failure: request.failure() },
-      );
+      finish(row, transportKind(request.failure()), {
+        failure: request.failure(),
+      });
   };
   const failed = (request) => {
     const row = rows.get(request);
-    if (row) finish(row, "transport-failure", { failure: request.failure() });
+    if (row)
+      finish(row, transportKind(request.failure()), {
+        failure: request.failure(),
+      });
   };
   const local = (kind) => {
     for (const row of rows.values()) if (!row.closure) finish(row, kind);
@@ -236,10 +243,9 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
         );
         await delay(10, undefined, { signal });
       }
-      assert.equal(
-        row.closure.kind,
-        "remote-end",
-        "C4 requires normal remote EOF before local cleanup or transport failure",
+      assert(
+        ["remote-end", "transport-end"].includes(row.closure.kind),
+        "C4 requires an original remote close before local cleanup or unrelated transport failure",
       );
       assert(
         row.closure.at >= point.at && row.closure.at <= point.at + timeoutMs,

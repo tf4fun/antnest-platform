@@ -62,6 +62,49 @@ function originalErrors(error) {
     : [error];
 }
 
+test("HTTP convergence groups related source queries into the same complete sample", async (t) => {
+  const f = workspaceStateTraceFixture(),
+    c = collectorFixture(t, f);
+  const related = structuredClone(f.trace);
+  related.traceID = "f".repeat(32);
+  for (const span of related.spans) {
+    span.traceID = related.traceID;
+    for (const ref of span.references ?? []) ref.traceID = related.traceID;
+  }
+  c.options.request = async (address) =>
+    Response.json({
+      data: [
+        new URL(address).pathname.endsWith(related.traceID) ? related : f.trace,
+      ],
+    });
+  const result = await implementation.collectWorkspaceHTTPTrace(
+    "http://jaeger.test",
+    { ...f.expected, relatedTraceIDs: [related.traceID] },
+    c.options,
+    (trace, expected, secrets, collection) => {
+      assert.deepEqual(
+        new Set(collection.traces.keys()),
+        new Set([f.trace.traceID, related.traceID]),
+      );
+      return { trace_id: trace.traceID };
+    },
+  );
+  assert.deepEqual(
+    result.complete_source_receipt.samples.map((sample) => sample.attempt),
+    [1, 2, 3],
+  );
+  assert.deepEqual(
+    result.complete_source_receipt.samples.map(
+      (sample) => sample.queries.length,
+    ),
+    [2, 2, 2],
+  );
+  assert.deepEqual(
+    new Set(result.complete_source_receipt.source_trace_ids),
+    new Set([f.trace.traceID, related.traceID]),
+  );
+});
+
 test("Workspace request collection retains its original owning assertion after convergence fails", async (t) => {
   const f = barrierTraceFixture();
   const directory = mkdtempSync(

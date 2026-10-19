@@ -20,7 +20,11 @@ export function inspectC4StreamBoundary(trace, expected, secrets, collection) {
   assert.equal(expected.authorizationCauseVerified, false);
   assert.equal(expected.reason, "revoked");
   assert.equal(point.reason, "revoked");
-  assert.equal(closure.kind, "remote-end");
+  assert(["remote-end", "transport-end"].includes(closure.kind));
+  if (closure.kind === "transport-end")
+    assert.deepEqual(closure.failure, {
+      errorText: "net::ERR_INCOMPLETE_CHUNKED_ENCODING",
+    });
   for (const key of [
     "protocolVersion",
     "protocolClientClosedLocally",

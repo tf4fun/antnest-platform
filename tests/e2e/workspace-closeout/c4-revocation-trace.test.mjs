@@ -3,6 +3,9 @@ import test from "node:test";
 import { inspect as format } from "node:util";
 import { c4RevocationTraceFixture as fixture } from "./c4-revocation-trace.fixture.mjs";
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
+import { hasDiagnosticError } from "../acp-plan/requests.mjs";
+import { privateACPDiagnosticInventory } from "../observability/private-acp-inventory.mjs";
+import { with403 } from "../identity-closeout/agent-access-denial.fixture.mjs";
 
 const moduleURL = new URL("./c4-revocation-trace.mjs", import.meta.url);
 const { inspectC4RevocationTrace } = await import(moduleURL).catch((error) => {
@@ -17,6 +20,59 @@ function inspect(f) {
   assert.equal(typeof inspectC4RevocationTrace, "function");
   return inspectC4RevocationTrace(f.trace, f.expected, [], f.collection);
 }
+const reasons = new Set([
+  "c4-revoked-identity-resolve",
+  "c4-revoked-prompt-denial",
+  "public-sse-revoked-handler",
+  "public-sse-revoked-response",
+  "serialization-retry",
+]);
+test("C4 owns the exact original 403 ancestry without claiming readiness reads", () => {
+  const f = with403(fixture());
+  f.expected.denial.rawBody = JSON.stringify(f.expected.denial.body);
+  const result = inspect(f);
+  const owned = result.owned_error_spans.filter(
+    (c) => c.trace_id === f.expected.denial.traceID,
+  );
+  assert.deepEqual(
+    new Set(owned.map((c) => c.span_id)),
+    new Set([f.denied.upstream.spanID, f.denied.server.spanID]),
+  );
+  privateACPDiagnosticInventory(
+    [...f.collection.traces.values()],
+    [result],
+    reasons,
+  );
+});
+for (const feed of [false, true])
+  test(`C4 owns only the proved original revocation errors (feed=${feed})`, () => {
+    const f = fixture({ feed }),
+      original = structuredClone([...f.collection.traces]),
+      result = inspect(f),
+      sources = [...f.collection.traces.values()];
+    assert(Array.isArray(result.owned_error_spans));
+    const inventory = privateACPDiagnosticInventory(sources, [result], reasons);
+    assert(inventory.raw_error_inventory.length > 0);
+    for (const claim of inventory.owned_error_spans) {
+      const trace = f.collection.traces.get(claim.trace_id),
+        span = trace.spans.find((s) => s.spanID === claim.span_id);
+      assert(hasDiagnosticError(span));
+      assert.equal(claim.service, trace.processes[span.processID].serviceName);
+      assert.equal(claim.operation, span.operationName);
+    }
+    assert(
+      result.owned_error_spans.some(
+        (c) => c.reason === "c4-revoked-prompt-denial",
+      ),
+    );
+    assert.equal(
+      result.owned_error_spans.some(
+        (c) => c.reason === "public-sse-revoked-handler",
+      ),
+      feed,
+    );
+    assert.deepEqual([...f.collection.traces], original);
+  });
 test("C4 binds its original page login, global revocation, public Disable, remote EOF and denial", () => {
   const f = fixture(),
     before = structuredClone([f.expected, [...f.collection.traces]]);
@@ -30,6 +86,38 @@ test("C4 binds its original page login, global revocation, public Disable, remot
   assert.equal(result.login.trace_id, f.login.trace.traceID);
   assert.equal(result.login.token_insert_span_id, f.login.insert.spanID);
   assert.deepEqual([f.expected, [...f.collection.traces]], before);
+});
+
+test("C4 proves original truncated browser transport through the exact Gateway revocation feed", () => {
+  const f = fixture({ feed: true });
+  f.expected.closure.kind = "transport-end";
+  f.expected.closure.failure = {
+    errorText: "net::ERR_INCOMPLETE_CHUNKED_ENCODING",
+  };
+  const original = structuredClone([f.expected, [...f.collection.traces]]);
+  const result = inspect(f);
+  assert.equal(result.closure, "transport-end");
+  assert.equal(result.authorizationCauseVerified, true);
+  assert(result.cause_proof.feed_sequence > 0);
+  assert.deepEqual([f.expected, [...f.collection.traces]], original);
+  f.root.logs = f.root.logs.filter((event) => event !== f.feed);
+  assert.throws(() => inspect(f));
+});
+
+test("a browser transport failure without original Gateway failure cannot prove C4 revocation", () => {
+  const f = fixture();
+  f.expected.closure.kind = "transport-end";
+  f.expected.closure.failure = {
+    errorText: "net::ERR_INCOMPLETE_CHUNKED_ENCODING",
+  };
+  assert.throws(() => inspect(f));
+});
+
+test("C4 Gateway revocation cannot authorize a locally aborted browser receipt", () => {
+  const f = fixture({ feed: true });
+  f.expected.closure.kind = "transport-end";
+  f.expected.closure.failure = { errorText: "net::ERR_ABORTED" };
+  assert.throws(() => inspect(f));
 });
 test("C4 accounts for both setup and original page sessions revoked by the same User mutation", () => {
   const f = fixture(),

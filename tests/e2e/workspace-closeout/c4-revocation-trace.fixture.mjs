@@ -5,10 +5,17 @@ import { sessionTraceBase as base } from "../identity-closeout/bridge-session-tr
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 
 // Controlled composition of existing source-shaped fixtures only.
-export function c4RevocationTraceFixture() {
-  const f = userBrowserFixture(false),
+export function c4RevocationTraceFixture({ feed = false } = {}) {
+  const f = userBrowserFixture(feed),
     expected = f.expected,
     point = expected.checkpoint;
+  // ApplySnapshot reports its applied revision, not the separate SettleAgent result.
+  const applied = f.raw.trace.spans.find(
+    (span) => span.spanID === "apply-execution-snapshot-client",
+  );
+  applied.tags = applied.tags.filter(
+    ({ key }) => key !== "antnest.settlement.outcome",
+  );
   Object.assign(expected.principal, {
     organization_slug: "stage3",
     organization_name: "Stage 3",
