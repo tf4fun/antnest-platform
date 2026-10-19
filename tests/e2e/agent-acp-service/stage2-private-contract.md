@@ -25,7 +25,9 @@ HTTP authorization is resolved from the original user session for each request.
 Private state and watch use the complete current state DTO and original HTTP
 receipts. Cold restart preserves the exact 503 response. Before revocation, a
 watch is established with the owner's authority; it must observe sanitized
-denial and a remote end. The already established ACP connection rejects the
+denial and a remote end. The login receipt fingerprints its original opaque
+session Cookie independently of the watch observer; their digests must match.
+The already established ACP connection rejects the
 Prompt, and a new connection is refused by Identity after revocation.
 
 ## Business inventory

@@ -1,5 +1,4 @@
 import { durablePath, writeEvidenceFile } from "../../support/storage.mjs";
-import { createHash } from "node:crypto";
 import { inspect } from "node:util";
 import { stage2Step } from "./stage2-step.mjs";
 import { assertStage2TraceCredentials } from "./stage2-trace-credentials.mjs";
@@ -619,9 +618,7 @@ try {
       mode: "revocation",
       agentID: agentId,
       principal: ownerLogin.principal,
-      session_digest: createHash("sha256")
-        .update(ownerLogin.accessToken)
-        .digest("hex"),
+      session_digest: ownerLogin.sessionDigest,
       traceID: receipt.traceID,
       clientSpanID: receipt.clientSpanID,
       window: { start: start.observedAt, end: Date.now() },

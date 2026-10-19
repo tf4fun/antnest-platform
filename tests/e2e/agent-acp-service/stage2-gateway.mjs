@@ -1,6 +1,7 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { registerFixturePrincipal } from "./stage2-transport.mjs";
 
 export async function gatewayLogin(origin, organizationSlug, email, password) {
@@ -29,6 +30,8 @@ export async function gatewayLogin(origin, organizationSlug, email, password) {
   return {
     cookie: pairs.join("; "),
     accessToken,
+    // Fingerprint the opaque random session cookie for independent watch binding.
+    sessionDigest: createHash("sha256").update(accessToken).digest("hex"),
     csrf,
     principal: payload.principal,
   };
