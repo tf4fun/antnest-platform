@@ -185,6 +185,15 @@ U+FFFD. These clients therefore print every JSON line through
 characters; `support/ascii-json.test.mjs` finds the clients from the runners
 and rejects raw `JSON.stringify` output.
 
+The [Stage2 execution contract](e2e/agent-acp-service/stage2-private-contract.md)
+retains nine business scenarios, seven Runs (six completed and one SIGKILL),
+thirteen model requests and six Runtime writes. Its v2 WebSocket and v1 HTTP
+clients use the original login session, Identity resolution and workload grant;
+management and audit continue through the Gateway. Original private receipts
+bind all six completed Run traces, including the explicit recovery Run, while
+RPC content capture remains enabled. The real `make e2e-stage2` gate also runs
+Temporal worker recovery and ACP PostgreSQL tests after the business scenarios.
+
 The [Stage 3 base client](e2e/stage3-base/README.md) uses private ACP for
 protocol checks and complete execution state, with the original member
 Session and Principal. Logout acceptance uses the actual browser Bridge SSE

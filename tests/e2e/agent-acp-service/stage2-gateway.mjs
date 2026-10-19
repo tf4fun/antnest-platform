@@ -26,7 +26,12 @@ export async function gatewayLogin(origin, organizationSlug, email, password) {
   const { accessToken, csrf } = gatewaySessionCookies(pairs);
   assert(accessToken, "Gateway session cookie missing");
   assert(csrf, "Gateway CSRF cookie missing");
-  return { cookie: pairs.join("; "), csrf, principal: payload.principal };
+  return {
+    cookie: pairs.join("; "),
+    accessToken,
+    csrf,
+    principal: payload.principal,
+  };
 }
 
 export async function gatewayCommand(origin, login, path, body, requestId) {

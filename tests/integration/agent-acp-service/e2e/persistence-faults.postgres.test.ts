@@ -115,6 +115,8 @@ describe.skipIf(databaseUrl === undefined)(
       const config = {
         ...loadConfig({
           ...testSecurityEnvironment(),
+          ANTNEST_ALLOW_PUBLIC_DEV_SECRETS:
+            process.env.ANTNEST_ALLOW_PUBLIC_DEV_SECRETS ?? "false",
           ANTNEST_ACP_DATABASE_URL: proxied.href,
           ANTNEST_ACP_CLIENT_MCP_KEY: key,
         }),

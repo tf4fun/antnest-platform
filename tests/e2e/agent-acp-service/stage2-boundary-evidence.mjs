@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { tag, traceTopology } from "../observability/trace-tree.mjs";
+import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 
 export function agentReferences(agent) {
   assert.equal(
@@ -16,8 +17,9 @@ export function agentReferences(agent) {
   return { runtime: agent.runtime, template: agent.configuration.template };
 }
 
-export function assertNoCredentials(trace) {
+export function assertNoCredentials(trace, secrets = []) {
   const encoded = JSON.stringify(trace);
+  if (secrets.length) assertSecretFree(encoded, secrets);
   for (const marker of [
     "stage2-model-secret",
     "stage2-model-replacement",
@@ -27,7 +29,7 @@ export function assertNoCredentials(trace) {
     assert(!encoded.includes(marker), "synthetic credential leaked into trace");
 }
 
-export function inspectTemporalHistory(history, agentId) {
+export function inspectTemporalHistory(history, agentId, secrets = []) {
   assert(history.events?.length > 0, "Temporal history evidence is empty");
   const payloads = [];
   const visit = (value) => {
@@ -56,8 +58,8 @@ export function inspectTemporalHistory(history, agentId) {
     JSON.stringify(payloads).includes(agentId),
     "Temporal history must contain decoded business payloads",
   );
-  assertNoCredentials(history);
-  assertNoCredentials(payloads);
+  assertNoCredentials(history, secrets);
+  assertNoCredentials(payloads, secrets);
   return payloads.length;
 }
 
@@ -90,6 +92,16 @@ export function inspectExecutionBoundary({ source, run }) {
       tag(prompt, "antnest.session.id") === tag(root, "antnest.session.id"),
     "Run must descend from exact ACP prompt",
   );
+  // The current Run span carries Run/Session; its original ancestor Prompt
+  // carries Agent. The final inventory also binds these IDs to the stored audit.
+  const agentId = tag(prompt, "antnest.agent.id");
+  assert(typeof agentId === "string" && agentId);
+  if (tag(root, "antnest.agent.id") !== undefined)
+    assert.equal(
+      tag(root, "antnest.agent.id"),
+      agentId,
+      "Run Agent differs from submitting Prompt",
+    );
   const withinRun = run.spans.filter((span) => tree.chain(span).includes(root));
   assert(
     withinRun.every(
@@ -117,6 +129,29 @@ export function inspectExecutionBoundary({ source, run }) {
     "Runtime Tool call missing",
   );
   for (const span of runtime) {
+    if (tag(span, "rpc.method") === "tools/call") {
+      const operations = withinRun.filter(
+        (item) =>
+          item.operationName === "runtime.mcp.operation" &&
+          item.processID === span.processID &&
+          tree.parent(item) === span &&
+          tag(item, "rpc.method") === "tools/call",
+      );
+      assert.equal(
+        operations.length,
+        1,
+        "one original Runtime write operation required",
+      );
+      assert.equal(tag(operations[0], "mcp.tool.name"), "write");
+      const tools = withinRun.filter(
+        (item) =>
+          item.operationName === "runtime.mcp.tool" &&
+          item.processID === span.processID &&
+          tree.parent(item) === operations[0],
+      );
+      assert.equal(tools.length, 1, "one original Runtime Tool required");
+      assert.equal(tag(tools[0], "mcp.tool.name"), "write");
+    }
     const parent = tree.parent(span);
     assert(
       parent &&
@@ -142,6 +177,10 @@ export function inspectExecutionBoundary({ source, run }) {
     trace_id: run.traceID,
     run_id: tag(root, "antnest.run.id"),
     session_id: tag(root, "antnest.session.id"),
+    agent_id: agentId,
+    runtime_tool_calls: runtime.filter(
+      (span) => tag(span, "rpc.method") === "tools/call",
+    ).length,
     spans: run.spans.length,
     prompt_span_id: prompt.spanID,
   };
@@ -233,36 +272,4 @@ export function inspectAuditBoundary(trace) {
     method: tag(servers[0], "rpc.method"),
     spans: trace.spans.length,
   };
-}
-
-export function inspectGatewayConnection({ connection, prompt }) {
-  const tree = traceTopology(connection);
-  assertNoCredentials(connection);
-  const link = prompt.references?.find(
-    (ref) =>
-      ref.refType === "FOLLOWS_FROM" && ref.traceID === connection.traceID,
-  );
-  assert(link, "ACP message has no connection link");
-  const receivers = connection.spans.filter(
-    (span) =>
-      tree.service(span) === "agent-acp-service" &&
-      tag(span, "span.kind") === "server",
-  );
-  assert.equal(receivers.length, 1, "one ACP connection receiver required");
-  const receiver = receivers[0];
-  assert.equal(tag(receiver, "span.kind"), "server");
-  assert.equal(tag(receiver, "http.response.status_code"), 101);
-  const client = tree.parent(receiver);
-  assert.equal(tree.service(client), "edge-gateway");
-  assert.equal(tag(client, "span.kind"), "client");
-  const gateway = tree
-    .chain(client)
-    .find((span) => tag(span, "span.kind") === "server");
-  assert.equal(tree.service(gateway), "edge-gateway");
-  assert.equal(tag(gateway, "http.response.status_code"), 101);
-  assert(
-    [receiver.spanID, gateway.spanID].includes(link.spanID),
-    "message must link to a receiving connection span",
-  );
-  return { trace_id: connection.traceID, spans: connection.spans.length };
 }

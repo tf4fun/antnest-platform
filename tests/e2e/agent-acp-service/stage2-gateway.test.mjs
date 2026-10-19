@@ -42,6 +42,9 @@ for (const prefix of ["", "__Host-"])
       "owner@example.com",
       "test-password",
     );
+    assert.equal(login.accessToken, "test-session");
+    assert.equal(login.csrf, "test-csrf");
+    assert.deepEqual(login.principal, { user_id: "user" });
     const result = await gatewayCommand(
       url,
       login,
