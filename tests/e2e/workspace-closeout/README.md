@@ -222,9 +222,20 @@ cause; its owning Trace and denial/zero-execution checks remain separate gates.
 Capture the actual page login response and bind its Principal and issued Cookie
 pair to that browser. The setup client's separate member login cannot replace
 this authority. Preserve the original administrator's Principal and complete
-deactivation response as the cause receipt. These are observation components;
-original-Cookie Prompt denial, complete before/after execution inventory and
-owning Trace admission still require their separate acceptance work.
+deactivation response as the cause receipt. After remote EOF, send one Prompt
+with the original Cookie/CSRF pair to the same Gateway, Agent and selected
+Session. Retain its raw refusal and compare the complete Run details, execution
+events and model inventory before and after revocation; no new or changed work
+is allowed.
+
+The C4 Trace inspector binds the original page login window and committed token
+issuance to the actual SSE, then reuses the existing directory mutation,
+committed revocation/feed, denial and stream-termination checks. Automatic
+Disable uses the real public owner/disabled events and settled Runtime proof;
+it must not fabricate private event payloads or SDK request fields. These
+components have local coverage. Outer-runner collection, independent failure
+archival/cleanup, complete entry admission and real Docker acceptance remain
+pending; local component success does not complete the C4 batch.
 
 The browser scope owns context/browser closure and joins every finite response
 read and page observer after success, failure or interruption. A failed context

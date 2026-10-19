@@ -12,6 +12,12 @@ import { runC4BrowserScope } from "./c4-browser-scope.mjs";
 import { captureC4Login } from "./c4-login.mjs";
 import { observeC4PageStreams } from "./c4-stream-observer.mjs";
 import {
+  snapshotC4Execution,
+  assertC4NoNewExecution,
+  rejectC4Prompt,
+  c4OffboardingExpected,
+} from "./c4-revocation.mjs";
+import {
   assertReadableText,
   assertTouchTargets,
 } from "../../integration/agent-ui/visual-assertions.mjs";
@@ -218,10 +224,14 @@ async function runBrowserInContext(
           response.request().method() === "POST",
       ),
     );
+    const loginStartedMono = performance.now(),
+      loginStartedAt = Date.now();
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     const originalLogin = await captureC4Login(page, await loginResponse, {
       gateway: config.gateway,
       ownerId: fixture.ownerID,
+      startedMono: loginStartedMono,
+      startedAt: loginStartedAt,
     });
     report.page_login = {
       issued: originalLogin.issued,
@@ -632,9 +642,19 @@ async function runBrowserInContext(
     });
     await check("mobile_layout_input_completion");
 
+    const revocationSession = workspaceLocation(page.url()).sessionId;
+    const revocationView = await view(revocationSession);
+    const revocation = (report.browser_revocation = {
+      principal: originalLogin.issued.principal,
+      selectedView: revocationView.selectedView,
+    });
+    revocation.before = await snapshotC4Execution(fixture, model);
+    revocation.events_before = await fixture.json(
+      `/api/admin/agents/${fixture.agentID}/events?limit=100`,
+    );
     const pageObserver = streams.get(page);
     const beforeRevocation = await pageObserver.checkpoint({
-      sessionId: workspaceLocation(page.url()).sessionId,
+      sessionId: revocationSession,
       cookies: originalLogin.cookies,
     });
     const cause = {
@@ -647,13 +667,18 @@ async function runBrowserInContext(
       startedMono: performance.now(),
       startedAt: Date.now(),
     };
-    report.browser_revocation = {
-      principal: originalLogin.issued.principal,
+    Object.assign(revocation, {
       checkpoint: beforeRevocation,
       cause,
-    };
+    });
     const revoked = await fixture.request(cause.path, {
       body: { active: false },
+      onResponse: (response) =>
+        Object.assign(cause, {
+          status: response.status,
+          traceID: response.traceID,
+          rawBody: response.text,
+        }),
     });
     Object.assign(cause, {
       completedMono: performance.now(),
@@ -664,9 +689,19 @@ async function runBrowserInContext(
       serverDate: revoked.headers.get("date"),
     });
     Object.assign(
-      report.browser_revocation,
+      revocation,
       await pageObserver.waitForRemoteEnd(beforeRevocation),
     );
+    revocation.denial = {};
+    await rejectC4Prompt({
+      context,
+      gateway: config.gateway,
+      observer: pageObserver,
+      point: beforeRevocation,
+      selectedView: revocation.selectedView,
+      signal,
+      evidence: revocation.denial,
+    });
     await until(
       async () => (await input().count()) === 0 || !(await input().isEnabled()),
       "open page loses access",
@@ -679,12 +714,30 @@ async function runBrowserInContext(
     assert.equal(await input().count(), 0);
     assert.equal(await page.locator(".message-content").count(), 0);
     await until(
-      async () =>
-        (await fixture.json(`/api/admin/agents/${fixture.agentID}`))
-          .activation_state === "disabled",
+      async () => {
+        const agent = await fixture.json(
+          `/api/admin/agents/${fixture.agentID}`,
+        );
+        return (
+          agent.activation_state === "disabled" &&
+          !agent.active_operation_request_id
+        );
+      },
       "revocation propagated",
       signal,
     );
+    revocation.events_after = await fixture.json(
+      `/api/admin/agents/${fixture.agentID}/events?limit=100`,
+    );
+    revocation.offboarding_expected = c4OffboardingExpected({
+      before: revocation.events_before,
+      after: revocation.events_after,
+      traceID: cause.traceID,
+      agentId: fixture.agentID,
+      ownerId: fixture.ownerID,
+    });
+    revocation.after = await snapshotC4Execution(fixture, model);
+    assertC4NoNewExecution(revocation.before, revocation.after);
     await page.screenshot({
       path: `${output}/mobile-revoked.png`,
       fullPage: true,

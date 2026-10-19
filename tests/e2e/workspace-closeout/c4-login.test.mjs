@@ -56,13 +56,37 @@ function fixture(prefix = "") {
     headersArray: async () => headers,
     text: async () => JSON.stringify(body),
   };
+  const startedMono = performance.now(),
+    startedAt = Date.now();
   const read = () =>
     captureC4Login(page, response, {
       gateway: "http://127.0.0.1:8123",
       ownerId: "original-owner",
+      startedMono,
+      startedAt,
     });
-  return { body, cookies, headers, request, context, page, response, read };
+  return {
+    body,
+    cookies,
+    headers,
+    request,
+    context,
+    page,
+    response,
+    read,
+    startedMono,
+    startedAt,
+  };
 }
+
+test("C4 login receipt retains the original trigger and completed response window", async () => {
+  const f = fixture(),
+    result = await f.read();
+  assert.equal(result.receipt.startedMono, f.startedMono);
+  assert.equal(result.receipt.startedAt, f.startedAt);
+  assert(result.receipt.completedMono >= f.startedMono);
+  assert(result.receipt.completedAt >= f.startedAt);
+});
 
 for (const prefix of ["", "__Host-"])
   test(`C4 freezes its page login Principal and exact issued ${prefix}Cookie pair`, async () => {

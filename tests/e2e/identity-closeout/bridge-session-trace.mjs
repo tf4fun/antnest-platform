@@ -125,6 +125,13 @@ export function inspectBridgeSessionBoundary(
     collection.archivedTraceIDs?.has(trace.traceID),
     "original SSE Trace not archived",
   );
+  return inspectWorkspaceSSETrace(trace, expected, secrets, collection);
+}
+
+export function inspectWorkspaceSSETrace(trace, expected, secrets, collection) {
+  const point = expected.checkpoint,
+    closure = expected.closure,
+    stream = point.stream;
   const sources = resolveTraceSources(trace, secrets, collection);
   for (const source of sources) {
     assertGatewayResolutionAttributes(source);

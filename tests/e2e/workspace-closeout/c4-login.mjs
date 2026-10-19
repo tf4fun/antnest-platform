@@ -13,7 +13,15 @@ function parsed(read, message) {
   }
 }
 
-export async function captureC4Login(page, response, { gateway, ownerId }) {
+export async function captureC4Login(
+  page,
+  response,
+  { gateway, ownerId, startedMono, startedAt },
+) {
+  assert(
+    Number.isFinite(startedMono) && Number.isFinite(startedAt),
+    "original C4 login trigger window required",
+  );
   assert(response, "original C4 page login response required");
   assert(
     response.url() === new URL("/api/session/login", gateway).href,
@@ -98,6 +106,9 @@ export async function captureC4Login(page, response, { gateway, ownerId }) {
   ]);
   Object.freeze(issued.principal);
   Object.freeze(issued);
+  const completedMono = performance.now(),
+    completedAt = Date.now();
+  assert(completedMono >= startedMono && completedAt >= startedAt);
   return Object.freeze({
     issued,
     cookies,
@@ -108,6 +119,10 @@ export async function captureC4Login(page, response, { gateway, ownerId }) {
       traceID,
       serverDate,
       rawBody,
+      startedMono,
+      startedAt,
+      completedMono,
+      completedAt,
     }),
   });
 }

@@ -37,7 +37,7 @@ function receipt(row) {
     Number.isFinite(date) && new Date(date).toUTCString() === row.serverDate,
   );
 }
-function gatewayObservation(boundary, trace, root, row) {
+export function gatewayObservation(boundary, trace, root, row) {
   const identity = (source, span) => {
     const tags = Object.fromEntries(
       (source.processes[span.processID]?.tags ?? []).map(({ key, value }) => [
@@ -80,7 +80,66 @@ function inspectBrowserAccessClosure(
   collection,
   kind,
 ) {
-  const b = inspectBridgeSessionBoundary(trace, expected, secrets, collection);
+  const boundary = inspectBridgeSessionBoundary(
+    trace,
+    expected,
+    secrets,
+    collection,
+  );
+  return {
+    ...inspectBrowserAccessCause(trace, expected, secrets, collection, {
+      kind,
+      boundary,
+      inspectOffboarding: ({
+        mutation,
+        report,
+        principal,
+        kind,
+        globalUser,
+        secrets,
+      }) => {
+        const cause = expected.cause;
+        const result = inspectOffboardingTrace(
+          [mutation],
+          {
+            sourceID: cause.traceID,
+            agentID: expected.agentId,
+            requestID: report.request_id,
+            ...(globalUser
+              ? {
+                  ownerRevocation: {
+                    event: report.owner_revocation,
+                    ownerUserID: principal.user_id,
+                    organizationID: "",
+                    reason: kind,
+                  },
+                }
+              : {}),
+          },
+          secrets,
+        );
+        return {
+          result,
+          ownerRevocationSequence: globalUser
+            ? result.owner_revocation.data.identity_revocation_sequence
+            : undefined,
+        };
+      },
+    }),
+    protocol_version: expected.protocolVersion,
+    closure: "silent",
+    private_owner_close_verified: false,
+  };
+}
+
+export function inspectBrowserAccessCause(
+  trace,
+  expected,
+  secrets,
+  collection,
+  { kind, boundary, inspectOffboarding },
+) {
+  const b = boundary;
   assert.equal(expected.reason, "revoked");
   const { checkpoint, closure, cause, denial: response, principal } = expected;
   assert.equal(cause.kind, kind);
@@ -154,25 +213,14 @@ function inspectBrowserAccessClosure(
   assert.equal(report.source_trace_id, cause.traceID);
   assert.equal(report.trace_id, cause.traceID);
   assert.equal(report.agent_id, expected.agentId);
-  const offboarding = inspectOffboardingTrace(
-    [mutation],
-    {
-      sourceID: cause.traceID,
-      agentID: expected.agentId,
-      requestID: report.request_id,
-      ...(globalUser
-        ? {
-            ownerRevocation: {
-              event: report.owner_revocation,
-              ownerUserID: principal.user_id,
-              organizationID: "",
-              reason: kind,
-            },
-          }
-        : {}),
-    },
+  const { result: offboarding, ownerRevocationSequence } = inspectOffboarding({
+    mutation,
+    report,
+    principal,
+    kind,
+    globalUser,
     secrets,
-  );
+  });
   const schedule = one(
     mutation.spans.filter(
       (s) =>
@@ -221,8 +269,7 @@ function inspectBrowserAccessClosure(
   const userProof = globalUser
     ? {
         ...inspectUserRevocationTransaction(mutation, identity),
-        owner_revocation_sequence:
-          offboarding.owner_revocation.data.identity_revocation_sequence,
+        owner_revocation_sequence: ownerRevocationSequence,
       }
     : {};
   const mutationRoot = one(
@@ -364,10 +411,7 @@ function inspectBrowserAccessClosure(
   return {
     trace_id: trace.traceID,
     reason: expected.reason,
-    protocol_version: expected.protocolVersion,
     authorizationCauseVerified: true,
-    closure: "silent",
-    private_owner_close_verified: false,
     cause_proof: {
       kind: cause.kind,
       mutation_trace_id: cause.traceID,

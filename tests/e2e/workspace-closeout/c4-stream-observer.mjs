@@ -58,6 +58,7 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
       url,
       sessionId: url.searchParams.get("sessionId"),
       evidence: {
+        origin: url.origin,
         path: url.pathname + url.search,
         started_at: mark.at,
         started_at_ms: mark.observed_at_ms,
