@@ -4,7 +4,12 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../acp-closeout/wait.mjs";
-import { commandConnection } from "../acp-commands/connection.mjs";
+import { createManagedWork, runManagedWork } from "./work.mjs";
+import { createManagedPrivateAccess } from "./private-access.mjs";
+import {
+  evidenceDirectory,
+  writeEvidenceFile,
+} from "../../support/storage.mjs";
 import {
   waitForAgentReady,
   assertAgentDeleted,
@@ -30,7 +35,10 @@ import {
   assertStillRunning,
   assertReplay,
 } from "./protocol.mjs";
-import { collectManagedTrace, inspectManagedTrace } from "./request-trace.mjs";
+import {
+  collectPrivateManagedTrace,
+  managedStrictOutcome,
+} from "./request-trace.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const { assertLivePeer, restartWithNewPeer, proveHealthDuringEgressOutage } =
@@ -41,7 +49,7 @@ const { assertLivePeer, restartWithNewPeer, proveHealthDuringEgressOutage } =
 const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
 const modelURL = process.env.TEST_MODEL_URL ?? "http://managed-model:8080";
 const jaegerURL = process.env.TEST_JAEGER_URL ?? "http://jaeger:16686";
-const output = process.env.TEST_EVIDENCE_DIRECTORY;
+const output = evidenceDirectory(process.env.TEST_EVIDENCE_DIRECTORY);
 const businessFile = output
   ? join(output, "business.json")
   : "/tmp/managed-business.json";
@@ -66,12 +74,39 @@ const secrets = [
 let stage = "setup",
   agentId,
   deleted = false;
-let egressOutage;
+let egressOutage, access, memberPrincipal;
+const stateReceipts = [];
+const work = createManagedWork();
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const agent = () => api(`/api/admin/agents/${agentId}`);
-const state = async () =>
-  (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const state = async () => {
+  const errors = [];
+  let result;
+  try {
+    result = await access.state(
+      agentId,
+      member,
+      memberPrincipal,
+      stateReceipts,
+    );
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    writeEvidenceFile(
+      output,
+      "private-state.json",
+      JSON.stringify(stateReceipts),
+    );
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length)
+    throw new AggregateError(errors, "Managed state and archive failed");
+  return result;
+};
 async function internal(path) {
   const response = await fetch(
     `${process.env.TEST_RUNTIME_CONTROLLER_URL ?? "http://runtime-controller:8080"}${path}`,
@@ -150,22 +185,37 @@ async function journal(kind, requestId) {
   });
 }
 async function connect() {
-  const client = commandConnection(profile, agentId, member);
+  const client = await access.open(profile, agentId, member, memberPrincipal);
   connections.push(client);
-  await client.initialize();
   return client;
 }
 async function send(client, name, params, expected = { kind: "request" }) {
-  let response;
+  let response, failure;
+  const previous = client.lastRequest;
   try {
     response = await client.request(name, params, 120000);
     return response;
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    requests.push({
-      ...client.lastRequest,
-      sessionId: params.sessionId ?? response?.sessionId,
-      ...expected,
-    });
+    if (client.lastRequest && client.lastRequest !== previous) {
+      // Keep the same owning record so final close archives the actual busy
+      // receipt as well as the immutable success receipt and original frames.
+      Object.assign(client.lastRequest, expected, {
+        sessionId: params.sessionId ?? response?.sessionId,
+        ...(failure && isBusyDenied(failure)
+          ? {
+              rejectionReceipt: {
+                rpcCode: failure.code,
+                code: failure.data.code,
+                retryable: failure.data.retryable,
+              },
+            }
+          : {}),
+      });
+      requests.push(client.lastRequest);
+    }
   }
 }
 async function prompt(client, sessionId, phase, snapshot) {
@@ -177,7 +227,7 @@ async function prompt(client, sessionId, phase, snapshot) {
     { kind: "managed", label: phase, phase, snapshot },
   );
   if (version === 2)
-    await until(
+    await work.wait(
       () =>
         client.updates
           .slice(offset)
@@ -211,6 +261,17 @@ async function main() {
     process.env.TEST_RUNTIME_IMAGE ?? "",
     /^antnest\/antnest-runtime:[a-z0-9-]+$/,
   );
+  assert(output, "Managed durable evidence directory required");
+  access = createManagedPrivateAccess({
+    secrets,
+    preserveConnection(index, snapshot) {
+      writeEvidenceFile(
+        output,
+        `private-connection-${index}.json`,
+        JSON.stringify(snapshot),
+      );
+    },
+  });
   await admin.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
@@ -224,13 +285,14 @@ async function main() {
     password: "managed-password",
     role: "member",
   });
-  await member.request("/api/session/login", {
+  const memberLogin = await member.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "managed@example.com",
       password: "managed-password",
     },
   });
+  memberPrincipal = memberLogin.body.principal;
   secrets.push(...admin.cookies.values(), ...member.cookies.values());
   const template = await seedManaged(api, process.env.TEST_RUNTIME_IMAGE);
   const secretDescriptor =
@@ -317,13 +379,13 @@ async function main() {
   stage = "active-run-rebuild";
   let finished = false;
   const offset = client.updates.length;
-  const pending = prompt(client, sessionId, "managed-draining", source).then(
-    (value) => {
+  const pending = work.track(
+    prompt(client, sessionId, "managed-draining", source).then((value) => {
       finished = true;
       return value;
-    },
+    }),
   );
-  void pending.catch(() => {});
+
   await waitHeld(1);
   const running = (await audits(sessionId)).filter(
     (item) => item.state === "running",
@@ -560,79 +622,117 @@ async function main() {
     );
   const lifecycleTraces = [],
     sessionTraces = [],
-    sessionRaw = [];
-  save("inputs")({ lifecycle, requests, modelRequests: model.requests });
+    failures = [];
+  const initializations = connections.map(
+    (client) => client.initializationRequest,
+  );
+  assert.equal(initializations.length, 3);
+  assert.equal(requests.length, 11);
+  const allRequests = [...initializations, ...requests];
+  save("inputs")({
+    lifecycle,
+    initializations,
+    requests,
+    modelRequests: model.requests,
+  });
   for (const expected of lifecycle) {
     stage = `trace:${expected.kind}`;
-    lifecycleTraces.push(
-      await collectTrace(jaegerURL, expected.traceID, (trace) => {
-        if (trace) save(expected.kind)(trace);
-        return inspectLifecycle(trace, expected, secrets);
-      }),
-    );
+    try {
+      lifecycleTraces.push(
+        await collectTrace(jaegerURL, expected.traceID, (trace) => {
+          if (trace) save(expected.kind)(trace);
+          return inspectLifecycle(trace, expected, secrets);
+        }),
+      );
+    } catch (error) {
+      failures.push(error);
+    }
   }
-  for (const expected of requests) {
+  for (const expected of allRequests) {
     stage = `trace:${expected.label}`;
-    sessionRaw.push(
-      await collectManagedTrace(
-        jaegerURL,
-        expected,
-        secrets,
-        model.requests,
-        save(expected.label),
-        (trace) => trace,
-      ),
-    );
+    try {
+      sessionTraces.push(
+        await collectPrivateManagedTrace(jaegerURL, expected, {
+          directory: traceDirectory,
+          secrets,
+          requests: model.requests,
+          flush: () => access.telemetry.flush(),
+        }),
+      );
+    } catch (error) {
+      failures.push(error);
+    }
   }
-  for (const [index, trace] of sessionRaw.entries()) {
-    stage = `trace:${requests[index].label}`;
-    sessionTraces.push(
-      inspectManagedTrace(
-        trace,
-        requests[index],
-        secrets,
-        model.requests.filter((r) => r.trace_id === trace.traceID),
-      ),
-    );
-  }
+  if (failures.length)
+    throw new AggregateError(failures, "Managed trace verification failed");
   assert.equal(
     new Set(sessionTraces.map((t) => t.trace_id)).size,
-    requests.length,
+    allRequests.length,
   );
-  assert.equal(
-    sessionTraces.reduce((n, t) => n + (t.runtime_tool_calls ?? 0), 0),
-    10,
+  const runtimeTools = sessionTraces.reduce(
+    (n, t) => n + (t.runtime_tool_calls ?? 0),
+    0,
   );
+  assert.equal(runtimeTools, 10);
+  const diagnostics = managedStrictOutcome(sessionTraces);
+  const lifecycleAccepted =
+    !lifecycleTraces.some((t) => t.strict_trace === "failed") ||
+    clockWarningsOnly(lifecycleTraces);
   const strict = [...lifecycleTraces, ...sessionTraces].some(
     (t) => t.strict_trace === "failed",
   )
     ? "failed"
     : "passed";
-  console.log(
-    asciiJSON({
-      status: "topology_passed",
-      version,
-      strict_trace: strict,
-      timing_warning_only:
-        strict === "failed" &&
-        clockWarningsOnly([...lifecycleTraces, ...sessionTraces]),
-      lifecycle_traces: lifecycleTraces,
-      session_traces: sessionTraces,
-    }),
-  );
-  if (
-    strict === "failed" &&
-    !clockWarningsOnly([...lifecycleTraces, ...sessionTraces])
-  )
-    process.exitCode = 1;
+  const accepted = diagnostics.accepted && lifecycleAccepted;
+  const report = {
+    version,
+    project:
+      process.env.TEST_DOCKER_PROJECT ?? process.env.COMPOSE_PROJECT_NAME,
+    accepted,
+    strict_trace: strict,
+    exit_code: accepted ? (strict === "failed" ? 2 : 0) : 1,
+    private_requests: allRequests.length,
+    initializations: initializations.length,
+    business_requests: requests.length,
+    lifecycle_traces: lifecycleTraces.length,
+    runtime_tool_calls: runtimeTools,
+    diagnostics,
+    business,
+  };
+  save("report")({
+    ...report,
+    lifecycle_reports: lifecycleTraces,
+    session_reports: sessionTraces,
+  });
+  console.log(asciiJSON({ status: "topology_passed", ...report }));
+  return report;
 }
 try {
-  await main();
+  const report = await runManagedWork(
+    work,
+    connections,
+    {
+      shutdown: () => access?.telemetry.shutdown(),
+    },
+    main,
+  );
+  writeEvidenceFile(
+    output,
+    "managed-complete.json",
+    JSON.stringify({
+      ...report,
+      complete: report.accepted,
+      cleanup_completed: true,
+    }),
+  );
+  process.exitCode = report.exit_code;
 } catch (error) {
   if (output)
     writeFileSync(
       join(output, "business-failure.private.txt"),
-      error.stack ?? String(error),
+      JSON.stringify(error, Object.getOwnPropertyNames(error), 2) +
+        "\n" +
+        (error.stack ?? String(error)),
       { mode: 0o600 },
     );
   console.error(
@@ -649,12 +749,4 @@ try {
     }),
   );
   process.exitCode = 1;
-} finally {
-  for (const connection of connections) {
-    try {
-      await connection.close();
-    } catch {
-      /* Already closed SDK transports need no retry. */
-    }
-  }
 }

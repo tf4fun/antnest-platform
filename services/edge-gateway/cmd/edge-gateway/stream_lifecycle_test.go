@@ -6,72 +6,102 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
 
-func TestWebSocketStopWaitsForHandlerButPreservesHTTPDrain(t *testing.T) {
+func TestBridgeStopWaitsForStreamCleanupAndCommandDrain(t *testing.T) {
 	for _, failListener := range []bool{false, true} {
 		t.Run(map[bool]string{false: "signal", true: "serve_error"}[failListener], func(t *testing.T) {
-			testWebSocketShutdown(t, failListener)
+			testBridgeShutdown(t, failListener)
 		})
 	}
 }
 
-func testWebSocketShutdown(t *testing.T, failListener bool) {
+func testBridgeShutdown(t *testing.T, failListener bool) {
 	t.Helper()
 	started := make(chan context.Context, 2)
-	release := make(chan struct{})
+	streamRelease, commandRelease := make(chan struct{}), make(chan struct{})
+	var releaseStream, releaseCommand sync.Once
 	handlersDone := make(chan struct{}, 2)
 	lifecycle := newStreamLifecycle(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		started <- request.Context()
-		<-release
+		if request.Method == http.MethodGet {
+			<-streamRelease
+		} else {
+			<-commandRelease
+		}
 		handlersDone <- struct{}{}
 	}), nil)
-	httpRequest := httptest.NewRequest(http.MethodGet, "/", nil)
-	wsRequest := httpRequest.Clone(context.Background())
-	wsRequest.Header.Set("Connection", "Upgrade")
-	wsRequest.Header.Set("Upgrade", "websocket")
-	go lifecycle.ServeHTTP(httptest.NewRecorder(), httpRequest)
-	httpContext := <-started
-	go lifecycle.ServeHTTP(httptest.NewRecorder(), wsRequest)
-	wsContext := <-started
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		close(release)
 		t.Fatal(err)
 	}
+	defer func() { _ = listener.Close() }()
+	commandRequest := httptest.NewRequest(http.MethodPost, "/api/app/workspace/v1/agents/agent-1/commands", nil)
+	streamRequest := httptest.NewRequest(http.MethodGet, "/api/app/workspace/v1/agents/agent-1/events", nil)
+	var handlers sync.WaitGroup
+	start := func(request *http.Request) {
+		handlers.Add(1)
+		go func() { defer handlers.Done(); lifecycle.ServeHTTP(httptest.NewRecorder(), request) }()
+	}
+	start(commandRequest)
+	commandContext := <-started
+	start(streamRequest)
+	streamContext := <-started
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	server := &http.Server{Handler: lifecycle, ReadHeaderTimeout: time.Second}
 	finished := make(chan error, 1)
-	go func() { finished <- serveHTTP(ctx, server, listener, lifecycle, 3*time.Second) }()
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		finished <- serveHTTP(ctx, server, listener, lifecycle, 3*time.Second)
+	}()
+	defer func() {
+		cancel()
+		releaseStream.Do(func() { close(streamRelease) })
+		releaseCommand.Do(func() { close(commandRelease) })
+		_ = server.Close()
+		handlers.Wait()
+		<-serverDone
+	}()
 	if failListener {
 		_ = listener.Close()
 	} else {
 		cancel()
 	}
 	select {
-	case <-wsContext.Done():
+	case <-streamContext.Done():
 	case <-time.After(time.Second):
-		close(release)
-		t.Fatal("WebSocket context was not cancelled")
+		t.Fatal("Bridge stream context was not cancelled")
 	}
-	if httpContext.Err() != nil {
-		t.Error("ordinary HTTP drain was cancelled")
+	if commandContext.Err() != nil {
+		t.Error("accepted Bridge command drain was cancelled")
 	}
 	select {
 	case <-finished:
-		t.Error("server returned before hijacked handler and its telemetry completed")
+		t.Error("server returned before stream cleanup and telemetry completed")
 	default:
 	}
-	rejected := httptest.NewRecorder()
-	lifecycle.ServeHTTP(rejected, wsRequest)
-	if rejected.Code != http.StatusServiceUnavailable {
-		t.Errorf("new upgrade during shutdown: %d", rejected.Code)
+	for _, request := range []*http.Request{streamRequest, commandRequest} {
+		rejected := httptest.NewRecorder()
+		lifecycle.ServeHTTP(rejected, request)
+		if rejected.Code != http.StatusServiceUnavailable {
+			t.Errorf("new %s during shutdown: %d", request.Method, rejected.Code)
+		}
 	}
-	close(release)
+	releaseStream.Do(func() { close(streamRelease) })
 	<-handlersDone
+	select {
+	case <-finished:
+		t.Error("server returned while an accepted command remained held")
+	default:
+	}
+	if commandContext.Err() != nil {
+		t.Error("stream cleanup cancelled an accepted Bridge command")
+	}
+	releaseCommand.Do(func() { close(commandRelease) })
 	<-handlersDone
 	select {
 	case err := <-finished:
@@ -83,16 +113,15 @@ func testWebSocketShutdown(t *testing.T, failListener bool) {
 	}
 }
 
-func TestWebSocketDrainDeadlineAndRepeatedStop(t *testing.T) {
+func TestBridgeDrainDeadlineAndRepeatedStop(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	lifecycle := newStreamLifecycle(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		close(started)
 		<-release
 	}), nil)
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	request.Header.Set("Connection", "Upgrade")
-	request.Header.Set("Upgrade", "websocket")
-	go lifecycle.ServeHTTP(httptest.NewRecorder(), request)
+	request := httptest.NewRequest(http.MethodGet, "/api/app/workspace/v1/agents/agent-1/events", nil)
+	done := make(chan struct{})
+	go func() { defer close(done); lifecycle.ServeHTTP(httptest.NewRecorder(), request) }()
 	<-started
 	lifecycle.stop()
 	lifecycle.stop()
@@ -102,22 +131,36 @@ func TestWebSocketDrainDeadlineAndRepeatedStop(t *testing.T) {
 		t.Errorf("drain result=%v", err)
 	}
 	close(release)
-	deadline, done := context.WithTimeout(context.Background(), time.Second)
-	defer done()
+	defer func() { <-done }()
+	deadline, cancelDeadline := context.WithTimeout(context.Background(), time.Second)
+	defer cancelDeadline()
 	if err := lifecycle.wait(deadline); err != nil {
 		t.Fatal(err)
 	}
 }
 
+func TestRetiredRoutesAreNotManagedReceiveStreams(t *testing.T) {
+	for _, path := range []string{
+		"/api/app/bootstrap", "/api/app/agents/agent-1/state", "/api/app/agents/agent-1/state/watch",
+		"/api/app/agents/agent-1/acp", "/api/app/agents/agent-1/v1/acp", "/api/app/agents/agent-1/v2/acp",
+	} {
+		for _, upgrade := range []bool{false, true} {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			if upgrade {
+				request.Header.Set("Connection", "Upgrade")
+				request.Header.Set("Upgrade", "websocket")
+			}
+			if managedStream(request) {
+				t.Errorf("retired route still owns a stream: %s upgrade=%t", path, upgrade)
+			}
+		}
+	}
+}
+
 func TestManagedReceiveRoutes(t *testing.T) {
 	for _, path := range []string{
-		"/api/app/agents/agent-1/state/watch",
-		"/api/app/agents/agent%2F1/state/watch",
-		"/%61pi/app/agents/agent%2F1/state/watch",
-		"/api/app/agents/agent%2F1/v1/acp",
-		"/api/app/agents/agent-1/v1/acp",
-		"/api/app/agents/agent-1/acp",
 		"/api/admin/agents/agent-1/events/watch",
+		"/%61pi/admin/agents/agent%2F1/events/watch",
 		"/api/app/workspace/v1/agents/agent-1/events",
 		"/api/app/workspace/v1/agents/agent%2F1/events",
 	} {
@@ -132,6 +175,7 @@ func TestManagedReceiveRoutes(t *testing.T) {
 	}
 	for _, path := range []string{
 		"/", "/status", "/api/admin/overview", "/api/app/agents/agent-1/state",
+		"/api/app/agents/agent-1/state/watch", "/api/app/agents/agent-1/v1/acp", "/api/app/agents/agent-1/acp",
 		"/api/app/agents/agent-1/v2/acp", "/api/app/agents/agent-1/v3/acp",
 		"/api/admin/agents/agent-1/events", "/api/app/agents/agent-1/v1/acp/extra",
 		"/api/app/workspace/v1/agents/agent-1/events/extra",

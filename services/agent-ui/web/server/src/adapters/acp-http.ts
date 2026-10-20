@@ -1,6 +1,7 @@
 import { learningStatusSchema, type LearningStatus } from "../protocol/learning-status.ts";
 import * as acp from "@agentclientprotocol/sdk";
-import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
+import { AcpTransportLifecycle } from "./acp-transport-lifecycle.ts";
+import { OwnedHttpResponse } from "./owned-http-response.ts";
 import { z } from "zod";
 import { initialSkillCommands, type WorkspaceCommand } from "../protocol/available-commands.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
@@ -250,6 +251,7 @@ export class AcpHttpBridge {
   private readonly scope: BridgeScope;
   private readonly fetchImpl: typeof fetch;
   private readonly configurationCas: boolean;
+  private readonly transport: AcpTransportLifecycle;
 
   private constructor(
     connection: acp.ClientConnection,
@@ -259,6 +261,7 @@ export class AcpHttpBridge {
     capabilities: acp.AgentCapabilities,
     configurationCas: boolean,
     skillCommands: WorkspaceCommand[],
+    transport: AcpTransportLifecycle,
   ) {
     this.connection = connection;
     this.baseUrl = baseUrl;
@@ -267,6 +270,7 @@ export class AcpHttpBridge {
     this.capabilities = capabilities;
     this.configurationCas = configurationCas;
     this.skillCommands = skillCommands;
+    this.transport = transport;
   }
 
   public static async open(input: {
@@ -274,6 +278,8 @@ export class AcpHttpBridge {
     scope: BridgeScope;
     callbacks: AcpBridgeCallbacks;
     fetchImpl: typeof fetch;
+    signal?: AbortSignal;
+    closeTimeoutMs?: number;
   }): Promise<AcpHttpBridge> {
     const headers = bridgeHeaders(input.scope);
     if (!input.fetchImpl) throw new BridgeCapabilityError("Authenticated ACP client is required");
@@ -288,13 +294,11 @@ export class AcpHttpBridge {
         ({ params, signal }) =>
           input.callbacks.requestPermission(params, signal),
       );
-    const connection = application.connect(
-      createHttpStream(new URL("/v1/acp", input.baseUrl).toString(), {
-        headers,
-        cookies: "omit",
-        fetch: tracedFetch,
-      }),
-    );
+    const transport = new AcpTransportLifecycle(new URL("/v1/acp", input.baseUrl).toString(), {
+      headers, fetchImpl: tracedFetch, signal: input.signal, closeTimeoutMs: input.closeTimeoutMs,
+    });
+    const connection = application.connect(transport.stream);
+    transport.bindConnection(connection);
     try {
       const initialized = await connection.agent.request(
         acp.methods.agent.initialize,
@@ -321,6 +325,8 @@ export class AcpHttpBridge {
         throw new BridgeCapabilityError(
           "ACP Session load is required by Bridge",
         );
+      const skillCommands = initialSkillCommands(initialized._meta);
+      transport.completeInitialization();
       return new AcpHttpBridge(
         connection,
         input.baseUrl,
@@ -328,16 +334,24 @@ export class AcpHttpBridge {
         tracedFetch,
         capabilities,
         configurationCas,
-        initialSkillCommands(initialized._meta),
+        skillCommands,
+        transport,
       );
     } catch (error) {
+      transport.beginClose("initialization_failure");
       connection.close(error);
+      try { await transport.close(); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], "ACP initialization and cleanup failed"); }
       throw error;
     }
   }
 
   public get closed(): Promise<unknown> {
     return this.connection.closed;
+  }
+
+  public get canReplaceAfterPeerLoss(): boolean {
+    return this.transport.canReplaceAfterPeerLoss;
   }
 
   public async load(sessionId: string): Promise<{
@@ -512,8 +526,10 @@ export class AcpHttpBridge {
     );
   }
 
-  public close(): void {
+  public close(): Promise<void> {
+    this.transport.beginClose("requested");
     this.connection.close();
+    return this.transport.close();
   }
 
   private internalGet(path: string, signal?: AbortSignal): Promise<Response> {
@@ -563,6 +579,24 @@ export async function consumeAgentExecutionStateStream(
   changed: (state: AgentExecutionState) => void | Promise<void>,
   signal: AbortSignal,
 ): Promise<void> {
+  const owned = new OwnedHttpResponse(response, signal);
+  let failed = false, failure: unknown;
+  try { await consumeAgentStateResponse(owned.response, agentId, changed, signal); }
+  catch (error) { failed = true; failure = error; }
+  try { await owned.cancel(); }
+  catch (cleanup) {
+    if (failed) throw new AggregateError([failure, cleanup], "ACP Agent watch and cleanup failed");
+    throw cleanup;
+  }
+  if (failed) throw failure;
+}
+
+async function consumeAgentStateResponse(
+  response: Response,
+  agentId: string,
+  changed: (state: AgentExecutionState) => void | Promise<void>,
+  signal: AbortSignal,
+): Promise<void> {
   if (response.status === 403) throw new AgentAccessRevokedError();
   await requireSuccessfulObservation(response);
   if (
@@ -573,10 +607,6 @@ export async function consumeAgentExecutionStateStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const cancel = () => {
-    void reader.cancel().catch(() => {});
-  };
-  signal.addEventListener("abort", cancel, { once: true });
   try {
     while (!signal.aborted) {
       const result = await reader.read();
@@ -614,8 +644,7 @@ export async function consumeAgentExecutionStateStream(
         throw new BridgeCapabilityError("ACP Agent state frame is too large");
     }
   } finally {
-    signal.removeEventListener("abort", cancel);
-    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }
 
@@ -655,6 +684,13 @@ function revision(value: unknown): value is number {
 
 async function requireSuccessfulObservation(response: Response): Promise<void> {
   if (response.ok) return;
+  if (response.status === 403) {
+    const body: unknown = await response.json().catch(() => null);
+    if (body !== null && typeof body === "object" && !Array.isArray(body) &&
+      (body as Record<string, unknown>).code === "access_denied" &&
+      (body as Record<string, unknown>).retryable === false)
+      throw new AgentAccessRevokedError();
+  }
   if (response.status === 404) {
     const body: unknown = await response.json().catch(() => null);
     if (body !== null && typeof body === "object" &&

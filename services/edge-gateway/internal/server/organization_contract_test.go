@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/dlclark/regexp2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
@@ -181,7 +181,7 @@ func TestOrganizationProjectionIsVerifiedFreshAndSchemaValid(t *testing.T) {
 		}
 		original := stub.resolvePrincipal
 		original.OrganizationName = "Old name"
-		if end := gateway.(*handler).checkRelaySession(context.Background(), "token", original); end != nil {
+		if end := browserstream.Validate(stub.resolvePrincipal, original, time.Now()); end != nil {
 			t.Fatal("display-only rename invalidated existing authorization scope")
 		}
 	}

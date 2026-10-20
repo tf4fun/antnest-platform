@@ -153,6 +153,24 @@ export function inspectAuthorityOrigin(hit, source, all, get) {
 }
 
 export function inspectOutageAuthority(evidence, collection, secrets = []) {
+  assert(
+    [3, 4].includes(evidence.policy_revision),
+    "unsupported authority evidence revision",
+  );
+  const bridge = evidence.policy_revision === 4;
+  if (bridge) {
+    assert.equal(evidence.transport, "http-sse");
+    assert.equal(
+      evidence.wire,
+      undefined,
+      "Bridge authority contains retired WSS admission",
+    );
+  } else
+    assert.notEqual(
+      evidence.transport,
+      "http-sse",
+      "Bridge authority requires revision 4",
+    );
   const { traces, archivedTraceIDs } = collection;
   assert(
     traces instanceof Map && traces.size > 0,
@@ -316,7 +334,12 @@ export function inspectOutageAuthority(evidence, collection, secrets = []) {
     if (receivingRoute === "/rpc/agent-acp/get-agent-execution-state")
       assert.equal(tag(server, "antnest.agent.id"), evidence.agent_id);
     if (!admissionOnly) successful([server]);
-    return { ...resolved(trace, root, upstream, profile, admissionOnly), row };
+    return {
+      ...resolved(trace, root, upstream, profile, admissionOnly),
+      row,
+      receiver: server,
+      upstream,
+    };
   };
   const consoleSource = http(
     actualHTTP(
@@ -328,134 +351,203 @@ export function inspectOutageAuthority(evidence, collection, secrets = []) {
     "admin-console",
     "/api/admin/execution-synchronization",
   );
-  const workspaceSource = http(
-    actualHTTP(
-      "fresh-consumer-agent-ready",
-      `/api/app/agents/${encodeURIComponent(evidence.agent_id)}/state`,
-    ),
-    "workspace",
-    "/api/app/agents/{agent_id}/state",
-    "agent-acp-service",
-    "/rpc/agent-acp/get-agent-execution-state",
-    200,
-    "POST",
-  );
-  const wire = evidence.wire;
-  assert.equal(
-    wire.credential_scope,
-    warmLogin.issued_credential_scope,
-    "WSS credential differs from original login",
-  );
-  assert.equal(wire.upgrade.status, 101);
-  finite(wire.started_at);
-  finite(wire.upgrade.at);
-  assert(
-    warmLogin.at <= wire.started_at &&
-      wire.started_at <= wire.upgrade.at &&
-      wire.upgrade.at < stop,
-  );
-  const connection = http(
-    { trace_id: wire.upgrade.trace_id },
-    "acp",
-    "/api/app/agents/{agent_id}/v1/acp",
-    "agent-acp-service",
-    "/v1/acp",
-    101,
-  );
-  const connectionRoot = rootOf(connection.trace).root;
-  const frames = wire.frames.map((f) => ({ ...f, message: JSON.parse(f.raw) }));
-  const message = (method) => {
-    const send = one(
-      frames.filter(
-        (f) => f.direction === "send" && f.message.method === method,
-      ),
-      `actual ${method} send missing or duplicate`,
-    );
-    assert(send.message.id !== undefined, "actual request ID missing");
-    const receive = one(
-      frames.filter(
-        (f) => f.direction === "receive" && f.message.id === send.message.id,
-      ),
-      "actual ACP response missing or duplicate",
-    );
-    assert(
-      Object.hasOwn(receive.message, "result") &&
-        !Object.hasOwn(receive.message, "error"),
-      "actual ACP request failed",
-    );
-    [send.at, receive.at].forEach(finite);
-    assert(
-      wire.upgrade.at <= send.at && send.at <= receive.at && receive.at < stop,
-      "ACP prewarm outside observed connection window",
-    );
-    const trace = one(
-      all.filter((t) =>
-        t.spans.some(
-          (s) =>
-            tag(s, "antnest.request.id") === String(send.message.id) &&
-            tag(s, "rpc.method") === method &&
-            t.spans.some((root) =>
-              (root.references ?? []).some(
-                (ref) =>
-                  ref.refType === "FOLLOWS_FROM" &&
-                  ref.traceID === wire.upgrade.trace_id,
-              ),
-            ),
+  const workspaceSource = bridge
+    ? http(
+        actualHTTP(
+          "fresh-consumer-agent-ready",
+          `/api/app/workspace/v1/agents/${encodeURIComponent(evidence.agent_id)}/view`,
         ),
-      ),
-      "actual ACP prewarm Trace missing or duplicate",
+        "workspace",
+        "/api/app/workspace/v1/{path...}",
+        "agent-ui",
+        "/api/app/workspace/v1/*",
+      )
+    : http(
+        actualHTTP(
+          "fresh-consumer-agent-ready",
+          `/api/app/agents/${encodeURIComponent(evidence.agent_id)}/state`,
+        ),
+        "workspace",
+        "/api/app/agents/{agent_id}/state",
+        "agent-acp-service",
+        "/rpc/agent-acp/get-agent-execution-state",
+        200,
+        "POST",
+      );
+  let bridgeAdmission;
+  if (bridge) {
+    assert.equal(
+      workspaceSource.row.body?.agentId,
+      evidence.agent_id,
+      "wrong ready view Agent",
     );
-    const { tree, root } = rootOf(trace);
-    assert.deepEqual(
-      root.references.filter((r) => r.refType === "FOLLOWS_FROM"),
-      [
-        {
-          refType: "FOLLOWS_FROM",
-          traceID: connection.trace.traceID,
-          spanID: connectionRoot.spanID,
-        },
-      ],
-      "wrong original handshake root",
-    );
-    const result = inspectWorkspaceRequestResolution(
-      trace,
-      {
-        traceID: trace.traceID,
-        method,
-        requestId: String(send.message.id),
-        transport: "websocket",
-        agentId: evidence.agent_id,
-        connectionTraceID: connection.trace.traceID,
-        resolveTTLMS: ttl,
-      },
-      secrets,
-      collection,
-    );
-    const decision = tree.spans.get(result.decision_span_id);
-    successful([
-      root,
-      decision,
-      ...trace.spans.filter(
+    assert.equal(workspaceSource.row.body.availability, "ready");
+    assert.equal(workspaceSource.row.body.activeSessionId, null);
+    const { trace, receiver, upstream } = workspaceSource,
+      tree = traceTopology(trace);
+    assert.equal(receiver.operationName, "agent_ui.http.request");
+    assert.equal(upstream.operationName, "HTTP GET agent-ui");
+    assert.equal(tag(upstream, "server.address"), "agent-ui");
+    const initialize = one(
+      trace.spans.filter(
         (s) =>
-          tree.service(s) === "edge-gateway" ||
-          (tree.service(s) === "agent-acp-service" &&
-            tag(s, "antnest.request.id") === String(send.message.id)),
+          tree.service(s) === "agent-acp-service" &&
+          tag(s, "span.kind") === "server" &&
+          tag(s, "http.route") === "/v1/acp" &&
+          tag(s, "http.request.method") === "POST" &&
+          tag(s, "rpc.method") === "initialize",
       ),
-    ]);
-    return {
-      trace,
-      decision,
-      result,
-      row: { started_at: send.at, at: receive.at },
+      "one actual private ACP initialization required",
+    );
+    assert.equal(
+      tree.parent(initialize),
+      receiver,
+      "ACP initialization must belong to the actual UI receiver",
+    );
+    assert.equal(tag(initialize, "http.response.status_code"), 200);
+    assert.equal(tag(initialize, "rpc.service"), "acp");
+    assert.equal(
+      tag(initialize, "antnest.agent.id"),
+      evidence.agent_id,
+      "wrong initialization Agent",
+    );
+    assert(
+      initialize.startTime >= receiver.startTime &&
+        end(initialize) <= end(receiver),
+      "ACP initialization outside the actual UI request",
+    );
+    successful([initialize]);
+    bridgeAdmission = {
+      source_trace_id: trace.traceID,
+      initialization_span_id: initialize.spanID,
+      ui_receiver_span_id: receiver.spanID,
+      gateway_client_span_id: upstream.spanID,
     };
-  };
-  const originalHit = message("initialize"),
+  }
+  let connection, originalHit, acpHit;
+  if (!bridge) {
+    const wire = evidence.wire;
+    assert.equal(
+      wire.credential_scope,
+      warmLogin.issued_credential_scope,
+      "WSS credential differs from original login",
+    );
+    assert.equal(wire.upgrade.status, 101);
+    finite(wire.started_at);
+    finite(wire.upgrade.at);
+    assert(
+      warmLogin.at <= wire.started_at &&
+        wire.started_at <= wire.upgrade.at &&
+        wire.upgrade.at < stop,
+    );
+    connection = http(
+      { trace_id: wire.upgrade.trace_id },
+      "acp",
+      "/api/app/agents/{agent_id}/v1/acp",
+      "agent-acp-service",
+      "/v1/acp",
+      101,
+    );
+    const connectionRoot = rootOf(connection.trace).root;
+    const frames = wire.frames.map((f) => ({
+      ...f,
+      message: JSON.parse(f.raw),
+    }));
+    const message = (method) => {
+      const send = one(
+        frames.filter(
+          (f) => f.direction === "send" && f.message.method === method,
+        ),
+        `actual ${method} send missing or duplicate`,
+      );
+      assert(send.message.id !== undefined, "actual request ID missing");
+      const receive = one(
+        frames.filter(
+          (f) => f.direction === "receive" && f.message.id === send.message.id,
+        ),
+        "actual ACP response missing or duplicate",
+      );
+      assert(
+        Object.hasOwn(receive.message, "result") &&
+          !Object.hasOwn(receive.message, "error"),
+        "actual ACP request failed",
+      );
+      [send.at, receive.at].forEach(finite);
+      assert(
+        wire.upgrade.at <= send.at &&
+          send.at <= receive.at &&
+          receive.at < stop,
+        "ACP prewarm outside observed connection window",
+      );
+      const trace = one(
+        all.filter((t) =>
+          t.spans.some(
+            (s) =>
+              tag(s, "antnest.request.id") === String(send.message.id) &&
+              tag(s, "rpc.method") === method &&
+              t.spans.some((root) =>
+                (root.references ?? []).some(
+                  (ref) =>
+                    ref.refType === "FOLLOWS_FROM" &&
+                    ref.traceID === wire.upgrade.trace_id,
+                ),
+              ),
+          ),
+        ),
+        "actual ACP prewarm Trace missing or duplicate",
+      );
+      const { tree, root } = rootOf(trace);
+      assert.deepEqual(
+        root.references.filter((r) => r.refType === "FOLLOWS_FROM"),
+        [
+          {
+            refType: "FOLLOWS_FROM",
+            traceID: connection.trace.traceID,
+            spanID: connectionRoot.spanID,
+          },
+        ],
+        "wrong original handshake root",
+      );
+      const result = inspectWorkspaceRequestResolution(
+        trace,
+        {
+          traceID: trace.traceID,
+          method,
+          requestId: String(send.message.id),
+          transport: "websocket",
+          agentId: evidence.agent_id,
+          connectionTraceID: connection.trace.traceID,
+          resolveTTLMS: ttl,
+        },
+        secrets,
+        collection,
+      );
+      const decision = tree.spans.get(result.decision_span_id);
+      successful([
+        root,
+        decision,
+        ...trace.spans.filter(
+          (s) =>
+            tree.service(s) === "edge-gateway" ||
+            (tree.service(s) === "agent-acp-service" &&
+              tag(s, "antnest.request.id") === String(send.message.id)),
+        ),
+      ]);
+      return {
+        trace,
+        decision,
+        result,
+        row: { started_at: send.at, at: receive.at },
+      };
+    };
+    originalHit = message("initialize");
     acpHit = message("session/list");
-  assert.equal(
-    frames.find((f) => f.direction === "send")?.message.method,
-    "initialize",
-    "original CCT must use the first request after upgrade",
-  );
+    assert.equal(
+      frames.find((f) => f.direction === "send")?.message.method,
+      "initialize",
+      "original CCT must use the first request after upgrade",
+    );
+  }
   const consoleHit = http(
     actualHTTP(
       "warm-console-audit",
@@ -510,7 +602,7 @@ export function inspectOutageAuthority(evidence, collection, secrets = []) {
   const origin = (hit, source) => inspectAuthorityOrigin(hit, source, all, get);
   const prewarm = [
     [consoleHit, consoleSource],
-    [acpHit, connection],
+    ...(!bridge ? [[acpHit, connection]] : []),
     [workspaceHit, workspaceSource],
   ].map(([hit, source]) => {
     const bound =
@@ -534,7 +626,7 @@ export function inspectOutageAuthority(evidence, collection, secrets = []) {
       conservative_deadline: bound,
     };
   });
-  const original = origin(originalHit, connection);
+  const original = bridge ? undefined : origin(originalHit, connection);
   const originalStream = origin(streamHit, workspaceSource);
   const streamDeadline =
     stream.started_at + tag(streamHit.decision, prefix + "valid_for_ms");
@@ -545,13 +637,23 @@ export function inspectOutageAuthority(evidence, collection, secrets = []) {
   // valid_for is clipped by the producer to snapshot TTL, original CCT, idle
   // and absolute session expiry. A same-origin hit supplies a lower bound for
   // all four without comparing Gateway and Identity clocks or decoding secrets.
-  const originalDeadline =
-    originalHit.row.started_at +
-    tag(originalHit.decision, prefix + "valid_for_ms");
+  // Cache hits retain the source's complete Principal and original CCT. Once
+  // credential, workspace/Agent and RPC origin match, that clipped cache
+  // deadline also bounds the original private initialization's authority.
+  const originalDeadline = bridge
+    ? one(
+        prewarm.filter((r) => r.profile === "workspace"),
+        "one original Bridge authority required",
+      ).conservative_deadline
+    : originalHit.row.started_at +
+      tag(originalHit.decision, prefix + "valid_for_ms");
   assert(
     restart < originalDeadline,
-    "original WSS CCT/session budget expired during stop",
+    bridge
+      ? "original Bridge CCT/session budget expired during stop"
+      : "original WSS CCT/session budget expired during stop",
   );
+  if (bridge) bridgeAdmission.conservative_deadline = originalDeadline;
   assert(
     collection.feedAttemptTraceIDs instanceof Set &&
       collection.feedAttemptTraceIDs.size > 0,
@@ -621,12 +723,16 @@ export function inspectOutageAuthority(evidence, collection, secrets = []) {
     status: "passed",
     prewarm,
     feed_trace_ids: [...matched].sort(),
-    original_wss: {
-      ...original,
-      connection_trace_id: connection.trace.traceID,
-      first_hit_trace_id: originalHit.trace.traceID,
-      conservative_deadline: originalDeadline,
-    },
+    ...(!bridge
+      ? {
+          original_wss: {
+            ...original,
+            connection_trace_id: connection.trace.traceID,
+            first_hit_trace_id: originalHit.trace.traceID,
+            conservative_deadline: originalDeadline,
+          },
+        }
+      : { original_bridge: bridgeAdmission }),
     original_sse: {
       ...originalStream,
       trace_id: streamHit.trace.traceID,
@@ -634,6 +740,9 @@ export function inspectOutageAuthority(evidence, collection, secrets = []) {
     },
     conservative_deadline: deadline,
     remaining_at_restart_ms: deadline - restart,
-    ...resolveTraceDiagnostics(connection.trace, all),
+    ...resolveTraceDiagnostics(
+      bridge ? workspaceSource.trace : connection.trace,
+      all,
+    ),
   };
 }

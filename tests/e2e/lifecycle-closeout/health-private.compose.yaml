@@ -1,0 +1,8 @@
+# Opt-in for the Health state reader; no ACP session or client exporter.
+services:
+  diagnostic-relay:
+    ports: !override
+      - "127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT}:5432"
+      - "127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT}:16686"
+      - "127.0.0.1:0:58081"
+      - "127.0.0.1:0:58082"

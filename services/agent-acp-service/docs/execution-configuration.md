@@ -125,7 +125,7 @@ business/security acceptance, which remain the final integration batch.
 ## Local Identity And Session Configuration
 
 Production composition uses the trusted organization/principal/Agent
-tuple from Gateway. Connection establishment does not query Controller and does
+tuple from Identity context delegated by Agent UI. Connection establishment does not query Controller and does
 not decide Agent availability. Resource methods authorize against the currently
 applied organization snapshot; a disabled Agent can still expose authorized
 history and Session configuration without granting execution.
@@ -271,7 +271,7 @@ an idle subscription and does not add polling or heartbeats. Reconnection reads
 current state instead of assuming that the terminal frame was delivered.
 
 `get-agent-execution-state` and `watch-agent-execution-state` are read-only
-internal POST routes on the workspace listener. They consume verified Gateway/UI
+internal POST routes on the workspace listener. They consume verified Agent UI
 workload, an Agent-scoped signed CCT and an empty JSON
 body. The state derives from the live execution directory, local Agent slot and
 durable old-Runtime protection, never Controller Run admissions or a new table.
@@ -289,7 +289,7 @@ Only stream metadata, not contents, enters telemetry.
 
 The configuration comparison token excludes occupancy, lifecycle status,
 organization revision and credential rotation. It changes for relevant Agent,
-Runtime or model-catalog settings. Gateway and Agent UI consume these routes
+Runtime or model-catalog settings. Agent UI consumes these routes
 for workspace bootstrap and state.
 
 ## Local Run Inputs
@@ -362,8 +362,10 @@ Session organization ownership and the local `deadline_at` are explicit in SQL
 fixtures, including lock-wait/expiry tests. Application recreation uses current
 synthetic configuration to rehydrate volatile credentials, never a Run snapshot.
 
-The [Controller/ACP integration scenarios](execution-boundary-e2e.md) verify
-Controller-driven close, settlement and confirmed replacement, Gateway state
-consumption, and Console execution-audit reads after deletion/restart.
+The [Controller/ACP integration scenarios](execution-boundary-e2e.md) define
+Controller-driven close, settlement and confirmed replacement, workspace state
+consumption, and Console execution-audit reads after deletion/restart. Their
+browser consumer migration to Agent UI and renewed cross-service acceptance
+remain pending after retirement of the old direct Gateway entry.
 Historical queries use immutable Session organization ownership, not live
 execution grants. Normal execution is locally assembled without Controller calls.

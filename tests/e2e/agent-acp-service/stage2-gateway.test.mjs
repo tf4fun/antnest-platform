@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { test } from "node:test";
@@ -28,7 +29,12 @@ for (const prefix of ["", "__Host-"])
           `${prefix}antnest_session=test-session; Path=/; HttpOnly${prefix ? "; Secure" : ""}`,
           `${prefix}antnest_csrf=test-csrf; Path=/; SameSite=Lax${prefix ? "; Secure" : ""}`,
         ]);
-        response.end(JSON.stringify({ principal: { user_id: "user" } }));
+        response.end(
+          JSON.stringify({
+            principal: { user_id: "user" },
+            sessionDigest: "0".repeat(64),
+          }),
+        );
       } else {
         response.writeHead(202, { "x-antnest-trace-id": "a".repeat(32) });
         response.end(
@@ -42,6 +48,14 @@ for (const prefix of ["", "__Host-"])
       "owner@example.com",
       "test-password",
     );
+    assert.equal(login.accessToken, "test-session");
+    assert.equal(
+      login.sessionDigest,
+      createHash("sha256").update("test-session").digest("hex"),
+      "session fingerprint must come from the original cookie, not the password or response body",
+    );
+    assert.equal(login.csrf, "test-csrf");
+    assert.deepEqual(login.principal, { user_id: "user" });
     const result = await gatewayCommand(
       url,
       login,

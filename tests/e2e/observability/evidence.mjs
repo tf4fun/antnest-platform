@@ -4,16 +4,17 @@ import { tag } from "./trace-tree.mjs";
 const value = (fields, key) =>
   fields?.find((field) => field.key === key)?.value;
 
-function graph(trace) {
+function graph(trace, strictWarnings = true) {
   assert(
     trace?.traceID && trace.spans?.length && trace.processes,
     "trace is missing",
   );
-  assert.equal(
-    trace.warnings?.length ?? 0,
-    0,
-    "Jaeger trace warnings require review",
-  );
+  if (strictWarnings)
+    assert.equal(
+      trace.warnings?.length ?? 0,
+      0,
+      "Jaeger trace warnings require review",
+    );
   const spans = new Map(trace.spans.map((span) => [span.spanID, span]));
   assert.equal(spans.size, trace.spans.length, "duplicate span ID");
   const service = (span) => trace.processes[span.processID]?.serviceName;
@@ -28,11 +29,12 @@ function graph(trace) {
     return result;
   };
   for (const span of trace.spans) {
-    assert.equal(
-      span.warnings?.length ?? 0,
-      0,
-      "Jaeger span warnings require review",
-    );
+    if (strictWarnings)
+      assert.equal(
+        span.warnings?.length ?? 0,
+        0,
+        "Jaeger span warnings require review",
+      );
     assert.equal(span.traceID, trace.traceID, "foreign span trace");
     assert(service(span), "unknown service");
     assert(
@@ -102,6 +104,16 @@ function inspectPayloads(span, captureRpcContent) {
 
 export function inspectTraceContent(trace, config = {}) {
   graph(trace);
+  return inspectContent(trace, config);
+}
+
+// The caller owns warning review; raw topology and content checks still apply.
+export function inspectTraceContentTopology(trace, config = {}) {
+  graph(trace, false);
+  return inspectContent(trace, config);
+}
+
+function inspectContent(trace, config) {
   const serialized = JSON.stringify(trace);
   for (const secret of config.secrets ?? []) {
     assert(secret.length >= 6, "secret canary must be specific");

@@ -21,8 +21,6 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	gatewayconfig "github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
@@ -77,7 +75,6 @@ type Config struct {
 	TrustedProxies           []netip.Prefix
 	AdminConsoleURL          string
 	AgentUIURL               string
-	AgentACPURL              string
 	IdentityURL              string
 	RequestTimeout           time.Duration
 	StreamLease              time.Duration
@@ -92,8 +89,6 @@ type Config struct {
 
 type Dependencies struct {
 	Identity       IdentityService
-	Agents         agentcontroller.Service
-	Execution      agentacp.Service
 	Sessions       *session.Manager
 	HTTPClient     *http.Client
 	Logger         *slog.Logger
@@ -105,8 +100,6 @@ type handler struct {
 	publicOrigin             *url.URL
 	trustedProxies           []netip.Prefix
 	identity                 IdentityService
-	agents                   agentcontroller.Service
-	execution                agentacp.Service
 	sessions                 *session.Manager
 	requestTimeout           time.Duration
 	streamLease              time.Duration
@@ -120,10 +113,6 @@ type handler struct {
 	logger                   *slog.Logger
 	consoleURL               *url.URL
 	agentUIURL               *url.URL
-	agentACPURL              *url.URL
-	acpConnections           chan struct{}
-	acpMessages              chan struct{}
-	stateConnections         chan struct{}
 	bridgeStreams            chan struct{}
 	adminProxy               *httputil.ReverseProxy
 	appProxy                 *httputil.ReverseProxy
@@ -149,15 +138,11 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	if err != nil {
 		return nil, fmt.Errorf("agent UI URL is invalid")
 	}
-	agentACPURL, err := parseServiceURL(config.AgentACPURL)
-	if err != nil {
-		return nil, fmt.Errorf("agent ACP URL is invalid")
-	}
 	identityURL, err := parseServiceURL(config.IdentityURL)
 	if err != nil {
 		return nil, fmt.Errorf("identity service URL is invalid")
 	}
-	if dependencies.Identity == nil || dependencies.Agents == nil || dependencies.Execution == nil ||
+	if dependencies.Identity == nil ||
 		dependencies.Sessions == nil || dependencies.HTTPClient == nil {
 		return nil, fmt.Errorf("gateway dependencies are incomplete")
 	}
@@ -201,7 +186,7 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	h := &handler{
 		allowOriginlessMutations: config.AllowOriginlessMutations,
 		publicOrigin:             publicOrigin, trustedProxies: append([]netip.Prefix(nil), config.TrustedProxies...),
-		identity: dependencies.Identity, agents: dependencies.Agents, execution: dependencies.Execution, sessions: dependencies.Sessions,
+		identity: dependencies.Identity, sessions: dependencies.Sessions,
 		requestTimeout: config.RequestTimeout, streamLease: config.StreamLease,
 		maximumSessionStale: browserstream.DefaultMaximumStale, browserStreams: dependencies.BrowserStreams,
 		loginWindow: config.LoginWindow,
@@ -213,11 +198,9 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		newRequestID: config.NewRequestID,
 		now:          config.Now,
 		httpClient:   dependencies.HTTPClient, logger: dependencies.Logger,
-		consoleURL: consoleURL, agentUIURL: agentUIURL, agentACPURL: agentACPURL,
-		acpConnections: make(chan struct{}, 64), acpMessages: make(chan struct{}, 4),
-		stateConnections: make(chan struct{}, 64),
-		bridgeStreams:    make(chan struct{}, 64),
-		mux:              http.NewServeMux(),
+		consoleURL: consoleURL, agentUIURL: agentUIURL,
+		bridgeStreams: make(chan struct{}, 64),
+		mux:           http.NewServeMux(),
 	}
 	h.adminProxy = h.newConsoleProxy(consoleURL, true)
 	h.appProxy = h.newConsoleProxy(consoleURL, false)
@@ -242,28 +225,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/session/external-identities", telemetry.Handler(h.listBrowserExternalIdentities))
 	h.mux.HandleFunc("DELETE /api/session/external-identities/{binding_id}", telemetry.Handler(h.unbindBrowserExternalIdentity))
 	h.mux.HandleFunc("POST /api/session/external-identities/notices/acknowledge", telemetry.Handler(h.acknowledgeBrowserExternalIdentityNotices))
-	h.mux.HandleFunc("GET /api/app/bootstrap", telemetry.Handler(h.workspaceBootstrap))
-	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state", telemetry.Handler(h.getWorkspaceState))
-	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state/watch", telemetry.Handler(h.watchWorkspaceState))
 	h.mux.HandleFunc("/api/app/workspace/v1/{path...}", telemetry.Handler(h.workspaceBridgeAPI))
-	for _, route := range []struct{ suffix, version string }{
-		{"acp", "v1"}, {"v1/acp", "v1"}, {"v2/acp", "v2"},
-	} {
-		h.mux.HandleFunc("GET /api/app/agents/{agent_id}/"+route.suffix,
-			telemetry.Handler(func(response http.ResponseWriter, request *http.Request) error {
-				request.SetPathValue("acp_version", route.version)
-				return h.workspaceACP(response, request)
-			}))
-		if route.version == "v1" {
-			for _, method := range []string{http.MethodPost, http.MethodDelete} {
-				h.mux.HandleFunc(method+" /api/app/agents/{agent_id}/"+route.suffix,
-					telemetry.Handler(func(response http.ResponseWriter, request *http.Request) error {
-						request.SetPathValue("acp_version", "v1")
-						return h.workspaceACP(response, request)
-					}))
-			}
-		}
-	}
 	h.mux.HandleFunc("/api/app/{path...}", func(response http.ResponseWriter, _ *http.Request) {
 		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
 	})
@@ -506,109 +468,6 @@ func (h *handler) logout(response http.ResponseWriter, request *http.Request) er
 	return nil
 }
 
-type workspacePrincipalResponse struct {
-	UserID         string `json:"user_id"`
-	OrganizationID string `json:"organization_id"`
-	Administrator  bool   `json:"administrator"`
-}
-
-type workspaceAgentResponse struct {
-	AgentID         string `json:"agent_id"`
-	Name            string `json:"name"`
-	LifecycleState  string `json:"lifecycle_state"`
-	ActivationState string `json:"activation_state,omitempty"`
-	RuntimeState    string `json:"runtime_state"`
-}
-
-type workspaceBootstrapResponse struct {
-	Principal workspacePrincipalResponse `json:"principal"`
-	Agents    []workspaceAgentResponse   `json:"agents"`
-}
-
-func (h *handler) workspaceBootstrap(response http.ResponseWriter, request *http.Request) error {
-	response.Header().Set("Cache-Control", "no-store")
-	_, principal, err := h.authenticate(response, request)
-	if err != nil {
-		return err
-	}
-	agents, err := h.workspaceAgents(request.Context(), principal)
-	if err != nil {
-		writeError(response, http.StatusServiceUnavailable, "workspace_unavailable", "Agent workspace is unavailable")
-		return err
-	}
-	items := make([]workspaceAgentResponse, 0, len(agents))
-	for _, agent := range agents {
-		items = append(items, workspaceAgentResponse{
-			AgentID: agent.AgentID, Name: agent.Name,
-			LifecycleState: agent.LifecycleState, ActivationState: agent.ActivationState, RuntimeState: agent.RuntimeState,
-		})
-	}
-	writeJSON(response, http.StatusOK, workspaceBootstrapResponse{
-		Principal: workspacePrincipalResponse{
-			UserID: principal.UserID, OrganizationID: principal.OrganizationID,
-			Administrator: principal.Administrator(),
-		},
-		Agents: items,
-	})
-	return nil
-}
-
-func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Request) error {
-	upgrade := webSocketUpgrade(request)
-	if !upgrade && request.PathValue("acp_version") != "v1" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "WebSocket upgrade is required")
-		return nil
-	}
-	if upgrade && !h.sameOrigin(request) {
-		writeError(response, http.StatusForbidden, "forbidden", "ACP origin is not allowed")
-		return nil
-	}
-	permits := h.acpConnections
-	if !upgrade && request.Method != http.MethodGet {
-		permits = h.acpMessages
-	}
-	select {
-	case permits <- struct{}{}:
-		defer func() { <-permits }()
-	default:
-		writeError(response, http.StatusServiceUnavailable, "agent_unavailable", "Agent connection capacity is unavailable")
-		return nil
-	}
-	values, principal, err := h.authenticate(response, request)
-	if err != nil {
-		return err
-	}
-	if !upgrade && stateChanging(request.Method) && !h.validCSRF(request, principal.SessionID) {
-		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
-		return nil
-	}
-	if request.Method == http.MethodGet {
-		var finish func()
-		response, request, finish, err = h.guardBrowserStream(response, request, values.AccessToken, principal)
-		if err != nil {
-			return err
-		}
-		defer finish()
-	}
-	if upgrade {
-		h.relayWorkspaceACP(response, request, values.AccessToken, principal)
-	} else {
-		h.relayWorkspaceHTTP(response, request, principal)
-	}
-	return nil
-}
-
-func (h *handler) workspaceAgents(
-	ctx context.Context, principal identity.Principal,
-) ([]agentcontroller.WorkspaceAgent, error) {
-	ctx, cancel := context.WithTimeout(ctx, h.requestTimeout)
-	defer cancel()
-	return h.agents.ListWorkspaceAgents(ctx, agentcontroller.ListWorkspaceAgentsInput{
-		RequestID: h.newRequestID(), OrganizationID: principal.OrganizationID,
-		PrincipalID: principal.UserID,
-	})
-}
-
 func (h *handler) workspaceApplication(response http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
 		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
@@ -704,22 +563,6 @@ func validWorkspaceReturnID(value string) bool {
 		}
 	}
 	return true
-}
-
-func webSocketUpgrade(request *http.Request) bool {
-	return strings.EqualFold(strings.TrimSpace(request.Header.Get("Upgrade")), "websocket") &&
-		headerContainsToken(request.Header.Values("Connection"), "upgrade")
-}
-
-func headerContainsToken(values []string, wanted string) bool {
-	for _, value := range values {
-		for _, token := range strings.Split(value, ",") {
-			if strings.EqualFold(strings.TrimSpace(token), wanted) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (h *handler) admin(response http.ResponseWriter, request *http.Request) error {

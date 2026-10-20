@@ -8,7 +8,7 @@ import {
 } from "../adapters/caller-context.js";
 import { bindAuthenticatedRequest } from "./trusted-identity.js";
 
-const workspace = ["edge-gateway", "agent-ui"];
+const workspace = ["agent-ui"];
 const operationPaths = new Map([
   ["/rpc/agent-acp/apply-execution-snapshot", ["agent-controller"]],
   ["/rpc/agent-acp/settle-agent", ["agent-controller"]],

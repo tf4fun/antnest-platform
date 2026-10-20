@@ -118,16 +118,13 @@ test("restart readiness waits for authorized execution with the original pricing
   );
 });
 
-test("restart readiness retries only the public 503, never authentication or other failures", async () => {
-  const { waitForRestoredConfiguration } = await import("./setup.mjs");
+test("restart readiness retries only the typed private state unavailability, never status lookalikes", async () => {
+  const { waitForRestoredConfiguration, CostExecutionStateUnavailableError } =
+    await import("./setup.mjs");
+  assert.equal(typeof CostExecutionStateUnavailableError, "function");
   let calls = 0;
   await waitForRestoredConfiguration(async () => {
-    if (++calls === 1)
-      throw new assert.AssertionError({
-        actual: 503,
-        expected: 200,
-        operator: "strictEqual",
-      });
+    if (++calls === 1) throw new CostExecutionStateUnavailableError();
     return {
       access_allowed: true,
       availability: "ready",
@@ -135,7 +132,7 @@ test("restart readiness retries only the public 503, never authentication or oth
     };
   }, "a".repeat(64));
   assert.equal(calls, 2);
-  for (const status of [401, 403, 500])
+  for (const status of [401, 403, 500, 503])
     await assert.rejects(
       waitForRestoredConfiguration(async () => {
         throw new assert.AssertionError({

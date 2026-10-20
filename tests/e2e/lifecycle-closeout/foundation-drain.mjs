@@ -1,21 +1,19 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { inspectManagedTrace } from "../managed-mcp/request-trace.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
-import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
 import { assertCompletedExecution } from "./foundation-evidence.mjs";
 import { isBusyDenied } from "../managed-mcp/drain.mjs";
-import { assertReplay } from "../acp-persistence/evidence.mjs";
+import { assertReplay } from "../../integration/agent-acp-service/support/persistence/evidence.mjs";
 import { assertCatalog } from "../acp-commands/evidence.mjs";
 import { until } from "../acp-closeout/wait.mjs";
-import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
 import {
   assertDrain,
   assertControllerStopped,
   heldProcessCommand,
 } from "./drain-evidence.mjs";
 import { lines } from "./docker.mjs";
+import { createFoundationPrivateAccess } from "./foundation-private-access.mjs";
+import { collectFoundationRequests } from "./foundation-private-trace.mjs";
 
 export async function withHeldRun({
   config,
@@ -30,32 +28,26 @@ export async function withHeldRun({
   signal,
 }) {
   const owner = new GatewayClient(config.gateway);
-  await owner.request("/api/session/login", {
+  const login = await owner.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "lifecycle-owner@example.com",
       password: "lifecycle-owner-password",
     },
   });
-  let client = connectOwner(config.gateway, agentID, owner.cookie, signal);
+  const principal = login.body.principal;
+  const secrets = [
+    "stage3-model-secret",
+    "lifecycle-owner-password",
+    ...owner.cookies.values(),
+  ];
+  const access = await createFoundationPrivateAccess(config, {
+    signal,
+    secrets,
+  });
+  let client, prompt, pid, output;
   let settled = false;
-  let prompt;
-  let pid;
-  const observed = [];
-  const remember = (client, method, details = {}) => {
-    const request = client.requests.filter((r) => r.method === method).at(-1);
-    assert(request, "actual SDK request missing");
-    const value = {
-      ...request,
-      agentId: agentID,
-      connectionTraceID: client.connectionTraceID,
-      transport: "websocket",
-      kind: "request",
-      ...details,
-    };
-    observed.push(value);
-    return value;
-  };
+  const errors = [];
   const audits = async (sessionId) => {
     const value = await json(
       `/api/admin/execution-audits?agent_id=${agentID}&session_id=${sessionId}`,
@@ -109,20 +101,19 @@ export async function withHeldRun({
     });
   }
   try {
-    await client.initialize();
+    client = await access.open(agentID, owner, principal);
     const session = (
       await client.request("new", { cwd: "/workspace", mcpServers: [] })
     ).sessionId;
-    remember(client, "session/new", { sessionId: session });
     const other = (
       await client.request("new", { cwd: "/workspace", mcpServers: [] })
     ).sessionId;
-    remember(client, "session/new", { sessionId: other });
     prompt = client
       .request(
         "prompt",
         { sessionId: session, prompt: [{ type: "text", text: "c3-held-run" }] },
         180000,
+        { kind: "ordinary", phase: "c3-held-run" },
       )
       .then(
         (value) => {
@@ -159,20 +150,20 @@ export async function withHeldRun({
     assert.equal(heldAudit.length, 1);
     const heldRunId = heldAudit[0].run_id;
     const originalExecution = (await saved(heldRunId)).run.execution_snapshot;
-    remember(client, "session/prompt", {
-      kind: "ordinary",
-      phase: "c3-held-run",
-      runId: heldRunId,
-    });
     const deny = async () => {
       const beforeUpdates = client.updates.filter((u) => u.sessionId === other);
       const before = await audits(other);
       assert.deepEqual(before, []);
       await assert.rejects(
-        client.request("prompt", {
-          sessionId: other,
-          prompt: [{ type: "text", text: "c3-denied" }],
-        }),
+        client.request(
+          "prompt",
+          {
+            sessionId: other,
+            prompt: [{ type: "text", text: "c3-denied" }],
+          },
+          15000,
+          { rejection: "agent_busy" },
+        ),
         (error) => {
           return isBusyDenied(error);
         },
@@ -182,7 +173,6 @@ export async function withHeldRun({
         beforeUpdates,
       );
       assert.deepEqual(await audits(other), before);
-      remember(client, "session/prompt", { rejection: "agent_busy" });
       assert.deepEqual(
         await modelState(),
         firstRequests,
@@ -201,7 +191,7 @@ export async function withHeldRun({
       async ({ requestID, path, options }) => {
         await until(
           async () =>
-            (await owner.request(`/api/app/agents/${agentID}/state`)).body
+            (await access.state(agentID, owner, principal))
               .unavailable_reason === "agent_unavailable",
           "ACP drain publication",
         );
@@ -255,10 +245,7 @@ export async function withHeldRun({
         await blocked(requestID);
         await exec(initial.container.Id, heldProcessCommand(pid, true));
         const result = await prompt;
-        assert(
-          !result.error,
-          `held Run failed: ${result.error?.data?.code ?? "unknown"}`,
-        );
+        if (result.error) throw result.error;
         assert.equal(result.value.stopReason, "end_turn");
         const completed = (await saved(heldRunId)).run;
         assertCompletedExecution(completed, initial.agent);
@@ -271,9 +258,8 @@ export async function withHeldRun({
       rebuilt.agent.executable_execution_revision,
       initial.agent.executable_execution_revision,
     );
-    client.close();
-    client = connectOwner(config.gateway, agentID, owner.cookie, signal);
-    await client.initialize();
+    await client.closeAndWait();
+    client = await access.open(agentID, owner, principal);
     const beforeReplay = await saved(heldRunId),
       beforeReplayCalls = await modelState();
     await client.request("load", {
@@ -285,7 +271,6 @@ export async function withHeldRun({
     assertReplay(1, client.updates, beforeReplay, session);
     assert.deepEqual(await saved(heldRunId), beforeReplay);
     assert.deepEqual(await modelState(), beforeReplayCalls);
-    remember(client, "session/load");
     const offset = client.updates.length;
     const next = await client.request(
       "prompt",
@@ -294,6 +279,7 @@ export async function withHeldRun({
         prompt: [{ type: "text", text: "c3-after-rebuild" }],
       },
       60000,
+      { kind: "ordinary", phase: "c3-after-rebuild", toolName: "read" },
     );
     assert.equal(next.stopReason, "end_turn");
     const afterRuns = await audits(session);
@@ -302,12 +288,6 @@ export async function withHeldRun({
     assert(fresh && fresh.state === "completed");
     const current = (await saved(fresh.run_id)).run;
     assertCompletedExecution(current, rebuilt.agent);
-    remember(client, "session/prompt", {
-      kind: "ordinary",
-      phase: "c3-after-rebuild",
-      toolName: "read",
-      runId: fresh.run_id,
-    });
     const answer = client.updates
       .slice(offset)
       .filter(
@@ -328,39 +308,23 @@ export async function withHeldRun({
         ["c3-after-rebuild", "reply"],
       ],
     );
-    client.close();
-    const traces = [];
-    const secrets = [
-      "stage3-model-secret",
-      "lifecycle-owner-password",
-      ...owner.cookies.values(),
-    ];
-    for (const expected of observed)
-      traces.push(
-        await collectLifecycleACPTrace(
-          config,
-          expected,
-          secrets,
-          requests,
-          (trace, expected, secrets, calls) => {
-            const result = expected.rejection
-              ? inspectManagedTrace(trace, expected, secrets, calls)
-              : inspectCommandTrace(trace, expected, secrets, calls);
-            if (expected.runId)
-              assert.equal(
-                result.run_id,
-                expected.runId,
-                "request trace belongs to another Run",
-              );
-            return {
-              ...strictSessionEvidence(result, trace),
-              topology: "passed",
-            };
-          },
-          signal,
-        ),
-      );
-    return {
+    await client.closeAndWait();
+    const runIds = {
+      "c3-held-run": heldRunId,
+      "c3-after-rebuild": fresh.run_id,
+    };
+    const observed = access.snapshots().flatMap((connection) =>
+      [connection.initialization, ...connection.evidence].map((row) => ({
+        ...row,
+        ...(row.kind === "ordinary" ? { runId: runIds[row.phase] } : {}),
+      })),
+    );
+    const traces = await collectFoundationRequests(
+      observed,
+      (expected) => access.collect(expected, requests),
+      signal,
+    );
+    output = {
       rebuild,
       evidence: {
         completed_prompts: 2,
@@ -369,10 +333,37 @@ export async function withHeldRun({
         same_session_after_rebuild: true,
         physical_tool_effects_exact: true,
         run_traces: traces,
+        run_ids: [heldRunId, fresh.run_id],
+        provider_requests: requests.map(({ phase, stage, trace_id }) => ({
+          phase,
+          stage,
+          trace_id,
+        })),
       },
     };
+  } catch (error) {
+    errors.push(error);
   } finally {
-    client.close();
-    if (prompt) await prompt;
+    try {
+      await access.closeAndWait();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (prompt) {
+      const result = await prompt;
+      if (result.error) errors.push(result.error);
+    }
+    if (signal?.aborted) errors.push(signal.reason);
   }
+  const failures = [...new Set(errors)];
+  if (failures.length === 1) throw failures[0];
+  if (failures.length)
+    throw new AggregateError(
+      failures,
+      "Foundation business and private cleanup failed",
+    );
+  output.evidence.private_connections = access.snapshots();
+  output.evidence.private_state_receipts = access.stateReceipts();
+  output.evidence.cleanup_completed = true;
+  return output;
 }

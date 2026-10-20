@@ -1,13 +1,13 @@
-import { gatewayOrigin } from "../../support/gateway-origin.mjs";
-import { durablePath } from "../../support/storage.mjs";
+import { durablePath, writeEvidenceFile } from "../../support/storage.mjs";
+import { inspect } from "node:util";
+import { stage2Step } from "./stage2-step.mjs";
+import { assertStage2TraceCredentials } from "./stage2-trace-credentials.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  executionHeaders,
   json,
-  openClient,
   startClientTelemetry,
   traced,
   waitFor,
@@ -19,7 +19,6 @@ import {
   inspectExecutionBoundary,
   inspectLifecycleBoundary,
   inspectAuditBoundary,
-  inspectGatewayConnection,
   assertNoCredentials,
   inspectTemporalHistory,
 } from "./stage2-boundary-evidence.mjs";
@@ -29,11 +28,14 @@ import {
   reviewStage2Trace,
 } from "./stage2-trace-read.mjs";
 import { gatewayLogin, gatewayCommand } from "./stage2-gateway.mjs";
+import { createStage2PrivateAccess } from "./stage2-private-access.mjs";
+import { inspectStage2PrivatePrompt } from "./stage2-private-trace.mjs";
 import {
-  firstGatewayState,
-  openGatewayHttpClient,
-} from "./stage2-protocol.mjs";
-import { traceTopology } from "../observability/trace-tree.mjs";
+  assertStage2Inventory,
+  stage2CompletedTraceIDs,
+} from "./stage2-inventory.mjs";
+import { assertWorkspaceWatchReceipt } from "../workspace-closeout/private-watch.mjs";
+import { tag } from "../observability/trace-tree.mjs";
 
 const env = (name) => {
   assert(process.env[name], `${name} is required`);
@@ -69,6 +71,10 @@ const compose = (...args) =>
   );
 const sdk = startClientTelemetry(env("ANTNEST_STAGE2_OTLP_URL"));
 let telemetryStopped = false;
+let privateAccess;
+const secrets = [];
+const sessions = [];
+const failures = [];
 let client;
 let agentId;
 let organizationId;
@@ -129,12 +135,26 @@ configureStage2Authentication({
   "agent-acp-service": execution,
 });
 try {
+  privateAccess = await createStage2PrivateAccess(
+    {
+      evidence: `artifacts/verification/stage2-boundary/${project}/private`,
+      privateAccess: {
+        acp: execution,
+        identity,
+        otlp: env("ANTNEST_STAGE2_OTLP_URL"),
+        credentials: env("ANTNEST_SERVICE_AUTH_DIRECTORY"),
+      },
+    },
+    { secrets },
+  );
   const administrator = await gatewayLogin(
     gateway,
     "stage2",
     "stage2-admin@example.com",
     "stage2-admin-password",
   );
+  secrets.push(administrator.accessToken, administrator.csrf);
+  sessions.push(administrator.accessToken);
   const login = await json(`${identity}/rpc/identity/local-login`, {
     request_id: "stage2-login",
     organization_slug: "stage2",
@@ -248,34 +268,26 @@ try {
     await operation(create.request_id);
     await synchronized();
   });
-  const headers = executionHeaders(organizationId, owner.user.id, agentId);
-  const state = () => rpc("get-agent-execution-state", {}, headers);
-  const ready = () =>
-    waitFor(
-      state,
-      (value) => value.access_allowed && value.availability === "ready",
-      "ACP ready",
-    );
-  await ready();
   const ownerLogin = await gatewayLogin(
     gateway,
     "stage2",
     "stage2-owner@example.com",
     "stage2-owner-password",
   );
-  const gatewayClient = () =>
-    openClient(
-      `${gateway.replace("http:", "ws:")}/api/app/agents/${agentId}/v2/acp`,
-      {
-        cookie: ownerLogin.cookie,
-        origin: gatewayOrigin(gateway),
-        "x-antnest-user-id": "forged-user",
-        "x-antnest-principal-id": "forged-principal",
-        "x-antnest-agent-id": "forged-agent",
-      },
-      { promptContext: false },
+  secrets.push(ownerLogin.accessToken, ownerLogin.csrf);
+  sessions.push(ownerLogin.accessToken);
+  const state = () =>
+    privateAccess.state(agentId, ownerLogin, ownerLogin.principal);
+  const ready = () =>
+    waitFor(
+      state,
+      (value) => value.access_allowed && value.availability === "ready",
+      "ACP ready",
     );
-  client = await gatewayClient();
+  const privateClient = () =>
+    privateAccess.open(agentId, ownerLogin, ownerLogin.principal);
+  await ready();
+  client = await privateClient();
   const session = await client.newSession();
   const modelState = () => json(`${model}/fixture/state`);
   const control = (command) => json(`${model}/fixture/control`, command);
@@ -326,34 +338,35 @@ try {
     );
   });
   await scenario("controller-offline-execution", async () => {
-    compose("stop", "agent-controller");
     const before = (await modelState()).requests.length;
-    try {
-      const initialState = await firstGatewayState(
-        gateway,
-        ownerLogin,
-        agentId,
-      );
-      assert.equal(initialState.availability, "ready");
-      await client.prompt(session.sessionId);
-      await client.close();
-      client = await gatewayClient();
-      const other = await client.newSession();
-      await client.prompt(other.sessionId);
-      const reconnectedState = await firstGatewayState(
-        gateway,
-        ownerLogin,
-        agentId,
-      );
-      assert.equal(reconnectedState.availability, "ready");
-      assert.equal(
-        reconnectedState.configuration_revision,
-        initialState.configuration_revision,
-      );
-      assert.equal(reconnectedState.active_session_id, null);
-    } finally {
-      compose("up", "-d", "--no-deps", "--wait", "agent-controller");
-    }
+    await stage2Step(
+      async () => {
+        compose("stop", "agent-controller");
+        const initialState = await privateAccess.firstState(
+          agentId,
+          ownerLogin,
+          ownerLogin.principal,
+        );
+        assert.equal(initialState.availability, "ready");
+        await client.prompt(session.sessionId);
+        await client.close();
+        client = await privateClient();
+        const other = await client.newSession();
+        await client.prompt(other.sessionId);
+        const reconnectedState = await privateAccess.firstState(
+          agentId,
+          ownerLogin,
+          ownerLogin.principal,
+        );
+        assert.equal(reconnectedState.availability, "ready");
+        assert.equal(
+          reconnectedState.configuration_revision,
+          initialState.configuration_revision,
+        );
+        assert.equal(reconnectedState.active_session_id, null);
+      },
+      () => compose("up", "-d", "--no-deps", "--wait", "agent-controller"),
+    );
     const additional = (await modelState()).requests.slice(before);
     assert.equal(additional.length, 4);
     assert.deepEqual(
@@ -459,30 +472,35 @@ try {
       "disabled ACP state",
     );
     await client.denied(session.sessionId);
-    const http = await openGatewayHttpClient(gateway, ownerLogin, agentId);
-    try {
-      const listed = await http.request("session/list", {});
-      assert(
-        listed.sessions.some((item) => item.sessionId === session.sessionId),
-      );
-      await http.request("session/load", {
-        sessionId: session.sessionId,
-        cwd: "/workspace",
-        mcpServers: [],
-      });
-      await assert.rejects(
-        http.request("session/prompt", {
+    const http = await privateAccess.openHTTP(
+      agentId,
+      ownerLogin,
+      ownerLogin.principal,
+    );
+    await stage2Step(
+      async () => {
+        const listed = await http.request("list", {});
+        assert(
+          listed.sessions.some((item) => item.sessionId === session.sessionId),
+        );
+        await http.request("load", {
           sessionId: session.sessionId,
-          prompt: [{ type: "text", text: "must not execute" }],
-        }),
-        (error) => error?.data?.code === "agent_unavailable",
-      );
-      await lifecycle("enable");
-      await ready();
-      await http.prompt();
-    } finally {
-      await http.close();
-    }
+          cwd: "/workspace",
+          mcpServers: [],
+        });
+        await assert.rejects(
+          http.request("prompt", {
+            sessionId: session.sessionId,
+            prompt: [{ type: "text", text: "must not execute" }],
+          }),
+          (error) => error?.data?.code === "agent_unavailable",
+        );
+        await lifecycle("enable");
+        await ready();
+        await http.prompt();
+      },
+      () => http.close(),
+    );
   });
   await scenario(
     "acp-crash-records-interruption-without-replay",
@@ -492,7 +510,7 @@ try {
       await client.close();
       client = undefined;
       await delay(6000);
-      client = await gatewayClient();
+      client = await privateClient();
       const running = await client.newSession();
       await control({ hold_next: true });
       const completion = client.prompt(running.sessionId);
@@ -509,50 +527,48 @@ try {
       assert.equal(before.items.length, 1);
       assert.equal(before.items[0].state, "running");
       const publication = await synchronized();
-      compose("stop", "agent-controller");
-      try {
-        compose("kill", "--signal", "SIGKILL", "agent-acp-service");
-        await assert.rejects(completion);
-        await client.close();
-        client = undefined;
-        compose("up", "-d", "--no-deps", "--wait", "agent-acp-service");
-        const terminal = await rpc("get-execution-audit", {
-          run_id: before.items[0].run_id,
-        });
-        assert.equal(terminal.state, "failed");
-        assert.equal(terminal.error_class, "service_restarted_during_run");
-        const cold = await rpc("get-agent-execution-state", {}, headers, 503);
-        assert.equal(cold.code, "execution_state_unavailable");
-        const coldClient = await openClient(
-          execution.replace("http:", "ws:") + "/v2/acp",
-          headers,
-        );
-        try {
-          await assert.rejects(
-            coldClient.newSession(),
-            (error) => error?.data?.code === "configuration_not_ready",
+      await stage2Step(
+        async () => {
+          compose("stop", "agent-controller");
+          compose("kill", "--signal", "SIGKILL", "agent-acp-service");
+          await assert.rejects(completion);
+          await client.close();
+          client = undefined;
+          compose("up", "-d", "--no-deps", "--wait", "agent-acp-service");
+          const terminal = await rpc("get-execution-audit", {
+            run_id: before.items[0].run_id,
+          });
+          assert.equal(terminal.state, "failed");
+          assert.equal(terminal.error_class, "service_restarted_during_run");
+          const cold = await state();
+          assert.equal(cold.code, "execution_state_unavailable");
+          const coldClient = await privateClient();
+          await stage2Step(
+            () =>
+              assert.rejects(
+                coldClient.newSession(),
+                (error) => error?.data?.code === "configuration_not_ready",
+              ),
+            () => coldClient.close(),
           );
-        } finally {
-          await coldClient.close();
-        }
-        await control({ release: true });
-        await delay(1000);
-        assert.equal(
-          (await modelState()).attempts.length,
-          held.attempts.length,
-          "startup replayed old execution",
-        );
-        evidence.interrupted = {
-          run_id: terminal.run_id,
-          trace_id: held.requests.at(-1).trace_id,
-          scenario_trace_id: scenarioTraceId,
-          state: terminal.state,
-          error_class: terminal.error_class,
-          trace_complete: false,
-        };
-      } finally {
-        compose("up", "-d", "--no-deps", "--wait", "agent-controller");
-      }
+          await control({ release: true });
+          await delay(1000);
+          assert.equal(
+            (await modelState()).attempts.length,
+            held.attempts.length,
+            "startup replayed old execution",
+          );
+          evidence.interrupted = {
+            run_id: terminal.run_id,
+            trace_id: held.requests.at(-1).trace_id,
+            scenario_trace_id: scenarioTraceId,
+            state: terminal.state,
+            error_class: terminal.error_class,
+            trace_complete: false,
+          };
+        },
+        () => compose("up", "-d", "--no-deps", "--wait", "agent-controller"),
+      );
       await ready();
       assert.equal(
         (await synchronized()).synchronization.revision,
@@ -564,10 +580,7 @@ try {
         held.attempts.length,
         "configuration replay restarted old Run",
       );
-      client = await openClient(
-        execution.replace("http:", "ws:") + "/v2/acp",
-        headers,
-      );
+      client = await privateClient();
       const next = await client.newSession();
       await client.prompt(next.sessionId);
       assert.equal(
@@ -582,7 +595,14 @@ try {
       assert.equal(interrupted.error_class, evidence.interrupted.error_class);
     },
   );
-  await scenario("identity-revocation", async () => {
+  await scenario("identity-revocation", async (traceId) => {
+    const watch = await privateAccess.watch(
+      agentId,
+      ownerLogin,
+      ownerLogin.principal,
+    );
+    await watch.ready();
+    const start = watch.beginRevocation();
     await json(`${identity}/rpc/identity/update-membership`, {
       ...requestBody("stage2-owner-deactivate"),
       membership_id: owner.membership.id,
@@ -591,20 +611,33 @@ try {
       role: "member",
       active: false,
     });
-    await waitFor(
-      state,
-      (value) =>
-        value.access_allowed === false &&
-        value.unavailable_reason === "access_denied",
-      "ACP observed identity revocation",
-    );
+    await watch.wait((value) => !value.access_allowed, start.receivedEvents);
+    await watch.waitClosed();
+    const receipt = await watch.closeAndWait();
+    assertWorkspaceWatchReceipt(receipt, {
+      mode: "revocation",
+      agentID: agentId,
+      principal: ownerLogin.principal,
+      session_digest: ownerLogin.sessionDigest,
+      traceID: receipt.traceID,
+      clientSpanID: receipt.clientSpanID,
+      window: { start: start.observedAt, end: Date.now() },
+      revocationTraceID: traceId,
+      revocationStart: start,
+    });
     await client.denied(session.sessionId, ["access_denied"]);
     await client.close();
-    client = await openClient(
-      execution.replace("http:", "ws:") + "/v2/acp",
-      headers,
-    );
-    await client.denied(session.sessionId, ["access_denied"]);
+    client = undefined;
+    evidence.revocation = {
+      mutation_trace_id: traceId,
+      watch: receipt,
+      denied_connection: await privateAccess.denyNewConnection(
+        agentId,
+        ownerLogin,
+        ownerLogin.principal,
+        { after: start.observedAt },
+      ),
+    };
     await waitFor(
       current,
       (value) =>
@@ -626,6 +659,7 @@ try {
       limit: 100,
     });
     assert.deepEqual(audits, before, "deletion changed execution history");
+    evidence.retained_audits = audits.items;
     const containers = execFileSync(
       "docker",
       ["ps", "-aq", "--filter", `name=^/antnest-runtime-${agentId}$`],
@@ -692,6 +726,8 @@ try {
     rpc,
     modelState,
     compose,
+    secrets,
+    sessions,
   });
   evidence.scenarios.push("authenticated-audit-consumer");
   const persisted = compose(
@@ -705,7 +741,12 @@ try {
     "antnest_agent_acp",
   ).toString();
   assert(persisted.includes(agentId), "ACP persistence evidence is empty");
-  assertNoCredentials(persisted);
+  assertNoCredentials(persisted, secrets);
+  writeEvidenceFile(
+    `artifacts/verification/stage2-boundary/${project}`,
+    "acp-data.sql",
+    persisted,
+  );
   const logs = compose(
     "logs",
     "--no-color",
@@ -713,7 +754,12 @@ try {
     "agent-acp-service",
   ).toString();
   assert(logs.includes("service_started"), "ACP log evidence is empty");
-  assertNoCredentials(logs);
+  assertNoCredentials(logs, secrets);
+  writeEvidenceFile(
+    `artifacts/verification/stage2-boundary/${project}`,
+    "service-logs.txt",
+    logs,
+  );
   for (const workflowId of evidence.workflows) {
     const history = JSON.parse(
       compose(
@@ -736,7 +782,12 @@ try {
         workflowId,
       ).toString(),
     );
-    inspectTemporalHistory(history, agentId);
+    writeEvidenceFile(
+      `artifacts/verification/stage2-boundary/${project}`,
+      `history-${evidence.workflows.indexOf(workflowId) + 1}.json`,
+      JSON.stringify(history),
+    );
+    inspectTemporalHistory(history, agentId, secrets);
   }
   evidence.secret_checks = {
     acp_database: true,
@@ -750,8 +801,16 @@ try {
       runs: evidence.audit.runs,
     }),
   );
-  await client.close();
+  await privateAccess.closeAndWait();
   client = undefined;
+  evidence.private = {
+    connections: privateAccess.snapshots(),
+    http: privateAccess.httpSnapshots(),
+    states: privateAccess.stateReceipts(),
+    watches: privateAccess.watchSnapshots(),
+    authority: privateAccess.authoritySnapshots(),
+  };
+  evidence.model_calls = modelCalls;
   const idleStart = new Date().toISOString();
   const idleSamples = [];
   for (let sample = 0; sample < 3; sample++) {
@@ -791,6 +850,7 @@ try {
   const jaeger = `http://127.0.0.1:${env("ANTNEST_JAEGER_UI_HOST_PORT")}`;
   const traceFailures = [];
   evidence.trace_reviews = [];
+  let traceReadNumber = 0;
   const readTrace = async (id) => {
     assert(/^[a-f0-9]{32}$/u.test(id), "valid Trace ID required");
     const data = await waitForTraceParents(async (signal) => {
@@ -801,12 +861,13 @@ try {
       if (payload.data?.length === 0) return null;
       assert.equal(payload.data?.length, 1);
       await writeFile(
-        `${traceDirectory}/${id}.json`,
+        `${traceDirectory}/${id}-${++traceReadNumber}.json`,
         JSON.stringify(payload.data[0]),
         {
           mode: 0o600,
         },
       );
+      assertStage2TraceCredentials(payload.data[0], { secrets, sessions });
       return payload.data[0];
     });
     const diagnostics = data.spans
@@ -864,39 +925,62 @@ try {
     });
   evidence.execution = [];
   evidence.connections = [];
-  for (const id of new Set(modelCalls.requests.map((item) => item.trace_id))) {
-    // Every span in the explicitly killed process may be unexported, including
-    // source-context spans shared by the subsequent recovery probe.
-    if (
-      [
-        evidence.interrupted?.trace_id,
-        evidence.interrupted?.scenario_trace_id,
-      ].includes(id)
-    )
-      continue;
+  for (const id of stage2CompletedTraceIDs(modelCalls, evidence.interrupted)) {
     await checkTrace(`run:${id}`, async () => {
       const run = await readTrace(id);
-      const source = run;
-      const inspected = inspectExecutionBoundary({ source, run });
-      evidence.execution.push(inspected);
-      const prompt = source.spans.find(
+      const inspected = inspectExecutionBoundary({ source: run, run });
+      const prompt = run.spans.find(
         (span) => span.spanID === inspected.prompt_span_id,
       );
-      const linked = traceTopology(source)
-        .chain(prompt)
-        .find((span) =>
-          span.references?.some((ref) => ref.refType === "FOLLOWS_FROM"),
-        );
-      const connectionLink = linked?.references?.find(
-        (ref) => ref.refType === "FOLLOWS_FROM",
+      const candidates = [
+        ...evidence.private.connections.flatMap((connection) =>
+          connection.evidence.map((receipt) => ({ receipt })),
+        ),
+        ...evidence.private.http.flatMap((connection) =>
+          connection.evidence.map((receipt) => ({
+            receipt,
+            http: connection.http,
+          })),
+        ),
+      ].filter(
+        ({ receipt }) =>
+          receipt.method === "session/prompt" &&
+          receipt.outcome === "succeeded" &&
+          receipt.requestId === tag(prompt, "antnest.request.id") &&
+          receipt.inputSessionID === inspected.session_id &&
+          receipt.agentId === inspected.agent_id &&
+          `v${receipt.protocolVersion}` ===
+            tag(prompt, "antnest.protocol.version") &&
+          (receipt.transport === "http"
+            ? receipt.traceID === id
+            : prompt.references.some(
+                (link) =>
+                  link.refType === "FOLLOWS_FROM" &&
+                  link.traceID === receipt.connectionTraceID,
+              )),
       );
-      if (connectionLink)
-        evidence.connections.push(
-          inspectGatewayConnection({
-            prompt: linked,
-            connection: await readTrace(connectionLink.traceID),
-          }),
-        );
+      assert.equal(
+        candidates.length,
+        1,
+        "completed Run needs one original private Prompt receipt",
+      );
+      const { receipt, http } = candidates[0];
+      const connection =
+        receipt.transport === "websocket"
+          ? await readTrace(receipt.connectionTraceID)
+          : undefined;
+      const bound = inspectStage2PrivatePrompt(run, receipt, {
+        connection,
+        http,
+        secrets,
+      });
+      assert.equal(bound.prompt_span_id, inspected.prompt_span_id);
+      evidence.execution.push({ ...inspected, ...bound });
+      if (connection)
+        evidence.connections.push({
+          trace_id: connection.traceID,
+          request_id: receipt.requestId,
+        });
     });
   }
   evidence.lifecycle = [];
@@ -906,10 +990,25 @@ try {
         inspectLifecycleBoundary(await readTrace(source.trace_id), source.kind),
       );
     });
-  await checkTrace("gateway-connections", () => {
-    assert(
-      evidence.connections.length >= 3,
-      "Gateway execution and offline reconnection traces missing",
+  await checkTrace("complete-stage2-inventory", () => {
+    evidence.inventory = assertStage2Inventory({
+      agentId,
+      audits: evidence.retained_audits,
+      execution: evidence.execution,
+      modelCalls,
+      interrupted: evidence.interrupted,
+      scenarios: evidence.scenarios,
+      management: evidence.lifecycle,
+      workflows: evidence.workflows,
+      auditTraceCount: evidence.audit.traces.length,
+    });
+    assert.equal(
+      evidence.execution.filter((row) => row.transport === "websocket").length,
+      5,
+    );
+    assert.equal(
+      evidence.execution.filter((row) => row.transport === "http").length,
+      1,
     );
   });
   console.log(
@@ -918,7 +1017,7 @@ try {
       audit_traces: evidence.audit.traces.length,
       execution_traces: evidence.execution.length,
       lifecycle_traces: evidence.lifecycle.length,
-      gateway_connections: evidence.connections.length,
+      private_connections: evidence.connections.length,
       strict_warning_failures: traceFailures.filter((item) =>
         item.label.startsWith("strict:"),
       ).length,
@@ -936,19 +1035,56 @@ try {
       `${traceFailures.length} trace checks failed; business scenarios are not full acceptance`,
     );
   }
-  console.log(
-    JSON.stringify({ result: "passed", ...evidence, agent_id: agentId }),
-  );
 } catch (error) {
+  failures.push(error);
+} finally {
+  for (const close of [
+    () => privateAccess?.closeAndWait(),
+    () => (telemetryStopped ? undefined : sdk.shutdown()),
+  ]) {
+    try {
+      await close();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  try {
+    writeEvidenceFile(
+      `artifacts/verification/stage2-boundary/${project}`,
+      "stage2-result.json",
+      JSON.stringify({
+        ...evidence,
+        agent_id: agentId,
+        result: failures.length ? "failed" : "passed",
+        failures: [...new Set(failures)].map((error) =>
+          inspect(error, { depth: 12 }),
+        ),
+      }),
+    );
+  } catch (error) {
+    failures.push(error);
+  }
+}
+if (failures.length) {
   console.error(
     JSON.stringify({
       result: "failed",
       completed_scenarios: evidence.scenarios,
-      error: error instanceof Error ? error.message : String(error),
+      errors: [...new Set(failures)].map((error) =>
+        inspect(error, { depth: 12 }),
+      ),
     }),
   );
-  throw error;
-} finally {
-  await client?.close();
-  if (!telemetryStopped) await sdk.shutdown();
+  if (new Set(failures).size === 1) throw failures[0];
+  throw new AggregateError(
+    [...new Set(failures)],
+    "Stage2 business and cleanup failed",
+  );
 }
+console.log(
+  JSON.stringify({
+    result: "passed",
+    agent_id: agentId,
+    inventory: evidence.inventory,
+  }),
+);

@@ -5,41 +5,101 @@ import { serviceContainer } from "./recovery-support.mjs";
 
 const senderFiles =
   'for f in /tmp/antnest-runtime-senders-*/*/antnest-runtime; do [ -f "$f" ] && { cat "$f"; echo; }; done';
-const statusRequest =
-  'curl --fail --silent -H "antnest-service-authorization: Bearer $ANTNEST_RUNTIME_STATUS_BEARER" http://127.0.0.1:8093/status';
 
-// Runtime /status admits only the Runtime Controller and ACP workloads. The
-// Controller keeps one sender credential per Runtime connection in its private
-// temporary directory, so the read tries each until the Runtime accepts one;
-// the answer still comes from the live Runtime process.
-export async function runtimeStatus(docker, project, runtimeId) {
+function statusBudget(docker, { signal, timeoutMS = 30000 } = {}) {
+  assert(Number.isFinite(timeoutMS) && timeoutMS > 0);
+  const deadline = performance.now() + timeoutMS;
+  const bounded = AbortSignal.any(
+    [signal, AbortSignal.timeout(Math.ceil(timeoutMS))].filter(Boolean),
+  );
+  const remaining = () => {
+    bounded.throwIfAborted();
+    const value = deadline - performance.now();
+    assert(value > 0, "Runtime status timed out");
+    return value;
+  };
+  const read = async (args) => {
+    const result = await docker(args, false, {
+      signal: bounded,
+      timeoutMS: remaining(),
+    });
+    remaining();
+    return result;
+  };
+  return { read, remaining };
+}
+
+async function requestStatus({ read, remaining }, runtimeId, token) {
+  const seconds = Math.max(0.001, Math.floor(remaining()) / 1000);
+  const output = await read([
+    "exec",
+    "-e",
+    `ANTNEST_RUNTIME_STATUS_BEARER=${token}`,
+    runtimeId,
+    "sh",
+    "-c",
+    `curl --fail --silent --max-time ${seconds} -H "antnest-service-authorization: Bearer $ANTNEST_RUNTIME_STATUS_BEARER" http://127.0.0.1:8093/status`,
+  ]);
+  return output;
+}
+
+// Select a credential while Identity is available. Subsequent reads keep that
+// credential private and query the original Runtime afresh, with each caller's
+// current bounded Docker operation. They never reuse a previous /status body
+// or silently discover replacement credentials during the measured window.
+export async function prepareRuntimeStatus(
+  docker,
+  project,
+  runtimeId,
+  options,
+) {
+  const initial = statusBudget(docker, options);
+  const { read, remaining } = initial;
   const controller = await serviceContainer(
-    docker,
+    read,
     project,
     "runtime-controller",
   );
   const tokens = lines(
-    await docker(["exec", controller.Id, "sh", "-c", senderFiles]),
+    await read(["exec", controller.Id, "sh", "-c", senderFiles]),
   );
   assert(tokens.length > 0, "Runtime Controller holds no Runtime credential");
   for (const token of tokens) {
     let output;
     try {
-      output = await docker([
-        "exec",
-        "-e",
-        `ANTNEST_RUNTIME_STATUS_BEARER=${token}`,
-        runtimeId,
-        "sh",
-        "-c",
-        statusRequest,
-      ]);
-    } catch {
+      output = await requestStatus(initial, runtimeId, token);
+    } catch (error) {
+      if (error.remoteCleanupPending) throw error;
+      remaining();
       continue;
     }
-    return JSON.parse(output);
+    let status;
+    try {
+      status = JSON.parse(output);
+    } catch {
+      throw new Error("Runtime status response invalid");
+    }
+    return {
+      status,
+      async read(currentDocker, currentOptions) {
+        const current = statusBudget(currentDocker, currentOptions);
+        try {
+          return JSON.parse(await requestStatus(current, runtimeId, token));
+        } catch (error) {
+          if (error.remoteCleanupPending) throw error;
+          current.remaining();
+          throw new Error("Runtime rejected the bound Controller credential");
+        }
+      },
+    };
   }
   throw new Error("Runtime rejected every Runtime Controller credential");
+}
+
+// One-shot callers retain discovery and one live read under a single budget.
+export async function runtimeStatus(docker, project, runtimeId, options) {
+  return (await prepareRuntimeStatus(docker, project, runtimeId, options))
+    .status;
 }
 
 // Runtime Controller's internal API admits only the Agent Controller

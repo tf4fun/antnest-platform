@@ -133,7 +133,7 @@ func TestPeriodicCacheRecheckCannotRetryItsSecondFailure(t *testing.T) {
 }
 
 func TestPeriodicCacheRecheckKeepsIndependentDeadlinesAndJoinsWorker(t *testing.T) {
-	for _, scenario := range []string{"probe-deadline", "stale", "original-absolute", "original-cct", "parent-cancel"} {
+	for _, scenario := range []string{"probe-deadline", "stale", "original-absolute", "parent-cancel"} {
 		t.Run(scenario, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				cfg := periodicExpiryConfig()
@@ -142,11 +142,6 @@ func TestPeriodicCacheRecheckKeepsIndependentDeadlinesAndJoinsWorker(t *testing.
 					cfg.Original.ResolveStartedAt = cfg.InitialStarted.Add(-18 * time.Second)
 					cfg.Original.ResolveCompletedAt = cfg.Original.ResolveStartedAt.Add(time.Millisecond)
 					deadline = cfg.InitialStarted.Add(11 * time.Second)
-				}
-				if scenario == "original-cct" {
-					cfg.DirectWebSocket = true
-					cfg.Original.ContextExpiresAt = cfg.InitialStarted.Add(12 * time.Second)
-					deadline, cause = cfg.InitialStarted.Add(11*time.Second), ErrCallerContextExpired
 				}
 				if scenario == "original-absolute" {
 					cfg.Original.ExpiresAt = cfg.InitialStarted.Add(12 * time.Second)

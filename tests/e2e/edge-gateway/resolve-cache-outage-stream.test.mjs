@@ -10,13 +10,35 @@ import {
 import { fields } from "../observability/trace-fixtures.mjs";
 
 import { addCompletedRead } from "./resolve-cache-completed-read-fixtures.mjs";
+import {
+  addReadEndpointObservation,
+  addRuntimeEventRepresentations,
+  assertReadEndpointObservations,
+} from "../observability/runtime-information-timing-fixture.mjs";
 import { recoveryHTTPFixture } from "./resolve-cache-recovery-http-fixtures.mjs";
 import { inspectRecoveryHTTP } from "./resolve-cache-recovery-http.mjs";
+import { tag } from "../observability/trace-tree.mjs";
+import {
+  outageClockFixture,
+  syncOutageClockSearch,
+} from "./resolve-cache-outage-clock-fixtures.mjs";
 
 const epoch = 1791786600000;
 const end = (s) => s.startTime + s.duration;
 const operationMessage =
   "Operation failed; unclassified error text was not exported";
+const closePrefix = "antnest.ui.acp.close.";
+const completeCloseReceipt = {
+  target_observed: true,
+  delete_attempts: 1,
+  delete_responses: 1,
+  delete_completed: 1,
+  delete_status: 202,
+  pending_requests: 0,
+  stream_joined: true,
+  failures: 0,
+  diagnostics_truncated: false,
+};
 function fixture() {
   const traces = new Map(),
     parts = {},
@@ -131,11 +153,21 @@ function fixture() {
     setTag(f.upstream, "http.response.status_code", 200);
     setTag(f.upstream, "server.address", "agent-ui");
     f.upstream.duration = end(f.root) - f.upstream.startTime - 100;
-    f.trace.processes.ui = { serviceName: "agent-ui" };
-    f.trace.processes.acp = { serviceName: "agent-acp-service" };
+    f.trace.processes.ui = {
+      serviceName: "agent-ui",
+      tags: fields({ "host.name": "ui-container", "process.pid": 1 }),
+    };
+    f.trace.processes.acp = {
+      serviceName: "agent-acp-service",
+      tags: fields({
+        "host.name": "acp-container",
+        "process.pid": 1,
+        "service.instance.id": "acp-container:1",
+      }),
+    };
     f.ui = {
       ...structuredClone(f.upstream),
-      spanID: "ui",
+      spanID: "f".repeat(16),
       processID: "ui",
       operationName: "agent_ui.http.request",
       startTime: f.upstream.startTime + 1000,
@@ -170,6 +202,7 @@ function fixture() {
           "http.route": marker
             ? "/rpc/agent-acp/watch-agent-execution-state"
             : "/v1/acp",
+          "antnest.listener": "workspace",
         }),
       };
       fault(
@@ -245,6 +278,11 @@ function fixture() {
         trace_id: id,
         path: viewPath(session),
         credential_scope: scope,
+        body: {
+          agentId: e.agent_id,
+          sessionId: session,
+          bridgeEpoch: at < 2500 ? "old-ui-epoch" : "new-ui-epoch",
+        },
       });
     parts[name] = f;
     traces.set(id, f.trace);
@@ -348,22 +386,660 @@ function fixture() {
   setTag(unrelated.root, "error", true);
   unrelated.trace.warnings = ["raw warning"];
   traces.set(unrelated.trace.traceID, unrelated.trace);
-  return {
+  const result = {
     evidence: e,
     traces,
     archivedTraceIDs: new Set(traces.keys()),
     parts,
+    make,
   };
+  const closes = [];
+  for (const [index, origin] of [pre, warmView].entries()) {
+    const init = {
+      ...structuredClone(origin.ui),
+      processID: "acp",
+      spanID: "a".repeat(16),
+      operationName: "HTTP POST /v1/acp",
+      startTime: origin.ui.startTime + 1000,
+      duration: 500,
+      references: [
+        {
+          refType: "CHILD_OF",
+          traceID: origin.trace.traceID,
+          spanID: origin.ui.spanID,
+        },
+      ],
+      tags: fields({
+        "span.kind": "server",
+        "http.request.method": "POST",
+        "http.route": "/v1/acp",
+        "http.response.status_code": 200,
+        "rpc.method": "initialize",
+        "rpc.service": "acp",
+        "rpc.system.name": "jsonrpc",
+        "antnest.listener": "workspace",
+        "antnest.agent.id": e.agent_id,
+      }),
+      logs: [],
+    };
+    origin.trace.spans.push(init);
+    origin.initialize = init;
+    const traceID = "d".repeat(31) + (index + 1),
+      close = {
+        ...structuredClone(origin.ui),
+        traceID,
+        spanID: "b".repeat(16),
+        operationName: "agent_ui.acp.close",
+        startTime: (epoch + (index === 0 ? 1895 : 28495)) * 1000,
+        duration: 1000,
+        tags: fields({
+          "span.kind": "internal",
+          "antnest.ui.acp.close.trigger": "requested",
+          "antnest.ui.acp.close.outcome": "closed",
+          ...Object.fromEntries(
+            Object.entries(completeCloseReceipt).map(([k, v]) => [
+              closePrefix + k,
+              v,
+            ]),
+          ),
+        }),
+        logs: [],
+        references: [
+          {
+            refType: "FOLLOWS_FROM",
+            traceID: origin.trace.traceID,
+            spanID: origin.ui.spanID,
+          },
+        ],
+      },
+      deletion = {
+        ...structuredClone(close),
+        spanID: "c".repeat(16),
+        processID: "acp",
+        operationName: "HTTP DELETE /v1/acp",
+        tags: fields({
+          "span.kind": "server",
+          "http.request.method": "DELETE",
+          "http.route": "/v1/acp",
+          "http.response.status_code": 202,
+          "antnest.listener": "workspace",
+        }),
+        references: [{ refType: "CHILD_OF", traceID, spanID: close.spanID }],
+      },
+      trace = {
+        traceID,
+        processes: {
+          ui: structuredClone(origin.trace.processes.ui),
+          acp: structuredClone(origin.trace.processes.acp),
+        },
+        spans: [close, deletion],
+      };
+    closes.push(trace);
+    traces.set(traceID, trace);
+    result.archivedTraceIDs.add(traceID);
+  }
+  const successfulWatch = structuredClone(pre.marker);
+  successfulWatch.traceID = warmView.trace.traceID;
+  successfulWatch.spanID = "successful-watch";
+  successfulWatch.startTime = warmView.ui.startTime + 2000;
+  successfulWatch.duration = (epoch + 28489) * 1000 - successfulWatch.startTime;
+  successfulWatch.references = [
+    {
+      refType: "CHILD_OF",
+      traceID: warmView.trace.traceID,
+      spanID: warmView.ui.spanID,
+    },
+  ];
+  successfulWatch.tags = successfulWatch.tags.filter(
+    (f) =>
+      ![
+        "error",
+        "error.type",
+        "otel.status_code",
+        "antnest.outcome",
+        "antnest.operation.phase",
+        "antnest.stream.termination",
+      ].includes(f.key),
+  );
+  successfulWatch.logs = [];
+  warmView.trace.spans.push(successfulWatch);
+  result.cleanupSearches = {
+    found: {
+      close: structuredClone(closes),
+      deletion: structuredClone(closes),
+    },
+    rounds: {
+      close: Array.from({ length: 3 }, () => structuredClone(closes)),
+      deletion: Array.from({ length: 3 }, () => structuredClone(closes)),
+    },
+    errors: [],
+  };
+  return result;
 }
 const check = (f, secrets = [], options) =>
   inspectOutageStreams(f.evidence, f, secrets, options);
+function syncCloseSearches(f) {
+  const closes = [...f.traces.values()].filter((t) =>
+    t.spans.some((s) => s.operationName === "agent_ui.acp.close"),
+  );
+  const deletions = closes.filter((t) =>
+    t.spans.some(
+      (s) =>
+        tag(s, "http.request.method") === "DELETE" &&
+        tag(s, "http.route") === "/v1/acp",
+    ),
+  );
+  f.cleanupSearches = {
+    found: {
+      close: structuredClone(closes),
+      deletion: structuredClone(deletions),
+    },
+    rounds: {
+      close: Array.from({ length: 3 }, () => structuredClone(closes)),
+      deletion: Array.from({ length: 3 }, () => structuredClone(deletions)),
+    },
+    errors: [],
+  };
+}
+function shiftService(f, service, delta) {
+  for (const trace of f.traces.values())
+    for (const span of trace.spans) {
+      if (trace.processes[span.processID].serviceName !== service) continue;
+      span.startTime += delta;
+      for (const log of span.logs ?? []) log.timestamp += delta;
+    }
+  syncCloseSearches(f);
+}
+test("stream independently calibrates ACP and UI instead of using Gateway or Docker wall clocks", () => {
+  const f = fixture();
+  shiftService(f, "agent-acp-service", 7000000);
+  shiftService(f, "agent-ui", -5000000);
+  assert.equal(check(f).status, "passed");
+});
+test("stream lifecycle keeps Docker timestamps independent of the observer wall clock", () => {
+  const f = fixture();
+  for (const lifecycle of [
+    ...f.evidence.consumer_restarts,
+    f.evidence.ui_drain,
+  ])
+    for (const state of [lifecycle.before, lifecycle.after])
+      for (const key of ["started_at", "finished_at"])
+        state[key] = new Date(Date.parse(state[key]) + 7000).toISOString();
+  assert.equal(check(f).status, "passed");
+});
+test("stream rejects a successful private watch ending after the observed UI drain", () => {
+  const f = fixture(),
+    span = f.parts["warm-workspace-view"].trace.spans.find(
+      (s) => s.spanID === "successful-watch",
+    );
+  span.duration = (epoch + 30000) * 1000 - span.startTime;
+  assert.throws(() => check(f), /private stream.*lifecycle/);
+});
+test("stream rejects normal close finishing after its observed UI process lifetime", () => {
+  const f = fixture(),
+    trace = f.traces.get("d".repeat(31) + "2");
+  for (const span of trace.spans) span.startTime = (epoch + 30000) * 1000;
+  syncCloseSearches(f);
+  assert.throws(() => check(f), /close.*lifecycle/);
+});
+test("complete DELETE cannot end after the observed UI drain", () => {
+  const f = fixture(),
+    deletion = f.traces.get("d".repeat(31) + "2").spans[1];
+  deletion.duration = (epoch + 30000) * 1000 - deletion.startTime;
+  syncCloseSearches(f);
+  assert.throws(() => check(f), /DELETE.*lifecycle/);
+});
+test("old-owner DELETE cannot extend into a later ACP process generation", () => {
+  const f = fixture(),
+    deletion = f.traces.get("d".repeat(31) + "1").spans[1];
+  deletion.duration = (epoch + 2400) * 1000 - deletion.startTime;
+  syncCloseSearches(f);
+  assert.throws(() => check(f), /DELETE.*lifecycle/);
+});
+test("complete DELETE must be causally compatible with its actual UI close", () => {
+  const f = restoredOwnerFixture(),
+    deletion = f.traces.get("d".repeat(31) + "2").spans[1];
+  deletion.startTime += 1000000;
+  syncCloseSearches(f);
+  assert.throws(() => check(f), /DELETE.*close/);
+});
+function stoppedPeerCloseFixture(causes = '["unknown","connection_refused"]') {
+  const f = fixture(),
+    trace = f.traces.get("d".repeat(31) + "1"),
+    close = trace.spans[0];
+  trace.spans = [close];
+  for (const [key, value] of Object.entries({
+    trigger: "transport_failure",
+    outcome: "failed",
+    delete_responses: 0,
+    delete_completed: 0,
+    delete_status: 0,
+    failures: 1,
+  }))
+    setTag(close, closePrefix + key, value);
+  setTag(close, "error", true);
+  setTag(close, "otel.status_code", "ERROR");
+  close.logs = [
+    {
+      timestamp: close.startTime + 1,
+      fields: fields({
+        event: "antnest.ui.acp.close.failure",
+        stage: "delete_request",
+        causes,
+        truncated: false,
+      }),
+    },
+  ];
+  f.failedClose = close;
+  syncCloseSearches(f);
+  return f;
+}
+function executionClockFixture() {
+  const f = fixture(),
+    p = f.parts["prep-view"],
+    s = structuredClone(p.initialize);
+  s.spanID = "execution-clock";
+  s.operationName = "HTTP GET unmatched";
+  s.startTime = p.ui.startTime + 3000;
+  s.duration = 1000;
+  s.tags = fields({
+    "span.kind": "server",
+    "http.request.method": "GET",
+    "http.route": "unmatched",
+    "http.response.status_code": 200,
+    "antnest.listener": "workspace",
+    "rpc.method": "read_workspace_execution",
+    "rpc.service": "agent-acp",
+    "rpc.system.name": "json-over-http",
+  });
+  p.trace.spans.push(s);
+  f.executionClock = s;
+  return f;
+}
+function withIndependentOutageClock(f) {
+  const c = outageClockFixture(),
+    delta = epoch * 1000 - c.epoch;
+  const restart = f.evidence.consumer_restarts[0];
+  restart.before.id = restart.after.id = c.evidence.acp_clock_probe.before.id;
+  restart.before.host_name = restart.after.host_name = "acp-container";
+  restart.before.at = 1600;
+  restart.before.observed_at_ms = epoch + 1600;
+  f.evidence.policy_revision = 4;
+  f.evidence.acp_clock_probe = {
+    before: restart.before,
+    sample: {
+      ...c.evidence.acp_clock_probe.sample,
+      server_date: new Date(epoch + 1000).toUTCString(),
+    },
+    after: { ...restart.before, at: 1750, observed_at_ms: epoch + 1750 },
+  };
+  for (const [id, trace] of c.traces) {
+    trace.spans[0].startTime += delta;
+    f.traces.set(id, trace);
+    f.archivedTraceIDs.add(id);
+  }
+  f.clockSearches = { ...c.clockSearches, now: epoch + 60000 };
+  syncOutageClockSearch(f);
+  return f;
+}
+test("current outage stream requires an independent pre-restart ACP probe", () => {
+  const f = fixture();
+  f.evidence.policy_revision = 4;
+  assert.throws(() => check(f), /independent outage ACP clock probe missing/);
+});
+test("independent outage probe resolves a coarse clock interval crossing the actual stop", () => {
+  const f = stoppedPeerCloseFixture();
+  const marker = f.parts["prep-view"].marker;
+  marker.duration = (epoch + 1810) * 1000 - marker.startTime;
+  marker.logs[0].timestamp = end(marker) - 1;
+  assert.throws(() => check(f), /watch before actual normal termination/);
+  withIndependentOutageClock(f);
+  const result = check(f);
+  const clock = result.service_clocks.find(
+    (r) => r.service === "agent-acp-service" && r.generation === 0,
+  );
+  assert.equal(result.status, "passed");
+  assert(clock.outage_probe, "the independent health proof must be retained");
+  assert(clock.offset_max_us - clock.offset_min_us < 10000);
+  assert.equal(clock.outage_probe.candidates.length, 2);
+});
+test("the independent outage clock still rejects a watch actually ending before stop", () => {
+  const f = withIndependentOutageClock(stoppedPeerCloseFixture());
+  const marker = f.parts["prep-view"].marker;
+  marker.duration = (epoch + 1790) * 1000 - marker.startTime;
+  marker.logs[0].timestamp = end(marker) - 1;
+  assert.throws(() => check(f), /watch before actual normal termination/);
+});
+test("completed Session view contributes its awaited execution-read clock window", () => {
+  const f = executionClockFixture(),
+    result = check(f);
+  assert(
+    result.service_clocks
+      .find((c) => c.service === "agent-acp-service" && c.generation === 0)
+      .samples.some((s) => s.span_id === f.executionClock.spanID),
+  );
+});
+for (const [name, change] of [
+  [
+    "wrong HTTP parent",
+    (f) => {
+      f.executionClock.references[0].spanID =
+        f.parts["prep-view"].upstream.spanID;
+    },
+  ],
+  [
+    "contradictory response",
+    (f) => setTag(f.executionClock, "http.response.status_code", 503),
+  ],
+  [
+    "contradictory clock window",
+    (f) => {
+      f.executionClock.startTime += 2000000;
+    },
+  ],
+])
+  test(`execution-read clock rejects ${name}`, () => {
+    const f = executionClockFixture();
+    change(f);
+    assert.throws(() => check(f));
+  });
+test("stopped-peer close cannot use the old owner's shutdown to admit a later failed owner", () => {
+  const f = fixture(),
+    failed = stoppedPeerCloseFixture().failedClose,
+    trace = f.traces.get("d".repeat(31) + "2"),
+    original = trace.spans[0];
+  trace.spans = [
+    {
+      ...structuredClone(failed),
+      traceID: trace.traceID,
+      startTime: original.startTime,
+      references: original.references,
+    },
+  ];
+  trace.spans[0].logs[0].timestamp = original.startTime + 1;
+  syncCloseSearches(f);
+  assert.throws(() => check(f), /another ACP generation/);
+});
+test("stopped-peer close requires zero actual DELETE receivers", () => {
+  const f = stoppedPeerCloseFixture(),
+    trace = f.traces.get(f.failedClose.traceID),
+    deletion = fixture().traces.get(f.failedClose.traceID).spans[1];
+  trace.spans.push(deletion);
+  syncCloseSearches(f);
+  assert.throws(() => check(f), /DELETE inventory/);
+});
+test("stopped-peer close cannot hide an actual DELETE receiver by renaming its operation", () => {
+  const f = stoppedPeerCloseFixture(),
+    trace = f.traces.get(f.failedClose.traceID),
+    deletion = fixture().traces.get(f.failedClose.traceID).spans[1];
+  deletion.operationName = "HTTP DELETE renamed";
+  trace.spans.push(deletion);
+  syncCloseSearches(f);
+  assert.throws(() => check(f), /DELETE inventory/);
+});
+for (const key of Object.keys(completeCloseReceipt))
+  test(`stopped-peer close rejects contradictory ${key}`, () => {
+    const f = stoppedPeerCloseFixture(),
+      value = tag(f.failedClose, closePrefix + key);
+    setTag(
+      f.failedClose,
+      closePrefix + key,
+      typeof value === "boolean" ? !value : value + 1,
+    );
+    syncCloseSearches(f);
+    assert.throws(() => check(f), /close receipt/);
+  });
+for (const cause of [
+  "connection_refused",
+  "connection_reset",
+  "broken_pipe",
+  "socket_closed",
+])
+  for (const wrapped of [false, true]) {
+    test(`stopped-peer close retains exact failed receipt for ${wrapped ? "wrapped " : ""}${cause}`, () => {
+      const f = stoppedPeerCloseFixture(
+          JSON.stringify(wrapped ? ["unknown", cause] : [cause]),
+        ),
+        before = JSON.stringify([...f.traces.values()]);
+      const result = check(f);
+      assert(
+        result.owner_closes.some((r) => r.reason === "failed-acp-process-exit"),
+      );
+      assert(
+        result.owned_error_spans.some(
+          (r) =>
+            r.span_id === f.failedClose.spanID &&
+            r.trace_id === f.failedClose.traceID &&
+            r.reason === "failed-acp-process-exit",
+        ),
+      );
+      assert.equal(JSON.stringify([...f.traces.values()]), before);
+    });
+  }
+for (const cause of [
+  "unknown",
+  "dns",
+  "timeout",
+  "abort",
+  "body",
+  "stream_cleanup",
+])
+  test(`stopped-peer close rejects ${cause}`, () => {
+    assert.throws(
+      () => check(stoppedPeerCloseFixture(JSON.stringify([cause]))),
+      /stopped-peer close cause/,
+    );
+  });
+for (const [name, change] of [
+  [
+    "later incarnation",
+    (f) => {
+      const old = f.traces.get("d".repeat(31) + "1"),
+        later = f.traces.get("d".repeat(31) + "2");
+      old.spans = structuredClone(later.spans);
+      for (const s of old.spans) {
+        s.traceID = old.traceID;
+        for (const r of s.references)
+          if (r.refType === "CHILD_OF") r.traceID = old.traceID;
+      }
+    },
+  ],
+  [
+    "missing ERROR",
+    (f) => {
+      f.failedClose.tags = f.failedClose.tags.filter((t) => t.key !== "error");
+    },
+  ],
+  [
+    "requested trigger",
+    (f) => setTag(f.failedClose, closePrefix + "trigger", "requested"),
+  ],
+  [
+    "missing failure event",
+    (f) => {
+      f.failedClose.logs = [];
+    },
+  ],
+  [
+    "extra failure event",
+    (f) => {
+      f.failedClose.logs.push(structuredClone(f.failedClose.logs[0]));
+    },
+  ],
+  [
+    "truncated failure event",
+    (f) => {
+      f.failedClose.logs[0].fields.find((t) => t.key === "truncated").value =
+        true;
+    },
+  ],
+  [
+    "wrong failure stage",
+    (f) => {
+      f.failedClose.logs[0].fields.find((t) => t.key === "stage").value =
+        "delete_body";
+    },
+  ],
+  [
+    "extra failure cause",
+    (f) => {
+      f.failedClose.logs[0].fields.find((t) => t.key === "causes").value =
+        '["connection_reset","socket_closed"]';
+    },
+  ],
+])
+  test(`stopped-peer close rejects ${name}`, () => {
+    const f = stoppedPeerCloseFixture();
+    change(f);
+    syncCloseSearches(f);
+    assert.throws(() => check(f));
+  });
+test("stream requires complete producer cleanup receipts for every owner", () => {
+  const result = check(fixture());
+  assert.equal(result.owner_closes.length, 2);
+  assert(result.owner_closes.every((r) => r.reason === "complete-delete-202"));
+});
+for (const key of Object.keys(completeCloseReceipt)) {
+  test(`stream rejects missing close receipt ${key}`, () => {
+    const f = fixture(),
+      close = f.traces.get("d".repeat(31) + "2").spans[0];
+    close.tags = close.tags.filter((t) => t.key !== closePrefix + key);
+    syncCloseSearches(f);
+    assert.throws(() => check(f), /close receipt/);
+  });
+  test(`stream rejects contradictory close receipt ${key}`, () => {
+    const f = fixture(),
+      close = f.traces.get("d".repeat(31) + "2").spans[0];
+    setTag(
+      close,
+      closePrefix + key,
+      typeof completeCloseReceipt[key] === "boolean"
+        ? !completeCloseReceipt[key]
+        : completeCloseReceipt[key] + 1,
+    );
+    syncCloseSearches(f);
+    assert.throws(() => check(f), /close receipt/);
+  });
+}
+for (const [name, change] of [
+  ["unobserved trigger", (c) => setTag(c, closePrefix + "trigger", "unknown")],
+  [
+    "unexpected receipt field",
+    (c) => setTag(c, closePrefix + "invented", true),
+  ],
+  ["extra exception", (c) => setTag(c, "exception.type", "private-error")],
+  [
+    "successful close with ERROR",
+    (c) => {
+      setTag(c, "error", true);
+      setTag(c, "otel.status_code", "ERROR");
+    },
+  ],
+  [
+    "successful close event",
+    (c) => {
+      c.logs = [
+        {
+          timestamp: c.startTime,
+          fields: fields({
+            event: "antnest.ui.acp.close.failure",
+            stage: "delete_request",
+            causes: '["connection_refused"]',
+            truncated: false,
+          }),
+        },
+      ];
+    },
+  ],
+])
+  test(`stream rejects ${name}`, () => {
+    const f = fixture(),
+      close = f.traces.get("d".repeat(31) + "2").spans[0];
+    change(close);
+    syncCloseSearches(f);
+    assert.throws(() => check(f));
+  });
+test("owning stream requires the complete cleanup inventory", () => {
+  const f = fixture();
+  delete f.cleanupSearches;
+  assert.throws(() => check(f), /inventory/);
+});
+test("owning stream rejects an epoch shared across observed UI restart", () => {
+  const f = fixture();
+  f.parts["prep-view"].row.body.bridgeEpoch = "new-ui-epoch";
+  assert.throws(() => check(f), /epoch/);
+});
+test("owning stream retains successful execution-watch inventory under actual owners", () => {
+  const result = check(fixture());
+  assert.equal(result.owner_inventory.owners.length, 2);
+  assert.equal(
+    result.owner_inventory.owners.flatMap((o) => o.streams).length,
+    10,
+  );
+});
+test("stream follows POST creation and Agent-view initialization before later Session views", () => {
+  const f = fixture(),
+    prep = f.parts["prep-view"],
+    warm = f.parts["warm-workspace-view"];
+  prep.row.label = "prep-session-create";
+  prep.row.path = "/api/app/workspace/v1/agents/agent/sessions";
+  prep.row.method = "POST";
+  prep.row.status = 201;
+  prep.row.body = { sessionId: f.evidence.session_id };
+  prep.root.operationName = "HTTP POST /api/app/workspace/v1/{path...}";
+  prep.upstream.operationName = "HTTP POST agent-ui";
+  for (const s of [prep.root, prep.upstream, prep.ui]) {
+    setTag(s, "http.request.method", "POST");
+    setTag(s, "http.response.status_code", 201);
+  }
+  const prepView = f.make(
+    "actual-prep-view",
+    1100,
+    1200,
+    prep.row.credential_scope,
+    f.evidence.session_id,
+  );
+  prepView.row.label = "prep-view";
+  warm.row.label = "fresh-consumer-agent-ready";
+  warm.row.path = "/api/app/workspace/v1/agents/agent/view";
+  warm.row.body = {
+    agentId: "agent",
+    bridgeEpoch: "new-ui-epoch",
+    availability: "ready",
+    activeSessionId: null,
+  };
+  const later = f.make(
+    "actual-warm-view",
+    3100,
+    3200,
+    warm.row.credential_scope,
+    f.evidence.session_id,
+  );
+  later.row.label = "warm-workspace-view";
+  const moved = warm.watches.pop();
+  warm.trace.spans.splice(warm.trace.spans.indexOf(moved), 1);
+  later.watch();
+  for (const p of [prepView, later]) f.archivedTraceIDs.add(p.trace.traceID);
+  const result = check(f);
+  assert.equal(result.owner_inventory.owners[0].origin_kind, "session-create");
+  const owner = result.owner_inventory.owners.find(
+    (o) => o.origin_trace_id === warm.trace.traceID,
+  );
+  assert(
+    owner.streams.some(
+      (s) =>
+        s.trace_id === later.trace.traceID && s.ui_span_id === later.ui.spanID,
+    ),
+  );
+  assert.equal(result.owned_error_spans.length, 19);
+});
 test("stream claims bind five remote retirements and actual retained internal watches without changing raw errors", () => {
   const f = fixture(),
     before = structuredClone(f.traces),
     result = check(f);
   assert.equal(result.status, "passed");
   assert.equal(result.streams.length, 5);
-  assert.equal(result.internal_watches.length, 9);
+  assert.equal(result.internal_watches.length, 10);
   assert.equal(result.owned_error_spans.length, 19);
   assert.equal(
     new Set(result.owned_error_spans.map((s) => `${s.trace_id}:${s.span_id}`))
@@ -716,6 +1392,13 @@ for (const kind of ["cancelled-read", "successful-runtime"]) {
   test(`retained non-error ${kind} telemetry is not an error claim`, () => {
     const f = fixture();
     benignTelemetry(f, kind);
+    if (kind === "cancelled-read") {
+      assert.throws(
+        () => check(f),
+        "unbound cancellation cannot prove a parsed read",
+      );
+      return;
+    }
     const r = check(f);
     assert.equal(r.error_spans, 20);
     assert.equal(r.owned_error_spans.length, 19);
@@ -1416,12 +2099,22 @@ function fullRecoveryStreamFixture() {
     };
     move(source);
     source.trigger.observed_at_ms = epoch + source.trigger.at;
-    source.wss_close.at = epoch + source.wss_close.observed_at;
     replaced.add(source.login);
     replaced.add(source.mutation);
+    replaced.add(source.initial_view);
+    // Retain the stream fixture's actual view Trace and its owned watches.
+    // Place the new Bridge create receipt after peer login and before that
+    // existing read instead of adding an unobserved second view request.
+    source.session_create.started_at = target.initial_view.started_at - 40;
+    source.session_create.at = target.initial_view.started_at - 1;
+    target.initial_view.body = {
+      ...source.initial_view.body,
+      bridgeEpoch: target.initial_view.body.bridgeEpoch,
+    };
     Object.assign(target.login, source.login);
     Object.assign(target.mutation, source.mutation);
     target.stream.records = source.stream.records;
+    target.stream.started_at_ms = epoch + target.stream.started_at;
     Object.assign(target, source, {
       login: target.login,
       mutation: target.mutation,
@@ -1444,12 +2137,754 @@ function fullRecoveryStreamFixture() {
     f.archivedTraceIDs.add(trace.traceID);
   }
   f.recoveryParts = recovery.parts;
+  addRestoredDenialHTTP(f);
   return neutralPublicStream(f);
 }
+
+function recoveryFeedFixture() {
+  const f = concurrentGatewayRetirement(fullRecoveryStreamFixture());
+  const processTags = fields({
+    "host.name": "gateway-host",
+    "process.pid": 23,
+    "service.instance.id": "gateway-instance",
+  });
+  f.feeds = [];
+  for (const name of ["warm", "logout", "password", "role", "deactivate"]) {
+    const p = f.parts[name + "-stream"];
+    const action = name === "warm" ? "password" : name;
+    const c = f.evidence.recovery.cases.find((c) => c.name === action);
+    const mutation = f.recoveryParts.find((p) => p.action === action);
+    // Relocate only synthetic Gateway/Identity traces into their real fixture
+    // request window. The admission code never rewrites archived evidence.
+    const delta =
+      (epoch + c.mutation.started_at + 5) * 1000 - mutation.root.startTime;
+    for (const span of mutation.trace.spans) {
+      span.startTime += delta;
+      for (const log of span.logs ?? []) log.timestamp += delta;
+    }
+    // The generic fixture leaves a 100ms root around a ~22ms request.
+    // Bound this synthetic root by its actual children to fit the 40ms receipt.
+    mutation.root.duration =
+      Math.max(
+        ...mutation.trace.spans
+          .filter((span) => span !== mutation.root)
+          .map(end),
+      ) -
+      mutation.root.startTime +
+      1;
+    for (const part of [p, mutation])
+      part.trace.processes[part.root.processID].tags =
+        structuredClone(processTags);
+    const principal =
+      name === "warm"
+        ? f.evidence.http.find((r) => r.label === "warm-login").body.principal
+        : c.login.body.principal;
+    const feed = {
+      timestamp: p.upstream.logs[0].timestamp - 1,
+      fields: fields({
+        event: "antnest.stream.termination",
+        source: "identity-session-feed",
+        reason: "session_revoked",
+        "antnest.revocation.reason": {
+          logout: "session_revoked",
+          password: "password_changed",
+          role: "role_changed",
+          deactivate: "membership_deactivated",
+        }[action],
+        "antnest.revocation.sequence": f.feeds.length + 1,
+        "antnest.revocation.trace_id": mutation.trace.traceID,
+        "antnest.revocation.span_id": mutation.server.spanID,
+        "antnest.organization.id": principal.organization_id,
+        "antnest.principal.id": principal.user_id,
+        "antnest.membership.id": principal.membership_id,
+        "antnest.agent.id": f.evidence.agent_id,
+      }),
+    };
+    p.root.logs.push(feed);
+    p.upstream.logs[0].fields.find(
+      (v) => v.key === "antnest.error.cause_types",
+    ).value = '["*browserstream.feedTerminationCause","*errors.errorString"]';
+    f.feeds.push({ name, p, c, mutation, feed });
+  }
+  return f;
+}
+
+test("recovery binds five feed retirements to complete committed mutation evidence", () => {
+  const f = recoveryFeedFixture();
+  const before = structuredClone({ evidence: f.evidence, traces: f.traces });
+  const result = check(f);
+  assert.equal(result.status, "passed");
+  for (const { name, mutation, feed } of f.feeds) {
+    assert.deepEqual(
+      result.streams.find((r) => r.name === name).feed_termination,
+      {
+        source: "identity-session-feed",
+        reason: feed.fields.find((v) => v.key === "antnest.revocation.reason")
+          .value,
+        sequence: feed.fields.find(
+          (v) => v.key === "antnest.revocation.sequence",
+        ).value,
+        mutation_trace_id: mutation.trace.traceID,
+        identity_server_span_id: mutation.server.spanID,
+      },
+    );
+  }
+  assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+});
+test("proved recovery feed retains the original generic read-error diagnostic", () => {
+  const f = recoveryFeedFixture();
+  for (const { p } of f.feeds)
+    p.upstream.logs[0].fields.find(
+      (v) => v.key === "antnest.error.cause_types",
+    ).value = '["*errors.errorString"]';
+  assert.equal(check(f).status, "passed");
+});
+for (const [name, mutate] of [
+  [
+    "wrong source span",
+    ({ feed, mutation }) => {
+      feed.fields.find((v) => v.key === "antnest.revocation.span_id").value =
+        mutation.root.spanID;
+    },
+  ],
+  [
+    "wrong mutation",
+    ({ feed }) => {
+      feed.fields.find((v) => v.key === "antnest.revocation.trace_id").value =
+        "f".repeat(32);
+    },
+  ],
+  [
+    "wrong reason",
+    ({ feed }) => {
+      feed.fields.find((v) => v.key === "antnest.revocation.reason").value =
+        "session_revoked";
+    },
+  ],
+  [
+    "foreign member",
+    ({ feed }) => {
+      feed.fields.find((v) => v.key === "antnest.membership.id").value =
+        "foreign";
+    },
+  ],
+  [
+    "missing sequence",
+    ({ feed }) => {
+      feed.fields.find((v) => v.key === "antnest.revocation.sequence").value =
+        0;
+    },
+  ],
+  [
+    "extra diagnostic",
+    ({ feed }) => {
+      feed.fields.push({ key: "error", value: true });
+    },
+  ],
+  [
+    "duplicate witness",
+    ({ p, feed }) => {
+      p.root.logs.push(structuredClone(feed));
+    },
+  ],
+  [
+    "before mutation",
+    ({ feed, mutation }) => {
+      feed.timestamp = mutation.root.startTime - 1;
+    },
+  ],
+  [
+    "after read failure",
+    ({ feed, p }) => {
+      feed.timestamp = p.upstream.logs[0].timestamp + 1;
+    },
+  ],
+  [
+    "typed cause without witness",
+    ({ p }) => {
+      p.root.logs.pop();
+    },
+  ],
+  [
+    "foreign Gateway process",
+    ({ mutation }) => {
+      mutation.trace.processes[mutation.root.processID].tags.find(
+        (v) => v.key === "process.pid",
+      ).value += 1;
+    },
+  ],
+  [
+    "missing both Gateway process identities",
+    ({ mutation, p }) => {
+      mutation.trace.processes[mutation.root.processID].tags = [];
+      p.trace.processes[p.root.processID].tags = [];
+    },
+  ],
+  [
+    "mutation outside original HTTP receipt",
+    ({ mutation }) => {
+      for (const span of mutation.trace.spans) {
+        span.startTime -= 1000000;
+        for (const log of span.logs ?? []) log.timestamp -= 1000000;
+      }
+    },
+  ],
+  [
+    "uncommitted transaction",
+    ({ mutation }) => {
+      setTag(
+        mutation.transaction,
+        "antnest.transaction.outcome",
+        "rolled_back",
+      );
+    },
+  ],
+  [
+    "missing committed feed SQL",
+    ({ mutation }) => {
+      mutation.trace.spans = mutation.trace.spans.filter(
+        (s) => s.spanID !== "session-feed-0",
+      );
+    },
+  ],
+])
+  test("recovery feed rejects " + name, () => {
+    const f = recoveryFeedFixture();
+    check(f);
+    mutate(f.feeds[0]);
+    const before = structuredClone({ evidence: f.evidence, traces: f.traces });
+    assert.throws(() =>
+      check(f, [], {
+        inspectRecovery: () => ({ status: "passed", mutations: [] }),
+      }),
+    );
+    assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+  });
 
 test("combined stream fixture supplies complete real-inspector recovery prerequisites", () => {
   const f = fullRecoveryStreamFixture();
   assert.equal(inspectRecoveryHTTP(f.evidence, f).status, "passed");
+});
+
+function addRestoredDenialHTTP(f) {
+  const c = f.evidence.recovery.cases[3],
+    at = c.restored_state.started_at,
+    p = f.make(
+      "restored-owner",
+      at,
+      c.restored_state.at,
+      c.fresh_login.issued_credential_scope,
+      f.evidence.session_id,
+    );
+  const placeholder = p.row;
+  c.restored_state.trace_id = p.trace.traceID;
+  c.restored_state.server_date = placeholder.server_date;
+  p.row = c.restored_state;
+  f.evidence.http.splice(f.evidence.http.indexOf(placeholder), 1);
+  for (const s of [p.root, p.upstream, p.ui])
+    setTag(s, "http.response.status_code", 403);
+  for (const [key, value] of Object.entries({
+    error: true,
+    "otel.status_code": "ERROR",
+    "error.type": "403",
+    "otel.status_description": "HTTP status 403",
+  }))
+    setTag(p.upstream, key, value);
+  p.ui.logs = [
+    {
+      timestamp: p.ui.startTime + 1,
+      fields: fields({
+        event: "antnest.ui.agent_view.failure",
+        stage: "view",
+        causes: '["agent_access_revoked"]',
+        truncated: false,
+      }),
+    },
+  ];
+  f.archivedTraceIDs.add(p.trace.traceID);
+  f.restoredOwner = p;
+}
+
+function restoredOwnerFixture() {
+  const f = fullRecoveryStreamFixture(),
+    p = f.restoredOwner,
+    at = p.row.started_at;
+  const init = structuredClone(f.parts["prep-view"].initialize);
+  init.traceID = p.trace.traceID;
+  init.startTime = p.ui.startTime + 1000;
+  init.references = [
+    { refType: "CHILD_OF", traceID: p.trace.traceID, spanID: p.ui.spanID },
+  ];
+  p.trace.spans.push(init);
+  p.watch();
+  const successful = structuredClone(
+    f.parts["warm-workspace-view"].trace.spans.find(
+      (s) => s.spanID === "successful-watch",
+    ),
+  );
+  successful.traceID = p.trace.traceID;
+  successful.startTime = p.ui.startTime + 2000;
+  successful.duration = 1000;
+  successful.references = [
+    { refType: "CHILD_OF", traceID: p.trace.traceID, spanID: p.ui.spanID },
+  ];
+  p.trace.spans.push(successful);
+  const warmClose = f.traces.get("d".repeat(31) + "2"),
+    finalClose = structuredClone(warmClose),
+    id = "d".repeat(31) + "3";
+  finalClose.traceID = id;
+  for (const s of finalClose.spans) {
+    s.traceID = id;
+    for (const ref of s.references)
+      ref.traceID = ref.refType === "FOLLOWS_FROM" ? p.trace.traceID : id;
+  }
+  finalClose.spans[0].references[0].spanID = p.ui.spanID;
+  for (const s of warmClose.spans) s.startTime = (epoch + at - 5) * 1000;
+  // The old owner's GETs retire on the proved deactivation; the restored
+  // owner is a new incarnation and its GET remains until final drain.
+  for (const [name, part] of Object.entries(f.parts))
+    if (name !== "prep-view" && part !== p)
+      for (const s of part.watches) {
+        s.duration = (epoch + at - 10) * 1000 - s.startTime;
+        s.logs = [
+          {
+            timestamp: end(s) - 1,
+            fields: fields({
+              event: "antnest.stream.termination",
+              reason: "access_denied",
+              "error.type": "DomainError",
+              source: "learning-notice",
+              "antnest.agent.id": "agent",
+              "antnest.organization.id": "org",
+            }),
+          },
+        ];
+      }
+  const oldWatch = f.parts["warm-workspace-view"].trace.spans.find(
+    (s) => s.spanID === "successful-watch",
+  );
+  oldWatch.duration = (epoch + at - 10) * 1000 - oldWatch.startTime;
+  f.traces.set(id, finalClose);
+  for (const traceID of [p.trace.traceID, id]) f.archivedTraceIDs.add(traceID);
+  const closes = [...f.traces.values()].filter((t) =>
+    t.spans.some((s) => s.operationName === "agent_ui.acp.close"),
+  );
+  f.cleanupSearches = {
+    found: {
+      close: structuredClone(closes),
+      deletion: structuredClone(closes),
+    },
+    rounds: {
+      close: Array.from({ length: 3 }, () => structuredClone(closes)),
+      deletion: Array.from({ length: 3 }, () => structuredClone(closes)),
+    },
+    errors: [],
+  };
+  f.restoredOwner = p;
+  return f;
+}
+
+test("restored disabled-Agent 403 without a new private request is owned using complete recovery evidence", () => {
+  const f = fullRecoveryStreamFixture(),
+    before = structuredClone({ evidence: f.evidence, traces: f.traces }),
+    p = f.restoredOwner,
+    result = check(f);
+  assert.equal(result.owner_inventory.owners.length, 2);
+  assert(
+    !p.trace.spans.some(
+      (s) => p.trace.processes[s.processID].serviceName === "agent-acp-service",
+    ),
+  );
+  assert.deepEqual(
+    result.owned_error_spans.filter((s) => s.trace_id === p.trace.traceID),
+    [
+      {
+        trace_id: p.trace.traceID,
+        span_id: p.upstream.spanID,
+        reason: "restored-disabled-agent-view",
+      },
+    ],
+  );
+  assert.equal(result.strict_trace, "failed");
+  assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+});
+
+for (const [name, change] of [
+  [
+    "incomplete deactivation proof",
+    (f) => {
+      f.evidence.recovery.cases[3].disabled_agent.status = 503;
+    },
+  ],
+  [
+    "extra forwarding exception",
+    (f) => setTag(f.restoredOwner.upstream, "exception.type", "other"),
+  ],
+  [
+    "missing forwarding error",
+    (f) => {
+      f.restoredOwner.upstream.tags = f.restoredOwner.upstream.tags.filter(
+        (v) => !v.key.startsWith("error") && !v.key.startsWith("otel.status"),
+      );
+    },
+  ],
+  [
+    "extra forwarding event",
+    (f) => {
+      f.restoredOwner.upstream.logs = [
+        {
+          timestamp: f.restoredOwner.upstream.startTime,
+          fields: fields({ event: "antnest.error" }),
+        },
+      ];
+    },
+  ],
+  ["Resolve error", (f) => setTag(f.restoredOwner.decision, "error", true)],
+  [
+    "SQL error",
+    (f) =>
+      setTag(
+        f.restoredOwner.trace.spans.find((s) => s.spanID === "sql"),
+        "error",
+        true,
+      ),
+  ],
+  [
+    "duplicate denial event",
+    (f) => {
+      f.restoredOwner.ui.logs.push(structuredClone(f.restoredOwner.ui.logs[0]));
+    },
+  ],
+])
+  test(`restored denial without a private request rejects ${name}`, () => {
+    const f = fullRecoveryStreamFixture();
+    change(f);
+    assert.throws(() =>
+      check(f, [], { inspectRecovery: () => ({ status: "passed" }) }),
+    );
+  });
+
+test("restored disabled-Agent 403 can initialize an owner only with complete recovery proof and its exact forwarding error", () => {
+  const f = restoredOwnerFixture(),
+    result = check(f);
+  assert.equal(result.owner_inventory.owners.length, 3);
+  assert(
+    result.owned_error_spans.some(
+      (s) =>
+        s.trace_id === f.restoredOwner.trace.traceID &&
+        s.span_id === f.restoredOwner.upstream.spanID &&
+        s.reason === "restored-disabled-agent-view",
+    ),
+  );
+});
+test("restored owner cannot replace complete recovery with an injected passed marker", () => {
+  const f = restoredOwnerFixture();
+  f.evidence.recovery.cases[3].disabled_agent.status = 503;
+  assert.throws(() =>
+    check(f, [], { inspectRecovery: () => ({ status: "passed" }) }),
+  );
+});
+for (const [name, change] of [
+  [
+    "extra forwarding exception",
+    (f) => setTag(f.restoredOwner.upstream, "exception.type", "other"),
+  ],
+  [
+    "missing forwarding failure",
+    (f) => {
+      f.restoredOwner.upstream.tags = f.restoredOwner.upstream.tags.filter(
+        (v) => !v.key.startsWith("error") && !v.key.startsWith("otel.status"),
+      );
+    },
+  ],
+  [
+    "extra forwarding event",
+    (f) => {
+      f.restoredOwner.upstream.logs = [
+        {
+          timestamp: f.restoredOwner.upstream.startTime,
+          fields: fields({ event: "antnest.error" }),
+        },
+      ];
+    },
+  ],
+])
+  test(`restored owner rejects ${name}`, () => {
+    const f = restoredOwnerFixture();
+    change(f);
+    assert.throws(() => check(f));
+  });
+
+function terminalRevocationRevalidationFixture() {
+  const f = fullRecoveryStreamFixture(),
+    warm = f.parts["warm-stream"],
+    mutation = f.recoveryParts.find((p) => p.action === "password"),
+    c = f.evidence.recovery.cases.find((c) => c.name === "password");
+  // Only synthetic fixture timestamps move; the real archived traces are immutable.
+  const delta =
+    (epoch + c.mutation.started_at + 5) * 1000 - mutation.root.startTime;
+  for (const span of mutation.trace.spans) {
+    span.startTime += delta;
+    for (const log of span.logs ?? []) log.timestamp += delta;
+  }
+  const processTags = fields({
+    "service.instance.id": "identity-instance",
+    "host.name": "identity-host",
+    "process.pid": 1,
+  });
+  mutation.trace.processes.identity.tags = structuredClone(processTags);
+  warm.trace.processes.identity.tags = structuredClone(processTags);
+  const decision = structuredClone(warm.decision);
+  decision.spanID = "terminal-revalidation";
+  decision.startTime = (epoch + c.mutation.at + 200) * 1000;
+  decision.duration = 4000;
+  for (const [key, value] of Object.entries({
+    [resolvePrefix + "source"]: "rpc",
+    [resolvePrefix + "outcome"]: "rejected",
+    error: true,
+    "otel.status_code": "ERROR",
+    "otel.status_description": "rejected",
+  }))
+    setTag(decision, key, value);
+  warm.trace.spans.push(decision);
+  addResolveRPC(warm.trace, "-rejected", decision.startTime + 500);
+  const client = warm.trace.spans.find(
+      (s) => s.spanID === "resolve-client-rejected",
+    ),
+    server = warm.trace.spans.find(
+      (s) => s.spanID === "resolve-server-rejected",
+    ),
+    sql = warm.trace.spans.find((s) => s.spanID === "sql-rejected");
+  for (const [key, value] of Object.entries({
+    "http.response.status_code": 401,
+    error: true,
+    "otel.status_code": "ERROR",
+    "otel.status_description": "HTTP status 401",
+    "error.type": "401",
+  }))
+    setTag(client, key, value);
+  const identityError = {
+    "antnest.error.cause_types": '["*domain.Error"]',
+    "antnest.error.code": "unauthenticated",
+    "antnest.error.message": "Authentication failed",
+    "antnest.error.stage": "protocol",
+    "antnest.error.type": "unauthenticated",
+    "error.type": "unauthenticated",
+  };
+  for (const [key, value] of Object.entries({
+    ...identityError,
+    "http.response.status_code": 401,
+    "antnest.outcome": "rejected",
+    "antnest.result": "rejected",
+  }))
+    setTag(server, key, value);
+  server.logs = [
+    {
+      timestamp: end(server) - 1,
+      fields: fields({ event: "antnest.error", ...identityError }),
+    },
+  ];
+  setTag(
+    sql,
+    "db.query.text",
+    tag(
+      mutation.trace.spans.find((s) => s.spanID === "sql"),
+      "db.query.text",
+    ),
+  );
+  setTag(sql, "pgx.rows_affected", 0);
+  return {
+    ...f,
+    rejection: { warm, mutation, c, decision, client, server, sql },
+  };
+}
+
+test("terminal RPC 401 binds the real committed password revocation without rewriting raw evidence", () => {
+  const f = terminalRevocationRevalidationFixture(),
+    before = structuredClone({ evidence: f.evidence, traces: f.traces });
+  assert.equal(inspectRecoveryHTTP(f.evidence, f).status, "passed");
+  const result = check(f),
+    stream = result.streams.find((s) => s.name === "warm");
+  assert.equal(stream.revocation_verified, true);
+  assert.equal(stream.gateway_revalidations.at(-1).outcome, "rejected");
+  assert.equal(
+    stream.terminal_rejection.mutation_trace_id,
+    f.rejection.c.mutation.trace_id,
+  );
+  assert.equal(
+    stream.terminal_rejection.commit_span_id,
+    f.rejection.mutation.commit.spanID,
+  );
+  for (const span of [
+    f.rejection.decision,
+    f.rejection.client,
+    f.rejection.server,
+  ])
+    assert(
+      result.owned_error_spans.some(
+        (s) => s.trace_id === span.traceID && s.span_id === span.spanID,
+      ),
+    );
+  assert.equal(result.strict_trace, "failed");
+  assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+});
+
+for (const offset of [-120000000, 600000000])
+  test(`terminal rejection uses Identity process order with independent clock offset ${offset}`, () => {
+    const f = terminalRevocationRevalidationFixture();
+    for (const span of [
+      ...f.rejection.mutation.trace.spans.filter(
+        (s) => s.processID === "identity",
+      ),
+      f.rejection.server,
+      f.rejection.sql,
+    ]) {
+      span.startTime += offset;
+      for (const log of span.logs ?? []) log.timestamp += offset;
+    }
+    assert.equal(check(f).status, "passed");
+  });
+
+for (const [name, change] of [
+  [
+    "another principal",
+    (f) => {
+      f.rejection.c.login.body.principal = {
+        ...f.rejection.c.login.body.principal,
+        user_id: "other",
+      };
+    },
+  ],
+  [
+    "wrong stream credential",
+    (f) => {
+      f.evidence.stream.credential_scope =
+        f.rejection.c.login.issued_credential_scope;
+    },
+  ],
+  [
+    "missing COMMIT",
+    (f) => {
+      const p = f.rejection.mutation;
+      p.trace.spans = p.trace.spans.filter((s) => s !== p.commit);
+    },
+  ],
+  [
+    "rolled back mutation",
+    (f) =>
+      setTag(
+        f.rejection.mutation.transaction,
+        "antnest.transaction.outcome",
+        "rolled_back",
+      ),
+  ],
+  [
+    "missing revocation feed",
+    (f) => {
+      const p = f.rejection.mutation;
+      p.trace.spans = p.trace.spans.filter(
+        (s) => s.spanID !== "session-feed-0",
+      );
+    },
+  ],
+  [
+    "unrevoked token row",
+    (f) => setTag(f.rejection.sql, "pgx.rows_affected", 1),
+  ],
+  [
+    "different token query",
+    (f) => setTag(f.rejection.sql, "db.query.text", "SELECT 1"),
+  ],
+  ["SQL write", (f) => setTag(f.rejection.sql, "db.operation.name", "UPDATE")],
+  [
+    "extra decision error",
+    (f) => setTag(f.rejection.decision, "error.type", "StorageError"),
+  ],
+  [
+    "extra client exception",
+    (f) => setTag(f.rejection.client, "exception.type", "StorageError"),
+  ],
+  [
+    "extra protocol event",
+    (f) => {
+      f.rejection.server.logs.push(structuredClone(f.rejection.server.logs[0]));
+    },
+  ],
+  [
+    "different Identity instance",
+    (f) => {
+      const p = f.rejection.warm.trace.processes.identity;
+      p.tags = p.tags.map((t) =>
+        t.key === "service.instance.id" ? { ...t, value: "other" } : t,
+      );
+    },
+  ],
+  [
+    "missing Identity host",
+    (f) => {
+      const p = f.rejection.warm.trace.processes.identity;
+      p.tags = p.tags.filter((t) => t.key !== "host.name");
+    },
+  ],
+  [
+    "SELECT before committed mutation",
+    (f) => {
+      const p = f.rejection.mutation;
+      const delta = f.rejection.sql.startTime + 1 - end(p.commit);
+      for (const s of p.trace.spans) {
+        s.startTime += delta;
+        for (const log of s.logs ?? []) log.timestamp += delta;
+      }
+    },
+  ],
+  [
+    "rejection before observed mutation",
+    (f) => {
+      for (const s of [f.rejection.decision, f.rejection.client])
+        s.startTime -= 5000000;
+    },
+  ],
+  [
+    "rejection after remote closure",
+    (f) => {
+      for (const s of [f.rejection.decision, f.rejection.client])
+        s.startTime += 5000000;
+    },
+  ],
+  [
+    "continued Resolve",
+    (f) => {
+      const s = structuredClone(f.rejection.decision);
+      s.spanID += "-later";
+      s.startTime += 5000;
+      f.rejection.warm.trace.spans.push(s);
+    },
+  ],
+  [
+    "unavailable decision",
+    (f) =>
+      setTag(f.rejection.decision, resolvePrefix + "outcome", "unavailable"),
+  ],
+  [
+    "unproved shared source",
+    (f) => setTag(f.rejection.decision, resolvePrefix + "source", "shared"),
+  ],
+])
+  test(`terminal stream rejection refuses ${name}`, () => {
+    const f = terminalRevocationRevalidationFixture();
+    change(f);
+    assert.throws(() => check(f));
+  });
+
+test("a supplied passed marker cannot replace complete terminal-rejection recovery admission", () => {
+  const f = terminalRevocationRevalidationFixture(),
+    p = f.rejection.mutation;
+  p.trace.spans = p.trace.spans.filter((s) => s.spanID !== "session-feed-0");
+  assert.throws(() =>
+    check(f, [], {
+      inspectRecovery: () => ({ status: "passed", mutations: [] }),
+    }),
+  );
 });
 
 test("normal EOF passes the default recovery inspector with committed SQL and final denials", () => {
@@ -1498,28 +2933,274 @@ for (const [name, change] of [
     assert.throws(() => check(f));
   });
 
-function completedViewRead(transport) {
+function completedViewRead(transport, options) {
   const f = fixture(),
     p = f.parts["prep-view"];
-  const initialize = {
-    ...structuredClone(p.ui),
-    spanID: "initialize",
-    references: [
-      { refType: "CHILD_OF", traceID: p.trace.traceID, spanID: p.ui.spanID },
-    ],
-    logs: [],
-  };
-  p.trace.spans.push(initialize);
+  const initialize = p.initialize,
+    process = structuredClone(p.trace.processes.acp),
+    read = addCompletedRead(
+      p.trace,
+      initialize,
+      transport,
+      f.evidence.agent_id,
+      options,
+    );
+  p.trace.processes.acp = process;
+  if (transport === "http")
+    for (const [key, value] of Object.entries({
+      "rpc.service": "acp",
+      "rpc.system.name": "jsonrpc",
+      "antnest.listener": "workspace",
+    }))
+      setTag(initialize, key, value);
   return {
     ...f,
-    ...addCompletedRead(p.trace, initialize, transport, f.evidence.agent_id),
+    ...read,
   };
 }
+function completedViewLoad(shape = "queued", runtimeOutcome = "canceled") {
+  const f = completedViewRead("http", { runtimeOutcome }),
+    p = f.parts["prep-view"];
+  const load = structuredClone(f.root);
+  load.spanID = "view-session-load";
+  load.operationName =
+    shape === "queued" ? "acp session/load" : "HTTP POST /v1/acp";
+  load.logs = [];
+  for (const [key, value] of Object.entries({
+    "rpc.method": "session/load",
+    "rpc.system.name": "jsonrpc",
+    "rpc.service": "acp",
+    "antnest.protocol.version": "v1",
+    "antnest.request.id": "original-load",
+    "antnest.agent.id": f.evidence.agent_id,
+    "antnest.session.id": f.evidence.session_id,
+  }))
+    setTag(load, key, value);
+  let receiver = load;
+  if (shape === "queued") {
+    receiver = structuredClone(f.root);
+    receiver.spanID = "view-load-receiver";
+    receiver.tags = fields({
+      "span.kind": "server",
+      "http.request.method": "POST",
+      "http.route": "/v1/acp",
+      "http.response.status_code": 202,
+      "antnest.listener": "workspace",
+    });
+    receiver.duration = 1;
+    load.startTime = receiver.startTime + 1;
+    load.duration -= 1;
+    load.references[0].spanID = receiver.spanID;
+    for (const key of [
+      "http.request.method",
+      "http.route",
+      "http.response.status_code",
+      "antnest.listener",
+    ])
+      setTag(load, key, undefined);
+    p.trace.spans.push(receiver);
+  }
+  p.trace.spans.push(load);
+  f.read.references[0].spanID = load.spanID;
+  return { ...f, load, receiver, p };
+}
+function completedCreationRead(shape = "queued", outcome = "success") {
+  const f = completedViewLoad(shape, outcome),
+    p = f.p;
+  setTag(f.load, "rpc.method", "session/new");
+  setTag(f.load, "antnest.session.id", f.evidence.session_id);
+  if (shape === "queued") f.load.operationName = "acp session/new";
+  p.row.label = "prep-session-create";
+  p.row.path = "/api/app/workspace/v1/agents/agent/sessions";
+  p.row.method = "POST";
+  p.row.status = 201;
+  p.row.body = { sessionId: f.evidence.session_id };
+  p.root.operationName = "HTTP POST /api/app/workspace/v1/{path...}";
+  p.upstream.operationName = "HTTP POST agent-ui";
+  for (const span of [p.root, p.upstream, p.ui]) {
+    setTag(span, "http.request.method", "POST");
+    setTag(span, "http.response.status_code", 201);
+  }
+  const view = f.make(
+    "actual-prep-view",
+    1100,
+    1200,
+    p.row.credential_scope,
+    f.evidence.session_id,
+  );
+  view.row.label = "prep-view";
+  f.archivedTraceIDs.add(view.trace.traceID);
+  return f;
+}
+for (const shape of ["queued", "http"])
+  for (const outcome of ["success", "canceled"])
+    test(
+      "outage Session creation binds " +
+        shape +
+        " metadata with Runtime " +
+        outcome,
+      () => {
+        const f = completedCreationRead(shape, outcome),
+          before = structuredClone(f.traces);
+        const result = check(f);
+        assert.equal(result.metadata_read_receipts.length, 1);
+        assert.equal(
+          result.metadata_read_receipts[0].request_span_id,
+          f.load.spanID,
+        );
+        assert.equal(
+          result.metadata_read_receipts[0].session_id,
+          f.evidence.session_id,
+        );
+        assert.deepEqual(f.traces, before);
+      },
+    );
+for (const [name, mutate] of [
+  ["foreign Agent", (f) => setTag(f.load, "antnest.agent.id", "other")],
+  [
+    "missing request ID",
+    (f) => setTag(f.load, "antnest.request.id", undefined),
+  ],
+  [
+    "foreign UI",
+    (f) => {
+      f.receiver.references[0].spanID = f.p.root.spanID;
+    },
+  ],
+  [
+    "foreign original login",
+    (f) => {
+      f.p.row.credential_scope = "other";
+    },
+  ],
+  [
+    "foreign created Session",
+    (f) => {
+      f.p.row.body.sessionId = "other";
+    },
+  ],
+  [
+    "foreign request Session",
+    (f) => setTag(f.load, "antnest.session.id", "other"),
+  ],
+])
+  test("outage Session creation rejects " + name, () => {
+    const f = completedCreationRead();
+    check(f);
+    mutate(f);
+    assert.throws(() => check(f));
+  });
+
+for (const shape of ["queued", "http"])
+  for (const outcome of ["success", "canceled"])
+    test(
+      "outage view binds original " +
+        shape +
+        " load metadata with Runtime " +
+        outcome,
+      () => {
+        const f = completedViewLoad(shape, outcome),
+          before = structuredClone({ traces: f.traces, evidence: f.evidence });
+        const r = check(f);
+        assert.equal(r.status, "passed");
+        assert.equal(r.metadata_read_receipts.length, 1);
+        assert.equal(
+          r.metadata_read_receipts[0].request_span_id,
+          f.load.spanID,
+        );
+        assert.equal(
+          r.metadata_read_receipts[0].session_id,
+          f.evidence.session_id,
+        );
+        assert.deepEqual({ traces: f.traces, evidence: f.evidence }, before);
+      },
+    );
+for (const [name, mutate] of [
+  ["wrong Session", (f) => setTag(f.load, "antnest.session.id", "other")],
+  ["wrong Agent", (f) => setTag(f.load, "antnest.agent.id", "other")],
+  [
+    "missing request ID",
+    (f) => setTag(f.load, "antnest.request.id", undefined),
+  ],
+  ["wrong protocol", (f) => setTag(f.load, "antnest.protocol.version", "v2")],
+  ["wrong RPC service", (f) => setTag(f.load, "rpc.service", "other")],
+  [
+    "foreign UI parent",
+    (f) => {
+      f.receiver.references[0].spanID = f.p.root.spanID;
+    },
+  ],
+  [
+    "foreign ACP process",
+    (f) => {
+      f.receiver.processID = f.p.ui.processID;
+    },
+  ],
+  [
+    "foreign credential scope",
+    (f) => {
+      f.p.row.credential_scope = "foreign";
+    },
+  ],
+  ["foreign queued HTTP tags", (f) => setTag(f.load, "http.route", "/v1/acp")],
+  [
+    "queued receiver not accepted",
+    (f) => setTag(f.receiver, "http.response.status_code", 503),
+  ],
+  ["unrelated method", (f) => setTag(f.load, "rpc.method", "session/prompt")],
+])
+  test("outage view load rejects " + name, () => {
+    const f = completedViewLoad();
+    check(f);
+    mutate(f);
+    assert.throws(() => check(f));
+  });
+
+test("stream report preserves each original read endpoint once without changing error claims", () => {
+  const f = completedViewRead("http"),
+    baseline = check(f);
+  const trace = f.parts["prep-view"].trace;
+  const expected = addReadEndpointObservation(trace, f.read);
+  const raw = structuredClone(f.traces);
+  assertReadEndpointObservations(check(f), [expected], baseline);
+  assert.deepEqual(f.traces, raw);
+});
+test("stream retains both original Runtime event representations once", () => {
+  const f = completedViewRead("http");
+  const baseline = check(f);
+  const expected = addRuntimeEventRepresentations(
+    f.parts["prep-view"].trace,
+    f.read,
+    f.server,
+  );
+  const raw = structuredClone(f.traces),
+    result = check(f);
+  assertReadEndpointObservations(result, expected);
+  for (const key of [
+    "strict_trace",
+    "warning_count",
+    "warnings",
+    "owned_error_spans",
+  ])
+    assert.deepEqual(result[key], baseline[key]);
+  assert.deepEqual(f.traces, raw);
+});
 const setEvent = (event, key, value) => {
   event.fields = event.fields.filter((field) => field.key !== key);
   event.fields.push({ key, value });
 };
-for (const transport of ["ws", "http"]) {
+test("Bridge outage rejects a retired WSS initialization even with a successful Runtime read", () => {
+  assert.throws(() => check(completedViewRead("ws")));
+});
+test("stream binds ACP-only cancellation to original successful read cleanup", () => {
+  const f = completedViewRead("http", { runtimeOutcome: "success" });
+  const before = structuredClone(f.traces);
+  assert.equal(check(f).owned_error_spans.length, 19);
+  assert.deepEqual(f.traces, before);
+});
+// Both transports' diagnostic shapes remain covered in the shared diagnostic
+// tests. This HTTP Bridge consumer must not admit a legacy WSS owner.
+for (const transport of ["http"]) {
   test(`stream retains ${transport} completed read disconnect without an error claim`, () => {
     const f = completedViewRead(transport),
       before = structuredClone({ traces: f.traces, evidence: f.evidence }),
@@ -1610,7 +3291,7 @@ for (const [key, value] of [
     assert.throws(() => check(f));
   });
 
-for (const transport of ["ws", "http"])
+for (const transport of ["http"])
   for (const [key, value] of [
     ["antnest.result", "rejected"],
     ["db.response.status_code", "XX001"],

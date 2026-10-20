@@ -57,6 +57,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "authenticated_tunnel",
         sql: include_str!("../../migrations/0003_authenticated_tunnel.sql"),
     },
+    Migration {
+        version: 4,
+        name: "pending_attachment",
+        sql: include_str!("../../migrations/0004_pending_attachment.sql"),
+    },
 ];
 
 const MAX_POOL_SIZE: usize = 8;
@@ -1414,6 +1419,7 @@ fn retry_version_matches(current: u64, expected: u64) -> bool {
 fn parse_attachment_state(value: String) -> Result<AttachmentState, RepositoryError> {
     match value.as_str() {
         "closed" => Ok(AttachmentState::Closed),
+        "pending" => Ok(AttachmentState::Pending),
         "open" => Ok(AttachmentState::Open),
         _ => Err(operation_failed("invalid Runtime attachment state")),
     }
@@ -1422,6 +1428,7 @@ fn parse_attachment_state(value: String) -> Result<AttachmentState, RepositoryEr
 const fn attachment_state(state: AttachmentState) -> &'static str {
     match state {
         AttachmentState::Closed => "closed",
+        AttachmentState::Pending => "pending",
         AttachmentState::Open => "open",
     }
 }

@@ -3,6 +3,10 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { composeListeners } from "./compose-listeners.mjs";
+import { costHarnessArguments } from "../e2e/acp-cost/deployment.mjs";
+import { progressHarnessArguments } from "../e2e/acp-progress/deployment.mjs";
+
+import { permissionHarnessArguments } from "../e2e/acp-permissions/deployment.mjs";
 
 const root = new URL("../../", import.meta.url);
 const script = new URL("tests/support/service-hosts.sh", root).pathname;
@@ -39,10 +43,66 @@ test("Stage 3a test clients pin service names", () => {
         readFileSync(new URL(name, directory), "utf8"),
       ),
     );
-  assert(launches.length >= 10, "client launch scripts not found");
+  assert.deepEqual(launches.sort(), [
+    "e2e-acp-closeout.sh",
+    "e2e-acp-restart.sh",
+    "e2e-agent-access.sh",
+    "e2e-managed-mcp.sh",
+    "e2e-rpc-response-loss.sh",
+    "e2e-stage3-base.sh",
+  ]);
   for (const name of launches) {
     const source = readFileSync(new URL(name, directory), "utf8");
     assert.match(source, /tests\/support\/service-hosts\.sh"/u, name);
     assert.match(source, /\$service_hosts/u, name);
   }
 });
+
+for (const [name, prefix, harness, runner, consumer] of [
+  ["Cost", "cost", costHarnessArguments, "e2e-session-cost.sh"],
+  ["Progress", "progress", progressHarnessArguments, "e2e-tool-progress.sh"],
+  [
+    "Permissions",
+    "permission",
+    permissionHarnessArguments,
+    "e2e-tool-permissions.sh",
+    "acp-permissions",
+  ],
+])
+  test(`${name} deployment client pins its actual Compose listeners`, () => {
+    const runID = "2485d43c-9cb0-42a0-9c9f-186a2dc3e855";
+    const tag = prefix + "-" + runID;
+    const { client } = harness(
+      {
+        COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+        ANTNEST_E2E_RUN_ID: runID,
+        ANTNEST_ADMISSION_TAG: tag,
+        ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:${tag}`,
+        ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+        ANTNEST_SERVICE_AUTH_UID: "501",
+        ANTNEST_SERVICE_AUTH_GID: "20",
+        ANTNEST_SERVICE_NETWORK_PREFIX: "10.9.8",
+      },
+      {
+        evidence: new URL(`artifacts/verification/${prefix}-host-pins`, root)
+          .pathname,
+      },
+    );
+    const listeners = composeListeners();
+    assert.deepEqual(
+      client.filter((value) => value.startsWith("--add-host=")).sort(),
+      ["agent-acp-service", "edge-gateway", "identity-service"]
+        .map((name) => {
+          assert(listeners.has(name), `Compose listener missing for ${name}`);
+          return `--add-host=${name}:10.9.8.${listeners.get(name)}`;
+        })
+        .sort(),
+    );
+    assert.match(
+      readFileSync(new URL(`tests/e2e/${runner}`, root), "utf8"),
+      new RegExp(
+        `${consumer ?? `acp-${prefix}`}/deployment\\.mjs" create-harness`,
+        "u",
+      ),
+    );
+  });

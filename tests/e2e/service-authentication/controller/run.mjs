@@ -2,12 +2,20 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { request as httpRequest } from "node:http";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
-import { createFixture, callerContext } from "./auth-fixture.mjs";
+import {
+  createFixture,
+  callerContext as signCallerContext,
+} from "./auth-fixture.mjs";
 import { rotateControllerFixture } from "./rekey-flow.mjs";
+import {
+  assertSecretFree,
+  inspectResponse,
+  redactSecrets,
+} from "./response.mjs";
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const project = "antnest-controller-auth-" + randomUUID();
 const evidence = resolve(
@@ -18,6 +26,21 @@ const evidence = resolve(
 const credentials = resolve(evidence, "credentials");
 const providerSecret = randomBytes(32).toString("base64url");
 const fixture = createFixture(credentials, providerSecret);
+// Keep every generated or supplied CCT in memory only, including raw duplicate
+// header probes. Later responses and failure logs may echo an earlier context.
+const contexts = new Set();
+function callerContext(...args) {
+  const context = signCallerContext(...args);
+  contexts.add(context);
+  return context;
+}
+const privateCredentials = () => [
+  providerSecret,
+  ...Object.values(fixture.incoming),
+  ...Object.values(fixture.tokens),
+  fixture.runtimeAuthority.token,
+  ...contexts,
+];
 const env = {
   ...process.env,
   CONTROLLER_TEST_AUTH_DIRECTORY: credentials,
@@ -61,6 +84,18 @@ try {
   const binding = container.NetworkSettings.Ports["8120/tcp"][0];
   assert.equal(binding.HostIp, "127.0.0.1");
   let base = "http://127.0.0.1:" + binding.HostPort;
+  const stats = async () =>
+    JSON.parse(
+      await docker([
+        ...compose,
+        "exec",
+        "-T",
+        "dependencies",
+        "node",
+        "-e",
+        "fetch('http://127.0.0.1:8101/test/state').then(r=>r.text()).then(t=>process.stdout.write(t))",
+      ]),
+    );
   const request = async (
     path,
     {
@@ -77,7 +112,10 @@ try {
     if (service !== null)
       outgoing["Antnest-Service-Authorization"] =
         "Bearer " + fixture.incoming[service];
-    if (context !== null) outgoing["Antnest-Caller-Context"] = context;
+    if (context !== null) {
+      outgoing["Antnest-Caller-Context"] = context;
+      contexts.add(context);
+    }
     const response = await fetch(base + path, {
       method,
       body,
@@ -85,26 +123,19 @@ try {
       signal: abort.signal,
     });
     const text = await response.text();
-    assert.equal(response.status, status, method + " " + path + ": " + text);
-    if (code) assert.equal(JSON.parse(text).code, code);
-    for (const secret of [
-      providerSecret,
-      ...Object.values(fixture.incoming),
-      ...Object.values(fixture.tokens),
-      fixture.runtimeAuthority.token,
-      context,
-    ].filter(Boolean))
-      assert(!text.includes(secret), "response leaked private credential");
-    assert.equal(response.headers.get("Antnest-Caller-Context"), null);
+    const json = inspectResponse({
+      response,
+      text,
+      status,
+      code,
+      label: method + " " + path,
+      secrets: privateCredentials(),
+    });
     checks++;
     return {
       response,
       text,
-      json:
-        text &&
-        response.headers.get("content-type")?.includes("application/json")
-          ? JSON.parse(text)
-          : null,
+      json,
     };
   };
   const path = "/internal/agents?organization_id=org-1";
@@ -149,6 +180,91 @@ try {
     `fetch(${JSON.stringify(`http://${providerAddress}:8120/status`)}, {signal: AbortSignal.timeout(1000)}).then(()=>process.exit(1)).catch(error=>process.exit(error.cause?.code === 'ECONNREFUSED' ? 0 : 1))`,
   ]);
   checks++;
+  // The receiver still loads this known credential. Removal is an explicit
+  // caller-policy denial, not an unknown-token or invalid-context rejection.
+  const configured = JSON.parse(
+    readFileSync(resolve(credentials, "callers.json"), "utf8"),
+  );
+  assert(
+    configured["edge-gateway"].includes(
+      "sha256:" +
+        createHash("sha256")
+          .update(fixture.incoming["edge-gateway"])
+          .digest("hex"),
+    ),
+    "retired Gateway credential must remain configured in the fixture",
+  );
+  checks++;
+  const workspaceContext = callerContext(fixture, {
+    aud: ["agent-ui", "agent-acp-service", "agent-controller"],
+    org_role: "member",
+  });
+  const workspaceBody = JSON.stringify({
+    request_id: "workspace-retired-gateway",
+    organization_id: "org-1",
+    principal_id: "user-admin",
+  });
+  const retirementBefore = await stats();
+  assert.equal(
+    retirementBefore.keyRequests,
+    0,
+    "CCT key cache must start cold",
+  );
+  checks++;
+  const retirementCases = [];
+  for (const scenario of [
+    { name: "valid-context", context: workspaceContext },
+    { name: "missing-context", context: null },
+    { name: "forged-context", context: "forged" },
+    { name: "malformed-body", context: workspaceContext, body: "{" },
+    {
+      name: "unknown-route",
+      path: "/internal/retired-gateway-probe",
+      method: "GET",
+      context: workspaceContext,
+    },
+    { name: "wrong-method", method: "GET", context: workspaceContext },
+  ]) {
+    const method = scenario.method ?? "POST";
+    const target =
+      scenario.path ?? "/rpc/agent-controller/list-workspace-agents";
+    const result = await request(target, {
+      method,
+      service: "edge-gateway",
+      context: scenario.context,
+      headers: { "Content-Type": "application/json" },
+      ...(method === "POST" ? { body: scenario.body ?? workspaceBody } : {}),
+      status: 403,
+      code: "caller_not_allowed",
+    });
+    assert.equal(result.json.retryable, false);
+    checks++;
+    retirementCases.push({
+      name: scenario.name,
+      method,
+      path: target,
+      status: 403,
+    });
+  }
+  const retirementAfter = await stats();
+  assert.equal(retirementAfter.keyRequests, retirementBefore.keyRequests);
+  assert.equal(retirementAfter.failures, retirementBefore.failures);
+  checks += 2;
+  writeFileSync(
+    resolve(evidence, "gateway-retirement.json"),
+    JSON.stringify({
+      image: container.Image,
+      knownCredentialConfigured: true,
+      cases: retirementCases,
+      jwksRequestsBefore: retirementBefore.keyRequests,
+      jwksRequestsAfter: retirementAfter.keyRequests,
+      dependencyFailuresBefore: retirementBefore.failures,
+      dependencyFailuresAfter: retirementAfter.failures,
+      scope:
+        "Real Controller image rejects configured retired Gateway caller before cold JWKS lookup. Raw-handler unit tests separately assert zero workspace business queries. Background revocation/publication polls are not counted as request effects.",
+    }) + "\n",
+    { mode: 0o600 },
+  );
   const missing = await request(path, {
     service: null,
     context: null,
@@ -277,19 +393,27 @@ try {
       status,
       code,
     });
+  const workspace = await request(
+    "/rpc/agent-controller/list-workspace-agents",
+    {
+      method: "POST",
+      service: "agent-ui",
+      context: workspaceContext,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request_id: "workspace-auth-1",
+        organization_id: "org-1",
+        principal_id: "user-admin",
+      }),
+    },
+  );
+  assert.deepEqual(workspace.json.agents, []);
+  assert.equal(workspace.response.headers.get("cache-control"), "no-store");
+  checks += 2;
   await request("/rpc/agent-controller/list-workspace-agents", {
     method: "POST",
     service: "agent-ui",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      request_id: "workspace-auth-1",
-      organization_id: "org-1",
-      principal_id: "user-admin",
-    }),
-  });
-  await request("/rpc/agent-controller/list-workspace-agents", {
-    method: "POST",
-    service: "edge-gateway",
+    context: workspaceContext,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       request_id: "workspace-auth-2",
@@ -530,18 +654,6 @@ try {
   assert.equal(materialized.docs.API_KEY, providerSecret);
   checks += 3;
 
-  const stats = async () =>
-    JSON.parse(
-      await docker([
-        ...compose,
-        "exec",
-        "-T",
-        "dependencies",
-        "node",
-        "-e",
-        "fetch('http://127.0.0.1:8101/test/state').then(r=>r.text()).then(t=>process.stdout.write(t))",
-      ]),
-    );
   let state;
   for (let attempt = 0; attempt < 80; attempt++) {
     state = await stats();
@@ -605,6 +717,52 @@ try {
         context: callerContext(fixture, { agt: agentID }),
       })
     ).json;
+  const operation = await eventually(
+    async () =>
+      (
+        await request(
+          "/internal/agent-operations/agent-private-runtime?organization_id=org-1",
+        )
+      ).json,
+    (value) => value.state === "completed",
+    "configured Create without peer",
+  );
+  assert.equal(operation.state, "completed");
+  const configuredAgent = await getAgent();
+  assert.equal(configuredAgent.active_operation_request_id ?? "", "");
+  assert.equal(configuredAgent.executable_execution_revision ?? "", "");
+  const waitingPeer = await stats();
+  assert.equal(waitingPeer.lastAttachment.agent_id, agentID);
+  assert.equal(waitingPeer.lastAttachment.state, "pending");
+  assert.equal(waitingPeer.privateApplies, 0);
+  const runtimePhase = async (phase) => {
+    assert(["starting", "healthy"].includes(phase));
+    await docker([
+      ...compose,
+      "exec",
+      "-T",
+      "dependencies",
+      "node",
+      "-e",
+      "fetch('http://127.0.0.1:8101/test/runtime-phase?phase=" +
+        phase +
+        "').then(r=>{if(!r.ok)process.exit(1);return r.arrayBuffer()})",
+    ]);
+  };
+  await runtimePhase("starting");
+  const firstBinding = await eventually(
+    stats,
+    (value) => value.lastAttachment?.state === "open",
+    "starting peer binding without a new journal event",
+  );
+  assert.equal(
+    firstBinding.lastAttachment.resource_version,
+    waitingPeer.lastAttachment.resource_version + 1,
+  );
+  assert.equal(firstBinding.privateApplies, 0);
+  assert.equal((await getAgent()).executable_execution_revision ?? "", "");
+  await runtimePhase("healthy");
+  checks += 9;
   await eventually(
     getAgent,
     (value) => value.runtime_state === "available",
@@ -731,20 +889,6 @@ try {
   assert.equal(closedState.lastAgent.token_hash, null);
   assert.equal(closedState.failures, 0);
   checks += 4;
-  const logs = await docker([
-    ...compose,
-    "logs",
-    "--no-color",
-    "agent-controller",
-  ]);
-  for (const secret of [
-    providerSecret,
-    ...Object.values(fixture.incoming),
-    ...Object.values(fixture.tokens),
-    fixture.runtimeAuthority.token,
-    context,
-  ])
-    assert(!logs.includes(secret), "private credential in logs");
   for (const [variable, value] of [
     ["ANTNEST_SERVICE_AUTH_MODE", ""],
     ["ANTNEST_SKILL_REGISTRY_API_TOKEN", "legacy"],
@@ -793,6 +937,13 @@ try {
     providerSecret,
   });
   checks += 7;
+  const logs = await docker([
+    ...compose,
+    "logs",
+    "--no-color",
+    "agent-controller",
+  ]);
+  assertSecretFree(logs, privateCredentials(), "private credential in logs");
   complete = true;
 } catch (error) {
   // Bounded, redacted private diagnostics survive cleanup without retaining the
@@ -806,14 +957,7 @@ try {
       "100",
       "agent-controller",
     ]);
-    for (const secret of [
-      providerSecret,
-      ...Object.values(fixture.incoming),
-      ...Object.values(fixture.tokens),
-      fixture.runtimeAuthority.token,
-    ]) {
-      logs = logs.replaceAll(secret, "[redacted]");
-    }
+    logs = redactSecrets(logs, privateCredentials());
     writeFileSync(resolve(evidence, "failure.log"), logs.slice(-65536), {
       mode: 0o600,
     });

@@ -8,15 +8,125 @@ import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { PostgresBridgeObservationRepository } from "../../src/adapters/postgres/bridge-observation-repository.js";
 import { BridgeObservationService } from "../../src/application/bridge-observation.js";
+import { WebSocket } from "ws";
+import { once } from "node:events";
+import { setImmediate as nextTurn } from "node:timers/promises";
 
 describe("AgentAcpHttpServer", () => {
   let server: AgentAcpHttpServer | undefined;
+  const peers = new Set<WebSocket>();
 
   afterEach(async () => {
+    for (const peer of peers) peer.terminate();
+    peers.clear();
     await server?.close().catch((error: unknown) => {
       throw new Error("server teardown failed", { cause: error });
     });
   });
+
+  async function openPeer(protocol = "v1") {
+    server ??= new AgentAcpHttpServer({
+      authentication: testAuthentication(),
+      application: applicationPort(),
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 64 * 1024,
+    });
+    if (server.address() === null) await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
+    const url = `ws://127.0.0.1:${address.port}/${protocol}/acp`;
+    const headers = testHeaders({ "X-Antnest-Agent-Id": "agent-1" });
+    const peer = new WebSocket(url, { headers });
+    peers.add(peer);
+    await once(peer, "open");
+    return { peer, url, headers };
+  }
+
+  it.each(["v1", "v2"])(
+    "normal shutdown sends 1001 and joins the %s peer before completing",
+    async (protocol) => {
+      server = undefined;
+      const { peer } = await openPeer(protocol);
+      const closed = once(peer, "close");
+      const first = server!.close();
+      expect(server!.close()).toBe(first);
+      const [code, reason] = (await closed) as [number, Buffer];
+      await first;
+      expect(code).toBe(1001);
+      expect(reason.toString()).toBe("Service shutting down");
+      expect(peer.readyState).toBe(WebSocket.CLOSED);
+    },
+  );
+
+  it("rejects another upgrade while waiting for an existing shutdown handshake", async () => {
+    server = undefined;
+    const { peer, url, headers } = await openPeer();
+    peer.pause();
+    let completed = false;
+    const closing = server!.close().then(() => {
+      completed = true;
+    });
+    await nextTurn();
+    expect(completed).toBe(false);
+    const late = new WebSocket(url, { headers });
+    peers.add(late);
+    const status = await new Promise<number>((resolve, reject) => {
+      late.once("error", reject);
+      late.once("open", () => resolve(101));
+      late.once("unexpected-response", (_request, response) => {
+        response.resume();
+        resolve(response.statusCode!);
+      });
+    });
+    expect(status).toBe(503);
+    peer.resume();
+    await closing;
+  });
+
+  it("bounds a peer that never acknowledges shutdown and still joins listener cleanup", async () => {
+    server = undefined;
+    const { peer } = await openPeer();
+    peer.pause();
+    const started = performance.now();
+    await server!.close();
+    expect(performance.now() - started).toBeLessThan(7500);
+    expect(server!.address()).toBeNull();
+    const closed = once(peer, "close");
+    peer.resume();
+    const [code] = (await closed) as [number];
+    expect(code).toBe(1001);
+  });
+
+  it("drains an unacknowledged HTTP connection and stalled WebSocket within one shutdown window", async () => {
+    server = undefined;
+    const { peer, url, headers } = await openPeer();
+    const initialized = await fetch(url.replace("ws:", "http:"), {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: 1, clientCapabilities: {} },
+      }),
+    });
+    expect(initialized.status).toBe(200);
+    await initialized.text();
+    expect(initialized.headers.get("acp-connection-id")).not.toBeNull();
+    peer.pause();
+    try {
+      const started = performance.now();
+      await server!.close();
+      expect(performance.now() - started).toBeLessThan(7500);
+      expect(server!.address()).toBeNull();
+      const closed = once(peer, "close");
+      peer.resume();
+      const [code] = (await closed) as [number];
+      expect(code).toBe(1001);
+    } finally {
+      peer.resume();
+    }
+  }, 15_000);
 
   it("real HTTP receipts and observations serialize the repository mapping against the central contract", async () => {
     const schema = JSON.parse(

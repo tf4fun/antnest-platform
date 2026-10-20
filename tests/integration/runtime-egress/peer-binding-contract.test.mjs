@@ -21,10 +21,26 @@ const ajv = new Ajv2020({
   },
 });
 
+const attachmentSchema = read(
+  "contracts/egress/attachment-state-request.schema.json",
+);
+
+test("pending attachment authorizes a first peer without granting traffic", () => {
+  const validate = ajv.compile(attachmentSchema);
+  const request = { state: "pending", expected_resource_version: 2 };
+  assert(validate(request), JSON.stringify(validate.errors));
+  assert(validate({ ...request, runtime_endpoint: null, tunnel_key_id: null }));
+  for (const invalid of [
+    { ...request, runtime_endpoint: "10.243.1.20" },
+    { ...request, tunnel_key_id: "rtk_" + "a".repeat(32) },
+    { ...request, expected_resource_version: 0 },
+    { ...request, state: "waiting" },
+  ])
+    assert.equal(validate(invalid), false);
+});
+
 test("attachment open requires a peer IPv4; close removes its peer binding", () => {
-  const validate = ajv.compile(
-    read("contracts/egress/attachment-state-request.schema.json"),
-  );
+  const validate = ajv.compile(attachmentSchema);
   const request = {
     state: "open",
     expected_resource_version: 1,

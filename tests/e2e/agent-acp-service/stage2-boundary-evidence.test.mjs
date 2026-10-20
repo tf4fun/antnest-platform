@@ -4,6 +4,7 @@ import {
   agentReferences,
   inspectExecutionBoundary,
   inspectTemporalHistory,
+  assertNoCredentials,
 } from "./stage2-boundary-evidence.mjs";
 import { traceTree, traceTopology } from "../observability/trace-tree.mjs";
 
@@ -102,6 +103,7 @@ function fixture() {
   add(source, "client", "prompt scenario", "antnest-stage2-client");
   add(source, "prompt", "acp session/prompt", "agent-acp-service", "client", {
     "antnest.session.id": "session-id",
+    "antnest.agent.id": "agent-id",
     "rpc.method": "session/prompt",
   });
   add(
@@ -134,10 +136,68 @@ function fixture() {
   });
   run.spans.push(...source.spans);
   Object.assign(run.processes, source.processes);
+  add(
+    run,
+    "runtime-operation",
+    "runtime.mcp.operation",
+    "antnest-runtime",
+    "tool",
+    {
+      "span.kind": "internal",
+      "rpc.method": "tools/call",
+      "mcp.tool.name": "write",
+    },
+  );
+  add(
+    run,
+    "runtime-write",
+    "runtime.mcp.tool",
+    "antnest-runtime",
+    "runtime-operation",
+    {
+      "span.kind": "internal",
+      "mcp.tool.name": "write",
+    },
+  );
   return { source: run, run };
 }
 test("execution proves a descendant Run, model call, Runtime request and ACP persistence without Controller", () => {
-  assert.equal(inspectExecutionBoundary(fixture()).run_id, "run-id");
+  const actual = inspectExecutionBoundary(fixture());
+  assert.equal(actual.run_id, "run-id");
+  assert.equal(actual.agent_id, "agent-id");
+  assert.equal(actual.runtime_tool_calls, 1);
+});
+test("execution binds the original Run Agent to its submitting Prompt", () => {
+  const value = fixture();
+  value.run.spans
+    .find((span) => span.spanID === "run")
+    .tags.push({ key: "antnest.agent.id", value: "foreign" });
+  assert.throws(() => inspectExecutionBoundary(value));
+});
+test("Stage2 rejects a different Runtime Tool pretending to be the required write", () => {
+  const value = fixture();
+  value.run.spans
+    .find((span) => span.spanID === "runtime-operation")
+    .tags.find((row) => row.key === "mcp.tool.name").value = "read";
+  assert.throws(() => inspectExecutionBoundary(value));
+});
+test("Stage2 binds the write operation and Tool to the original Runtime receiver", () => {
+  const value = fixture();
+  value.run.spans.find(
+    (span) => span.spanID === "runtime-operation",
+  ).references[0].spanID = "mcp";
+  assert.throws(() => inspectExecutionBoundary(value));
+});
+test("Stage2 secret checks include original session and workload credentials in decoded history", () => {
+  const secret = "actual-stage2-credential-example";
+  assert.throws(() => assertNoCredentials({ leaked: secret }, [secret]));
+  assert.throws(() =>
+    inspectTemporalHistory(
+      temporalHistory({ agent_id: "agent-test", secret }),
+      "agent-test",
+      [secret],
+    ),
+  );
 });
 test("HTTP and WebSocket prompts use the RPC method and exact ancestry, not a hardcoded span title", () => {
   const value = fixture();

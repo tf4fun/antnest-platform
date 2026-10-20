@@ -52,8 +52,8 @@ test("Identity's active catalog publishes both password admission failures", () 
   }
 });
 
-test("Gateway revision 23 publishes password failures only on login and password change", () => {
-  assert.equal(gateway.version, 23);
+test("Gateway revision 24 publishes password failures only on login and password change", () => {
+  assert.equal(gateway.version, 24);
   for (const name of ["login", "change_password"]) {
     const route = gateway.routes[name];
     assert.equal(
@@ -506,7 +506,7 @@ test("Console user creation has an explicit bounded busy-error consumer batch", 
 });
 
 test("active Console retains busy admission only on user creation", () => {
-  assert.equal(consoleContract.version, 54);
+  assert.equal(consoleContract.version, 55);
   const route = consoleContract.routes.create_local_user;
   assert.equal(route.password_failure_schema, "password-failure.schema.json");
   assert.deepEqual(route.error_status_by_code, { credential_busy: 503 });

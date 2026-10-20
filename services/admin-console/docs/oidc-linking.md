@@ -1,6 +1,6 @@
 # External login administration
 
-Console revision 54 consumes Identity revision 18 and Gateway revision 23 under
+Console revision 54 consumes Identity revision 18 and Gateway revision 24 under
 the shared [OIDC linking contract](../../../contracts/identity/oidc-linking.md).
 Identity owns policy, binding transactions, SCIM pairing, notices and session
 revocation. Console supplies management forms and strict public projections.

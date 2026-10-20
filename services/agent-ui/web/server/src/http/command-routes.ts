@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { recordPromptInputPrepared } from "../telemetry.ts";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import { z } from "zod";
-import { acpPromptRequestBytes, SessionNotFoundError } from "../adapters/acp-http.ts";
+import { acpPromptRequestBytes, AgentAccessRevokedError, SessionNotFoundError } from "../adapters/acp-http.ts";
 import type {
   HistoryCondition,
   HistoryTokens,
@@ -17,6 +18,8 @@ import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { BridgeCapacityError } from "../bridge/registry.ts";
 import { bindScopeContext, verifiedRequestContext } from "./trusted-identity.ts";
 import { strictObject } from "../adapters/strict-json.ts";
+import { takeValidatedJson } from "./json-request.ts";
+import { largeInputBytes, runInputWork } from "./input-work.ts";
 
 const prefix = ["api", "app", "workspace", "v1", "agents"];
 const id = z.string().min(1).max(200);
@@ -136,6 +139,8 @@ export function createCommandHandler(dependencies: {
         resource === "prompts",
       );
     } catch (cause) {
+      if (cause instanceof AgentAccessRevokedError)
+        return error(403, "access_denied", "Agent access denied", "none");
       const capacity = bridgeCapacityResponse(cause);
       if (capacity !== null) return capacity;
       const missing = missingSessionResponse(cause);
@@ -184,19 +189,21 @@ export function createCommandHandler(dependencies: {
             "History condition is stale",
             "refresh",
           );
-        if (acpPromptRequestBytes({
+        const input = {
           sessionId,
           intentId: body.intentId,
           expectedAppendVersion: body.expectedAppendVersion,
           prompt: body.prompt as ContentBlock[],
-        }) > maxAcpPromptBytes)
-          throw new BodyTooLargeError();
-        const accepted = authorized.operations.submit({
-          sessionId,
-          intentId: body.intentId,
-          expectedAppendVersion: body.expectedAppendVersion,
-          prompt: body.prompt as ContentBlock[],
-        });
+        };
+        // Wire sizing, fingerprinting and intent insertion stay one synchronous
+        // operation. Other ready requests can run between queued preparations.
+        const accepted = await runInputWork(() => {
+          if (acpPromptRequestBytes(input) > maxAcpPromptBytes)
+            throw new BodyTooLargeError();
+          const accepted = authorized.operations.submit(input);
+          recordPromptInputPrepared();
+          return accepted;
+        }, request.signal);
         return json(accepted, 202);
       }
       if (action === "cancel") {
@@ -211,6 +218,8 @@ export function createCommandHandler(dependencies: {
       }
       return json(await authorized.operations.read(sessionId, intentId!));
     } catch (cause) {
+      if (cause instanceof AgentAccessRevokedError)
+        return error(403, "access_denied", "Agent access denied", "none");
       const missing = missingSessionResponse(cause);
       if (missing !== null) return missing;
       if (cause instanceof BodyTooLargeError)
@@ -313,32 +322,53 @@ export async function readBody(
     Number(declaredLength) > limit
   )
     throw new BodyTooLargeError();
+  const validated = takeValidatedJson(request);
+  if (validated !== undefined) {
+    // Consume the already buffered body without copying or parsing it again.
+    // Cancelling a tee branch can wait for an unread Request.clone() forever.
+    const reader = request.body!.getReader();
+    try {
+      while (!(await readWhileConnected(reader, request.signal)).done) { /* drain */ }
+    } catch (cause) {
+      void reader.cancel().catch(() => {});
+      throw cause;
+    } finally { reader.releaseLock(); }
+    request.signal.throwIfAborted();
+    if (validated.byteLength > limit) throw new BodyTooLargeError();
+    return validated.value;
+  }
   const reader = request.body?.getReader();
   if (reader === undefined) throw new SyntaxError();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  while (true) {
-    const { done, value } = await readWhileConnected(reader, request.signal);
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      throw new BodyTooLargeError();
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+  let complete = false;
   try {
-    request.signal.throwIfAborted();
-    return strictObject(bytes);
-  } catch {
-    throw new SyntaxError("Invalid JSON encoding");
+    while (true) {
+      const { done, value } = await readWhileConnected(reader, request.signal);
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw new BodyTooLargeError();
+      chunks.push(value);
+    }
+    complete = true;
+  } finally {
+    // A Request clone's cancellation waits for its sibling. Reject this route
+    // immediately, while cancellation still propagates to its own stream branch.
+    if (!complete) void reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
+  const parse = () => {
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    try { return strictObject(bytes); }
+    catch { throw new SyntaxError("Invalid JSON encoding"); }
+  };
+  request.signal.throwIfAborted();
+  return size >= largeInputBytes ? await runInputWork(parse, request.signal) : parse();
 }
 
 async function readWhileConnected(

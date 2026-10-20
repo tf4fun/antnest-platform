@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertSecretFree } from "../e2e/identity-closeout/evidence.mjs";
-import { hasError } from "../e2e/acp-plan/requests.mjs";
+import { hasDiagnosticError } from "../e2e/acp-plan/requests.mjs";
 import {
   assertCaptureDisabled,
   traceTopology,
@@ -12,6 +12,10 @@ import {
   writeEvidenceFile,
 } from "./storage.mjs";
 import { collectResolutionSources } from "./gateway-resolution-collect.mjs";
+import {
+  isCompleteSourceFailure,
+  preserveCompleteSourceFailure,
+} from "./complete-source-inspection.mjs";
 
 export function resolveTraceSources(trace, secrets, options = {}) {
   const traces = options.traces ?? new Map([[trace.traceID, trace]]);
@@ -31,7 +35,7 @@ export function resolveTraceDiagnostics(trace, sources) {
     ...source.spans.flatMap((span) => span.warnings ?? []),
   ]);
   const errors = sources.reduce(
-    (count, source) => count + source.spans.filter(hasError).length,
+    (count, source) => count + source.spans.filter(hasDiagnosticError).length,
     0,
   );
   return {
@@ -64,6 +68,30 @@ export async function collectResolveTraceEvidence(
   assert.equal(typeof inspect, "function", "owning trace inspector required");
   directory = evidenceDirectory(directory);
   const ids = new Set(expectations.map((item) => item.traceID));
+  const relatedByID = new Map();
+  for (const item of expectations) {
+    const related =
+      item.relatedTraceIDs === undefined ? [] : item.relatedTraceIDs;
+    assert(
+      Array.isArray(related) &&
+        related.length <= 16 &&
+        new Set(related).size === related.length,
+      "invalid related Trace inventory",
+    );
+    const selected = relatedByID.get(item.traceID) ?? new Set();
+    for (const id of related) {
+      assert(
+        typeof id === "string" &&
+          /^[a-f0-9]{32}$/u.test(id) &&
+          id !== item.traceID,
+        "invalid related Trace identity",
+      );
+      evidenceFilePath(directory, `${id}.json`);
+      selected.add(id);
+    }
+    assert(selected.size <= 16, "related Trace inventory exceeds its bound");
+    relatedByID.set(item.traceID, selected);
+  }
   for (const id of ids) {
     assert.match(id ?? "", /^[a-f0-9]{32}$/, "Gateway trace ID missing");
     evidenceFilePath(directory, `${id}.json`);
@@ -117,7 +145,54 @@ export async function collectResolveTraceEvidence(
           const trace = body.data[0];
           assert.equal(trace.traceID, id, "wrong Identity trace");
           try {
-            const collection = await collectResolutionSources(base, [trace], {
+            // Logout and the existing stream are independent requests. Load
+            // explicit related roots before provenance collection so the whole
+            // union participates in privacy, diagnostics and convergence.
+            const initial = [trace];
+            for (const relatedID of relatedByID.get(id)) {
+              signal?.throwIfAborted();
+              let relatedResponse, relatedText;
+              try {
+                relatedResponse = await request(
+                  `${base.replace(/\/$/, "")}/api/traces/${relatedID}`,
+                  {
+                    signal: signal
+                      ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+                      : AbortSignal.timeout(10000),
+                  },
+                );
+                relatedText = await relatedResponse.text();
+              } catch {
+                signal?.throwIfAborted();
+                throw new Error("Related Trace request failed");
+              }
+              signal?.throwIfAborted();
+              assert.equal(
+                relatedResponse.status,
+                200,
+                "related Trace not available",
+              );
+              let relatedBody;
+              try {
+                relatedBody = JSON.parse(relatedText);
+              } catch {
+                throw new Error("Related Trace response is invalid JSON");
+              }
+              assert(
+                relatedBody.errors == null ||
+                  (Array.isArray(relatedBody.errors) &&
+                    relatedBody.errors.length === 0),
+                "related Trace backend errors require review",
+              );
+              assert(
+                Array.isArray(relatedBody.data) &&
+                  relatedBody.data.length === 1 &&
+                  relatedBody.data[0]?.traceID === relatedID,
+                "missing or mismatched related Trace",
+              );
+              initial.push(relatedBody.data[0]);
+            }
+            const collection = await collectResolutionSources(base, initial, {
               request,
               signal,
               directory,
@@ -182,6 +257,10 @@ export async function collectResolveTraceEvidence(
             lastError = new Error("Identity trace export did not converge");
           } catch (error) {
             signal?.throwIfAborted();
+            if (isCompleteSourceFailure(error)) {
+              preserveCompleteSourceFailure(error, directory);
+              throw error;
+            }
             lastError = error;
             previous = undefined;
             stable = 0;

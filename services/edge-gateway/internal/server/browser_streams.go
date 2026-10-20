@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/streamio"
@@ -18,10 +21,7 @@ func browserStreamRequest(request *http.Request) bool {
 	if request.Method != http.MethodGet {
 		return false
 	}
-	if isAgentEventWatch(request) || request.PathValue("acp_version") != "" {
-		return true
-	}
-	if request.Pattern == "GET /api/app/agents/{agent_id}/state/watch" {
+	if isAgentEventWatch(request) {
 		return true
 	}
 	path := request.PathValue("path")
@@ -33,13 +33,9 @@ func (h *handler) guardBrowserStream(response http.ResponseWriter, request *http
 	started, _ := request.Context().Value(browserStreamStartKey{}).(time.Time)
 	profile, agent := callerSelection(request)
 	parent := identity.WithResolution(request.Context(), profile, agent)
-	cancelLease := func() {}
-	websocket := webSocketUpgrade(request)
-	if !websocket {
-		parent, cancelLease = context.WithTimeout(parent, h.streamLease)
-	}
+	parent, cancelLease := context.WithTimeout(parent, h.streamLease)
 	guard, err := browserstream.Start(parent, h.browserStreams, browserstream.Config{
-		MaximumStale: h.maximumSessionStale, InitialStarted: started, Original: principal, DirectWebSocket: websocket,
+		MaximumStale: h.maximumSessionStale, InitialStarted: started, Original: principal,
 		Resolve: func(ctx context.Context) (identity.Principal, error) {
 			ctx, cancel := context.WithTimeout(ctx, h.requestTimeout)
 			defer cancel()
@@ -49,44 +45,30 @@ func (h *handler) guardBrowserStream(response http.ResponseWriter, request *http
 	if err != nil {
 		cancelLease()
 		status, code := http.StatusServiceUnavailable, "identity_unavailable"
-		if errors.Is(err, browserstream.ErrRejected) || errors.Is(err, browserstream.ErrCallerContextExpired) {
+		if errors.Is(err, browserstream.ErrRejected) {
 			status, code = http.StatusUnauthorized, "unauthenticated"
 		}
 		writeError(response, status, code, "Session could not be verified")
 		return response, request, nil, err
 	}
-	finishWrites := func() {}
-	if !websocket {
-		response, finishWrites = streamio.CancelHTTPWrites(guard.Context(), response, h.logger)
-	}
+	response, finishWrites := streamio.CancelHTTPWrites(guard.Context(), response, h.logger)
 	finish := func() {
 		guard.Close()
 		finishWrites()
+		if receipt, ok := guard.FeedTermination(); ok {
+			attributes := []attribute.KeyValue{
+				attribute.String("source", "identity-session-feed"), attribute.String("reason", "session_revoked"),
+				attribute.String("antnest.revocation.reason", receipt.Reason), attribute.Int64("antnest.revocation.sequence", receipt.Sequence),
+				attribute.String("antnest.organization.id", principal.OrganizationID), attribute.String("antnest.principal.id", principal.UserID),
+				attribute.String("antnest.membership.id", principal.MembershipID), attribute.String("antnest.agent.id", agent),
+			}
+			if receipt.Source.IsValid() {
+				attributes = append(attributes, attribute.String("antnest.revocation.trace_id", receipt.Source.TraceID().String()),
+					attribute.String("antnest.revocation.span_id", receipt.Source.SpanID().String()))
+			}
+			trace.SpanFromContext(request.Context()).AddEvent("antnest.stream.termination", trace.WithTimestamp(receipt.At), trace.WithAttributes(attributes...))
+		}
 		cancelLease()
 	}
 	return response, request.WithContext(guard.Context()), finish, nil
-}
-
-// Existing per-message checks remain non-touch and preserve the same original
-// authority. They do not refresh the background guard's stale deadline.
-func (h *handler) validateStreamIdentity(ctx context.Context, token string, original identity.Principal) error {
-	budget := min(h.requestTimeout, browserstream.Interval(h.maximumSessionStale, original.ActivityIntervalMS))
-	ctx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
-	started := time.Now()
-	current, err := h.identity.Resolve(ctx, token)
-	if ctx.Err() != nil {
-		return browserstream.ErrUnavailable
-	}
-	if err != nil {
-		if identity.IsCode(err, "unauthenticated") || identity.IsCode(err, "inactive_principal") {
-			return browserstream.ErrRejected
-		}
-		return browserstream.ErrUnavailable
-	}
-	if err := browserstream.Validate(current, original, time.Now()); err != nil {
-		return err
-	}
-	_, err = browserstream.ValidateTiming(current, started, h.maximumSessionStale, time.Now())
-	return err
 }

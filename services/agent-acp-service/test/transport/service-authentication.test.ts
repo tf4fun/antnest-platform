@@ -92,11 +92,11 @@ const workspace = () => testHeaders({ "x-antnest-agent-id": "agent-1" });
 it.each([
   ["no workload", {}, 401, "service_unauthenticated"],
   ["wrong workload", workloadHeaders("agent-controller"), 403, "caller_not_allowed"],
-  ["no context", workloadHeaders("edge-gateway"), 401, "caller_context_required"],
+  ["no context", workloadHeaders("agent-ui"), 401, "caller_context_required"],
   [
     "wrong audience",
     {
-      ...workloadHeaders("edge-gateway"),
+      ...workloadHeaders("agent-ui"),
       [CALLER_CONTEXT_HEADER]: signContext({ agt: "agent-1", aud: ["agent-ui"] }),
     },
     401,
@@ -105,7 +105,7 @@ it.each([
   [
     "expired",
     {
-      ...workloadHeaders("edge-gateway"),
+      ...workloadHeaders("agent-ui"),
       [CALLER_CONTEXT_HEADER]: signContext({ agt: "agent-1", iat: 1, exp: 61 }),
     },
     401,
@@ -113,7 +113,7 @@ it.each([
   ],
   [
     "unscoped",
-    { ...workloadHeaders("edge-gateway"), [CALLER_CONTEXT_HEADER]: signContext() },
+    { ...workloadHeaders("agent-ui"), [CALLER_CONTEXT_HEADER]: signContext() },
     401,
     "caller_context_invalid",
   ],

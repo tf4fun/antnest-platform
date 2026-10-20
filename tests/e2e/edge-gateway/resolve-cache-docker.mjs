@@ -18,12 +18,20 @@ import {
   composeArgs,
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
-import { setup, until } from "../workspace-closeout/c4-setup.mjs";
+import { until } from "../workspace-closeout/c4-setup.mjs";
+import { setupResolveCache } from "./resolve-cache-setup.mjs";
 import { resolveObservationConfig } from "../observability/resolve-config.mjs";
 import { certificates } from "./tls-certificates.mjs";
 import { verifyResolveLoad } from "./resolve-cache-flow.mjs";
 import { verifyWarmOutage } from "./resolve-cache-outage-flow.mjs";
 import { cacheEvidencePaths } from "./resolve-cache-ownership.mjs";
+import {
+  cacheCandidateServices,
+  cacheImagePlan,
+  inspectCacheCandidateImages,
+  resolveCacheLoadImages,
+  selectCacheRuntimeImage,
+} from "./resolve-cache-images.mjs";
 import {
   isResolveCacheCompletion,
   finalizeResolveCacheReport,
@@ -48,24 +56,24 @@ let before,
   report,
   failure;
 try {
+  const runtimeImage = selectCacheRuntimeImage(process.env);
   before = await snapshotEnvironment({
     signal,
     images: [
-      "admin-console",
-      "agent-acp-service",
-      "agent-ui",
-      "edge-gateway",
-      "identity-service",
-      "runtime-controller",
-      "antnest-runtime",
-    ].map((name) => `antnest/${name}:local`),
+      ...cacheCandidateServices.map(([service]) => `antnest/${service}:local`),
+      runtimeImage,
+    ],
   });
-  config = await configuration(signal, (project) => {
-    ({ credentialsDirectory, output } = cacheEvidencePaths(
-      project,
-      process.env.ANTNEST_RESOLVE_CACHE_E2E_OUTPUT,
-    ));
-  });
+  config = await configuration(
+    signal,
+    (project) => {
+      ({ credentialsDirectory, output } = cacheEvidencePaths(
+        project,
+        process.env.ANTNEST_RESOLVE_CACHE_E2E_OUTPUT,
+      ));
+    },
+    runtimeImage,
+  );
   const save = (name, data) =>
     writeEvidenceFile(output, name, JSON.stringify(data, null, 2));
   save("environment-before.json", before);
@@ -103,14 +111,7 @@ try {
       "tests/e2e/edge-gateway/browser-sessions.compose.yaml",
       ...args,
     ]);
-  for (const [service, variable] of [
-    ["admin-console", "ANTNEST_TLS_E2E_CONSOLE_IMAGE"],
-    ["agent-acp-service", "ANTNEST_C4_AGENT_ACP_IMAGE"],
-    ["agent-ui", "ANTNEST_C4_AGENT_UI_IMAGE"],
-    ["edge-gateway", "ANTNEST_C4_EDGE_GATEWAY_IMAGE"],
-    ["identity-service", "ANTNEST_SECURITY_E2E_IDENTITY_IMAGE"],
-    ["runtime-controller", "ANTNEST_SECURITY_E2E_RC_IMAGE"],
-  ]) {
+  for (const [service, variable] of cacheCandidateServices) {
     const image = `antnest/${service}:resolve-cache-e2e-${config.project.slice(-8)}`;
     assert.equal(
       await docker(["image", "ls", "-q", "--filter", `reference=${image}`]),
@@ -141,10 +142,28 @@ try {
     candidateIDs.set(image, row.Id);
   }
   save("candidate-images.json", Object.fromEntries(candidateIDs));
+  const imagePlan = cacheImagePlan(
+    config,
+    JSON.parse(await docker(compose(["config", "--format", "json"]))),
+    candidateIDs,
+  );
+  save("load-image-plan.json", imagePlan);
   console.log(JSON.stringify({ phase: "start", project: config.project }));
   await docker(
     compose(["up", "-d", "--wait", "--wait-timeout", "180", "--no-build"]),
     true,
+  );
+  const images = await resolveCacheLoadImages(docker, imagePlan);
+  save("load-selected-image-ids.json", images);
+  save(
+    "actual-candidate-images.json",
+    await inspectCacheCandidateImages({
+      docker,
+      compose,
+      project: config.project,
+      environment: config.env,
+      candidates: candidateIDs,
+    }),
   );
   const gatewayID = await docker(compose(["ps", "-q", "edge-gateway"]));
   const [gateway] = JSON.parse(await docker(["inspect", gatewayID]));
@@ -204,7 +223,8 @@ try {
     signal,
     30000,
   );
-  const fixture = await setup(config, signal);
+  const fixture = await setupResolveCache(config, signal);
+  save("cold-agent-setup.private.json", fixture.coldAgentSetup);
   // Provisioning keeps its normal budget. Recreate only the owned Gateway
   // after setup and before any load/warm-cache observations. The short request
   // budget lets real negative HTTP responses complete inside the 5s stop.
@@ -261,6 +281,9 @@ try {
     settings,
     signal,
     output,
+    docker,
+    compose,
+    images,
   });
   console.log(
     JSON.stringify({ phase: "verify", check: "identity-warm-outage" }),
@@ -277,6 +300,7 @@ try {
   });
   report = {
     suite: resolveCacheSuite,
+    policy_revision: 4,
     status: "business_passed",
     scenarios: 2,
     verified: ["100-acp-load", "identity-outage-recovery", "trace-admission"],

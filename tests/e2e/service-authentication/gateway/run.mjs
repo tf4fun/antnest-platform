@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { gatewaySessionCookies } from "../../../support/gateway-session-cookies.mjs";
 import { browserSessionChecks } from "./browser-sessions.mjs";
+import { retirementChecks } from "./retirement.mjs";
 import {
   passwordFailures,
   assertPasswordCaseCounts,
@@ -36,8 +37,6 @@ const ports = {
   "identity-service": 8101,
   "admin-console": 8102,
   "agent-ui": 8103,
-  "agent-controller": 8104,
-  "agent-acp-service": 8105,
 };
 const tokens = Object.fromEntries(
   Object.keys(ports).map((name) => [
@@ -202,8 +201,14 @@ try {
     });
     assert.equal(response.status, status, `${method} ${path}`);
     checks++;
-    assert.equal(response.headers.get("Antnest-Service-Authorization"), null);
-    assert.equal(response.headers.get("Antnest-Caller-Context"), null);
+    assert(
+      response.headers.get("Antnest-Service-Authorization") === null,
+      "response leaked workload credential",
+    );
+    assert(
+      response.headers.get("Antnest-Caller-Context") === null,
+      "response leaked caller context",
+    );
     assert.equal(response.headers.getSetCookie().length, 0);
     checks++;
     const value = await response.json();
@@ -212,7 +217,7 @@ try {
     return value;
   };
   await request("/api/session");
-  for (const [path, audience, agent] of [
+  for (const [path, audience, agent, method = "GET"] of [
     ["/api/admin/agents", "admin-console", null],
     ["/api/admin/agents/agent-1", "admin-console", "agent-1"],
     ["/api/app/workspace/v1/bootstrap", "agent-ui", null],
@@ -222,23 +227,71 @@ try {
       "agent-1",
     ],
     ["/workspace/agent-1/", "agent-ui", null],
-    ["/api/app/agents/agent-1/v1/acp", "agent-acp-service", "agent-1"],
+    ["/api/app/workspace/v1/agents/agent-1/view", "agent-ui", "agent-1"],
+    [
+      "/api/app/workspace/v1/agents/agent-1/commands",
+      "agent-ui",
+      "agent-1",
+      "POST",
+    ],
+    [
+      "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts",
+      "agent-ui",
+      "agent-1",
+      "POST",
+    ],
   ]) {
-    const value = await request(path);
+    const value = await request(path, {
+      method,
+      ...(method === "POST"
+        ? {
+            headers: {
+              "X-Antnest-CSRF-Token": csrf,
+              "Content-Type": "application/json",
+            },
+            body: "{}",
+          }
+        : {}),
+    });
     assert(value.audience.includes(audience));
     assert.equal(value.agent, agent);
     assert.equal(value.subject, "user-admin");
     checks++;
-    if (path.endsWith("/v1/acp")) {
-      assert.deepEqual(value.audience, ["agent-acp-service"]);
+    if (audience === "agent-ui") {
+      assert.deepEqual(value.audience, [
+        "agent-ui",
+        "agent-acp-service",
+        "agent-controller",
+      ]);
       checks++;
     }
   }
-  await request("/api/app/bootstrap");
-  const state = await request("/api/app/agents/agent-1/state");
-  assert.equal(state.agent_id, "agent-1");
-  assert.equal(state.access_allowed, true);
-  checks++;
+  const retirement = await retirementChecks({
+    url,
+    origin: publicOrigin,
+    cookies,
+    signal: controller.signal,
+    readEvidence: async () =>
+      JSON.parse(
+        await docker([
+          ...compose,
+          "exec",
+          "-T",
+          "dependencies",
+          "node",
+          "--input-type=module",
+          "-e",
+          "import {readFileSync} from 'node:fs'; const token=readFileSync('/run/auth/outgoing/identity-service','utf8'); const r=await fetch('http://127.0.0.1:8101/__fixture/forwarding-evidence',{headers:{'Antnest-Service-Authorization':'Bearer '+token},signal:AbortSignal.timeout(5000)}); if(!r.ok) throw Error('forwarding evidence unavailable'); console.log(JSON.stringify(await r.json()));",
+        ]),
+      ),
+  });
+  checks += retirement.checks;
+  recordEvidence("retirement-container.json", {
+    image: gateway.Image,
+    ...retirement,
+    boundary:
+      "Real Gateway image with signed Identity and application doubles; receiver grant retirement and complete Bridge business integration remain separate.",
+  });
   await request("/", { anonymous: true });
   await request("/workspace/assets/app.js", { anonymous: true });
   await request("/scim/v2/Users", {

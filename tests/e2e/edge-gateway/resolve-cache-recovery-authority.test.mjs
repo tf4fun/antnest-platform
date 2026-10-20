@@ -158,3 +158,317 @@ for (const [name, change] of [
     change(f);
     assert.throws(() => check(f));
   });
+
+function bridgeFixture() {
+  const f = authorityFixture(4),
+    e = f.evidence;
+  const source = f.fixtures.workspaceSource;
+  // A recovery owner may already exist. Session creation is the new Cookie's
+  // actual RPC source; neither a new initialize nor a WSS connection is needed.
+  source.trace.spans = source.trace.spans.filter(
+    (s) => s !== source.initialize,
+  );
+  delete source.initialize;
+  for (const span of [
+    source.root,
+    source.upstream,
+    source.trace.spans.find((s) => s.spanID === "receiver"),
+  ]) {
+    setTag(span, "http.request.method", "POST");
+    setTag(span, "http.response.status_code", 201);
+  }
+  const created = e.http.find((r) => r.label === "fresh-consumer-agent-ready");
+  Object.assign(created, {
+    method: "POST",
+    status: 201,
+    path: "/api/app/workspace/v1/agents/agent/sessions",
+    request: {},
+    body: { sessionId: "session" },
+  });
+  const initial = e.http.find((r) => r.label === "warm-workspace-hit");
+  Object.assign(initial, {
+    started_at: 1400,
+    at: 1410,
+    body: { agentId: "agent", sessionId: "session" },
+  });
+  const hit = f.fixtures.workspaceHit;
+  for (const span of hit.trace.spans) span.startTime -= 200000;
+  for (const key of ["snapshot_age_ms", "proof_age_ms"])
+    setTag(
+      hit.decision,
+      resolvePrefix + key,
+      hit.decision.tags.find((t) => t.key === resolvePrefix + key).value - 200,
+    );
+  const valid = hit.decision.tags.find(
+    (t) => t.key === resolvePrefix + "valid_for_ms",
+  ).value;
+  setTag(hit.decision, resolvePrefix + "valid_for_ms", valid + 200);
+  const login = e.http.find((r) => r.label === "warm-login");
+  login.body = {
+    principal: {
+      user_id: "owner",
+      organization_id: "organization",
+      membership_id: "member",
+      active: true,
+    },
+  };
+  const c = {
+    name: "logout",
+    agent_id: "agent",
+    owner_id: "owner",
+    login,
+    session_create: created,
+    initial_view: initial,
+    stream: e.stream,
+    session_id: "session",
+    trigger: { at: 1800 },
+  };
+  c.stream.closure = {
+    kind: "transport-end",
+    at: 2001,
+    trace_id: c.stream.trace_id,
+  };
+  return { ...f, c };
+}
+
+test("Bridge recovery binds both cache admissions to actual session creation without a new initialize", () => {
+  const f = bridgeFixture(),
+    result = check(f);
+  assert.equal(result.view_trace_id, f.c.initial_view.trace_id);
+  assert.equal(result.sse_trace_id, f.c.stream.trace_id);
+  assert.equal(result.session_create_trace_id, f.c.session_create.trace_id);
+  for (const key of ["view", "sse"]) {
+    assert.equal(result[key].source_trace_id, f.c.session_create.trace_id);
+    assert(result[key].conservative_deadline > f.c.stream.closure.at);
+  }
+  assert.equal(result.wss, undefined);
+});
+
+for (const [name, change] of [
+  [
+    "unknown revision",
+    (f) => {
+      f.evidence.policy_revision = 5;
+    },
+  ],
+  [
+    "Bridge payload with legacy revision",
+    (f) => {
+      f.evidence.policy_revision = 3;
+    },
+  ],
+  [
+    "missing transport",
+    (f) => {
+      delete f.evidence.transport;
+    },
+  ],
+  [
+    "retired WSS payload",
+    (f) => {
+      f.c.wire = {};
+    },
+  ],
+  [
+    "retired WSS closure",
+    (f) => {
+      f.c.wss_close = {};
+    },
+  ],
+  [
+    "foreign session creation Cookie",
+    (f) => {
+      f.c.session_create.credential_scope = "foreign";
+    },
+  ],
+  [
+    "foreign initial view Cookie",
+    (f) => {
+      f.c.initial_view.credential_scope = "foreign";
+    },
+  ],
+  [
+    "foreign stream Cookie",
+    (f) => {
+      f.c.stream.credential_scope = "foreign";
+    },
+  ],
+  [
+    "foreign creation Agent",
+    (f) => {
+      f.c.session_create.path = "/api/app/workspace/v1/agents/other/sessions";
+    },
+  ],
+  [
+    "foreign creation Session",
+    (f) => {
+      f.c.session_create.body.sessionId = "other";
+    },
+  ],
+  [
+    "foreign view Agent",
+    (f) => {
+      f.c.initial_view.body.agentId = "other";
+    },
+  ],
+  [
+    "foreign view Session",
+    (f) => {
+      f.c.initial_view.body.sessionId = "other";
+    },
+  ],
+  [
+    "foreign case Agent",
+    (f) => {
+      f.c.agent_id = "other";
+    },
+  ],
+  [
+    "foreign login Principal",
+    (f) => {
+      f.c.login.body.principal.user_id = "other";
+    },
+  ],
+  [
+    "foreign stream Session",
+    (f) => {
+      f.c.stream.path =
+        "/api/app/workspace/v1/agents/agent/events?sessionId=other";
+    },
+  ],
+  [
+    "forged creation receipt",
+    (f) => {
+      f.c.session_create = { ...f.c.session_create, at: 1090 };
+    },
+  ],
+  [
+    "GET in place of creation POST",
+    (f) => {
+      f.c.session_create.method = "GET";
+    },
+  ],
+  [
+    "200 in place of creation 201",
+    (f) => {
+      f.c.session_create.status = 200;
+    },
+  ],
+  [
+    "wrong original raw method",
+    (f) => {
+      setTag(f.fixtures.workspaceSource.upstream, "http.request.method", "GET");
+    },
+  ],
+  [
+    "wrong original raw status",
+    (f) => {
+      setTag(f.fixtures.workspaceSource.root, "http.response.status_code", 200);
+    },
+  ],
+  [
+    "original RPC SQL error",
+    (f) => {
+      setTag(
+        f.fixtures.workspaceSource.trace.spans.find((s) => s.spanID === "sql"),
+        "error",
+        true,
+      );
+    },
+  ],
+  [
+    "missing original SQL",
+    (f) => {
+      f.fixtures.workspaceSource.trace.spans =
+        f.fixtures.workspaceSource.trace.spans.filter(
+          (s) => s.spanID !== "sql",
+        );
+    },
+  ],
+  [
+    "unarchived original source",
+    (f) => {
+      f.archivedTraceIDs.delete(f.c.session_create.trace_id);
+    },
+  ],
+  [
+    "foreign original parent",
+    (f) => {
+      f.fixtures.workspaceSource.trace.spans.find(
+        (s) => s.spanID === "receiver",
+      ).references[0].spanID = "absent";
+    },
+  ],
+  [
+    "wrong original snapshot age",
+    (f) => {
+      setTag(
+        f.fixtures.workspaceHit.decision,
+        resolvePrefix + "snapshot_age_ms",
+        1,
+      );
+    },
+  ],
+  [
+    "view replaced by later RPC",
+    (f) => {
+      setTag(f.fixtures.workspaceHit.decision, resolvePrefix + "source", "rpc");
+    },
+  ],
+  [
+    "local stream shutdown",
+    (f) => {
+      f.c.stream.closure.kind = "local-close";
+    },
+  ],
+  [
+    "missing actual closure Trace",
+    (f) => {
+      delete f.c.stream.closure.trace_id;
+    },
+  ],
+  [
+    "another stream's closure",
+    (f) => {
+      f.c.stream.closure.trace_id = f.c.initial_view.trace_id;
+    },
+  ],
+  [
+    "closure before revocation",
+    (f) => {
+      f.c.stream.closure.at = f.c.trigger.at - 1;
+    },
+  ],
+  [
+    "closure exactly at original view deadline",
+    (f) => {
+      f.c.stream.closure.at = check(f).view.conservative_deadline;
+    },
+  ],
+  [
+    "closure exactly at original SSE deadline",
+    (f) => {
+      f.c.stream.closure.at = check(f).sse.conservative_deadline;
+    },
+  ],
+  [
+    "view before creation finished",
+    (f) => {
+      f.c.initial_view.started_at = f.c.session_create.at - 1;
+    },
+  ],
+  [
+    "stream before view finished",
+    (f) => {
+      f.c.stream.started_at = f.c.initial_view.at - 1;
+    },
+  ],
+])
+  test(`Bridge recovery authority rejects ${name}`, () => {
+    const f = bridgeFixture();
+    change(f);
+    assert.throws(
+      () => check(f),
+      (error) => error instanceof assert.AssertionError,
+    );
+  });

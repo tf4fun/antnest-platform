@@ -74,7 +74,7 @@ test("every current workload pair shares the receiver's explicitly bound purpose
       }
     }
   }
-  assert.equal(pairs.size, 25);
+  assert.equal(pairs.size, 23);
   assert.deepEqual(contract.control_routes, {
     "agent-acp-service": [
       "POST /rpc/agent-acp/apply-execution-snapshot",
@@ -85,6 +85,31 @@ test("every current workload pair shares the receiver's explicitly bound purpose
     contract.listeners["agent-acp-service"].control.network,
     contract.listeners["agent-acp-service"].primary.network,
   );
+});
+
+test("retired Gateway destinations preserve the Agent UI purpose interfaces", () => {
+  const contract = readContract();
+  assert.equal(
+    contract.networks["controller-clients"].members["edge-gateway"],
+    undefined,
+  );
+  assert.deepEqual(Object.keys(contract.destinations["edge-gateway"]).sort(), [
+    "admin-console",
+    "agent-ui",
+    "identity-service",
+  ]);
+  assert.equal(contract.networks.edge.members["edge-gateway"], 2);
+  assert.equal(contract.networks.edge.members["agent-ui"], 4);
+  assert.equal(contract.networks["controller-clients"].members["agent-ui"], 21);
+  for (const [host, receiver] of [
+    ["agent-controller", "agent-controller"],
+    ["agent-acp-workspace", "agent-acp-service"],
+  ]) {
+    assert.deepEqual(contract.destinations["agent-ui"][host], {
+      receiver,
+      listener: "primary",
+    });
+  }
 });
 
 test("static purpose addresses are unique and fit their private /28 subnets", () => {

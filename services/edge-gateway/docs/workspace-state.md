@@ -1,89 +1,64 @@
-# Workspace State Gateway
+# Workspace Bridge Entry
 
-This document describes the Gateway's workspace bootstrap and Agent
-execution-state observation routes, their scope, streaming rules and failure
-behavior.
+Gateway 24 exposes browser workspace traffic through `/workspace/*` and
+`/api/app/workspace/v1/*`, using the configured Agent UI origin. The old
+`/api/app/bootstrap`, Agent state/watch and direct ACP aliases return
+`404 not_found` after outer Origin admission, including HEAD and upgrade
+requests, without Identity or downstream calls.
 
-## Boundary
+## Ownership
 
-`GET /api/app/bootstrap` lists every authorized, non-deleting Agent via the
-Controller's scoped paginated list. Items contain agent_id/name and management
-lifecycle_state/runtime_state, with activation_state only when created. Gateway
-validates and relays these facts without new ACP/Runtime calls. They are deployment
-observations, not execution availability; starting, disabled and unhealthy Agents
-remain listed. No credentials, endpoints or Session data are included.
+Agent UI owns bootstrap, view and event DTOs, commands, prompt delivery and
+browser recovery. ACP remains its private execution authority. Gateway no
+longer queries Controller discovery, validates/re-encodes six-field ACP state
+snapshots or synthesizes Agent availability. An unavailable or inaccessible
+Agent must retain the owning service's error and disclosure semantics.
 
-`GET /api/app/agents/{agent_id}/state` and `/state/watch` authenticate the
-browser session. They accept no query fields, replay cursor or supplied
-principal. A supplied Origin must exactly match the configured public origin.
-Forwarded host and scheme headers cannot change that boundary; see the
-[public-entry contract](../../../contracts/edge-gateway/public-entry.md).
+Gateway establishes browser-session and route scope, applies Origin and
+session-bound CSRF admission, strips reserved headers and trailers, and forwards
+verified presentation hints plus the unchanged Identity CCT with workload
+authentication. Labels never confer resource authority. See
+[execution ownership](execution-boundary.md) and the
+[header contract](../../../contracts/edge-gateway/request-headers.md).
 
-Gateway sends an empty JSON object by POST to ACP's
-`/rpc/agent-acp/get-agent-execution-state` or
-`/rpc/agent-acp/watch-agent-execution-state`. It supplies the authenticated
-Organization/Principal and route Agent ID in trusted headers. ACP, not an
-administrator role or a Controller discovery list, decides resource access.
-Neither path calls Controller. See the
-[ACP producer contract](../../../contracts/agent-acp/execution-api.md).
+## Streaming and recovery
 
-Each complete view contains `agent_id`, `availability`, `access_allowed`,
-nullable `configuration_revision`, nullable `active_session_id`, and nullable
-`unavailable_reason`. Configuration revision is an opaque 64-character digest,
-not an ordered Agent aggregate version. Busy/idle changes must not be interpreted
-as configuration replacement. Gateway validates and relays views; it owns no
-execution state, history, database or event journal.
+`GET /api/app/workspace/v1/agents/{agent_id}/events` forwards one validated
+Last-Event-ID of at most 4096 bytes and flushes SSE without buffering a full
+stream. Agent UI owns event contents, replay and reset semantics. Gateway
+reserves one of 64 Bridge receive slots and bounds the observer by
+`ANTNEST_EDGE_STREAM_LEASE`.
 
-Missing/inaccessible Agents have the same sanitized offline view, with no
-Session or configuration revision and reason `access_denied`. This is a valid
-HTTP 200 response, including as the first watch snapshot. An authorized offline
-view can report `agent_unavailable` or `runtime_barrier_required`; an in-flight
-Run can remain busy while new execution is disabled. ACP owns these semantics.
+The browser guard starts before opening upstream and retains the original SID,
+User/Organization/Membership, roles and absolute session deadline. Non-touch
+checks continue while quiet, with a maximum 30-second stale-output bound
+anchored to the source's actual Resolve RPC start, including request latency
+and connection closure. Cache hits cannot reset that age. Returned snapshots
+must retain valid idle, absolute and CCT deadlines; a live check can observe
+new idle eligibility without changing the original identity.
 
-## Streaming
+The private session feed accelerates closure without replacing bounded checks.
+Revocation, stale authority, lease expiry or cancellation interrupts blocked
+writes, cancels the upstream receive request and joins owned work. After a
+stream commits, failure closes it without appending a fabricated state or JSON
+error. Browser uncertainty, reconnect and command deduplication remain Agent
+UI responsibilities; reconnect must not replay a prompt.
 
-Watch emits `event: workspace_state` and a full JSON snapshot, without event
-IDs or replay. Frames are bounded, decoded, validated against the requested
-Agent, then re-encoded. Unknown fields, malformed/oversized frames and wrong
-Agent IDs are not forwarded. Only a valid first snapshot commits HTTP 200.
-An ACP `workspace_error` ends observation as a source failure, never as idle,
-ready or permission revocation. Its raw body is not forwarded or logged.
+Disconnect ends observation only. It does not cancel an accepted Run. A user
+cancellation uses the admitted Bridge command/operation API and must be
+confirmed by the actual execution owner.
 
-The first snapshot is bounded by the request timeout. A subscription is bounded
-by `ANTNEST_EDGE_STREAM_LEASE` (default five minutes), without in-process
-renewal. Frame writes have deadlines. There are 64 state slots separate from
-ACP receive/message slots, so observation does not consume cancel capacity.
+## Verification and capacity
 
-Identity is resolved at entry, before subsequent snapshots and independently
-while quiet. It must retain the original active SID, User/Organization/Membership
-and roles. Non-touch checks run at `min(30s/3, activity_interval_ms)`, with a
-hard stale-output deadline anchored to the source's actual Resolve RPC start,
-including RPC latency and socket closure. A cache hit does not reset that age;
-the current probe's wait and scheduling budget remains separate. Initial checks must fit that budget before
-opening ACP. Mutable idle expiry schedules a fresh read; absolute expiry is a
-hard cap. The private session-revocation feed accelerates closure without
-replacing bounded checks. Missing or stale feed proof requires live Resolve;
-the [cache policy](../../../contracts/edge-gateway/resolve-cache.md) governs
-whether an exact-scope snapshot can still admit a probe during an outage.
-Revocation, expiry or unavailable resolution interrupts delivery and
-blocked browser writes. A valid ACP access-loss snapshot is delivered to the
-still-valid original identity and closes the stream. The stream lease remains
-an additional cap. See [session lifecycle](../../../contracts/identity/browser-sessions.md).
+Gateway tests use real HTTP dependencies for trusted scope, header/trailer
+stripping, SSE flush, live revalidation, blocked writes, disconnect, shutdown,
+trace parenting and slot release. At 64 held streams another user's command
+can still be forwarded; that is a Gateway boundary check, not proof of real
+Agent UI/Runtime cancellation.
 
-Before streaming, invalid browser sessions return 401; Identity or ACP outages,
-malformed responses and missing internal routes return 503. No dependency
-failure is treated as Agent absence. After streaming starts, failures close
-the stream without appending JSON errors or inventing a state. Clients mark
-state uncertain and reconnect with backoff; they must not replay prompts.
-Disconnect cancels the ACP watch request only, not the Run. Service shutdown
-cancels and drains watches before telemetry shutdown.
-
-## Testing
-
-Service tests cover trusted scope, no Controller dependency, malformed and
-sanitized views, fragmented SSE, source failure, identity changes, lease
-expiry, browser disconnect, shutdown, trace parenting and capacity release.
-Tests use controlled HTTP dependencies, not another service's database.
-Identity and ACP client spans must be children of the Gateway HTTP span.
-
-Bootstrap management state is browser contract revision 12.
+The [retirement policy](../../../contracts/edge-gateway/workspace-entry-retirement.md)
+separately requires authenticated private ACP protocol coverage, retained Bridge
+business journeys, Agent UI upload-budget checks and two-user production-image
+integration. Its cancellation gate measures the same held Run and Runtime work
+through actual terminal state and quiescence during both body reception and
+EOF parse/hash/serialization.

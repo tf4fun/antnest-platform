@@ -27,7 +27,7 @@ function fixture(t) {
     const block=(name)=>{fs.appendFileSync(marker,name+'\\n');throw new Error('fixture blocks '+name)};
     const pool=${JSON.stringify(poolCode)};
     const pkg=require('./package.json'), mappings={};
-    for(const specifier of [...Object.keys({...pkg.dependencies,...pkg.devDependencies}),'@agentclientprotocol/sdk/experimental/v2','@agentclientprotocol/sdk/experimental/ws-client']) {
+    for(const specifier of [...Object.keys({...pkg.dependencies,...pkg.devDependencies}),'ajv/dist/2020.js','@agentclientprotocol/sdk/experimental/v2','@agentclientprotocol/sdk/experimental/http-client','@agentclientprotocol/sdk/experimental/ws-client']) {
       try { mappings[specifier]=pathToFileURL(require.resolve(specifier)).href; } catch {}
     }
     mappings.ws=new URL("./wrapper.mjs",mappings.ws).href;
@@ -151,3 +151,44 @@ test("Foundation durable output still reaches Docker discovery", (t) => {
   assert.notEqual(result.status, 0);
   assert.equal(result.calls, "docker\n", result.stderr);
 });
+
+for (const kind of [
+  "cached-root",
+  "dangling-root",
+  "cached-traces",
+  "dangling-traces",
+  "durable",
+])
+  test(`Gateway shutdown validates ${kind} evidence before Docker`, (t) => {
+    const f = fixture(t);
+    const project = "antnest-gateway-stop-storage";
+    const output = join(
+      f.work,
+      "artifacts/verification/gateway-shutdown",
+      project,
+    );
+    mkdirSync(join(f.work, "artifacts/verification/gateway-shutdown"), {
+      recursive: true,
+    });
+    if (kind !== "durable") {
+      const target = join(f.work, ".cache", kind);
+      if (kind.startsWith("cached")) mkdirSync(target, { recursive: true });
+      if (kind.endsWith("traces")) mkdirSync(output);
+      symlinkSync(
+        target,
+        kind.endsWith("traces") ? join(output, "traces") : output,
+      );
+    }
+    const code = `import {run} from ${JSON.stringify(new URL("../e2e/edge-gateway/shutdown-docker.mjs", import.meta.url).href)};await run(${JSON.stringify({ root: f.work, project })});`;
+    const result = f.run(["--input-type=module", "-e", code], undefined);
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(
+      result.stderr,
+      /ERR_MODULE_NOT_FOUND|does not provide an export|RangeError|SyntaxError/,
+    );
+    if (kind === "durable") assert.match(result.calls, /docker/, result.stderr);
+    else {
+      assert.equal(result.calls, "", result.stderr);
+      assert.match(result.stderr, /cache|ENOENT/);
+    }
+  });

@@ -23,6 +23,7 @@ export async function observeWorkspaceStream(
   const path = `/api/app/workspace/v1/agents/${encodeURIComponent(agentID)}/events?sessionId=${encodeURIComponent(sessionID)}`;
   const evidence = {
     started_at: performance.now(),
+    started_at_ms: Date.now(),
     frames: [],
     events: [],
     path,
@@ -30,7 +31,39 @@ export async function observeWorkspaceStream(
   };
   const records = [];
   let state = initialBridgeStream(agentID, sessionID);
-  let response, reader, pump, closure, failure, revoked;
+  let response,
+    reader,
+    pump,
+    closure,
+    failure,
+    revoked,
+    cancellation,
+    closing,
+    readFailure,
+    readFailed = false;
+  const cleanupErrors = [];
+  const cancelReader = () =>
+    (cancellation ??= (async () => {
+      try {
+        await reader.cancel();
+        evidence.reader_cleanup = { outcome: "cancelled" };
+      } catch (error) {
+        // Cancelling an already errored stream rethrows that same read failure.
+        // Preserve it as a transport receipt; a new cancellation error is fatal.
+        const alreadyEnded =
+          readFailed &&
+          error === readFailure &&
+          (combined.aborted || closure?.kind === "transport-end");
+        evidence.reader_cleanup = {
+          outcome: alreadyEnded ? "already-terminated" : "failed",
+          error: {
+            name: error?.name ?? "Error",
+            message: error?.message ?? String(error),
+          },
+        };
+        if (!alreadyEnded) cleanupErrors.push(error);
+      }
+    })());
   const finish = (kind) => {
     if (closure) return;
     closure = Object.freeze({
@@ -83,7 +116,9 @@ export async function observeWorkspaceStream(
           let chunk;
           try {
             chunk = await reader.read();
-          } catch {
+          } catch (error) {
+            readFailed = true;
+            readFailure = error;
             if (!combined.aborted) finish("transport-end");
             return;
           }
@@ -173,16 +208,30 @@ export async function observeWorkspaceStream(
         finish("invalid-event");
         stop.abort(failure);
       } finally {
-        await reader.cancel().catch(() => {});
-        reader.releaseLock();
+        await cancelReader();
+        try {
+          reader.releaseLock();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
         signal?.removeEventListener("abort", interrupted);
       }
     })();
   } catch (error) {
+    const errors = [error];
+    try {
+      await response?.body?.cancel();
+    } catch (cleanupError) {
+      errors.push(cleanupError);
+    }
     stop.abort(error);
-    await response?.body?.cancel().catch(() => {});
     signal?.removeEventListener("abort", interrupted);
-    throw error;
+    if (errors.length > 1)
+      throw new AggregateError(
+        errors,
+        "Workspace admission and cleanup failed",
+      );
+    throw errors[0];
   } finally {
     clearTimeout(timer);
   }
@@ -237,13 +286,22 @@ export async function observeWorkspaceStream(
         clearTimeout(timeout);
       }
     },
-    async closeAndWait() {
-      finish("local-close");
-      stop.abort(new Error("Workspace observer closed"));
-      await reader.cancel().catch(() => {});
-      await pump;
-      if (failure) throw failure;
-      return closure;
+    closeAndWait() {
+      return (closing ??= (async () => {
+        finish("local-close");
+        const cancelled = cancelReader();
+        stop.abort(new Error("Workspace observer closed"));
+        await cancelled;
+        await pump;
+        const errors = [...(failure ? [failure] : []), ...cleanupErrors];
+        if (errors.length > 1)
+          throw new AggregateError(
+            errors,
+            "Workspace observation and cleanup failed",
+          );
+        if (errors.length) throw errors[0];
+        return closure;
+      })());
     },
   };
 }

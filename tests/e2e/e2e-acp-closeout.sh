@@ -11,6 +11,12 @@ umask 077
 evidence="$root/artifacts/verification/acp-closeout-normal/$COMPOSE_PROJECT_NAME"
 node "$root/tests/support/storage.mjs" "$evidence"
 mkdir -p "$evidence/traces"
+compose() {
+  docker_cmd --lifecycle compose --env-file /dev/null -f "$root/compose.yaml" -f "$root/compose.debug.yaml" -f "$root/compose.stage3.yaml" \
+    -f "$root/tests/support/compose.public-development-secrets.yaml" -f "$root/tests/e2e/stage3a.compose.yaml" \
+    -f "$root/tests/e2e/identity-closeout/oidc-compose.yaml" -f "$root/tests/e2e/identity-closeout/compose.yaml" \
+    --profile stage3 --profile observability "$@"
+}
 client="${COMPOSE_PROJECT_NAME}-closeout-access-client"
 model="${COMPOSE_PROJECT_NAME}-closeout-access-model"
 cleanup() {
@@ -28,23 +34,36 @@ trap 'exit 143' TERM
 containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 docker_cmd inspect $containers >"$evidence/deployment.private.json"
 node "$root/tests/e2e/identity-closeout/deployment.mjs" "$evidence/deployment.private.json" "$COMPOSE_PROJECT_NAME"
+acp=$(compose ps -q agent-acp-service)
+case "$acp" in
+  ''|*[!0-9a-f]*) echo 'Expected one deployed ACP container' >&2; exit 1 ;;
+esac
+acp_image=$(docker_cmd inspect --format '{{.Image}}' "$acp")
+[ -n "$acp_image" ] || { echo 'Deployed ACP image is missing' >&2; exit 1; }
 docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=closeout-access-model" \
   --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=closeout-access-model" \
-  -v "$root/tests:/app/tests:ro" antnest/agent-acp-service:local \
+  -v "$root/tests:/app/tests:ro" "$acp_image" \
   node /app/tests/e2e/acp-closeout/access-model.mjs >/dev/null
 # shellcheck disable=SC2086 # service_hosts is a list of options.
 docker_cmd create --name "$client" $service_hosts --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" \
-  --network "${COMPOSE_PROJECT_NAME}_acp-provider" \
+  --network "${COMPOSE_PROJECT_NAME}_acp-provider" --network "${COMPOSE_PROJECT_NAME}_edge" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-ui/tokens/agent-acp-service:/run/auth/agent-ui-acp:ro" \
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/agent-controller:/run/auth/console-controller:ro" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
   -e "ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF" \
   -e ANTNEST_IDENTITY_EVIDENCE_DIR=/evidence/traces \
   -v "$evidence:/evidence" -v "$root/tests:/app/tests:ro" \
-  antnest/agent-acp-service:local node /app/tests/e2e/acp-closeout/access-client.mjs >/dev/null
+  -v "$root/contracts/identity/identity-contract.json:/app/contracts/identity/identity-contract.json:ro" \
+  -v "$root/contracts/agent-controller/control-contract.json:/app/contracts/agent-controller/control-contract.json:ro" \
+  -v "$root/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro" \
+  -v "$root/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro" \
+  -v "$root/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro" \
+  -v "$root/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro" \
+  "$acp_image" node /app/tests/e2e/acp-closeout/access-client.mjs >/dev/null
 docker_cmd network connect "${COMPOSE_PROJECT_NAME}_agent-acp-database" "$client"
 docker_cmd network connect "$ANTNEST_RUNTIME_MANAGEMENT_NETWORK" "$client"
 docker_cmd network connect "${COMPOSE_PROJECT_NAME}_controller-runtime" "$client"

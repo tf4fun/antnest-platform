@@ -49,7 +49,14 @@ test("Runtime removal requires an owned normal exit and never forces deletion", 
           ])
         : "";
     };
-    if (exit === 0) await stopLossRuntime(docker, before, initial, project);
+    if (exit === 0)
+      assert.deepEqual(
+        await stopLossRuntime(docker, before, initial, project),
+        {
+          ...before,
+          State: { Running: false, ExitCode: 0, OOMKilled: false },
+        },
+      );
     else
       await assert.rejects(stopLossRuntime(docker, before, initial, project));
     assert.deepEqual(calls, [

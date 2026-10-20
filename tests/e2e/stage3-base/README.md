@@ -25,13 +25,54 @@ Runtime. It asserts:
   and ACP settlement before Runtime mutation.
 - Official SDK v1 WebSocket, v2 WebSocket and v1 HTTP exercise real Bash effects
   and exact history recovery without model re-execution. Rebuild preserves the
-  workspace. Logout rejects new work on both WebSocket versions.
+  workspace. These protocol clients use private ACP with the original member
+  Session and Principal delegated through Identity; each connection initializes
+  once. Browser discovery uses the Workspace bootstrap schema and production
+  decoder. Execution readiness and `configuration_revision` come from the
+  complete private ACP state response.
+- Logout uses an actual Workspace Bridge SSE and the original browser Cookie:
+  the committed Identity mutation must terminate that stream, then a real
+  Prompt HTTP request with the same Cookie must return 401. A fresh login
+  restores the empty Session for each protocol version without model work.
+  Private SDK clients close locally after this proof; their closure does not
+  establish browser revocation or shared Bridge owner drainage.
 - Trace collection uses actual Gateway lifecycle response IDs and actual SDK
   message IDs, with RPC content capture disabled. Warnings fail the strict
   gate even when business, topology and privacy checks pass. Docker absence
   probes must have the exact owner, command ancestry and subsequent successful
   allocation/start or storage verification to permit topology diagnosis; their
   ERROR spans still fail the strict gate. Other errors fail immediately.
+
+The original business inventory remains 29 requests (34 for Registry outage
+and offline reuse), with 8 model requests (10 for those two profiles). The
+separate private inventory also includes all 13 initializations (15 for those
+profiles) and the two Logout `session/new` requests: 44 or 51 collected private
+request traces. Initialization, HTTP snapshots, raw frames, complete state
+responses and Logout observations are archived before client removal. Each
+connection and exporter is joined; business, archive and cleanup failures are
+retained independently.
+
+Browser projection checks live in `workspace-contracts.mjs`, which loads the
+production frontend decoder and Workspace schema. Protocol and lifecycle
+helpers in `contracts.mjs` do not load either dependency. The isolated import
+regression copies the test sources into an ACP-only harness layout, so the
+host checkout cannot hide missing container dependencies.
+
+The runner pins its client to the actual deployed ACP image ID and mounts the
+Gateway-to-Identity and Agent-UI-to-ACP grants read-only. Private evidence is
+written directly into the ignored evidence directory. A log archival or
+resource cleanup failure returns 1 even when the original client returned the
+reviewed diagnostic code 2.
+
+For base, Skill delivery, Registry outage, offline reuse and restart/rebuild,
+the outer runner publishes `completion.json` only after inner archival and
+cleanup have succeeded and both Docker ownership labels have no remaining
+containers, volumes or networks. The finalizer links the original business,
+lifecycle, private-request and Logout reports without changing their diagnostics.
+CI runs these five original shell recipes directly, preserving exit 2 for
+completed work with reviewed strict findings and exit 1 for business, evidence
+or cleanup failures. Unknown warnings remain failures under the existing CI
+rules. Other fault profiles retain their separate completion contracts.
 
 `make test-stage3-base-fixtures` runs local gates. `make e2e-stage3-local`
 uses already built local images; `make e2e-stage3` builds first. Both default
@@ -140,7 +181,7 @@ HTML, bootstrap and protocol behavior; browser interaction is covered by the
 [workspace browser profile](../workspace-closeout/README.md#browser-profile).
 
 Raw lifecycle diagnostics, when collected, stay in the ignored private
-`artifacts/verification/stage3-base/<project>/stage3-traces/` directory. Only aggregate business,
+`artifacts/verification/stage3-base/<project>/traces/` directory. Only aggregate business,
 topology, warning and cleanup evidence is printed.
 
 Normal lifecycle POST requests prove a single `console` Resolve decision before
@@ -155,6 +196,14 @@ Source errors remain strict failures and cannot inherit a current workflow's
 clock-only or restart diagnostic exception. Source warnings and the original
 business verdict remain available in the aggregate report. Clock-only acceptance
 requires zero raw errors; a restart exception requires the exact reviewed total.
-The separate ACP
-message collectors and declared killed-process recovery still require their
-own Resolve consumer integration.
+Private ACP requests have their own owning admission checks and retain raw
+strict failures separately. Logout additionally requires the original Session
+feed witness, committed mutation and post-close denial chain. If the later
+Agent Delete ends retained private notification streams, only the exact
+`learning-notice` / `access_denied` diagnostic is accepted, tied to that Agent,
+ACP process and the initial access revision confirmed by completed Delete
+settlement. Notification closure may precede settlement and final publication
+responses after the access snapshot has applied. This later event
+does not prove private owner closure at Logout. Unknown internal errors still
+fail; confirmed SDK diagnostics remain visible and nonblocking under the
+repository policy.

@@ -14,26 +14,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/server"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
-func TestWorkspaceWatchStopsBeforeGatewayTelemetryShutdown(t *testing.T) {
+func TestWorkspaceBridgeEventsStopBeforeGatewayTelemetryShutdown(t *testing.T) {
 	// Exercise escaped routing with a public ID accepted by Identity. A decoded
 	// slash is outside that contract and is rejected before a stream can open.
-	for _, path := range []string{"/api/app/agents/agent-1/state/watch", "/api/app/agents/agent%2D1/state/watch"} {
+	for _, path := range []string{"/api/app/workspace/v1/agents/agent-1/events", "/api/app/workspace/v1/agents/agent%2D1/events"} {
 		t.Run(path, func(t *testing.T) { testReceiveShutdown(t, path) })
 	}
 }
 
 func TestHTTPReceiveStreamsStopBeforeGatewayTelemetryShutdown(t *testing.T) {
 	for _, path := range []string{
-		"/api/app/agents/agent-1/v1/acp",
-		"/api/app/agents/agent-1/acp",
 		"/api/admin/agents/agent-1/events/watch",
 	} {
 		t.Run(path, func(t *testing.T) { testReceiveShutdown(t, path) })
@@ -46,7 +42,11 @@ func testReceiveShutdown(t *testing.T, path string) {
 	expiresAt := now.Add(time.Hour).Format(time.RFC3339Nano)
 	idleExpiresAt := now.Add(30 * time.Minute).Format(time.RFC3339Nano)
 	parts := strings.Split(path, "/")
-	agentID, err := url.PathUnescape(parts[4])
+	agentIndex := 4
+	if strings.HasPrefix(path, "/api/app/workspace/v1/") {
+		agentIndex = 6
+	}
+	agentID, err := url.PathUnescape(parts[agentIndex])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,17 +58,15 @@ func testReceiveShutdown(t *testing.T, path string) {
 			}
 			return
 		}
-		if r.URL.Path == "/rpc/agent-controller/list-workspace-agents" {
-			if _, err := io.WriteString(w, `{"agents":[{"agent_id":"agent-1","name":"One","lifecycle_state":"created","activation_state":"enabled","runtime_state":"available"}],"next_cursor":null}`); err != nil {
-				t.Error(err)
-			}
-			return
-		}
 		defer close(upstreamStopped)
 		w.Header().Set("Content-Type", "text/event-stream")
-		if _, err := io.WriteString(w, strings.ReplaceAll("event: workspace_state\ndata: {\"agent_id\":\"agent-1\",\"availability\":\"ready\",\"access_allowed\":true,\"configuration_revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"unavailable_reason\":null,\"active_session_id\":null}\n\n", "agent-1", agentID)); err != nil {
+		if strings.HasPrefix(path, "/api/app/workspace/v1/") && r.Header.Get(server.HeaderAgentID) != agentID {
+			t.Errorf("Bridge Agent scope=%q want=%q", r.Header.Get(server.HeaderAgentID), agentID)
+		}
+		if _, err := io.WriteString(w, "event: reset\ndata: {}\n\n"); err != nil {
 			return
 		}
+
 		if err := http.NewResponseController(w).Flush(); err != nil {
 			return
 		}
@@ -76,15 +74,7 @@ func testReceiveShutdown(t *testing.T, path string) {
 	}))
 	defer upstream.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	agents, err := agentcontroller.NewClient(upstream.URL, upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
 	identities, err := identity.NewClient(upstream.URL, upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	executionClient, err := agentacp.NewClient(upstream.URL, upstream.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +82,7 @@ func testReceiveShutdown(t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := server.NewHandler(server.Config{AdminConsoleURL: upstream.URL, AgentUIURL: upstream.URL, AgentACPURL: upstream.URL, IdentityURL: upstream.URL}, server.Dependencies{Identity: identities, Agents: agents, Execution: executionClient, Sessions: sessions, HTTPClient: upstream.Client(), Logger: logger})
+	h, err := server.NewHandler(server.Config{AdminConsoleURL: upstream.URL, AgentUIURL: upstream.URL, IdentityURL: upstream.URL}, server.Dependencies{Identity: identities, Sessions: sessions, HTTPClient: upstream.Client(), Logger: logger})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +105,12 @@ func testReceiveShutdown(t *testing.T, path string) {
 		}
 	}()
 	done := make(chan error, 1)
-	go func() { done <- serveHTTP(ctx, httpServer, listener, lifecycle, time.Second) }()
+	serverStopped := make(chan struct{})
+	go func() {
+		defer close(serverStopped)
+		done <- serveHTTP(ctx, httpServer, listener, lifecycle, time.Second)
+	}()
+	defer func() { cancel(); _ = httpServer.Close(); awaitGatewaySignal(t, serverStopped) }()
 	r, err := http.NewRequest(http.MethodGet, "http://"+listener.Addr().String()+path, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +118,6 @@ func testReceiveShutdown(t *testing.T, path string) {
 	r.AddCookie(&http.Cookie{Name: session.AccessTokenCookieName, Value: "test-token"})
 	r.AddCookie(&http.Cookie{Name: session.CSRFCookieName, Value: "test-csrf"})
 	r.Header.Set("Accept", "text/event-stream")
-	r.Header.Set("Acp-Connection-Id", "test-connection")
 	client := &http.Client{Timeout: 3 * time.Second}
 	response, err := client.Do(r)
 	if err != nil {
@@ -154,7 +148,7 @@ func testReceiveShutdown(t *testing.T, path string) {
 	select {
 	case <-upstreamStopped:
 	case <-time.After(time.Second):
-		t.Fatal("ACP receive not cancelled")
+		t.Fatal("SSE upstream receive not cancelled")
 	}
 }
 

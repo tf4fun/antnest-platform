@@ -5,7 +5,10 @@ export type NetworkAssignment = {
   resource_version: number;
 };
 export type NetworkPolicy = NetworkAssignment & {
-  attachment: { state: "open" | "closed"; resource_version: number };
+  attachment: {
+    state: "open" | "closed" | "pending";
+    resource_version: number;
+  };
 };
 export type PendingNetwork = {
   action: NetworkAction;
@@ -48,7 +51,11 @@ export function decodeNetworkPolicy(
 ): NetworkPolicy {
   const assigned = assignment(value, agentID);
   const attachment = object(object(value).attachment);
-  if (attachment.state !== "open" && attachment.state !== "closed")
+  if (
+    attachment.state !== "open" &&
+    attachment.state !== "closed" &&
+    attachment.state !== "pending"
+  )
     throw new Error("Network attachment is invalid.");
   return {
     ...assigned,

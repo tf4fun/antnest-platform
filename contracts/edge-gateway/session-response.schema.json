@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://antnest.dev/contracts/edge-gateway/session-response.schema.json",
-  "title": "Gateway browser session requests and responses, revision 23",
+  "title": "Gateway browser session requests and responses, revision 24",
   "$defs": {
     "principal": {
       "type": "object",

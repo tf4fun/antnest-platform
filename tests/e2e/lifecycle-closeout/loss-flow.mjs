@@ -1,18 +1,20 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
-import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
-import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
-import { saveFoundationFailure } from "./foundation-trace.mjs";
+import { inspect } from "node:util";
+import { writeEvidenceFile } from "../../support/storage.mjs";
+import { createFoundationPrivateAccess } from "./foundation-private-access.mjs";
+import { collectPrivateLossTrace } from "./loss-private-trace.mjs";
+import {
+  assertLossOwner,
+  closeLossConnections,
+  collectLossTraces,
+  expectLossDenial,
+  recordLossFailures,
+} from "./loss-private-session.mjs";
 import { assertRestoreRun, assertReplayAudits } from "./restore-evidence.mjs";
 import { flushTraceProducers, physicalIdentity } from "./network-support.mjs";
-import {
-  stopLossRuntime,
-  inspectLossDenial,
-  readLossEvent,
-} from "./loss-current.mjs";
-import { connectOwner, collectLifecycleACPTrace } from "./acp.mjs";
+import { stopLossRuntime, readLossEvent } from "./loss-current.mjs";
 import { lines } from "./docker.mjs";
 import { runtimeControllerRead } from "./runtime-status.mjs";
 import { assertControllerStopped } from "./drain-evidence.mjs";
@@ -21,7 +23,6 @@ import {
   assertLoss,
   assertReplacement,
   assertOwnedRuntime,
-  assertLossDenial,
   assertLossProducer,
   assertLossBinding,
 } from "./loss-evidence.mjs";
@@ -90,12 +91,13 @@ async function history(client, sessionId) {
     );
 }
 
-async function prompt(client, sessionId, text) {
+async function prompt(client, sessionId, text, toolName) {
   const start = client.updates.length;
   const reply = await client.request(
     "prompt",
     { sessionId, prompt: [{ type: "text", text }] },
     60000,
+    { kind: "ordinary", phase: text, toolName },
   );
   assert.equal(reply.stopReason, "end_turn");
   const answer = client.updates
@@ -113,15 +115,27 @@ async function prompt(client, sessionId, text) {
 export async function runLoss(input) {
   const { config, signal } = input;
   const owner = new GatewayClient(config.gateway);
-  await owner.request("/api/session/login", {
+  const login = await owner.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "lifecycle-owner@example.com",
       password: "lifecycle-owner-password",
     },
   });
+  input.traceSecrets.push(
+    "lifecycle-owner-password",
+    ...owner.cookies.values(),
+  );
+  const work = {
+    principal: login.body.principal,
+    creation_principal: input.principal,
+    agents: [],
+    confirmations: [],
+    provider_requests: [],
+    lifecycle_admissions: [],
+  };
   const modelState = async () => {
-    const response = await fetch(`${config.model}/status`, {
+    const response = await fetch(config.model + "/status", {
       signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
     });
     assert.equal(response.status, 200);
@@ -133,89 +147,126 @@ export async function runLoss(input) {
     );
     return state.requests;
   };
-  const requests = [];
-  input.traceSecrets.push(
-    "lifecycle-owner-password",
-    ...owner.cookies.values(),
-  );
-  const remember = (client, method, details) => {
-    const actual = client.requests.filter((r) => r.method === method).at(-1);
-    assert(actual, "actual loss SDK request missing");
-    requests.push({
-      ...actual,
-      agentId: client.agentId,
-      agentID: client.agentId,
-      requestID: actual.requestId,
-      connectionTraceID: client.connectionTraceID,
-      transport: "websocket",
-      kind: "request",
-      ...details,
-    });
-  };
-  const cases = [];
-  const postgres = await serviceContainer(
-    input.docker,
-    config.project,
-    "postgres",
-  );
-  const reader = {
-    ...journalReader(input.docker, postgres.Id),
-    lossEvent: (eventID) => readLossEvent(input.docker, postgres.Id, eventID),
-  };
-  const runtimeRead = (path) =>
-    runtimeControllerRead(input.docker, config, path);
-  for (const mode of ["live", "cold"])
-    cases.push(
-      await lossCase(
-        { ...input, owner, modelState, reader, runtimeRead, remember },
-        mode,
-      ),
-    );
-  assert.equal((await modelState()).length, 8);
-  const calls = await modelState();
-  await flushTraceProducers(config, input.docker);
-  const requestTraces = await collectLifecycleEvidence(
-    requests,
-    (expected) =>
-      collectLifecycleACPTrace(
-        config,
-        expected,
-        input.traceSecrets,
-        expected.kind === "ordinary"
-          ? calls.filter((c) => c.phase === expected.phase)
-          : [],
-        (trace, expected, secrets, modelCalls) => {
-          if (expected.rejection)
-            return inspectLossDenial(trace, expected, secrets);
-          const result = inspectCommandTrace(
-            trace,
-            expected,
-            secrets,
-            modelCalls,
-          );
-          if (expected.runId) assert.equal(result.run_id, expected.runId);
-          return strictSessionEvidence(result, trace);
-        },
-        signal,
-      ),
-    (expected, error) =>
-      saveFoundationFailure(
-        config,
-        { traceID: expected.traceID ?? expected.connectionTraceID },
-        error,
-      ),
+  const access = await createFoundationPrivateAccess(config, {
     signal,
+    secrets: input.traceSecrets,
+    collectTrace: collectPrivateLossTrace,
+  });
+  const clients = [],
+    errors = [],
+    cases = [];
+  let calls = [],
+    requestTraces = [],
+    cleanup = false,
+    failedRequests = 0;
+  try {
+    const postgres = await serviceContainer(
+      input.docker,
+      config.project,
+      "postgres",
+    );
+    const reader = {
+      ...journalReader(input.docker, postgres.Id),
+      lossEvent: (eventID) => readLossEvent(input.docker, postgres.Id, eventID),
+    };
+    const runtimeRead = (path) =>
+      runtimeControllerRead(input.docker, config, path);
+    for (const mode of ["live", "cold"])
+      cases.push(
+        await lossCase(
+          {
+            ...input,
+            owner,
+            modelState,
+            reader,
+            runtimeRead,
+            access,
+            clients,
+            errors,
+            work,
+          },
+          mode,
+        ),
+      );
+    calls = await modelState();
+    assert.equal(calls.length, 8);
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    await closeLossConnections(clients, errors);
+    if (!signal.aborted) {
+      try {
+        calls = await modelState();
+      } catch (error) {
+        errors.push(error);
+      }
+      work.provider_requests = calls;
+      try {
+        await flushTraceProducers(config, input.docker);
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        const rows = access.snapshots().flatMap((connection) =>
+          [connection.initialization, ...connection.evidence].map((row) => {
+            const agent = work.agents.find((a) => a.id === row.agentId);
+            const run =
+              row.kind === "ordinary"
+                ? agent?.[
+                    row.phase.endsWith("-before") ? "before_run" : "after_run"
+                  ]
+                : undefined;
+            return { ...row, ...(run ? { runId: run.run_id } : {}) };
+          }),
+        );
+        requestTraces = await collectLossTraces(
+          rows,
+          (row) =>
+            access.collect(
+              row,
+              row.kind === "ordinary"
+                ? calls.filter((c) => c.phase === row.phase)
+                : [],
+            ),
+          (row, error) =>
+            writeEvidenceFile(
+              config.evidence,
+              "loss-private-request-failure-" + ++failedRequests + ".txt",
+              inspect({ expected: row, error }, { depth: 8 }),
+            ),
+          signal,
+          errors,
+        );
+      } catch (error) {
+        errors.push(error);
+      }
+    } else errors.push(signal.reason);
+    try {
+      await access.closeAndWait();
+      cleanup = true;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  return recordLossFailures(
+    {
+      profile: "runtime-loss",
+      project: config.project,
+      cases,
+      request_traces: requestTraces,
+      completed_runs: work.agents
+        .flatMap((a) => [a.before_run, a.after_run])
+        .filter(Boolean).length,
+      denied_prompts: cases.reduce((count, c) => count + c.denied_prompts, 0),
+      model_requests: calls.length,
+      deleted_before_teardown: cases.length === 2,
+      private_connections: access.snapshots(),
+      private_state_receipts: access.stateReceipts(),
+      private_loss: work,
+      private_cleanup_completed: cleanup,
+    },
+    errors,
   );
-  return {
-    profile: "runtime-loss",
-    project: config.project,
-    cases,
-    request_traces: requestTraces,
-    completed_runs: 4,
-    denied_prompts: 2,
-    model_requests: calls.length,
-    deleted_before_teardown: true,
-  };
 }
 
 async function lossCase(
@@ -233,7 +284,10 @@ async function lossCase(
     modelState,
     reader,
     runtimeRead,
-    remember,
+    access,
+    clients,
+    errors,
+    work,
   },
   mode,
 ) {
@@ -244,6 +298,14 @@ async function lossCase(
   });
   const agentID = created.agentID;
   const initial = await ready(agentID);
+  const owned = { id: agentID, mode, initial };
+  work.agents.push(owned);
+  assertLossOwner(work.principal, work.creation_principal, owned);
+  const open = async () => {
+    const next = await access.open(agentID, owner, work.principal);
+    clients.push(next);
+    return next;
+  };
   const auditPath = `/api/admin/execution-audits?agent_id=${agentID}`;
   const completedRun = async (agent, prior) => {
     const page = await json(auditPath);
@@ -257,27 +319,20 @@ async function lossCase(
       latest[0].session_id,
     );
   };
-  let client = connectOwner(config.gateway, agentID, owner.cookie, signal);
+  let client;
   try {
-    await client.initialize();
+    client = await open();
     const sessionId = (
       await client.request("new", { cwd: "/workspace", mcpServers: [] })
     ).sessionId;
-    remember(client, "session/new", { sessionId });
-    await prompt(client, sessionId, `c5-${mode}-before`);
+    owned.session_id = sessionId;
+    await prompt(client, sessionId, `c5-${mode}-before`, "bash");
     const beforeRun = await completedRun(initial.agent);
     assert.equal(beforeRun.session_id, sessionId);
-    remember(client, "session/prompt", {
-      sessionId,
-      kind: "ordinary",
-      phase: `c5-${mode}-before`,
-      toolName: "bash",
-      runId: beforeRun.run_id,
-    });
+    owned.before_run = beforeRun;
     const baselineAudits = await json(auditPath);
     const baselineRequests = await modelState();
     const savedHistory = await history(client, sessionId);
-    remember(client, "session/load", { sessionId });
     assertReplayAudits(baselineAudits, await json(auditPath));
     assert(
       savedHistory.some((event) => event.update.sessionUpdate === "tool_call"),
@@ -287,11 +342,9 @@ async function lossCase(
       baselineRequests,
       "load replay invoked model",
     );
-    client.close();
-    client = connectOwner(config.gateway, agentID, owner.cookie, signal);
-    await client.initialize();
+    await closeLossConnections([client], errors);
+    client = await open();
     assert.deepEqual(await history(client, sessionId), savedHistory);
-    remember(client, "session/load", { sessionId });
     assertReplayAudits(baselineAudits, await json(auditPath));
     assert.equal((await reader.runtimeCursor()).initialized, true);
     const stopped =
@@ -300,7 +353,12 @@ async function lossCase(
       await docker(["inspect", initial.container.Id]),
     )[0];
     assertOwnedRuntime(target, initial, config.project);
-    await stopLossRuntime(docker, target, initial, config.project);
+    owned.stopped_runtime = await stopLossRuntime(
+      docker,
+      target,
+      initial,
+      config.project,
+    );
     if (mode === "live")
       await until(
         () => json(`/api/admin/agents/${agentID}`),
@@ -375,8 +433,7 @@ async function lossCase(
     );
     assertLossBinding(initial, await reader.lossBinding(agentID));
     await until(
-      async () =>
-        (await owner.request(`/api/app/agents/${agentID}/state`)).body,
+      () => access.state(agentID, owner, work.principal),
       (state) =>
         state.agent_id === agentID &&
         state.access_allowed &&
@@ -384,21 +441,27 @@ async function lossCase(
         state.unavailable_reason === "agent_unavailable",
       signal,
     );
-    const notifications = client.updates.length;
-    await assert.rejects(
-      client.request("prompt", {
-        sessionId,
-        prompt: [{ type: "text", text: `c5-${mode}-denied` }],
-      }),
-      (error) => {
-        assertLossDenial(error);
-        return true;
-      },
-    );
-    remember(client, "session/prompt", {
-      sessionId,
-      rejection: "agent_unavailable",
+    const connection = client.snapshot();
+    assert.equal(connection.closed, false);
+    work.confirmations.push({
+      mode,
+      agent_id: agentID,
+      connection_trace_id: connection.connectionTraceID,
+      connection_closed: connection.closed,
+      receipt_index: access.stateReceipts().length - 1,
     });
+    const notifications = client.updates.length;
+    await expectLossDenial(() =>
+      client.request(
+        "prompt",
+        {
+          sessionId,
+          prompt: [{ type: "text", text: `c5-${mode}-denied` }],
+        },
+        15000,
+        { rejection: "agent_unavailable" },
+      ),
+    );
     assert.equal(client.updates.length, notifications);
     assertReplayAudits(baselineAudits, await json(auditPath));
     assert.deepEqual(
@@ -406,7 +469,7 @@ async function lossCase(
       baselineRequests,
       "denied prompt invoked model",
     );
-    client.close();
+    await closeLossConnections([client], errors);
 
     console.error(
       `Runtime loss (${mode}): explicit Rebuild and same-session read`,
@@ -425,33 +488,26 @@ async function lossCase(
       },
     );
     const replacement = await ready(agentID);
+    owned.replacement = replacement;
     assertReplacement(initial, replacement);
-    client = connectOwner(config.gateway, agentID, owner.cookie, signal);
-    await client.initialize();
+    client = await open();
     assert.deepEqual(await history(client, sessionId), savedHistory);
-    remember(client, "session/load", { sessionId });
     assertReplayAudits(baselineAudits, await json(auditPath));
     assert.deepEqual(
       await modelState(),
       baselineRequests,
       "recovery history replay invoked model",
     );
-    await prompt(client, sessionId, `c5-${mode}-after`);
+    await prompt(client, sessionId, `c5-${mode}-after`, "read");
     const afterRun = await completedRun(replacement.agent, beforeRun);
     assert.equal(afterRun.session_id, sessionId);
-    remember(client, "session/prompt", {
-      sessionId,
-      kind: "ordinary",
-      phase: `c5-${mode}-after`,
-      toolName: "read",
-      runId: afterRun.run_id,
-    });
+    owned.after_run = afterRun;
     assert.deepEqual(
       await json(`/api/admin/execution-audits/${beforeRun.run_id}`),
       beforeRun,
     );
     const completedAudits = await json(auditPath);
-    client.close();
+    await closeLossConnections([client], errors);
     const beforeRestart = await json(eventsPath);
     await startController(config, docker, await stopController(config, docker));
     const observationPage = await runtimeRead(
@@ -514,6 +570,6 @@ async function lossCase(
       execution_audits_preserved: true,
     };
   } finally {
-    client.close();
+    if (client) await closeLossConnections([client], errors);
   }
 }

@@ -9,10 +9,45 @@ optional RPC content capture, PostgreSQL tracing, span names and known limits.
 
 - One HTTP SERVER span covers response finish, disconnect and upgrade. Extract
   W3C trace context before starting it; never propagate inbound baggage.
+  The same span records the fixed, content-free
+  [upgrade lifecycle events](../../../docs/observability-contract.md#acp-websocket-upgrade-lifecycle)
+  around ws preparing 101 and ACP connection setup. Socket submission is not
+  peer receipt; the SERVER may finish after the peer accepts the handshake.
+  Failed setup never records successful completion. The production-image
+  `runtime-information-docker.mjs` gate also exercises both protocol versions
+  with a real worker peer held across setup, setup failure, rejection and
+  telemetry disabled. Consumers still need their own warning review.
 - A common fetch wrapper creates CLIENT before injection and ends at response
   EOF, cancellation or read failure. Model and Runtime MCP use it; ordinary
   execution does not call Controller.
   Adapter operations are INTERNAL, not duplicate CLIENT spans.
+- `mcp.runtime.info.read` owns one Runtime information connection, resource
+  parsing and its cleanup. The shared
+  [read lifecycle contract](../../../docs/observability-contract.md#acp-runtime-information-read-lifecycle)
+  records `antnest.mcp.discovery.ready` after successful SDK connection and
+  `antnest.mcp.resource.read.started` immediately before the actual read call.
+  These same-span events carry no content and do not assert HTTP EOF or peer
+  receipt. A complete discovery SSE message may make the connection ready
+  before its response stream ends. `antnest.mcp.resource.validated` occurs only after
+  both the SDK read and execution-fenced resource parsing succeed. The
+  `antnest.mcp.connection.close.started` and `.completed` events bracket the
+  actual awaited close. Span attributes retain `antnest.mcp.resource_read.outcome`
+  (`success|failed`), `antnest.mcp.connection.close.outcome`
+  (`not_started|closed|failed`), the admitted Runtime execution ID and whether
+  the original caller signal was cancelled. Read/parse and close errors retain
+  their own diagnostics even when the caller tolerates metadata failure or the
+  adapter preserves a successful result after reporting a close failure.
+  This metadata contains no resource contents, headers or credentials. A
+  successful ACP parent alone does not prove a successful information read;
+  consumers must bind the original read, HTTP children and close receipts.
+  The owning production-image gate is
+  `node tests/e2e/agent-acp-service/runtime-information-docker.mjs` from the
+  repository root. CI passes its candidate via `ANTNEST_ACP_TEST_IMAGE` and
+  retains the original OTLP bytes (base64 and SHA-256), peer request inventory,
+  actual image ID and cleanup result in its durable suite log. The isolated
+  TCP peer holds discovery SSE EOF behind an actual resource-request barrier
+  and tests read/close provenance; Runtime credential admission and the
+  complete Session workflow remain separate gates.
 - The ACP dispatcher records registered v1/v2 requests with their own context,
   complete decoded request/response values (when enabled) and protocol outcome. WebSocket requests
   without request metadata use connection Links, not a handshake parent.
@@ -105,6 +140,14 @@ queue; it does not validate or implement ACP semantics. Real official-SDK tests
 prove that initialize, new Session and prompt belong to their own POST traces.
 Pre-dispatch protocol failures still require their own transport evidence.
 
+The pinned MCP client 2.2.0 does not pass the caller's AbortSignal into its
+discovery probe; an incomplete discovery can remain pending until the SDK's
+60-second probe timeout. The failed-discovery component case aborts the caller
+and then supplies an independent matching protocol error, joining that outcome
+before transport teardown. It verifies truthful lifecycle receipts and retains
+the caller-cancelled fact, not prompt cancellation of discovery. This telemetry
+batch does not change that SDK limitation.
+
 Other explicit limits: content is recorded once at the receiving RPC boundary,
 not at model/Tool/Internal decorators. Non-RPC error metadata retains stable
 summaries and typed causes; RPC failure objects follow the content switch.
@@ -140,10 +183,10 @@ model responses still retain error status and typed error events.
   `agent.run` inherits the submitting ACP request context, including asynchronous
   execution owned by RunSupervisor. Ending a request span does not cancel the Run
   or prevent later child spans. No business-name special case may reset context.
-  WebSocket messages receive W3C context through ACP `params._meta` from Gateway;
-  each Gateway message is a bounded root linked to the long-lived connection.
+  WebSocket messages receive actual W3C context through ACP `params._meta` from
+  the authenticated client.
   Thus a prompt, its model calls and Runtime tools form one trace without waiting
-  for the browser connection to close. Direct clients without message context
+  for the client connection to close. Clients without message context
   still create an ACP message root linked to their connection.
 - `acp.session.prompt` covers admission (`acceptPrompt`), not Run completion.
   The protocol boundary `acp session/prompt` waits for completion and output
@@ -155,8 +198,10 @@ model responses still retain error status and typed error events.
   differences can produce Jaeger clock-skew warnings without a broken parent.
 - These application spans expose `antnest.operation.phase=admit`
   for `acp.session.prompt` and `antnest.operation.phase=read` for
-  `acp.session.output`. Gateway message spans expose `relay` and `forward`;
-  the forwarding span is a PRODUCER because it ends after the WebSocket send.
+  `acp.session.output`. The retired Gateway ACP relay used bounded message roots
+  linked to the connection, with `relay` and `forward` phases and a PRODUCER send
+  span. Those names describe historical evidence; new Bridge traces must follow
+  actual causality and must not fabricate the retired relay spans.
   These low-cardinality labels clarify their existing lifetimes without changing
   request completion, Run ownership, context propagation or clock-skew evidence.
 - HTTP names are `HTTP METHOD /status`, `HTTP METHOD /v1/acp`, `HTTP METHOD /v2/acp`,

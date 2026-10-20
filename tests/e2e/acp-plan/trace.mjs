@@ -1,7 +1,15 @@
+import { inspectRunInformationReads } from "../observability/runtime-information-run.mjs";
+import { privateACPDiagnosticView } from "../observability/private-acp-diagnostics.mjs";
+import { assertSessionSuccess } from "../identity-closeout/session-diagnostics.mjs";
 import assert from "node:assert/strict";
 import { tag } from "../observability/trace-tree.mjs";
 import { caseFor, stepsFor } from "./model.mjs";
-import { requestBoundary, hasError, timingEvidence } from "./requests.mjs";
+import {
+  requestBoundary,
+  requestBoundaryKind,
+  hasError,
+  timingEvidence,
+} from "./requests.mjs";
 
 export function inspectPlanTrace(trace, requests, secrets = [], expected) {
   assert(requests?.length, "missing model request correlation");
@@ -63,19 +71,11 @@ export function inspectPlanTrace(trace, requests, secrets = [], expected) {
     ),
     "missing committed Run persistence path",
   );
-  const prepared = ["mcp.runtime.info", "mcp.tools.list"].map((operation) => {
-    const span = single(acp(operation), operation);
-    assert(inside(span), "preparation detached from Run");
-    assert(
-      trace.spans.some(
-        (child) =>
-          tree.service(child) === "antnest-runtime" &&
-          tree.chain(child).includes(span),
-      ),
-      "Runtime preparation descendant missing",
-    );
-    return span;
+  const information = inspectRunInformationReads(trace, {
+    request: request,
+    run,
   });
+  const prepared = information.prepared;
   assert.equal(
     acp("model.complete").length,
     requests.length,
@@ -160,10 +160,37 @@ export function inspectPlanTrace(trace, requests, secrets = [], expected) {
     assert.equal(tag(client, "span.kind"), "client");
     assert(tree.chain(client).includes(call));
   }
-  assert(
-    !trace.spans.some(hasError),
-    "unexpected execution error, including handled invalid-plan Run",
-  );
+  if (requestBoundaryKind(expected) === "private-acp") {
+    assert.notEqual(
+      expected.closedBeforeResponse,
+      true,
+      "Plan must finish its original prompt",
+    );
+    for (const span of expected.connectionTrace.spans)
+      assertSessionSuccess(span);
+    const runtimeSpans = new Set([
+      ...information.spans,
+      ...information.toolLifecycles.flatMap((proof) => [
+        proof.owner,
+        ...proof.clients,
+        ...proof.servers,
+        ...proof.exchanges.map((exchange) => exchange.operation),
+      ]),
+    ]);
+    for (const span of trace.spans)
+      assertSessionSuccess(
+        privateACPDiagnosticView(
+          trace,
+          span,
+          information.neutralDiagnostics,
+          runtimeSpans,
+        ),
+      );
+  } else
+    assert(
+      !trace.spans.some(hasError),
+      "unexpected execution error, including handled invalid-plan Run",
+    );
   return {
     trace_id: trace.traceID,
     run_id: runId,
@@ -172,8 +199,14 @@ export function inspectPlanTrace(trace, requests, secrets = [], expected) {
     model_requests: requests.length,
     runtime_tool_calls: item.remote,
     information_reads: 1,
+    runtime_information_reads: information.informationReads,
+    post_prompt_information_reads: information.postPromptInformationReads,
+    neutral_diagnostics: information.neutralDiagnostics,
+    time_observations: information.timeObservations,
     catalog_reads: 1,
-    gateway_ancestry: true,
+    ...(requestBoundaryKind(expected) === "gateway"
+      ? { gateway_ancestry: true }
+      : {}),
     persistence: true,
     ...timingEvidence(trace, tree, request, forwarded),
   };

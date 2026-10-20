@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { connectACP } from "../identity-closeout/acp-connection.mjs";
+import { openSkillACP, withSkillACPClient } from "./private-client.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../workspace-closeout/c4-setup.mjs";
 import { serviceCalls } from "./service-calls.mjs";
@@ -20,11 +20,12 @@ const account = {
 const login = (await member.request("/api/session/login", { body: account }))
   .body;
 const services = policyOff ? serviceCalls() : undefined;
-const client = connectACP(1, agentId, member.cookie);
+const client = await openSkillACP(1, agentId, member, {
+  principal: login.principal,
+});
 const status = () =>
   fetch("http://stage3-model:8080/status").then((response) => response.json());
-try {
-  await client.initialize();
+await withSkillACPClient(client, async () => {
   const { sessionId } = await client.request("new", {
     cwd: "/workspace",
     mcpServers: [],
@@ -138,6 +139,4 @@ try {
       }),
     );
   }
-} finally {
-  client.close();
-}
+});

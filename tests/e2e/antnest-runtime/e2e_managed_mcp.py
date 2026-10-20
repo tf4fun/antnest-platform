@@ -5,16 +5,22 @@ containers, anonymous volumes, network and temporary bind mounts and removes the
 The UDP dependency is a readiness fixture, not an Egress integration test.
 """
 import http.client
+import hashlib
+import datetime
 import itertools
 import json
+import math
 import os
+import re
 import socket
 from pathlib import Path
 import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -45,7 +51,9 @@ def rpc_message(data):
 class ManagedMcpE2E(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.prefix = "antnest-mcp-e2e-" + uuid.uuid4().hex[:10]
+        cls.prefix = os.environ.get("ANTNEST_RUNTIME_E2E_PREFIX", "antnest-mcp-e2e-" + uuid.uuid4().hex[:10])
+        if re.fullmatch(r"antnest-mcp-e2e-[0-9a-f]{10}", cls.prefix) is None:
+            raise ValueError("invalid isolated Runtime test prefix")
         cls.root = tempfile.TemporaryDirectory(prefix=cls.prefix + "-")
         cls.addClassCleanup(cls.root.cleanup)
         cls.directory = Path(cls.root.name)
@@ -149,6 +157,7 @@ class ManagedMcpE2E(unittest.TestCase):
         params = dict(params or {})
         params.setdefault("_meta", {}).update({"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}})
         body = {"jsonrpc": "2.0", "id": next(self.requests), "method": method, "params": params}
+        self.last_request_id = body["id"]
         headers = {"content-type": "application/json", "accept": "application/json, text/event-stream",
                    "Antnest-Service-Authorization": self.mcp_authority,
                    "mcp-protocol-version": "2026-07-28", "mcp-method": method,
@@ -236,6 +245,329 @@ class ManagedMcpE2E(unittest.TestCase):
                           "successful_disconnects": sum(any(tag["key"] == "http.transport.outcome" and tag["value"] == "canceled"
                                                              for tag in span["tags"]) for span in collected["success"]),
                           "failed_operation_and_http_spans": len(failed)}))
+
+    def test_managed_stdio_completion_diagnostics_remain_inside_actual_span(self):
+        repository = Path(__file__).resolve().parents[3]
+        evidence = Path(os.environ.get("ANTNEST_RUNTIME_OBSERVABILITY_EVIDENCE",
+                                       repository / "artifacts/verification/runtime-managed-completion")).resolve() / self.name
+        self.assertTrue(evidence.is_relative_to((repository / "artifacts/verification").resolve()),
+                        "Runtime evidence must stay inside repository artifacts/verification")
+        evidence.mkdir(mode=0o700, parents=True)
+        for directory in [evidence, *evidence.parents]:
+            directory.chmod(0o700)
+            if directory.name == "artifacts":
+                break
+        saved = []
+        receipts = []
+        connections, responses = [], []
+        archived_phases = set()
+        collector = self.name + "-jaeger"
+        port = None
+
+        def save(name, raw):
+            raw = raw.encode() if isinstance(raw, str) else raw
+            with os.fdopen(os.open(evidence / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as output:
+                output.write(raw)
+            saved.append({"name": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+
+        def snapshot():
+            # Called before unittest removes the Runtime; failed/partial runs
+            # retain diagnostics too. Never archive credentials from Config.Env.
+            errors = []
+            for name, args in [
+                    ("runtime.log", ["logs", self.name]),
+                    ("runtime-state.json", ["inspect", "--format", "{{json .State}}", self.name]),
+                    ("runtime-image.json", ["inspect", "--format", "{{json .Image}}", self.name]),
+                    ("runtime-container.json", ["inspect", "--format", "{{json .Id}}", self.name]),
+                    ("collector.log", ["logs", collector]),
+                    ("collector-state.json", ["inspect", "--format", "{{json .State}}", collector]),
+                    ("collector-image.json", ["inspect", "--format", "{{json .Image}}", collector])]:
+                try:
+                    result = subprocess.run(["docker", *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                            timeout=30, check=False)
+                    save(name, result.stdout)
+                    if result.returncode:
+                        errors.append({"source": name, "exit_code": result.returncode})
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    errors.append({"source": name, "error": type(error).__name__})
+            save("requests-final.json", json.dumps({"agent_id": self.name, "execution_id": getattr(self, "execution_id", None),
+                                                     "requests": receipts}, sort_keys=True, indent=2))
+            save("snapshot-errors.json", json.dumps(errors, sort_keys=True, indent=2))
+            save("files.json", json.dumps(saved, sort_keys=True, indent=2))
+            self.assertEqual(errors, [], "Runtime evidence snapshot failed")
+
+        def collect_query(receipt, suffix):
+            def fetch_json(path, name):
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}" + path, timeout=2) as result:
+                        raw = result.read()
+                except urllib.error.HTTPError as error:
+                    with error:
+                        save(name + "-http-error.body", error.read())
+                    save(name + "-http-error.json", json.dumps({"status": error.code}))
+                    raise
+                save(name + ".json", raw)
+                return json.loads(raw)
+
+            # Jaeger 2.21 removed /api/traces search. As in the shared
+            # jaeger-search.mjs contract, use v3 search and original v1 details.
+            now = datetime.datetime.now(datetime.timezone.utc)
+            query = urllib.parse.urlencode({
+                "query.serviceName": "antnest-runtime", "query.searchDepth": "100",
+                "query.startTimeMin": (now - datetime.timedelta(hours=1)).isoformat(),
+                "query.startTimeMax": now.isoformat(),
+                "query.attributes": json.dumps({"antnest.agent.id": self.name,
+                                                "antnest.request.id": str(receipt["request_id"])})})
+            name = f"{receipt['phase']}-{suffix}"
+            found = fetch_json("/api/v3/trace-summaries?" + query, name + "-search")
+            self.assertIsInstance(found, dict)
+            self.assertTrue(set(found) <= {"summaries", "nextPageToken"})
+            self.assertFalse(found.get("nextPageToken"), "unread trace search page")
+            summaries = found.get("summaries", [])
+            self.assertIsInstance(summaries, list)
+            ids = [summary["traceId"] for summary in summaries]
+            self.assertEqual(len(ids), len(set(ids)), "duplicate actual trace search ID")
+            traces = []
+            for trace_id in ids:
+                self.assertRegex(trace_id, r"^[0-9a-f]{32}$")
+                detail = fetch_json("/api/traces/" + trace_id, name + "-" + trace_id)
+                self.assertFalse(detail.get("errors"), "trace detail query failed")
+                self.assertEqual(len(detail["data"]), 1)
+                self.assertEqual(detail["data"][0]["traceID"], trace_id)
+                traces.extend(detail["data"])
+            return traces
+
+        def preserve_failed_run():
+            errors = []
+            for index, resource in enumerate([*responses, *connections]):
+                try:
+                    resource.close()
+                except Exception as error:
+                    errors.append({"stage": "close", "index": index, "error": type(error).__name__})
+            try:
+                state = docker("inspect", "--format", "{{json .State}}", self.name, check=False)
+                if state and json.loads(state)["Running"]:
+                    docker("stop", "--time", "15", self.name)
+            except Exception as error:
+                errors.append({"stage": "stop", "error": type(error).__name__})
+            for receipt in receipts:
+                if receipt["phase"] in archived_phases:
+                    continue
+                complete = False
+                deadline = time.monotonic() + 10
+                attempt = 0
+                while port is not None and time.monotonic() < deadline:
+                    attempt += 1
+                    try:
+                        traces = collect_query(receipt, f"failure-query-{attempt}")
+                        if traces and any(span["operationName"] == "runtime.mcp.stdio"
+                                          for trace in traces for span in trace["spans"]):
+                            complete = True
+                            break
+                    except Exception as error:
+                        save(f"{receipt['phase']}-failure-query-{attempt}-error.json",
+                             json.dumps({"error": type(error).__name__}))
+                    time.sleep(0.1)
+                if not complete:
+                    errors.append({"stage": "trace", "phase": receipt["phase"], "error": "incomplete"})
+            save("failure-evidence-errors.json", json.dumps(errors, sort_keys=True, indent=2))
+            self.assertEqual(errors, [], "failed-run evidence preservation incomplete")
+
+        # unittest cleanups run in reverse: join/flush and raw first, then
+        # snapshots, then Collector removal, then the base Runtime removal.
+        self.addCleanup(lambda: docker("rm", "-f", "--volumes", collector))
+        self.addCleanup(snapshot)
+        self.addCleanup(preserve_failed_run)
+        docker("run", "-d", "--name", collector, "--network", self.network,
+               "-p", "127.0.0.1::16686", "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0")
+        inspection = json.loads(docker("inspect", collector))[0]
+        address = inspection["NetworkSettings"]["Networks"][self.network]["IPAddress"]
+        port = inspection["NetworkSettings"]["Ports"]["16686/tcp"][0]["HostPort"]
+        self.start(telemetry={"OTEL_TRACES_EXPORTER": "otlp", "OTEL_METRICS_EXPORTER": "none",
+                              "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://{address}:4318"})
+        self.ready()
+        for phase, tool, arguments in [
+                ("success", "mcp__a__echo", {"value": "managed-completion-canary"}),
+                ("failure", "mcp__a__fail", {})]:
+            connection = self.request("tools/call", {"name": tool, "arguments": arguments})
+            connections.append(connection)
+            receipts.append({"phase": phase, "tool": tool, "request_id": self.last_request_id})
+            try:
+                response = connection.getresponse()
+                responses.append(response)
+                self.assertEqual(response.status, 200)
+                raw = response.read()
+                save(phase + "-response.body", raw)
+                envelope = rpc_message(raw.decode())
+                self.assertEqual(envelope["id"], self.last_request_id)
+                self.assertNotIn("error", envelope)
+                result = envelope["result"]
+            finally:
+                connection.close()
+            self.assertEqual(result.get("isError", False), phase == "failure")
+        connection = self.request("tools/call", {"name": "mcp__a__progress",
+                                  "arguments": {"gate": "completion-cancel"},
+                                  "_meta": {"progressToken": "completion-cancel"}})
+        connections.append(connection)
+        receipts.append({"phase": "cancel", "tool": "mcp__a__progress", "request_id": self.last_request_id})
+        save("requests.json", json.dumps({"agent_id": self.name, "execution_id": self.execution_id,
+                                          "requests": receipts}, sort_keys=True, indent=2))
+        response = None
+        try:
+            response = connection.getresponse()
+            responses.append(response)
+            self.assertEqual(response.status, 200)
+            preview = bytearray()
+            while True:
+                line = response.readline()
+                preview.extend(line)
+                self.assertTrue(line, "managed call ended before live progress")
+                if line.startswith(b"data:"):
+                    frame = json.loads(line[5:])
+                    self.assertNotIn("result", frame)
+                    if frame.get("method") == "notifications/progress":
+                        self.assertEqual(frame["params"]["progressToken"], "completion-cancel")
+                        save("cancel-first-progress.body", preview)
+                        break
+        finally:
+            if response is not None:
+                response.close()
+            connection.close()
+        eventually(lambda: (self.workspace / "completion-cancel-canceled").exists())
+        eventually(lambda: (self.workspace / "cancel-received").exists())
+        markers = {}
+        for name in ["completion-cancel-started", "cancel-received"]:
+            raw = docker("exec", "--user", "0", self.name, "cat", "/workspace/" + name)
+            save(name + ".json", raw)
+            markers[name] = json.loads(raw)
+        self.assertEqual(markers["completion-cancel-started"], markers["cancel-received"])
+        docker("stop", "--time", "15", self.name)
+        self.assertEqual(json.loads(docker("inspect", self.name))[0]["State"]["ExitCode"], 0)
+
+        def fields(items):
+            result = {item["key"]: item["value"] for item in items}
+            self.assertEqual(len(result), len(items), "duplicate original attribute")
+            return result
+
+        summary = []
+        for receipt in receipts:
+            collected = []
+            attempt = 0
+
+            def exported():
+                nonlocal attempt
+                attempt += 1
+                try:
+                    traces = collect_query(receipt, f"query-{attempt}")
+                    if not traces:
+                        return False
+                    self.assertEqual(len(traces), 1, "ambiguous actual request trace")
+                    if len(traces[0]["spans"]) < 4:
+                        return False
+                    collected[:] = traces
+                    archived_phases.add(receipt["phase"])
+                    return True
+                except (OSError, urllib.error.URLError):
+                    return False
+
+            eventually(exported)
+            trace = collected[0]
+            self.assertEqual(len(trace["spans"]), 4)
+            self.assertEqual(len({span["spanID"] for span in trace["spans"]}), 4)
+            self.assertEqual({span["traceID"] for span in trace["spans"]}, {trace["traceID"]})
+            for span in trace["spans"]:
+                self.assertTrue(all(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+                                    for value in [span["startTime"], span["duration"], span["startTime"] + span["duration"]]))
+                self.assertGreaterEqual(span["startTime"], 0)
+                self.assertGreaterEqual(span["duration"], 0)
+            by_name = {span["operationName"]: span for span in trace["spans"]}
+            self.assertEqual(set(by_name), {"HTTP POST /mcp", "runtime.mcp.operation", "runtime.mcp.tool", "runtime.mcp.stdio"})
+            server, operation, tool, stdio = (by_name[name] for name in [
+                "HTTP POST /mcp", "runtime.mcp.operation", "runtime.mcp.tool", "runtime.mcp.stdio"])
+            self.assertFalse([ref for ref in server["references"] if ref["refType"] == "CHILD_OF"])
+            for child, parent in [(operation, server), (tool, operation), (stdio, tool)]:
+                self.assertEqual(child["processID"], parent["processID"])
+                refs = [ref for ref in child["references"] if ref["refType"] == "CHILD_OF"]
+                self.assertEqual([(ref["traceID"], ref["spanID"]) for ref in refs], [(trace["traceID"], parent["spanID"])])
+            self.assertEqual(trace["processes"][stdio["processID"]]["serviceName"], "antnest-runtime")
+            resource = fields(trace["processes"][stdio["processID"]]["tags"])
+            self.assertEqual(resource["antnest.agent.id"], self.name)
+            self.assertEqual(str(resource["antnest.runtime.generation"]), "1")
+            attrs = fields(operation["tags"])
+            self.assertEqual(attrs["antnest.agent.id"], self.name)
+            self.assertEqual(attrs["antnest.runtime.execution.id"], self.execution_id)
+            self.assertEqual(attrs["antnest.request.id"], str(receipt["request_id"]))
+            self.assertEqual(attrs["mcp.tool.name"], receipt["tool"])
+            attrs = fields(stdio["tags"])
+            failed = receipt["phase"] != "success"
+            self.assertEqual(attrs["span.kind"], "client")
+            self.assertEqual(attrs["mcp.tool.name"], receipt["tool"])
+            self.assertEqual(attrs["antnest.protocol.outcome"], "error" if failed else "success")
+            self.assertEqual(attrs["otel.status_code"], "ERROR" if failed else "OK")
+            self.assertEqual(attrs.get("error", False), failed)
+            self.assertEqual(len(stdio["logs"]), int(failed))
+            if failed:
+                code = "outcome_unknown" if receipt["phase"] == "cancel" else "managed_tool_error"
+                self.assertEqual(attrs["error.type"], code)
+                event = stdio["logs"][0]
+                diagnostic = fields(event["fields"])
+                expected = {"event": "antnest.error", "antnest.error.stage": "mcp.stdio",
+                            "antnest.error.type": code, "antnest.error.code": code,
+                            "antnest.error.message": "Execution ended without a confirmed effect outcome"
+                            if receipt["phase"] == "cancel" else "Managed tool returned isError"}
+                if receipt["phase"] == "cancel":
+                    causes = diagnostic["antnest.error.cause_types"]
+                    diagnostic["antnest.error.cause_types"] = json.loads(causes) if isinstance(causes, str) else causes
+                    expected["antnest.error.cause_types"] = ["canceled"]
+                self.assertEqual(diagnostic, expected)
+                self.assertTrue(isinstance(event["timestamp"], (int, float)) and math.isfinite(event["timestamp"]))
+                self.assertLessEqual(stdio["startTime"], event["timestamp"])
+                # Jaeger separately truncates start and duration to microseconds.
+                # Raw SDK nanosecond containment is checked by managed_bridge.rs.
+                self.assertLessEqual(event["timestamp"], stdio["startTime"] + stdio["duration"] + 1)
+            else:
+                self.assertEqual(attrs.get("error.type", ""), "")
+            self.assertNotIn("managed-completion-canary", json.dumps(trace))
+            self.assertNotIn("progress-payload-canary", json.dumps(trace))
+            summary.append({**receipt, "trace_id": trace["traceID"], "stdio_span_id": stdio["spanID"],
+                            "spans": len(trace["spans"]), "raw_warnings_retained": True})
+        save("result.json", json.dumps({"status": "passed", "requests": summary}, sort_keys=True, indent=2))
+        print(json.dumps({"managed_stdio_completion": "passed", "evidence": str(evidence), "requests": summary}))
+
+    def test_managed_stdio_failure_preserves_traces_before_removing_collector(self):
+        original = self.request
+        calls = 0
+
+        def interrupted_request(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise RuntimeError("controlled managed evidence interruption")
+            return original(*args, **kwargs)
+
+        with mock.patch.object(self, "request", interrupted_request):
+            with self.assertRaisesRegex(RuntimeError, "^controlled managed evidence interruption$"):
+                self.test_managed_stdio_completion_diagnostics_remain_inside_actual_span()
+        self.assertTrue(self.doCleanups(), "failure finalizer must finish all resource cleanup")
+        repository = Path(__file__).resolve().parents[3]
+        evidence = Path(os.environ.get("ANTNEST_RUNTIME_OBSERVABILITY_EVIDENCE",
+                                       repository / "artifacts/verification/runtime-managed-completion")) / self.name
+        self.assertEqual(json.loads((evidence / "failure-evidence-errors.json").read_text()), [])
+        self.assertEqual(json.loads((evidence / "snapshot-errors.json").read_text()), [])
+        receipts = json.loads((evidence / "requests-final.json").read_text())["requests"]
+        self.assertEqual([receipt["phase"] for receipt in receipts], ["success", "failure"])
+        for receipt in receipts:
+            raws = list(evidence.glob(receipt["phase"] + "-failure-query-*.json"))
+            self.assertTrue(raws, "failed run must retain original query bytes")
+            self.assertTrue(any(any(span["operationName"] == "runtime.mcp.stdio"
+                                    for trace in json.loads(path.read_text()).get("data", []) for span in trace["spans"])
+                                for path in raws))
+        for item in json.loads((evidence / "files.json").read_text()):
+            path = evidence / item["name"]
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), item["sha256"])
+            self.assertEqual(path.stat().st_size, item["bytes"])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(evidence.stat().st_mode & 0o777, 0o700)
 
     def test_background_process_and_managed_service_survive_other_calls(self):
         self.start()

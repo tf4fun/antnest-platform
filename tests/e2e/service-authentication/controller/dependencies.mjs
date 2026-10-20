@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { executionPeers } from "./execution-fixture.mjs";
 const fixture = JSON.parse(readFileSync("/run/auth/fixture.json", "utf8"));
 const key = createPublicKey({ key: fixture.jwks.keys[0], format: "jwk" });
-const stats = { calls: {}, failures: 0, registryContexts: [] };
+const stats = { calls: {}, failures: 0, registryContexts: [], keyRequests: 0 };
 const servers = [];
 const json = (w, value, status = 200) => {
   w.writeHead(status, { "content-type": "application/json" });
@@ -17,12 +17,20 @@ for (const [service, port] of Object.entries(fixture.ports)) {
     try {
       const path = new URL(r.url, "http://fixture").pathname;
       if (path === "/status" || path === "/test/state") return json(w, stats);
+      if (path === "/test/runtime-phase") {
+        peers.setRuntimePhase(
+          new URL(r.url, "http://fixture").searchParams.get("phase"),
+        );
+        return json(w, stats);
+      }
       if (path === "/test/connection-mode") {
         peers.setConnectionMode(
           new URL(r.url, "http://fixture").searchParams.get("mode"),
         );
         return json(w, stats);
       }
+      if (service === "identity-service" && path === "/rpc/identity/jwks")
+        stats.keyRequests++;
       const credential = r.headers["antnest-service-authorization"];
       if (
         !credential?.startsWith("Bearer ") ||

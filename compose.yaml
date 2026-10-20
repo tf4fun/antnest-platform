@@ -937,17 +937,11 @@ services:
         condition: service_healthy
       agent-ui:
         condition: service_healthy
-      agent-acp-service:
-        condition: service_healthy
-      agent-controller:
-        condition: service_healthy
     environment:
       ANTNEST_EDGE_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.130:8080
       ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
       ANTNEST_ADMIN_CONSOLE_URL: http://admin-console:8080
       ANTNEST_AGENT_UI_URL: http://agent-ui:8080
-      ANTNEST_AGENT_ACP_URL: http://agent-acp-workspace:8080
-      ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
       ANTNEST_EDGE_PUBLIC_ORIGIN: ${ANTNEST_EDGE_PUBLIC_BASE_URL:-http://127.0.0.1:8090}
       ANTNEST_EDGE_COOKIE_SECURE: ${ANTNEST_EDGE_COOKIE_SECURE:-true}
       ANTNEST_EDGE_CSRF_KEY_FILE: /etc/antnest/service-auth/csrf.key
@@ -982,8 +976,6 @@ services:
     networks:
       edge:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.2
-      controller-clients:
-        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.19
       identity-clients:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.67
       observability:
@@ -1024,8 +1016,6 @@ services:
       identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
       admin-console: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.3
       agent-ui: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.4
-      agent-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
-      agent-acp-workspace: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.5
       jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 
   jaeger:

@@ -1,3 +1,4 @@
+import { inspectRunInformationReads } from "../observability/runtime-information-run.mjs";
 import assert from "node:assert/strict";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,14 +11,231 @@ import {
 } from "../observability/trace-tree.mjs";
 import {
   requestBoundary,
+  requestBoundaryKind,
+  selectRequestTrace,
   timingEvidence,
   hasError,
   closedV1PromptResponse,
   inspectCatalogRuntime,
 } from "../acp-plan/requests.mjs";
 import { clockWarningsOnly } from "../stage3-base/trace.mjs";
+import { assertSessionSuccess } from "../identity-closeout/session-diagnostics.mjs";
+import {
+  privateACPProcessIdentity as httpProcess,
+  privateACPDiagnosticView as commandDiagnosticView,
+  privateACPRejection as commandRejection,
+} from "../observability/private-acp-diagnostics.mjs";
+
+export function inspectCommandHTTPClosure(snapshot) {
+  assert(
+    snapshot?.initialized === true &&
+      snapshot.closing === true &&
+      snapshot.streamJoined === true,
+    "private HTTP connection has not joined",
+  );
+  assert.equal(
+    snapshot.pendingRequests,
+    0,
+    "private HTTP requests remain live",
+  );
+  assert.deepEqual(snapshot.failures, [], "private HTTP cleanup failed");
+  const receipts = snapshot.requests;
+  assert(
+    Array.isArray(receipts) && receipts.length > 0,
+    "HTTP inventory required",
+  );
+  assert.equal(
+    new Set(receipts.map((item) => item.index)).size,
+    receipts.length,
+    "duplicate HTTP request index",
+  );
+  const initializations = receipts.filter(
+    (item) => item.method === "POST" && item.rpcMethod === "initialize",
+  );
+  assert.equal(initializations.length, 1, "one actual initialize required");
+  const initialize = initializations[0];
+  const connectionID = initialize.responseConnectionID;
+  assert(typeof connectionID === "string" && connectionID.length > 0);
+  assert.equal(initialize.connectionID, null);
+  assert.equal(initialize.bodyOutcome, "eof");
+  const deletions = receipts.filter((item) => item.method === "DELETE");
+  assert.equal(deletions.length, 1, "one actual DELETE required");
+  assert.equal(deletions[0].bodyOutcome, "eof", "DELETE body incomplete");
+  const wire = receipts.filter((item) => item.wireStarted);
+  assert.equal(
+    new Set(wire.map((item) => item.traceID)).size,
+    wire.length,
+    "HTTP CLIENT Trace reused",
+  );
+  for (const item of receipts) {
+    assert(Number.isSafeInteger(item.index) && item.index >= 0);
+    assert(["POST", "GET", "DELETE"].includes(item.method));
+    assert.equal(item.failed, false);
+    assert(
+      ["eof", "cancelled"].includes(item.bodyOutcome),
+      "HTTP body is not complete",
+    );
+    assert(
+      item.ended &&
+        Number.isFinite(item.ended.monotonicMs) &&
+        Number.isFinite(item.started?.monotonicMs) &&
+        item.ended.monotonicMs >= item.started.monotonicMs,
+    );
+    assert(Number.isSafeInteger(item.bytes) && item.bytes >= 0);
+    if (item !== initialize) assert.equal(item.connectionID, connectionID);
+    if (item.wireStarted === false) {
+      assert.equal(
+        item.method,
+        "GET",
+        "only a pending Session GET may be cancelled before dispatch",
+      );
+      assert.equal(item.bodyOutcome, "cancelled");
+      assert.equal(item.status, null);
+      assert.equal(item.traceID, undefined);
+      assert.equal(item.clientSpanID, undefined);
+      continue;
+    }
+    assert.equal(item.wireStarted, true);
+    assert.match(item.traceID ?? "", /^[a-f0-9]{32}$/u);
+    assert.match(item.clientSpanID ?? "", /^[a-f0-9]{16}$/u);
+    assert.equal(
+      item.status,
+      item === initialize || item.method === "GET" ? 200 : 202,
+    );
+  }
+  return { connectionID, initialize, wire, receipts };
+}
+
+export function inspectPrivateCommandHTTPBoundary(
+  trace,
+  expected,
+  secrets = [],
+) {
+  assert.equal(requestBoundaryKind(expected), "private-acp");
+  assert.equal(expected.transport, "http");
+  assert.equal(expected.protocolVersion, 1);
+  assert.notEqual(
+    expected.closedBeforeResponse,
+    true,
+    "HTTP cannot borrow a closed WebSocket response proof",
+  );
+  for (const key of [
+    "connectionTraceID",
+    "connectionSpanID",
+    "connectionTrace",
+  ])
+    assert.equal(
+      expected[key],
+      undefined,
+      "HTTP cannot borrow a WS connection proof",
+    );
+  const { receipts } = inspectCommandHTTPClosure(expected.httpConnection);
+  const matches = receipts.filter(
+    (item) => item.index === expected.httpRequestIndex,
+  );
+  assert.equal(matches.length, 1, "actual HTTP receipt missing");
+  const receipt = matches[0];
+  assert.equal(receipt.method, "POST");
+  assert.equal(receipt.wireStarted, true);
+  assert.equal(receipt.traceID, expected.traceID);
+  assert.equal(receipt.clientSpanID, expected.clientSpanID);
+  assert.equal(receipt.connectionID, expected.connectionID);
+  assert.equal(receipt.rpcMethod, expected.method);
+  assert.notEqual(receipt.requestID, null);
+  assert.equal(String(receipt.requestID), expected.requestId);
+  assert.equal(
+    receipt.rpcSessionID,
+    expected.inputSessionID,
+    "wrong HTTP input Session",
+  );
+  if (["initialize", "session/new", "session/list"].includes(expected.method))
+    assert.equal(expected.inputSessionID, null);
+  else {
+    assert(
+      typeof expected.inputSessionID === "string" &&
+        expected.inputSessionID.length > 0,
+    );
+    if (expected.method === "session/fork" && !expected.rejection)
+      assert.notEqual(expected.sessionId, expected.inputSessionID);
+    else assert.equal(expected.sessionId, expected.inputSessionID);
+  }
+  if (expected.method === "session/list")
+    assert.equal(expected.sessionId, undefined);
+  const mayOmitSession =
+    ["initialize", "session/list"].includes(expected.method) ||
+    (expected.method === "session/new" &&
+      expected.rejection === "access_denied");
+  if (!mayOmitSession || expected.sessionId !== undefined)
+    assert(
+      typeof expected.sessionId === "string" && expected.sessionId.length > 0,
+      "actual result Session required",
+    );
+  assert(typeof expected.agentId === "string" && expected.agentId.length > 0);
+  assert.equal(trace?.traceID, receipt.traceID);
+  const tree = traceTopology(trace);
+  assertCaptureDisabled(trace);
+  assertSecretFree(JSON.stringify(trace), secrets);
+  const roots = trace.spans.filter((span) => !tree.parent(span));
+  assert.equal(roots.length, 1, "one exported HTTP CLIENT root required");
+  const client = roots[0];
+  assert.equal(client.spanID, receipt.clientSpanID);
+  assert.equal(client.references.length, 0);
+  assert.equal(tree.service(client), "antnest-private-acp-client");
+  assert.equal(client.operationName, "HTTP POST agent-acp-workspace");
+  assert.equal(tag(client, "span.kind"), "client");
+  assert.equal(tag(client, "http.request.method"), "POST");
+  assert.equal(tag(client, "http.response.status_code"), receipt.status);
+  assert.equal(tag(client, "antnest.outcome"), receipt.bodyOutcome);
+  assert.equal(tag(client, "antnest.http.body.outcome"), receipt.bodyOutcome);
+  assert.equal(tag(client, "http.response.body.size"), receipt.bytes);
+  const receivers = trace.spans.filter(
+    (span) =>
+      tree.service(span) === "agent-acp-service" &&
+      tag(span, "span.kind") === "server" &&
+      tag(span, "http.request.method") === "POST" &&
+      tag(span, "http.route") === "/v1/acp",
+  );
+  assert.equal(
+    receivers.length,
+    1,
+    "one actual workspace HTTP receiver required",
+  );
+  const http = receivers[0];
+  assert.equal(http.operationName, "HTTP POST /v1/acp");
+  assert.equal(tree.parent(http), client);
+  assert.equal(tag(http, "antnest.listener"), "workspace");
+  assert.equal(tag(http, "http.response.status_code"), receipt.status);
+  const requests = trace.spans.filter(
+    (span) =>
+      tree.service(span) === "agent-acp-service" &&
+      tag(span, "span.kind") === "server" &&
+      tag(span, "rpc.service") === "acp",
+  );
+  assert.equal(requests.length, 1, "one actual ACP RPC required");
+  const request = requests[0];
+  assert.equal(tag(request, "rpc.system.name"), "jsonrpc");
+  assert.equal(tag(request, "rpc.method"), expected.method);
+  assert.equal(tag(request, "antnest.protocol.version"), "v1");
+  assert.equal(tag(request, "antnest.request.id"), expected.requestId);
+  assert.equal(tag(request, "antnest.agent.id"), expected.agentId);
+  assert.equal(tag(request, "antnest.session.id"), expected.sessionId);
+  assert(!request.references.some((ref) => ref.refType === "FOLLOWS_FROM"));
+  if (request !== http) {
+    assert.equal(request.operationName, `acp ${expected.method}`);
+    assert.equal(tree.parent(request), http);
+  }
+  assert.deepEqual(
+    httpProcess(trace, request),
+    httpProcess(trace, http),
+    "RPC belongs to another ACP process",
+  );
+  return { tree, root: client, request, forwarded: client, http };
+}
 
 function boundary(trace, expected, secrets) {
+  const kind = requestBoundaryKind(expected);
+  if (kind === "private-acp" && expected.transport === "http")
+    return inspectPrivateCommandHTTPBoundary(trace, expected, secrets);
   assert(
     expected.requestId && expected.agentId,
     "actual request identity missing",
@@ -73,7 +291,16 @@ function boundary(trace, expected, secrets) {
   );
   return result;
 }
-function rejected(trace, tree, request, expected) {
+function rejected(
+  trace,
+  tree,
+  request,
+  expected,
+  neutralDiagnostics,
+  runtimeSpans,
+  timeObservations,
+  strictPrivate,
+) {
   const rejection = expected.rejection;
   assert(
     rejection === undefined ||
@@ -89,7 +316,37 @@ function rejected(trace, tree, request, expected) {
     assert.equal(tag(request, "antnest.outcome"), "rejected");
     assert.equal(tag(request, "antnest.error.code"), "-32020");
   }
-  for (const span of trace.spans.filter(hasError)) {
+  const strictPrivateBoundary =
+    requestBoundaryKind(expected) === "private-acp" &&
+    (expected.transport === "http" || strictPrivate);
+  if (strictPrivateBoundary) {
+    const proof = rejection
+      ? commandRejection(trace, tree, request, expected, timeObservations)
+      : { views: new Map(), records: [] };
+    for (const span of trace.spans) {
+      const view = commandDiagnosticView(
+        trace,
+        span,
+        neutralDiagnostics,
+        runtimeSpans,
+      );
+      assertSessionSuccess(
+        proof.views.get(span) ?? view,
+        expected.transport === "http" && span.spanID === expected.clientSpanID
+          ? {
+              "antnest.outcome": tag(span, "antnest.outcome"),
+              "antnest.http.body.outcome": tag(
+                span,
+                "antnest.http.body.outcome",
+              ),
+            }
+          : {},
+      );
+    }
+    return proof.records;
+  }
+  for (const span of trace.spans) {
+    if (!hasError(span)) continue;
     if (
       expected.closedBeforeResponse === true &&
       !rejection &&
@@ -122,9 +379,10 @@ export function inspectCommandTrace(
   expected,
   secrets = [],
   requests = [],
+  { strictPrivate = false } = {},
 ) {
   assert(["command", "request", "ordinary"].includes(expected.kind));
-  const { tree, request, forwarded } = boundary(trace, expected, secrets);
+  const { tree, request, forwarded, http } = boundary(trace, expected, secrets);
   const acp = (name) =>
     trace.spans.filter(
       (span) =>
@@ -176,19 +434,23 @@ export function inspectCommandTrace(
     );
   }
   let runtimeInformationReads = 0;
+  let postPromptInformationReads = 0;
+  let neutralDiagnostics = [];
+  let runtimeSpans = new Set();
+  let timeObservations = [];
   if (expected.kind !== "ordinary") {
     assert.equal(requests.length, 0);
-    runtimeInformationReads = inspectCatalogRuntime(
-      trace,
-      tree,
-      request,
-      expected,
-    );
+    const catalog = inspectCatalogRuntime(trace, tree, request, expected);
+    runtimeInformationReads = catalog.informationReads;
+    neutralDiagnostics = catalog.neutralDiagnostics;
+    runtimeSpans = catalog.spans;
+    timeObservations = catalog.timeObservations;
     for (const span of trace.spans) {
       assert(
-        !/^(model\.|mcp\.|HTTP POST model$|agent_controller\.resolve_credential$)/.test(
-          span.operationName,
-        ),
+        catalog.spans.has(span) ||
+          !/^(model\.|mcp\.|HTTP POST model$|agent_controller\.resolve_credential$)/.test(
+            span.operationName,
+          ),
         "command executed model, MCP or credential resolution",
       );
     }
@@ -208,19 +470,27 @@ export function inspectCommandTrace(
     assert.equal(new Set(requests.map((item) => item.model_span_id)).size, 2);
     assert.equal(acp("HTTP POST model").length, 2);
     assert.equal(acp("model.complete").length, 2);
-    const prepared = ["mcp.runtime.info", "mcp.tools.list"].map((name) => {
-      const span = single(acp(name), name);
-      assert(tree.chain(span).includes(run));
-      assert(
-        trace.spans.some(
-          (child) =>
-            tree.service(child) === "antnest-runtime" &&
-            tree.chain(child).includes(span),
-        ),
-        "Runtime preparation descendant missing",
-      );
-      return span;
+    const information = inspectRunInformationReads(trace, {
+      request: request,
+      run,
+      closedBeforeResponse:
+        expected.transport === "websocket" &&
+        expected.closedBeforeResponse === true,
     });
+    const prepared = information.prepared;
+    runtimeInformationReads = information.informationReads;
+    postPromptInformationReads = information.postPromptInformationReads;
+    neutralDiagnostics = information.neutralDiagnostics;
+    runtimeSpans = new Set([
+      ...information.spans,
+      ...information.toolLifecycles.flatMap((proof) => [
+        proof.owner,
+        ...proof.clients,
+        ...proof.servers,
+        ...proof.exchanges.map((exchange) => exchange.operation),
+      ]),
+    ]);
+    timeObservations = information.timeObservations;
     const models = new Set();
     for (const item of requests) {
       const http = tree.spans.get(item.model_span_id);
@@ -266,7 +536,16 @@ export function inspectCommandTrace(
     assert.equal(tag(client, "span.kind"), "client");
     assert(tree.chain(client).includes(call));
   }
-  rejected(trace, tree, request, expected);
+  const ownedErrors = rejected(
+    trace,
+    tree,
+    request,
+    expected,
+    neutralDiagnostics,
+    runtimeSpans,
+    timeObservations,
+    strictPrivate,
+  );
   return {
     trace_id: trace.traceID,
     label: expected.label,
@@ -284,16 +563,61 @@ export function inspectCommandTrace(
       !trace.spans.some((span) => tree.service(span) === "antnest-runtime"),
     no_model_or_tools: expected.kind !== "ordinary",
     runtime_information_reads: runtimeInformationReads,
+    post_prompt_information_reads: postPromptInformationReads,
+    neutral_diagnostics: neutralDiagnostics,
+    ...(ownedErrors ? { owned_error_spans: ownedErrors } : {}),
+    time_observations: timeObservations,
     runtime_tool_calls: expected.kind === "ordinary" ? 1 : 0,
-    gateway_ancestry: true,
+    ...(requestBoundaryKind(expected) === "gateway"
+      ? { gateway_ancestry: true }
+      : {}),
     ...timingEvidence(trace, tree, request, forwarded),
+    ...(requestBoundaryKind(expected) === "private-acp" &&
+    expected.transport === "http"
+      ? {
+          timing: {
+            acp_start_minus_http_client_us:
+              request.startTime - forwarded.startTime,
+            acp_start_minus_http_receiver_us:
+              request.startTime - http.startTime,
+          },
+        }
+      : {}),
   };
+}
+
+// Opt-in for this consumer's new raw collectors. Legacy Gateway consumers
+// retain their own admission rules until their service-owned migration.
+export function inspectPrivateCommandTrace(
+  trace,
+  expected,
+  secrets = [],
+  requests = [],
+) {
+  assert.equal(requestBoundaryKind(expected), "private-acp");
+  assert.notEqual(
+    expected.closedBeforeResponse,
+    true,
+    "commands must finish their original request before closing",
+  );
+  if (expected.transport === "websocket")
+    for (const span of expected.connectionTrace?.spans ?? [])
+      assertSessionSuccess(span);
+  return inspectCommandTrace(
+    trace,
+    expected,
+    secrets,
+    requests.filter((item) => item.trace_id === trace.traceID),
+    { strictPrivate: true },
+  );
 }
 export function selectCommandTrace(data, expected) {
   assert(
     Array.isArray(data) && data.length < 100,
     "invalid or truncated request trace query",
   );
+  if (requestBoundaryKind(expected) === "private-acp")
+    return selectRequestTrace(data, expected);
   const matches = data.filter(
     (trace) =>
       trace.spans?.some(
@@ -317,6 +641,20 @@ export function selectCommandTrace(data, expected) {
   assert(matches.length <= 1, "ambiguous actual request trace");
   return matches[0]?.traceID;
 }
+export function inspectCommandTraceFromRequests(
+  trace,
+  expected,
+  secrets = [],
+  requests = [],
+) {
+  return inspectCommandTrace(
+    trace,
+    expected,
+    secrets,
+    requests.filter((item) => item.trace_id === trace.traceID),
+  );
+}
+
 export async function collectCommandTrace(
   base,
   expected,
@@ -325,12 +663,7 @@ export async function collectCommandTrace(
   signal,
 ) {
   const inspect = (trace) =>
-    inspectCommandTrace(
-      trace,
-      expected,
-      secrets,
-      requests.filter((item) => item.trace_id === trace.traceID),
-    );
+    inspectCommandTraceFromRequests(trace, expected, secrets, requests);
   if (expected.transport === "http")
     return collectTrace(base, expected.traceID, inspect, signal);
   const query = new URLSearchParams({

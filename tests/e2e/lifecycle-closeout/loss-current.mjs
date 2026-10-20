@@ -37,6 +37,7 @@ export async function stopLossRuntime(docker, target, initial, project) {
     "loss fixture Runtime did not exit normally",
   );
   assert.equal(stopped.State.OOMKilled, false);
+  return stopped;
 }
 
 export function inspectLossDenial(trace, expected, secrets = []) {

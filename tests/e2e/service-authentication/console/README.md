@@ -30,3 +30,14 @@ SCIM pairing and Provider review. Build the web assets before that command.
 These fixtures prove the Console consumer and UI against doubles. Identity
 transactions, live session grants, real SCIM requests and both browser
 applications over HTTPS require the separate integration batch.
+
+The network-policy checks use the real BFF with an authenticated Controller
+double: pending read, one policy CAS, unchanged pending read, then an independent
+peer-open transition and a fresh open read. Exactly three GETs and one PUT carry
+the original signed scope; rejected account/member requests make no dependency
+call, private fields are removed and responses stay `no-store`. A counter before
+workload/CCT authentication also rejects hidden failed business HTTP attempts;
+status, fixture control and JWKS reads remain separate. The independent
+assignment and attachment versions are preserved in `network-admission.json`.
+This does not prove React event refresh, live Egress packet flow or Foundation
+integration; those have their own component and integration gates.

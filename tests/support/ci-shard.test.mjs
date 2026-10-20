@@ -111,6 +111,55 @@ test("the existing strict runner completion reports remain accepted", () => {
   }
 });
 
+test("private multimodal completion counts finished transports and keeps strict findings", () => {
+  const completion = {
+    status: "business_passed",
+    strict_trace: "failed",
+    accepted: true,
+    reviewed_error_spans: 52,
+    clock_warnings_accepted: true,
+    outcomes: ["v1-ws", "v2-ws", "v1-http"].map((transport) => ({
+      transport,
+      successful_runs: 3,
+      local_failed_runs: 1,
+      invalid_inputs: 2,
+      replayed_messages: 4,
+      foreign_session_rejections: 3,
+    })),
+    model_requests: 9,
+    business_requests: 48,
+    initialization_requests: 12,
+    connections: 12,
+    traces: Array.from({ length: 48 }, () => ({ warnings: [clock] })),
+    initialization_traces: Array.from({ length: 12 }, () => ({ warnings: [] })),
+  };
+  const classify = (record, code = 2, trailing = "") =>
+    verdict(
+      code,
+      `${JSON.stringify(record)}\n${trailing}`,
+      true,
+      "acp-multimodal",
+    );
+
+  // The original private consumer completed all transports but omitted the
+  // scenario count required by the existing CI completion contract.
+  assert.equal(classify(completion), "failed");
+  const completed = { ...completion, scenarios: completion.outcomes.length };
+  assert.equal(completed.scenarios, 3);
+  assert.equal(classify(completed), "warning");
+  assert.equal(completed.strict_trace, "failed");
+  assert.equal(classify(completed, 1), "failed");
+  assert.equal(classify({ ...completed, traces: [] }), "failed");
+  assert.equal(
+    classify({ ...completed, traces: [{ warnings: ["missing parent span"] }] }),
+    "failed",
+  );
+  assert.equal(
+    classify(completed, 2, JSON.stringify({ status: "cleanup_failed" })),
+    "failed",
+  );
+});
+
 test("suite results retain elapsed time, timeout and incremental outcomes", async () => {
   const recorded = [];
   const times = [1000, 1250, 2000, 2040];

@@ -73,11 +73,11 @@ func (client *Client) SetAgentNetworkAttachment(
 	runtimeEndpoint string,
 	tunnelKeyID string,
 ) (ports.NetworkAttachment, error) {
-	if state != ports.NetworkAttachmentClosed && state != ports.NetworkAttachmentOpen {
+	if !validAttachmentState(state) {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
 	if (state == ports.NetworkAttachmentOpen && (!ports.ValidRuntimePeer(runtimeEndpoint) || !ports.ValidTunnelKeyID(tunnelKeyID))) ||
-		(state == ports.NetworkAttachmentClosed && (runtimeEndpoint != "" || tunnelKeyID != "")) {
+		(state != ports.NetworkAttachmentOpen && (runtimeEndpoint != "" || tunnelKeyID != "")) {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
 	payload, err := json.Marshal(struct {
@@ -277,7 +277,7 @@ func validNetworkState(value string) bool {
 }
 
 func validAttachmentState(value string) bool {
-	return value == ports.NetworkAttachmentClosed || value == ports.NetworkAttachmentOpen
+	return value == ports.NetworkAttachmentClosed || value == ports.NetworkAttachmentPending || value == ports.NetworkAttachmentOpen
 }
 
 func decodeNetworkAttachment(
@@ -310,7 +310,7 @@ func decodeNetworkAttachment(
 		payload.NetworkResourceVersion == 0 || !validAttachmentState(payload.AttachmentState) ||
 		payload.AttachmentResourceVersion == 0 ||
 		(payload.AttachmentState == ports.NetworkAttachmentOpen && (!ports.ValidRuntimePeer(payload.RuntimeEndpoint) || !ports.ValidTunnelKeyID(payload.TunnelKeyID))) ||
-		(payload.AttachmentState == ports.NetworkAttachmentClosed && (payload.RuntimeEndpoint != "" || payload.TunnelKeyID != "")) ||
+		(payload.AttachmentState != ports.NetworkAttachmentOpen && (payload.RuntimeEndpoint != "" || payload.TunnelKeyID != "")) ||
 		(requiredState != "" && payload.State != requiredState) ||
 		(expectedAttachmentState != "" && payload.AttachmentState != expectedAttachmentState) {
 		return ports.NetworkAttachment{}, fmt.Errorf("invalid Agent network attachment")

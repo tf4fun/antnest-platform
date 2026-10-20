@@ -103,6 +103,11 @@ operation using `rpc.method`; each HTTP request produces exactly one CLIENT.
 Runtime journal reads are separate HTTP requests, not children of a synthetic
 protocol CLIENT. Observation listing also has a CLIENT.
 
+Successful Identity HTTP CLIENT spans omit `error.type`. Dependency request
+and duration metrics retain their bounded `error.type=none` success bucket;
+that metric label is not copied to successful spans. HTTP failures and invalid
+success response bodies retain the original error status and diagnostics.
+
 There are no `agent_controller.repository.*` spans, no
 `antnest.repository.operation` dimension and no repository store decorators.
 Composition passes the repository directly to application services. Queries

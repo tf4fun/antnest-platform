@@ -262,7 +262,7 @@ func seedAvailableAgentForRebuild(
 	return seedConfiguredAgentForTest(t, ctx, repository, true)
 }
 
-func seedConfiguredAgentForTest(t *testing.T, ctx context.Context, repository *Repository, observe bool) (ports.AgentLifecycleBase, rebuildSeed) {
+func seedConfiguredAgentForTest(t *testing.T, ctx context.Context, repository *Repository, observe bool, attachmentStates ...string) (ports.AgentLifecycleBase, rebuildSeed) {
 	t.Helper()
 	resetCatalogSchema(t, ctx, repository)
 	if err := repository.Migrate(ctx); err != nil {
@@ -344,6 +344,9 @@ func seedConfiguredAgentForTest(t *testing.T, ctx context.Context, repository *R
 	}
 	openedAttachment := attachment
 	openedAttachment.AttachmentState = ports.NetworkAttachmentOpen
+	if len(attachmentStates) != 0 {
+		openedAttachment.AttachmentState = attachmentStates[0]
+	}
 	openedAttachment.AttachmentResourceVersion++
 	if _, err := repository.PublishAgentCreate(mutationCtx, ports.PublishAgentCreate{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,

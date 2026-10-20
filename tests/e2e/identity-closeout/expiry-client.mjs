@@ -36,7 +36,7 @@ if (phase === "prepare") {
   for (const path of [
     "/api/session",
     "/api/admin/account",
-    "/api/app/bootstrap",
+    "/api/app/workspace/v1/bootstrap",
   ]) {
     // Each scope is first used after Identity stops, so Gateway must reject it.
     // A stopped Identity keeps its pinned Compose address and drops connects;
@@ -66,7 +66,7 @@ if (phase === "prepare") {
   let denied;
   for (const path of [
     "/api/session",
-    "/api/app/bootstrap",
+    "/api/app/workspace/v1/bootstrap",
     "/api/admin/account",
   ]) {
     denied = await browser.request(path, {

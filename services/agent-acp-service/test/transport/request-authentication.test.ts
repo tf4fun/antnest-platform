@@ -81,10 +81,7 @@ it.each([
   const request = new IncomingMessage(socket);
   request.method = "POST";
   request.url = "/v1/acp";
-  request.rawHeaders = [
-    ...Object.entries(workloadHeaders("edge-gateway")).flat(),
-    ...contextFields,
-  ];
+  request.rawHeaders = [...Object.entries(workloadHeaders("agent-ui")).flat(), ...contextFields];
   try {
     expect(await authentication.admit(request)).toMatchObject({
       status: 401,

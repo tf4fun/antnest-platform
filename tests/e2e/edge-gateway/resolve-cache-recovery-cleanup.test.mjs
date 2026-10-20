@@ -14,6 +14,9 @@ function fixture() {
     phase: request.phase,
     run_id: "run",
     session_id: "session",
+    agent_id: "agent",
+    owner_id: "owner",
+    intent_id: "intent",
     prompt: { trace_id: request.trace_id },
     model_started: { state: { requests: [request] } },
     failure: { message: "original business failure" },
@@ -27,6 +30,8 @@ function fixture() {
     body: {
       run_id: "run",
       session_id: "session",
+      agent_id: "agent",
+      principal_id: "owner",
       state: "completed",
       executor_state: "quiescent",
       tool_effect_state: "none",
@@ -136,7 +141,7 @@ test("cleanup waits for an accepted Run whose model request has not arrived yet"
     wait: async () => {},
   });
   assert.equal(f.c.failure_cleanup.status, "joined");
-  assert.equal(reads, 2);
+  assert.equal(reads, 3);
 });
 
 for (const [label, mutate] of [
@@ -227,15 +232,128 @@ test("cleanup waits for the same Run to become quiescent and does not release tw
   assert.equal(releases, 1);
 });
 
-test("cleanup rejects a foreign terminal audit", async () => {
-  const f = fixture();
-  f.terminal.body.run_id = "other";
-  await assert.rejects(
-    joinRecoveryRun({
-      ...f,
-      model: async () => f.held,
-      release: async () => ({ status: 200 }),
-      audit: async () => f.terminal,
-    }),
-  );
+for (const field of ["run_id", "session_id", "agent_id", "principal_id"])
+  test(`cleanup never releases work before verifying audit ${field}`, async () => {
+    const f = fixture();
+    f.terminal.body[field] = "foreign";
+    let releases = 0;
+    await assert.rejects(
+      joinRecoveryRun({
+        ...f,
+        model: async () => f.held,
+        release: async () => {
+          releases++;
+          return { status: 200 };
+        },
+        audit: async () => f.terminal,
+      }),
+    );
+    assert.equal(releases, 0);
+    assert.equal(f.c.failure_cleanup.status, "failed");
+  });
+
+test("cleanup joins a fresh terminal audit after releasing the owned request", async () => {
+  const f = fixture(),
+    order = [];
+  await joinRecoveryRun({
+    ...f,
+    model: async () => f.held,
+    release: async () => {
+      order.push("release");
+      return { status: 200 };
+    },
+    audit: async () => {
+      order.push("audit");
+      return f.terminal;
+    },
+    wait: async () => {},
+  });
+  assert.deepEqual(order, ["audit", "release", "audit"]);
+  assert.equal(f.c.failure_cleanup.status, "joined");
 });
+
+test("accepted prompt with no SSE Run ID is recovered from the same read-only intent receipt", async () => {
+  const f = fixture(),
+    controller = new AbortController();
+  delete f.c.run_id;
+  delete f.c.model_started;
+  controller.abort(new Error("observer interrupted before acceptance event"));
+  let reads = 0,
+    releases = 0;
+  await joinRecoveryRun({
+    ...f,
+    signal: controller.signal,
+    lookupIntent: async (signal) => {
+      assert(!signal.aborted);
+      return {
+        status: 200,
+        method: "GET",
+        path: "/api/app/workspace/v1/agents/agent/sessions/session/operations/intent",
+        body:
+          ++reads === 1
+            ? {
+                operationId: "intent",
+                sessionId: "session",
+                acceptance: "bridge",
+                phase: "dispatching",
+              }
+            : {
+                operationId: "intent",
+                sessionId: "session",
+                acceptance: "acp",
+                phase: "running",
+                runId: "run",
+                outputWatermark: 0,
+              },
+      };
+    },
+    model: async () => {
+      assert.equal(reads, 2);
+      return f.held;
+    },
+    release: async () => {
+      releases++;
+      return { status: 200 };
+    },
+    audit: async () => f.terminal,
+    wait: async () => {},
+  });
+  assert.equal(f.c.run_id, "run");
+  assert.equal(f.c.failure_cleanup.intent_receipts.length, 2);
+  assert.equal(f.c.failure_cleanup.status, "joined");
+  assert.equal(releases, 1);
+});
+
+for (const field of ["operationId", "sessionId", "acceptance", "runId"])
+  test(`cleanup cannot use a foreign or incomplete intent ${field}`, async () => {
+    const f = fixture();
+    delete f.c.run_id;
+    const body = {
+      operationId: "intent",
+      sessionId: "session",
+      acceptance: "acp",
+      phase: "running",
+      runId: "run",
+      outputWatermark: 0,
+    };
+    body[field] = field === "runId" ? "" : "foreign";
+    let releases = 0;
+    await assert.rejects(
+      joinRecoveryRun({
+        ...f,
+        lookupIntent: async () => ({
+          status: 200,
+          method: "GET",
+          path: "/api/app/workspace/v1/agents/agent/sessions/session/operations/intent",
+          body,
+        }),
+        model: async () => f.held,
+        release: async () => {
+          releases++;
+          return { status: 200 };
+        },
+        audit: async () => f.terminal,
+      }),
+    );
+    assert.equal(releases, 0);
+  });

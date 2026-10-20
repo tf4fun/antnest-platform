@@ -204,6 +204,7 @@ test(
             "--name",
             clientName,
             ...skillClientArgs(config, {
+              privateACP: true,
               grants: reviewPolicyOff
                 ? ["acp-controller", "console-controller", "gateway-identity"]
                 : [],
@@ -362,7 +363,7 @@ test(
               "run",
               "--name",
               restartClientName,
-              ...skillClientArgs(config),
+              ...skillClientArgs(config, { privateACP: true }),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
@@ -561,7 +562,7 @@ test(
               "run",
               "--name",
               recoveryClientName,
-              ...skillClientArgs(config),
+              ...skillClientArgs(config, { privateACP: true }),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",

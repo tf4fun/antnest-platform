@@ -6,6 +6,18 @@ import { member, until } from "./c4-setup.mjs";
 import { note, imageData } from "./browser-model.mjs";
 import { audioData } from "../acp-multimodal/fixtures.mjs";
 import { observedHeldRun } from "./browser-control.mjs";
+import { readC4View } from "./c4-view.mjs";
+import { c4RebuildReady } from "./c4-rebuild.mjs";
+import { runC4BrowserScope } from "./c4-browser-scope.mjs";
+import { captureC4Login } from "./c4-login.mjs";
+import { captureC4PromptReceipt } from "./c4-prompt-receipt.mjs";
+import { observeC4PageStreams } from "./c4-stream-observer.mjs";
+import {
+  snapshotC4Execution,
+  assertC4NoNewExecution,
+  rejectC4Prompt,
+  c4OffboardingExpected,
+} from "./c4-revocation.mjs";
 import {
   assertReadableText,
   assertTouchTargets,
@@ -18,35 +30,83 @@ export async function runBrowser(
   output,
   report,
   checkpoint,
+  {
+    launch = () =>
+      chromium.launch({
+        headless: true,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
+      }),
+  } = {},
 ) {
   // The coordinator owns signals and Docker cleanup. Playwright's default
   // SIGINT handler exits the Node process before the runner's finally block.
-  const browser = await chromium.launch({
-    headless: true,
-    handleSIGINT: false,
-    handleSIGTERM: false,
-    handleSIGHUP: false,
-  });
-  const abort = () => void browser.close();
-  signal.addEventListener("abort", abort, { once: true });
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
-  });
+  return runC4BrowserScope({ signal, launch }, (scope) =>
+    runBrowserInContext(
+      config,
+      fixture,
+      signal,
+      output,
+      report,
+      checkpoint,
+      scope,
+    ),
+  );
+}
+
+async function runBrowserInContext(
+  config,
+  fixture,
+  signal,
+  output,
+  report,
+  checkpoint,
+  scope,
+) {
+  const { context } = scope;
   const frames = [];
   const errors = [];
+  const prompts = (report.prompt_receipts = []);
+  let originalLogin;
   let browserPhase = "startup";
   const paths = [];
-  const pageTasks = [];
-  const track = (page) => {
+  const streams = new Map();
+  const track = async (page) => {
+    const observer = observeC4PageStreams(page, {
+      gateway: config.gateway,
+      agentId: fixture.agentID,
+      signal,
+    });
+    streams.set(page, observer);
+    scope.addObserver({
+      async closeAndWait() {
+        try {
+          await observer.closeAndWait();
+        } finally {
+          report.page_streams = [...streams.values()].flatMap(
+            (value) => value.records,
+          );
+          report.page_network_observations = [...streams.values()].map(
+            (value) => value.nativeRecords,
+          );
+        }
+      },
+    });
     page.setDefaultTimeout(25000);
-    page.on("pageerror", (error) =>
+    page.on("pageerror", (error) => {
+      scope.recordFailure(error);
       errors.push({
         phase: browserPhase,
         url: page.url(),
         message: error.message,
-      }),
-    );
-    page.on("websocket", () => errors.push("unexpected browser WebSocket"));
+      });
+    });
+    page.on("websocket", () => {
+      const error = new Error("unexpected browser WebSocket");
+      scope.recordFailure(error);
+      errors.push(error.message);
+    });
     page.on("response", (response) => {
       const url = new URL(response.url());
       // SSE watches have no finite response body. Their state payloads are
@@ -58,17 +118,32 @@ export async function runBrowser(
         !response.headers()["content-type"]?.startsWith("text/event-stream")
       ) {
         paths.push(url.pathname);
-        pageTasks.push(
-          response.text().then(
-            (body) => frames.push(body),
-            () => {},
-          ),
-        );
+        scope.track(async () => {
+          if (
+            url.pathname.endsWith("/prompts") &&
+            response.request().method() === "POST"
+          ) {
+            const receipt = {};
+            prompts.push(receipt);
+            await captureC4PromptReceipt(
+              page,
+              response,
+              {
+                gateway: config.gateway,
+                agentId: fixture.agentID,
+                cookies: originalLogin.cookies,
+              },
+              receipt,
+            );
+            frames.push(receipt.rawBody);
+          } else frames.push(await response.text());
+        });
       }
     });
+    await observer.ready;
     return page;
   };
-  let page = track(await context.newPage());
+  let page = await track(await context.newPage());
   const url = `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/`;
   const input = (target = page) =>
     target.getByRole("combobox", { name: "Message", exact: true });
@@ -82,29 +157,30 @@ export async function runBrowser(
       .click();
     await enabled(target);
   };
-  const state = async () => {
-    const response = await gatewayBrowserRequest(
-      context,
-      `${config.gateway}/api/app/agents/${fixture.agentID}/state`,
-    );
-    assert.equal(response.status(), 200);
-    const body = await response.json();
-    frames.push(JSON.stringify(body));
-    return body;
-  };
+  const view = (sessionId = null) =>
+    readC4View(context, {
+      gateway: config.gateway,
+      agentId: fixture.agentID,
+      sessionId,
+      frames,
+    });
   const model = async (path = "/status", method = "GET") => {
     const response = await fetch(config.model + path, {
       method,
       signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
     });
     assert.equal(response.status, 200);
-    return response.json();
+    const body = await response.json();
+    if (path === "/status") report.model = body;
+    return body;
   };
   const openAgentPage = async (target) => {
-    const bootstrap = target.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname ===
-          "/api/app/workspace/v1/bootstrap" && response.status() === 200,
+    const bootstrap = scope.track(
+      target.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+            "/api/app/workspace/v1/bootstrap" && response.status() === 200,
+      ),
     );
     await target.goto(url);
     await bootstrap;
@@ -144,14 +220,7 @@ export async function runBrowser(
     await checkpoint();
   }
   const sessionInfo = async (sessionId) => {
-    const response = await gatewayBrowserRequest(
-      context,
-      `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${sessionId}`,
-    );
-    assert.equal(response.status(), 200);
-    const body = await response.json();
-    frames.push(JSON.stringify(body));
-    assert.equal(body.selectedView?.sessionId, sessionId);
+    const body = await view(sessionId);
     return {
       title: body.selectedView.title,
       updatedAt: body.selectedView.updatedAt,
@@ -173,7 +242,27 @@ export async function runBrowser(
     await page.goto(`${config.gateway}/workspace/`);
     for (const [name, value] of Object.entries(member))
       await page.locator(`[name="${name}"]`).fill(value);
+    const loginResponse = scope.track(
+      page.waitForResponse(
+        (response) =>
+          response.url() ===
+            new URL("/api/session/login", config.gateway).href &&
+          response.request().method() === "POST",
+      ),
+    );
+    const loginStartedMono = performance.now(),
+      loginStartedAt = Date.now();
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    originalLogin = await captureC4Login(page, await loginResponse, {
+      gateway: config.gateway,
+      ownerId: fixture.ownerID,
+      startedMono: loginStartedMono,
+      startedAt: loginStartedAt,
+    });
+    report.page_login = {
+      issued: originalLogin.issued,
+      receipt: originalLogin.receipt,
+    };
     await page.waitForURL("**/workspace/**");
     await page
       .getByRole("searchbox", { name: "Find a workspace" })
@@ -260,7 +349,7 @@ export async function runBrowser(
     const firstURL = page.url();
     await page.reload();
     await enabled();
-    const observer = track(await context.newPage());
+    const observer = await track(await context.newPage());
     await observer.goto(firstURL);
     await enabled(observer);
     const firstSession = workspaceLocation(firstURL).sessionId;
@@ -341,7 +430,7 @@ export async function runBrowser(
     });
     await page.reload();
     await enabled();
-    const negative = track(await context.newPage());
+    const negative = await track(await context.newPage());
     await openAgentPage(negative);
     await newConversation(negative);
     const beforeRejected = (await model()).requests.length;
@@ -388,7 +477,7 @@ export async function runBrowser(
     await page.getByRole("option", { name: /^Auto\b/ }).click();
     await check("real_tool_permission_interaction");
 
-    const other = track(await context.newPage());
+    const other = await track(await context.newPage());
     await openAgentPage(other);
     await newConversation(other);
     await input(other).fill("Waiting in a separate draft");
@@ -402,13 +491,7 @@ export async function runBrowser(
       signal,
     );
     const heldSession = report.sessions["c4-browser-hold-cancel"];
-    const heldResponse = await gatewayBrowserRequest(
-      context,
-      `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${encodeURIComponent(heldSession)}`,
-    );
-    assert.equal(heldResponse.status(), 200);
-    report.cancelled_run_view = await heldResponse.json();
-    frames.push(JSON.stringify(report.cancelled_run_view));
+    report.cancelled_run_view = await view(heldSession);
     report.cancelled_run = observedHeldRun(
       report.cancelled_run_view,
       fixture.agentID,
@@ -447,8 +530,8 @@ export async function runBrowser(
     await held("c4-browser-hold-offline");
     const offlineURL = page.url();
     await context.setOffline(true);
-    // A navigation also closes an existing WebSocket on browsers that retain it
-    // when network emulation changes. No ACP or Gateway request is mocked.
+    // A navigation closes the page's existing Bridge event stream even when
+    // network emulation leaves established connections open.
     await page.goto(offlineURL).catch(() => {});
     await model("/release/c4-browser-hold-offline", "POST");
     await until(
@@ -474,7 +557,7 @@ export async function runBrowser(
     const closedURL = page.url();
     await page.close();
     await model("/release/c4-browser-hold-close", "POST");
-    page = track(await context.newPage());
+    page = await track(await context.newPage());
     await page.goto(closedURL);
     await page
       .getByText("c4-browser-hold-close completed", { exact: true })
@@ -488,7 +571,9 @@ export async function runBrowser(
     );
     await check("close_reopen_history_without_resubmission");
 
-    const before = await state();
+    const rebuildSession = workspaceLocation(page.url()).sessionId;
+    assert(rebuildSession, "Rebuild must retain an existing Session");
+    const before = await fixture.state();
     const beforeRebuildRequests = (await model()).requests.length;
     const rebuildDraft = "Draft retained while the Agent rebuilds";
     await input().fill(rebuildDraft);
@@ -524,14 +609,26 @@ export async function runBrowser(
     });
     await fixture.operation((rebuilt.operation ?? rebuilt).request_id);
     await fixture.ready();
+    await fixture.captureRuntime("rebuilt");
+    assert.equal(
+      workspaceLocation(page.url()).sessionId,
+      rebuildSession,
+      "Rebuild lost the original browser Session",
+    );
     await until(
       async () =>
-        (await state()).configuration_revision !==
-        before.configuration_revision,
-      "rebuilt configuration",
+        c4RebuildReady(
+          before,
+          await fixture.state(),
+          await view(rebuildSession),
+          fixture.agentID,
+          rebuildSession,
+        ),
+      "rebuilt private configuration and ready browser view",
       signal,
     );
     await enabled();
+    assert.equal(workspaceLocation(page.url()).sessionId, rebuildSession);
     assert.equal(
       (await model()).requests.length,
       beforeRebuildRequests,
@@ -541,6 +638,7 @@ export async function runBrowser(
       "c4-browser-after-rebuild",
       "c4-browser-after-rebuild: retained note alpha-beta verified.",
     );
+    assert.equal(report.sessions["c4-browser-after-rebuild"], rebuildSession);
     await fixture.verifyWorkspace();
     await check("open_page_rebuild_retains_workspace_and_history");
 
@@ -571,8 +669,65 @@ export async function runBrowser(
     });
     await check("mobile_layout_input_completion");
 
-    await fixture.json(`/api/admin/directory/users/${fixture.ownerID}/active`, {
+    const revocationSession = workspaceLocation(page.url()).sessionId;
+    const revocationView = await view(revocationSession);
+    const revocation = (report.browser_revocation = {
+      principal: originalLogin.issued.principal,
+      selectedView: revocationView.selectedView,
+    });
+    revocation.before = await snapshotC4Execution(fixture, model);
+    revocation.events_before = await fixture.json(
+      `/api/admin/agents/${fixture.agentID}/events?limit=100`,
+    );
+    const pageObserver = streams.get(page);
+    const beforeRevocation = await pageObserver.checkpoint({
+      sessionId: revocationSession,
+      cookies: originalLogin.cookies,
+    });
+    const cause = {
+      kind: "user_deactivated",
+      method: "POST",
+      path: `/api/admin/directory/users/${fixture.ownerID}/active`,
+      requestBody: { active: false },
+      actor: structuredClone(fixture.adminPrincipal),
+      target: structuredClone(originalLogin.issued.principal),
+      startedMono: performance.now(),
+      startedAt: Date.now(),
+    };
+    Object.assign(revocation, {
+      checkpoint: beforeRevocation,
+      cause,
+    });
+    const revoked = await fixture.request(cause.path, {
       body: { active: false },
+      onResponse: (response) =>
+        Object.assign(cause, {
+          status: response.status,
+          traceID: response.traceID,
+          rawBody: response.text,
+        }),
+    });
+    Object.assign(cause, {
+      completedMono: performance.now(),
+      completedAt: Date.now(),
+      status: revoked.status,
+      body: revoked.body,
+      traceID: revoked.traceID,
+      serverDate: revoked.headers.get("date"),
+    });
+    Object.assign(
+      revocation,
+      await pageObserver.waitForRemoteEnd(beforeRevocation),
+    );
+    revocation.denial = {};
+    await rejectC4Prompt({
+      context,
+      gateway: config.gateway,
+      observer: pageObserver,
+      point: beforeRevocation,
+      selectedView: revocation.selectedView,
+      signal,
+      evidence: revocation.denial,
     });
     await until(
       async () => (await input().count()) === 0 || !(await input().isEnabled()),
@@ -586,20 +741,38 @@ export async function runBrowser(
     assert.equal(await input().count(), 0);
     assert.equal(await page.locator(".message-content").count(), 0);
     await until(
-      async () =>
-        (await fixture.json(`/api/admin/agents/${fixture.agentID}`))
-          .activation_state === "disabled",
+      async () => {
+        const agent = await fixture.json(
+          `/api/admin/agents/${fixture.agentID}`,
+        );
+        return (
+          agent.activation_state === "disabled" &&
+          !agent.active_operation_request_id
+        );
+      },
       "revocation propagated",
       signal,
     );
+    revocation.events_after = await fixture.json(
+      `/api/admin/agents/${fixture.agentID}/events?limit=100`,
+    );
+    revocation.offboarding_expected = c4OffboardingExpected({
+      before: revocation.events_before,
+      after: revocation.events_after,
+      traceID: cause.traceID,
+      agentId: fixture.agentID,
+      ownerId: fixture.ownerID,
+    });
+    revocation.after = await snapshotC4Execution(fixture, model);
+    assertC4NoNewExecution(revocation.before, revocation.after);
     await page.screenshot({
       path: `${output}/mobile-revoked.png`,
       fullPage: true,
     });
     await check("open_page_identity_revocation");
     // Closing pages also settles response reads aborted by a navigation.
-    await context.close();
-    await Promise.all(pageTasks);
+    await scope.closeContext();
+    await scope.joinTasks();
     assert.deepEqual(errors, []);
     assert(paths.length > 0 && frames.length > 0);
     for (const body of frames)
@@ -619,19 +792,16 @@ export async function runBrowser(
     report.browser_payloads_checked = frames.length;
     await check("private_runtime_and_provider_data_absent");
   } catch (error) {
-    report.model = await model().catch(() => null);
+    scope.recordFailure(error);
+    await scope.capture(() => model());
     if (!page.isClosed()) {
-      report.failure_page = await page
-        .locator("body")
-        .innerText()
-        .catch(() => "unavailable");
-      await page
-        .screenshot({ path: `${output}/failure.png`, fullPage: true })
-        .catch(() => {});
+      await scope.capture(async () => {
+        report.failure_page = await page.locator("body").innerText();
+      });
+      await scope.capture(() =>
+        page.screenshot({ path: `${output}/failure.png`, fullPage: true }),
+      );
     }
     throw error;
-  } finally {
-    signal.removeEventListener("abort", abort);
-    await browser.close();
   }
 }

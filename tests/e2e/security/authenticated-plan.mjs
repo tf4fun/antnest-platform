@@ -14,7 +14,7 @@ export function authenticatedPlan({ config, topology, agentId, mode }) {
     ...(mode === "admission"
       ? {
           "console-identity": ["admin-console", "identity-service"],
-          "gateway-acp": ["edge-gateway", "agent-acp-service"],
+          "agent-ui-acp": ["agent-ui", "agent-acp-service"],
           "acp-registry": ["agent-acp-service", "skill-registry"],
           "rc-registry": ["runtime-controller", "skill-registry"],
         }

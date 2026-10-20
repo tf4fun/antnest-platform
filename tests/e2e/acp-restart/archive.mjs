@@ -1,18 +1,29 @@
 import assert from "node:assert/strict";
-export async function archiveCompleted(requests, cache, collect) {
-  for (const request of requests) {
+import { isDeepStrictEqual } from "node:util";
+export async function archiveCompleted(
+  requests,
+  cache,
+  collect,
+  { initializations = [], signal } = {},
+) {
+  signal?.throwIfAborted();
+  for (const request of [...initializations, ...requests]) {
+    signal?.throwIfAborted();
     if (request.kind === "interruption") continue;
     assert.equal(typeof request.label, "string");
     if (cache.has(request.label)) {
-      assert.deepEqual(
-        cache.get(request.label).request,
-        request,
+      assert(
+        isDeepStrictEqual(cache.get(request.label).request, request),
         "archive label reused for another request",
       );
       continue;
     }
-    const trace = await collect(request);
-    assert(trace, "missing completed request trace");
-    cache.set(request.label, { request: structuredClone(request), trace });
+    const report = await collect(request);
+    signal?.throwIfAborted();
+    assert(report?.trace_id, "missing completed request trace report");
+    cache.set(request.label, {
+      request: structuredClone(request),
+      report: structuredClone(report),
+    });
   }
 }

@@ -86,10 +86,7 @@ func callerSelection(request *http.Request) (string, string) {
 		return "session", ""
 	}
 	profile := "workspace"
-	agent := request.PathValue("agent_id")
-	if request.PathValue("acp_version") != "" {
-		profile = "acp"
-	}
+	agent := ""
 	if strings.HasPrefix(request.URL.Path, "/api/admin/") {
 		profile = "console"
 		if strings.HasPrefix(request.URL.Path, "/api/admin/agents/") {

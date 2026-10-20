@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { dockerClient } from "../../lifecycle-closeout/docker.mjs";
 import { createFixture, callerContext } from "./auth-fixture.mjs";
 import { verifyOIDCLinking } from "./oidc-linking.mjs";
+import { verifyPendingNetwork } from "./network-policy.mjs";
 import {
   passwordCases,
   passwordCaseEmail,
@@ -64,6 +65,7 @@ export async function runConsoleAcceptance({
     complete = false,
     cleaned = false;
   const passwordAdmission = { cases: [], afterStop: null };
+  const networkAdmission = { responses: [], calls: [], complete: false };
   try {
     await docker(
       [...compose, "up", "-d", "--build", "--wait", "--wait-timeout", "120"],
@@ -549,6 +551,20 @@ export async function runConsoleAcceptance({
         fixture,
       });
       checks += linkingChecks;
+      checks += await verifyPendingNetwork({
+        request,
+        state,
+        fixture,
+        admission: networkAdmission,
+        openPeer: () =>
+          docker([
+            "exec",
+            dependencyId,
+            "node",
+            "-e",
+            "fetch('http://127.0.0.1:8101/test/network-open',{method:'POST'}).then(r=>{if(!r.ok)process.exit(1);return r.arrayBuffer()})",
+          ]),
+      });
       writeFileSync(file + ".next", fixture.next, { mode: 0o600 });
       renameSync(file + ".next", file);
       await request("/api/admin/agents");
@@ -816,6 +832,12 @@ export async function runConsoleAcceptance({
           writeFileSync(
             resolve(evidence, "password-admission.json"),
             JSON.stringify(passwordAdmission, null, 2) + "\n",
+            { mode: 0o600 },
+          );
+        if (authentication)
+          writeFileSync(
+            resolve(evidence, "network-admission.json"),
+            JSON.stringify(networkAdmission, null, 2) + "\n",
             { mode: 0o600 },
           );
       }

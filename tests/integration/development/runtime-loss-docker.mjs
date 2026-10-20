@@ -23,6 +23,7 @@ import {
   runtimeLossSnapshots,
 } from "../../support/fixtures/development-runtime-loss.mjs";
 import { lifecycleServer } from "../../support/fixtures/development-lifecycle-server.mjs";
+import { developmentPrivateStateFixture } from "../../support/fixtures/development-private-state.mjs";
 import { inspectLifecycle } from "../../e2e/stage3-base/trace.mjs";
 import { inspectPublication } from "../../e2e/development/publication.mjs";
 import { tag } from "../../e2e/observability/trace-tree.mjs";
@@ -367,9 +368,22 @@ try {
           }
         },
       });
+      fixture.privateState = developmentPrivateStateFixture(folder, {
+        agentId: () => fixture.temporaryId,
+        state: () => ({
+          agent_id: fixture.temporaryId,
+          access_allowed: true,
+          configuration_revision: "a".repeat(64),
+          availability: "offline",
+          active_session_id: null,
+          unavailable_reason: "agent_unavailable",
+        }),
+      });
+      fixture.privateState.principal.organization_id = fixture.organization;
       const config = {
         gateway: fixture.origin,
         jaeger: fixture.origin,
+        privateAccess: fixture.privateState.configuration(fixture.origin),
         retainedAgentId: fixture.retainedId,
         restartSnapshot: join(folder, "restart.json"),
         composeSnapshot: join(folder, "compose.json"),
@@ -423,6 +437,15 @@ try {
       );
       assert.equal(report.status, success ? "passed" : "failed");
       if (success) {
+        assert(
+          !fixture.requests.some((r) => r.url.startsWith("/api/app/agents/")),
+        );
+        const access = JSON.parse(
+          readFileSync(join(config.output, "private-access.private.json")),
+        );
+        assert.equal(access.closed, true);
+        assert.equal(access.states.length, 1);
+        assert.equal(access.states[0].joined, true);
         assert.deepEqual(transitions, lifecycleKinds);
         assert.equal(new Set(containerIDs).size, 3);
         assert.equal(
@@ -437,15 +460,23 @@ try {
         assert.equal(report.checks.length, 6);
         assert(exitedObserved && absentObserved);
         assert(!containerOwned && !volumeOwned);
-        for (const trace of [
-          ...publications,
-          ...Object.values(lifecycles).map((x) => x.trace),
+        assert.equal(
+          fixture.requests.filter((r) =>
+            r.url.startsWith("/api/v3/trace-summaries?"),
+          ).length,
+          1,
+        );
+        // Publication discovery reads each summary's detail once; collection
+        // still requires the original three stable samples for every Trace.
+        for (const [trace, samples] of [
+          ...publications.map((trace) => [trace, 4]),
+          ...Object.values(lifecycles).map((x) => [x.trace, 3]),
         ])
           assert.equal(
             fixture.requests.filter(
               (r) => r.url === `/api/traces/${trace.traceID}`,
             ).length,
-            3,
+            samples,
           );
         if (history)
           assert.deepEqual(
@@ -545,7 +576,7 @@ const result = {
   status: "passed",
   checks,
   scope:
-    "Actual owned shell containers and workspace volumes; local Gateway/Jaeger fixtures. An optional original Runtime-loss report/Trace replay preserves warnings and rebinds only temporary Agent identity. Both snapshots retain their original scope/cutoff. Runtime loss uses normal stop, exit zero and observed removal before rebuild. No retained service deployment or real Controller lifecycle business acceptance.",
+    "Actual owned shell containers and workspace volumes; local Gateway, Identity, ACP state and Jaeger fixtures. New private state receipts are preserved separately from optional original Runtime-loss report/Trace replay, which preserves warnings and rebinds only temporary Agent identity. Both snapshots retain their original scope/cutoff. Runtime loss uses normal stop, exit zero and observed removal before rebuild. No retained service deployment or real Controller lifecycle business acceptance.",
 };
 write("result.json", result);
 console.log(JSON.stringify(result));

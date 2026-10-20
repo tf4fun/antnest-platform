@@ -2,11 +2,24 @@ import assert from "node:assert/strict";
 import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 import { mkdir, writeFile, access, readFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
+import { inspect } from "node:util";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { publishCheckpoint } from "../acp-closeout/checkpoint.mjs";
-import { commandConnection } from "../acp-commands/connection.mjs";
+import {
+  openPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "../acp-commands/connection.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import { preserveFileFailure } from "../acp-files/failure-evidence.mjs";
+import { summarizeFailure } from "../../support/verification/failure.mjs";
+import {
+  createRestartRecorder,
+  indexRestartRequests,
+  preserveRestartFailure,
+} from "./client-evidence.mjs";
 import {
   assertPromptComplete,
   replayRequest,
@@ -20,78 +33,92 @@ import {
   runtimeCommandId,
   assertRuntimeOperation,
 } from "../stage3-base/contracts.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import { inspectCommandTrace } from "../acp-commands/trace.mjs";
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
+import { inspectInterruptedTrace, restartStrictOutcome } from "./trace.mjs";
 import {
-  inspectBarrierTrace,
-  inspectInterruptedTrace,
-  assertRuntimeBinding,
-  restartStrictOutcome,
-} from "./trace.mjs";
+  collectPrivateRestartTrace,
+  restartTraceInitializations,
+} from "./collector.mjs";
 import { captureRuntime } from "../managed-mcp/rebuild-evidence.mjs";
 import {
   assertInterrupted,
   assertReplacement,
   assertBarrierRejection,
 } from "./evidence.mjs";
-import { assertReplay } from "../acp-persistence/evidence.mjs";
+import { assertReplay } from "../../integration/agent-acp-service/support/persistence/evidence.mjs";
 import { seed } from "./setup.mjs";
 import { archiveCompleted } from "./archive.mjs";
 import { collectInterruptedTrace } from "./collection.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
-const archive = new Map();
-const saveTrace = (label) => (trace) =>
-  writeFileSync(`/tmp/restart-traces/${label}.json`, JSON.stringify(trace), {
-    mode: 0o600,
-  });
+const archive = new Map(),
+  runtimeBindings = new Map();
+const traceRequest = (request) =>
+  runtimeBindings.has(request.label)
+    ? { ...request, runtimeBinding: runtimeBindings.get(request.label) }
+    : request;
 async function archiveReady() {
   const modelRequests = (await modelState()).requests;
-  await archiveCompleted(requests, archive, (expected) =>
-    collectManagedTrace(
-      "http://jaeger:16686",
-      expected,
-      secrets,
-      [],
-      saveTrace(expected.label),
-      (trace) => {
-        if (expected.rejection) inspectBarrierTrace(trace, expected, secrets);
-        else
-          inspectCommandTrace(
-            trace,
-            expected,
-            secrets,
-            modelRequests.filter((r) => r.trace_id === trace.traceID),
-          );
-        return trace;
-      },
-    ),
+  await archiveCompleted(
+    requests.map(traceRequest),
+    archive,
+    (expected) =>
+      collectPrivateRestartTrace("http://jaeger:16686", expected, {
+        directory: "/tmp/restart-traces",
+        flush: () => telemetry.flush(),
+        secrets,
+        requests: modelRequests,
+      }),
+    { initializations: restartTraceInitializations([...connections.values()]) },
   );
 }
-import { stateReady } from "../acp-persistence/readiness.mjs";
+import { readRestartExecutionState, stateReady } from "./readiness.mjs";
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
-const connections = [],
-  requests = [],
+const connections = new Map(),
+  recorders = new WeakMap(),
+  clients = new Set();
+const requests = [],
   lifecycle = [],
   faults = [],
-  journals = [];
+  journals = [],
+  stateReceipts = [];
 const secrets = [
   "stage3-admin-password",
   "restart-owner-password",
   "restart-fixture-key",
 ];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+function preserveConnection(snapshot) {
+  connections.set(snapshot.connectionTraceID, snapshot);
+  writeEvidenceFile(
+    "/tmp/restart-traces",
+    "connection-inventory.private.json",
+    JSON.stringify([...connections.values()]) + "\n",
+  );
+}
 let stage = "setup",
   agentId,
   organizationId,
+  memberPrincipal,
   deleted = false,
   restarts = 0;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const agent = () => api(`/api/admin/agents/${agentId}`);
-const state = async () =>
-  (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const state = () =>
+  readRestartExecutionState(agentId, member, {
+    principal: memberPrincipal,
+    service: services,
+    receipts: stateReceipts,
+    secrets,
+    preserve: (rows) =>
+      writeEvidenceFile(
+        "/tmp/restart-traces",
+        "execution-state.private.json",
+        JSON.stringify(rows) + "\n",
+      ),
+  });
 const services = serviceClient();
 const runtimeController = "http://runtime-controller:8080";
 async function peer(base, path, body) {
@@ -165,29 +192,42 @@ async function operation(id, kind) {
     completed: true,
   });
 }
-async function connect(version) {
-  const c = commandConnection(
+async function connect(version, kind, role = "prompt") {
+  const c = await openPrivateCommandConnection(
     { name: `restart-v${version}`, version },
     agentId,
     member,
+    {
+      principal: memberPrincipal,
+      telemetry,
+      secrets,
+      service: services,
+      captureRawFrames: true,
+    },
   );
-  connections.push(c);
-  await c.initialize();
+  clients.add(c);
+  const recorder = createRestartRecorder(
+    c,
+    { version, kind, role, agentId },
+    preserveConnection,
+  );
+  recorders.set(c, recorder);
+  clients.delete(c);
+  clients.add(recorder);
+  preserveConnection(recorder.snapshot());
   return c;
 }
 async function send(c, name, params, expected) {
-  let result;
+  const recorder = recorders.get(c),
+    offset = recorder.snapshot().evidence.length;
   try {
-    result = await c.request(name, params, 120000);
-    return result;
+    return await recorder.request(name, params, 120000);
   } finally {
-    requests.push({
-      ...c.lastRequest,
-      sessionId: params.sessionId ?? result?.sessionId,
-      ...expected,
-    });
+    for (const row of recorder.snapshot().evidence.slice(offset))
+      requests.push({ ...row, version: c.version, ...expected });
   }
 }
+const close = (client) => recorders.get(client).closeAndWait();
 async function prompt(c, version, sessionId, phase) {
   const offset = c.updates.length,
     result = await send(
@@ -246,11 +286,11 @@ async function checkpoint(name) {
     90000,
   );
 }
-async function preserve(version, sessionId, before, label) {
+async function preserve(version, kind, sessionId, before, label) {
   const calls = (await modelState()).requests;
   let reader;
   for (let n = 1; n <= 2; n++) {
-    reader = await connect(version);
+    reader = await connect(version, kind, `replay-${n}`);
     const spec = replayRequest(version, sessionId);
     await send(reader, spec.method, spec.params, {
       kind: "request",
@@ -258,7 +298,7 @@ async function preserve(version, sessionId, before, label) {
     });
     assertReplay(version, reader.updates, before, sessionId);
     assert.deepEqual(await saved(sessionId, before.run.run_id), before);
-    if (n === 1) await reader.close();
+    if (n === 1) await close(reader);
   }
   assert.deepEqual(
     (await modelState()).requests,
@@ -285,7 +325,7 @@ async function exercise(version, kind, template) {
       kind === "inflight" ? `v${version}-tool-inflight` : label + "-fault";
   stage = label;
   await ready();
-  const c = await connect(version),
+  const c = await connect(version, kind),
     { sessionId } = await send(
       c,
       "new",
@@ -355,19 +395,8 @@ async function exercise(version, kind, template) {
     calls.filter((r) => r.phase === phase).length,
     { completed: 2, "model-held": 1, "tool-held": 2, inflight: 1 }[kind],
   );
-  if (kind === "completed") {
-    await archiveReady();
-    const expected = requests.find((r) => r.label === phase),
-      id = calls.find((r) => r.phase === phase).trace_id;
-    await collectTrace("http://jaeger:16686", id, (t) =>
-      inspectCommandTrace(
-        t,
-        expected,
-        secrets,
-        calls.filter((r) => r.trace_id === id),
-      ),
-    );
-  } else if (version === 1)
+  if (kind === "completed") await archiveReady();
+  else if (version === 1)
     assert.equal(resolved, false, "interrupted v1 prompt already finished");
   else assertStillRunning(version, c.updates, sessionId);
   const proof = await restart(
@@ -381,7 +410,7 @@ async function exercise(version, kind, template) {
       assert(result.error, "v1 prompt survived killed executor");
     else assertV2PromptAcknowledged(result.value, c.updates, sessionId);
   }
-  await c.close();
+  await close(c);
   if (kind === "inflight") {
     assert.equal(proof.marker, `v${version}-tool-inflight\n`);
     assert(proof.tool_pid > 0);
@@ -403,7 +432,7 @@ async function exercise(version, kind, template) {
     calls,
     "restart called Provider",
   );
-  let reader = await preserve(version, sessionId, after, label),
+  let reader = await preserve(version, kind, sessionId, after, label),
     replacement;
   if (kind === "inflight") {
     const beforeOther = await audits(other.sessionId),
@@ -428,7 +457,7 @@ async function exercise(version, kind, template) {
     assert.deepEqual(await audits(other.sessionId), beforeOther);
     assert.deepEqual(await saved(sessionId, after.run.run_id), after);
     assert.deepEqual((await modelState()).requests, calls);
-    await reader.close();
+    await close(reader);
     const rebuilt = await admin.request(
       `/api/admin/agents/${agentId}/rebuild`,
       {
@@ -459,7 +488,7 @@ async function exercise(version, kind, template) {
       after,
       "Rebuild changed unresolved audit",
     );
-    reader = await connect(version);
+    reader = await connect(version, kind, "rebuild");
     await restore(reader, version, sessionId, after, label + "-rebuild-replay");
     assert.deepEqual(
       (await modelState()).requests,
@@ -468,7 +497,7 @@ async function exercise(version, kind, template) {
     );
   }
   await prompt(reader, version, sessionId, label + "-post");
-  await reader.close();
+  await close(reader);
   assert.equal((await audits(sessionId)).length, 2);
   assert.deepEqual(
     await saved(sessionId, after.run.run_id),
@@ -476,16 +505,9 @@ async function exercise(version, kind, template) {
     "later Run rewrote prior audit",
   );
   if (replacement) {
-    const post = (await saved(sessionId)).run,
-      expected = requests.find((r) => r.label === label + "-post"),
-      calls = (await modelState()).requests.filter(
-        (r) => r.phase === label + "-post",
-      );
-    assert.equal(calls.length, 2);
-    await collectTrace("http://jaeger:16686", calls[0].trace_id, (trace) => {
-      const result = inspectCommandTrace(trace, expected, secrets, calls);
-      assertRuntimeBinding(trace, post, replacement);
-      return result;
+    runtimeBindings.set(label + "-post", {
+      run: (await saved(sessionId)).run,
+      runtime: replacement,
     });
   }
   await archiveReady();
@@ -530,13 +552,16 @@ async function main() {
     password: "restart-owner-password",
     role: "member",
   });
-  await member.request("/api/session/login", {
+  const ownerLogin = await member.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "restart-owner@example.com",
       password: "restart-owner-password",
     },
   });
+  memberPrincipal = structuredClone(ownerLogin.body.principal);
+  assert.equal(memberPrincipal.organization_id, organizationId);
+  assert.equal(memberPrincipal.user_id, owner.user.id);
   secrets.push(...admin.cookies.values(), ...member.cookies.values());
   const { template } = await seed(api, process.env.TEST_RUNTIME_IMAGE);
   const created = await admin.request("/api/admin/agents", {
@@ -562,6 +587,20 @@ async function main() {
       await exercise(version, kind, template);
   const modelResult = await modelState();
   assert.equal(modelResult.requests.length, 28);
+  const inventory = indexRestartRequests({
+    agentId,
+    connections: [...connections.values()],
+  });
+  assert.deepEqual(requests, inventory.requests);
+  assert.deepEqual(
+    restartTraceInitializations([...connections.values()]),
+    inventory.initializations,
+  );
+  for (const [file, rows] of [
+    ["request-inventory.private.json", inventory.requests],
+    ["initialization-inventory.private.json", inventory.initializations],
+  ])
+    writeEvidenceFile("/tmp/restart-traces", file, JSON.stringify(rows) + "\n");
   stage = "delete";
   const removed = await admin.request(`/api/admin/agents/${agentId}/delete`, {
     body: {},
@@ -592,6 +631,9 @@ async function main() {
     model_requests: modelResult.requests.length,
     restarts,
     replays: 18,
+    connections: connections.size,
+    initializations: inventory.initializations.length,
+    business_requests: inventory.requests.length,
     rejections: 2,
     rebuilds: 2,
     history_preserved: true,
@@ -610,18 +652,29 @@ async function main() {
     });
   save("inputs")({
     requests,
+    initializations: inventory.initializations,
+    runtimeBindings: [...runtimeBindings],
     lifecycle,
     faults,
     modelRequests: modelResult.requests,
   });
   const results = [];
-  for (const expected of [...lifecycle, ...requests]) {
+  for (const expected of [
+    ...lifecycle,
+    ...inventory.initializations,
+    ...requests,
+  ]) {
     const label = expected.label ?? expected.kind;
     stage = `trace:${label}`;
     try {
       let trace;
-      if (archive.has(label)) trace = archive.get(label).trace;
-      else if (expected.kind === "interruption") {
+      if (archive.has(label)) {
+        const entry = archive.get(label);
+        assert.deepEqual(entry.request, traceRequest(expected));
+        results.push(entry.report);
+        continue;
+      }
+      if (expected.kind === "interruption") {
         const ids = [
           ...new Set(
             modelResult.requests
@@ -632,46 +685,42 @@ async function main() {
         assert.equal(ids.length, 1);
         trace = await collectInterruptedTrace("http://jaeger:16686", ids[0]);
         if (trace) save(label)(trace);
-      } else
-        trace = expected.traceID
-          ? await collectTrace("http://jaeger:16686", expected.traceID, (t) => {
-              if (t) save(label)(t);
-              return t;
-            })
-          : await collectManagedTrace(
-              "http://jaeger:16686",
+      } else {
+        assert(
+          expected.traceID,
+          "completed private request was not archived before fault or teardown",
+        );
+        trace = await collectTrace(
+          "http://jaeger:16686",
+          expected.traceID,
+          (t) => {
+            if (t) save(label)(t);
+            return t;
+          },
+        );
+      }
+      results.push(
+        expected.kind === "interruption"
+          ? inspectInterruptedTrace(
+              trace,
               expected,
               secrets,
               modelResult.requests,
-              save(label),
-              (t) => t,
-            );
-      results.push(
-        expected.rejection
-          ? inspectBarrierTrace(trace, expected, secrets)
-          : expected.kind === "interruption"
-            ? inspectInterruptedTrace(
-                trace,
-                expected,
-                secrets,
-                modelResult.requests,
-              )
-            : expected.traceID
-              ? inspectLifecycle(trace, expected, secrets)
-              : inspectCommandTrace(
-                  trace,
-                  expected,
-                  secrets,
-                  modelResult.requests.filter(
-                    (r) => r.trace_id === trace.traceID,
-                  ),
-                ),
+            )
+          : inspectLifecycle(trace, expected, secrets),
       );
     } catch (error) {
+      await preserveRestartFailure(error, (original) =>
+        writeEvidenceFile(
+          "/tmp/restart-traces",
+          `${label}-failure.private.txt`,
+          inspect(original, { depth: 8 }) + "\n",
+        ),
+      );
       results.push({
         label,
         strict_trace: "failed",
-        evidence_error: error.message,
+        ...summarizeFailure(error),
       });
     }
   }
@@ -691,22 +740,27 @@ async function main() {
   if (!accepted) process.exitCode = 1;
 }
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, main);
 } catch (error) {
   console.error(
-    asciiJSON({
-      event: "restart_failed",
-      stage,
-      error: error.message,
-      location: error.stack
-        ?.split("\n")
-        .find((line) => line.includes("file:///app/tests/e2e/")),
-    }),
+    asciiJSON(
+      await preserveFileFailure({
+        directory: "/tmp/restart-traces",
+        error,
+        stage,
+        inventory: {
+          connections: [...connections.values()],
+          requests,
+          lifecycle,
+          faults,
+          stateReceipts,
+        },
+        fetchStatus: () =>
+          fetch("http://restart-model-peer:8080/status", {
+            signal: AbortSignal.timeout(5000),
+          }),
+      }),
+    ),
   );
   process.exitCode = 1;
-} finally {
-  for (const c of connections)
-    try {
-      await c.close();
-    } catch {}
 }

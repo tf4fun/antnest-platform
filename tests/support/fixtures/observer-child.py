@@ -24,11 +24,20 @@ while not (root / 'worker.pid').exists():
 if mode == 'parent-exits':
     (root / 'ready').touch()
     raise SystemExit(int(os.environ.get('OBSERVER_EXIT_CODE', '0')))
+requested_signal = None
 if mode == 'clean-trigger':
     def stop(signum, frame):
-        worker.terminate()
-        worker.wait(timeout=2)
-        raise SystemExit(128 + signum)
+        global requested_signal
+        # A handler must not re-enter Popen.wait while it owns its wait lock.
+        if requested_signal is None:
+            requested_signal = signum
     signal.signal(signal.SIGTERM, stop)
 (root / 'ready').touch()
+if mode == 'clean-trigger':
+    while requested_signal is None and worker.poll() is None:
+        time.sleep(0.01)
+    if requested_signal is not None:
+        worker.terminate()
+        worker.wait(timeout=2)
+        raise SystemExit(128 + requested_signal)
 worker.wait()

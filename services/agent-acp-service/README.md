@@ -7,11 +7,29 @@ Tools on the Agent's Runtime. It is written in TypeScript on Node.js 24 and uses
 the official `@agentclientprotocol/sdk` and `@modelcontextprotocol/client`
 packages.
 
+Strict JSON admission rejects duplicate decoded keys, invalid UTF-8 and nesting
+beyond 64 levels. Large attachment strings use native delimiter scanning; only
+object keys are decoded during the duplicate-key pass, while the final native
+parser validates all values. This avoids repeated value decoding and JavaScript
+per-character scanning before another Agent's control request can run.
+
 Each endpoint fixes its protocol version for the whole connection. Stable v1
 and draft v2 are separate adapters over one application core. The unversioned
 `/acp` path does not exist, so protocol selection is never implicit. ACP does
 not construct Agents or Runtimes; Agent Controller publishes the current
 execution configuration into it.
+
+Normal process shutdown sends WebSocket close code `1001` on both protocol
+endpoints and joins the peer close before retiring the listeners. New upgrades
+are rejected once shutdown begins. A peer that does not acknowledge within five
+seconds is disconnected, so it cannot exhaust the process shutdown deadline.
+HTTP connections receive the same concurrent five-second shutdown window:
+existing streams close, new work is rejected, and only authenticated original
+connection DELETE requests may finish their actual cleanup before receiving 202.
+The explicit shutdown drain permits those acknowledgements after readiness
+stops; ordinary not-ready operation does not. At the fixed deadline outstanding
+responses are aborted and cleanup is joined before listeners retire. See the
+[HTTP retirement contract](docs/http-transport.md).
 
 Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP keys under the [development secret policy](../../contracts/platform/development-secrets.md). The exact independent `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits one variable-only WARN per affected setting and enables neither Skill learning debug mode nor removed Registry bearers.
 
@@ -68,7 +86,7 @@ Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP ke
 | Outbound  | Skill Registry discovery and projection routes                                  | Skill discovery and source metadata delivery, when configured                          |
 | Owned     | PostgreSQL                                                                      | Sessions, messages, checkpoints, Runs, Tool attempts, permissions and learning records |
 
-Gateway and Agent UI supply an unchanged Identity-signed CCT plus their own
+Agent UI supplies an unchanged Identity-signed CCT plus its own
 verified workload credentials. ACP derives organization, principal and Agent
 from signed claims, ignores unsigned identity hints, and authorizes each resource
 method against the locally applied snapshot. It advertises no ACP `authMethods`.
@@ -81,7 +99,12 @@ After workload admission, a required but absent CCT returns
 
 The [execution configuration contract](../../contracts/agent-acp/execution-api.md)
 defines how Controller publishes into ACP. Normal ACP operation makes no
-reverse access, admission, credential or finish requests to Controller. The
+reverse access, admission, credential or finish requests to Controller. Local authorization commits
+are ordered per Agent, so one Agent's input persistence cannot queue another
+Agent's cancellation checks or terminal reads. Organization configuration
+publication remains exclusive: it waits for all earlier Agent commits, and
+later access waits for the published revision before authorization. Failed
+commits release their queue position without changing the original error. The
 [workspace Bridge extension](../../contracts/agent-acp/workspace-bridge.md) is
 negotiated through `_meta["antnest.dev/bridge"]`; clients that do not negotiate
 it keep standard ACP wire behavior.
@@ -183,6 +206,13 @@ and Docker end-to-end tests live in
 dependencies. `test:integration` runs official ACP and MCP protocol peers,
 HTTP, WebSocket and SSE boundaries and trace propagation. `test:postgres`
 selects the real PostgreSQL cases.
+
+The service-owned `sdk-regressions-docker.mjs` runner also revokes access through
+an actual execution publication, holds the official client's automatic DELETE
+until its connection has closed, and verifies the complete authenticated 202.
+It checks foreign scopes, invalid bodies and retired IDs against that same
+production connection, plus unchanged full Session/Run database rows. This does
+not replace Agent UI shutdown tracing or the cross-service recovery admission.
 
 Test-only variables:
 

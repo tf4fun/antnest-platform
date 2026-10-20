@@ -8,6 +8,7 @@ export type BridgeOwner = {
   beginDrain?(): void | Promise<void>;
   close(): void | Promise<void>;
   isClosed?: boolean;
+  readonly canReplaceAfterPeerLoss?: boolean;
 };
 
 export type BridgeLease<Owner extends BridgeOwner> = {
@@ -22,7 +23,7 @@ type RegistryOptions<Owner extends BridgeOwner> = {
   create(
     scope: BridgeScope,
     retainWork: () => () => void,
-    identity: { epoch: string; incarnation: string },
+    identity: { epoch: string; incarnation: string; signal: AbortSignal },
   ): Owner | Promise<Owner>;
   now(): number;
   idleMs: number;
@@ -37,6 +38,8 @@ type Slot<Owner extends BridgeOwner> = {
   incarnation: string;
   observers: number;
   work: number;
+  initializing: boolean;
+  initialization: AbortController;
   idleSince?: number;
   retiring?: Promise<void>;
 };
@@ -84,19 +87,26 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
     let slot = this.slots.get(key);
     if (slot) refreshScopeContext(slot.scope, scope);
     if (slot?.retiring !== undefined) {
-      await slot.retiring;
+      await this.retireForObservation(key, slot);
       return this.observe(scope);
     }
     if (slot === undefined) {
       if (this.slots.size >= (this.options.maxOwners ?? 16)) {
-        const cold = [...this.slots].find(([, candidate]) =>
-          candidate.retiring === undefined &&
+        const cold = [...this.slots].filter(([, candidate]) =>
           candidate.observers === 0 &&
           candidate.work === 0,
         );
-        if (cold === undefined) throw new BridgeCapacityError();
-        await this.retire(cold[0], cold[1]);
-        return this.observe(scope);
+        const failures: unknown[] = [];
+        for (const [coldKey, candidate] of cold) {
+          if (this.draining) throw new Error("Bridge is draining");
+          if (this.slots.get(coldKey) !== candidate ||
+            candidate.observers !== 0 || candidate.work !== 0) continue;
+          try { await this.retireForObservation(coldKey, candidate); }
+          catch (error) { failures.push(error); continue; }
+          return this.observe(scope);
+        }
+        if (failures.length) throw failures[0];
+        throw new BridgeCapacityError();
       }
       let resolveOwner!: (owner: Owner) => void;
       let rejectOwner!: (error: unknown) => void;
@@ -110,6 +120,8 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
         incarnation: this.options.incarnation(),
         observers: 0,
         work: 0,
+        initializing: true,
+        initialization: new AbortController(),
       };
       const current = slot;
       this.slots.set(key, current);
@@ -126,8 +138,15 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
         const created = this.options.create(scope, retainWork, {
           epoch: this.epoch,
           incarnation: current.incarnation,
+          signal: current.initialization.signal,
         });
-        Promise.resolve(created).then(resolveOwner, rejectOwner);
+        Promise.resolve(created).then((value) => {
+          current.initializing = false;
+          resolveOwner(value);
+        }, (error) => {
+          current.initializing = false;
+          rejectOwner(error);
+        });
       } catch (error) {
         this.slots.delete(key);
         throw error;
@@ -145,7 +164,7 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
     if (owner.isClosed === true) {
       slot.observers -= 1;
       this.markIdle(slot);
-      await this.retire(key, slot);
+      await this.retireForObservation(key, slot);
       return this.observe(scope);
     }
     if (this.draining) {
@@ -160,8 +179,9 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
       epoch: this.epoch,
       incarnation: current.incarnation,
       retainWork: () => {
-        if (released || this.draining)
-          throw new Error("Cannot retain work after releasing the observer");
+        if (released || this.draining || owner.isClosed === true ||
+          current.retiring !== undefined || this.slots.get(key) !== current)
+          throw new Error("Cannot retain work for a retired or released observer");
         return this.retainSlotWork(current);
       },
       release: () => {
@@ -177,8 +197,11 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
     if (this.draining) return;
     const closings: Promise<void>[] = [];
     for (const [key, slot] of this.slots) {
+      if (slot.retiring !== undefined) {
+        closings.push(slot.retiring);
+        continue;
+      }
       if (
-        slot.retiring !== undefined ||
         slot.observers > 0 ||
         slot.work > 0 ||
         slot.idleSince === undefined ||
@@ -187,7 +210,9 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
         continue;
       closings.push(this.retire(key, slot));
     }
-    await Promise.all(closings);
+    const results = await Promise.allSettled(closings);
+    const failures = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+    if (failures.length) throw new AggregateError(failures, "Bridge owner sweep failed");
   }
 
   public drain(timeoutMs: number): Promise<{ forced: boolean }> {
@@ -200,25 +225,27 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
   }
 
   private async finishDrain(deadline: number): Promise<{ forced: boolean }> {
+    const slots = [...this.slots];
+    for (const [, slot] of slots)
+      if (slot.initializing) slot.initialization.abort(new Error("Bridge is draining"));
     const streamClosures = Promise.allSettled(
-      [...this.slots.values()].map((slot) =>
+      slots.map(([, slot]) =>
         slot.owner.then((owner) => owner.beginDrain?.()),
       ),
     );
     const streamsClosed = await until(streamClosures, deadline);
-    const streamFailures =
-      streamsClosed &&
-      (await streamClosures).some((result) => result.status === "rejected");
     const idle = streamsClosed && (await this.waitForIdle(deadline));
     const closings = Promise.allSettled(
-      [...this.slots].map(([key, slot]) => this.retire(key, slot)),
+      slots.map(([key, slot]) => this.retire(key, slot)),
     );
-    const ownersClosed = await until(closings, deadline);
-    const closeFailures =
-      ownersClosed &&
-      (await closings).some((result) => result.status === "rejected");
+    // The deadline limits accepted-work waiting. Resource cleanup has its own
+    // bounded abort/join lifecycle; never leave it running behind a timed-out race.
+    const closeFailures = (await closings).some((result) => result.status === "rejected");
+    const streamFailures = (await streamClosures).some((result) => result.status === "rejected");
+    for (const [key, slot] of slots)
+      if (this.slots.get(key) === slot) this.slots.delete(key);
     return {
-      forced: !idle || !ownersClosed || streamFailures || closeFailures,
+      forced: !idle || streamFailures || closeFailures,
     };
   }
 
@@ -251,10 +278,21 @@ export class BridgeRegistry<Owner extends BridgeOwner> {
     if (slot.retiring !== undefined) return slot.retiring;
     slot.retiring = slot.owner
       .then((owner) => owner.close())
-      .finally(() => {
+      .then(() => {
         if (this.slots.get(key) === slot) this.slots.delete(key);
       });
     return slot.retiring;
+  }
+
+  private async retireForObservation(key: string, slot: Slot<Owner>): Promise<void> {
+    try { await this.retire(key, slot); }
+    catch (error) {
+      const owner = await slot.owner;
+      if (this.draining || owner.isClosed !== true || slot.work !== 0 ||
+        owner.canReplaceAfterPeerLoss !== true) throw error;
+      // Late waiters must never delete a replacement created by an earlier one.
+      if (this.slots.get(key) === slot) this.slots.delete(key);
+    }
   }
 
   private markIdle(slot: Slot<Owner>): void {

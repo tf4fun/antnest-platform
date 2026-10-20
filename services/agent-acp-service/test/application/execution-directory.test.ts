@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import {
   ExecutionDirectory,
@@ -666,6 +667,163 @@ describe("execution directory", () => {
     ).resolves.toBe("independent");
     finish.resolve();
     await active;
+  });
+
+  async function twoAgents() {
+    const test = setup();
+    const configuration = executionConfiguration();
+    configuration.agents.push({
+      ...structuredClone(configuration.agents[0]!),
+      agent_id: "agent-2",
+      principal_ids: ["principal-2"],
+      runtime: runtimeConfiguration(2),
+    });
+    await test.directory.apply(configuration);
+    return {
+      ...test,
+      configuration,
+      other: { ...executionIdentity(), agentId: "agent-2", principalId: "principal-2" },
+    };
+  }
+
+  it("lets another Agent access the same organization while preserving each Agent's FIFO", async () => {
+    const { directory, other } = await twoAgents();
+    const entered = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const active = directory.withAccess(executionIdentity(), async () => {
+      entered.resolve();
+      await finish.promise;
+    });
+    await entered.promise;
+    const order: string[] = [];
+    const same = directory.withAccess(executionIdentity(), () => {
+      order.push("same");
+      return Promise.resolve();
+    });
+    const independent = directory.withAccess(other, () => {
+      order.push("other");
+      return Promise.resolve();
+    });
+    try {
+      await nextTurn();
+      expect(order).toEqual(["other"]);
+    } finally {
+      finish.resolve();
+      await Promise.all([active, same, independent]);
+    }
+    expect(order).toEqual(["other", "same"]);
+  });
+
+  it("waits for every earlier Agent commit and prevents later access from passing revocation", async () => {
+    const { directory, repository, other } = await twoAgents();
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const entered: string[] = [];
+    const a = directory.withAccess(executionIdentity(), async () => {
+      entered.push("a");
+      await first.promise;
+    });
+    const b = directory.withAccess(other, async () => {
+      entered.push("b");
+      await second.promise;
+    });
+    const revoked = directory.apply({
+      organization_id: "organization-1",
+      revision: 2,
+      agents: [],
+      models: [],
+      providers: [],
+    });
+    const late = directory.withAccess(other, () => {
+      entered.push("invalid late");
+      return Promise.resolve();
+    });
+    const lateResult = late.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    try {
+      await nextTurn();
+      expect(entered).toEqual(["a", "b"]);
+      expect(repository.save).toHaveBeenCalledTimes(1);
+      first.resolve();
+      await a;
+      await nextTurn();
+      expect(repository.save).toHaveBeenCalledTimes(1);
+      expect(entered).toEqual(["a", "b"]);
+    } finally {
+      first.resolve();
+      second.resolve();
+      await Promise.all([a, b, revoked]);
+    }
+    expect(await lateResult).toMatchObject({ code: "access_denied" });
+    expect(repository.save).toHaveBeenCalledTimes(2);
+  });
+
+  it("orders successive publications around already queued Agent commits without starving either", async () => {
+    const { directory, other, configuration } = await twoAgents();
+    const first = Promise.withResolvers<void>();
+    const middle = Promise.withResolvers<void>();
+    const observed: number[] = [];
+    const a = directory.withAccess(executionIdentity(), async () => {
+      await first.promise;
+    });
+    const revision2 = directory.apply({ ...configuration, revision: 2 });
+    const b = directory.withAccess(other, async ({ configuration: current }) => {
+      observed.push(current.revision);
+      await middle.promise;
+    });
+    const revision3 = directory.apply({ ...configuration, revision: 3 });
+    const late = directory.withAccess(executionIdentity(), ({ configuration: current }) => {
+      observed.push(current.revision);
+      return Promise.resolve();
+    });
+    try {
+      await nextTurn();
+      expect(observed).toEqual([]);
+      first.resolve();
+      await revision2;
+      await nextTurn();
+      expect(observed).toEqual([2]);
+    } finally {
+      first.resolve();
+      middle.resolve();
+      await Promise.all([a, revision2, b, revision3, late]);
+    }
+    expect(observed).toEqual([2, 3]);
+  });
+
+  it("keeps a failed Agent action's error and releases its publication dependencies", async () => {
+    const { directory, other, configuration } = await twoAgents();
+    const failure = new Error("original commit failure");
+    const finish = Promise.withResolvers<void>();
+    const a = directory.withAccess(executionIdentity(), async () => {
+      await finish.promise;
+      throw failure;
+    });
+    const result = a.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    let independent = false;
+    const b = directory.withAccess(other, () => {
+      independent = true;
+      return Promise.resolve();
+    });
+    const publication = directory.apply({ ...configuration, revision: 2 });
+    try {
+      await nextTurn();
+      expect(independent).toBe(true);
+    } finally {
+      finish.resolve();
+      await Promise.all([result, b, publication]);
+    }
+    expect(await result).toBe(failure);
+    await expect(
+      directory.withAccess(executionIdentity(), ({ configuration: current }) =>
+        Promise.resolve(current.revision),
+      ),
+    ).resolves.toBe(2);
   });
 
   it("releases the local authority boundary after an action fails", async () => {

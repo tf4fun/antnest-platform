@@ -12,6 +12,13 @@ Runtime information and the Tool catalog are refreshed once per Run. The
 initial context includes Skill summaries and locators, never full Skill bodies
 or child environment secrets.
 
+The client delegates the original member login Session and Principal to the
+private ACP entry through Identity workspace Resolve. Only the disposable
+`gateway-identity` and `agent-ui-acp` grants authorize these calls. Execution
+state reads preserve the complete private response, including its configuration
+revision. Each version must retain three real SDK connections and initializations,
+eleven business requests, six Runs, sixteen Provider requests and ten Tool calls.
+
 ## Rebuild during an active Run
 
 Rebuild is tested with two explicitly released Provider response barriers in
@@ -40,12 +47,21 @@ container and its storage.
 
 ## Trace rules
 
-Each JSON-RPC request has a distinct Gateway request Trace linked to its
-connection. The Provider `traceparent` identifies the HTTP CLIENT span under
+Each JSON-RPC request, including initialize, has a distinct private ACP request
+Trace linked to its actual exported CLIENT span and connection upgrade. The
+original SDK request ID, Session and immutable wire receipt identify the request.
+The Provider `traceparent` identifies the HTTP CLIENT span under
 `model.complete`. Per-Run preparation, dispatch, Runtime descendants and durable
 closure must be present. Only the deliberately invoked alpha failure Tool and
-the exact busy rejection may have expected error spans. Lifecycle absence probes,
-Unknown Trace warnings and invalid logical timing are failures. Only the shared,
-reviewed clock-skew warning class can be reported as a timing-only limitation;
-strict diagnostics remain explicit. Missing parents, privacy and topology never
-become passes because business results succeeded.
+the exact busy rejection may have expected business error spans. Their actual
+response and complete owning span chains are required. All fourteen private
+requests and three lifecycle Traces must pass their owning checks.
+
+Reviewed SDK read/Tool cleanup diagnostics require the complete successful
+operation and exact diagnostic ownership. Reviewed clock observations retain
+their original timestamps. Raw strict failures and child exit code 2 remain
+explicit; unknown errors, warnings, missing parents, privacy violations and
+invalid topology fail. Business success cannot replace those checks. The final
+completion receipt is written only after pending requests, connection closure,
+evidence preservation and telemetry shutdown have joined. Build, archive and
+cleanup failures are never accepted as warning exits.

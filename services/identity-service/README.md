@@ -285,6 +285,11 @@ across Store instances, fifth/sixth serialization, blocked-Organization row
 growth, fresh time after lock waits, bounded cleanup and transaction rollback.
 They also verify pool/row wait exhaustion and release when BEGIN has succeeded
 but its caller's admission expires.
+An expired database admission exhausts the transaction's remaining allowance,
+including when deadline setup delays the operation timer. A later operation
+cannot restart that budget. Original caller cancellation still takes priority;
+the shared two-second database budget excludes KDF work. A virtual-clock unit
+test covers the setup delay without relying on scheduler timing.
 The real service startup test holds a cleanup query behind a PostgreSQL table
 lock, then verifies shutdown returns with its connection closed and preserves
 the held state. Unit tests cover first-pass delay, completion-based scheduling,

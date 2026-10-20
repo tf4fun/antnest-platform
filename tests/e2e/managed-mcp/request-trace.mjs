@@ -4,11 +4,17 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   requestTraceBoundary,
   inspectCommandTrace,
+  inspectPrivateCommandTrace,
   selectCommandTrace,
 } from "../acp-commands/trace.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { hasError, timingEvidence } from "../acp-plan/requests.mjs";
 import { collectTrace } from "./trace.mjs";
+import { inspectRunInformationReads } from "../observability/runtime-information-run.mjs";
+import { managedDiagnostics } from "./private-diagnostics.mjs";
+import { collectPrivateACPConsumerTrace } from "../acp-commands/collector.mjs";
+import { privateACPStrictOutcome } from "../observability/private-acp-inventory.mjs";
+import { assertSessionSuccess } from "../identity-closeout/session-diagnostics.mjs";
 
 const plans = {
   "managed-bootstrap": ["write", "write"],
@@ -23,9 +29,15 @@ export function inspectManagedTrace(
   expected,
   secrets = [],
   requests = [],
+  { privateMode = false } = {},
 ) {
   if (expected.kind === "request" && !expected.rejection)
-    return inspectCommandTrace(trace, expected, secrets, requests);
+    return (privateMode ? inspectPrivateCommandTrace : inspectCommandTrace)(
+      trace,
+      expected,
+      secrets,
+      requests,
+    );
   const { tree, request, forwarded } = requestTraceBoundary(
     trace,
     expected,
@@ -69,6 +81,9 @@ export function inspectManagedTrace(
       no_execution: true,
       rejection: expected.rejection,
       ...timing,
+      ...(privateMode
+        ? managedDiagnostics(trace, expected, { tree, request })
+        : {}),
     };
   }
   const plan = plans[expected.phase];
@@ -97,18 +112,24 @@ export function inspectManagedTrace(
     ),
     "durable Run closure",
   );
-  const prepared = ["mcp.runtime.info", "mcp.tools.list"].map((name) => {
-    const span = one(acp(name), name);
-    assert(inside(span));
-    assert(
-      trace.spans.some(
-        (s) =>
-          tree.service(s) === "antnest-runtime" && tree.chain(s).includes(span),
-      ),
-      "Runtime preparation descendant missing",
-    );
-    return span;
-  });
+  const information = privateMode
+    ? inspectRunInformationReads(trace, { request, run })
+    : undefined;
+  const prepared =
+    information?.prepared ??
+    ["mcp.runtime.info", "mcp.tools.list"].map((name) => {
+      const span = one(acp(name), name);
+      assert(inside(span));
+      assert(
+        trace.spans.some(
+          (s) =>
+            tree.service(s) === "antnest-runtime" &&
+            tree.chain(s).includes(span),
+        ),
+        "Runtime preparation descendant missing",
+      );
+      return span;
+    });
   assert.equal(requests.length, plan.length + 1);
   assert.deepEqual(
     requests.map((r) => r.step),
@@ -222,26 +243,31 @@ export function inspectManagedTrace(
       failedCalls.push(call);
     }
   }
-  for (const s of errors) {
-    const failed = failedCalls.find((call) => tree.chain(s).includes(call));
-    assert(failed, "unexpected error outside controlled Tool failure");
-    if (tree.service(s) === "agent-acp-service") {
-      assert.equal(s, failed, "unexpected ACP error under controlled failure");
-      assert.equal(tag(s, "error.type"), "mcp_tool_error");
-    } else {
-      assert.equal(tree.service(s), "antnest-runtime");
-      assert(
-        [
-          "runtime.mcp.tool",
-          "runtime.mcp.stdio",
-          "runtime.mcp.operation",
-          "HTTP POST /mcp",
-        ].includes(s.operationName),
-        "unexpected Runtime error under controlled failure",
-      );
-      assert.equal(tag(s, "error.type"), "managed_tool_error");
+  if (!privateMode)
+    for (const s of errors) {
+      const failed = failedCalls.find((call) => tree.chain(s).includes(call));
+      assert(failed, "unexpected error outside controlled Tool failure");
+      if (tree.service(s) === "agent-acp-service") {
+        assert.equal(
+          s,
+          failed,
+          "unexpected ACP error under controlled failure",
+        );
+        assert.equal(tag(s, "error.type"), "mcp_tool_error");
+      } else {
+        assert.equal(tree.service(s), "antnest-runtime");
+        assert(
+          [
+            "runtime.mcp.tool",
+            "runtime.mcp.stdio",
+            "runtime.mcp.operation",
+            "HTTP POST /mcp",
+          ].includes(s.operationName),
+          "unexpected Runtime error under controlled failure",
+        );
+        assert.equal(tag(s, "error.type"), "managed_tool_error");
+      }
     }
-  }
   const gap =
     finish.startTime - models.at(-1).startTime - models.at(-1).duration;
   return {
@@ -261,6 +287,9 @@ export function inspectManagedTrace(
     persistence: true,
     expected_tool_error_spans: errors.length,
     ...timing,
+    ...(privateMode
+      ? managedDiagnostics(trace, expected, { tree, request }, information)
+      : {}),
     model_to_finish_gap_us: gap,
     strict_trace:
       timing.strict_trace === "failed" || gap < 0 ? "failed" : "passed",
@@ -312,4 +341,39 @@ export async function collectManagedTrace(
     await delay(1000, undefined, { signal });
   }
   throw new Error("actual Managed request trace missing");
+}
+
+const managedReasons = new Set([
+  "managed-busy-rejection",
+  "managed-alpha-tool-error",
+  "completed-initialize-mcp-read-disconnect",
+  "completed-runtime-tool-http-disconnect",
+]);
+export function inspectPrivateManagedTrace(
+  trace,
+  expected,
+  secrets = [],
+  requests = [],
+) {
+  assert.equal(expected.boundary, "private-acp");
+  assert.equal(expected.transport, "websocket");
+  assert.notEqual(expected.closedBeforeResponse, true);
+  for (const span of expected.connectionTrace?.spans ?? [])
+    assertSessionSuccess(span);
+  return inspectManagedTrace(
+    trace,
+    expected,
+    secrets,
+    requests.filter((row) => row.trace_id === trace.traceID),
+    { privateMode: true },
+  );
+}
+export function collectPrivateManagedTrace(base, expected, options = {}) {
+  return collectPrivateACPConsumerTrace(base, expected, options, {
+    inspect: inspectPrivateManagedTrace,
+    ownedReasons: managedReasons,
+  });
+}
+export function managedStrictOutcome(results) {
+  return privateACPStrictOutcome(results, managedReasons);
 }

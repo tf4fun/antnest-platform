@@ -1,5 +1,5 @@
 {
-  "revision": 7,
+  "revision": 8,
   "transport": "json-over-http",
   "trust_boundary": "verified-controller-or-runtime-controller-workload",
   "status_values": ["ready", "degraded"],

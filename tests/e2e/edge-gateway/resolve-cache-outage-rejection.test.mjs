@@ -31,12 +31,14 @@ function failed(span, type, message, causes, stage) {
     : [];
 }
 
-function fixture() {
+function fixture(policyRevision = 3) {
   const traces = new Map(),
     rows = {},
     parts = {};
   const scope = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   const evidence = {
+    policy_revision: policyRevision,
+    ...(policyRevision === 4 ? { transport: "http-sse" } : {}),
     agent_id: "agent",
     session_id: "chat",
     settings: { resolveTTLMS: 10000, captureRpcContent: false },
@@ -192,6 +194,7 @@ function fixture() {
       method,
       path,
       status,
+      cache_control: "no-store",
       set_cookie_count: 0,
       trace_id: f.trace.traceID,
       started_at: time,
@@ -230,6 +233,7 @@ function fixture() {
     row.set_cookie_count = 2;
     if (label === "short-idle-login")
       row.body = { ...evidence.rejections.expired_session.before };
+    if (label === "warm-login") row.body = { principal: { user_id: "owner" } };
   }
   for (const [label, source, time] of [
     ["short-idle-warm", "rpc", 8000],
@@ -264,14 +268,28 @@ function fixture() {
       2,
       10100,
     ],
-    [
-      "stopped-cold-acp",
-      "acp",
-      "/api/app/agents/agent/v1/acp",
-      "POST",
-      2,
-      10100,
-    ],
+    ...(policyRevision === 4
+      ? [
+          ["stopped-cold-profile", "session", "/api/session", "GET", 4, 10100],
+          [
+            "stopped-cold-agent",
+            "workspace",
+            "/api/app/workspace/v1/agents/cold-agent/sessions",
+            "GET",
+            4,
+            10100,
+          ],
+        ]
+      : [
+          [
+            "stopped-cold-acp",
+            "acp",
+            "/api/app/agents/agent/v1/acp",
+            "POST",
+            2,
+            10100,
+          ],
+        ]),
     ["stopped-new-login", null, "/api/session/login", "POST", null, 10100],
     ["stopped-expired-session", "session", "/api/session", "GET", 3, 12200],
   ])
@@ -310,15 +328,589 @@ function fixture() {
       remaining_ms: -10,
     },
   ];
+  if (policyRevision === 4) {
+    evidence.cold_agent = {
+      agent_id: "cold-agent",
+      owner_user_id: "owner",
+      desired_state: "enabled",
+      activation_state: "enabled",
+      runtime_state: "available",
+      executable_execution_revision: "execution-cold",
+      last_successful_execution_revision: "execution-cold",
+    };
+    evidence.cold_agent_setup = {
+      agent_id: "cold-agent",
+      owner_user_id: "owner",
+      executable_execution_revision: "execution-cold",
+      ready_at: 7000,
+    };
+    add(
+      "warm-workspace-hit",
+      "workspace",
+      "/api/app/workspace/v1/agents/agent/sessions/chat/view",
+      "GET",
+      200,
+      "cache",
+      9000,
+      scope(4),
+    );
+  }
+  const archivedTraceIDs = new Set(traces.keys());
   return {
     evidence,
-    collection: { traces, archivedTraceIDs: new Set(traces.keys()) },
+    collection: { traces, archivedTraceIDs },
     rows,
     parts,
+    add: (...args) => {
+      const row = add(...args);
+      archivedTraceIDs.add(row.trace_id);
+      return row;
+    },
   };
 }
 
-test("five real outage rejections keep HTTP/cookie/scope/Trace evidence and unchanged short-idle authority", () => {
+test("Bridge outage proves six refusals including a warm Cookie's cold profile and Agent", () => {
+  const f = fixture(4);
+  const before = structuredClone([...f.collection.traces]);
+  const result = inspectOutageRejections(f.evidence, f.collection);
+  assert.equal(result.status, "passed");
+  assert.deepEqual(
+    result.requests.map(({ label, profile }) => [label, profile]),
+    [
+      ["stopped-cold-console", "console"],
+      ["stopped-cold-workspace", "workspace"],
+      ["stopped-cold-profile", "session"],
+      ["stopped-cold-agent", "workspace"],
+      ["stopped-new-login", null],
+      ["stopped-expired-session", "session"],
+    ],
+  );
+  assert.equal(result.expired_recovery.status, 401);
+  assert.equal(result.strict_trace, "failed");
+  assert.equal(result.owned_error_spans.length, 21);
+  const claimed = new Set(
+    result.owned_error_spans.map((s) => `${s.trace_id}:${s.span_id}`),
+  );
+  for (const [label, p] of Object.entries(f.parts))
+    if (label.startsWith("stopped-"))
+      for (const s of p.trace.spans)
+        assert(claimed.has(`${s.traceID}:${s.spanID}`));
+  assert.deepEqual([...f.collection.traces], before);
+});
+
+for (const revision of [undefined, null, 2, 5, "4"])
+  test(`rejection gate refuses an unrecognized evidence revision ${revision}`, () => {
+    const f = fixture();
+    f.evidence.policy_revision = revision;
+    assert.throws(
+      () => inspectOutageRejections(f.evidence, f.collection),
+      /revision/u,
+    );
+  });
+
+for (const cacheControl of [
+  "no-store, no-store",
+  "private, NO-STORE",
+  " \tno-store\t ",
+])
+  test(`Bridge refusals preserve complete no-store directives: ${cacheControl}`, () => {
+    const f = fixture(4);
+    for (const r of f.evidence.http) r.cache_control = cacheControl;
+    assert.equal(
+      inspectOutageRejections(f.evidence, f.collection).status,
+      "passed",
+    );
+  });
+
+for (const [label, mutate, reason] of [
+  [
+    "a missing cold profile",
+    (f) => {
+      f.evidence.http = f.evidence.http.filter(
+        (r) => r.label !== "stopped-cold-profile",
+      );
+    },
+    /stopped-cold-profile/u,
+  ],
+  [
+    "a missing cold Agent",
+    (f) => {
+      f.evidence.http = f.evidence.http.filter(
+        (r) => r.label !== "stopped-cold-agent",
+      );
+    },
+    /stopped-cold-agent/u,
+  ],
+  [
+    "a duplicate cold Agent",
+    (f) => f.evidence.http.push({ ...f.rows["stopped-cold-agent"] }),
+    /stopped-cold-agent/u,
+  ],
+  [
+    "a legacy transport",
+    (f) => {
+      f.evidence.transport = "wss";
+    },
+    /http-sse/u,
+  ],
+  [
+    "an old ACP refusal substituted for the cold profile",
+    (f) => {
+      Object.assign(f.rows["stopped-cold-profile"], {
+        label: "stopped-cold-acp",
+        path: "/api/app/agents/agent/v1/acp",
+        method: "POST",
+      });
+    },
+    /stopped-cold-profile/u,
+  ],
+  [
+    "the warm Agent substituted for the cold Agent",
+    (f) => {
+      f.evidence.cold_agent.agent_id = "agent";
+      f.evidence.cold_agent_setup.agent_id = "agent";
+      f.rows["stopped-cold-agent"].path =
+        "/api/app/workspace/v1/agents/agent/sessions";
+    },
+    /distinct.*Agent/u,
+  ],
+  [
+    "an unready cold Agent",
+    (f) => {
+      f.evidence.cold_agent.runtime_state = "unavailable";
+    },
+    /available/u,
+  ],
+  [
+    "another owner's cold Agent",
+    (f) => {
+      f.evidence.cold_agent.owner_user_id = "other";
+    },
+    /owner/u,
+  ],
+  [
+    "a cold Agent readied after the stop",
+    (f) => {
+      f.evidence.cold_agent_setup.ready_at = 10100;
+    },
+    /ready.*before/u,
+  ],
+  [
+    "a different cold Agent setup",
+    (f) => {
+      f.evidence.cold_agent_setup.agent_id = "other";
+    },
+    /cold Agent setup/u,
+  ],
+  [
+    "a new Cookie for the cold profile",
+    (f) => {
+      f.rows["stopped-cold-profile"].credential_scope =
+        f.rows["cold-console-login"].issued_credential_scope;
+    },
+    /warm credential/u,
+  ],
+  [
+    "a new Cookie for the cold Agent",
+    (f) => {
+      f.rows["stopped-cold-agent"].credential_scope =
+        f.rows["cold-workspace-login"].issued_credential_scope;
+    },
+    /warm credential/u,
+  ],
+  [
+    "no warm workspace hit",
+    (f) => {
+      f.evidence.http = f.evidence.http.filter(
+        (r) => r.label !== "warm-workspace-hit",
+      );
+    },
+    /warm-workspace-hit/u,
+  ],
+  [
+    "a different warm hit Cookie",
+    (f) => {
+      f.rows["warm-workspace-hit"].credential_scope =
+        f.rows["audit-login"].issued_credential_scope;
+    },
+    /warm credential/u,
+  ],
+  [
+    "a late warm workspace hit",
+    (f) => {
+      f.rows["warm-workspace-hit"].at = 10100;
+    },
+    /warm.*before/u,
+  ],
+  [
+    "an RPC substituted for a warm cache hit",
+    (f) => {
+      setTag(
+        f.parts["warm-workspace-hit"].decision,
+        resolvePrefix + "source",
+        "rpc",
+      );
+    },
+    undefined,
+  ],
+  [
+    "an absent warm trace",
+    (f) =>
+      f.collection.archivedTraceIDs.delete(
+        f.rows["warm-workspace-hit"].trace_id,
+      ),
+    /not archived/u,
+  ],
+  [
+    "a prewarmed session profile",
+    (f) =>
+      f.add(
+        "early-profile",
+        "session",
+        "/api/session",
+        "GET",
+        200,
+        "rpc",
+        8000,
+        f.rows["warm-login"].issued_credential_scope,
+      ),
+    /cold profile.*already/u,
+  ],
+  [
+    "a prewarmed Agent through another workspace route",
+    (f) =>
+      f.add(
+        "early-agent",
+        "workspace",
+        "/api/app/workspace/v1/agents/cold-agent/view",
+        "GET",
+        200,
+        "rpc",
+        8000,
+        f.rows["warm-login"].issued_credential_scope,
+      ),
+    /cold Agent.*already/u,
+  ],
+  [
+    "an encoded prewarmed Agent route",
+    (f) =>
+      f.add(
+        "early-agent",
+        "workspace",
+        "/api/app/workspace/v1/agents/%63old-agent/view",
+        "GET",
+        200,
+        "rpc",
+        8000,
+        f.rows["warm-login"].issued_credential_scope,
+      ),
+    /cold Agent.*already/u,
+  ],
+  [
+    "a cold profile first used between stop and refusal",
+    (f) =>
+      f.add(
+        "early-profile",
+        "session",
+        "/api/session",
+        "GET",
+        503,
+        "rpc",
+        10050,
+        f.rows["warm-login"].issued_credential_scope,
+      ),
+    /cold profile.*already/u,
+  ],
+])
+  test(`Bridge refusal gate rejects ${label}`, () => {
+    const f = fixture(4);
+    mutate(f);
+    assert.throws(
+      () => inspectOutageRejections(f.evidence, f.collection),
+      reason,
+    );
+  });
+
+for (const label of ["stopped-cold-profile", "stopped-cold-agent"])
+  for (const [name, mutate] of [
+    [
+      "late response",
+      (f) => {
+        f.rows[label].at = 15050;
+      },
+    ],
+    [
+      "new Cookie",
+      (f) => {
+        f.rows[label].set_cookie_count = 1;
+      },
+    ],
+    [
+      "issued credential",
+      (f) => {
+        f.rows[label].issued_credential_scope =
+          f.rows["audit-login"].issued_credential_scope;
+      },
+    ],
+    [
+      "wrong profile",
+      (f) =>
+        setTag(f.parts[label].decision, resolvePrefix + "profile", "console"),
+    ],
+    [
+      "cache source",
+      (f) => setTag(f.parts[label].decision, resolvePrefix + "source", "cache"),
+    ],
+    [
+      "business forwarding",
+      (f) => f.parts[label].trace.spans.push(f.parts[label].upstream),
+    ],
+    [
+      "missing Identity attempt",
+      (f) => {
+        f.parts[label].trace.spans = f.parts[label].trace.spans.filter(
+          (s) => s.spanID !== "resolve-client",
+        );
+      },
+    ],
+    [
+      "client timeout without response",
+      (f) => {
+        delete f.rows[label].status;
+      },
+    ],
+  ])
+    test(`${label} keeps the existing refusal invariant: ${name}`, () => {
+      const f = fixture(4);
+      mutate(f);
+      assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+    });
+
+for (const cacheControl of [
+  undefined,
+  "",
+  "public",
+  "no-store=1",
+  "x-no-store",
+  '"no-store"',
+])
+  for (const label of [
+    "stopped-cold-profile",
+    "stopped-cold-agent",
+    "recovered-expired-session",
+  ])
+    test(`${label} rejects invalid cache-control ${JSON.stringify(cacheControl)}`, () => {
+      const f = fixture(4);
+      f.rows[label].cache_control = cacheControl;
+      assert.throws(
+        () => inspectOutageRejections(f.evidence, f.collection),
+        /no-store/u,
+      );
+    });
+
+test("different Bridge refusal receipts cannot reuse one real failure Trace", () => {
+  const f = fixture(4);
+  f.rows["stopped-cold-agent"].trace_id =
+    f.rows["stopped-cold-workspace"].trace_id;
+  assert.throws(
+    () => inspectOutageRejections(f.evidence, f.collection),
+    /Trace.*reused/u,
+  );
+});
+
+for (const location of ["outage", "recovery"])
+  test(`a ${location} SSE admission cannot silently prewarm the cold Agent`, () => {
+    const f = fixture(4);
+    const stream = f.add(
+      "early-stream",
+      "workspace",
+      "/api/app/workspace/v1/agents/cold-agent/events?sessionId=other",
+      "GET",
+      200,
+      "rpc",
+      8000,
+      f.rows["warm-login"].issued_credential_scope,
+    );
+    f.evidence.http = f.evidence.http.filter((r) => r !== stream);
+    delete stream.method;
+    stream.headers_at = stream.at;
+    delete stream.at;
+    if (location === "outage") f.evidence.stream = stream;
+    else f.evidence.recovery = { cases: [{ stream }] };
+    assert.throws(
+      () => inspectOutageRejections(f.evidence, f.collection),
+      /cold Agent.*already/u,
+    );
+  });
+
+for (const location of ["outage", "recovery"])
+  for (const scope of ["cold-console-login", "cold-workspace-login"])
+    test(`the independent ${scope} remains cold across ${location} SSE requests`, () => {
+      const f = fixture(4);
+      const stream = f.add(
+        "early-cold-stream",
+        "workspace",
+        "/api/app/workspace/v1/agents/agent/events",
+        "GET",
+        200,
+        "rpc",
+        8000,
+        f.rows[scope].issued_credential_scope,
+      );
+      f.evidence.http = f.evidence.http.filter((r) => r !== stream);
+      delete stream.method;
+      stream.headers_at = stream.at;
+      delete stream.at;
+      if (location === "outage") f.evidence.stream = stream;
+      else f.evidence.recovery = { cases: [{ stream }] };
+      assert.throws(
+        () => inspectOutageRejections(f.evidence, f.collection),
+        /cold credential.*already/u,
+      );
+    });
+
+for (const [field, value] of [
+  ["credential_scope", undefined],
+  ["credential_scope", null],
+  ["started_at", undefined],
+  ["started_at", NaN],
+  ["path", undefined],
+])
+  test(`Bridge cache-key history cannot hide a SSE request with ${field}=${value}`, () => {
+    const f = fixture(4);
+    f.evidence.stream = {
+      ...f.rows["warm-workspace-hit"],
+      path: "/api/app/workspace/v1/agents/cold-agent/events",
+      [field]: value,
+    };
+    assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+  });
+
+test("a session-account read prewarms the same session profile", () => {
+  const f = fixture(4);
+  f.add(
+    "early-account",
+    "session",
+    "/api/session/account",
+    "GET",
+    200,
+    "rpc",
+    8000,
+    f.rows["warm-login"].issued_credential_scope,
+  );
+  assert.throws(
+    () => inspectOutageRejections(f.evidence, f.collection),
+    /cold profile.*already/u,
+  );
+});
+
+test("a warm HTTP history entry cannot hide its Cookie behind a null scope", () => {
+  const f = fixture(4);
+  f.add(
+    "early-profile",
+    "session",
+    "/api/session",
+    "GET",
+    200,
+    "rpc",
+    8000,
+    null,
+  );
+  assert.throws(
+    () => inspectOutageRejections(f.evidence, f.collection),
+    /unauthenticated.*login/u,
+  );
+});
+
+test("Bridge transport cannot be relabelled as historical revision 3", () => {
+  const f = fixture();
+  f.evidence.transport = "http-sse";
+  assert.throws(
+    () => inspectOutageRejections(f.evidence, f.collection),
+    /revision 4/u,
+  );
+});
+
+test("Bridge-only cold labels cannot enter a historical revision 3 report", () => {
+  const f = fixture();
+  f.evidence.http.push({
+    ...f.rows["stopped-cold-acp"],
+    label: "stopped-cold-agent",
+  });
+  assert.throws(
+    () => inspectOutageRejections(f.evidence, f.collection),
+    /revision 4/u,
+  );
+});
+
+test("the same Cookie's workspace bootstrap has an independent empty Agent key", () => {
+  const f = fixture(4);
+  f.add(
+    "early-bootstrap",
+    "workspace",
+    "/api/app/workspace/v1/bootstrap",
+    "GET",
+    200,
+    "rpc",
+    8000,
+    f.rows["warm-login"].issued_credential_scope,
+  );
+  assert.equal(
+    inspectOutageRejections(f.evidence, f.collection).status,
+    "passed",
+  );
+});
+
+for (const [name, mutate] of [
+  [
+    "missing marker",
+    (p) => {
+      p.trace.spans = p.trace.spans.filter((s) => s !== p.decision);
+    },
+  ],
+  [
+    "wrong profile",
+    (p) => setTag(p.decision, resolvePrefix + "profile", "console"),
+  ],
+])
+  test(`a protected history response cannot hide its Resolve admission: ${name}`, () => {
+    const f = fixture(4);
+    f.add(
+      "early-agent",
+      "workspace",
+      "/api/app/workspace/v1/agents/cold-agent/view",
+      "GET",
+      200,
+      "rpc",
+      8000,
+      f.rows["warm-login"].issued_credential_scope,
+    );
+    mutate(f.parts["early-agent"]);
+    assert.throws(
+      () => inspectOutageRejections(f.evidence, f.collection),
+      /Resolve/u,
+    );
+  });
+
+test("a different Cookie's earlier read does not warm the original Cookie's cold Agent", () => {
+  const f = fixture(4);
+  f.add(
+    "other-cookie",
+    "workspace",
+    "/api/app/workspace/v1/agents/cold-agent/view",
+    "GET",
+    200,
+    "rpc",
+    8000,
+    f.rows["audit-login"].issued_credential_scope,
+  );
+  assert.equal(
+    inspectOutageRejections(f.evidence, f.collection).status,
+    "passed",
+  );
+});
+
+test("five historical outage rejections keep HTTP/cookie/scope/Trace evidence and unchanged short-idle authority", () => {
   const f = fixture();
   const before = structuredClone([...f.collection.traces]);
   const result = inspectOutageRejections(f.evidence, f.collection);

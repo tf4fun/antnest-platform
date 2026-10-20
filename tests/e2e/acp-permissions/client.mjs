@@ -1,15 +1,36 @@
 import assert from "node:assert/strict";
+import { withPermissionAgentCleanup } from "./cleanup-evidence.mjs";
+import { requestPermissionRuntimeInspection } from "./runtime-inspection.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
+import { gateway } from "../identity-closeout/acp-connection.mjs";
 import { until } from "../acp-closeout/support.mjs";
-import { collectTrace } from "../managed-mcp/trace.mjs";
-import { inspectPermissionTrace } from "./trace.mjs";
-import { verifyModelRequests, assertApprovalPending } from "./expectations.mjs";
+import { assertApprovalPending } from "./expectations.mjs";
+import { cancelPermissionPrompt } from "./cancel.mjs";
+import { openPrivatePermissionConnection } from "./connection.mjs";
+import {
+  capturePermissionConnection,
+  indexPermissionRequests,
+} from "./client-evidence.mjs";
+import {
+  collectPrivatePermissionTrace,
+  collectPrivatePermissionNotificationTrace,
+  privatePermissionStrictOutcome,
+} from "./collector.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import {
+  withPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "../acp-commands/connection.mjs";
+import {
+  evidenceDirectory,
+  shellStoragePreflight,
+  writeEvidenceFile,
+} from "../../support/storage.mjs";
+import { preserveFileFailure } from "../acp-files/failure-evidence.mjs";
 
 import { seedPermissions } from "./setup.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
-import { collectPlanRequestTrace } from "../acp-plan/requests.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
@@ -18,16 +39,33 @@ const admin = new GatewayClient(gateway),
 const suffix = process.env.TEST_PERMISSION_RUN_ID,
   agents = [],
   outcomes = [],
-  executionRequests = [],
-  replayRequests = [];
+  connections = [],
+  checked = [];
+const clients = new Set(),
+  issuedSessions = new WeakMap(),
+  connectionMeta = new WeakMap();
+const secrets = [
+  "permission-model-test",
+  "read_only",
+  "stage3-admin-password",
+  "permission-owner-password",
+];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+const directory = evidenceDirectory(
+  process.env.ANTNEST_PERMISSION_EVIDENCE_DIR,
+);
 const email = `permission-owner-${suffix}@example.com`;
 assert.match(suffix ?? "", /^[0-9a-f-]{36}$/);
 const setup = { cwd: "/workspace", mcpServers: [] };
 let stage = "setup";
-const login = (client, email, password) =>
-  client.request("/api/session/login", {
+async function login(client, email, password) {
+  const result = await client.request("/api/session/login", {
     body: { organization_slug: "stage3", email, password },
   });
+  issuedSessions.set(client, result.body);
+  secrets.push(client.accessToken, ...client.cookies.values());
+  return result.body;
+}
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 async function operation(id) {
@@ -41,36 +79,46 @@ async function operation(id) {
     120000,
   );
 }
-async function connect(version, agent) {
-  stage = `v${version}-connect`;
-  const pending = [];
-  const client = connectACP(version, agent, member.cookie, {
-    requestPermission: ({ params, signal }) =>
-      new Promise((resolve) => {
-        const entry = {
-          params,
-          answer: (optionId) => {
-            signal.removeEventListener("abort", abort);
-            resolve({ outcome: { outcome: "selected", optionId } });
-          },
-        };
-        const abort = () => {
-          const index = pending.indexOf(entry);
-          if (index >= 0) pending.splice(index, 1);
-          resolve({ outcome: { outcome: "cancelled" } });
-        };
-        signal.addEventListener("abort", abort, { once: true });
-        pending.push(entry);
-        if (signal.aborted) abort();
-      }),
-  });
+async function connect(version, agentId, browser = member, role = "owner") {
+  stage = `v${version}-connect-${role}`;
+  const principal = issuedSessions.get(browser)?.principal;
+  assert(principal, "original Permissions login Principal required");
+  const client = await openPrivatePermissionConnection(
+    version,
+    agentId,
+    browser,
+    { principal, telemetry, secrets },
+  );
+  clients.add(client);
+  connectionMeta.set(client, { version, agentId, role });
+  return client;
+}
+async function use(client, action) {
+  const errors = [];
+  let result;
   try {
-    await client.initialize();
-    return Object.assign(client, { pending, version, agentId: agent });
+    result = await withPrivateCommandConnection(client, [], action);
   } catch (error) {
-    client.close();
-    throw error;
+    errors.push(error);
   }
+  try {
+    connections.push(
+      await capturePermissionConnection({
+        client,
+        ...connectionMeta.get(client),
+      }),
+    );
+  } catch (error) {
+    errors.push(error);
+  }
+  clients.delete(client);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length)
+    throw new AggregateError(
+      errors,
+      "Permissions business and connection cleanup failed",
+    );
+  return result;
 }
 async function session(client, mode) {
   stage = `v${client.version}-configure-${mode}`;
@@ -106,8 +154,10 @@ async function done(client, version, promise, sessionId, phase) {
     );
   await until(
     () =>
-      client.updates.some((frame) =>
-        JSON.stringify(frame.update).includes(`${phase} verified`),
+      client.updates.some(
+        (frame) =>
+          frame.sessionId === sessionId &&
+          JSON.stringify(frame.update).includes(`${phase} verified`),
       ),
     "final output",
   );
@@ -115,27 +165,12 @@ async function done(client, version, promise, sessionId, phase) {
     !JSON.stringify(client.updates).includes("read_only"),
     "judge text leaked to chat",
   );
-  assert.equal(client.pending.length, 0);
+  assert.equal(client.pendingPermissions.length, 0);
   outcomes.push(phase);
-}
-function identity(client, method, sessionId) {
-  return {
-    method,
-    sessionId,
-    agentId: client.agentId,
-    connectionTraceID: client.traceID,
-  };
-}
-function recordPrompt(client, sessionId, phase) {
-  executionRequests.push({
-    ...identity(client, "session/prompt", sessionId),
-    phase,
-  });
 }
 async function prompt(client, version, sessionId, phase, decision) {
   stage = phase;
   client.updates.length = 0;
-  recordPrompt(client, sessionId, phase);
   const pending = client.request(
     "prompt",
     { sessionId, prompt: [{ type: "text", text: phase }] },
@@ -146,12 +181,15 @@ async function prompt(client, version, sessionId, phase, decision) {
     (error) => ({ error }),
   );
   if (decision) {
-    await until(() => client.pending.length === 1, "approval request");
+    await until(
+      () => client.pendingPermissions.length === 1,
+      "approval request",
+    );
     if (process.env.TEST_PERMISSION_CRASH === "true") {
       console.log(asciiJSON({ status: "crash_ready" }));
       await new Promise(() => {});
     }
-    const request = client.pending.shift();
+    const request = client.pendingPermissions[0];
     assertApprovalPending(request.params, client.updates, sessionId, decision);
     request.answer(decision);
   }
@@ -160,8 +198,8 @@ async function prompt(client, version, sessionId, phase, decision) {
   await done(client, version, Promise.resolve(result.value), sessionId, phase);
 }
 async function exercise(version, agent, modelID) {
-  let client = await connect(version, agent);
-  try {
+  const client = await connect(version, agent);
+  const { sessionId, originalApproval } = await use(client, async () => {
     let sid = await session(client, "approve");
     const config = await client.request("setConfigOption", {
       sessionId: sid,
@@ -195,47 +233,11 @@ async function exercise(version, agent, modelID) {
     sid = await session(client, "approve");
     client.updates.length = 0;
     stage = `v${version}-cancel`;
-    recordPrompt(client, sid, stage);
-    const cancel = client.request(
-      "prompt",
-      {
-        sessionId: sid,
-        prompt: [{ type: "text", text: `v${version}-cancel` }],
-      },
-      120000,
-    );
-    const observedCancel = cancel.catch((error) => ({ error }));
-    await until(() => client.pending.length === 1, "cancel approval");
-    assertApprovalPending(
-      client.pending[0].params,
-      client.updates,
-      sid,
-      "allow_once",
-    );
-    await client.notify("cancel", { sessionId: sid });
-    const cancelled = await observedCancel;
-    if (version === 1) assert.equal(cancelled.stopReason, "cancelled");
-    else
-      await until(
-        () =>
-          client.updates.some(
-            (frame) =>
-              frame.sessionId === sid &&
-              frame.update.sessionUpdate === "state_update" &&
-              frame.update.state === "idle" &&
-              frame.update.stopReason === "cancelled",
-          ),
-        "cancel idle",
-      );
-    await until(
-      () => client.pending.length === 0,
-      "cancelled approval removed",
-    );
+    await cancelPermissionPrompt(client, version, sid);
     outcomes.push(`v${version}-cancel`);
     sid = await session(client, "approve");
     client.updates.length = 0;
     stage = `v${version}-reconnect`;
-    recordPrompt(client, sid, stage);
     const disconnected = client
       .request(
         "prompt",
@@ -245,23 +247,41 @@ async function exercise(version, agent, modelID) {
         },
         120000,
       )
-      .catch(() => undefined);
-    await until(() => client.pending.length === 1, "old approval");
-    const originalApproval = structuredClone(client.pending[0].params);
+      .then(
+        (result) => ({ result }),
+        (error) => ({ error }),
+      );
+    await until(() => client.pendingPermissions.length === 1, "old approval");
+    const originalApproval = structuredClone(
+      client.pendingPermissions[0].params,
+    );
     assertApprovalPending(originalApproval, client.updates, sid, "allow_once");
-    client.close();
-    await disconnected;
-    client = await connect(version, agent);
+    if (version === 2) {
+      const acknowledged = await disconnected;
+      if (acknowledged.error) throw acknowledged.error;
+      assert(acknowledged.result.messageId);
+    }
+    await client.disconnectForReplay();
+    const original = await disconnected;
+    if (version === 1)
+      assert.equal(client.isLocalCloseError(original.error), true);
+    else assert.equal(original.error, undefined);
+    return { sessionId: sid, originalApproval };
+  });
+  const resumed = await connect(version, agent, member, "replay");
+  await use(resumed, async () => {
+    const client = resumed,
+      sid = sessionId;
     await client.request(version === 1 ? "load" : "resume", {
       ...setup,
       sessionId: sid,
       ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
     });
-    replayRequests.push(
-      identity(client, version === 1 ? "session/load" : "session/resume", sid),
+    await until(
+      () => client.pendingPermissions.length === 1,
+      "reissued approval",
     );
-    await until(() => client.pending.length === 1, "reissued approval");
-    const reissued = client.pending.shift();
+    const reissued = client.pendingPermissions[0];
     assert.deepEqual(
       reissued.params,
       originalApproval,
@@ -271,10 +291,12 @@ async function exercise(version, agent, modelID) {
     reissued.answer("allow_once");
     await until(
       () =>
-        client.updates.some((frame) =>
-          JSON.stringify(frame.update).includes(
-            `v${version}-reconnect verified`,
-          ),
+        client.updates.some(
+          (frame) =>
+            frame.sessionId === sid &&
+            JSON.stringify(frame.update).includes(
+              `v${version}-reconnect verified`,
+            ),
         ),
       "resumed result",
     );
@@ -290,17 +312,21 @@ async function exercise(version, agent, modelID) {
           ),
         "reconnected Run idle",
       );
-    assert.equal(client.pending.length, 0);
+    assert.equal(client.pendingPermissions.length, 0);
     assert(
       !JSON.stringify(client.updates).includes("read_only"),
       "judge text leaked to chat",
     );
     outcomes.push(`v${version}-reconnect`);
-  } finally {
-    client.close();
-  }
+  });
 }
 async function main() {
+  assert(directory, "Permissions private evidence directory required");
+  shellStoragePreflight(directory);
+  assert(
+    process.env.TEST_RUNTIME_IMAGE,
+    "candidate Permissions Runtime image required",
+  );
   await login(admin, "stage3-admin@example.com", "stage3-admin-password");
   const owner = await api("/api/admin/directory/users", {
     email,
@@ -322,151 +348,179 @@ async function main() {
     process.env.TEST_RUNTIME_IMAGE,
     suffix,
   );
-  for (const version of [1, 2]) {
-    const created = await api(
-      "/api/admin/agents",
-      {
-        owner_user_id: owner.user.id,
-        name: `Permissions v${version} ${suffix}`,
-        template_id: template.template_id,
-        template_revision: template.revision,
-      },
-      202,
-    );
-    agents.push(created.agent.agent_id);
-    await operation(created.operation.request_id);
-    const agent = agents.at(-1);
-    await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
-    const denied = connectACP(version, agent, stranger.cookie);
-    try {
-      await denied.initialize();
-      await assertAgentDenied(denied);
-      replayRequests.push({
-        method: "session/new",
-        agentId: agent,
-        connectionTraceID: denied.traceID,
-        denial: "access_denied",
-      });
-    } finally {
-      denied.close();
-    }
-    await exercise(version, agent, alternateModelID);
-  }
-  const modelResponse = await fetch("http://permission-model:8080/status", {
-    signal: AbortSignal.timeout(5000),
-  });
-  assert(modelResponse.ok);
-  const modelStatus = await modelResponse.json();
-  assert.deepEqual(modelStatus.errors, []);
-  assert.equal(outcomes.length, 26);
-  verifyModelRequests(
-    modelStatus.requests,
-    `permission-model-${suffix}`,
-    `alternate-model-${suffix}`,
-  );
-  if (process.env.TEST_BROWSER === "true") {
-    stage = "browser-validation";
-    console.log(
-      asciiJSON({ status: "browser_ready", email, agent_id: agents[0] }),
-    );
-    await until(
-      async () => {
-        const status = await fetch("http://permission-model:8080/status", {
-          signal: AbortSignal.timeout(5000),
+  const { inventory, modelStatus, runtimeInspection } =
+    await withPermissionAgentCleanup(
+      agents,
+      admin,
+      async (consumed) => {
+        for (const version of [1, 2]) {
+          const created = await api(
+            "/api/admin/agents",
+            {
+              owner_user_id: owner.user.id,
+              name: `Permissions v${version} ${suffix}`,
+              template_id: template.template_id,
+              template_revision: template.revision,
+            },
+            202,
+          );
+          agents.push(created.agent.agent_id);
+          await operation(created.operation.request_id);
+          const agent = agents.at(-1);
+          await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
+          const denied = await connect(version, agent, stranger, "foreign");
+          await use(denied, () => assertAgentDenied(denied));
+          await exercise(version, agent, alternateModelID);
+        }
+        const modelResponse = await fetch(
+          "http://permission-model:8080/status",
+          {
+            signal: AbortSignal.timeout(5000),
+          },
+        );
+        assert(modelResponse.ok);
+        const modelRaw = await modelResponse.text();
+        writeEvidenceFile(directory, "model-status.private.json", modelRaw);
+        const modelStatus = JSON.parse(modelRaw);
+        assert.deepEqual(modelStatus.errors, []);
+        assert.equal(outcomes.length, 26);
+        assert.equal(
+          clients.size,
+          0,
+          "Permissions connections were not joined",
+        );
+        const inventory = indexPermissionRequests({
+          agents,
+          connections,
+          outcomes,
+          models: modelStatus.requests,
+          alternateModelID,
+          defaultModel: `permission-model-${suffix}`,
+          alternateModel: `alternate-model-${suffix}`,
         });
-        return (await status.json()).browserReleased;
+        for (const [file, value] of [
+          ["connection-inventory.private.json", connections],
+          ["request-inventory.private.json", inventory.requests],
+          ["initialization-inventory.private.json", inventory.initializations],
+          ["notification-inventory.private.json", inventory.notifications],
+          ["permission-inventory.private.json", inventory.permissions],
+        ])
+          writeEvidenceFile(directory, file, JSON.stringify(value) + "\n");
+        if (process.env.TEST_BROWSER === "true") {
+          stage = "browser-validation";
+          console.log(
+            asciiJSON({ status: "browser_ready", email, agent_id: agents[0] }),
+          );
+          await until(
+            async () => {
+              const status = await fetch(
+                "http://permission-model:8080/status",
+                {
+                  signal: AbortSignal.timeout(5000),
+                },
+              );
+              return (await status.json()).browserReleased;
+            },
+            "browser release",
+            600000,
+          );
+        }
+        stage = "runtime-inspection";
+        const runtimeInspection = await requestPermissionRuntimeInspection(
+          agents,
+          { consumed },
+        );
+        return { inventory, modelStatus, runtimeInspection };
       },
-      "browser release",
-      600000,
+      { directory },
     );
-  }
-  // Graceful Runtime shutdown flushes OTLP before inspecting the completed Runs.
-  // The independent wrapper cleanup still covers abrupt client loss.
-  for (const agent of agents)
-    await operation(
-      (await api(`/api/admin/agents/${agent}/delete`, {}, 202)).request_id,
-    );
+  // The original two-Runtime ACK and both completed delete operations are
+  // recorded before shutdown-flushed Trace evidence is admitted.
   stage = "trace-validation";
-  const ids = new Set(modelStatus.requests.map((item) => item.trace_id));
-  assert.equal(ids.size, 26, "one independent execution trace per prompt");
-  assert.equal(executionRequests.length, 26);
-  const secrets = [
-    "permission-model-test",
-    "read_only",
-    "permission-owner-password",
-    ...outcomes,
-    ...admin.cookies.values(),
-    ...member.cookies.values(),
-    ...stranger.cookies.values(),
-  ];
-  const traces = [],
-    replays = [];
-  for (const id of ids) {
-    const requests = modelStatus.requests.filter(
-      (item) => item.trace_id === id,
-    );
-    stage = `trace-${requests[0].phase}`;
-    traces.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectPermissionTrace(
-          trace,
-          requests,
-          executionRequests.find(
-            (expected) => expected.phase === requests[0].phase,
-          ),
-          secrets,
-        ),
+  secrets.push(...outcomes);
+  const options = {
+    directory,
+    secrets,
+    requests: modelStatus.requests,
+    flush: () => telemetry.flush(),
+  };
+  for (const expected of [
+    ...inventory.requests,
+    ...inventory.initializations,
+  ]) {
+    stage = `trace-${expected.label}`;
+    checked.push(
+      await collectPrivatePermissionTrace(
+        "http://jaeger:16686",
+        expected,
+        options,
       ),
     );
   }
-  assert.equal(new Set(traces.map((trace) => trace.run_id)).size, 26);
-  assert.equal(
-    traces.reduce((sum, trace) => sum + trace.runtime_tool_calls, 0),
-    16,
-  );
-  assert.equal(
-    traces.reduce((sum, trace) => sum + trace.permission_waits, 0),
-    16,
-  );
-  assert.equal(replayRequests.length, 4);
-  for (const expected of replayRequests)
-    replays.push(
-      await collectPlanRequestTrace("http://jaeger:16686", expected, secrets),
+  for (const { phase, receipt } of inventory.notifications) {
+    stage = `cancel-trace-${phase}`;
+    checked.push(
+      await collectPrivatePermissionNotificationTrace(
+        "http://jaeger:16686",
+        receipt,
+        options,
+      ),
     );
-  assert.equal(
-    new Set([...traces, ...replays].map((trace) => trace.trace_id)).size,
-    30,
+  }
+  assert.equal(checked.length, 64);
+  assert.equal(new Set(checked.map((row) => row.trace_id)).size, 64);
+  const traces = checked.filter((row) => row.run_id);
+  assert.equal(traces.length, 26);
+  assert.equal(new Set(traces.map((row) => row.run_id)).size, 26);
+  assert.deepEqual(
+    new Set(traces.map((row) => row.trace_id)),
+    new Set(modelStatus.requests.map((row) => row.trace_id)),
   );
-  const strictTrace = [...traces, ...replays].some(
-    (trace) => trace.strict_trace === "failed",
-  )
-    ? "failed"
-    : "passed";
+  assert.equal(
+    traces.reduce((sum, row) => sum + row.runtime_tool_calls, 0),
+    16,
+  );
+  assert.equal(
+    traces.reduce((sum, row) => sum + row.permission_waits, 0),
+    16,
+  );
+  const { exit_code, ...strict } = privatePermissionStrictOutcome(checked);
+  assert.equal(strict.accepted, true);
   console.log(
     asciiJSON({
       status: "business_passed",
-      strict_trace: strictTrace,
       scenarios: outcomes.length,
       model_requests: modelStatus.requests.length,
       outcomes,
-      traces,
-      replay_traces: replays,
+      connections: connections.length,
+      request_traces: inventory.requests.length,
+      initialization_requests: inventory.initializations.length,
+      cancel_notifications: inventory.notifications.length,
+      permission_deliveries: inventory.permissions.length,
+      traces: checked,
       cross_user_rejections: 2,
+      runtime_containers_verified: runtimeInspection.runtimes.length,
+      ...strict,
     }),
   );
-  if (strictTrace === "failed") process.exitCode = 2;
+  process.exitCode = exit_code;
 }
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, main);
 } catch (error) {
   console.error(
-    asciiJSON({
-      status: "failed",
-      stage,
-      code: error.data?.code,
-      error: error.message,
-      locations: error.stack?.split("\n").slice(1, 5),
-    }),
+    asciiJSON(
+      await preserveFileFailure({
+        directory,
+        error,
+        stage,
+        inventory: { agents, connections, outcomes, checked },
+        fetchStatus: () =>
+          fetch("http://permission-model:8080/status", {
+            signal: AbortSignal.timeout(5000),
+          }),
+      }),
+    ),
   );
   process.exitCode = 1;
 }

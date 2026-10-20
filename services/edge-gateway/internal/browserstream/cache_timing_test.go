@@ -204,14 +204,14 @@ func TestRepeatedCacheHitsCannotExtendAuthorityOrSpinProbes(t *testing.T) {
 	})
 }
 
-func TestFreshRPCAdvancesAuthorityButCannotExtendOriginalWebSocketCCT(t *testing.T) {
+func TestFreshRPCAdvancesAuthorityButCannotExtendOriginalAbsoluteDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		principal := streamPrincipal()
-		principal.ContextExpiresAt = time.Now().Add(80 * time.Millisecond)
+		principal.ExpiresAt = time.Now().Add(80 * time.Millisecond)
+		principal.IdleExpiresAt = principal.ExpiresAt
 		principal.ResolveStartedAt, principal.ResolveCompletedAt = time.Now().Add(-20*time.Millisecond), time.Now().Add(-19*time.Millisecond)
 		principal.ResolveValidUntil, principal.ResolveCacheHit = time.Now().Add(40*time.Millisecond), true
 		cfg := streamConfig(principal)
-		cfg.DirectWebSocket = true
 		var calls atomic.Int64
 		cfg.Resolve = func(context.Context) (identity.Principal, error) {
 			if calls.Add(1) < 3 {
@@ -236,8 +236,8 @@ func TestFreshRPCAdvancesAuthorityButCannotExtendOriginalWebSocketCCT(t *testing
 		}
 		time.Sleep(9 * time.Millisecond)
 		synctest.Wait()
-		if !errors.Is(context.Cause(guard.Context()), ErrCallerContextExpired) {
-			t.Fatal("new RPC/CCT extended the original direct WebSocket credential")
+		if !errors.Is(context.Cause(guard.Context()), ErrRejected) {
+			t.Fatal("new RPC/CCT extended the original absolute session deadline")
 		}
 	})
 }

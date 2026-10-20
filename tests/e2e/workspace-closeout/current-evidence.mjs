@@ -31,12 +31,21 @@ export function assertUnchangedAudit(before, after) {
 export function runtimeBinding(observed, status) {
   assert.equal(status.status, "ready");
   assert.equal(typeof status.execution_id, "string");
-  assert(status.execution_id.length > 0);
+  assert(status.execution_id.trim().length > 0);
+  assert.equal(status.agent_id, observed.agent.agent_id);
+  assert.equal(typeof status.agent_id, "string");
+  assert(status.agent_id.length > 0);
+  assert(Number.isSafeInteger(status.generation) && status.generation > 0);
   assert.equal(
     observed.container.Config.Labels["io.antnest.agent-id"],
     observed.agent.agent_id,
   );
-  assert(observed.agent.runtime.runtime_revision);
+  assert.equal(
+    observed.container.Config.Labels["io.antnest.runtime-generation"],
+    String(status.generation),
+  );
+  assert.equal(typeof observed.agent.runtime.runtime_revision, "string");
+  assert(observed.agent.runtime.runtime_revision.trim().length > 0);
   return {
     runtime_revision: observed.agent.runtime.runtime_revision,
     runtime_execution_id: status.execution_id,

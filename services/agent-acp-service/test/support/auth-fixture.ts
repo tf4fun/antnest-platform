@@ -92,7 +92,7 @@ export function signContext(overrides: Partial<CallerClaims> = {}): string {
 // Security tests use raw headers instead; production never accepts these hints.
 export function testHeaders(
   hints: Record<string, string> = {},
-  caller = "edge-gateway",
+  caller = "agent-ui",
 ): Record<string, string> {
   const lower = Object.fromEntries(
     Object.entries(hints).map(([name, value]) => [name.toLowerCase(), value]),

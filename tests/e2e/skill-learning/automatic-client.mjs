@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { connectACP } from "../identity-closeout/acp-connection.mjs";
+import { openSkillACP } from "./private-client.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../workspace-closeout/c4-setup.mjs";
-import { learningFailureBoundary } from "./automatic-failure.mjs";
+import {
+  learningFailureBoundary,
+  learningViewReceipt,
+} from "./automatic-failure.mjs";
 
 const agentId = process.env.ANTNEST_E2E_AGENT_ID;
 const mode = process.env.ANTNEST_E2E_LEARNING_MODE;
@@ -15,20 +18,23 @@ assert(["create", "update", "verify"].includes(mode));
 assert(!peer || mode === "create");
 const gateway = "http://edge-gateway:8080";
 const member = new GatewayClient(gateway);
-await member.request("/api/session/login", {
+const login = await member.request("/api/session/login", {
   body: {
     organization_slug: "stage3",
     email: "c4-member@example.com",
     password: "c4-member-password",
   },
 });
+const principal = login.body.principal;
 const startedAt = Date.now();
-const client = connectACP(1, agentId, member.cookie, {
+const client = await openSkillACP(1, agentId, member, {
+  principal,
   clientCapabilities: { session: { notices: {} } },
 });
 const setup = { cwd: "/workspace", mcpServers: [] };
 let sessionId, persistedNotice;
 let phase = "initialize";
+let warmViewObserved = false;
 const withFailure = learningFailureBoundary((receipt) =>
   console.log(JSON.stringify(receipt)),
 );
@@ -36,7 +42,6 @@ await withFailure(
   client,
   () => ({ phase, startedAt, persistedNotice }),
   async () => {
-    await client.initialize();
     phase = `${mode}-session`;
     if (mode === "create") {
       ({ sessionId } =
@@ -87,9 +92,26 @@ await withFailure(
       assert.equal(result.stopReason, "end_turn");
     };
     const notices = async () => {
+      const requestedAt = Date.now();
       const view = (
         await member.request(
           `/api/app/workspace/v1/agents/${agentId}/view?sessionId=${sessionId}`,
+          {
+            onResponse(response) {
+              if (response.status !== 200 || !warmViewObserved)
+                console.log(
+                  JSON.stringify(
+                    learningViewReceipt(response, {
+                      mode,
+                      agentId,
+                      sessionId,
+                      requestedAt,
+                    }),
+                  ),
+                );
+              warmViewObserved ||= response.status === 200;
+            },
+          },
         )
       ).body;
       return view.systemNotices ?? [];
@@ -262,9 +284,10 @@ await withFailure(
           ])
         assert(model.requests.includes(kind), `missing model phase: ${kind}`);
       if (!uiOffline) {
-        client.close();
+        await client.closeAndWait();
         const reconnectStartedAt = Date.now();
-        const reconnected = connectACP(1, agentId, member.cookie, {
+        const reconnected = await openSkillACP(1, agentId, member, {
+          principal,
           clientCapabilities: { session: { notices: {} } },
         });
         await withFailure(
@@ -275,7 +298,6 @@ await withFailure(
             persistedNotice,
           }),
           async () => {
-            await reconnected.initialize();
             await reconnected.request("load", { ...setup, sessionId });
             const restored = await until(
               async () => {

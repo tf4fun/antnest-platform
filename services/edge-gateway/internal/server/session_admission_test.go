@@ -33,7 +33,7 @@ func TestSessionAdmissionDistinguishesInvalidFromUnavailable(t *testing.T) {
 			handler := newTestHandler(t, upstream, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				t.Error("rejected request reached downstream")
 			}), time.Now())
-			for _, path := range []string{"/api/session", "/api/admin/directory", "/api/app/bootstrap"} {
+			for _, path := range []string{"/api/session", "/api/admin/directory", "/api/app/workspace/v1/bootstrap"} {
 				request := httptest.NewRequest(http.MethodGet, path, nil)
 				request.Header.Set("Cookie", "antnest_session=token-1; antnest_csrf=csrf-1")
 				response := httptest.NewRecorder()

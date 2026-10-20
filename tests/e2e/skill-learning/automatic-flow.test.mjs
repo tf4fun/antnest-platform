@@ -5,6 +5,7 @@ import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
   configuration,
@@ -44,6 +45,11 @@ import {
 } from "../security/stack.mjs";
 import { rotatePlatformKeys } from "../encryption-key-rotation/flow.mjs";
 import { skillClientArgs } from "./client-container.mjs";
+import {
+  captureLearningFailureTraces,
+  collectLearningFailureEvidence,
+  createLearningReadinessProbe,
+} from "./automatic-failure.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const debugLearning = process.env.ANTNEST_E2E_SKILL_LEARNING_DEBUG === "true";
@@ -127,12 +133,16 @@ const overlay = deployment
 // so they get their own budget instead of consuming the workflow's.
 const imageBuildBudgetMs = 1_200_000;
 const workflowBudgetMs = 1_200_000;
-const logs = (name) => {
-  const result = spawnSync("docker", ["logs", "--tail", "200", name], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 10_000,
-  });
+const logs = (name, { full = false } = {}) => {
+  const result = spawnSync(
+    "docker",
+    ["logs", ...(full ? [] : ["--tail", "200"]), name],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+    },
+  );
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 };
 
@@ -609,6 +619,7 @@ test(
           ),
         });
       }
+      const learningClientLogs = [];
       const runClient = async (mode, created) => {
         if (learningBrowser)
           return mode === "create"
@@ -622,7 +633,7 @@ test(
               "run",
               "--name",
               clientName,
-              ...skillClientArgs(config),
+              ...skillClientArgs(config, { privateACP: true }),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",
@@ -661,8 +672,7 @@ test(
               import.meta.url,
             ),
           );
-          await mkdir(evidence, { recursive: true, mode: 0o700 });
-          const clientLog = logs(clientName);
+          const clientLog = logs(clientName, { full: true });
           const modelContainer = await docker(
             composeArgs(config.project, [
               ...overlay,
@@ -721,42 +731,83 @@ test(
                 "SELECT run_id,disposition,COALESCE(reason,'') FROM learning_source_decisions ORDER BY decided_at",
               ]).catch(() => "decision query unavailable")
             : "postgres container unavailable";
-          await writeFile(
-            `${evidence}${config.project}.failure.json`,
-            JSON.stringify({
-              clientLog,
-              modelStatus,
-              tasks,
-              decisions,
-              ...(discovery && postgresContainer
-                ? {
-                    unresolved: await docker([
-                      "exec",
-                      "-e",
-                      "PGPASSWORD=antnest-agent-acp-dev",
-                      postgresContainer,
-                      "psql",
-                      "-U",
-                      "antnest_agent_acp",
-                      "-d",
-                      "antnest_agent_acp",
-                      "-Atc",
-                      "SELECT task_id,request_id,action,state,receipt FROM learning_maintenance_intents WHERE state <> 'settled' ORDER BY created_at",
-                    ]).catch(() => "unresolved query unavailable"),
-                    runtimeLog: logs(`antnest-runtime-${fixture.agentID}`),
-                  }
-                : {}),
-              acpLog: acpContainer
-                ? logs(acpContainer)
-                : "ACP container unavailable",
+          const failure = {
+            clientLog,
+            modelStatus,
+            tasks,
+            decisions,
+            ...(discovery && postgresContainer
+              ? {
+                  unresolved: await docker([
+                    "exec",
+                    "-e",
+                    "PGPASSWORD=antnest-agent-acp-dev",
+                    postgresContainer,
+                    "psql",
+                    "-U",
+                    "antnest_agent_acp",
+                    "-d",
+                    "antnest_agent_acp",
+                    "-Atc",
+                    "SELECT task_id,request_id,action,state,receipt FROM learning_maintenance_intents WHERE state <> 'settled' ORDER BY created_at",
+                  ]).catch(() => "unresolved query unavailable"),
+                  runtimeLog: logs(`antnest-runtime-${fixture.agentID}`),
+                }
+              : {}),
+            acpLog: acpContainer
+              ? logs(acpContainer)
+              : "ACP container unavailable",
+          };
+          const diagnosticSignal = AbortSignal.timeout(30000);
+          const readDocker = dockerClient(config.env, diagnosticSignal, 10000);
+          await collectLearningFailureEvidence(error, [
+            () => mkdir(evidence, { recursive: true, mode: 0o700 }),
+            () =>
+              writeFile(
+                `${evidence}${config.project}.failure.json`,
+                JSON.stringify(failure),
+                { flag: "wx", mode: 0o600 },
+              ),
+            ...["agent-ui", "edge-gateway"].map((service) => async () => {
+              const id = await readDocker(
+                composeArgs(config.project, [
+                  ...overlay,
+                  "ps",
+                  "-a",
+                  "-q",
+                  service,
+                ]),
+              );
+              await writeFile(
+                `${evidence}${config.project}.${service}-failure.json`,
+                JSON.stringify({
+                  service,
+                  container: id || null,
+                  log: id ? logs(id) : null,
+                }),
+                { flag: "wx", mode: 0o600 },
+              );
             }),
-            { flag: "wx", mode: 0o600 },
-          );
-          throw new Error(
-            `Skill learning client failed; model status: ${modelStatus}; tasks: ${tasks}; decisions: ${decisions}; client: ${clientLog.slice(-1000)}`,
-            { cause: error },
-          );
+            // Export can lag the failed response. Save each diagnostic sample
+            // separately; never resend the original business GET.
+            ...[1, 2, 3].map((attempt) => async () => {
+              if (attempt > 1)
+                await delay(2500, undefined, { signal: diagnosticSignal });
+              await captureLearningFailureTraces({
+                logs: [...learningClientLogs, clientLog].join("\n"),
+                jaeger: config.jaeger,
+                signal: diagnosticSignal,
+                save: (name, value) =>
+                  writeFile(
+                    `${evidence}${config.project}.failure-${attempt}-${name}`,
+                    JSON.stringify(value),
+                    { flag: "wx", mode: 0o600 },
+                  ),
+              });
+            }),
+          ]);
         }
+        learningClientLogs.push(output);
         return JSON.parse(output.trim().split("\n").at(-1));
       };
       const created = await runClient("create");
@@ -967,6 +1018,7 @@ test(
               "--name",
               clientName,
               ...skillClientArgs(config, {
+                privateACP: true,
                 grants: [
                   "acp-controller",
                   "console-controller",
@@ -1146,6 +1198,8 @@ test(
               output: propagationOutput(),
             });
           const clientName = `${config.project}-discovery-tools`;
+          const outputDir = `${root}/artifacts/verification/skill-discovery-d3-20261001`;
+          await mkdir(outputDir, { recursive: true, mode: 0o700 });
           let output;
           try {
             output = await docker(
@@ -1153,15 +1207,21 @@ test(
                 "run",
                 "--name",
                 clientName,
-                ...skillClientArgs(config),
+                ...skillClientArgs(config, { privateACP: true }),
                 "-e",
                 `ANTNEST_E2E_AGENT_ID=${targetId}`,
                 "-e",
                 `ANTNEST_E2E_SOURCE_AGENT_ID=${fixture.agentID}`,
                 "-e",
                 `ANTNEST_E2E_SKILL_TEMPORARY=${temporaryTools}`,
+                "-e",
+                `ANTNEST_E2E_PRIVATE_STATE_EVIDENCE=/private-evidence/${config.project}-state.json`,
+                "-v",
+                `${outputDir}:/private-evidence`,
                 "-v",
                 `${root}/tests:/app/tests:ro`,
+                "-v",
+                `${root}/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro`,
                 image,
                 "node",
                 "/app/tests/e2e/skill-learning/discovery-tools-client.mjs",
@@ -1169,25 +1229,26 @@ test(
               true,
             );
           } catch (error) {
-            const outputDir = `${root}/artifacts/verification/skill-discovery-d3-20261001`;
-            await mkdir(outputDir, { recursive: true, mode: 0o700 });
-            await writeFile(
-              `${outputDir}/${config.project}-tools-client.log`,
-              logs(clientName),
-              { flag: "wx", mode: 0o600 },
-            );
-            await writeFile(
-              `${outputDir}/${config.project}-tools-failure.json`,
-              JSON.stringify({
-                source_agent_id: fixture.agentID,
-                target_agent_id: targetId,
-                runs: await sql(
-                  `SELECT json_agg(json_build_object('run_id',r.id,'state',r.state,'error_class',r.error_class,'tools',(SELECT json_agg(json_build_object('name',a.tool_name,'source',a.source,'state',a.state,'effect',a.tool_effect_state)) FROM tool_attempts a WHERE a.run_id=r.id))) FROM runs r JOIN acp_sessions s ON s.id=r.session_id WHERE s.agent_id='${targetId}'`,
+            await collectLearningFailureEvidence(error, [
+              () =>
+                writeFile(
+                  `${outputDir}/${config.project}-tools-client.log`,
+                  logs(clientName),
+                  { flag: "wx", mode: 0o600 },
                 ),
-              }),
-              { flag: "wx", mode: 0o600 },
-            );
-            throw error;
+              async () =>
+                writeFile(
+                  `${outputDir}/${config.project}-tools-failure.json`,
+                  JSON.stringify({
+                    source_agent_id: fixture.agentID,
+                    target_agent_id: targetId,
+                    runs: await sql(
+                      `SELECT json_agg(json_build_object('run_id',r.id,'state',r.state,'error_class',r.error_class,'tools',(SELECT json_agg(json_build_object('name',a.tool_name,'source',a.source,'state',a.state,'effect',a.tool_effect_state)) FROM tool_attempts a WHERE a.run_id=r.id))) FROM runs r JOIN acp_sessions s ON s.id=r.session_id WHERE s.agent_id='${targetId}'`,
+                    ),
+                  }),
+                  { flag: "wx", mode: 0o600 },
+                ),
+            ]);
           }
           await docker(["rm", clientName]);
           discoveryToolEvidence = JSON.parse(output.trim().split("\n").at(-1));
@@ -1499,21 +1560,90 @@ test(
           await readinessMember.request("/api/session/login", {
             body: fixtureMember,
           });
-          await until(
-            async () => {
-              try {
-                const view = await readinessMember.request(
-                  `/api/app/workspace/v1/agents/${fixture.agentID}/view`,
+          const readiness = createLearningReadinessProbe({
+            mode: "incident-restart-readiness",
+            agentId: fixture.agentID,
+          });
+          try {
+            await until(
+              () =>
+                readiness.check((onResponse) =>
+                  readinessMember.request(
+                    `/api/app/workspace/v1/agents/${fixture.agentID}/view`,
+                    { onResponse },
+                  ),
+                ),
+              "fresh ACP execution directory after incident signer restart",
+              abort.signal,
+              60_000,
+            );
+          } catch (error) {
+            const evidence = fileURLToPath(
+              new URL(
+                "../../../artifacts/verification/skill-learning/",
+                import.meta.url,
+              ),
+            );
+            const snapshot = readiness.snapshot();
+            const diagnosticSignal = AbortSignal.timeout(30000);
+            const readDocker = dockerClient(
+              config.env,
+              diagnosticSignal,
+              10000,
+            );
+            await collectLearningFailureEvidence(error, [
+              () => mkdir(evidence, { recursive: true, mode: 0o700 }),
+              () =>
+                writeFile(
+                  `${evidence}${config.project}.readiness-failure.json`,
+                  JSON.stringify(snapshot),
+                  { flag: "wx", mode: 0o600 },
+                ),
+              ...[
+                "agent-ui",
+                "edge-gateway",
+                "agent-acp-service",
+                "runtime-controller",
+              ].map((service) => async () => {
+                const id = await readDocker(
+                  composeArgs(config.project, [
+                    ...overlay,
+                    "ps",
+                    "-a",
+                    "-q",
+                    service,
+                  ]),
                 );
-                return view.body.availability === "ready";
-              } catch {
-                return false;
-              }
-            },
-            "fresh ACP execution directory after incident signer restart",
-            abort.signal,
-            60_000,
-          );
+                await writeFile(
+                  `${evidence}${config.project}.${service}-readiness-failure.json`,
+                  JSON.stringify({
+                    service,
+                    container: id || null,
+                    log: id ? logs(id) : null,
+                  }),
+                  { flag: "wx", mode: 0o600 },
+                );
+              }),
+              ...[1, 2, 3].map((attempt) => async () => {
+                if (attempt > 1)
+                  await delay(2500, undefined, { signal: diagnosticSignal });
+                await captureLearningFailureTraces({
+                  logs: [
+                    ...learningClientLogs,
+                    ...snapshot.samples.map((sample) => JSON.stringify(sample)),
+                  ].join("\n"),
+                  jaeger: config.jaeger,
+                  signal: diagnosticSignal,
+                  save: (name, value) =>
+                    writeFile(
+                      `${evidence}${config.project}.readiness-${attempt}-${name}`,
+                      JSON.stringify(value),
+                      { flag: "wx", mode: 0o600 },
+                    ),
+                });
+              }),
+            ]);
+          }
         }
         const runtimeName = `antnest-runtime-${fixture.agentID}`;
         const runtimeInspect = JSON.parse(
@@ -1574,7 +1704,7 @@ test(
               "run",
               "--name",
               verifyClientName,
-              ...skillClientArgs(config),
+              ...skillClientArgs(config, { privateACP: true }),
               "-e",
               `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
               "-e",

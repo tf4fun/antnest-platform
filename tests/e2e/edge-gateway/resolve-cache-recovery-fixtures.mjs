@@ -4,6 +4,7 @@ export function recoveryFixture() {
   let sequence = 0;
   const e = {
     agent_id: "agent",
+    settings: { resolveTTLMS: 10000 },
     identity: { healthy: { running: true, health: "healthy", at: 10 } },
     http: [],
     model_observations: [],
@@ -64,28 +65,25 @@ export function recoveryFixture() {
       );
     c.login = login(start, scope);
     c.peer_login = login(start + 1, peerScope);
-    c.wire = {
-      started_at: start + 2,
-      credential_scope: scope,
-      upgrade: {
-        at: start + 3,
-        status: 101,
-        trace_id: (++sequence).toString(16).padStart(32, "0"),
-      },
-      frames: [
-        {
-          at: start + 4,
-          direction: "send",
-          raw: '{"id":1,"method":"initialize"}',
-        },
-      ],
-    };
+    c.session_create = http(
+      "/api/app/workspace/v1/agents/agent/sessions",
+      start + 3,
+      { sessionId: c.session_id },
+      { method: "POST", status: 201, credential_scope: scope, request: {} },
+    );
+    c.initial_view = http(
+      `/api/app/workspace/v1/agents/agent/sessions/${c.session_id}/view`,
+      start + 4.5,
+      { agentId: "agent", sessionId: c.session_id },
+      { started_at: start + 4, credential_scope: scope },
+    );
     c.stream = {
       status: 200,
       set_cookie_count: 0,
       credential_scope: scope,
       path: `/api/app/workspace/v1/agents/agent/events?sessionId=${c.session_id}`,
       started_at: start + 5,
+      started_at_ms: Date.parse("2026-10-12T12:00:00Z") + start + 5,
       headers_at: start + 6,
       trace_id: (++sequence).toString(16).padStart(32, "0"),
       records: [
@@ -161,7 +159,6 @@ export function recoveryFixture() {
     c.model_started = model(start + 13);
     c.audit_before = audit(start + 14, "running");
     c.trigger = { at: start + 20, observed_at_ms: start + 20 };
-    c.quiet_requests = c.wire.frames.map((f) => f.raw);
     c.mutation = http(
       name === "logout"
         ? "/api/session"
@@ -192,13 +189,6 @@ export function recoveryFixture() {
     );
     if (name === "password")
       c.mutation.issued_credential_scope = "rotated-password-scope";
-    c.wss_close = {
-      code: 1008,
-      reason: "session_rejected",
-      at: start + 35,
-      observed_at: start + 35,
-      localClose: false,
-    };
     c.old_session = http(
       "/api/session",
       start + 42,
@@ -235,6 +225,12 @@ export function recoveryFixture() {
         activation_state: "disabled",
         runtime_state: "absent",
       });
+      c.restore_audits_before = http(
+        "/api/admin/execution-audits?agent_id=agent&limit=100",
+        start + 55.75,
+        { items: [structuredClone(c.audit_terminal.body)], next_cursor: null },
+        { started_at: start + 55.25 },
+      );
       c.restore = http(
         "/api/admin/directory/memberships/membership",
         start + 57,
@@ -250,23 +246,37 @@ export function recoveryFixture() {
       );
       c.fresh_login = login(start + 58.5, `fresh-${index}`, "admin");
       c.restored_state = http(
-        "/api/app/agents/agent/state",
+        "/api/app/workspace/v1/agents/agent/view",
         start + 60,
         {
-          agent_id: "agent",
-          availability: "offline",
-          access_allowed: false,
-          active_session_id: null,
-          configuration_revision: null,
-          unavailable_reason: "access_denied",
+          code: "access_denied",
+          message: "Agent access denied",
+          requestId: "00000000-0000-4000-8000-000000000001",
+          retryable: false,
+          recovery: "none",
         },
-        { credential_scope: `fresh-${index}` },
+        {
+          status: 403,
+          cache_control: "no-store",
+          credential_scope: `fresh-${index}`,
+        },
+      );
+      c.restored_agent = http(
+        "/api/admin/agents/agent",
+        start + 60.5,
+        structuredClone(c.disabled_agent.body),
+        { started_at: start + 60.25 },
       );
       c.restored_old_session = http(
         "/api/session",
         start + 61,
         { code: "unauthenticated" },
         { status: 401, credential_scope: scope },
+      );
+      c.restore_audits_after = http(
+        "/api/admin/execution-audits?agent_id=agent&limit=100",
+        start + 63,
+        structuredClone(c.restore_audits_before.body),
       );
     } else {
       c.model_after_close = model(start + 46);

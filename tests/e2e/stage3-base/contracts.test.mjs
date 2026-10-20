@@ -6,49 +6,129 @@ import {
   templateInput,
   assertBuildSnapshot,
   assertRuntimeOperation,
-  assertWorkspaceProjection,
 } from "./contracts.mjs";
+import { assertWorkspaceProjection } from "./workspace-contracts.mjs";
 
-test("bootstrap exposes management facts while ACP state owns execution availability", () => {
-  const bootstrap = {
-    agents: [
-      {
-        agent_id: "a",
-        lifecycle_state: "created",
-        activation_state: "enabled",
-        runtime_state: "available",
-      },
-    ],
-  };
-  const state = {
-    agent_id: "a",
-    access_allowed: true,
-    availability: "ready",
-    configuration_revision: "a".repeat(64),
-  };
-  assertWorkspaceProjection(bootstrap, state, "a");
-  assert.throws(() =>
-    assertWorkspaceProjection(
-      { agents: [{ ...bootstrap.agents[0], availability: "ready" }] },
-      state,
-      "a",
-    ),
-  );
-  assert.throws(() =>
-    assertWorkspaceProjection(
-      bootstrap,
-      { ...state, access_allowed: false },
-      "a",
-    ),
-  );
-  assert.throws(() =>
-    assertWorkspaceProjection(
-      bootstrap,
-      { ...state, configuration_revision: null },
-      "a",
-    ),
-  );
+const principal = {
+  user_id: "member",
+  organization_id: "organization",
+  organization_slug: "stage3",
+  organization_name: "Stage 3",
+  system_role: "user",
+  organization_role: "member",
+};
+const bootstrap = {
+  principal: {
+    userId: "member",
+    organizationId: "organization",
+    organizationSlug: "stage3",
+    organizationName: "Stage 3",
+    administrator: false,
+  },
+  agents: [
+    {
+      agentId: "a",
+      name: "Agent",
+      lifecycle: "created",
+      activation: "enabled",
+      runtime: "available",
+    },
+  ],
+  renderedAt: "2026-10-18T00:00:00Z",
+  bridgeEpoch: "epoch",
+};
+const state = {
+  agent_id: "a",
+  access_allowed: true,
+  availability: "ready",
+  configuration_revision: "a".repeat(64),
+  active_session_id: null,
+  unavailable_reason: null,
+};
+test("current bootstrap binds the original member and complete ACP execution state", () => {
+  assertWorkspaceProjection(bootstrap, state, "a", principal);
 });
+for (const [name, change] of [
+  [
+    "admin substitution",
+    (b) => {
+      b.principal.administrator = true;
+    },
+  ],
+  [
+    "foreign user",
+    (b) => {
+      b.principal.userId = "other";
+    },
+  ],
+  [
+    "foreign organization",
+    (b) => {
+      b.principal.organizationId = "other";
+    },
+  ],
+  [
+    "foreign display",
+    (b) => {
+      b.principal.organizationName = "Other";
+    },
+  ],
+  [
+    "extra Agent",
+    (b) => {
+      b.agents.push({ ...b.agents[0], agentId: "foreign" });
+    },
+  ],
+  [
+    "execution authority in bootstrap",
+    (b) => {
+      b.agents[0].availability = "ready";
+    },
+  ],
+  [
+    "internal subject",
+    (b) => {
+      b.agent_access_subject = "private";
+    },
+  ],
+  [
+    "retired DTO",
+    (b) => {
+      b.agents = [
+        {
+          agent_id: "a",
+          lifecycle_state: "created",
+          activation_state: "enabled",
+          runtime_state: "available",
+        },
+      ];
+    },
+  ],
+])
+  test("bootstrap rejects " + name, () => {
+    const b = structuredClone(bootstrap);
+    change(b);
+    assert.throws(() => assertWorkspaceProjection(b, state, "a", principal));
+  });
+for (const change of [
+  { access_allowed: false },
+  { configuration_revision: null },
+  { agent_id: "foreign" },
+  { availability: "offline" },
+])
+  test(
+    "ACP execution evidence cannot be replaced " + JSON.stringify(change),
+    () => {
+      assert.throws(() =>
+        assertWorkspaceProjection(
+          bootstrap,
+          { ...state, ...change },
+          "a",
+          principal,
+        ),
+      );
+    },
+  );
 
 const model = {
   model_profile_id: "model-1",

@@ -4,6 +4,11 @@ import { runtimeCallStopped } from "./runtime-stop-evidence.js";
 import type { RuntimePath } from "../../domain/runtime-information.js";
 import type { RuntimeInformationPort } from "../../ports/runtime-information.js";
 import { parseRuntimeInformation, RUNTIME_INFORMATION_URI } from "./runtime-information.js";
+import { observeRuntimeInformationRead } from "../../telemetry/runtime-information-read.js";
+import {
+  claimRuntimeToolLifecycle,
+  type RuntimeToolLifecycle,
+} from "../../telemetry/runtime-tool-lifecycle.js";
 import type {
   ContentBlock,
   JsonObject,
@@ -83,20 +88,26 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
 
   /** Reads the current Runtime binding for maintenance admission, not a historical Run snapshot. */
   public async readBinding(binding: RuntimeBinding, signal: AbortSignal) {
-    return this.withConnection(
-      this.dependencies.runtimeDialer,
-      {
-        endpoint: new URL(binding.mcpEndpoint),
-        runtimeBinding: binding,
-        headers: runtimeHeaders(binding.executionId),
-        signal,
+    return observeRuntimeInformationRead(
+      binding.executionId,
+      signal,
+      async () => {
+        const connection = await this.dependencies.runtimeDialer.connect({
+          endpoint: new URL(binding.mcpEndpoint),
+          runtimeBinding: binding,
+          headers: runtimeHeaders(binding.executionId),
+          signal,
+        });
+        return {
+          read: async () =>
+            parseRuntimeInformation(
+              await connection.readResource(RUNTIME_INFORMATION_URI, signal),
+              binding.executionId,
+            ),
+          close: () => connection.close(),
+        };
       },
       (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
-      async (connection) =>
-        parseRuntimeInformation(
-          await connection.readResource(RUNTIME_INFORMATION_URI, signal),
-          binding.executionId,
-        ),
     );
   }
 
@@ -167,49 +178,63 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
     snapshot: ToolCallInput["snapshot"],
     signal: AbortSignal,
   ): Promise<ModelToolDefinition[]> {
+    const lifecycle = claimRuntimeToolLifecycle("tools/list", snapshot.runtime.executionId);
     const sources = await this.dependencies.revisions.getClientMcpRevision(
       snapshot.clientMcpRevisionId,
     );
     requireNoClientMcpServers(sources);
-    return runtimeToolCatalog(await this.listRuntimeTools(snapshot, signal));
+    return runtimeToolCatalog(await this.listRuntimeTools(snapshot, signal, lifecycle));
   }
 
   public async call(input: ToolCallInput): Promise<ToolCallResult> {
+    const lifecycle = claimRuntimeToolLifecycle("tools/call", input.snapshot.runtime.executionId);
     if (input.tool.source !== "runtime") {
       throw new McpToolCallError("Client MCP injection is not supported", "none", {
         runtimeCallStopped: true,
       });
     }
-    return this.callRuntime(input);
+    return this.callRuntime(input, lifecycle);
   }
 
   private async listRuntimeTools(
     snapshot: ToolCallInput["snapshot"],
     signal: AbortSignal,
+    lifecycle: RuntimeToolLifecycle,
   ): Promise<ToolDefinition[]> {
-    return this.withConnection(
-      this.dependencies.runtimeDialer,
-      {
-        endpoint: new URL(snapshot.runtime.mcpEndpoint),
-        runtimeBinding: snapshot.runtime,
-        headers: runtimeHeaders(snapshot.runtime.executionId),
+    const connection = await this.dependencies.runtimeDialer.connect({
+      endpoint: new URL(snapshot.runtime.mcpEndpoint),
+      runtimeBinding: snapshot.runtime,
+      headers: runtimeHeaders(snapshot.runtime.executionId),
+      signal,
+    });
+    lifecycle.ready();
+    try {
+      signal.throwIfAborted();
+      lifecycle.dispatch();
+      const tools = await connection.listTools(signal);
+      lifecycle.parsed();
+      return tools.map((tool) => ({
+        source: "runtime",
+        sourceId: "runtime",
+        name: tool.name,
+        ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+        ...(tool.title === undefined ? {} : { title: tool.title }),
+        description: tool.description ?? "",
+        ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
+      }));
+    } finally {
+      await lifecycle.close(
         signal,
-      },
-      (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
-      async (connection) =>
-        (await connection.listTools(signal)).map((tool) => ({
-          source: "runtime",
-          sourceId: "runtime",
-          name: tool.name,
-          ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
-          ...(tool.title === undefined ? {} : { title: tool.title }),
-          description: tool.description ?? "",
-          ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
-        })),
-    );
+        () => connection.close(),
+        (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
+      );
+    }
   }
 
-  private async callRuntime(input: ToolCallInput): Promise<ToolCallResult> {
+  private async callRuntime(
+    input: ToolCallInput,
+    lifecycle: RuntimeToolLifecycle,
+  ): Promise<ToolCallResult> {
     return this.invokeTool(
       this.dependencies.runtimeDialer,
       () => ({
@@ -221,6 +246,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
       input,
       "runtime",
       (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
+      lifecycle,
     );
   }
 
@@ -230,6 +256,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
     input: ToolCallInput,
     source: "runtime",
     reportCloseFailure: (error: unknown) => void,
+    lifecycle: RuntimeToolLifecycle,
   ): Promise<ToolCallResult> {
     let connection: McpConnection;
     try {
@@ -242,6 +269,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
       });
     }
 
+    lifecycle.ready();
     try {
       if (input.signal.aborted)
         throw new McpToolCallError("MCP Tool cancelled before dispatch", "none", {
@@ -249,6 +277,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
         });
       let result: Awaited<ReturnType<McpConnection["callTool"]>>;
       try {
+        lifecycle.dispatch();
         result = await connection.callTool(
           { name: input.tool.name, arguments: input.arguments },
           input.signal,
@@ -257,6 +286,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
       } catch (error) {
         throw new McpToolCallError("MCP Tool outcome is unknown", "unknown", { cause: error });
       }
+      lifecycle.parsed(result.isError);
       const toolEffectState = receivedEffectState(result, source);
       const file = parseFileObservation(input.tool, { ...result, toolEffectState });
       return {
@@ -270,11 +300,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
         toolEffectState,
       };
     } finally {
-      try {
-        await connection.close();
-      } catch (error) {
-        reportCloseFailure(error);
-      }
+      await lifecycle.close(input.signal, () => connection.close(), reportCloseFailure);
     }
   }
 

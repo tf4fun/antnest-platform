@@ -57,7 +57,7 @@ validation remains enabled; the document's CSP does not allow `unsafe-eval`.
 Server-side parsing keeps its existing configuration.
 
 Bootstrap and SSR share `readWorkspacePrincipal`: it requires private verified
-CCT claims and the two display headers from Gateway revision 23. Signed claims
+CCT claims and the two display headers from Gateway revision 24. Signed claims
 determine Organization/Principal IDs and administrator status; raw identity and
 administrator hints grant nothing. Each label must be canonical unpadded Base64URL over
 valid UTF-8 and decode to a non-whitespace string. Invalid or missing metadata
@@ -200,8 +200,19 @@ same-identity bootstrap arriving after creation merges discovery without
 discarding the new Session.
 
 Node drain first rejects new requests with retryable 503 and marks `/status`
-unready while `/live` remains available; then it closes observers and flushes
-telemetry without cancelling ACP Runs. Single-replica deployment is the current model. Multi-replica
+unready while `/live` remains available. It aborts pending owner initialization,
+closes observers and execution-state watches, and gives accepted work up to
+15 seconds to settle without cancelling ACP Runs. Owner retirement then joins
+the actual ACP transport cleanup, including the full DELETE response body,
+before telemetry and authenticated dependency clients shut down. Cleanup has
+a separate 5-second deadline: expiry aborts outstanding transport requests and
+still joins their termination before reporting failure. An initializing ACP
+connection also has a 10-second deadline; cancellation joins any late-created
+connection's cleanup before initialization fails. Repeated close calls share
+the same completion and retain the same failure.
+The forced-drain warning covers either accepted work left for ACP to continue
+or unsuccessful resource cleanup. Exit status alone therefore does not prove
+clean connection retirement. Single-replica deployment is the current model. Multi-replica
 ownership needs a separate lease and fencing design.
 The Node process starts OTLP/HTTP tracing and metrics when configured, records
 bounded route names and final status for each HTTP request, and awaits SDK
@@ -214,7 +225,13 @@ reuse. These metrics contain no Agent, Session or principal labels.
 Gateway's W3C trace context becomes the parent of each Node HTTP span;
 Controller and ACP calls within the active HTTP request continue that context.
 Background work deliberately omits an ended HTTP parent; it does not yet carry
-independent span links.
+independent span links except for owned ACP cleanup. That cleanup records one
+`agent_ui.acp.close` root span, links it to the HTTP span that initialized the
+owner when available, and parents the actual DELETE request. Its bounded
+`antnest.ui.acp.close.trigger` and `antnest.ui.acp.close.outcome` attributes
+distinguish requested or failed initialization/transport closure and
+`closed`, `no_target`, or `failed` results. The span contains no connection,
+Agent, Session, or principal identifiers and no credentials or remote errors.
 
 An opened Workspace SSE that finishes because the Agent execution-state watch
 reports revoked access records one `antnest.stream.termination` event on that
@@ -370,6 +387,49 @@ local output and metadata updates do not trigger ACP observation GETs.
 
 ## Bridge capacity and lifetimes
 
+- Prompt reception and HTTP dispatch reserve at most 128 MiB / 16 requests
+  per process, with 64 MiB / 4 requests per signed `(organization, user)` across
+  Agents and login sessions. Unknown-length bodies reserve the full 64 MiB
+  maximum. Admission happens before body consumption; exhaustion returns
+  `429 upload_capacity_exceeded` with `Retry-After: 1` and no business dispatch.
+  Cancellation and other control requests bypass this pool, with a 16 KiB
+  native body ceiling and any smaller route bound still enforced. Reservations
+  last until dispatch settles, including body failures and disconnect/deadline
+  cleanup; accepted ACP work has its separate owner lifetime. These wire-byte
+  budgets are not a process RSS bound.
+- The native HTTP boundary validates UTF-8 and decoded duplicate JSON members
+  once. A private Request-bound record carries that result and its actual byte
+  count to route validation; clones and direct handler requests still parse
+  strictly. Payload strings use native boundary scanning, and routes retain
+  their Zod validation, byte limits and same-intent content digest comparison.
+  Body copying and strict parsing at or above 1 MiB use a process-local FIFO.
+  Prompt wire sizing, content digest comparison and intent insertion use the
+  same FIFO as one synchronous job, with an event-loop turn before each job so
+  ready I/O can proceed between preparations. Each job keeps its caller's
+  async context and checks cancellation before execution. Small control paths
+  bypass the queue; queue failures do not block later requests, and dispatch
+  still owns upload reservations and Session leases until its work settles.
+  This does not preempt an individual synchronous job or establish a general
+  end-to-end latency bound; the fixed cancellation workloads below retain
+  their one-second gate.
+- With telemetry enabled, each original HTTP SERVER span has
+  `antnest.ui.http.started_monotonic_ns`, a decimal string from the current
+  process's monotonic clock sampled before request handling. Calibrate it with
+  the independent client's complete request interval and the original Trace
+  and process identity; never compare clocks from different processes directly.
+  An admitted native Prompt records at most four `antnest.ui.prompt_input`
+  events with only `phase`, `bytes` and decimal-string `monotonic_ns`.
+  `receive-started` follows the first nonempty chunk actually read;
+  `body-eof` follows real EOF and the abort check; `body-parsed` follows
+  successful strict parsing. `input-prepared` follows Antnest's envelope sizing
+  serialization, canonical digest and atomic intent submission. This last
+  receipt describes the service's synchronous work, not later SDK internals
+  or the upstream response wait. Failed requests retain only their actual phase
+  prefix. Control, unadmitted and disabled requests emit no input phase events;
+  ended HTTP boundaries cannot acquire late events.
+  For the completion/parse workload, the entire calibrated cancellation-send
+  interval must fall between that upload's EOF and parsed receipts. This
+  conservative parsing interval excludes all later preparation and response wait.
 - Each owner admits at most 16 live Agent SSE observers across selected
   Sessions, keeps at most 32 Agent and 32 Session journals, and retains up to
   256 KiB of replay suffix per journal. A slow observer has a 1 MiB
@@ -426,6 +486,21 @@ There is no browser ACP or Nginx compatibility mode.
   not a container memory limit. `test:bridge:runtime-memory` samples the
   Runtime HTTP View and SSE handler path with four observers; it does not
   include Node sockets or Docker RSS.
+- `test:bridge:capacity` runs the real authenticated Node HTTP boundary,
+  WorkspaceRuntime, operation coordinator and official ACP HTTP client in a
+  separate process from the client and the ACP execution double. Two signed
+  user/Agent scopes exercise operation cancellation and `/stop` during one and
+  four concurrent uploads. Every upload contains four valid text attachments
+  filling more than 99% of the default 16 MiB ACP envelope; all four uploads
+  remain admitted within the principal budget.
+  Native incoming EOF, handler entry and SDK request dispatch receipts distinguish
+  unfinished uploads from strict parsing, and bracketed monotonic clock samples
+  prove actual overlap. Each case requires the same held operation's cancelled
+  receipt and double-work release within one second. This component test is part
+  of `test:bridge:integration`; real Runtime termination remains a Docker gate.
+  The same integration command verifies the container gate's listener startup,
+  child-process exit, SSE cancellation and complete cleanup using real local
+  sockets/processes plus explicit Docker inventory failures.
 - `test:bridge:docker` uses the production image with an official ACP HTTP
   fixture for slow-observer reset, multi-owner history, 17 MiB content paging,
   and four-observer small updates beside a 1 MiB tool body with a

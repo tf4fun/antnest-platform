@@ -1,6 +1,7 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { registerFixturePrincipal } from "./stage2-transport.mjs";
 
 export async function gatewayLogin(origin, organizationSlug, email, password) {
@@ -26,7 +27,14 @@ export async function gatewayLogin(origin, organizationSlug, email, password) {
   const { accessToken, csrf } = gatewaySessionCookies(pairs);
   assert(accessToken, "Gateway session cookie missing");
   assert(csrf, "Gateway CSRF cookie missing");
-  return { cookie: pairs.join("; "), csrf, principal: payload.principal };
+  return {
+    cookie: pairs.join("; "),
+    accessToken,
+    // Fingerprint the opaque random session cookie for independent watch binding.
+    sessionDigest: createHash("sha256").update(accessToken).digest("hex"),
+    csrf,
+    principal: payload.principal,
+  };
 }
 
 export async function gatewayCommand(origin, login, path, body, requestId) {

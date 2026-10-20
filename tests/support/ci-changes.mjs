@@ -197,10 +197,17 @@ export const suites = [
     paths: [
       ...service("agent-acp-service"),
       "tests/e2e/agent-acp-service/**",
+      "tests/integration/agent-acp-service/adapters/mcp/runtime-information-close.test.ts",
+      "tests/integration/agent-acp-service/adapters/mcp/tool-lifecycle.test.ts",
+      "tests/e2e/acp-closeout/docker.mjs",
+      "tests/e2e/acp-closeout/network.mjs",
       "tests/e2e/service-authentication/acp/**",
       ...compose,
     ],
-    run: ["make e2e-acp-authentication"],
+    run: [
+      "make e2e-acp-authentication",
+      "ANTNEST_ACP_TEST_IMAGE=antnest/agent-acp-service:local node tests/e2e/agent-acp-service/runtime-information-docker.mjs",
+    ],
   },
   ...[
     ["console", "Admin Console", service("admin-console")],
@@ -362,6 +369,12 @@ export const suites = [
       "make e2e-gateway-security-headers",
     ],
     [
+      "agent-ui-upload-capacity",
+      "Agent UI two-user upload cancellation capacity",
+      ["agent-ui-web"],
+      "make e2e-agent-ui-upload-capacity",
+    ],
+    [
       "agent-ui-receipt",
       "Agent UI receipt contract",
       ["agent-ui-web", "chromium"],
@@ -375,12 +388,11 @@ export const suites = [
     disabled,
     strict: id === "gateway-resolve-cache",
     images: platformImages,
-    pull:
-      id === "gateway-resolve-cache"
-        ? [...observed, "caddy:2.11.7-alpine"]
-        : ["gateway-tls", "browser-sessions-https"].includes(id)
-          ? [...temporal, "caddy:2.11.7-alpine"]
-          : temporal,
+    pull: ["gateway-resolve-cache", "agent-ui-upload-capacity"].includes(id)
+      ? [...observed, "caddy:2.11.7-alpine"]
+      : ["gateway-tls", "browser-sessions-https"].includes(id)
+        ? [...temporal, "caddy:2.11.7-alpine"]
+        : temporal,
     paths: [
       "services/**",
       "deploy/tls/**",
@@ -401,10 +413,13 @@ export const suites = [
     tier: "b",
     setup: [],
     images: ["edge-gateway"],
-    pull: ["node:24.21.0-bookworm-slim"],
+    pull: [
+      "node:24.21.0-bookworm-slim",
+      "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0",
+    ],
     paths: [
       ...service("edge-gateway"),
-      "tests/e2e/edge-gateway/shutdown-docker.mjs",
+      "tests/e2e/edge-gateway/shutdown-*.mjs",
       ...go,
       ...compose,
     ],
@@ -565,30 +580,42 @@ function foundation(runner) {
 // Stage 3a profiles that report strict-only trace findings (expected
 // rejection errors, clock skew) as exit 2 run the make recipe directly so
 // that exit code survives.
-function stage3aProfile(profile) {
-  return { run: `${profile} sh tests/e2e/e2e-stage3a.sh`, strict: true };
+function stage3aProfile(profile = "") {
+  return {
+    run: `${profile ? profile + " " : ""}sh tests/e2e/e2e-stage3a.sh`,
+    strict: true,
+  };
 }
 
 function tierC() {
   const families = {
     "Stage 3a": [
-      ["e2e-stage3-local", "base"],
+      ["e2e-stage3-local", "base", stage3aProfile()],
+      ...["acp-restart", "rpc-response-loss"].map((name) => [
+        `e2e-${name}`,
+        name,
+      ]),
       ...[
-        "acp-restart",
-        "file-observations",
-        "multimodal",
-        "rpc-response-loss",
-        "session-cost",
-        "slash-commands",
-        "stage3-skill-delivery",
-        "stage4-skill-offline-reuse",
-        "stage4-skill-registry-outage",
-        "stage4-skill-restart-rebuild",
-        "structured-plan",
-      ].map((name) => [`e2e-${name}`, name]),
-      ...[
+        ["stage3-skill-delivery", "ANTNEST_E2E_SKILL_DELIVERY=true"],
+        [
+          "stage4-skill-offline-reuse",
+          "ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_OFFLINE_REUSE=true",
+        ],
+        [
+          "stage4-skill-registry-outage",
+          "ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_REGISTRY_OUTAGE=true",
+        ],
+        [
+          "stage4-skill-restart-rebuild",
+          "ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_RESTART_REBUILD=true",
+        ],
         ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
         ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
+        ["slash-commands", "ANTNEST_E2E_SLASH_COMMANDS=true"],
+        ["structured-plan", "ANTNEST_E2E_STRUCTURED_PLAN=true"],
+        ["multimodal", "ANTNEST_E2E_MULTIMODAL=true"],
+        ["session-cost", "ANTNEST_E2E_SESSION_COST=true"],
+        ["file-observations", "ANTNEST_E2E_FILE_OBSERVATIONS=true"],
         ["agent-access", "ANTNEST_E2E_AGENT_ACCESS=true"],
         ["identity-access", "ANTNEST_E2E_IDENTITY_ACCESS=true"],
         ["identity-core", "ANTNEST_E2E_IDENTITY_CORE=true"],
@@ -602,18 +629,22 @@ function tierC() {
         name,
         { ...options, ...stage3aProfile(profile) },
       ]),
-      ...[
-        ["tool-permissions", "ANTNEST_E2E_TOOL_PERMISSIONS=true"],
-        ["tool-progress", "ANTNEST_E2E_TOOL_PROGRESS=true"],
-      ].map(([name, profile]) => [
-        `e2e-${name}`,
-        name,
+      [
+        "e2e-tool-permissions",
+        "tool-permissions",
         {
-          before: ["make docker-build-managed-runtime"],
-          images: [...platformImages, "antnest-runtime-managed"].sort(),
-          ...stage3aProfile(profile),
+          images: [...platformImages, "antnest-runtime-fixture"].sort(),
+          ...stage3aProfile("ANTNEST_E2E_TOOL_PERMISSIONS=true"),
         },
-      ]),
+      ],
+      [
+        "e2e-tool-progress",
+        "tool-progress",
+        {
+          images: [...platformImages, "antnest-runtime-fixture"].sort(),
+          ...stage3aProfile("ANTNEST_E2E_TOOL_PROGRESS=true"),
+        },
+      ],
     ],
     "Authenticated shell": [
       ["e2e-stage2", "stage 2"],
@@ -699,7 +730,6 @@ function tierC() {
 // component tests, or its behavior is not settled. The issue deletes the
 // target or re-admits it.
 export const outsideCI = {
-  "e2e-acp-persistence": 167,
   "e2e-lifecycle-health": 168,
   "e2e-lifecycle-interrupted": 166,
   "e2e-lifecycle-network": 168,
@@ -1070,6 +1100,7 @@ export const shards = [
       "browser-sessions-https",
       "gateway-security-headers",
       "agent-ui-receipt",
+      "agent-ui-upload-capacity",
       "gateway-shutdown",
     ],
   },

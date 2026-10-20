@@ -19,7 +19,7 @@ Do not restart into an intermediate configuration or change receiver origins
 through browser inputs. Public listener TLS uses a separate certificate and key;
 it does not reuse internal workload credentials.
 
-Deploy Identity revision 17 before Gateway revision 22. Its required session
+Gateway 24 consumes Identity revision 18. Its required session
 metadata, account/session RPCs, external identity list/unbind/notice RPCs and
 private revocation feed must be available. The three new self routes preserve
 cookies on success and failure; after unbinding the current session, the next
@@ -55,8 +55,6 @@ KDF capacity returns.
 | `ANTNEST_IDENTITY_SERVICE_URL`            | yes                            | -                     | trusted Identity Service base URL                                                                           |
 | `ANTNEST_ADMIN_CONSOLE_URL`               | yes                            | -                     | trusted Admin Console base URL                                                                              |
 | `ANTNEST_AGENT_UI_URL`                    | yes                            | -                     | internal Node Agent UI base URL for authenticated HTML, static assets, the Workspace HTTP API and SSE       |
-| `ANTNEST_AGENT_CONTROLLER_URL`            | yes                            | -                     | trusted Agent Controller base URL for ID/name discovery only                                                |
-| `ANTNEST_AGENT_ACP_URL`                   | yes                            | -                     | trusted Agent ACP Service base URL                                                                          |
 | `ANTNEST_EDGE_COOKIE_SECURE`              | no                             | `true`                | Secure cookies; false requires a literal loopback HTTP listener                                             |
 | `ANTNEST_EDGE_CSRF_KEY_FILE`              | yes                            | -                     | readable regular file containing exactly 32 raw CSRF key bytes; identical on all replicas for one origin    |
 | `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS` | no                             | `false`               | explicit compatibility for API mutations with both Origin and Fetch Metadata absent; logs a startup warning |
@@ -89,7 +87,7 @@ Gateway supports native TLS and HTTPS termination at an explicitly trusted
 proxy. Both set `ANTNEST_EDGE_PUBLIC_ORIGIN=https://<public-host>[:port]` and keep
 Secure cookies. API Origin checks use that configured origin, independently
 of Host, `X-Forwarded-Host` and `X-Forwarded-Proto`. HTTPS public origins receive
-HSTS with `max-age=31536000`, including errors and WebSocket upgrades; Gateway
+HSTS with `max-age=31536000`, including errors and retired-route responses; Gateway
 overrides conflicting upstream HSTS. It does not opt subdomains into HSTS.
 
 For native TLS, mount a directory containing the certificate chain and private
@@ -135,8 +133,7 @@ including when the transport connects to a private Gateway address. Standard
 Compose keeps originless mutations disabled. If an explicit legacy-client
 exception is necessary, set `ANTNEST_EDGE_ALLOW_ORIGINLESS_MUTATIONS=true` in
 that Gateway process/container; startup emits a warning. This admits only
-requests with both Origin and `Sec-Fetch-Site` absent and never waives CSRF or
-ACP WebSocket Origin checks. Remove the exception after migrating clients.
+requests with both Origin and `Sec-Fetch-Site` absent and never waives session or CSRF checks. Remove the exception after migrating clients.
 Secure mode uses only `__Host-antnest_session` and `__Host-antnest_csrf`.
 CSRF is derived from Identity's stable token ID; a planted cookie/header pair
 cannot authorize a request. The delivery cookie may be absent when a client
@@ -154,7 +151,7 @@ fresh login; key rotation also requires fresh login to receive the new derived
 CSRF value. This revision has no dual-key rolling acceptance.
 
 `GET /status` reports Gateway's own initialized listener. It never probes
-Identity, Controller, Console, UI or ACP. Check each container's health and real
+Identity, Console or Agent UI. Check each container's health and real
 business requests separately to establish deployment readiness. Native-TLS
 `--healthcheck` connects to that listener with certificate and public-hostname
 verification; it never disables certificate validation. The native-TLS probe
@@ -213,7 +210,7 @@ private network. Additional proxies require their own reviewed trust and
 network configuration; do not trust arbitrary client networks.
 
 After installing both replacement files, native TLS reloads without dropping
-existing WebSockets:
+existing HTTP connections:
 
 ```sh
 docker compose -f compose.yaml -f compose.stage3.yaml -f compose.native-tls.yaml \
@@ -227,7 +224,7 @@ proxy file set; that restart reconnects clients. The reference does not enable
 ACME or a network-accessible reload endpoint.
 
 Finally, check the public HTTPS `/status`, sign in, make a Console admin request,
-send a Workspace message and initialize an ACP client over WSS. An internal
+send a Workspace message and observe events through the retained Bridge. An internal
 Gateway health check alone cannot validate the TLS proxy or public certificate.
 
 ## Resolve Cache Operation
@@ -270,10 +267,10 @@ no automatic retry. Old and new generations both count against capacity; an old
 authoritative denial still invalidates newer work and every cached token scope.
 
 A short Identity outage can preserve admission only for a prewarmed exact scope
-whose snapshot, proof, session, stale-output and existing connection CCT budgets
+whose snapshot, proof, session, stale-output and returned CCT budgets
 remain valid. It does not make new login, a cold scope or expired authority
 available. Ordinary failure responses preserve cookies. Cache reuse does not
-extend JWKS trust or an existing direct WebSocket's original CCT hard cap;
+extend JWKS trust or the CCT validity of a reused snapshot;
 reconnection still requires normal admission. Already accepted Runs retain their
 independent execution lifetime.
 
@@ -288,23 +285,13 @@ including that request's latency.
 ## Request Diagnostics
 
 The public response carries `X-Antnest-Trace-ID`. In Jaeger, expect Gateway
-SERVER -> shared HTTP CLIENT -> downstream SERVER. Identity and Controller RPC
-clients do not create a second CLIENT span. Reverse proxies share the same
-Transport; the WebSocket dial wrapper traces its handshake separately from messages.
+SERVER -> shared HTTP CLIENT -> downstream SERVER. The Identity RPC client
+does not create a second CLIENT span. Reverse proxies share the same Transport.
 
-Each client ACP request or notification starts a bounded Gateway message trace,
-linked to the connection trace rather than parented by its long-lived HTTP span.
-The message SERVER includes session revalidation; its PRODUCER covers forwarding
-to ACP, not waiting for the eventual protocol response. W3C context is injected
-into standard ACP `params._meta`; caller-supplied trace context is replaced.
-`antnest.operation.phase=relay` on the message SERVER and `forward` on the
-outbound PRODUCER make those bounded lifetimes explicit in Jaeger. The outbound
-span ending before ACP dispatch or Run completion is expected.
-ACP dispatch, Run execution, model and Runtime calls inherit this context.
-Message spans record method and byte count only, never prompt or response content.
-Responses, binary frames and malformed envelopes remain unchanged; validation
-and execution semantics remain ACP responsibilities. Gateway creates no
-per-chunk spans and holds no Run state.
+Gateway does not create ACP message traces or inject protocol message metadata.
+Private ACP tracing belongs to the downstream execution path. Gateway keeps
+request-level HTTP and Resolve evidence without per-chunk spans or Run state.
+
 The HTTP CLIENT span ends when its response body reaches EOF, fails, or closes,
 not when response headers arrive. SSE is not pre-read or buffered for tracing.
 
@@ -315,7 +302,7 @@ strings, query strings, cookies, Authorization, OIDC codes/state and access
 subjects are excluded. Handler panic payloads are not exported to traces.
 
 Gateway never collects request/response contents or Header values. This applies
-to login, JSON APIs, opaque proxy traffic, files, SSE and WebSocket frames alike.
+to login, JSON APIs, opaque proxy traffic, files and SSE alike.
 The observer counts bytes already consumed by the transport; it never buffers
 them or reads ahead. There is no Gateway content-mode setting, projection map,
 custom payload budget or omission event. Typed RPC diagnostics belong to the
@@ -326,7 +313,7 @@ Gateway follows the [platform observability contract](../../../docs/observabilit
 but cannot repair a missing downstream SERVER span itself.
 
 Each Resolve invocation ends a `gateway.identity.resolve` INTERNAL marker under
-its actual HTTP or ACP message root. `source=rpc|cache|shared`, the fixed profile
+its actual HTTP request root. `source=rpc|cache|shared`, the fixed profile
 and `outcome=admitted|rejected|unavailable` describe the decision. A cache hit
 records fractional `snapshot_age_ms`, `proof_age_ms` and positive `valid_for_ms`
 at admission. Shared decisions link the exact actual CLIENT span; background
@@ -393,22 +380,15 @@ durability. Receiver acceptance/storage requires receiver-side evidence.
 
 ## Shutdown And Streams
 
-Signal and listener-error exits cancel and drain WebSocket handlers separately
-before telemetry shutdown; ordinary HTTP requests keep their normal drain
-window. Deadline exhaustion is reported as a shutdown failure, not a clean drain.
-For an admitted WebSocket, cancellation sends a bounded `1001 going away` close
-frame in both directions before closing the sockets and joining both relay
-workers. Closing the TCP sockets first would hide normal maintenance behind
-an abnormal `1006` disconnect. This notification does not cancel a durable Run.
+Signal and listener-error exits cancel and drain Workspace Bridge events and
+administrator Agent event watches before telemetry shutdown. Stop cancels their
+upstream receive requests and waits for handlers and request telemetry; it does
+not send a business cancellation command or retry a prompt.
 
-The shutdown contract includes every receive-only long-lived transport: ACP
-WebSockets, ACP v1 GET/SSE (including the unversioned v1 alias), Workspace state
-Watch, Workspace API events and administrator Agent event Watch. Stop cancels their upstream receive
-requests and waits for handlers and request telemetry. It never sends an ACP
-cancel command or retries a prompt. Ordinary HTTP requests, including ACP
-POST/DELETE, keep graceful drain. Regression tests must cover all five HTTP
-receive routes on a real listener and signal/restart behavior in Docker;
-testing only WebSocket or one Watch route is insufficient.
+Ordinary HTTP requests, including Bridge commands/prompts, keep their normal
+graceful-drain window. Deadline exhaustion remains a shutdown failure.
+Regression tests cover both retained receive routes on a real listener and
+signal/restart behavior in Docker, including requests carrying Upgrade headers.
 
 Managed HTTP receive streams also interrupt blocked downstream writes on
 stop. Later per-frame deadlines cannot reopen writing after that cancellation.
@@ -431,6 +411,14 @@ feed, clears entries, and unregisters metric callbacks before transport and
 telemetry teardown. Feed outage or lag never waives each stream's independent
 bounded checks. Constructors start no cache worker or poller.
 
+Trace and metric resources include the actual `host.name` and numeric
+`process.pid`, plus a generated `service.instance.id` that remains stable for
+the process lifetime. Restarting the same container creates a new instance ID
+even when its hostname and PID are reused. These three fields override values
+in `OTEL_RESOURCE_ATTRIBUTES`; other deployment resource attributes and
+`OTEL_SERVICE_NAME` retain their existing behavior. The instance ID identifies
+a process generation, not a user, session, request or credential.
+
 Telemetry cleanup uses fresh bounded contexts even if its caller has already
 expired, and retains that cancellation in the returned error. At trace drain
 expiry, Gateway cancels active exporter HTTP requests, rejects further queued
@@ -446,11 +434,15 @@ docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
 node tests/e2e/edge-gateway/shutdown-docker.mjs
 ```
 
-The regression starts only a Gateway container and a controlled Node HTTP
-dependency. Five active receive routes must close on SIGTERM, reopen after a
+The regression starts a Gateway container, a controlled Node HTTP dependency,
+and a private Jaeger receiver. Both retained receive routes must close on SIGTERM, reopen after a
 restart, and close on SIGINT, with both exits zero and no extra upstream
 commands. It verifies the image ID and removes only its labeled containers and
-network. No database, model Provider or retained deployment is used.
+network. The five original streams in each process must export their actual
+hostname, PID and one common instance ID. The two processes must have different
+instance IDs despite sharing the same container, hostname and PID. Original
+Trace responses remain in private verification evidence. No database, model
+Provider or retained deployment is used.
 
 ## State, Limits And Capacity
 
@@ -503,51 +495,33 @@ token to JavaScript. Unknown OIDC paths return JSON `404`, not Console HTML.
 SCIM clients use the Identity-issued Bearer credential at the Edge
 `/scim/v2` path. A SCIM upstream transport failure is a canonical SCIM `503`.
 
-Workspace WebSockets require a same-origin `Origin` and a valid browser session.
-Trusted Organization/Principal/Agent headers are injected server-side.
-Browser-supplied identity and the retired access subject are discarded.
-ACP owns Agent/Session authorization; Controller is not a chat dependency.
-Each client data message performs a bounded Identity resolution before relay;
-server output and ping/pong do not record activity. Independent live checks
-continue while idle, and the original handshake CCT expiry closes the socket
-even if later resolutions return fresh contexts. A 1008 close requires fresh session/Agent access;
-1013 signals temporary admission unavailability. Neither close changes HTTP
-cookies or promises Run cancellation. A reconnect must repeat admission.
-The relay supports complete messages up to 64 MiB in either direction and uses
-the request timeout for socket writes, not as a maximum Run duration.
+Workspace traffic uses the authenticated Agent UI Bridge. Its HTTP bodies are
+limited to 64 MiB, and ordinary requests have a 65-second deadline. The process
+has 64 Bridge SSE slots; the next stream is refused with
+`503 workspace_unavailable`. Commands use no SSE slot. These are Gateway
+bounds, not a per-user quota, process RSS guarantee or Node event-loop fairness
+proof. Gateway no longer owns the old ACP connection/message or state pools.
 
-The process permits 64 admitting/open ACP connections and four buffered
-messages across both directions; this also bounds concurrent message-level
-Identity calls. Capacity waits use the dependency timeout. Message assembly
-has a one-minute absolute deadline after acquiring a buffer slot, with compression
-disabled. Capacity errors return HTTP 503 or WebSocket 1013. Allow memory
-headroom beyond the 256 MiB live-payload ceiling for Go allocation/GC and other
-service work; these limits are not per-user quotas.
-Ping/pong are hop-local; Edge does not generate a new heartbeat. The direct
-Docker entry has no idle-proxy lease. An additional load balancer must
-configure its WebSocket idle timeout explicitly; keepalive behavior through
-arbitrary third-party proxies is not verified.
+The Agent UI owning batch and explicit integration must independently prove
+near-limit upload reception and EOF processing do not prevent another user's
+same held Runtime work from actually stopping within one second. Body parsing,
+hashing and serialization are part of that overlap; a later upstream wait is
+not a substitute. See the [retirement contract](../../../contracts/edge-gateway/workspace-entry-retirement.md).
 
 HTTP/SSE trace completion also runs when a handler unwinds, including
 `http.ErrAbortHandler` from interrupted reverse-proxy streams. Gateway ends the
 span, retains any already-written HTTP status and marks the execution as
 aborted. It does not swallow the panic, write a second response or log its
-payload. This keeps the exported ACP/Controller spans attached to an observable
+payload. This keeps downstream spans attached to an observable
 Gateway parent. The boolean `antnest.http.request_cancelled` is emitted only
 when the handler unwinds with `http.ErrAbortHandler` and its request context is
 cancelled. The span remains `handler_aborted`, not a successful completion. An
 arbitrary panic, a live-context abort or an errored dependency is not treated
 as normal stream cancellation.
 
-Workspace state GET/SSE uses the same browser identity boundary, with no caller
-scope parameters. Its stream is capped by `ANTNEST_EDGE_STREAM_LEASE`; every
-reconnect revalidates Identity and reads fresh ACP state. Quiet streams are
-also subject to live checks, feed-driven closure and the absolute deadline.
-An old idle deadline schedules fresh validation rather than overriding activity
-recorded through another replica. On transport loss,
-the UI must close actionable state and reconnect with backoff, not poll or
-replay a prompt. See [Workspace state](workspace-state.md) for the consumer
-contract. State subscriptions have 64 independent slots and do not consume ACP
-cancellation capacity. Workspace API SSE streams have their own 64 slots. On
-shutdown they are explicitly cancelled and drained, including their trace spans.
-No Controller/ACP operation is cancelled by this observation cleanup.
+Bridge events retain their lease, bounded non-touch checks, private-feed
+invalidation and original absolute session deadline. Every reconnect performs
+normal admission. Agent UI owns event DTOs, Last-Event-ID recovery and browser
+state; Gateway does not parse/re-encode the old six-field ACP state projection.
+Disconnect or shutdown cancels and joins only the observer. It does not cancel
+an accepted durable Run. See [Workspace Bridge entry](workspace-state.md).

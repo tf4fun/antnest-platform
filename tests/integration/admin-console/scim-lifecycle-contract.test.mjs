@@ -50,9 +50,9 @@ const token = {
   issuer_review_required: false,
 };
 
-test("Console54 activates its lifecycle routes with the Identity18 producer", () => {
+test("Console retains its lifecycle routes with the Identity18 producer", () => {
   const catalog = read("admin-console/admin-contract.json");
-  assert.equal(catalog.version, 54);
+  assert.equal(catalog.version, 55);
   assert.equal(catalog.response_policy.account_security.identity_revision, 18);
   for (const [route, field, definition, valid] of [
     [

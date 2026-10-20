@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -43,7 +44,48 @@ func (worker *RuntimeObservationWorker) bindObservedPeer(ctx context.Context, pe
 		inspection.Phase != "running" || inspection.LifecycleState != "provisioned" {
 		return nil
 	}
+	if pending.Operation.NetworkAttachment != nil && pending.Operation.NetworkAttachment.AttachmentState == ports.NetworkAttachmentPending {
+		return worker.bindPendingCreatePeer(ctx, pending, inspection)
+	}
 	return worker.bindCurrentOpenPeer(ctx, inspection, pending.Agent.AwaitingRuntimeBinding(), true)
+}
+
+func (worker *RuntimeObservationWorker) bindPendingCreatePeer(ctx context.Context, pending ports.PendingRuntimeBinding, inspection ports.RuntimeInspection) error {
+	op := pending.Operation
+	if op.Kind != domain.OperationCreate || op.State != domain.OperationCompleted || op.Phase != domain.PhaseCompleted ||
+		op.AgentID != pending.Agent.AgentID || op.TargetSpecRevisionID != pending.Agent.AgentSpecRevisionID ||
+		pending.Spec.ID != op.TargetSpecRevisionID || pending.Spec.AgentID != pending.Agent.AgentID ||
+		op.RuntimeResult == nil || !completedProvisionedRuntime(*op.RuntimeResult) || op.RuntimeResult.RuntimeRevision != inspection.RuntimeRevision ||
+		!ports.ValidRuntimePeer(inspection.RuntimeEndpoint) || !ports.ValidTunnelKeyID(inspection.TunnelKeyID) {
+		return ErrDependencyUnavailable
+	}
+	expected := *op.NetworkAttachment
+	network, err := worker.egress.GetAgentNetwork(ctx, inspection.AgentID)
+	if err != nil {
+		return err
+	}
+	if !sameNetworkCoordinates(network, expected) || network.NetworkResourceVersion != expected.NetworkResourceVersion {
+		return ErrDependencyUnavailable
+	}
+	if network.AttachmentState == ports.NetworkAttachmentOpen {
+		// Subsequent restarts can have advanced the open version repeatedly; this
+		// is ordinary rebind, not permission to borrow a later pending cycle.
+		return worker.bindCurrentOpenPeer(ctx, inspection, true, true)
+	}
+	if !networkAttachmentInState(network, inspection.AgentID, ports.NetworkStateActive, ports.NetworkAttachmentPending) ||
+		network.AttachmentResourceVersion != expected.AttachmentResourceVersion || network.RuntimeEndpoint != "" || network.TunnelKeyID != "" ||
+		expected.RuntimeEndpoint != "" || expected.TunnelKeyID != "" {
+		return ErrDependencyUnavailable
+	}
+	bound, err := worker.egress.SetAgentNetworkAttachment(ctx, inspection.AgentID, ports.NetworkAttachmentOpen, expected.AttachmentResourceVersion, inspection.RuntimeEndpoint, inspection.TunnelKeyID)
+	if err != nil {
+		return err
+	}
+	if !networkAttachmentReady(bound, inspection.AgentID) || !sameNetworkCoordinates(bound, expected) || bound.NetworkResourceVersion != expected.NetworkResourceVersion ||
+		!immediatelyAfter(bound.AttachmentResourceVersion, expected.AttachmentResourceVersion) || bound.RuntimeEndpoint != inspection.RuntimeEndpoint || bound.TunnelKeyID != inspection.TunnelKeyID {
+		return ErrDependencyUnavailable
+	}
+	return nil
 }
 
 func (worker *RuntimeObservationWorker) bindCurrentOpenPeer(ctx context.Context, inspection ports.RuntimeInspection, confirm, requireOpen bool) error {

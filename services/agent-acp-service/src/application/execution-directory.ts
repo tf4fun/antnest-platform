@@ -34,7 +34,10 @@ export type ClosedAgentOperation = {
 
 export class ExecutionDirectory {
   private readonly configurations = new Map<string, PublicExecutionConfiguration>();
-  private readonly pending = new Map<string, Promise<void>>();
+  private readonly pending = new Map<
+    string,
+    { publication: Promise<void> | undefined; agents: Map<string, Promise<void>> }
+  >();
   private readonly changes = new InvalidationListeners();
 
   public constructor(private readonly dependencies: ExecutionDirectoryDependencies) {}
@@ -43,11 +46,14 @@ export class ExecutionDirectory {
     input: unknown,
   ): Promise<{ organization_id: string; applied_revision: number }> {
     const configuration = parseExecutionConfiguration(input);
-    return this.exclusive(configuration.organization_id, () => this.applyCurrent(configuration));
+    return this.authorized(configuration.organization_id, undefined, () =>
+      this.applyCurrent(configuration),
+    );
   }
 
-  // Keep only short local commits/publications inside this authority boundary,
-  // never a model request, a complete Run, or a wait for user approval.
+  // Serialize local commits per Agent. A configuration publication waits for
+  // every earlier Agent commit and blocks all later access in the organization.
+  // Never hold this boundary for a model request, a Run, or user approval.
   public withAccess<T>(
     identity: ExecutionIdentity,
     action: (input: {
@@ -55,7 +61,9 @@ export class ExecutionDirectory {
       configuration: PublicExecutionConfiguration;
     }) => Promise<T>,
   ): Promise<T> {
-    return this.exclusive(identity.organizationId, () => action(this.inspect(identity)));
+    return this.authorized(identity.organizationId, identity.agentId, () =>
+      action(this.inspect(identity)),
+    );
   }
 
   public inspect(identity: ExecutionIdentity): {
@@ -204,16 +212,36 @@ export class ExecutionDirectory {
     }
   }
 
-  private async exclusive<T>(organizationId: string, action: () => Promise<T>): Promise<T> {
-    const previous = this.pending.get(organizationId);
+  private async authorized<T>(
+    organizationId: string,
+    agentId: string | undefined,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const pending = this.pending.get(organizationId) ?? {
+      publication: undefined,
+      agents: new Map<string, Promise<void>>(),
+    };
+    this.pending.set(organizationId, pending);
+    // Capture only predecessors. Publish the new tail before the first await:
+    // later access cannot pass a queued publication or become its dependency.
+    const predecessors =
+      agentId === undefined
+        ? [pending.publication, ...pending.agents.values()]
+        : [pending.publication, pending.agents.get(agentId)];
     const completion = Promise.withResolvers<void>();
-    this.pending.set(organizationId, completion.promise);
-    await previous;
+    if (agentId === undefined) pending.publication = completion.promise;
+    else pending.agents.set(agentId, completion.promise);
+    await Promise.all(predecessors.filter((previous) => previous !== undefined));
     try {
       return await action();
     } finally {
       completion.resolve();
-      if (this.pending.get(organizationId) === completion.promise)
+      if (agentId === undefined) {
+        if (pending.publication === completion.promise) pending.publication = undefined;
+      } else if (pending.agents.get(agentId) === completion.promise) {
+        pending.agents.delete(agentId);
+      }
+      if (pending.publication === undefined && pending.agents.size === 0)
         this.pending.delete(organizationId);
     }
   }

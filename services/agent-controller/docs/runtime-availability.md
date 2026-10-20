@@ -17,6 +17,17 @@ outer-peer binding; health and execution identity are still independent. A retry
 does not reuse an address from a durable compute receipt. Source restoration
 likewise inspects the exact source Runtime revision before reopening traffic.
 
+Create alone also accepts a matching provisioned `created`/`exited` inspection
+without peer or key. It commits a versioned Egress `pending` attachment and
+finishes the configured target, without publishing execution. Unknown/absent
+phases, a different Agent/revision, failed Inspect and incomplete running peers
+cannot use this path. Rebuild/Enable pending consumption is a separate batch.
+An attachment reply lost after commit is recovered only at the immediately
+following version with unchanged network coordinates and network version. The
+saved pending/open effect can outlive a Runtime phase change; an already-open
+running peer/key change uses the existing additional CAS rebind. Inspect errors
+retain their Runtime Controller attribution and original cause.
+
 There are two independent facts:
 
 1. Configured Agent: immutable AgentSpec plus the current Runtime revision.
@@ -60,8 +71,18 @@ retain the entry and report synchronization failure without replacing RC health
 with unknown or blocking later journal entries. The work set is not a persisted
 queue: inventory restores it, and normal shutdown requires no additional state.
 
-Before new execution publication the worker still confirms the current peer on
-the open Egress attachment. This confirmation and background retries share a
+After the Agent aggregate CAS, a completed Create target may consume exactly its
+saved pending attachment version to bind a fresh matching running peer, including
+while health is still starting. The persisted target scan also refreshes an open
+peer before health, so a restart after a lost open response cannot deadlock
+readiness. Once open, subsequent rebinds can advance its version normally; the
+old pending receipt is not a cap on open versions. Closed and newer pending
+cycles are never borrowed. Disable/Delete advance the attachment version when
+closing pending, rejecting an old first-bind request even if it arrives after
+the caller timed out.
+
+Before new execution publication the worker still confirms the current peer.
+This confirmation and background retries share a
 single budget equal to the configured observation poll interval; failed attempts
 resume on the next pass, rotating through pending peers. Neither path opens a
 lifecycle-closed attachment. Healthy observation alone cannot publish an
@@ -98,6 +119,10 @@ contract. Runtime Client tests pin the wire contract separately from current
 health observations. A targeted test covers the stale first-binding race. The
 service HTTP boundary is tested with dependency contract fixtures, not a
 deployed cross-service Docker run.
+The Controller Docker fixture holds a newly provisioned Runtime without a peer
+until Create completes, then exposes a starting peer and requires network open
+before allowing healthy/executable observation. Egress's separate Docker suite
+proves the real pending packet fence; Foundation supplies final integration.
 
 The platform-wide state model is described in
 [Agent lifecycle state model](../../../docs/agent-lifecycle-state-model.md).

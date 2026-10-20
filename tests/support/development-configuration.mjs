@@ -16,8 +16,10 @@ import { parseEnv } from "node:util";
 import { durablePath, readConfiguration } from "./storage.mjs";
 
 const agentPattern = /^agent_[a-f0-9]{32}$/u;
+// Browser Bridge sessions and existing private ACP sessions retain their
+// original identifiers; neither is converted before replay or Trace lookup.
 const sessionPattern =
-  /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
+  /^(?:session_[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/u;
 function text(value, name, pattern) {
   assert(
     typeof value === "string" && value.length && !value.includes("\0"),
@@ -50,6 +52,45 @@ function origin(value, name) {
       !url.hash,
     `invalid ${name} HTTP origin`,
   );
+}
+function privateExecution(value) {
+  const access = object(value, "privateAccess");
+  assert.deepEqual(
+    Object.keys(access).sort(),
+    ["acp", "credentials", "identity", "otlp"],
+    "privateAccess requires exactly credentials, acp, identity and otlp",
+  );
+  for (const name of ["acp", "identity", "otlp"]) {
+    const url = new URL(text(access[name], "privateAccess." + name));
+    assert(
+      url.protocol === "http:" &&
+        url.hostname === "127.0.0.1" &&
+        url.port &&
+        url.pathname === (name === "otlp" ? "/v1/traces" : "/") &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash,
+      "invalid privateAccess." + name + " loopback endpoint",
+    );
+    access[name] = name === "otlp" ? url.href : url.origin;
+  }
+  access.credentials = durablePath(
+    text(access.credentials, "privateAccess.credentials"),
+  );
+  assert(
+    statSync(access.credentials).isDirectory(),
+    "privateAccess.credentials must be a directory",
+  );
+  for (const path of [
+    "edge-gateway/tokens/identity-service",
+    "agent-ui/tokens/agent-acp-service",
+  ])
+    assert(
+      /^[A-Za-z0-9_-]{43}$/u.test(input(join(access.credentials, path))),
+      "invalid privateAccess workload grant",
+    );
+  return access;
 }
 function optionalStat(path) {
   try {
@@ -200,10 +241,16 @@ export function readDevelopmentConfiguration(file, profile) {
     ],
   }[profile];
   assert(fields, "unknown development profile");
+  if (["agent-state", "replay", "recover", "runtime-loss"].includes(profile))
+    fields.push("privateAccess");
   assert(
     Object.keys(config).every((key) => fields.includes(key)),
     "unknown configuration field",
   );
+  // Drivers acquire this configuration as their private transport is migrated.
+  // Existing unmigrated profiles retain their original inputs until that step.
+  if (Object.hasOwn(config, "privateAccess"))
+    config.privateAccess = privateExecution(config.privateAccess);
   const output = optionalStat(config.output);
   if (output)
     assert(statSync(config.output).isDirectory(), "output must be a directory");
@@ -352,6 +399,12 @@ export function readDevelopmentConfiguration(file, profile) {
       "recovery-report.json",
     ];
   } else if (profile === "replay") {
+    const traces = join(config.output, "traces");
+    assert(
+      !optionalStat(traces),
+      "replay trace directory already exists or is a symbolic link",
+    );
+    durablePath(traces);
     origin(config.gateway, "gateway");
     origin(config.jaeger, "jaeger");
     config.gateway = new URL(config.gateway).origin;
@@ -447,6 +500,7 @@ export function readDevelopmentConfiguration(file, profile) {
     for (const key of keys)
       text(settings["ANTNEST_BOOTSTRAP_" + key], "ANTNEST_BOOTSTRAP_" + key);
   }
+  if (config.privateAccess) names.push("private-access.private.json");
   for (const name of names)
     outputPath(config, name, name.endsWith(".png") ? "png" : "json");
   return {

@@ -87,6 +87,38 @@ function completion(strict = "failed") {
   };
 }
 
+test("legacy aggregate cannot admit current HTTP load paired with old WSS outage", () => {
+  const record = completion();
+  Object.assign(record.traces[0], {
+    policy_revision: 4,
+    transport: "http",
+    profile: "workspace",
+  });
+  assert.equal(isResolveCacheCompletion(record), false);
+});
+
+for (const location of ["report", "outage"])
+  test(`legacy aggregate rejects policy 4 on ${location}`, () => {
+    const record = completion();
+    (location === "report" ? record : record.warm_outage).policy_revision = 4;
+    assert.equal(isResolveCacheCompletion(record), false);
+  });
+
+for (const [name, mutate] of [
+  [
+    "nested HTTP measurement",
+    (r) =>
+      (r.traces[0].measurement = { policy_revision: 4, transport: "http" }),
+  ],
+  ["HTTP receipt count", (r) => (r.traces[0].http_traces = 100)],
+  ["HTTP outage transport", (r) => (r.warm_outage.transport = "http")],
+])
+  test(`legacy aggregate rejects ${name} without top-level policy markers`, () => {
+    const record = completion();
+    mutate(record);
+    assert.equal(isResolveCacheCompletion(record), false);
+  });
+
 test("complete cache admission accepts retained strict findings and clean traces", () => {
   for (const strict of ["failed", "passed"]) {
     const record = completion(strict);

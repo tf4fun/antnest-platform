@@ -5,6 +5,17 @@ execution boundary between Agent Controller and Agent ACP Service. It runs with
 `make e2e-stage2`; the fixture sources live in
 [`tests/e2e/agent-acp-service`](../../../tests/e2e/agent-acp-service).
 
+## Retired Gateway Entry Migration
+
+The topology and scenarios below describe the fixture before Gateway 24 retired
+the direct ACP and state routes. That recorded coverage remains historical.
+The consumer batch must move browser journeys to the retained Agent UI Bridge
+and keep protocol assertions on authenticated private ACP. It must preserve the
+business, persistence, trace, error and cleanup requirements below. This ACP
+owning batch does not admit that cross-service workflow or its capacity gate.
+
+## Historical Fixture Topology
+
 The fixture does not start Agent UI. It uses real Controller publication, ACP
 protocol clients, PostgreSQL, Temporal, Runtime MCP, and Jaeger. Only the
 external model is deterministic. It must not write execution snapshots directly

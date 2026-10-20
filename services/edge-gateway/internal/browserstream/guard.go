@@ -16,17 +16,15 @@ import (
 const DefaultMaximumStale = 30 * time.Second
 
 var (
-	ErrRejected             = errors.New("browser session rejected")
-	ErrUnavailable          = errors.New("browser session verification unavailable")
-	ErrCallerContextExpired = errors.New("original caller context expired")
+	ErrRejected    = errors.New("browser session rejected")
+	ErrUnavailable = errors.New("browser session verification unavailable")
 )
 
 type Config struct {
-	MaximumStale    time.Duration
-	InitialStarted  time.Time
-	Original        identity.Principal
-	DirectWebSocket bool
-	Resolve         func(context.Context) (identity.Principal, error)
+	MaximumStale   time.Duration
+	InitialStarted time.Time
+	Original       identity.Principal
+	Resolve        func(context.Context) (identity.Principal, error)
 }
 
 type Guard struct {
@@ -97,15 +95,6 @@ func Start(parent context.Context, registry *Registry, cfg Config) (*Guard, erro
 	guard := &Guard{ctx: ctx, cancel: cancel, done: make(chan struct{}), original: cfg.Original,
 		maximumStale: cfg.MaximumStale, closeGrace: CloseGrace(cfg.MaximumStale),
 		hardCap: cfg.Original.ExpiresAt, hardCause: ErrRejected}
-	if cfg.DirectWebSocket {
-		if cfg.Original.ContextExpiresAt.IsZero() {
-			cancel(ErrUnavailable)
-			return nil, ErrUnavailable
-		}
-		if cfg.Original.ContextExpiresAt.Before(guard.hardCap) {
-			guard.hardCap, guard.hardCause = cfg.Original.ContextExpiresAt, ErrCallerContextExpired
-		}
-	}
 	deadline, cause := guard.deadline(authorityStarted)
 	if !deadline.After(now) {
 		cancel(cause)

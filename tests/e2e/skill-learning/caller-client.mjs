@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { connectACP } from "../identity-closeout/acp-connection.mjs";
+import { openSkillACP, withSkillACPClient } from "./private-client.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
 import { serviceCalls } from "./service-calls.mjs";
@@ -98,9 +98,8 @@ const selected = {
   formal_digest: formal.content_digest,
 };
 assert.equal(formal.version, 2);
-const acp = connectACP(1, callerId, client.cookie, {
-  // This client has no span exporter: do not invent an unrecorded parent.
-  injectTraceParent: false,
+const acp = await openSkillACP(1, callerId, client, {
+  principal: login.principal,
   requestPermission: ({ params }) => ({
     outcome: {
       outcome: "selected",
@@ -109,8 +108,7 @@ const acp = connectACP(1, callerId, client.cookie, {
     },
   }),
 });
-try {
-  await acp.initialize();
+await withSkillACPClient(acp, async () => {
   console.log("Caller fixture: ACP initialized");
   const { sessionId } = await until(
     async () => {
@@ -190,6 +188,4 @@ try {
       local_skill_still_available: true,
     }),
   );
-} finally {
-  await acp.close();
-}
+});

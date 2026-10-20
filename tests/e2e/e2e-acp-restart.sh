@@ -32,18 +32,25 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 docker_cmd inspect "$acp" >"$temporary/acp-initial.json"
-node "$root/tests/e2e/acp-persistence/process.mjs" owned "$temporary/acp-initial.json"
+node "$root/tests/e2e/acp-restart/ownership.mjs" owned "$temporary/acp-initial.json"
 containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
 
-image=antnest/antnest-runtime:local
+image=${ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF:-antnest/antnest-runtime:local}
+acp_image=$(docker_cmd inspect --format '{{.Image}}' "$acp")
 docker_cmd image inspect "$image" >/dev/null
-docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=restart-model-peer" --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=restart-model-peer" -v "$root/tests:/app/tests:ro" antnest/agent-acp-service:local node /app/tests/e2e/acp-restart/model.mjs >/dev/null
+docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "name=${COMPOSE_PROJECT_NAME}_acp-provider,alias=restart-model-peer" --network "name=${COMPOSE_PROJECT_NAME}_controller-provider,alias=restart-model-peer" -v "$root/tests:/app/tests:ro" "$acp_image" node /app/tests/e2e/acp-restart/model.mjs >/dev/null
 # shellcheck disable=SC2086 # service_hosts is a list of options.
-docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" --network "${COMPOSE_PROJECT_NAME}_acp-provider" --network "${COMPOSE_PROJECT_NAME}_controller-runtime" \
+docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" --network "${COMPOSE_PROJECT_NAME}_gateway-ingress" --network "${COMPOSE_PROJECT_NAME}_observability" --network "${COMPOSE_PROJECT_NAME}_acp-provider" --network "${COMPOSE_PROJECT_NAME}_controller-runtime" --network "${COMPOSE_PROJECT_NAME}_identity-clients" --network "${COMPOSE_PROJECT_NAME}_edge" \
   --user "$ANTNEST_SERVICE_AUTH_UID:$ANTNEST_SERVICE_AUTH_GID" -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-controller/tokens/runtime-controller:/run/auth/controller-runtime:ro" \
-  -e "TEST_RUNTIME_IMAGE=$image" -v "$root/tests:/app/tests:ro" -v "$temporary:/checkpoints" antnest/agent-acp-service:local node /app/tests/e2e/acp-restart/client.mjs >/dev/null
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/edge-gateway/tokens/identity-service:/run/auth/gateway-identity:ro" \
+  -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/agent-ui/tokens/agent-acp-service:/run/auth/agent-ui-acp:ro" \
+  -v "$root/contracts/identity/identity-contract.json:/app/contracts/identity/identity-contract.json:ro" \
+  -v "$root/contracts/agent-controller/control-contract.json:/app/contracts/agent-controller/control-contract.json:ro" \
+  -v "$root/services/runtime-controller/api/control-contract.json:/app/services/runtime-controller/api/control-contract.json:ro" \
+  -v "$root/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro" \
+  -e "TEST_RUNTIME_IMAGE=$image" -v "$root/tests:/app/tests:ro" -v "$temporary:/checkpoints" "$acp_image" node /app/tests/e2e/acp-restart/client.mjs >/dev/null
 docker_cmd start "$client" >/dev/null
 for step in 1 2 3 4 5 6 7 8; do
   attempt=0
@@ -53,7 +60,7 @@ for step in 1 2 3 4 5 6 7 8; do
     sleep 1
   done
   docker_cmd inspect "$acp" >"$temporary/before-$step.json"
-  node "$root/tests/e2e/acp-persistence/process.mjs" owned "$temporary/before-$step.json"
+  node "$root/tests/e2e/acp-restart/ownership.mjs" owned "$temporary/before-$step.json"
   node "$root/tests/e2e/acp-closeout/inflight-barrier.mjs" "$temporary/request-$step" >"$temporary/proof-$step"
   chmod 644 "$temporary/proof-$step"
   docker_cmd kill --signal KILL "$acp" >/dev/null
@@ -71,7 +78,7 @@ for step in 1 2 3 4 5 6 7 8; do
     sleep 1
   done
   docker_cmd inspect "$acp" >"$temporary/after-$step.json"
-  node "$root/tests/e2e/acp-persistence/process.mjs" restarted "$temporary/before-$step.json" "$temporary/after-$step.json"
+  node "$root/tests/e2e/acp-restart/ownership.mjs" restarted "$temporary/before-$step.json" "$temporary/after-$step.json"
   touch "$temporary/done-$step"
   echo "ACP interruption $step/8: SIGKILL 137, same container restarted healthy" >&2
   case "$step" in

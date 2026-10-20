@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import { inspectOutageCancellation } from "./chat-outage-trace.mjs";
 import { assertWorkspaceResolveReceipt } from "./request-trace.mjs";
@@ -25,10 +24,7 @@ export function inspectChatTrace(trace, expected) {
 }
 
 // Diagnostics do not waive the strict warning gate or change source timestamps.
-function chatTraceBoundary(
-  trace,
-  { sessionId, requireTools = false, bridge = false },
-) {
+export function chatRequestBoundary(trace, { sessionId, bridge = false }) {
   const tree = traceTopology(trace);
   assertCaptureDisabled(trace);
   const roots = trace.spans.filter((span) => !tree.parent(span));
@@ -94,6 +90,17 @@ function chatTraceBoundary(
       ["agent-controller", "identity-service"].includes(tree.service(span)),
     ),
     "Run calls a management service",
+  );
+  return { tree, root, upstream, prompt, run, execution };
+}
+
+export function chatTraceBoundary(
+  trace,
+  { sessionId, requireTools = false, bridge = false },
+) {
+  const { tree, root, upstream, prompt, run, execution } = chatRequestBoundary(
+    trace,
+    { sessionId, bridge },
   );
   assert(
     execution.some(
@@ -507,29 +514,4 @@ export async function collectWorkspaceChatTrace(
     { ...options, inspect: inspectWorkspaceChatTrace },
   );
   return { ...result, strict: result.strict_trace };
-}
-
-export async function collectChatTraces({ jaeger, sessionId, secrets }) {
-  await new Promise((resolve) => setTimeout(resolve, 6000));
-  const query = new URLSearchParams({
-    service: "agent-acp-service",
-    limit: "20",
-    lookback: "1h",
-    tags: JSON.stringify({
-      "rpc.method": "session/prompt",
-      "antnest.session.id": sessionId,
-    }),
-  });
-  const data = await searchJaegerTraces(jaeger, query, {
-    signal: AbortSignal.timeout(10000),
-  });
-  assert.equal(data?.length, 3, "expected greeting and two Tool prompts");
-  const reports = data.map((trace) =>
-    inspectChatTrace(trace, { sessionId, secrets }),
-  );
-  assert(
-    reports.filter((report) => report.runtime_calls > 0).length >= 2,
-    "both Tool prompts must include Runtime spans",
-  );
-  return reports;
 }

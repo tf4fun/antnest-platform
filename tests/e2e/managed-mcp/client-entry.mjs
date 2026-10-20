@@ -9,6 +9,12 @@ const hook = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (
       specifier === "ws" ||
+      [
+        "ajv/dist/2020.js",
+        "@opentelemetry/api",
+        "@opentelemetry/sdk-node",
+        "@opentelemetry/exporter-trace-otlp-http",
+      ].includes(specifier) ||
       specifier === "@agentclientprotocol/sdk" ||
       specifier.startsWith("@agentclientprotocol/sdk/")
     ) {

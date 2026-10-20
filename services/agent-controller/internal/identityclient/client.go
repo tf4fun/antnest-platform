@@ -97,10 +97,14 @@ func (client *Client) invoke(
 			attribute.String("rpc.service", "identity-service"),
 			attribute.String("rpc.method", method),
 			attribute.String("antnest.result", result),
-			attribute.String("error.type", errorClass),
 		}
 		span.SetAttributes(attributes...)
+		if resultErr != nil {
+			span.SetAttributes(attribute.String("error.type", errorClass))
+		}
 		span.Finish(resultErr)
+		// Metrics keep a bounded success bucket; successful spans carry no error.
+		attributes = append(attributes, attribute.String("error.type", errorClass))
 		requests.Add(ctx, 1, metric.WithAttributes(attributes...))
 		duration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
 	}()

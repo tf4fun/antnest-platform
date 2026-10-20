@@ -8,8 +8,14 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { developmentPrivateStateFixture } from "../../support/fixtures/development-private-state.mjs";
 import { lifecycleCliFixture } from "../../support/fixtures/development-lifecycle-cli.mjs";
-import { lifecycleKinds } from "../../support/fixtures/development-lifecycle.mjs";
+import {
+  lifecycleKinds,
+  addPreparationRetries,
+  addLifecycleAuxiliaryAbsences,
+  publicationTrace,
+} from "../../support/fixtures/development-lifecycle.mjs";
 import {
   runtimeLossTrace,
   runtimeLossSnapshots,
@@ -18,6 +24,20 @@ import {
 async function fixture(t) {
   const f = await lifecycleCliFixture(t);
   f.entry = "tests/e2e/development/runtime-loss.mjs";
+  f.privateState = developmentPrivateStateFixture(f.root, {
+    agentId: () => f.temporaryId,
+    state: () => ({
+      agent_id: f.temporaryId,
+      access_allowed: true,
+      configuration_revision: "a".repeat(64),
+      availability: "offline",
+      active_session_id: null,
+      unavailable_reason: "agent_unavailable",
+      ...f.appState,
+    }),
+  });
+  f.privateState.principal.organization_id = f.organization;
+  f.config.privateAccess = f.privateState.configuration(f.origin);
   // Preserve deadline intervals and sample counts with a virtual polling clock.
   f.preload =
     "import timers from 'node:timers/promises';import {syncBuiltinESMExports} from 'node:module';let tick=0;const now=Date.now;Date.now=()=>now()+tick;const delay=timers.setTimeout;timers.setTimeout=(ms,...args)=>{tick+=ms;return delay(1,...args)};syncBuiltinESMExports();";
@@ -85,6 +105,46 @@ else if(args[0]==='ps'||args[0]==='volume')process.stdout.write(s.residue);else 
   return f;
 }
 
+test("runtime loss accepts individually owned auxiliary absences and retains the missing source probe", async (t) => {
+  const f = await fixture(t);
+  for (const kind of lifecycleKinds)
+    addLifecycleAuxiliaryAbsences(f.lifecycles[kind].trace, kind);
+  const result = await f.run();
+  assert.equal(result.exit_code, 0, result.log);
+  const report = f.read("lifecycle-report.json");
+  assert.deepEqual(
+    report.lifecycle.map((item) => item.evidence.platform_absence_probes),
+    [6, 1, 5, 7, 1],
+  );
+  assert.equal(report.source_absence_404, 1);
+  assert.equal(report.lifecycle[3].missingSourceGeneration, 2);
+});
+
+test("runtime loss archives partial search results before selecting and fully collecting post-restart publications", async (t) => {
+  const f = await fixture(t);
+  const nested = publicationTrace(4);
+  nested.spans[0].references.push({
+    refType: "CHILD_OF",
+    traceID: nested.traceID,
+    spanID: "not-yet-exported-parent",
+  });
+  const partial = structuredClone(f.publications[0]);
+  partial.spans = partial.spans.filter((span) => span.spanID !== "client");
+  const search = [nested, partial, ...f.publications.slice(1)];
+  f.searchResponse = () => search;
+  const result = await f.run();
+  assert.equal(result.exit_code, 0, result.log);
+  assert.deepEqual(f.read("publication-search-1.json"), search);
+  assert.deepEqual(
+    f.read("lifecycle-report.json").publication.map((row) => row.trace_id),
+    f.publications.map((trace) => trace.traceID),
+  );
+  assert.deepEqual(
+    f.read(`publication-${partial.traceID}.json`),
+    f.publications[0],
+  );
+});
+
 test("runtime loss preserves normal stop, source generation, five absences and post-restart publications", async (t) => {
   const f = await fixture(t),
     result = await f.run();
@@ -113,6 +173,11 @@ test("runtime loss preserves normal stop, source generation, five absences and p
     ["rm", "1".repeat(64)],
   );
   const paths = f.requests.map((r) => r.url);
+  assert(!paths.some((path) => path.startsWith("/api/app/agents/")));
+  const access = f.read("private-access.private.json");
+  assert.equal(access.closed, true);
+  assert.equal(access.states.length, 1);
+  assert.equal(access.states[0].joined, true);
   assert(
     paths.findIndex((p) => p.startsWith("/api/v3/trace-summaries?")) >
       paths.indexOf(`/api/admin/agents/${f.temporaryId}/delete`),
@@ -120,6 +185,7 @@ test("runtime loss preserves normal stop, source generation, five absences and p
 });
 
 for (const [name, mutate] of [
+  ["missing private access", (f) => delete f.config.privateAccess],
   [
     "invalid start time",
     (f) => (f.snapshots.restart.State.StartedAt = "invalid"),
@@ -258,11 +324,11 @@ for (const [name, mutate, error] of [
   [
     "foreign App state",
     (f) => (f.appState = { agent_id: "foreign" }),
-    /App state identity mismatch/,
+    /foreign Workspace state Agent/,
   ],
   [
     "online app",
-    (f) => (f.appState = { availability: "online" }),
+    (f) => (f.appState = { availability: "ready", unavailable_reason: null }),
     /Expected values/,
   ],
   [
@@ -323,6 +389,46 @@ for (const [name, mutate, error] of [
     assert.equal(result.complete, true);
     assert.match(f.read("lifecycle-report.json").failure.message, error);
   });
+
+for (const scenario of ["completed", "unknown failure", "no later success"])
+  test(`runtime loss preparation: ${scenario}`, async (t) => {
+    const f = await fixture(t);
+    for (const kind of ["create", "enable", "rebuild"]) {
+      const [retry] = addPreparationRetries(f.lifecycles[kind].trace, kind);
+      if (scenario === "unknown failure")
+        retry.tags.find((tag) => tag.key === "otel.status_description").value =
+          "dependency unavailable: Skill preparation rejected";
+      if (scenario === "no later success") retry.startTime += 1000000;
+    }
+    const result = await f.run();
+    if (scenario !== "completed") {
+      assert.notEqual(result.exit_code, 0);
+      assert.equal(
+        f.read("lifecycle-report.json").failure.stage,
+        "lifecycle_trace",
+      );
+      return;
+    }
+    assert.equal(result.exit_code, 0, result.log);
+    for (const item of f.read("lifecycle-report.json").lifecycle)
+      if (["create", "enable", "rebuild"].includes(item.kind)) {
+        assert.equal(item.skillPreparation, true);
+        assert.equal(item.evidence.skill_preparation_retries, 2);
+      }
+  });
+
+test("runtime loss preserves the original failed lifecycle Trace", async (t) => {
+  const f = await fixture(t);
+  const trace = f.lifecycles.create.trace;
+  trace.spans[0].tags.push({ key: "error", type: "bool", value: true });
+  const result = await f.run();
+  assert.notEqual(result.exit_code, 0);
+  assert.equal(
+    f.read("lifecycle-report.json").failure.stage,
+    "lifecycle_trace",
+  );
+  assert.deepEqual(f.read("lifecycle-create.json"), trace);
+});
 
 test("runtime loss polls until three post-restart publication roots exist", async (t) => {
   const f = await fixture(t);

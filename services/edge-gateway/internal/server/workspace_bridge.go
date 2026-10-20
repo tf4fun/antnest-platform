@@ -12,7 +12,10 @@ import (
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
-const workspaceBridgeRequestTimeout = 65 * time.Second
+const (
+	workspaceBridgeRequestTimeout = 65 * time.Second
+	maximumWorkspaceBodyBytes     = 64 << 20
+)
 
 func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http.Request) error {
 	if request.Method != http.MethodGet && request.Method != http.MethodPost {
@@ -40,11 +43,11 @@ func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
-	if request.ContentLength > maximumACPMessageBytes {
+	if request.ContentLength > maximumWorkspaceBodyBytes {
 		writeError(response, http.StatusRequestEntityTooLarge, "request_too_large", "Workspace request exceeds the payload limit")
 		return nil
 	}
-	request.Body = http.MaxBytesReader(response, request.Body, maximumACPMessageBytes)
+	request.Body = http.MaxBytesReader(response, request.Body, maximumWorkspaceBodyBytes)
 	ctx, cancel := context.WithTimeout(request.Context(), workspaceBridgeRequestTimeout)
 	defer cancel()
 	h.workspaceBridgeProxy.ServeHTTP(response, request.WithContext(ctx))

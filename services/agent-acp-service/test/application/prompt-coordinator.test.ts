@@ -1,6 +1,9 @@
+import { RunRecoveryRequiredError } from "../../src/ports/acp-application.js";
 import { describe, expect, it, vi } from "vitest";
 import { readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { AccessService } from "../../src/application/access-service.js";
 import { DomainError } from "../../src/domain/errors.js";
 
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
@@ -123,16 +126,71 @@ describe("PromptCoordinator", () => {
 
   it("preserves original Run authority when the acceptance commit receipt is unknown", async () => {
     const test = await setup();
-    test.repository.acceptRun.mockRejectedValueOnce(new Error("commit acknowledgement lost"));
-    await expect(test.coordinator.accept(test.input)).rejects.toThrow(
-      "commit acknowledgement lost",
-    );
+    const failure = new Error("commit acknowledgement lost");
+    test.repository.acceptRun.mockRejectedValueOnce(failure);
+    await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+      name: RunRecoveryRequiredError.name,
+      cause: failure,
+    });
     await closeAgent(test);
     expect(readdirSync(test.connections.directory)).toEqual([
       test.configuration.agents[0]!.runtime!.connection_id,
     ]);
     expect(test.recoveryRequired).toHaveBeenCalledOnce();
   });
+  it.each(["intent", "acceptance"])(
+    "does not block another user's Agent access behind the %s persistence receipt",
+    async (stage) => {
+      const test = await setup(false);
+      test.configuration.agents.push({
+        ...structuredClone(test.configuration.agents[0]!),
+        agent_id: "agent-2",
+        principal_ids: ["principal-2"],
+        runtime: runtimeConfiguration(3),
+      });
+      await test.directory.apply(test.configuration);
+      const entered = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      if (stage === "intent") {
+        const original = test.repository.createRunIntent.getMockImplementation()!;
+        test.repository.createRunIntent.mockImplementationOnce(async (input) => {
+          entered.resolve();
+          await finish.promise;
+          return original(input);
+        });
+      } else {
+        test.repository.acceptRun.mockImplementationOnce(async () => {
+          entered.resolve();
+          await finish.promise;
+          return "accepted";
+        });
+      }
+      const accepting = test.coordinator.accept(test.input);
+      await entered.promise;
+      let checked = false;
+      const access = new AccessService({ directory: test.directory });
+      const control = access
+        .assert({
+          ...test.input.binding,
+          agentId: "agent-2",
+          principalId: "principal-2",
+        })
+        .then(() => {
+          checked = true;
+        });
+      try {
+        await nextTurn();
+        expect(checked).toBe(true);
+      } finally {
+        finish.resolve();
+        const accepted = await accepting;
+        await control;
+        test.directory.releaseRuntimeRun(accepted.runId);
+      }
+      expect(test.repository.acceptRun).toHaveBeenCalledOnce();
+    },
+  );
+
   it("assigns separate resource kinds to the Run, request and user message", async () => {
     const test = await setup();
     await test.coordinator.accept(test.input);
@@ -212,10 +270,12 @@ describe("PromptCoordinator", () => {
     "leaves uncertain local %s commits for interruption cleanup without replay",
     async (operation) => {
       const test = await setup();
-      test.repository[operation].mockRejectedValueOnce(new Error("commit acknowledgement lost"));
-      await expect(test.coordinator.accept(test.input)).rejects.toThrow(
-        "commit acknowledgement lost",
-      );
+      const failure = new Error("commit acknowledgement lost");
+      test.repository[operation].mockRejectedValueOnce(failure);
+      await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+        name: RunRecoveryRequiredError.name,
+        cause: failure,
+      });
       expect(test.repository[operation]).toHaveBeenCalledOnce();
       expect(test.repository.rejectRun).not.toHaveBeenCalled();
       expect(test.recoveryRequired).toHaveBeenCalledOnce();
@@ -245,8 +305,12 @@ describe("PromptCoordinator", () => {
     test.configuration.revision = 2;
     test.configuration.models[0]!.enabled = false;
     await test.directory.apply(test.configuration);
-    test.repository.rejectRun.mockRejectedValueOnce(new Error("rejection commit lost"));
-    await expect(test.coordinator.accept(test.input)).rejects.toThrow("rejection commit lost");
+    const failure = new Error("rejection commit lost");
+    test.repository.rejectRun.mockRejectedValueOnce(failure);
+    await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+      name: RunRecoveryRequiredError.name,
+      cause: failure,
+    });
     expect(test.repository.rejectRun).toHaveBeenCalledOnce();
     expect(test.repository.acceptRun).not.toHaveBeenCalled();
     expect(test.recoveryRequired).toHaveBeenCalledOnce();

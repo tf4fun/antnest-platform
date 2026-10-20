@@ -7,7 +7,11 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
 } from "../../support/verification/development-runtime.mjs";
-import { inspectPublication, selectPublications } from "./publication.mjs";
+import {
+  inspectPublication,
+  publicationCandidates,
+  selectPublications,
+} from "./publication.mjs";
 import assert from "node:assert/strict";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { mkdirSync } from "node:fs";
@@ -15,12 +19,13 @@ import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
+import { withDevelopmentPrivateState } from "./private-state.mjs";
 import {
   waitForAgentReady,
   assertAgentDisabled,
   assertAgentDeleted,
 } from "../../support/verification/agent-state.mjs";
-import { inspectLifecycle } from "../stage3-base/trace.mjs";
+import { inspectDevelopmentLifecycle } from "./lifecycle-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import { traceTopology, tag } from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
@@ -33,6 +38,7 @@ const {
   secrets: privateSettings,
   publicationCutoff,
 } = readDevelopmentConfiguration(values.config, "runtime-loss");
+assert(config.privateAccess, "privateAccess is required");
 process.umask(0o077);
 mkdirSync(config.output, { recursive: true, mode: 0o700 });
 const secrets = [
@@ -120,6 +126,9 @@ async function record(kind, result, requestId) {
     agentId,
     requestId,
     ...(kind === "rebuild" ? { missingSourceGeneration } : {}),
+    ...(["create", "enable", "rebuild"].includes(kind)
+      ? { skillPreparation: true }
+      : {}),
   };
   report.lifecycle.push(item);
   write("lifecycle-progress.json", report);
@@ -151,18 +160,14 @@ async function publications(organization) {
   });
   const cutoff = publicationCutoff;
   const end = Date.now() + 120000;
-  let roots = [];
+  let roots = [],
+    searchRound = 0;
   while (Date.now() < end) {
     const data = await searchJaegerTraces(jaeger, query, {
       signal: AbortSignal.timeout(10000),
     });
-    roots = (data ?? []).filter((trace) => {
-      const tree = traceTopology(trace);
-      const attempt = trace.spans.find(
-        (s) => s.operationName === "agent_controller.execution_publication",
-      );
-      return attempt && !tree.parent(attempt) && attempt.startTime >= cutoff;
-    });
+    write(`publication-search-${++searchRound}.json`, data);
+    roots = publicationCandidates(data, cutoff);
     if (roots.length >= 3) break;
     await delay(1000);
   }
@@ -178,16 +183,17 @@ async function publications(organization) {
     traceIDs.add(found.traceID);
     const filename = `publication-${found.traceID}.json`;
     mutableNames.push(filename);
-    const evidence = await collectTrace(jaeger, found.traceID, (trace) =>
-      inspectPublication(
+    const evidence = await collectTrace(jaeger, found.traceID, (trace) => {
+      if (trace) write(filename, trace);
+      return inspectPublication(
         trace,
         found.traceID,
         organization,
         secrets,
-        () => write(filename, trace),
+        undefined,
         cutoff,
-      ),
-    );
+      );
+    });
     report.publication.push(evidence);
   }
   assert.equal(report.publication.length, 3);
@@ -201,228 +207,238 @@ try {
     },
   });
   secrets.push(...admin.cookies.values());
-  const original = await read(retained);
-  const template = original.configuration.template;
-  assert(template?.template_id && template.revision);
-  stage = "publication";
-  const principal = login.body.principal ?? login.body;
-  assert(principal.organization_id, "login organization identity missing");
-  stage = "create";
-  const created = await admin.request("/api/admin/agents", {
-    status: 202,
-    body: {
-      name: config.fixtureName,
-      owner_user_id: original.owner_user_id,
-      template_id: template.template_id,
-      template_revision: template.revision,
-    },
-  });
-  const temporaryId = created.body?.agent?.agent_id;
-  assert.match(
-    temporaryId ?? "",
-    /^agent_[a-f0-9]{32}$/u,
-    "temporary Agent ID missing",
-  );
-  assert.notEqual(
-    temporaryId,
-    retained,
-    "created Agent must not be the retained Agent",
-  );
-  agentId = temporaryId;
-
-  write("temporary-agent.json", { agent_id: agentId });
-  const ready = await record(
-    "create",
-    created,
-    created.body.operation.request_id,
-  );
-  const name = "antnest-runtime-" + agentId;
-  assert.equal(ready.name, config.fixtureName, "temporary Agent name mismatch");
-  assert.equal(
-    ready.owner_user_id,
-    original.owner_user_id,
-    "temporary Agent owner mismatch",
-  );
-  assert.deepEqual(
-    ready.configuration.template,
-    template,
-    "temporary Agent Template mismatch",
-  );
-  const initial = inspectRuntime();
-  const marker = config.workspaceMarker;
-  docker(
-    "exec",
-    initial.Id,
-    "sh",
-    "-c",
-    writeWorkspaceFile,
-    "sh",
-    config.workspaceFile,
-    marker,
-  );
-  await transition("disable");
-  await transition("enable");
-  const beforeRebuild = inspectRuntime();
-  assert.equal(
-    docker(
-      "exec",
-      beforeRebuild.Id,
-      "sh",
-      "-c",
-      readWorkspaceFile,
-      "sh",
-      config.workspaceFile,
-    ),
-    marker,
-  );
-  stage = "normal_runtime_loss";
-  assert.notEqual(agentId, retained);
-  assert.equal(beforeRebuild.Config.Labels["io.antnest.agent-id"], agentId);
-  assert.equal(
-    beforeRebuild.Config.Labels["io.antnest.runtime-controller-scope"],
-    config.runtimeControllerScope,
-  );
-  assert.equal(beforeRebuild.State.Running, true);
-  missingSourceGeneration = Number(
-    beforeRebuild.Config.Labels["io.antnest.runtime-generation"],
-  );
-  assert(
-    Number.isSafeInteger(missingSourceGeneration) &&
-      missingSourceGeneration > 0,
-  );
-  docker("stop", "-t", "10", beforeRebuild.Id);
-  const stopped = inspectDevelopmentRuntime(
-    JSON.parse(docker("inspect", beforeRebuild.Id)),
-    {
-      name,
-      agentId,
-      scope: config.runtimeControllerScope,
-      volume: "antnest-workspace-" + agentId,
-    },
-  );
-  assert.equal(
-    stopped.Id,
-    beforeRebuild.Id,
-    "stopped Runtime identity changed",
-  );
-  assert.equal(stopped.State.Running, false);
-  assert.equal(stopped.State.ExitCode, 0);
-  assert.equal(stopped.State.OOMKilled, false);
-  const deadline = Date.now() + 60000;
-  while (Date.now() < deadline) {
-    const a = await read(agentId);
-    if (a.failure_code === "runtime_exited" && !a.executable_execution_revision)
-      break;
-    await delay(300);
-  }
-  const exited = await read(agentId);
-  assert.equal(exited.failure_code, "runtime_exited");
-  assert(!exited.executable_execution_revision);
-  docker("rm", beforeRebuild.Id);
-  const absentDeadline = Date.now() + 60000;
-  while (Date.now() < absentDeadline) {
-    const a = await read(agentId);
-    if (a.runtime_state === "absent" && !a.executable_execution_revision) break;
-    await delay(300);
-  }
-  const lost = await read(agentId);
-  assert.equal(lost.runtime_state, "absent");
-  assert(!lost.executable_execution_revision);
-  const state = (await admin.request(`/api/app/agents/${agentId}/state`)).body;
-  assert.equal(state.agent_id, agentId, "App state identity mismatch");
-  assert.equal(state.availability, "offline");
-  assert.equal(state.unavailable_reason, "agent_unavailable");
-  assert.deepEqual(lost.configuration, ready.configuration);
-  report.checks.push(
-    "temporary_runtime_normal_exit_zero_loss_observed_offline",
-  );
-  const rebuilt = await transition("rebuild", {
-    template_id: template.template_id,
-    template_revision: template.revision,
-  });
-  assert.notEqual(
-    rebuilt.runtime.runtime_revision,
-    ready.runtime.runtime_revision,
-  );
-  const afterRebuild = inspectRuntime();
-  assert.notEqual(beforeRebuild.Id, afterRebuild.Id);
-  const workspace = (c) =>
-    c.Mounts.find((m) => m.Destination === "/workspace").Name;
-  assert.equal(workspace(initial), workspace(afterRebuild));
-  assert.equal(
-    docker(
-      "exec",
-      afterRebuild.Id,
-      "sh",
-      "-c",
-      readWorkspaceFile,
-      "sh",
-      config.workspaceFile,
-    ),
-    marker,
-  );
-  report.checks.push(
-    "workspace_retained_across_disable_enable_and_physical_rebuild",
-  );
-  await transition("delete");
-  stage = "publication";
-  await publications(principal.organization_id);
-  report.checks.push(
-    "three_post_restart_publications_with_source_http_and_ack",
-  );
-  stage = "lifecycle_trace";
-  for (const item of report.lifecycle) {
-    const evidence = await collectTrace(jaeger, item.traceID, (trace) => {
-      const result = inspectLifecycle(trace, item, secrets);
-      assert.equal(result.platform_probe_errors, 0);
-      const tree = traceTopology(trace);
-      assert(
-        !trace.spans.some(
-          (s) => tree.service(s) === "runtime-controller" && hasError(s),
-        ),
+  await withDevelopmentPrivateState(
+    config,
+    { browser: admin, principal: login.body.principal, secrets },
+    async (access) => {
+      const original = await read(retained);
+      const template = original.configuration.template;
+      assert(template?.template_id && template.revision);
+      stage = "publication";
+      const principal = login.body.principal;
+      assert(principal.organization_id, "login organization identity missing");
+      stage = "create";
+      const created = await admin.request("/api/admin/agents", {
+        status: 202,
+        body: {
+          name: config.fixtureName,
+          owner_user_id: original.owner_user_id,
+          template_id: template.template_id,
+          template_revision: template.revision,
+        },
+      });
+      const temporaryId = created.body?.agent?.agent_id;
+      assert.match(
+        temporaryId ?? "",
+        /^agent_[a-f0-9]{32}$/u,
+        "temporary Agent ID missing",
       );
-      if (item.kind === "rebuild") {
-        const probes = trace.spans.filter(
-          (s) =>
-            tree.parent(s)?.operationName === "runtime.platform.inspect" &&
-            tag(s, "http.response.status_code") === 404,
-        );
-        assert.equal(probes.length, 1);
-        assert.equal(tag(probes[0], "antnest.outcome"), "absent");
-        assert(!hasError(probes[0]));
-        report.source_absence_404 = 1;
+      assert.notEqual(
+        temporaryId,
+        retained,
+        "created Agent must not be the retained Agent",
+      );
+      agentId = temporaryId;
+
+      write("temporary-agent.json", { agent_id: agentId });
+      const ready = await record(
+        "create",
+        created,
+        created.body.operation.request_id,
+      );
+      const name = "antnest-runtime-" + agentId;
+      assert.equal(
+        ready.name,
+        config.fixtureName,
+        "temporary Agent name mismatch",
+      );
+      assert.equal(
+        ready.owner_user_id,
+        original.owner_user_id,
+        "temporary Agent owner mismatch",
+      );
+      assert.deepEqual(
+        ready.configuration.template,
+        template,
+        "temporary Agent Template mismatch",
+      );
+      const initial = inspectRuntime();
+      const marker = config.workspaceMarker;
+      docker(
+        "exec",
+        initial.Id,
+        "sh",
+        "-c",
+        writeWorkspaceFile,
+        "sh",
+        config.workspaceFile,
+        marker,
+      );
+      await transition("disable");
+      await transition("enable");
+      const beforeRebuild = inspectRuntime();
+      assert.equal(
+        docker(
+          "exec",
+          beforeRebuild.Id,
+          "sh",
+          "-c",
+          readWorkspaceFile,
+          "sh",
+          config.workspaceFile,
+        ),
+        marker,
+      );
+      stage = "normal_runtime_loss";
+      assert.notEqual(agentId, retained);
+      assert.equal(beforeRebuild.Config.Labels["io.antnest.agent-id"], agentId);
+      assert.equal(
+        beforeRebuild.Config.Labels["io.antnest.runtime-controller-scope"],
+        config.runtimeControllerScope,
+      );
+      assert.equal(beforeRebuild.State.Running, true);
+      missingSourceGeneration = Number(
+        beforeRebuild.Config.Labels["io.antnest.runtime-generation"],
+      );
+      assert(
+        Number.isSafeInteger(missingSourceGeneration) &&
+          missingSourceGeneration > 0,
+      );
+      docker("stop", "-t", "10", beforeRebuild.Id);
+      const stopped = inspectDevelopmentRuntime(
+        JSON.parse(docker("inspect", beforeRebuild.Id)),
+        {
+          name,
+          agentId,
+          scope: config.runtimeControllerScope,
+          volume: "antnest-workspace-" + agentId,
+        },
+      );
+      assert.equal(
+        stopped.Id,
+        beforeRebuild.Id,
+        "stopped Runtime identity changed",
+      );
+      assert.equal(stopped.State.Running, false);
+      assert.equal(stopped.State.ExitCode, 0);
+      assert.equal(stopped.State.OOMKilled, false);
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        const a = await read(agentId);
+        if (
+          a.failure_code === "runtime_exited" &&
+          !a.executable_execution_revision
+        )
+          break;
+        await delay(300);
       }
-      write(`lifecycle-${item.kind}.json`, trace);
-      return result;
-    });
-    item.evidence = evidence;
-  }
-  assert.equal(
-    report.lifecycle.reduce(
-      (n, l) => n + l.evidence.platform_absence_probes,
-      0,
-    ),
-    5,
+      const exited = await read(agentId);
+      assert.equal(exited.failure_code, "runtime_exited");
+      assert(!exited.executable_execution_revision);
+      docker("rm", beforeRebuild.Id);
+      const absentDeadline = Date.now() + 60000;
+      while (Date.now() < absentDeadline) {
+        const a = await read(agentId);
+        if (a.runtime_state === "absent" && !a.executable_execution_revision)
+          break;
+        await delay(300);
+      }
+      const lost = await read(agentId);
+      assert.equal(lost.runtime_state, "absent");
+      assert(!lost.executable_execution_revision);
+      const state = await access.state(agentId);
+      assert.equal(state.agent_id, agentId, "App state identity mismatch");
+      assert.equal(state.availability, "offline");
+      assert.equal(state.unavailable_reason, "agent_unavailable");
+      assert.deepEqual(lost.configuration, ready.configuration);
+      report.checks.push(
+        "temporary_runtime_normal_exit_zero_loss_observed_offline",
+      );
+      const rebuilt = await transition("rebuild", {
+        template_id: template.template_id,
+        template_revision: template.revision,
+      });
+      assert.notEqual(
+        rebuilt.runtime.runtime_revision,
+        ready.runtime.runtime_revision,
+      );
+      const afterRebuild = inspectRuntime();
+      assert.notEqual(beforeRebuild.Id, afterRebuild.Id);
+      const workspace = (c) =>
+        c.Mounts.find((m) => m.Destination === "/workspace").Name;
+      assert.equal(workspace(initial), workspace(afterRebuild));
+      assert.equal(
+        docker(
+          "exec",
+          afterRebuild.Id,
+          "sh",
+          "-c",
+          readWorkspaceFile,
+          "sh",
+          config.workspaceFile,
+        ),
+        marker,
+      );
+      report.checks.push(
+        "workspace_retained_across_disable_enable_and_physical_rebuild",
+      );
+      await transition("delete");
+      stage = "publication";
+      await publications(principal.organization_id);
+      report.checks.push(
+        "three_post_restart_publications_with_source_http_and_ack",
+      );
+      stage = "lifecycle_trace";
+      for (const item of report.lifecycle) {
+        const evidence = await collectTrace(jaeger, item.traceID, (trace) => {
+          if (trace) write(`lifecycle-${item.kind}.json`, trace);
+          const result = inspectDevelopmentLifecycle(trace, item, secrets);
+          assert.equal(result.platform_probe_errors, 0);
+          const tree = traceTopology(trace);
+          assert(
+            !trace.spans.some(
+              (s) => tree.service(s) === "runtime-controller" && hasError(s),
+            ),
+          );
+          if (item.kind === "rebuild") {
+            const probes = trace.spans.filter(
+              (s) =>
+                tree.parent(s)?.operationName === "runtime.platform.inspect" &&
+                tag(s, "http.response.status_code") === 404,
+            );
+            assert.equal(probes.length, 1);
+            assert.equal(tag(probes[0], "antnest.outcome"), "absent");
+            assert(!hasError(probes[0]));
+            report.source_absence_404 = 1;
+          }
+          return result;
+        });
+        item.evidence = evidence;
+      }
+      report.checks.push(
+        "five_lifecycle_topologies_and_owned_absence_coverage",
+      );
+      assert.equal(docker("ps", "-aq", "--filter", "name=^/" + name + "$"), "");
+      assert.equal(
+        docker("volume", "ls", "-q", "--filter", "name=" + agentId),
+        "",
+      );
+      report.checks.push("temporary_runtime_and_workspace_removed");
+      const final = await read(retained);
+      for (const key of [
+        "runtime",
+        "configuration",
+        "executable_execution_revision",
+        "agent_spec_revision",
+      ])
+        assert.deepEqual(
+          final[key],
+          original[key],
+          "retained Agent changed: " + key,
+        );
+      report.checks.push("retained_agent_runtime_and_configuration_unchanged");
+    },
   );
-  report.checks.push(
-    "five_lifecycle_topologies_and_five_expected_absence_probes",
-  );
-  assert.equal(docker("ps", "-aq", "--filter", "name=^/" + name + "$"), "");
-  assert.equal(docker("volume", "ls", "-q", "--filter", "name=" + agentId), "");
-  report.checks.push("temporary_runtime_and_workspace_removed");
-  const final = await read(retained);
-  for (const key of [
-    "runtime",
-    "configuration",
-    "executable_execution_revision",
-    "agent_spec_revision",
-  ])
-    assert.deepEqual(
-      final[key],
-      original[key],
-      "retained Agent changed: " + key,
-    );
-  report.checks.push("retained_agent_runtime_and_configuration_unchanged");
   report.status = "passed";
 } catch (error) {
   report.status = "failed";

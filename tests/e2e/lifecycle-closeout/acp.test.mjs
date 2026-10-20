@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { connectOwner, ownerStream, requestOptions } from "./acp.mjs";
@@ -392,3 +393,88 @@ test("HTTPS owner clients upgrade over WSS while preserving the public Origin", 
     },
   );
 });
+
+// Preserve transport cleanup coverage while legacy consumers migrate to Bridge.
+test(
+  "legacy owner cleanup waits for the upgraded socket's actual close",
+  { timeout: 10000 },
+  async (t) => {
+    const require = createRequire(
+      new URL(
+        "../../../services/agent-acp-service/package.json",
+        import.meta.url,
+      ),
+    );
+    const { WebSocketServer } = require("ws");
+    const server = createServer((request, response) => {
+      assert.equal(request.headers.cookie, "synthetic-session");
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.write(": open\n\n");
+    });
+    const sockets = new WebSocketServer({ server });
+    const controller = new AbortController();
+    let peer, running;
+    sockets.on("connection", (socket) => {
+      peer = socket;
+      socket.once("message", (raw) => {
+        const message = JSON.parse(raw.toString());
+        socket.send(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: message.params.protocolVersion,
+              agentCapabilities: {},
+            },
+          }),
+        );
+        // Hold the close handshake after a real successful HTTP 101 upgrade.
+        socket.pause();
+      });
+    });
+    t.after(async () => {
+      controller.abort();
+      for (const socket of sockets.clients) {
+        socket.resume();
+        socket.terminate();
+      }
+      await running;
+      await new Promise((resolve) => sockets.close(resolve));
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const owner = connectOwner(
+      `http://127.0.0.1:${server.address().port}`,
+      "agent",
+      "synthetic-session",
+      controller.signal,
+    );
+    await owner.initialize();
+    let settled = false;
+    running = owner
+      .closeAndWait()
+      .then(
+        () => ({ success: true }),
+        (error) => ({ error }),
+      )
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    try {
+      await delay(50);
+      assert.equal(
+        settled,
+        false,
+        "HTTP 101 does not prove WSS cleanup completed",
+      );
+    } finally {
+      peer.resume();
+    }
+    const result = await running;
+    assert.deepEqual(result, { success: true });
+    assert.equal(settled, true);
+  },
+);

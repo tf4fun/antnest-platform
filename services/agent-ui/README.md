@@ -1,5 +1,11 @@
 # Agent UI
 
+Workspace command authorization and operation reads preserve ACP's explicit
+Agent access denial as HTTP 403 with `access_denied`, `retryable: false` and
+`recovery: none`. This also applies while Gateway still holds a valid positive
+identity resolution. Missing Sessions retain 404; invalid downstream caller
+credentials and unavailable or malformed observations remain dependency errors.
+
 Agent UI is the end-user conversation workspace of Antnest Platform, served
 behind Edge Gateway at `/workspace/`. It presents Agents, Sessions, messages,
 tool activity, permission requests and attachments without owning Agent
@@ -66,7 +72,7 @@ The Gateway route and presentation-header inventory is in the
 [session contract](../../contracts/edge-gateway/session-contract.json). Paths
 follow the [navigation contract](../../contracts/agent-ui/workspace-navigation.md).
 
-The browser consumes Gateway revision 23 and Identity revision 18 under the
+The browser consumes Gateway revision 24 and Identity revision 18 under the
 [browser session contract](../../contracts/identity/browser-sessions.md).
 Identity's browser-session schemas are unchanged. Gateway 22 introduced validated
 password admission errors while preserving existing cookies; #60 completed
@@ -114,16 +120,129 @@ Telemetry exports HTTP request spans plus `antnest.ui.http.requests` and
 `antnest.ui.http.duration` metrics, aggregate Bridge gauges (owners, observer
 leases, held work, retained history bytes, subscribers, journal bytes,
 replays, Node heap/RSS) with no Agent, Session or principal labels.
+Trace and metric resources share the actual `host.name`, `process.pid`, and
+a random `service.instance.id` generated once per process. Restarting the same
+container creates a new instance ID even when its hostname and PID 1 repeat.
+These identity fields override environment resource values; other deployment
+attributes from `OTEL_RESOURCE_ATTRIBUTES` are retained.
 Exporters have a 5-second timeout and are flushed after Bridge drain. A valid
 W3C `traceparent` from Gateway parents each HTTP span. Capacity and lifetime
 semantics are described in [Architecture](docs/architecture.md#bridge-capacity-and-lifetimes).
+ACP retirement waits for its complete DELETE response and execution-state
+watch cleanup before telemetry flush. A separate `agent_ui.acp.close` root
+span links to the owner's initialization HTTP span and parents DELETE; its
+outcome records actual cleanup success or failure without identity labels.
+Its final receipt separately counts DELETE attempts, response headers and
+completed bodies, records the last status (zero when none), and reports whether
+the SDK stream and pending HTTP work were joined. At most 16 failure summaries
+identify fixed stages and bounded network/abort cause classifications; the total
+failure count and any truncation remain explicit. No exception messages, remote
+response contents, credentials or identity labels enter these summaries.
+An attempted DELETE with no receiver response remains a failed close. ACP
+process shutdown does not promise a new acknowledgement; a normal UI drain
+with ACP still online requires the complete DELETE 202 response.
+
+After an initialized ACP connection ends unexpectedly, the next authorized
+observation can replace its retired owner when the only cleanup failure is a
+single DELETE attempt refused or reset before any response. This qualification
+requires the complete network cause to contain only `ECONNREFUSED` or
+`ECONNRESET`, all transport work and streams to finish, the owner watch and local cleanup callbacks to
+finish successfully, and no held registry work. Initialization failures,
+requested closes, denied access, HTTP error responses, deadlines, unknown
+causes, causes mixed with other failures and additional cleanup failures do not
+qualify. The original close
+promise and ERROR trace still report failure. Concurrent observations share one
+replacement initialized with the current request's delegation; no View request
+or Prompt is replayed.
+
+An unqualified failed retirement retains its registry slot and capacity charge.
+Later observations and sweeps continue to report that failure instead of
+bypassing cleanup. A complete service drain joins those retirements, reports
+forced cleanup and releases the captured slots. Other idle owners can still be
+evicted, with their leases and work rechecked after each awaited retirement.
+
+Failed Agent views add `antnest.ui.agent_view.failure` to the active HTTP span,
+distinguishing owner acquisition/retirement from view preparation. Its bounded
+cause list contains fixed classifications only, without exception messages,
+stacks, credentials or identity labels. These diagnostic summaries do not grant
+retirement qualification.
+
+Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
+16 requests per process and 64 MiB / 4 requests per signed user in an
+organization. It preserves the configured single Prompt limit. Control requests
+use a separate 16 KiB body ceiling and bypass the upload pool. Capacity rejection
+is `429 upload_capacity_exceeded`; the browser does not replay a Prompt.
+Bodies of at least 1 MiB and Prompt preparation share a FIFO that gives ready
+I/O an event-loop turn between synchronous jobs. Controls bypass that queue.
+Queued requests check cancellation before parsing or submitting; their upload
+reservation and Session lease stay held until the handler finishes.
+With telemetry enabled, the original HTTP span records native upload phases
+and a process-monotonic clock sample. These bounded receipts support the
+cross-service capacity gate without recording attachment contents or credentials.
+The local Node `diagnostics_channel` channel `antnest.ui.prompt_input.v1`
+synchronously publishes each accepted `receive-started` and `body-eof` phase
+when a subscriber is present. Its frozen message contains only `traceId`,
+`spanId`, the frozen `processIdentity` resource fields above, `phase`, `bytes`,
+and the exact `monotonic_ns` sample also attached to the original HTTP span.
+The phase advances before publication; duplicates, invalid byte counts,
+disabled telemetry and ended HTTP boundaries cannot publish. Parsing and
+preparation still produce their original OTLP events without local notification.
+Subscribers must isolate their own errors and must not wait, delay parsing or
+issue business operations inside the service. Node reports thrown subscriber
+errors as uncaught exceptions; the publisher does not install a global exception
+handler. A test observer can forward the small notification over a connection
+prepared before the upload. Such a notification establishes the native input
+boundary, not receipt or processing of another request.
+
+`make e2e-agent-ui-upload-capacity` exercises two real users against Gateway,
+Agent UI, ACP and Runtime with 64 live SSE streams: four owners, two Session
+selections per owner, eight subscribers per selection. The 65th stream must be
+rejected. User A sends three valid PNG images whose ACP envelope approaches the
+configured 16 MiB limit while User B cancels a running Bash through each control
+path. Both incomplete-body and EOF/parse scenarios retain the 1 second limit for
+the control response, cancellation-specific terminal receipt and original Runtime
+process group stopping. A cancelled Bash with unknown effects is correctly
+`uncertain`, with a quiescent executor, rather than a claim that effects rolled back.
+The gate binds original HTTP phases using before/after monotonic-clock bounds,
+replays the actual SSE frames and checks the model received every image intact.
+The deterministic external model advertises an 8 Mi-token context so the normal
+ACP context budget admits the three images; all Antnest services run production
+images. Independent cases use a fresh B Agent and renew streams between cases,
+while retaining the earlier cancelled operation's unresolved side effects.
+Cancellation HTTP, the original Runtime process probe and original SSE terminal
+are observed concurrently. Each records its own completion receipt; the strict
+one-second bound covers the latest complete receipt, including process
+observation, and every observer is joined on success or failure.
+Each Runtime sample starts physical discovery, its authenticated live status
+request and its original process-group read independently under one deadline.
+It retains all identity and storage checks and joins every read before recording
+the complete receipt; discovery latency cannot postpone the process read.
+
+For the parse cases, the host prepares B's TCP connection before A uploads.
+A test-only server preload forwards bounded native phase metadata over one
+authenticated connection to the existing test process. The Compose overlay
+mounts only this module and connects UI to the diagnostic ingress network;
+healthchecks do not load it. A matching EOF notice synchronously sends B's
+original cancellation request. The proof matches both notices to A's original
+OTLP Trace, span, process, byte count and timestamps, and requires B's actual
+write to finish before native parsing ends under the full upper clock bound.
+The original SSE waiter starts before A's EOF; Runtime sampling waits for B's
+actual write callback so Docker and process reads do not compete with that send.
+The one-second limit still starts at B's original send and includes the complete
+HTTP, SSE and Runtime observation.
+EOF-to-host causality can tighten the parse window's lower bound; the original
+calibration and HTTP/SSE evidence remain unchanged. No parser delay, fixed
+clock tolerance or retry is added, and both TCP clients and the observer are
+joined before admission.
+
+Private raw evidence lives in `artifacts/verification/agent-ui-upload-capacity-*`.
 
 ## Dependencies
 
 - Edge Gateway: the only supported caller; supplies verified identity.
 - Identity: CCT keys fetched only from its authenticated configured origin;
   cached trust expires after 30 seconds and fails closed during an outage.
-- Organization display: Gateway revision 23 supplies verified slug/name as
+- Organization display: Gateway revision 24 supplies verified slug/name as
   canonical UTF-8 Base64URL headers. Node decodes and validates the same
   principal for bootstrap and SSR; both frontend bootstrap mappings require
   these labels. The chooser and account footer render the real name with the

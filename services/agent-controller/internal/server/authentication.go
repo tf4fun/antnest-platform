@@ -52,7 +52,7 @@ func (boundary *authenticatedMux) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if _, trusted := r.Context().Value(workloadContextKey{}).(string); !trusted {
-		caller, err := security.Authentication.Authorize(r, []string{"admin-console", "edge-gateway", "agent-ui", "agent-acp-service", "runtime-controller"})
+		caller, err := security.Authentication.Authorize(r, []string{"admin-console", "agent-ui", "agent-acp-service", "runtime-controller"})
 		if err != nil {
 			writeAuthenticationError(w, err)
 			return
@@ -76,7 +76,7 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 		} else if operation {
 			allowed = []string{"agent-acp-service"}
 		} else if pattern == "POST /rpc/agent-controller/list-workspace-agents" {
-			allowed = []string{"edge-gateway", "agent-ui"}
+			allowed = []string{"agent-ui"}
 		}
 		if !slices.Contains(allowed, caller) {
 			writeError(w, http.StatusForbidden, "caller_not_allowed", "Caller cannot use this route", false)

@@ -1,0 +1,26 @@
+# Independent model fixture; production Gateway/UI/ACP/Runtime paths remain intact.
+services:
+  stage3-model:
+    command: ["node", "/tests/e2e/agent-ui/upload-capacity-model.mjs"]
+  agent-ui:
+    command:
+      - node
+      - --import
+      - /tests/support/agent-ui/capacity-eof-observer.mjs
+      - server/dist/main.js
+    environment:
+      ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES: "16777216"
+      ANTNEST_CAPACITY_OBSERVER_HOST: ${ANTNEST_CAPACITY_OBSERVER_HOST:?required}
+      ANTNEST_CAPACITY_OBSERVER_PORT: ${ANTNEST_CAPACITY_OBSERVER_PORT:?required}
+      ANTNEST_CAPACITY_OBSERVER_TOKEN: ${ANTNEST_CAPACITY_OBSERVER_TOKEN:?required}
+    extra_hosts:
+      host.docker.internal: host-gateway
+    networks:
+      diagnostic-ingress: {}
+    volumes:
+      - type: bind
+        source: ./tests/support/agent-ui/capacity-eof-observer.mjs
+        target: /tests/support/agent-ui/capacity-eof-observer.mjs
+        read_only: true
+        bind:
+          create_host_path: false

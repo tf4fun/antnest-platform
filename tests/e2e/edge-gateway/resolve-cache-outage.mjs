@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inspectBridgeOutageWindow } from "./resolve-cache-bridge-outage.mjs";
 import { parseDeliveryMark } from "../../../services/agent-ui/web/server/src/bridge/delivery.ts";
 
 export const outagePhase = "c4-cache-outage";
@@ -11,6 +12,8 @@ const finite = (value) =>
 // in a new process loads keys no earlier than process start. The restart call's
 // start is an earlier, conservative bound; no unlabelled JWKS span is attributed.
 export function inspectFreshConsumerWindow(evidence) {
+  const bridge = evidence.policy_revision === 4;
+  if (bridge) assert.equal(evidence.transport, "http-sse");
   assert.match(evidence.project ?? "", /^antnest-lifecycle-[a-f0-9]{8}$/u);
   assert.deepEqual(
     evidence.consumer_restarts.map((row) => row.service).sort(),
@@ -20,14 +23,18 @@ export function inspectFreshConsumerWindow(evidence) {
   const acp = evidence.consumer_restarts.find(
     (row) => row.service === "agent-acp-service",
   );
+  const restartedAt = bridge
+    ? Math.max(...evidence.consumer_restarts.map((row) => row.after.at))
+    : acp.after.at;
+  finite(restartedAt);
   for (const row of [synchronization, state]) {
     assert.equal(row.status, 200);
     traceID(row.trace_id);
     finite(row.started_at);
     finite(row.at);
-    assert(row.started_at > acp.after.at && row.at >= row.started_at);
+    assert(row.started_at > restartedAt && row.at >= row.started_at);
     assert(
-      row.at < evidence.wire.upgrade.at,
+      row.at < (bridge ? evidence.stream.started_at : evidence.wire.upgrade.at),
       "configuration must recover before admission",
     );
   }
@@ -45,12 +52,37 @@ export function inspectFreshConsumerWindow(evidence) {
     Date.parse(applied.applied_at) > Date.parse(acp.after.started_at),
     "configuration acknowledgement predates new ACP process",
   );
-  assert.equal(state.body.agent_id, evidence.agent_id);
-  assert.equal(state.body.access_allowed, true);
   assert.equal(state.body.availability, "ready");
-  assert.equal(state.body.active_session_id, null);
-  assert.equal(state.body.unavailable_reason, null);
-  assert.match(state.body.configuration_revision ?? "", /^[a-f0-9]{64}$/u);
+  if (bridge) {
+    const base = `/api/app/workspace/v1/agents/${encodeURIComponent(evidence.agent_id)}`;
+    assert.equal(synchronization.method, "GET");
+    assert.equal(synchronization.path, "/api/admin/execution-synchronization");
+    assert.equal(state.method, "GET");
+    assert.equal(state.path, `${base}/view`);
+    assert.equal(state.body.agentId, evidence.agent_id);
+    assert.equal(state.body.activeSessionId, null);
+    assert.equal(
+      evidence.stream.path,
+      `${base}/events?sessionId=${encodeURIComponent(evidence.session_id)}`,
+    );
+    assert(
+      typeof state.credential_scope === "string" &&
+        state.credential_scope.length > 0,
+    );
+    assert.equal(evidence.stream.credential_scope, state.credential_scope);
+    assert.equal(state.set_cookie_count, 0);
+    assert.equal(evidence.stream.set_cookie_count, 0);
+    finite(evidence.stream.started_at);
+    finite(evidence.stream.headers_at);
+    assert(evidence.stream.headers_at >= evidence.stream.started_at);
+    finite(evidence.identity.stop_started_at);
+  } else {
+    assert.equal(state.body.agent_id, evidence.agent_id);
+    assert.equal(state.body.access_allowed, true);
+    assert.equal(state.body.active_session_id, null);
+    assert.equal(state.body.unavailable_reason, null);
+    assert.match(state.body.configuration_revision ?? "", /^[a-f0-9]{64}$/u);
+  }
   const budgets = evidence.consumer_restarts.map((row) => {
     assert.equal(row.after.project, evidence.project);
     assert.equal(row.after.service, row.service);
@@ -64,20 +96,34 @@ export function inspectFreshConsumerWindow(evidence) {
     finite(row.started_at);
     finite(row.after.at);
     assert(row.after.at > row.started_at);
+    if (bridge) {
+      assert.equal(row.before.project, evidence.project);
+      assert.equal(row.before.service, row.service);
+      finite(row.before.at);
+      assert(row.before.at <= row.started_at);
+    }
+    // The actual UI -> ACP admission chain is verified by the separate raw
+    // authority gate. This HTTP response is only its conservative time bound.
     const admission =
       row.service === "agent-acp-service"
-        ? evidence.wire.upgrade
+        ? bridge
+          ? state
+          : evidence.wire.upgrade
         : evidence.stream;
     assert.equal(
       admission.status,
-      row.service === "agent-acp-service" ? 101 : 200,
+      row.service === "agent-acp-service" && !bridge ? 101 : 200,
     );
     traceID(admission.trace_id);
     const at =
       row.service === "agent-acp-service" ? admission.at : admission.headers_at;
     finite(at);
     assert(
-      at > row.after.at && at < evidence.identity.stopped.at,
+      at > row.after.at &&
+        at <
+          (bridge
+            ? evidence.identity.stop_started_at
+            : evidence.identity.stopped.at),
       "consumer admission must follow new process startup",
     );
     const deadline = row.started_at + 30000;
@@ -209,6 +255,8 @@ export function outageDelivery(
 // Business-window evidence only. Authority budgets and complete raw Trace
 // admission are separate gates and cannot be inferred from these observations.
 export function inspectOutageWindow(evidence) {
+  if (evidence.policy_revision === 4)
+    return inspectBridgeOutageWindow(evidence);
   const {
     identity,
     wire,

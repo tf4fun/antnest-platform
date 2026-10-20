@@ -12,20 +12,19 @@ assert(
 const profiles = {
   MANAGED_MCP: "managed-mcp",
   RPC_RESPONSE_LOSS: "rpc-response-loss",
-  ACP_PERSISTENCE: "acp-persistence",
   ACP_RESTART: "acp-restart",
   ACP_SESSION: "identity-session",
   IDENTITY_CORE: "identity-http",
   IDENTITY_ACCESS: "identity-http",
   AGENT_ACCESS: "identity-agent",
   ACP_CLOSEOUT: "acp-closeout-normal",
-  TOOL_PROGRESS: null,
-  FILE_OBSERVATIONS: null,
-  STRUCTURED_PLAN: null,
-  SLASH_COMMANDS: null,
-  MULTIMODAL: null,
-  SESSION_COST: null,
-  TOOL_PERMISSIONS: null,
+  TOOL_PROGRESS: "acp-progress",
+  FILE_OBSERVATIONS: "acp-files",
+  STRUCTURED_PLAN: "acp-plan",
+  SLASH_COMMANDS: "acp-commands",
+  MULTIMODAL: "acp-multimodal",
+  SESSION_COST: "acp-cost",
+  TOOL_PERMISSIONS: "acp-permissions",
 };
 let selected = false;
 for (const [flag, directory] of Object.entries(profiles)) {

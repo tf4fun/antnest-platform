@@ -93,8 +93,8 @@ func TestLogoutResolveOverlapsSessionRevocationThroughRealHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			h, err := NewHandler(Config{AdminConsoleURL: peer.URL, AgentUIURL: peer.URL, AgentACPURL: peer.URL, IdentityURL: peer.URL, RequestTimeout: 5 * time.Second}, Dependencies{
-				Identity: issuer, Agents: &agentServiceStub{}, Execution: &executionServiceStub{}, Sessions: manager, HTTPClient: client,
+			h, err := NewHandler(Config{AdminConsoleURL: peer.URL, AgentUIURL: peer.URL, IdentityURL: peer.URL, RequestTimeout: 5 * time.Second}, Dependencies{
+				Identity: issuer, Sessions: manager, HTTPClient: client,
 				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			})
 			if err != nil {

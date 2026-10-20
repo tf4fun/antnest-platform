@@ -20,6 +20,7 @@ import {
   recoveryTrace,
 } from "../../support/fixtures/development-recovery.mjs";
 import { inspectLifecycle } from "../../e2e/stage3-base/trace.mjs";
+import { developmentPrivateStateFixture } from "../../support/fixtures/development-private-state.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -164,6 +165,17 @@ try {
       ? historical.manifest
       : createHash("sha256").update(content).digest("hex") + "  ./marker.txt\n";
     const requests = [];
+    const privateState = developmentPrivateStateFixture(folder, {
+      agentId: () => agentId,
+      state: () => ({
+        agent_id: agentId,
+        access_allowed: true,
+        configuration_revision: "a".repeat(64),
+        availability: "ready",
+        active_session_id: null,
+        unavailable_reason: null,
+      }),
+    });
     let rebuilt = false,
       samples = 0,
       server;
@@ -276,9 +288,11 @@ try {
           let body = "";
           for await (const chunk of request) body += chunk;
           requests.push({ url: request.url, method: request.method, body });
+          if (privateState.handle(request, response, body)) return;
           let value,
             status = 200;
-          if (request.url === "/api/session/login") value = {};
+          if (request.url === "/api/session/login")
+            value = privateState.login(response);
           else if (request.url === `/api/admin/agents/${agentId}/rebuild`) {
             assert(!rebuilt, "duplicate rebuild");
             assert.deepEqual(JSON.parse(body), {
@@ -329,12 +343,6 @@ try {
             request.url === `/api/admin/operations/${expected.requestId}`
           )
             value = { state: "completed" };
-          else if (request.url === `/api/app/agents/${agentId}/state`)
-            value = {
-              agent_id: agentId,
-              availability: "ready",
-              active_session_id: null,
-            };
           else if (request.url === `/api/traces/${trace.traceID}`) {
             samples++;
             value = { data: [trace] };
@@ -357,6 +365,7 @@ try {
       const config = {
         gateway: origin,
         jaeger: origin,
+        privateAccess: privateState.configuration(origin),
         retainedAgentId: agentId,
         runtimeContainerPrefix: "antnest-runtime-",
         runtimeControllerScope: scope,
@@ -405,6 +414,13 @@ try {
       );
       assert.equal(report.status, success ? "passed" : "failed");
       if (success) {
+        assert(!requests.some((r) => r.url.startsWith("/api/app/agents/")));
+        const access = JSON.parse(
+          readFileSync(join(config.output, "private-access.private.json")),
+        );
+        assert.equal(access.closed, true);
+        assert.equal(access.states.length, 1);
+        assert.equal(access.states[0].joined, true);
         assert.equal(samples, 3);
         assert.equal(report.lifecycle.length, 1);
         assert.notEqual(
@@ -470,6 +486,7 @@ try {
       }
       for (const value of [...volumes].reverse())
         docker(["volume", "rm", value]);
+      assert.deepEqual(privateState.failures, []);
     }
   }
 } catch (error) {
@@ -494,7 +511,7 @@ const result = {
   status: "passed",
   checks,
   scope:
-    "Actual owned Docker Runtime replacement and RW workspace volumes; local Gateway/Jaeger adapters. Historical Trace/report are checked unchanged, then only Agent identity is rebound for isolated CLI replay. No retained Agent rebuild or deployed-service business acceptance.",
+    "Actual owned Docker Runtime replacement and RW workspace volumes; local Gateway, Identity, ACP state and Jaeger adapters. New private state receipts are preserved separately from historical lifecycle Trace/report, whose Agent identity alone is rebound for isolated CLI replay. No retained Agent rebuild or deployed-service business acceptance.",
 };
 write("result.json", result);
 console.log(JSON.stringify(result));

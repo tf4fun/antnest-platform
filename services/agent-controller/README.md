@@ -75,6 +75,13 @@ each workload and required Identity-signed caller context independently of
 Gateway. Signed Organization/actor/Agent scope, ownership and access rules are
 enforced here; raw identity hints provide no authority.
 
+Workspace discovery accepts the Agent UI workload with an Organization-scoped
+CCT. The retired direct Gateway caller is rejected before body parsing, Identity
+key lookup and business execution, even when its old credential remains configured.
+The public health exceptions remain available. See the
+[workspace reader](docs/workspace-state.md) and
+[caller policy](../../contracts/agent-controller/service-authentication.md).
+
 | Direction | Interface                                                                                                | Purpose                                                                                                          |
 | --------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Inbound   | `/internal/provider-connections`, `/internal/model-profiles`, `/internal/agent-templates`                | Provider, model and Template catalog management ([control API](../../contracts/agent-controller/control-api.md)) |

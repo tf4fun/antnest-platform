@@ -1,10 +1,20 @@
 {
   "contract": "antnest.edge-gateway.resolve-cache",
-  "revision": 3,
+  "revision": 4,
   "identity_revision": 18,
-  "gateway_session_revision": 23,
+  "gateway_session_revision": 24,
   "resolve_method": "resolve_access_token",
   "semantics": "resolve-cache.md",
+  "historical_measurement": {
+    "revision": 3,
+    "transport": "gateway-direct-acp-websocket",
+    "load_messages": 100,
+    "load_count_includes_handshake_and_refresh": true,
+    "original_handshake_cct_hard_cap": true,
+    "decision_parent": "current-http-or-acp-message-root",
+    "semantics": "resolve-cache.md#historical-direct-acp-measurement",
+    "admits_current_bridge": false
+  },
   "scope": {
     "key": ["sha256(access_token)", "profile", "agent_id"],
     "owner": "identity-client-and-issuer",
@@ -147,7 +157,12 @@
     ],
     "probe_start_updates_authority_age": false,
     "cache_age_is_rpc_duration": false,
-    "original_handshake_cct_hard_cap": true,
+    "workspace_sse": {
+      "gateway_revalidation": "current-cct-and-original-sid-identities-roles",
+      "gateway_absolute_deadline": "original-session-expiry",
+      "delegation_owner": "agent-ui",
+      "delegation_deadline": "original_verified_cct_expiry"
+    },
     "accepted_run_cancelled_by_revocation": false,
     "output_bound_anchor": "real-resolve-rpc-start",
     "expired_hit_recheck": {
@@ -163,7 +178,7 @@
         "all-resolve-trace-decisions"
       ],
       "expired_result_admitted": false,
-      "initial_or_message_retry": false
+      "initial_or_request_retry": false
     }
   },
   "organization_display": {
@@ -172,6 +187,46 @@
     "observation": "next-real-read-plus-request-latency"
   },
   "admission": {
+    "suite_completion": {
+      "policy_revision": 4,
+      "load": {
+        "transport": "http",
+        "requires_full_load_admission": true,
+        "requires_owner_restored": true
+      },
+      "outage": {
+        "transport": "http-sse",
+        "bind_business_to": "cancellation.business",
+        "requires_same_run_and_runtime": true,
+        "requires_runtime_quiescent_before_restart": true,
+        "requires_pre_restart_acp_clock": true,
+        "requires_all_owning_gates": [
+          "authority",
+          "http_rejections",
+          "recovery_runs",
+          "recovery_authority",
+          "recovery_http",
+          "feed",
+          "stream",
+          "cancellation"
+        ]
+      },
+      "recovery": {
+        "cases": ["logout", "password", "role", "deactivate"],
+        "bind_business_to": "recovery_runs.business",
+        "bind_runs_to": "recovery_runs.runs",
+        "remote_sse_close_max_ms": 30000
+      },
+      "raw_evidence": {
+        "trace_inventory": "complete-unique-archived-closure",
+        "error_claims": "exact-union-of-owning-gate-claims",
+        "preserve_original_strict_result": true
+      },
+      "cleanup": "verified",
+      "unknown_or_mixed_revision": "reject",
+      "policy_3": "historical-only",
+      "missing_pending_or_failed_evidence": "reject"
+    },
     "outage_seconds": 5,
     "outage_scope": "prewarmed-exact-scope-on-established-streams",
     "outage_requires": [
@@ -186,12 +241,301 @@
       "cold-agent",
       "expired-cache-or-authority"
     ],
-    "load_messages": 100,
+    "outage_bridge": {
+      "output": "/api/app/workspace/v1/agents/{agentId}/events",
+      "cancel_method": "POST",
+      "cancel_path": "/api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}/cancel",
+      "target": [
+        "organization",
+        "user",
+        "agent",
+        "session",
+        "run",
+        "runtime-instance",
+        "actual-runtime-work"
+      ],
+      "work": "held-until-correlated-cancellation",
+      "output_required": "new-real-output-during-identity-outage",
+      "completion": "same-run-terminal-and-runtime-quiescent-before-identity-restart",
+      "local_abort_is_remote_close": false,
+      "natural_completion_is_cancel": false,
+      "preserve_cold_scope_deadline_and_recovery_checks": true
+    },
+    "load_calls": 100,
+    "load_request": {
+      "method": "GET",
+      "path": "/api/app/workspace/v1/agents/{agentId}/sessions",
+      "profile": "workspace",
+      "response_contract": "../agent-ui/workspace-api.json",
+      "response": "sessionPage"
+    },
+    "load_measurement": {
+      "order": "sequential",
+      "scope": "same-token-profile-and-agent",
+      "initial_scope": "cold",
+      "owner_prewarmed": false,
+      "activity_during_window": false,
+      "clock": "client-monotonic",
+      "start": "before-first-http-request",
+      "end": "after-final-complete-response-body",
+      "initialization": "first-http-request-includes-real-bridge-acp-initialize",
+      "initialization_is_extra_public_request": false,
+      "ttl_ms": 10000,
+      "final_request_after_half_ttl": true,
+      "final_request_refresh_required": true
+    },
     "load_window_max_ms": 8000,
     "load_actual_resolve_calls_max": 3,
-    "load_count_includes_handshake_and_refresh": true,
+    "load_count_includes_initialization_and_refresh": true,
     "load_count_excludes_feed_activity_and_jwks": true,
-    "raw_evidence_required": true
+    "load_resolve_count": {
+      "independent_counters": [
+        "gateway-resolve-client-attempts",
+        "identity-resolve-server-calls"
+      ],
+      "includes": [
+        "initialization",
+        "foreground",
+        "background-refresh",
+        "failed-attempts"
+      ],
+      "refresh_completion_after_http_window_counted": true,
+      "cache_hit_metric_is_rpc_count": false
+    },
+    "load_trace": {
+      "requests": "each-actual-http-trace-id",
+      "upstream": "gateway-client-to-agent-ui-server",
+      "profile": "workspace",
+      "business_receipt": "actual-acp-session-list",
+      "include_first_initialize": true,
+      "source_search": "independent-client-and-server-inventories",
+      "closure_stable_rounds": 3,
+      "reject_saturated_search": true,
+      "include_late_refresh": true,
+      "owner_close_required": true,
+      "preserve_raw_strict_diagnostics": true
+    },
+    "load_owner_lifecycle": {
+      "baseline": "selected-image-and-container-process-before-first-request",
+      "after": "all-100-complete-http-responses",
+      "measured_window_ends_before_drain": true,
+      "stopped_service": "agent-ui",
+      "stop_deadline_ms": 30000,
+      "require_exit_zero": true,
+      "require_complete_stdout_stderr": true,
+      "reject_forced_or_failed_cleanup": true,
+      "collection": "after-clean-stop-before-restoration",
+      "restore": {
+        "target": "same-agent-ui-container",
+        "image_and_configuration": "unchanged",
+        "deadline_ms": 30000,
+        "readiness": "healthy",
+        "before": "outage-scenario",
+        "on_collection_failure": true
+      },
+      "other_participants": "same-container-image-configuration-and-process",
+      "exit_is_protocol_cleanup_receipt": false
+    },
+    "load_owner_close": {
+      "count": 1,
+      "service": "agent-ui",
+      "operation": "agent_ui.acp.close",
+      "kind": "internal",
+      "synchronous_parent": "none",
+      "trigger": "requested",
+      "outcome": "closed",
+      "link": "exact-first-initialization-agent-ui-http-span",
+      "delete": {
+        "count": 1,
+        "service": "agent-acp-service",
+        "method": "DELETE",
+        "route": "/v1/acp",
+        "kind": "server",
+        "parent": "owner-close-root",
+        "status": 202,
+        "complete_response_required": true,
+        "synthetic_client_span_allowed": false
+      },
+      "independent_searches": ["agent-ui-close-roots", "acp-delete-servers"],
+      "source_archive_and_stability": "same-three-round-closure-as-http-and-refresh",
+      "private_streams": {
+        "require_complete": true,
+        "normal_error_ownership": "exact-stream-scope-and-owner-close-lifecycle",
+        "clock_correlation": "same-service-clock-and-actual-stop-interval",
+        "enumerate_all_receipts": true,
+        "fixed_stream_count": false,
+        "watch_may_finish_before_close_root": true,
+        "reject_early_eof_and_unclassified_errors": true,
+        "preserve_original_strict_errors": true
+      }
+    },
+    "raw_evidence_required": true,
+    "outage_owner_close": {
+      "pre_restart_acp_clock": {
+        "probe": {
+          "method": "GET",
+          "route": "/status",
+          "listener": "control",
+          "status": 200,
+          "complete_ready_body": true,
+          "timing": "runner-monotonic-send-through-complete-response",
+          "before_actual_restart": true
+        },
+        "process_binding": [
+          "container-id",
+          "unchanged-started-at",
+          "host-name",
+          "process-pid",
+          "service-instance-id"
+        ],
+        "coarse_anchor": "verified-complete-same-generation-http",
+        "pairing": "unique-candidate-intersecting-coarse-probe-window",
+        "clock": "intersect-all-independent-same-process-bounds",
+        "inventory": {
+          "service": "agent-acp-service",
+          "operation": "HTTP GET /status",
+          "fixed_query_window": true,
+          "search_limit": 500,
+          "reject_saturation_and_unread_pages": true,
+          "stable_complete_rounds": 3,
+          "raw_archive": "bidirectional-inventory-and-exact-snapshot-equality",
+          "retain_all_candidates_and_exclusions": true
+        },
+        "missing_ambiguous_or_foreign_evidence": "reject",
+        "nearest_timestamp_or_synthetic_parent": false,
+        "entire_closure_interval_inside_observed_lifecycle": true,
+        "preserve_original_diagnostics": true
+      },
+      "owners": "actual-acp-initializations-and-initializing-http-origins",
+      "link": "exact-first-initialization-agent-ui-http-span",
+      "fixed_owner_count": false,
+      "independent_searches": ["agent-ui-close-roots", "acp-delete-servers"],
+      "source_archive_and_stability": "same-three-round-closure-as-http-and-refresh",
+      "private_streams": "all-actual-get-and-execution-state-watch-receipts",
+      "later_receipts_under_reused_owner": true,
+      "normal_close": "load-owner-close-complete-delete-202",
+      "no_target_is_admission": false,
+      "failed_shutdown": {
+        "trigger": "transport_failure",
+        "outcome": "failed",
+        "witness": "same-owner-process-shutdown-watch-and-normal-old-acp-process-exit",
+        "clock_correlation": "same-service-clock-and-observed-lifecycle",
+        "receipt": {
+          "target_observed": true,
+          "delete_attempts": 1,
+          "delete_responses": 0,
+          "delete_completed": 0,
+          "delete_status": 0,
+          "pending_requests": 0,
+          "stream_joined": true,
+          "failures": 1,
+          "diagnostics_truncated": false
+        },
+        "failure_event": {
+          "count": 1,
+          "stage": "delete_request",
+          "supported_leaf_causes": [
+            "connection_refused",
+            "connection_reset",
+            "broken_pipe",
+            "socket_closed"
+          ],
+          "leaf_count": 1,
+          "leading_unknown_wrapper_max": 1,
+          "unknown_only_allowed": false,
+          "other_causes_allowed": false,
+          "truncated": false
+        },
+        "delete_server_count": 0,
+        "retain_error_and_drain_warning": true,
+        "shutdown_acknowledgement_added": false
+      }
+    },
+    "outage_runtime_cancellation": {
+      "phase": "c4-cache-runtime-outage",
+      "model": { "requests": 1, "stage": "tool", "outcome": "ok" },
+      "tool": { "calls": 1, "name": "bash", "source": "runtime" },
+      "binding": [
+        "actual-prompt-and-cancel-http",
+        "same-organization-user-agent-session-run",
+        "same-runtime-execution-generation-image-and-process-group",
+        "original-run-storage-and-terminal-audit"
+      ],
+      "terminal": {
+        "state": "unresolved",
+        "executor": "quiescent",
+        "effects": "unknown",
+        "source": "runtime_mcp",
+        "error_class": "cancelled_tool_outcome_unknown"
+      },
+      "model_disconnect_is_runtime_cancellation": false,
+      "diagnostics": {
+        "error_spans": [
+          "agent.run",
+          "mcp.tools.call",
+          "runtime.mcp.operation",
+          "runtime.mcp.tool",
+          "runtime.executor"
+        ],
+        "non_error_spans": [
+          "acp-http-client-abort",
+          "runtime-tools-call-http-disconnect"
+        ],
+        "require_exact_tags_events_and_causes": true,
+        "duplicate_or_additional_diagnostics_allowed": false,
+        "response_bytes": "positive-and-equal-on-both-ends",
+        "claims": "exact-original-trace-and-span-identifiers",
+        "preserve_raw_errors_warnings_and_strict_verdict": true,
+        "initialize_read_exception_reused": false
+      },
+      "timing": {
+        "cancel_span": "same-process-internal-acp-session-cancel",
+        "terminal_sql_joined_run": true,
+        "acp_order": [
+          "same-process-model-end-before-tool-start",
+          "cancel-rpc-start-before-tool-end",
+          "tool-end-before-terminal-sql-start",
+          "terminal-sql-end-joined-before-run-end",
+          "run-and-terminal-sql-end-before-cancel-rpc-end"
+        ],
+        "runtime_tree": "same-process-server-operation-tool-executor",
+        "runtime_clock": "completed-same-runtime-rpc-request-response-intervals",
+        "clock_samples": {
+          "before_and_after_cancellation": true,
+          "anchor": "runtime-server-start-within-acp-client-send-to-complete-eof",
+          "successful_protocol_and_equal_positive_bytes": true,
+          "client_cancellation_or_errors_allowed": false,
+          "all_eligible_samples_required": true,
+          "empty_intersection_allowed": false,
+          "cancelled_tool_as_anchor_allowed": false
+        },
+        "teardown": "calibrated-cancel-window-and-actual-process-group-quiescence",
+        "runtime_end_interval": "entire-interval-inside-cancel-rpc",
+        "runtime_event_precision": "jaeger-microsecond-half-open-representation-intervals",
+        "raw_cross_service_end_comparison": false,
+        "blanket_clock_skew_or_end_tolerance": false,
+        "node_sub_ms_deferral": "same-acp-integer-ms-anchor-only"
+      }
+    },
+    "outage_terminal_rejection": {
+      "initial_resolution": "admitted",
+      "source": "rpc",
+      "terminal": true,
+      "mutation": "complete-recovery-http-admission-for-this-mutation",
+      "credential": "actual-stream-dispatch-and-mutation-observations",
+      "principal": ["organization_id", "user_id", "membership_id"],
+      "identity_process": ["service.instance.id", "host.name", "process.pid"],
+      "identity_order": "committed-mutation-before-zero-row-original-token-select",
+      "gateway_window": "http-date-and-observed-mutation-to-remote-closure",
+      "error_claims": [
+        "rejected-resolve-decision",
+        "resolve-client-401",
+        "identity-unauthenticated-server"
+      ],
+      "unrelated_errors_allowed": false,
+      "shared_or_unavailable_admitted_by_this_rule": false,
+      "preserve_original_strict_errors": true
+    }
   },
   "diagnostics": {
     "feed_client": {
@@ -210,7 +554,7 @@
     "decision_span": "gateway.identity.resolve",
     "decision_scope": "request-admission",
     "sources": ["rpc", "cache", "shared"],
-    "parent": "current-http-or-acp-message-root",
+    "parent": "current-http-request-root",
     "background_root": "process-owned",
     "background_requires_trigger_link": true,
     "shared_source_link": "actual-rpc-client-span",

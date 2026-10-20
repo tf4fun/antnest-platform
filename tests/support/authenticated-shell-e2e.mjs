@@ -32,16 +32,52 @@ const owners = [
   "temporal",
 ];
 const entrypoints = {
+  development: ["node", "tests/e2e/development/run.mjs"],
+  workspace: ["node", "tests/e2e/workspace-closeout/run.mjs"],
+  "workspace-browser": ["node", "tests/e2e/workspace-closeout/browser-run.mjs"],
+  "stage4-skill-storage-restore": [
+    "node",
+    "tests/e2e/lifecycle-closeout/restore-stage4-storage-docker.mjs",
+  ],
+  "stage4-skill-restore": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "skill-restore",
+  ],
   stage1: ["sh", "tests/e2e/e2e-stage1.sh"],
   stage2: ["sh", "tests/e2e/e2e-stage2.sh"],
   "runtime-controller": ["sh", "tests/e2e/runtime-controller/run.sh"],
   lifecycle: ["node", "tests/e2e/lifecycle-closeout/run.mjs"],
+  "lifecycle-health": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "health",
+  ],
+  "lifecycle-network": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "network",
+  ],
+  "lifecycle-loss": ["node", "tests/e2e/lifecycle-closeout/run.mjs", "loss"],
+  "lifecycle-shutdown": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "shutdown",
+  ],
+  "lifecycle-restore": [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "restore",
+  ],
 };
 
+export function shellEntrypoint(profile) {
+  assert(Object.hasOwn(entrypoints, profile));
+  return [...entrypoints[profile]];
+}
+
 export function shellComposeFiles(profile) {
-  assert(
-    ["stage1", "stage2", "runtime-controller", "lifecycle"].includes(profile),
-  );
+  shellEntrypoint(profile);
   return [
     "compose.yaml",
     ...(profile === "stage1" ? [] : ["compose.debug.yaml"]),
@@ -209,7 +245,7 @@ export async function runShellAcceptance(profile) {
     abort.signal.throwIfAborted();
     console.log(JSON.stringify({ profile, project, stage: "business" }));
     result = await runCommand({
-      command: entrypoints[profile],
+      command: shellEntrypoint(profile),
       cwd: root,
       env,
       output,

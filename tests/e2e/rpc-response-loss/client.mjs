@@ -4,12 +4,25 @@ import { writeFileSync } from "node:fs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { until } from "../acp-closeout/wait.mjs";
-import { commandConnection } from "../acp-commands/connection.mjs";
 import {
-  inspectCommandTrace,
-  commandStrictOutcome,
-} from "../acp-commands/trace.mjs";
-import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
+  openPrivateCommandConnection,
+  withPrivateCommandResources,
+} from "../acp-commands/connection.mjs";
+import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
+import { preserveFileFailure } from "../acp-files/failure-evidence.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
+import {
+  readRestartExecutionState as readExecutionState,
+  stateReady,
+} from "../acp-restart/readiness.mjs";
+import {
+  createRpcLossRecorder,
+  indexRpcLossRequests,
+} from "./client-evidence.mjs";
+import {
+  collectPrivateRpcLossTrace,
+  rpcLossStrictOutcome,
+} from "./collector.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import {
   assertPromptComplete,
@@ -32,7 +45,7 @@ import {
 import { inspectLifecycle } from "../stage3-base/trace.mjs";
 import { seed } from "./setup.mjs";
 import { assertUnacknowledged, assertReceipts } from "./evidence.mjs";
-import { inspectRpcTrace, inspectClosedPrompt } from "./trace.mjs";
+import { inspectRpcTrace } from "./trace.mjs";
 import {
   traceSampleRecorder,
   captureTraceAfterFailure,
@@ -42,25 +55,50 @@ import { asciiJSON } from "../../support/ascii-json.mjs";
 const recordTraceSample = traceSampleRecorder("/tmp/rpc-traces");
 const admin = new GatewayClient("http://edge-gateway:8080"),
   member = new GatewayClient("http://edge-gateway:8080");
-const connections = [],
-  requests = [],
+const connections = new Map(),
+  recorders = new WeakMap(),
+  clients = new Set(),
+  runtimeBindings = new Map();
+const requests = [],
   lifecycle = [],
   faults = [],
-  journals = [];
+  journals = [],
+  stateReceipts = [];
 const secrets = [
   "stage3-admin-password",
   "rpc-owner-password",
   "rpc-fixture-key",
 ];
+const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+function preserveConnection(snapshot) {
+  connections.set(snapshot.connectionTraceID, snapshot);
+  writeEvidenceFile(
+    "/tmp/rpc-traces",
+    "connection-inventory.private.json",
+    JSON.stringify([...connections.values()]) + "\n",
+  );
+}
 let stage = "setup",
   agentId,
   organizationId,
+  memberPrincipal,
   deleted = false;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const agent = () => api(`/api/admin/agents/${agentId}`);
-const state = async () =>
-  (await member.request(`/api/app/agents/${agentId}/state`)).body;
+const state = () =>
+  readExecutionState(agentId, member, {
+    principal: memberPrincipal,
+    service: services,
+    receipts: stateReceipts,
+    secrets,
+    preserve: (rows) =>
+      writeEvidenceFile(
+        "/tmp/rpc-traces",
+        "execution-state.private.json",
+        JSON.stringify(rows) + "\n",
+      ),
+  });
 const services = serviceClient();
 const runtimeController = "http://runtime-controller:8080";
 async function peer(base, path, body) {
@@ -96,10 +134,7 @@ async function synchronized() {
 }
 async function ready() {
   await waitForAgentReady(agent);
-  await until(
-    async () => (await state()).availability === "ready",
-    "ACP ready",
-  );
+  await until(() => stateReady(state), "ACP ready");
   await synchronized();
 }
 async function operation(id, kind) {
@@ -139,29 +174,42 @@ async function operation(id, kind) {
     completed: true,
   });
 }
-async function connect(version) {
-  const c = commandConnection(
+async function connect(version, kind, role = "prompt") {
+  const c = await openPrivateCommandConnection(
     { name: `rpc-v${version}`, version },
     agentId,
     member,
+    {
+      principal: memberPrincipal,
+      telemetry,
+      secrets,
+      service: services,
+      captureRawFrames: true,
+    },
   );
-  connections.push(c);
-  await c.initialize();
+  clients.add(c);
+  const recorder = createRpcLossRecorder(
+    c,
+    { version, kind, role, agentId },
+    preserveConnection,
+  );
+  recorders.set(c, recorder);
+  clients.delete(c);
+  clients.add(recorder);
+  preserveConnection(recorder.snapshot());
   return c;
 }
 async function send(c, name, params, expected) {
-  let result;
+  const recorder = recorders.get(c),
+    offset = recorder.snapshot().evidence.length;
   try {
-    result = await c.request(name, params, 120000);
-    return result;
+    return await recorder.request(name, params, 120000);
   } finally {
-    requests.push({
-      ...c.lastRequest,
-      sessionId: params.sessionId ?? result?.sessionId,
-      ...expected,
-    });
+    for (const row of recorder.snapshot().evidence.slice(offset))
+      requests.push({ ...row, version: c.version, ...expected });
   }
 }
+const close = (client) => recorders.get(client).closeAndWait();
 async function prompt(c, version, sessionId, phase) {
   const offset = c.updates.length,
     result = await send(
@@ -241,19 +289,19 @@ async function receipts(record) {
   assertReceipts(record, rows);
   return rows;
 }
-async function preserve(version, c, sessionId, phase, updates, saved) {
-  await c.close();
+async function preserve(version, kind, c, sessionId, phase, updates, saved) {
+  await close(c);
   const before = (await modelState()).requests;
   let reader;
   for (let i = 1; i <= 2; i++) {
-    const replay = await connect(version),
+    const replay = await connect(version, kind, `replay-${i}`),
       spec = replayRequest(version, sessionId);
     await send(replay, spec.method, spec.params, {
       kind: "request",
       label: `${phase}-replay-${i}`,
     });
     assertReplay(version, updates, replay.updates, [phase], sessionId);
-    if (i === 1) await replay.close();
+    if (i === 1) await close(replay);
     else reader = replay;
   }
   assert.deepEqual(
@@ -272,14 +320,14 @@ async function exercise(version, kind, template, model) {
   const label = `v${version}-${kind}`;
   stage = label;
   await ready();
-  const c = await connect(version),
+  const c = await connect(version, kind),
     { sessionId } = await send(
       c,
       "new",
       { cwd: "/workspace", mcpServers: [] },
       { kind: "request", label: `${label}-new` },
     );
-  let record, transition;
+  let record, transition, replacement;
   if (kind === "apply") {
     const revision = (await sync()).revision + 1;
     await proxy("/__test/arm", {
@@ -368,6 +416,7 @@ async function exercise(version, kind, template, model) {
     await operation(transition.requestId, "rebuild");
     await ready();
     const after = captureRuntime(await agent(), await runtime());
+    replacement = after;
     assert.equal(after.template_revision, before.template_revision);
     for (const field of [
       "runtime_revision",
@@ -388,10 +437,27 @@ async function exercise(version, kind, template, model) {
     lifecycle: transition,
     confirmation_blocked: true,
   });
-  const reader = await preserve(version, c, sessionId, phase, updates, saved);
+  const reader = await preserve(
+    version,
+    kind,
+    c,
+    sessionId,
+    phase,
+    updates,
+    saved,
+  );
   await prompt(reader, version, sessionId, `${label}-read`);
-  await reader.close();
-  assert.equal((await audits(sessionId)).length, 2);
+  await close(reader);
+  const finalRuns = await audits(sessionId);
+  assert.equal(finalRuns.length, 2);
+  if (replacement) {
+    const readRun = finalRuns.find((row) => row.run_id !== saved.run.run_id);
+    assert(readRun, "post-Rebuild Run missing");
+    runtimeBindings.set(`${label}-read`, {
+      run: await api(`/api/admin/execution-audits/${readRun.run_id}`),
+      runtime: replacement,
+    });
+  }
   return model;
 }
 async function main() {
@@ -413,13 +479,16 @@ async function main() {
     password: "rpc-owner-password",
     role: "member",
   });
-  await member.request("/api/session/login", {
+  const ownerLogin = await member.request("/api/session/login", {
     body: {
       organization_slug: "stage3",
       email: "rpc-owner@example.com",
       password: "rpc-owner-password",
     },
   });
+  memberPrincipal = structuredClone(ownerLogin.body.principal);
+  assert.equal(memberPrincipal.organization_id, organizationId);
+  assert.equal(memberPrincipal.user_id, owner.user.id);
   secrets.push(...admin.cookies.values(), ...member.cookies.values());
   let { model, template } = await seed(api, process.env.TEST_RUNTIME_IMAGE);
   const created = await admin.request("/api/admin/agents", {
@@ -445,6 +514,16 @@ async function main() {
       model = await exercise(version, kind, template, model);
   const modelResult = await modelState();
   assert.equal(modelResult.requests.length, 16);
+  const inventory = indexRpcLossRequests({
+    agentId,
+    connections: [...connections.values()],
+  });
+  assert.deepEqual(requests, inventory.requests);
+  for (const [file, rows] of [
+    ["request-inventory.private.json", inventory.requests],
+    ["initialization-inventory.private.json", inventory.initializations],
+  ])
+    writeEvidenceFile("/tmp/rpc-traces", file, JSON.stringify(rows) + "\n");
   stage = "delete";
   const removed = await admin.request(`/api/admin/agents/${agentId}/delete`, {
     body: {},
@@ -470,6 +549,9 @@ async function main() {
     model_requests: 16,
     replays: 8,
     rejections: 2,
+    connections: connections.size,
+    initializations: inventory.initializations.length,
+    business_requests: inventory.requests.length,
     history_preserved: true,
     runtime_operations: journals,
   };
@@ -477,12 +559,14 @@ async function main() {
     mode: 0o600,
   });
   console.log(asciiJSON(business));
-  await mkdir("/tmp/rpc-traces", { mode: 0o700 });
+  await mkdir("/tmp/rpc-traces", { mode: 0o700, recursive: true });
   const save = (label) => (trace) =>
     writeFileSync(`/tmp/rpc-traces/${label}.json`, JSON.stringify(trace), {
       mode: 0o600,
     });
   save("inputs")({
+    initializations: inventory.initializations,
+    runtimeBindings: [...runtimeBindings],
     lifecycle,
     requests,
     faults,
@@ -517,52 +601,42 @@ async function main() {
         }),
       });
     }
-  for (const expected of requests) {
-    stage = `collect:${expected.label}`;
-    raws.push({
-      kind: "request",
-      expected,
-      trace: await collectManagedTrace(
-        "http://jaeger:16686",
-        expected,
+  for (const original of [...inventory.initializations, ...requests]) {
+    stage = `collect:${original.label}`;
+    const expected = runtimeBindings.has(original.label)
+      ? { ...original, runtimeBinding: runtimeBindings.get(original.label) }
+      : original;
+    results.push(
+      await collectPrivateRpcLossTrace("http://jaeger:16686", expected, {
+        directory: "/tmp/rpc-traces",
+        flush: () => telemetry.flush(),
         secrets,
-        modelResult.requests,
-        save(expected.label),
-        (t) => t,
-      ),
-    });
+        requests: modelResult.requests,
+      }),
+    );
+    save("results")(results);
   }
   for (const row of raws) {
     stage = `inspect:${row.expected?.label ?? row.expected?.kind ?? row.fault.label}`;
     results.push(
       row.kind === "lifecycle"
         ? inspectLifecycle(row.trace, row.expected, secrets)
-        : row.kind === "rpc"
-          ? inspectRpcTrace(
-              row.trace,
-              row.fault.records.filter(
-                (r) => r.traceparent.split("-")[1] === row.id,
-              ),
-              row.fault.lifecycle,
-              secrets,
-            )
-          : row.expected.rejection
-            ? inspectClosedPrompt(row.trace, row.expected, secrets)
-            : inspectCommandTrace(
-                row.trace,
-                row.expected,
-                secrets,
-                modelResult.requests.filter(
-                  (r) => r.trace_id === row.trace.traceID,
-                ),
-              ),
+        : inspectRpcTrace(
+            row.trace,
+            row.fault.records.filter(
+              (r) => r.traceparent.split("-")[1] === row.id,
+            ),
+            row.fault.lifecycle,
+            secrets,
+          ),
     );
   }
   assert.equal(
     results.reduce((n, r) => n + (r.runtime_tool_calls ?? 0), 0),
     8,
   );
-  const { accepted, ...strict } = commandStrictOutcome(results);
+  const { accepted, ...strict } = rpcLossStrictOutcome(results);
+  save("results")(results);
   console.log(
     asciiJSON({
       status: "scoped_topology_passed",
@@ -573,19 +647,27 @@ async function main() {
   if (!accepted) process.exitCode = 1;
 }
 try {
-  await main();
+  await withPrivateCommandResources(clients, telemetry, main);
 } catch (error) {
   console.error(
-    asciiJSON({
-      status: "failed",
-      stage,
-      error: error.name,
-      code: error.code,
-      location: error.stack
-        ?.split("\n")
-        .find((line) => line.includes("/app/tests/e2e/"))
-        ?.trim(),
-    }),
+    asciiJSON(
+      await preserveFileFailure({
+        directory: "/tmp/rpc-traces",
+        error,
+        stage,
+        inventory: {
+          connections: [...connections.values()],
+          requests,
+          lifecycle,
+          faults,
+          stateReceipts,
+        },
+        fetchStatus: () =>
+          fetch("http://rpc-model-peer:8080/status", {
+            signal: AbortSignal.timeout(5000),
+          }),
+      }),
+    ),
   );
   process.exitCode = 1;
   try {
@@ -595,14 +677,6 @@ try {
       recordTraceSample,
     );
   } catch {
-    /* Preserve the original scenario failure. */
-  }
-} finally {
-  for (const c of connections) {
-    try {
-      await c.close();
-    } catch {
-      /* Preserve the original scenario failure. */
-    }
+    /* The original scenario failure and raw evidence are already preserved. */
   }
 }

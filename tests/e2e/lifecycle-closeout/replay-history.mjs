@@ -7,6 +7,7 @@ import {
   traceTopology,
 } from "../observability/trace-tree.mjs";
 import { assertEventPage } from "./evidence.mjs";
+import { hasDiagnosticError } from "../acp-plan/requests.mjs";
 
 const traceIdentity = /^[a-f0-9]{32}$/u;
 const eventIdentity = /^[a-zA-Z0-9_-]+$/u;
@@ -224,7 +225,7 @@ export function inspectReplayObservation(
       Number.isFinite(span.duration) && span.duration >= 0,
       "unfinished observation span",
     );
-    assert(tag(span, "error") !== true, "observation trace contains errors");
+    assert(!hasDiagnosticError(span), "observation trace contains errors");
     assert(
       !["ERROR", "Error", 2].includes(tag(span, "otel.status_code")),
       "observation trace contains an error status",

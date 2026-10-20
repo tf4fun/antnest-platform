@@ -119,6 +119,9 @@ export class AgentAcpHttpServer {
       noServer: true,
       maxPayload: options.maxWebSocketPayloadBytes,
     });
+    this.webSockets.on("headers", () => {
+      activeHttpSpan()?.addEvent("antnest.http.upgrade.response.prepared");
+    });
     this.server.on("upgrade", (request, socket, head) => {
       const boundary = startHttpBoundary(request);
       const onClose = () => boundary.finish();
@@ -174,22 +177,24 @@ export class AgentAcpHttpServer {
     return this.closePromise;
   }
 
+  private isClosing(): boolean {
+    return this.closePromise !== undefined;
+  }
+
   private async closeOnce(): Promise<void> {
-    await this.httpTransport.close();
-    for (const socket of this.connections) {
-      socket.terminate();
-    }
-    await new Promise<void>((resolve) => {
-      this.webSockets.close(() => resolve());
-    });
-    const results = await Promise.allSettled(
-      [this.server, this.controlServer].map(async (server) => {
-        if (!server.listening) return;
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) => (error === undefined ? resolve() : reject(error)));
-          server.closeAllConnections();
-        });
-      }),
+    // Both transports receive the same five-second shutdown window. Keep HTTP
+    // listening for existing connections' authenticated cleanup acknowledgements.
+    const results = await Promise.allSettled([this.httpTransport.drain(), this.closeWebSockets()]);
+    results.push(
+      ...(await Promise.allSettled(
+        [this.server, this.controlServer].map(async (server) => {
+          if (!server.listening) return;
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error === undefined ? resolve() : reject(error)));
+            server.closeAllConnections();
+          });
+        }),
+      )),
     );
     const errors = results.filter(
       (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -199,6 +204,28 @@ export class AgentAcpHttpServer {
         errors.map((result) => result.reason as unknown),
         "Listener shutdown failed",
       );
+  }
+
+  private async closeWebSockets(): Promise<void> {
+    await Promise.all(
+      [...this.connections].map(
+        (socket) =>
+          new Promise<void>((resolve) => {
+            // Give responsive peers the normal going-away frame. A stalled
+            // peer cannot consume the process's entire shutdown deadline.
+            const timer = setTimeout(() => socket.terminate(), 5_000);
+            timer.unref();
+            socket.once("close", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+            socket.close(1001, "Service shutting down");
+          }),
+      ),
+    );
+    await new Promise<void>((resolve) => {
+      this.webSockets.close(() => resolve());
+    });
   }
 
   private async handleHttp(
@@ -339,6 +366,7 @@ export class AgentAcpHttpServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<number> {
+    if (this.isClosing()) return rejectUpgrade(socket, 503, "Service Unavailable");
     const admission = await this.options.authentication.admit(request, true);
     if ("status" in admission) return rejectAuthenticatedUpgrade(socket, admission);
     const protocol = acpProtocol(request.url);
@@ -347,7 +375,7 @@ export class AgentAcpHttpServer {
       return rejectUpgrade(socket, 404, "Not Found");
     }
     try {
-      if (!(await this.options.ready())) {
+      if (!(await this.options.ready()) || this.isClosing()) {
         this.telemetry.count("antnest.acp.connections", {
           result: "rejected",
           reason: "not_ready",
@@ -374,6 +402,8 @@ export class AgentAcpHttpServer {
         ...identity,
       };
       this.webSockets.handleUpgrade(request, socket, head, (webSocket) => {
+        const span = activeHttpSpan();
+        span?.addEvent("antnest.http.upgrade.connection.setup.started");
         this.telemetry.count("antnest.acp.connections", { result: "accepted", protocol });
         this.connections.add(webSocket);
         webSocket.once("close", () => {
@@ -421,6 +451,7 @@ export class AgentAcpHttpServer {
             );
             this.observeConnection(connection, protocol);
           }
+          span?.addEvent("antnest.http.upgrade.connection.setup.completed");
         } catch (error) {
           this.report(error, "acp_connect");
           webSocket.close(1011, "ACP connection setup failed");

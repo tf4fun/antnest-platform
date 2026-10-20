@@ -23,6 +23,20 @@ import {
 import { withHeldRun } from "./foundation-drain.mjs";
 import { assertReplayHistory } from "./replay-history.mjs";
 import {
+  collectNetworkTraces,
+  recordNetworkFailures,
+} from "./network-private-session.mjs";
+import {
+  collectLossTraces,
+  recordLossFailures,
+} from "./loss-private-session.mjs";
+import {
+  collectRestoreTraces,
+  recordRestoreFailures,
+} from "./restore-private-session.mjs";
+import { recordShutdownFailures } from "./shutdown-private-flow.mjs";
+import { collectWorkspaceLifecycles } from "../workspace-closeout/private-flow.mjs";
+import {
   waitForAgentReady,
   assertAgentDisabled,
 } from "../../support/verification/agent-state.mjs";
@@ -303,14 +317,90 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       ready,
       traceSecrets,
     });
-    const traces = await collectLifecycleEvidence(
+    if (result.profile === "workspace-protocol")
+      return collectWorkspaceLifecycles(
+        result,
+        admitted,
+        (operation) =>
+          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, error) => saveFoundationFailure(config, operation, error),
+        signal,
+      );
+    if (result.profile === "shutdown") {
+      result.private_shutdown.lifecycle_admissions = structuredClone(admitted);
+      const errors = [];
+      const traces = await collectRestoreTraces(
+        admitted,
+        (operation) =>
+          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, error) => saveFoundationFailure(config, operation, error),
+        signal,
+        errors,
+      );
+      recordShutdownFailures(result, errors);
+      return recordShutdownFailures(
+        { ...result, operations: admitted.length, traces },
+        result.shutdownErrors,
+      );
+    }
+    if (["offline-restore", "offline-skill-restore"].includes(result.profile)) {
+      const work =
+        result.profile === "offline-restore"
+          ? result.private_restore
+          : result.private_skill_restore;
+      work.lifecycle_admissions = structuredClone(admitted);
+      const errors = [];
+      const traces = await collectRestoreTraces(
+        admitted,
+        (operation) =>
+          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, error) => saveFoundationFailure(config, operation, error),
+        signal,
+        errors,
+      );
+      recordRestoreFailures(result, errors);
+      return recordRestoreFailures(
+        { ...result, operations: admitted.length, traces },
+        result.restoreErrors,
+      );
+    }
+    if (result.profile === "runtime-loss") {
+      result.private_loss.lifecycle_admissions = structuredClone(admitted);
+      const errors = [];
+      const traces = await collectLossTraces(
+        admitted,
+        (operation) =>
+          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, error) => saveFoundationFailure(config, operation, error),
+        signal,
+        errors,
+      );
+      recordLossFailures(result, errors);
+      return recordLossFailures(
+        { ...result, operations: admitted.length, traces },
+        result.lossErrors,
+      );
+    }
+    const collect =
+      result.profile === "lifecycle-real-network"
+        ? async (...args) => {
+            const errors = [];
+            const traces = await collectNetworkTraces(...args, errors);
+            recordNetworkFailures(result, errors);
+            return traces;
+          }
+        : collectLifecycleEvidence;
+    const traces = await collect(
       admitted,
       (operation) =>
         collectFoundationLifecycle(config, operation, traceSecrets, signal),
       (operation, error) => saveFoundationFailure(config, operation, error),
       signal,
     );
-    return { ...result, operations: admitted.length, traces };
+    const complete = { ...result, operations: admitted.length, traces };
+    return result.profile === "lifecycle-real-network"
+      ? recordNetworkFailures(complete, result.networkErrors)
+      : complete;
   }
   const created = await command("create", undefined, agentBody);
   const agentID = created.agentID;

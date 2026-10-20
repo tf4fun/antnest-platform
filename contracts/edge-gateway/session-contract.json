@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 23,
+  "version": 24,
   "login_admission_policy": "login-admission-policy.json",
   "password_verification_policy": "../identity/password-verification-policy.json",
   "session_security": {
@@ -29,8 +29,7 @@
       "code": "forbidden",
       "message": "Request origin is not allowed"
     },
-    "csrf": "independent and still required on authenticated mutations",
-    "websocket": "ACP WebSocket upgrades always require matching Origin"
+    "csrf": "independent and still required on authenticated mutations"
   },
   "session_validation": {
     "scope": "ordinary authenticated requests; explicit logout follows routes.logout.cookie_outcomes",
@@ -139,115 +138,6 @@
       "event_watch_authentication_lease": "bounded by live session revalidation and required roles",
       "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
     },
-    "workspace_bootstrap": {
-      "method": "GET",
-      "path": "/api/app/bootstrap",
-      "authentication": "browser_session",
-      "success_status": 200,
-      "response_required": ["principal", "agents"],
-      "forbidden_response_fields": [
-        "agent_access_subject",
-        "runtime_endpoint",
-        "provider_credential",
-        "availability",
-        "active_session_id"
-      ],
-      "agent_required": [
-        "agent_id",
-        "name",
-        "lifecycle_state",
-        "runtime_state"
-      ],
-      "agent_activation_state": "enabled or disabled, present exactly when lifecycle_state is created",
-      "state_source": "Controller management projection in the existing paginated list; no ACP or Runtime lookup"
-    },
-    "workspace_state": {
-      "method": "GET",
-      "path": "/api/app/agents/{agent_id}/state",
-      "authentication": "browser_session; verified Gateway workload and signed Agent-scoped workspace CCT at ACP",
-      "scope": "original authenticated organization and principal only; no query fields",
-      "success_status": 200,
-      "response_required": [
-        "agent_id",
-        "availability",
-        "access_allowed",
-        "configuration_revision",
-        "active_session_id",
-        "unavailable_reason"
-      ],
-      "upstream": {
-        "method": "POST",
-        "path": "/rpc/agent-acp/get-agent-execution-state",
-        "body": {}
-      },
-      "denied": "200 sanitized offline state; no session or configuration revision disclosure"
-    },
-    "workspace_state_watch": {
-      "method": "GET",
-      "path": "/api/app/agents/{agent_id}/state/watch",
-      "authentication": "browser_session_at_entry_and_live_revalidation_including_silent_periods_and_before_each_subsequent_snapshot",
-      "success_status": 200,
-      "transport": "SSE",
-      "event": "workspace_state",
-      "replay": "none; reject query fields and Last-Event-ID",
-      "lease": "ANTNEST_EDGE_STREAM_LEASE; no automatic Gateway renewal",
-      "disconnect": "cancel upstream observation only; never cancel or replay ACP work",
-      "response_required": [
-        "agent_id",
-        "availability",
-        "access_allowed",
-        "configuration_revision",
-        "active_session_id",
-        "unavailable_reason"
-      ],
-      "upstream": {
-        "method": "POST",
-        "path": "/rpc/agent-acp/watch-agent-execution-state",
-        "body": {}
-      },
-      "source_failure": "503 before first snapshot; after streaming close without inventing state",
-      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
-    },
-    "workspace_acp_http": {
-      "method": "POST|GET|DELETE",
-      "path": "/api/app/agents/{agent_id}/v1/acp",
-      "alias": "/api/app/agents/{agent_id}/acp",
-      "transport": "official experimental ACP Streamable HTTP",
-      "authentication": "browser_session; direct ACP routing without Controller lookup; ACP owns Agent/Session authorization",
-      "csrf": "POST and DELETE require exactly one X-Antnest-CSRF-Token matching the authenticated session derivation",
-      "origin": "shared origin_admission; POST and DELETE require matching public Origin or same-origin Fetch Metadata, unless explicit originless compatibility applies",
-      "forwarded_headers": [
-        "Content-Type",
-        "Accept",
-        "Acp-Connection-Id",
-        "Acp-Session-Id"
-      ],
-      "message_payload": "opaque; no ACP translation or login credential forwarding",
-      "streaming": "unbuffered SSE; client disconnect cancels upstream receive request only",
-      "connection_authority": "ACP Service; connection ID is not an authentication credential",
-      "already_forwarded_work": "ACP owns Run and cancellation semantics; Gateway live-session guard stops the authenticated response output within the documented bound",
-      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
-    },
-    "workspace_acp": {
-      "method": "GET",
-      "path": "/api/app/agents/{agent_id}/acp",
-      "transport": "websocket",
-      "authentication": "browser_session; direct ACP routing without Controller lookup; ACP owns Agent/Session authorization",
-      "upstream_protocol": "ACP v1",
-      "versioned_paths": [
-        "/api/app/agents/{agent_id}/v1/acp",
-        "/api/app/agents/{agent_id}/v2/acp"
-      ],
-      "same_origin_required": true,
-      "message_admission": "non-touch original-cookie resolution before each complete client message; retain original User/Organization/Membership and handshake CCT hard expiry; reconnect after expiry",
-      "message_payload": "opaque; no ACP translation or login credential forwarding",
-      "invalid_session_close": 1008,
-      "identity_unavailable_close": 1013,
-      "maximum_message_bytes": 67108864,
-      "already_forwarded_work": "ACP owns authorization, Run, cancellation and disconnect semantics",
-      "idle_connection": "background live Identity checks and private session revocation feed stop stale output within the documented bound",
-      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
-    },
     "oidc_callback": {
       "method": "GET",
       "path": "/protocol/oidc/callback",
@@ -290,7 +180,8 @@
       "trust": "verified Gateway workload and signed CCT; principal headers are presentation hints only",
       "identity_failure": "401 or 503; do not contact Node",
       "body_limit": "at least existing negotiated ACP multimodal input limit",
-      "upstream": "internal agent-ui Node, not ACP"
+      "upstream": "internal agent-ui Node, not ACP",
+      "maximum_body_bytes": 67108864
     },
     "workspace_bridge_events": {
       "method": "GET",
@@ -305,7 +196,8 @@
       "lease_max_seconds": 300,
       "buffering": "disabled",
       "upstream_disconnect": "observation only; never cancel ACP Run",
-      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams"
+      "session_revalidation": "session_lifecycle.stream_revalidation; enforce original SID and principal on silent and active streams",
+      "maximum_concurrent_streams": 64
     },
     "workspace_application": {
       "method": "GET|HEAD",
@@ -523,11 +415,11 @@
       "deadline_anchor": "actual successful Resolve RPC start retained across cache hits; probe start controls scheduling only",
       "feed_dependency": false,
       "absolute_deadline": "fixed hard cap",
-      "idle_deadline": "mutable observation schedules fresh live check",
-      "direct_acp_websocket_cct": "original handshake expiry is a fixed hard cap; reconnect required"
+      "idle_deadline": "mutable observation schedules fresh live check"
     },
     "session_revocation_feed": "one process-owned poller fans validated events to private SID stream registry and Resolve cache; live stream stale bound remains independent; cache reuse requires recent caught-up proof"
   },
   "oidc_linking_contract": "../identity/oidc-linking.md",
-  "identity_resolve_cache": "resolve-cache-policy.json"
+  "identity_resolve_cache": "resolve-cache-policy.json",
+  "workspace_entry_retirement_policy": "workspace-entry-retirement-policy.json"
 }

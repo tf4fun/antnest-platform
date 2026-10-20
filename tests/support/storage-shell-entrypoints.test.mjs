@@ -15,15 +15,29 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { sessionHarnessArguments } from "../e2e/identity-closeout/session-deployment.mjs";
+import { commandHarnessArguments } from "../e2e/acp-commands/deployment.mjs";
+import { planHarnessArguments } from "../e2e/acp-plan/deployment.mjs";
+import { multimodalHarnessArguments } from "../e2e/acp-multimodal/deployment.mjs";
+import { costHarnessArguments } from "../e2e/acp-cost/deployment.mjs";
+import { filesHarnessArguments } from "../e2e/acp-files/deployment.mjs";
+
+import { permissionHarnessArguments } from "../e2e/acp-permissions/deployment.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const children = [
   ["managed-mcp", "managed-mcp"],
   ["rpc-response-loss", "rpc-response-loss"],
   ["stage3-base", "stage3-base"],
-  ["acp-persistence", "acp-persistence"],
   ["acp-restart", "acp-restart"],
   ["acp-session", "identity-session"],
+  ["slash-commands", "acp-commands"],
+  ["structured-plan", "acp-plan"],
+  ["multimodal", "acp-multimodal"],
+  ["session-cost", "acp-cost"],
+  ["tool-progress", "acp-progress"],
+  ["tool-permissions", "acp-permissions"],
+  ["file-observations", "acp-files"],
   ["identity-http", "identity-http"],
   ["agent-access", "identity-agent"],
   ["acp-closeout", "acp-closeout-normal"],
@@ -33,6 +47,7 @@ function launch(t, entry, evidenceRoot, cached, extra = {}, setup = () => {}) {
   t.after(() => rmSync(work, { recursive: true, force: true }));
   for (const file of [
     "tests/e2e/e2e-" + entry + ".sh",
+    "tests/e2e/acp-closeout/container-state.sh",
     "tests/support/storage.mjs",
     "tests/support/public-development-secrets.sh",
     "tests/support/service-hosts.sh",
@@ -100,7 +115,7 @@ for (const [entry, directory] of children) {
   });
   test(`${entry} durable output still reaches its first dependency`, (t) => {
     const result = launch(t, entry, directory, false);
-    assert.notEqual(result.calls, "");
+    assert.notEqual(result.calls, "", result.stderr);
     assert.doesNotMatch(result.stderr, /durable.*cache/i);
   });
   for (const alias of [false, true])
@@ -159,9 +174,14 @@ for (const [flag, directory] of [
   ["", "stage3-base"],
   ["MANAGED_MCP", "managed-mcp"],
   ["RPC_RESPONSE_LOSS", "rpc-response-loss"],
-  ["ACP_PERSISTENCE", "acp-persistence"],
   ["ACP_RESTART", "acp-restart"],
   ["ACP_SESSION", "identity-session"],
+  ["SLASH_COMMANDS", "acp-commands"],
+  ["MULTIMODAL", "acp-multimodal"],
+  ["SESSION_COST", "acp-cost"],
+  ["TOOL_PROGRESS", "acp-progress"],
+  ["TOOL_PERMISSIONS", "acp-permissions"],
+  ["FILE_OBSERVATIONS", "acp-files"],
   ["IDENTITY_CORE", "identity-http"],
   ["IDENTITY_ACCESS", "identity-http"],
   ["AGENT_ACCESS", "identity-agent"],
@@ -203,7 +223,150 @@ test("containers writing private evidence run as the evidence owner", () => {
         commands.push([name, command]);
     }
   }
-  assert(commands.length >= 3, "evidence-writing clients not found");
+  // The Session runner delegates container creation to the shared deployment
+  // module. Include its actual arguments in the same evidence-owner inventory.
+  assert.match(
+    readFileSync(join(directory, "e2e-acp-session.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/identity-closeout\/session-deployment\.mjs" create-harness "\$checkpoints"/u,
+  );
+  const runID = "00000000-0000-4000-8000-000000000001";
+  const uid = String(process.getuid());
+  const gid = String(process.getgid());
+  const { client } = sessionHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `session-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:session-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence", checkpoints: "/fixture/checkpoints" },
+  );
+  assert(client.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    client.flatMap((arg, index) =>
+      arg === "--user" ? [client[index + 1]] : [],
+    ),
+    [`${uid}:${gid}`],
+  );
+  assert.match(
+    readFileSync(join(directory, "e2e-slash-commands.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-commands\/deployment\.mjs" create-harness/u,
+  );
+  const command = commandHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `commands-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:commands-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(command.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    command.flatMap((arg, index) =>
+      arg === "--user" ? [command[index + 1]] : [],
+    ),
+    [`${uid}:${gid}`],
+  );
+  assert.match(
+    readFileSync(join(directory, "e2e-structured-plan.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-plan\/deployment\.mjs" create-harness/u,
+  );
+  const plan = planHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `plan-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:plan-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(plan.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    plan.flatMap((arg, index) => (arg === "--user" ? [plan[index + 1]] : [])),
+    [`${uid}:${gid}`],
+  );
+  assert.match(
+    readFileSync(join(directory, "e2e-multimodal.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-multimodal\/deployment\.mjs" create-harness/u,
+  );
+  const multimodal = multimodalHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `multimodal-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:multimodal-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(multimodal.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    multimodal.flatMap((arg, index) =>
+      arg === "--user" ? [multimodal[index + 1]] : [],
+    ),
+    [`${uid}:${gid}`],
+  );
+  assert.match(
+    readFileSync(join(directory, "e2e-session-cost.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-cost\/deployment\.mjs" create-harness/u,
+  );
+  const cost = costHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `cost-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:cost-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(cost.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    cost.flatMap((arg, index) => (arg === "--user" ? [cost[index + 1]] : [])),
+    [`${uid}:${gid}`],
+  );
+  assert.match(
+    readFileSync(join(directory, "e2e-file-observations.sh"), "utf8"),
+    /node "\$root\/tests\/e2e\/acp-files\/deployment\.mjs" create-harness/u,
+  );
+  const files = filesHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: `files-${runID}`,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: `antnest/antnest-runtime:files-${runID}`,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  ).client;
+  assert(files.includes("/fixture/evidence:/evidence"));
+  assert.deepEqual(
+    files.flatMap((arg, index) => (arg === "--user" ? [files[index + 1]] : [])),
+    [`${uid}:${gid}`],
+  );
+  assert(commands.length + 4 >= 5, "evidence-writing clients not found");
   for (const [name, command] of commands)
     assert(
       command.includes('--user "$(id -u):$(id -g)"') ||
@@ -328,3 +491,49 @@ for (const [entry, consumed, variable] of dependencyEntries) {
     assert(!result.stderr.includes(value));
   });
 }
+
+test("Permissions client and independent cleanup write only their evidence subdirectories as the evidence owner", () => {
+  const shell = readFileSync(
+    join(root, "tests/e2e/e2e-tool-permissions.sh"),
+    "utf8",
+  );
+  assert.match(shell, /acp-permissions\/deployment\.mjs" create-harness/u);
+  const runID = "00000000-0000-4000-8000-000000000001";
+  const uid = String(process.getuid()),
+    gid = String(process.getgid());
+  const args = permissionHarnessArguments(
+    {
+      COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+      ANTNEST_E2E_RUN_ID: runID,
+      ANTNEST_ADMISSION_TAG: "permission-" + runID,
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF:
+        "antnest/antnest-runtime:permission-" + runID,
+      ANTNEST_SERVICE_AUTH_DIRECTORY: "/fixture/credentials",
+      ANTNEST_SERVICE_AUTH_UID: uid,
+      ANTNEST_SERVICE_AUTH_GID: gid,
+      ANTNEST_SERVICE_NETWORK_PREFIX: "10.242.187",
+    },
+    { evidence: "/fixture/evidence" },
+  );
+  for (const role of ["client", "cleanup"]) {
+    assert.deepEqual(
+      args[role].flatMap((arg, i) =>
+        arg === "--user" ? [args[role][i + 1]] : [],
+      ),
+      [`${uid}:${gid}`],
+    );
+    assert.deepEqual(
+      args[role]
+        .flatMap((arg, i) =>
+          arg === "-v" && !args[role][i + 1].endsWith(":ro")
+            ? [args[role][i + 1]]
+            : [],
+        )
+        .sort(),
+      [
+        "/fixture/evidence/deployment:/evidence/deployment",
+        "/fixture/evidence/traces:/evidence/traces",
+      ],
+    );
+  }
+});

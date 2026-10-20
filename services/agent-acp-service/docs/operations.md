@@ -162,7 +162,16 @@ prevent a later explicit Run after the configuration/network is corrected.
 Both `/v1/acp` and `/v2/acp` accept WebSocket upgrades. `/v1/acp` additionally
 accepts SDK Streamable HTTP POST/GET SSE/DELETE; `/v2/acp` does not accept that
 HTTP transport. See the [HTTP transport contract](http-transport.md).
-The caller must be a verified Gateway/UI workload and supply Identity's unchanged
+
+The 1024-entry HTTP connection limit also counts pending SDK cleanup and
+unacknowledged server-closed connections. The latter retain their original
+binding and cleanup result for a fixed five minutes so that the same authorized
+caller can complete DELETE; successful acknowledgement removes the ID. Unfinished
+cleanup and already admitted responses hold the entry's capacity until settlement;
+the original deadline and shutdown can still abort those responses. Expiry removes
+the addressable ID without freeing pending cleanup. Cleanup failure remains a 503 and is logged as
+`acp_http_close_failed`; it cannot be reported as a successful DELETE.
+The caller must be a verified Agent UI workload and supply Identity's unchanged
 signed CCT with ACP audience and Agent scope. ACP derives the tuple from verified
 claims; raw identity hints and the old opaque subject are not fallbacks. Both transports bind the same tuple;
 resource operations check the current local grant, not a Controller RPC or a
@@ -272,6 +281,16 @@ Collector retention. This service adds no retention service.
 - A confirmed Runtime-managed MCP error is returned to the model as a Tool
   result; an unknown transport effect still terminates the Run as unresolved.
 - PostgreSQL unavailable: readiness fails and no prompt is accepted.
+- An unconfirmed Run admission or completion write stops new Run admission and
+  requires service recovery. An unacknowledged prompt returns JSON-RPC `-32603`
+  with `code: database_error` and `retryable: false`; its public message contains
+  no database details. The original cause remains available to internal
+  diagnostics. A v2 prompt already acknowledged keeps that receipt and its
+  connection closes on completion failure; ACP does not invent a new outcome.
+  Startup classifies the durable Run without repeating model or Tool work.
+  Component coverage uses production service composition and real PostgreSQL
+  with fake outbound Runtime/model peers in
+  [`persistence-faults.postgres.test.ts`](../../../tests/integration/agent-acp-service/e2e/persistence-faults.postgres.test.ts).
 - Run worker lock unavailable: startup fails because another replica owns Run
   execution. A same-session heartbeat detects loss of the dedicated lock
   connection; loss makes readiness false, aborts startup recovery and local
@@ -307,7 +326,7 @@ admission, and durable event persistence must not introduce the inverse order.
 The service is internal. Do not publish its port directly to the internet.
 Compose or Kubernetes network policy permits:
 
-- workspace inbound only from authenticated Gateway, Agent UI, Console and
+- workspace inbound only from authenticated Agent UI, Console and
   Registry on their documented routes; Controller uses its separate listener;
 - outbound to authenticated Identity for bounded JWKS verification;
 - outbound to its private PostgreSQL, configured model APIs,

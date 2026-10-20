@@ -119,6 +119,8 @@ function NetworkPolicyControl({ agent, scope, refreshRevision }: Props) {
     refresh,
     agent.lifecycle_state,
     agent.activation_state,
+    agent.runtime_state,
+    agent.executable_execution_revision,
     agent.runtime?.runtime_revision,
     refreshRevision,
   ]);
@@ -280,6 +282,12 @@ function NetworkPolicyControl({ agent, scope, refreshRevision }: Props) {
         </div>
       </div>
       <div className="mt-3 grid gap-3">
+        {policy?.attachment.state === "pending" &&
+        agent.activation_state !== "disabled" ? (
+          <p className="text-sm text-muted-foreground">
+            Waiting for the Runtime to connect. Agent network is paused.
+          </p>
+        ) : null}
         {policy?.attachment.state === "closed" ||
         agent.activation_state === "disabled" ? (
           <p className="text-sm text-muted-foreground">

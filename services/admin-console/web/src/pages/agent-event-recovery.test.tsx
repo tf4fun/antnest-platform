@@ -94,6 +94,25 @@ const eventsPath = "/api/admin/agents/agent-1/events";
 const agentPath = "/api/admin/agents/agent-1";
 
 describe("Agent event recovery", () => {
+  it("refreshes pending network when ready publishes an execution without changing available Runtime state", async () => {
+    const { state, streams, calls } = await workflow();
+    state.operation = { ...operation, state: "completed", phase: "completed" };
+    state.agent = { ...agent, aggregate_sequence: 2, runtime_state: "available", active_operation_request_id: undefined, executable_execution_revision: undefined };
+    state.networkRead = async () => Response.json({ agent_id: "agent-1", action: "deny_all", resource_version: 7, attachment: { state: "pending", resource_version: 2 } });
+    await act(async () => streams[0]!.dispatchEvent(new MessageEvent("agent_event", {
+      data: JSON.stringify({ ...event(110, 2, "agent_runtime_condition_changed"), operation_request_id: undefined }),
+    })));
+    await screen.findByText("Waiting for the Runtime to connect. Agent network is paused.");
+    const before = calls("/api/admin/agents/agent-1/network-policy").length;
+    state.agent = { ...state.agent, aggregate_sequence: 3, executable_execution_revision: "execution-first" };
+    state.networkRead = async () => Response.json({ agent_id: "agent-1", action: "deny_all", resource_version: 7, attachment: { state: "open", resource_version: 3 } });
+    await act(async () => streams[0]!.dispatchEvent(new MessageEvent("agent_event", {
+      data: JSON.stringify({ ...event(111, 3, "agent_ready"), operation_request_id: undefined }),
+    })));
+    await waitFor(() => expect(screen.queryByText("Waiting for the Runtime to connect. Agent network is paused.")).toBeNull());
+    expect(calls("/api/admin/agents/agent-1/network-policy")).toHaveLength(before + 1);
+  });
+
   it.each(["generation", "cookie", "unmount"])("ignores events and reconnect callbacks after %s invalidates the stream", async boundary => {
     const { streams, page, calls } = await workflow();
     const before = [calls(eventsPath).length, calls(agentPath).length];

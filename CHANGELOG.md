@@ -4,6 +4,14 @@
 
 ### Upgrade requirement
 
+**#64 retires the unused direct browser workspace stack.** Gateway revision 24
+returns `404` for the old bootstrap, state/watch and ACP relay paths, including
+HEAD and WebSocket upgrade attempts after outer Origin admission. Browser
+consumers use `/api/app/workspace/v1/*`; protocol tests use authenticated private
+ACP entrypoints. Deploy the matching catalogs and credential configuration,
+which remove Gateway's unused Controller/ACP grants and direct dependencies.
+See [browser workspace entry retirement](contracts/edge-gateway/workspace-entry-retirement.md).
+
 After restoring an Identity database, restart Gateways to reset their Resolve
 cache and revocation-feed cursors (#59). Setting
 `ANTNEST_EDGE_RESOLVE_CACHE_TTL=0s` keeps direct Identity resolution.
@@ -99,6 +107,20 @@ separate from the subsequent online key rotation. See
 [Rotating encryption keys](docs/encryption-key-rotation.md).
 
 ### Changed
+
+Normal ACP shutdown lets existing authenticated HTTP connections complete their
+cleanup acknowledgement after readiness stops. HTTP and WebSocket peers share
+one five-second shutdown window; remaining responses are then aborted and cleanup
+is joined. This prevents a normal ACP restart from leaving the Workspace Bridge
+unavailable because its original DELETE was rejected during shutdown (#64).
+
+Large Workspace uploads yield between body parsing and Prompt preparation.
+ACP serializes access by Agent, so one Agent's large Prompt persistence no
+longer queues another Agent's permission and cancellation reads in the same
+Organization. Organization-wide authority publications still wait for earlier
+access and fence later requests. The production capacity gate exercises direct
+cancel and `/stop` during upload reception and EOF processing with 64 active
+SSE streams, retaining the one-second completion bound (#64).
 
 Identity revision 17 shares one bounded Argon2 memory/concurrency budget across
 password verification, user creation, password changes and bootstrap (#60).

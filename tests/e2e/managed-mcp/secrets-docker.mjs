@@ -22,6 +22,7 @@ import {
   writeEvidenceFile,
 } from "../../support/storage.mjs";
 import { parseVersion } from "./protocol.mjs";
+import { managedLoopbackOrigin, assertManagedDelivery } from "./delivery.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const version = parseVersion(process.argv[2]);
@@ -39,7 +40,7 @@ const timer = setTimeout(stop, 1800000);
 const docker = dockerClient(process.env, abort.signal, 1800000);
 const built = [],
   failures = [];
-let config, before, business, cleaned;
+let config, before, business, cleaned, admission;
 async function identities(client) {
   const result = {};
   for (const [kind, args] of [
@@ -50,7 +51,7 @@ async function identities(client) {
     result[kind] = lines(await client(args)).sort();
   return result;
 }
-const gate = async (name, command, env = process.env) => {
+const gate = async (name, command, env = process.env, expected) => {
   abort.signal.throwIfAborted();
   const result = await runCommand({
     name,
@@ -60,7 +61,13 @@ const gate = async (name, command, env = process.env) => {
     output,
     timeoutMs: 1200000,
   });
-  assert.equal(result.exit_code, 0, `${name} failed; see private evidence`);
+  if (expected) {
+    admission = JSON.parse(
+      readFileSync(resolve(output, "managed-complete.json"), "utf8"),
+    );
+    assertManagedDelivery(result, admission, expected);
+  } else
+    assert.equal(result.exit_code, 0, `${name} failed; see private evidence`);
 };
 try {
   before = await identities(docker);
@@ -204,12 +211,37 @@ try {
     ]),
     true,
   );
-  const relayID = await invoke(
-    config.compose(["ps", "-q", "diagnostic-relay"]),
+  async function deployed(service) {
+    const ids = lines(await invoke(config.compose(["ps", "-q", service])));
+    assert.equal(ids.length, 1, "one Managed fixture service required");
+    return JSON.parse(await invoke(["inspect", ids[0]]));
+  }
+  const relay = await deployed("diagnostic-relay");
+  const exporter = await deployed("managed-client-telemetry");
+  const runtimeController = managedLoopbackOrigin(
+    relay,
+    config.project,
+    "diagnostic-relay",
+    58080,
   );
-  const [relay] = JSON.parse(await invoke(["inspect", relayID]));
-  const rcPort = relay.NetworkSettings.Ports["58080/tcp"][0];
-  assert.equal(rcPort.HostIp, "127.0.0.1");
+  const acp = managedLoopbackOrigin(
+    relay,
+    config.project,
+    "diagnostic-relay",
+    58081,
+  );
+  const identity = managedLoopbackOrigin(
+    relay,
+    config.project,
+    "diagnostic-relay",
+    58082,
+  );
+  const otlp = managedLoopbackOrigin(
+    exporter,
+    config.project,
+    "managed-client-telemetry",
+    4318,
+  );
   await gate(
     "business",
     [process.execPath, "tests/e2e/managed-mcp/client-entry.mjs"],
@@ -220,7 +252,11 @@ try {
       TEST_GATEWAY_URL: config.gateway,
       TEST_MODEL_URL: config.model,
       TEST_JAEGER_URL: config.jaeger,
-      TEST_RUNTIME_CONTROLLER_URL: `http://127.0.0.1:${rcPort.HostPort}`,
+      TEST_RUNTIME_CONTROLLER_URL: runtimeController,
+      TEST_ACP_ORIGIN: acp,
+      TEST_IDENTITY_ORIGIN: identity,
+      TEST_OTLP_ENDPOINT: otlp + "/v1/traces",
+      TEST_MANAGED_CREDENTIAL_DIRECTORY: config.credentials,
       TEST_RC_TOKEN_FILE: resolve(
         config.credentials,
         "agent-controller/tokens/runtime-controller",
@@ -229,6 +265,7 @@ try {
       TEST_DOCKER_PROJECT: config.project,
       TEST_TUNNEL_WIRE_BINARY: wireBinary,
     },
+    { version, project: config.project },
   );
   business = JSON.parse(readFileSync(resolve(output, "business.json"), "utf8"));
   assert.equal(business.status, "business_passed");
@@ -310,6 +347,7 @@ const result = {
   complete: failures.length === 0,
   cleaned,
   business,
+  admission,
   evidence: output,
 };
 writeEvidenceFile(output, "result.json", JSON.stringify(result));

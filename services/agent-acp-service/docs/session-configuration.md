@@ -87,3 +87,9 @@ Configuration operations have ACP and local database spans. Attributes identify
 Agent/Session/request and operation only; rule bodies and secrets are not logged.
 Configuration writes use transaction-local 5s lock and 10s statement timeouts;
 a blocked write rolls back its event and releases the local publication boundary.
+
+Prior deployment evidence used the retired Gateway ACP/state routes. That
+recorded coverage remains historical. Gateway 24 requires a separate consumer
+migration: browser journeys through the retained Agent UI Bridge and protocol
+assertions through authenticated private ACP. This ACP owning batch does not
+admit that cross-service workflow or its capacity gate.

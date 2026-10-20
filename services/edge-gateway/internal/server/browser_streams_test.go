@@ -2,24 +2,18 @@ package server
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/agentacp"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
 var browserSSERoutes = []struct{ path, profile string }{
 	{"/api/admin/agents/agent-1/events/watch", "console"},
-	{"/api/app/agents/agent-1/state/watch", "workspace"},
 	{"/api/app/workspace/v1/agents/agent-1/events", "workspace"},
-	{"/api/app/agents/agent-1/acp", "acp"},
-	{"/api/app/agents/agent-1/v1/acp", "acp"},
 }
 
 type streamIdentity struct {
@@ -71,12 +65,7 @@ func TestBrowserEverySSEEntryRevalidatesWhileUpstreamIsSilent(t *testing.T) {
 				<-r.Context().Done()
 				w.Header().Set("Content-Type", "text/event-stream")
 			})
-			execution := &executionServiceStub{watchState: func(ctx context.Context, _ agentacp.WorkspaceStateEmitter) error {
-				close(entered)
-				<-ctx.Done()
-				return ctx.Err()
-			}}
-			h := newTestHandlerWithServices(t, service, &agentServiceStub{}, execution, upstream, time.Now(), Config{})
+			h := newTestHandler(t, service, upstream, time.Now())
 			ctx, cancel := context.WithCancel(context.Background())
 			r := newBrowserRequest("GET", route.path, nil).WithContext(ctx)
 			addSessionCookies(r, "token", testCSRFToken)
@@ -120,63 +109,13 @@ func TestBrowserLateInitialResolutionNeverStartsSSEUpstream(t *testing.T) {
 			service := newStreamIdentity()
 			service.initialDelay = 30 * time.Millisecond
 			calls := 0
-			execution := &executionServiceStub{watchState: func(context.Context, agentacp.WorkspaceStateEmitter) error {
-				calls++
-				return errors.New("unexpected upstream")
-			}}
-			h := newTestHandlerWithServices(t, service, &agentServiceStub{}, execution, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }), time.Now(), Config{})
+			h := newTestHandler(t, service, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }), time.Now())
 			r := newBrowserRequest("GET", route.path, nil)
 			addSessionCookies(r, "token", testCSRFToken)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			if w.Code != 503 || calls != 0 || len(w.Result().Cookies()) != 0 {
 				t.Fatalf("late admission status=%d upstream=%d", w.Code, calls)
-			}
-		})
-	}
-}
-
-func TestBrowserSilentWebSocketsRevalidateWithoutClientFrames(t *testing.T) {
-	for _, version := range []string{"v1", "v2"} {
-		t.Run(version, func(t *testing.T) {
-			fixture := newRelayFixture(t, version, func(h *handler) {
-				service := h.identity.(*relayIdentity)
-				service.principal.ActivityIntervalMS = 20
-				service.principal.ContextExpiresAt = time.Now().Add(time.Minute)
-			})
-			fixture.identity.reject(ordinaryPrincipal(), &identity.RemoteError{Code: "unauthenticated"}, false)
-			_ = fixture.client.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
-			_, _, err := fixture.client.ReadMessage()
-			var closed *websocket.CloseError
-			if !errors.As(err, &closed) || closed.Code != websocket.ClosePolicyViolation {
-				t.Fatalf("silent browser close=%v", err)
-			}
-			select {
-			case <-fixture.closed:
-			case <-time.After(time.Second):
-				t.Fatal("upstream reader was not joined")
-			}
-		})
-	}
-}
-
-func TestBrowserWebSocketKeepsOriginalHandshakeExpiryDespiteFreshContexts(t *testing.T) {
-	for _, version := range []string{"v1", "v2"} {
-		t.Run(version, func(t *testing.T) {
-			fixture := newRelayFixture(t, version, func(h *handler) {
-				h.maximumSessionStale = 300 * time.Millisecond
-				service := h.identity.(*relayIdentity)
-				service.principal.ActivityIntervalMS = 20
-				service.principal.ContextExpiresAt = time.Now().Add(250 * time.Millisecond)
-			})
-			fixture.identity.mu.Lock()
-			fixture.identity.principal.ContextExpiresAt = time.Now().Add(time.Hour)
-			fixture.identity.mu.Unlock()
-			_ = fixture.client.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
-			_, _, err := fixture.client.ReadMessage()
-			var closed *websocket.CloseError
-			if !errors.As(err, &closed) || closed.Code != websocket.ClosePolicyViolation || closed.Text != "caller_context_expired" {
-				t.Fatalf("fresh CCT extended the original WebSocket handshake: %v", err)
 			}
 		})
 	}

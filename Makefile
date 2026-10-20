@@ -130,7 +130,9 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/service-authentication/identity/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/service-authentication/gateway/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs tests/e2e/skill-learning/service-calls.test.mjs tests/e2e/skill-learning/client-container.test.mjs tests/e2e/skill-learning/source-projection-check.test.mjs tests/e2e/skill-learning/maintenance-response-gate.test.mjs
+	node --test --test-concurrency=1 tests/e2e/service-authentication/controller/*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/service-authentication/acp/*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs tests/e2e/skill-learning/service-calls.test.mjs tests/e2e/skill-learning/client-container.test.mjs tests/e2e/skill-learning/private-client.test.mjs tests/e2e/skill-learning/source-projection-check.test.mjs tests/e2e/skill-learning/maintenance-response-gate.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/key-removal-probe.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/discovery-tools-client.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/response-diagnostic.test.mjs tests/e2e/skill-learning/automatic-failure.test.mjs
@@ -140,13 +142,13 @@ test-repo:
 	node --test tests/integration/runtime-egress/peer-binding-contract.test.mjs
 	node --test tests/integration/runtime-egress/authenticated-tunnel-contract.test.mjs
 	node --test --test-concurrency=1 tests/e2e/runtime-controller/observation-retry-proxy.test.mjs
-	node --test --test-concurrency=1 tests/integration/development/*.test.mjs
+	node --test --test-concurrency=1 tests/integration/development/*.test.mjs tests/e2e/development/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/temporal/*.test.mjs
 	node --test tests/e2e/observability/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs tests/e2e/agent-acp-service/http-close-receipt.test.mjs
 	$(MAKE) test-managed-mcp-fixtures
 	$(MAKE) test-rpc-response-loss-fixtures
-	$(MAKE) test-acp-persistence-fixtures
+	node --test --test-concurrency=1 tests/integration/agent-acp-service/support/persistence/*.test.mjs
 	$(MAKE) test-acp-restart-fixtures
 	$(MAKE) test-tool-progress-fixtures
 	$(MAKE) test-file-observation-fixtures
@@ -159,9 +161,10 @@ test-repo:
 	$(MAKE) test-lifecycle-fixtures
 	$(MAKE) test-workspace-fixtures
 	$(MAKE) test-resolve-cache-fixtures
+	node --test --test-concurrency=1 tests/e2e/agent-ui/upload-capacity-*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
-	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs tests/e2e/edge-gateway/browser-session-revocation.test.mjs tests/e2e/edge-gateway/password-verification-evidence.test.mjs tests/e2e/edge-gateway/password-pressure.test.mjs tests/e2e/edge-gateway/password-browser-request.test.mjs tests/e2e/edge-gateway/login-admission-client.test.mjs tests/e2e/edge-gateway/login-admission-evidence.test.mjs tests/e2e/edge-gateway/login-admission-process.test.mjs tests/e2e/edge-gateway/scim-lifecycle-evidence.test.mjs
+	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs tests/e2e/edge-gateway/browser-session-revocation.test.mjs tests/e2e/edge-gateway/password-verification-evidence.test.mjs tests/e2e/edge-gateway/password-pressure.test.mjs tests/e2e/edge-gateway/password-browser-request.test.mjs tests/e2e/edge-gateway/login-admission-client.test.mjs tests/e2e/edge-gateway/login-admission-evidence.test.mjs tests/e2e/edge-gateway/login-admission-process.test.mjs tests/e2e/edge-gateway/scim-lifecycle-evidence.test.mjs tests/e2e/edge-gateway/shutdown-interruption.test.mjs
 
 .PHONY: test-resolve-cache-fixtures
 test-resolve-cache-fixtures:
@@ -200,34 +203,42 @@ e2e-organization-display:
 
 .PHONY: e2e-lifecycle-shutdown
 e2e-lifecycle-shutdown:
-	node tests/e2e/lifecycle-closeout/run.mjs shutdown
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-shutdown
 
 .PHONY: e2e-lifecycle-health
 e2e-lifecycle-health:
-	node tests/e2e/lifecycle-closeout/run.mjs health
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-health
 
 .PHONY: e2e-lifecycle-restore
 e2e-lifecycle-restore:
-	node tests/e2e/lifecycle-closeout/run.mjs restore
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-restore
 
 .PHONY: e2e-stage4-skill-storage-restore
 e2e-stage4-skill-storage-restore:
-	node tests/e2e/lifecycle-closeout/restore-stage4-storage-docker.mjs
+	node tests/support/authenticated-shell-e2e.mjs stage4-skill-storage-restore
 
 .PHONY: e2e-stage4-skill-restore
 e2e-stage4-skill-restore:
-	node tests/e2e/lifecycle-closeout/run.mjs skill-restore
+	node tests/support/authenticated-shell-e2e.mjs stage4-skill-restore
 
 .PHONY: test-workspace-fixtures e2e-workspace
 test-workspace-fixtures:
 	node --test --test-concurrency=1 tests/e2e/workspace-closeout/*.test.mjs
 
 e2e-workspace:
-	node tests/e2e/workspace-closeout/run.mjs
+	node tests/support/authenticated-shell-e2e.mjs workspace
 
 .PHONY: e2e-workspace-browser
 e2e-workspace-browser:
-	node tests/e2e/workspace-closeout/browser-run.mjs
+	node tests/support/authenticated-shell-e2e.mjs workspace-browser
+
+.PHONY: e2e-development
+e2e-development:
+	node tests/support/authenticated-shell-e2e.mjs development
+
+.PHONY: e2e-agent-ui-upload-capacity
+e2e-agent-ui-upload-capacity:
+	node tests/e2e/agent-ui/upload-capacity-docker.mjs
 
 .PHONY: e2e-agent-ui-receipt-contract
 e2e-agent-ui-receipt-contract:
@@ -252,11 +263,11 @@ e2e-lifecycle-interrupted:
 
 .PHONY: e2e-lifecycle-network
 e2e-lifecycle-network:
-	node tests/e2e/lifecycle-closeout/run.mjs network
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-network
 
 .PHONY: e2e-lifecycle-loss
 e2e-lifecycle-loss:
-	node tests/e2e/lifecycle-closeout/run.mjs loss
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-loss
 
 .PHONY: e2e-rpc-response-loss
 e2e-rpc-response-loss:
@@ -313,7 +324,7 @@ e2e-multimodal:
 
 .PHONY: test-cost-fixtures e2e-session-cost
 test-cost-fixtures:
-	node --test --test-concurrency=1 tests/e2e/acp-cost/*.test.mjs
+	node --import ./tests/e2e/identity-closeout/acp-client-dependencies.fixture.mjs --test --test-concurrency=1 tests/e2e/acp-cost/*.test.mjs
 
 e2e-session-cost:
 	ANTNEST_E2E_SESSION_COST=true sh tests/e2e/e2e-stage3a.sh
@@ -524,7 +535,7 @@ e2e-skill-deployment:
 
 .PHONY: test-service-authentication-integration e2e-service-authentication-integration e2e-service-authentication-matrix
 test-service-authentication-integration:
-	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/security/run.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
+	node --test --test-concurrency=1 tests/support/authenticated-e2e.test.mjs tests/support/service-grants.test.mjs tests/e2e/acp-closeout/network.test.mjs tests/e2e/lifecycle-closeout/docker.test.mjs tests/e2e/security/network-matrix.test.mjs tests/e2e/security/probe-network.test.mjs tests/e2e/security/fixture-wiring.test.mjs tests/e2e/security/model-discovery.test.mjs tests/e2e/security/authenticated-plan.test.mjs tests/e2e/security/authenticated-peer.test.mjs tests/e2e/security/run.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
 
 .PHONY: e2e-acp-authentication
 e2e-acp-authentication:
@@ -624,13 +635,6 @@ e2e-managed-mcp-v1:
 
 e2e-managed-mcp-v2:
 	node tests/e2e/managed-mcp/secrets-docker.mjs 2
-
-.PHONY: test-acp-persistence-fixtures e2e-acp-persistence
-test-acp-persistence-fixtures:
-	node --test --test-concurrency=1 tests/e2e/acp-persistence/*.test.mjs
-
-e2e-acp-persistence:
-	ANTNEST_E2E_ACP_PERSISTENCE=true sh tests/e2e/e2e-stage3a.sh
 
 .PHONY: test-acp-restart-fixtures e2e-acp-restart
 test-acp-restart-fixtures:

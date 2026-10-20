@@ -13,7 +13,7 @@ const cookie = "antnest_session=expiry-session; antnest_csrf=expiry-csrf";
 const protectedPaths = [
   "/api/session",
   "/api/admin/account",
-  "/api/app/bootstrap",
+  "/api/app/workspace/v1/bootstrap",
 ];
 
 async function fixture(t, override = {}) {
@@ -167,6 +167,7 @@ test("cancelled outage CLI is joined before its result completes", async (t) => 
 for (const [name, override] of [
   ["successful access", { status: 200 }],
   ["authentication rejection", { status: 401 }],
+  ["retired route 404", { status: 404 }],
   [
     "Console dependency failure on a cold scope",
     { code: "dependency_unavailable" },

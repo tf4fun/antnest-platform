@@ -9,4 +9,4 @@ therefore no response-loss scenario for those calls.
 The Controller's remaining calls to ACP, `apply-execution-snapshot` and
 `settle-agent`, are covered by the [RPC response-loss scenario](../rpc-response-loss/README.md)
 (`make e2e-rpc-response-loss`). ACP-side commit-receipt loss is covered by the
-[ACP persistence scenario](../acp-persistence/README.md).
+[ACP persistence components](../../integration/agent-acp-service/support/persistence/README.md).

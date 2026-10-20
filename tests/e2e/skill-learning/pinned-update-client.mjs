@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { connectACP } from "../identity-closeout/acp-connection.mjs";
+import { openSkillACP, withSkillACPClient } from "./private-client.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { serviceCalls } from "./service-calls.mjs";
 
@@ -38,11 +38,11 @@ const policy = await services.setLearningPolicy(agentId, account, {
 assert.deepEqual(policy.pinned_paths, [pinnedPath]);
 assert.notEqual(policy.revision, before.revision);
 
-const client = connectACP(1, agentId, member.cookie, {
+const client = await openSkillACP(1, agentId, member, {
+  principal,
   clientCapabilities: { session: { notices: {} } },
 });
-try {
-  await client.initialize();
+await withSkillACPClient(client, async () => {
   await client.request("load", {
     cwd: "/workspace",
     mcpServers: [],
@@ -68,6 +68,4 @@ try {
       policy_revision: policy.revision,
     }),
   );
-} finally {
-  client.close();
-}
+});

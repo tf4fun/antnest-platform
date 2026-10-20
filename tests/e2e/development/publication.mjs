@@ -7,15 +7,24 @@ import {
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 
-export function selectPublications(data, cutoff = -Infinity) {
+export function publicationCandidates(data, cutoff = -Infinity) {
   assert(Array.isArray(data), "publication search must return traces");
-  const roots = data.filter((trace) => {
-    const tree = traceTopology(trace);
+  // Search samples can be incomplete. Select by the publication's own parent
+  // references, then collect and strictly inspect these same original traces.
+  return data.filter((trace) => {
     const attempt = trace.spans.find(
       (s) => s.operationName === "agent_controller.execution_publication",
     );
-    return attempt && !tree.parent(attempt) && attempt.startTime >= cutoff;
+    return (
+      attempt &&
+      !attempt.references?.some((ref) => ref.refType === "CHILD_OF") &&
+      attempt.startTime >= cutoff
+    );
   });
+}
+
+export function selectPublications(data, cutoff = -Infinity) {
+  const roots = publicationCandidates(data, cutoff);
   assert(roots.length >= 3, "three independent publication traces required");
   const selected = roots.slice(0, 3);
   for (const trace of selected)

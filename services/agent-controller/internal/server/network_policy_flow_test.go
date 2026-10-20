@@ -57,6 +57,45 @@ func policyFlowReadBody(path string) string {
 
 type policyFlowRequest struct{ method, path, body, traceparent string }
 
+func TestNetworkPolicyFlowPreservesPendingAttachmentWithoutPeerProjection(t *testing.T) {
+	requests := make(chan policyFlowRequest, 8)
+	handler, source := policyFlowHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		recordPolicyFlowRequest(t, r, requests)
+		writePolicyFlowBody(t, w, strings.Replace(policyFlowReadBody(r.URL.EscapedPath()), `"attachment_state":"closed"`, `"attachment_state":"pending"`, 1))
+	})
+	source.record.ActivationState = domain.ActivationEnabled
+	source.record.DesiredState = domain.DesiredEnabled
+	source.record.RuntimeState = domain.RuntimeUnknown
+	before := source.record
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1/network-policy?organization_id=org-1", nil))
+	var view application.AgentNetworkPolicyView
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 200 || view.Attachment.State != "pending" || view.Attachment.ResourceVersion != 4 || len(requests) != 3 {
+		t.Fatalf("pending projection: %d %s", response.Code, response.Body.String())
+	}
+	for _, private := range []string{"tunnel_ipv4", "runtime_endpoint", "tunnel_key_id", "egress_endpoint"} {
+		if strings.Contains(response.Body.String(), private) {
+			t.Fatal("private Egress field projected", private)
+		}
+	}
+	for range 3 {
+		if call := <-requests; call.method != http.MethodGet {
+			t.Fatal("read mutated attachment", call)
+		}
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/internal/agents/agent-1/network-policy", strings.NewReader(networkMutationJSON)))
+	if response.Code != 200 || len(requests) != 1 || !reflect.DeepEqual(before, source.record) {
+		t.Fatalf("pending policy write changed Agent: %d %s", response.Code, response.Body.String())
+	}
+	if call := <-requests; call.path != "/internal/agent-policy-assignments/agent-1" || call.method != http.MethodPut {
+		t.Fatal("policy write changed attachment", call)
+	}
+}
+
 func recordPolicyFlowRequest(t *testing.T, r *http.Request, requests chan<- policyFlowRequest) {
 	t.Helper()
 	body, err := io.ReadAll(r.Body)

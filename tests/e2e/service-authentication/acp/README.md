@@ -19,11 +19,22 @@ invoking the target. The harness has a three-minute scenario budget.
 
 The owning-service harness uses the production image, isolated PostgreSQL,
 temporary CSPRNG service credentials, an Identity fixture and synthetic model/MCP
-dependencies. It covers 14 authentication/listener checks, 23 Provider policy
-checks, 18 Runtime instance checks and five official SDK business scenarios,
+dependencies. It covers 14 authentication/listener checks, 14 retired-Gateway
+probes, 23 Provider policy checks, 18 Runtime instance checks and five official SDK business scenarios,
 including normal process restart. The Runtime protocol peer admits only the
 fixture's separate CSPRNG instance token and exact execution fence on every
 official MCP request; it rejects unrelated user/CCT/cookie authority.
+
+The retirement probes run before the first JWKS request, with the old Gateway
+workload credential still configured in the production receiver. All eleven
+workspace route grants reject that caller with 403, including real v1/v2
+WebSocket handshakes. Additional state probes omit or forge CCT, or send a
+malformed body. The result records each public error, zero JWKS requests and the
+running image ID. Native raw-listener tests separately verify zero readiness and
+business calls; this Docker evidence does not claim database query counting.
+The retained SDK scenarios use Agent UI workload and signed user context against
+private ACP transports. Browser Bridge, capacity and final cross-service
+acceptance remain separate gates.
 
 Runtime checks cover malformed executable/closed publications, immutable token
 identity on equal and newer revisions, credential-free database/Run/model/log

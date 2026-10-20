@@ -102,6 +102,55 @@ export function decide(payload) {
   return { phase, text: `${phase} verified` };
 }
 
+// Archive the actual model input, not a reconstruction from the case oracle.
+// This stays in private evidence and never enters telemetry or public stdout.
+export function observeFileModelRequest(payload) {
+  const decision = decide(payload);
+  if (decision.call) return decision;
+  const last = payload.messages.findLastIndex(
+    (message) => message.role === "user",
+  );
+  const messages = payload.messages.slice(last + 1);
+  const calls = messages.flatMap((message, index) =>
+    message.role === "assistant"
+      ? (message.tool_calls ?? []).map((call) => ({ call, index }))
+      : [],
+  );
+  assert.equal(calls.length, 1, "one actual file Tool call required");
+  const results = messages.flatMap((message, index) =>
+    message.role === "tool" ? [{ message, index }] : [],
+  );
+  assert.equal(results.length, 1, "one actual file Tool result required");
+  const { call, index } = calls[0];
+  const result = results[0];
+  const item = caseFor(decision.phase);
+  assert(index < result.index, "file result preceded its actual call");
+  // ACP scopes the provider ID to the owning Run and model request. The trace
+  // inspector independently verifies that derivation against the actual Run.
+  assert.match(
+    call.id ?? "",
+    /^[a-f0-9]{64}$/u,
+    "unnormalized file model Tool ID",
+  );
+  assert.equal(
+    result.message.tool_call_id,
+    call.id,
+    "foreign file model result ID",
+  );
+  assert.equal(call.type, "function");
+  assert.equal(call.function.name, item.tool);
+  assert.deepEqual(JSON.parse(call.function.arguments), item.args);
+  const content = result.message.content;
+  return {
+    ...decision,
+    tool_result: {
+      tool_call_id: result.message.tool_call_id,
+      tool: call.function.name,
+      result: JSON.parse(content.slice(content.indexOf("{"))),
+    },
+  };
+}
+
 function start() {
   const requests = [];
   const errors = [];
@@ -126,12 +175,15 @@ function start() {
         assert(size <= 1024 * 1024);
         chunks.push(chunk);
       }
-      const result = decide(JSON.parse(Buffer.concat(chunks).toString()));
+      const result = observeFileModelRequest(
+        JSON.parse(Buffer.concat(chunks).toString()),
+      );
       requests.push({
         phase: result.phase,
         stage: result.call ? "tool" : "final",
         trace_id: request.headers.traceparent.split("-")[1],
         model_span_id: request.headers.traceparent.split("-")[2],
+        ...(result.tool_result ? { tool_result: result.tool_result } : {}),
       });
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(encodeCompletion(result));

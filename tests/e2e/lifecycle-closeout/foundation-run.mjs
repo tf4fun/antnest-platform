@@ -15,6 +15,52 @@ import { applicationServices, assertDeployment } from "./deployment.mjs";
 import { runFoundationFlow } from "./foundation-flow.mjs";
 import { inspectCrashProxyDeployment } from "./crash-evidence.mjs";
 import {
+  configureFoundationPrivate,
+  inspectFoundationPrivateDeployment,
+} from "./foundation-private-deployment.mjs";
+import {
+  foundationPrivateAdmission,
+  foundationPublicResult,
+} from "./foundation-private-evidence.mjs";
+import {
+  configureHealthPrivate,
+  inspectHealthPrivateDeployment,
+} from "./health-private-deployment.mjs";
+import {
+  healthPrivateAdmission,
+  healthPublicResult,
+} from "./health-private-evidence.mjs";
+import { inspectNetworkPrivateDeployment } from "./network-private-deployment.mjs";
+import { networkFailures } from "./network-private-session.mjs";
+import { lossFailures } from "./loss-private-session.mjs";
+import { restoreFailures } from "./restore-private-session.mjs";
+import { shutdownFailures } from "./shutdown-private-flow.mjs";
+import {
+  workspaceFailures,
+  workspacePublicResult,
+} from "../workspace-closeout/private-flow.mjs";
+import { workspacePrivateAdmission } from "../workspace-closeout/private-evidence.mjs";
+import {
+  shutdownPrivateAdmission,
+  shutdownPublicResult,
+} from "./shutdown-private-evidence.mjs";
+import {
+  skillRestorePrivateAdmission,
+  skillRestorePublicResult,
+} from "./skill-restore-private-evidence.mjs";
+import {
+  restorePrivateAdmission,
+  restorePublicResult,
+} from "./restore-private-evidence.mjs";
+import {
+  lossPrivateAdmission,
+  lossPublicResult,
+} from "./loss-private-evidence.mjs";
+import {
+  networkPrivateAdmission,
+  networkPublicResult,
+} from "./network-private-evidence.mjs";
+import {
   foundationTraceExitCode,
   foundationAcceptedTraceExitCode,
 } from "./foundation-evidence.mjs";
@@ -44,7 +90,7 @@ export async function runFoundation(
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   const timer = setTimeout(interrupt, 900000);
-  let config, result, deployment, failure;
+  let config, result, deployment, failure, admission;
   try {
     config = await configuration(
       abort.signal,
@@ -68,6 +114,14 @@ export async function runFoundation(
       config.env.ANTNEST_ADMISSION_TAG = candidateTag;
     }
     configureFoundation(config);
+    if (profile === "foundation") configureFoundationPrivate(config);
+    if (profile === "network") configureFoundationPrivate(config);
+    if (profile === "loss") configureFoundationPrivate(config);
+    if (profile === "restore") configureFoundationPrivate(config);
+    if (profile === "skill-restore") configureFoundationPrivate(config);
+    if (profile === "shutdown") configureFoundationPrivate(config);
+    if (profile === "workspace") configureFoundationPrivate(config);
+    if (profile === "health") configureHealthPrivate(config);
     if (
       [
         "network",
@@ -131,15 +185,24 @@ export async function runFoundation(
       "deployment.private.json",
       JSON.stringify(rows),
     );
-    let baseRows = rows;
-    if (profile === "network") {
-      const { inspectNetworkTarget } = await import("./network-current.mjs");
-      inspectNetworkTarget(rows, config);
-      baseRows = rows.filter(
-        (r) =>
-          r.Config.Labels["com.docker.compose.service"] !== "network-target",
-      );
-    }
+    let baseRows =
+      profile === "foundation"
+        ? inspectFoundationPrivateDeployment(rows, config)
+        : profile === "health"
+          ? inspectHealthPrivateDeployment(rows, config)
+          : profile === "network"
+            ? inspectNetworkPrivateDeployment(rows, config)
+            : profile === "loss"
+              ? inspectFoundationPrivateDeployment(rows, config)
+              : profile === "restore"
+                ? inspectFoundationPrivateDeployment(rows, config)
+                : profile === "skill-restore"
+                  ? inspectFoundationPrivateDeployment(rows, config)
+                  : profile === "shutdown"
+                    ? inspectFoundationPrivateDeployment(rows, config)
+                    : profile === "workspace"
+                      ? inspectFoundationPrivateDeployment(rows, config)
+                      : rows;
     if (profile === "interrupted") {
       const { inspectUpdateProxyDeployment } =
         await import("./interrupted-current.mjs");
@@ -203,14 +266,76 @@ export async function runFoundation(
                         : undefined;
     result = await runFoundationFlow(config, docker, abort.signal, scenario);
     writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result));
+    if (profile === "foundation")
+      admission = foundationPrivateAdmission(result);
+    if (profile === "health") admission = healthPrivateAdmission(result);
+    if (profile === "network") {
+      networkFailures(result.networkErrors);
+      admission = networkPrivateAdmission(result);
+    }
+    if (profile === "loss") {
+      lossFailures(result.lossErrors);
+      admission = lossPrivateAdmission(result);
+    }
+    if (profile === "restore") {
+      restoreFailures(result.restoreErrors);
+      admission = restorePrivateAdmission(result);
+    }
+    if (profile === "skill-restore") {
+      restoreFailures(result.restoreErrors);
+      admission = skillRestorePrivateAdmission(result);
+    }
+    if (profile === "shutdown") {
+      shutdownFailures(result.shutdownErrors);
+      admission = shutdownPrivateAdmission(result);
+    }
+    if (profile === "workspace") {
+      workspaceFailures(result.workspaceErrors);
+      admission = workspacePrivateAdmission(result);
+    }
   } catch (error) {
-    failure = error;
-    if (config?.evidence)
-      writeEvidenceFile(
-        config.evidence,
-        "failure.private.txt",
-        inspect(error, { depth: 8 }),
-      );
+    failure =
+      profile === "network" && result?.networkErrors?.length
+        ? new AggregateError(
+            [...new Set([...result.networkErrors, error])],
+            "Network evidence and final admission failed",
+          )
+        : profile === "loss" && result?.lossErrors?.length
+          ? new AggregateError(
+              [...new Set([...result.lossErrors, error])],
+              "Loss evidence and final admission failed",
+            )
+          : ["restore", "skill-restore"].includes(profile) &&
+              result?.restoreErrors?.length
+            ? new AggregateError(
+                [...new Set([...result.restoreErrors, error])],
+                "Restore evidence and final admission failed",
+              )
+            : profile === "shutdown" && result?.shutdownErrors?.length
+              ? new AggregateError(
+                  [...new Set([...result.shutdownErrors, error])],
+                  "Shutdown evidence and final admission failed",
+                )
+              : profile === "workspace" && result?.workspaceErrors?.length
+                ? new AggregateError(
+                    [...new Set([...result.workspaceErrors, error])],
+                    "Workspace evidence and final admission failed",
+                  )
+                : error;
+    if (config?.evidence) {
+      try {
+        writeEvidenceFile(
+          config.evidence,
+          "failure.private.txt",
+          inspect(failure, { depth: 8 }),
+        );
+      } catch (archiveError) {
+        failure = new AggregateError(
+          [failure, archiveError],
+          "Foundation business and failure archive failed",
+        );
+      }
+    }
     if (config?.evidence) {
       // Preserve bounded, private service diagnostics before owned cleanup.
       const diagnostics = {};
@@ -239,22 +364,47 @@ export async function runFoundation(
       } catch {
         diagnostics.retrieval = "diagnostic retrieval failed";
       }
-      writeEvidenceFile(
-        config.evidence,
-        "services.private.json",
-        JSON.stringify(diagnostics),
-      );
+      try {
+        writeEvidenceFile(
+          config.evidence,
+          "services.private.json",
+          JSON.stringify(diagnostics),
+        );
+      } catch (archiveError) {
+        failure = new AggregateError(
+          [failure, archiveError],
+          "Foundation business and service archive failed",
+        );
+      }
     }
   } finally {
     clearTimeout(timer);
     try {
       if (config) await cleanup(config);
+    } catch (cleanupError) {
+      failure = failure
+        ? new AggregateError(
+            [failure, cleanupError],
+            "Foundation business and Docker cleanup failed",
+          )
+        : cleanupError;
     } finally {
       process.removeListener("SIGINT", interrupt);
       process.removeListener("SIGTERM", interrupt);
     }
   }
   if (failure) {
+    if (config?.evidence) {
+      try {
+        writeEvidenceFile(
+          config.evidence,
+          "failure.private.txt",
+          inspect(failure, { depth: 12 }),
+        );
+      } catch {
+        /* The original archive error remains in the failure above. */
+      }
+    }
     console.error(
       "Foundation business/topology failed; diagnostics retained privately",
     );
@@ -268,9 +418,16 @@ export async function runFoundation(
     ...(result.active_run_rebuild?.run_traces ?? result.request_traces ?? []),
     ...(result.policy_traces ?? []),
     ...(result.watch_traces ?? []),
+    ...(result.state_traces ?? []),
+    ...(result.notification_traces ?? []),
+    ...(result.authority_traces ?? []),
+    ...(result.offboarding_traces ?? []),
   ];
-  const strictCode = foundationTraceExitCode(traceEvidence);
-  const code = foundationAcceptedTraceExitCode(traceEvidence, profile);
+  const strictCode =
+    admission?.strict_exit ?? foundationTraceExitCode(traceEvidence);
+  const code =
+    admission?.accepted_exit ??
+    foundationAcceptedTraceExitCode(traceEvidence, profile);
   const reviewed = strictCode === 2 && code === 0;
   console.log(
     JSON.stringify({
@@ -280,7 +437,24 @@ export async function runFoundation(
           : profile === "crash"
             ? "business_and_recovery_topology_passed"
             : "business_and_topology_passed",
-      ...result,
+      ...(profile === "foundation"
+        ? foundationPublicResult(result)
+        : profile === "health"
+          ? healthPublicResult(result)
+          : profile === "network"
+            ? networkPublicResult(result)
+            : profile === "loss"
+              ? lossPublicResult(result)
+              : profile === "restore"
+                ? restorePublicResult(result)
+                : profile === "skill-restore"
+                  ? skillRestorePublicResult(result)
+                  : profile === "shutdown"
+                    ? shutdownPublicResult(result)
+                    : profile === "workspace"
+                      ? workspacePublicResult(result)
+                      : result),
+      ...(admission ? { private_admission: admission } : {}),
       deployment,
       cleanup: "verified",
       strict_exit: strictCode,

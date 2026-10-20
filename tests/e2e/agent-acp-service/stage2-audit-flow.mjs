@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { json, registerFixturePrincipal } from "./stage2-transport.mjs";
 import { gatewayLogin } from "./stage2-gateway.mjs";
+import { stage2Step } from "./stage2-step.mjs";
 
 export async function verifyAdministrativeAudit({
   gateway,
@@ -12,6 +13,8 @@ export async function verifyAdministrativeAudit({
   rpc,
   modelState,
   compose,
+  secrets = [],
+  sessions = [],
 }) {
   const traces = [];
   const request = async (path, cookie = "", status = 200, extra = {}) => {
@@ -32,8 +35,12 @@ export async function verifyAdministrativeAudit({
       traces.push(traceId);
     return payload;
   };
-  const login = (slug, email, password) =>
-    gatewayLogin(gateway, slug, email, password);
+  const login = async (slug, email, password) => {
+    const result = await gatewayLogin(gateway, slug, email, password);
+    secrets.push(result.accessToken, result.csrf, password);
+    sessions.push(result.accessToken);
+    return result;
+  };
   const command = (method, body) =>
     json(`${identity}/rpc/identity/${method}`, {
       request_id: `stage2-audit-${method}`,
@@ -174,13 +181,14 @@ export async function verifyAdministrativeAudit({
     400,
   );
 
-  compose("stop", "agent-acp-service");
-  try {
-    await request(listPath, admin.cookie, 503);
-    await request("/api/admin/agents", admin.cookie);
-  } finally {
-    compose("up", "-d", "--no-deps", "--wait", "agent-acp-service");
-  }
+  await stage2Step(
+    async () => {
+      compose("stop", "agent-acp-service");
+      await request(listPath, admin.cookie, 503);
+      await request("/api/admin/agents", admin.cookie);
+    },
+    () => compose("up", "-d", "--no-deps", "--wait", "agent-acp-service"),
+  );
   assert.deepEqual(await request(listPath, admin.cookie), before);
   assert.equal(
     (await modelState()).attempts.length,
