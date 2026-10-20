@@ -123,6 +123,15 @@ startup cleanup/protection restoration and current configuration application.
 Transport availability is separate: an authenticated protocol connection can
 receive configuration-unavailable errors without a blanket handshake 503.
 
+Prompt preparation checks the current published access before preempting Skill
+learning or cleaning temporary Skills. Durable Run acceptance still performs
+its own ordered authorization; the preparation check cannot grant later access.
+When revocation overlaps lifecycle cancellation during preparation, the request
+retains `access_denied`, including when access is subsequently restored. The
+original cancellation signal and cleanup join are preserved. This classification
+does not replace unrelated preparation failures, shutdown reasons, or failures
+after durable acceptance has begun.
+
 Older snapshots return the actual newer live-applied revision without overwriting
 state. A stored revision alone cannot authorize this response after restart;
 stale input then fails until the current configuration is applied. Equal

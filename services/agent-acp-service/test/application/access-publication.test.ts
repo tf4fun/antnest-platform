@@ -62,9 +62,14 @@ describe("configuration publication access effects", () => {
 
   it("revokes a pending acceptance even if its database commit subsequently succeeds", async () => {
     const gate = Promise.withResolvers<AcceptedAcpRun>();
+    const accepting = Promise.withResolvers<void>();
     const execute = vi.fn<RunExecutionPort["execute"]>(() => Promise.resolve(completed));
     const supervisor = new RunSupervisor({ execute });
-    const pending = supervisor.submit(submission(), () => gate.promise);
+    const pending = supervisor.submit(submission(), () => {
+      accepting.resolve();
+      return gate.promise;
+    });
+    await accepting.promise;
     try {
       supervisor.revokeAccess(revoked);
     } finally {
