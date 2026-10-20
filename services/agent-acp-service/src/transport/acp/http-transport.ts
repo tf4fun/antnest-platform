@@ -43,6 +43,9 @@ export class AcpHttpTransport {
   private readonly closing = new Set<Promise<void>>();
   private readonly telemetry: TelemetryPort;
   private stopped = false;
+  private draining = false;
+  private drainPromise: Promise<void> | undefined;
+  private readonly drained = Promise.withResolvers<void>();
 
   public constructor(private readonly options: Options) {
     this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
@@ -50,14 +53,15 @@ export class AcpHttpTransport {
 
   public async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
-      if (this.stopped || !(await this.options.ready())) return reply(response, 503);
+      if (this.stopped || !(await this.available(request.method))) return reply(response, 503);
       if (!["POST", "GET", "DELETE"].includes(request.method ?? "")) {
         response.setHeader("Allow", "POST, GET, DELETE");
         return reply(response, 405);
       }
       const identity = trustedIdentity(request.headers);
       if (identity === null) return reply(response, 401);
-      if (this.isStopped() || response.destroyed) return reply(response, 503);
+      if (this.isStopped() || (this.draining && request.method !== "DELETE") || response.destroyed)
+        return reply(response, 503);
       const entry = this.admit(request, response, identity);
       if (entry) await entry.handle(request, response);
     } catch (error) {
@@ -69,9 +73,53 @@ export class AcpHttpTransport {
   }
 
   public async close(): Promise<void> {
+    this.stop();
+    await Promise.allSettled(this.closing);
+  }
+
+  /** Normal shutdown preserves existing cleanup receipts for one bounded window. */
+  public drain(timeoutMs = 5_000): Promise<void> {
+    if (this.drainPromise !== undefined) return this.drainPromise;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5_000)
+      throw new RangeError("Invalid ACP HTTP drain timeout");
+    this.draining = true;
+    this.drainPromise = this.drainOnce(timeoutMs);
+    return this.drainPromise;
+  }
+
+  private async drainOnce(timeoutMs: number): Promise<void> {
+    const timer = setTimeout(() => this.stop(), timeoutMs);
+    timer.unref();
+    try {
+      for (const entry of this.entries) void this.retire(entry).catch(() => undefined);
+      if (this.entries.size === 0) this.drained.resolve();
+      await this.drained.promise;
+    } finally {
+      clearTimeout(timer);
+      await this.close();
+    }
+  }
+
+  private stop(): void {
     this.stopped = true;
     for (const entry of this.entries) this.release(entry);
-    await Promise.allSettled(this.closing);
+  }
+
+  private async available(method: string | undefined): Promise<boolean> {
+    if (this.isDraining()) return method === "DELETE";
+    let ready: boolean;
+    try {
+      ready = await this.options.ready();
+    } catch (error) {
+      if (!this.isDraining()) throw error;
+      ready = false;
+    }
+    // Shutdown can begin while the original dependency readiness read awaits.
+    return this.isDraining() ? method === "DELETE" : ready;
+  }
+
+  private isDraining(): boolean {
+    return this.draining;
   }
 
   private isStopped(): boolean {
@@ -163,6 +211,7 @@ export class AcpHttpTransport {
     const forget = () => {
       this.entries.delete(entry);
       this.closing.delete(closed);
+      if (this.draining && this.entries.size === 0) this.drained.resolve();
     };
     void closed.then(forget, forget);
   }

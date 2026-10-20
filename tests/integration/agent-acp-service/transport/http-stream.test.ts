@@ -38,6 +38,7 @@ import { DomainError } from "../../../../services/agent-acp-service/src/domain/e
 import type { AgentAcpHttpServerOptions } from "../../../../services/agent-acp-service/src/transport/http-server.js";
 import type { LearningChangeItem } from "../../../../services/agent-acp-service/src/adapters/postgres/learning-change-read.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
+import { CALLER_CONTEXT_HEADER } from "../../../../services/agent-acp-service/src/adapters/caller-context.js";
 
 function headers(principalId = "owner") {
   return identityHeaders({ ...binding(), principalId });
@@ -113,7 +114,7 @@ describe("ACP v1 Streamable HTTP", () => {
   });
 
   async function start(
-    ready = true,
+    ready: boolean | (() => Promise<boolean>) = true,
     limit = 4096,
     notices?: AgentAcpHttpServerOptions["notices"],
     skillCommands?: AgentAcpHttpServerOptions["skillCommands"],
@@ -123,7 +124,7 @@ describe("ACP v1 Streamable HTTP", () => {
     server = new AgentAcpHttpServer({
       authentication: testAuthentication(),
       application,
-      ready: () => Promise.resolve(ready),
+      ready: typeof ready === "function" ? ready : () => Promise.resolve(ready),
       maxWebSocketPayloadBytes: limit,
       ...(notices === undefined ? {} : { notices }),
       ...(skillCommands === undefined ? {} : { skillCommands }),
@@ -723,6 +724,339 @@ describe("ACP v1 Streamable HTTP", () => {
     sent.flushHeaders();
     return { sent, completed: completed.promise };
   }
+
+  it("acknowledges the official client's original DELETE during normal shutdown after readiness stops", async () => {
+    let serving = true;
+    await start(() => Promise.resolve(serving));
+    const receiving = Promise.withResolvers<void>();
+    const deleting = Promise.withResolvers<void>();
+    const deleted = Promise.withResolvers<{ status: number; body: string }>();
+    void deleted.promise.catch(() => undefined);
+    let attempts = 0;
+    let deleteRequest: Promise<Response> | undefined;
+    const connection = acp.client().connect(
+      createHttpStream(url, {
+        headers: headers(),
+        fetch: (input, init) => {
+          const method =
+            init?.method ?? (input instanceof Request ? input.method : "GET");
+          const sent = fetch(input, init).then(async (response) => {
+            if (method === "GET" && response.status === 200)
+              receiving.resolve();
+            if (method === "DELETE")
+              deleted.resolve({
+                status: response.status,
+                body: await response.clone().text(),
+              });
+            return response;
+          });
+          if (method === "DELETE") {
+            attempts++;
+            deleteRequest = sent;
+            void sent.catch(deleted.reject);
+            deleting.resolve();
+          }
+          return sent;
+        },
+      }),
+    );
+    connections.push(connection);
+    let stopping: Promise<void> | undefined;
+    let cleanup: ReturnType<typeof holdSdkCleanup> | undefined;
+    try {
+      await connection.agent.request(
+        acp.methods.agent.initialize,
+        initialize.params,
+      );
+      await receiving.promise;
+      cleanup = holdSdkCleanup();
+      serving = false;
+      stopping = server!.close();
+      expect(server!.close()).toBe(stopping);
+      await Promise.all([cleanup.entered, deleting.promise]);
+      const rejected = await request("POST", "owner", undefined, initialize);
+      expect(rejected.status).toBe(503);
+      await rejected.text();
+      cleanup.release();
+      expect(await deleted.promise).toEqual({ status: 202, body: "" });
+      await stopping;
+      expect(attempts).toBe(1);
+      expect(application.cancelRun).not.toHaveBeenCalled();
+      expect(application.deleteSession).not.toHaveBeenCalled();
+    } finally {
+      cleanup?.release();
+      connection.close();
+      await connection.closed;
+      await Promise.allSettled([deleteRequest, stopping]);
+    }
+  });
+
+  it.each([false, true])(
+    "drain waits for original cleanup before a DELETE response (failure=%s)",
+    async (failure) => {
+      let serving = true;
+      const admitted = Promise.withResolvers<void>();
+      const transport = await startBounded(
+        300_000,
+        { ready: () => Promise.resolve(serving) },
+        (incoming) => {
+          if (incoming.method === "DELETE") admitted.resolve();
+        },
+      );
+      const id = await open();
+      const cleanup = holdSdkCleanup(failure);
+      let stopping: Promise<void> | undefined;
+      let pending: Promise<{ status: number; body: string }> | undefined;
+      let received = false;
+      try {
+        serving = false;
+        stopping = transport.drain(1000);
+        expect(transport.drain(1)).toBe(stopping);
+        await cleanup.entered;
+        pending = request("DELETE", "owner", id).then(async (response) => {
+          received = true;
+          return { status: response.status, body: await response.text() };
+        });
+        void pending.catch(() => undefined);
+        await admitted.promise;
+        const rejected = await request("GET", "owner", id);
+        expect(rejected.status).toBe(503);
+        await rejected.text();
+        expect(received).toBe(false);
+        cleanup.release();
+        const result = await pending;
+        expect(result.status).toBe(failure ? 503 : 202);
+        expect(result.body).not.toContain("cleanup-private-canary");
+        if (failure) {
+          const again = await request("DELETE", "owner", id);
+          expect(again.status).toBe(503);
+          await again.text();
+          await transport.close();
+        }
+        await stopping;
+        expect(cleanup.close).toHaveBeenCalledOnce();
+      } finally {
+        cleanup.release();
+        await transport.close();
+        await Promise.allSettled([pending, stopping]);
+      }
+    },
+  );
+
+  it.each(["organizationId", "principalId", "agentId"])(
+    "drain preserves workload/CCT admission, %s binding and one original acknowledgement",
+    async (field) => {
+      let serving = true;
+      const transport = await startBounded(300_000, {
+        maxConnections: 2,
+        ready: () => Promise.resolve(serving),
+      });
+      const id = await open();
+      const other = await open();
+      let stopping: Promise<void> | undefined;
+      try {
+        serving = false;
+        stopping = transport.drain(1000);
+        const unauthenticated = await fetch(url, {
+          method: "DELETE",
+          headers: { "Acp-Connection-Id": id },
+        });
+        expect(unauthenticated.status).toBe(401);
+        await unauthenticated.text();
+        const noContext = headers();
+        delete noContext[CALLER_CONTEXT_HEADER];
+        const contextless = await fetch(url, {
+          method: "DELETE",
+          headers: { ...noContext, "Acp-Connection-Id": id },
+        });
+        expect(contextless.status).toBe(401);
+        await contextless.text();
+        const foreign = await fetch(url, {
+          method: "DELETE",
+          headers: {
+            ...identityHeaders({
+              ...binding(),
+              principalId: "owner",
+              [field]: "intruder",
+            }),
+            "Acp-Connection-Id": id,
+          },
+        });
+        expect(foreign.status).toBe(403);
+        await foreign.text();
+        for (const [method, connectionId, expected, body] of [
+          ["GET", id, 503, undefined],
+          ["POST", id, 503, initialize],
+          ["POST", undefined, 503, initialize],
+          ["DELETE", "unknown-id", 404, undefined],
+          ["DELETE", id, 400, { invalid: true }],
+          ["DELETE", id, 413, { data: "x".repeat(8192) }],
+          ["DELETE", id, 202, undefined],
+          ["DELETE", id, 404, undefined],
+          ["DELETE", other, 202, undefined],
+        ] as const) {
+          const response = await request(method, "owner", connectionId, body);
+          expect(response.status).toBe(expected);
+          await response.text();
+        }
+        await stopping;
+      } finally {
+        await transport.close();
+        await Promise.allSettled([stopping]);
+      }
+    },
+  );
+
+  it("ordinary not-ready operation cannot acknowledge an old connection", async () => {
+    let serving = true;
+    await startBounded(300_000, { ready: () => Promise.resolve(serving) });
+    const id = await open();
+    serving = false;
+    const rejected = await request("DELETE", "owner", id);
+    expect(rejected.status).toBe(503);
+    await rejected.text();
+    serving = true;
+    const accepted = await request("DELETE", "owner", id);
+    expect(accepted.status).toBe(202);
+    await accepted.text();
+  });
+
+  it.each([
+    ["POST", "ready"],
+    ["DELETE", "not_ready"],
+    ["DELETE", "failure"],
+  ] as const)(
+    "drain rechecks a %s already waiting for readiness (%s)",
+    async (method, readiness) => {
+      const ready = Promise.withResolvers<boolean>();
+      const entered = Promise.withResolvers<void>();
+      let hold = false;
+      const transport = await startBounded(300_000, {
+        maxConnections: 2,
+        ready: () => {
+          if (!hold) return Promise.resolve(true);
+          entered.resolve();
+          return ready.promise;
+        },
+      });
+      const id = await open();
+      hold = true;
+      const pending = request(
+        method,
+        "owner",
+        method === "DELETE" ? id : undefined,
+        method === "POST" ? initialize : undefined,
+      );
+      void pending.catch(() => undefined);
+      let stopping: Promise<void> | undefined;
+      try {
+        await entered.promise;
+        stopping = transport.drain(1000);
+        if (readiness === "failure")
+          ready.reject(new Error("Readiness read failed"));
+        else ready.resolve(readiness === "ready");
+        const response = await pending;
+        expect(response.status).toBe(method === "POST" ? 503 : 202);
+        await response.text();
+        if (method === "POST") {
+          const acknowledged = await request("DELETE", "owner", id);
+          expect(acknowledged.status).toBe(202);
+          await acknowledged.text();
+        }
+        await stopping;
+      } finally {
+        ready.resolve(false);
+        await transport.close();
+        await Promise.allSettled([pending, stopping]);
+      }
+    },
+  );
+
+  it("drain deadline aborts a held DELETE body and still joins pending cleanup", async () => {
+    const admitted = Promise.withResolvers<void>();
+    const transport = await startBounded(300_000, {}, (incoming) => {
+      if (incoming.method === "DELETE") admitted.resolve();
+    });
+    const id = await open();
+    const pending = heldDelete(id);
+    const cleanup = holdSdkCleanup();
+    let stopping: Promise<void> | undefined;
+    let stopped = false;
+    try {
+      await admitted.promise;
+      stopping = transport.drain(100).then(() => {
+        stopped = true;
+      });
+      await cleanup.entered;
+      await expect(pending.completed).rejects.toThrow();
+      expect(stopped).toBe(false);
+      cleanup.release();
+      await stopping;
+      expect(stopped).toBe(true);
+    } finally {
+      cleanup.release();
+      pending.sent.destroy();
+      await transport.close();
+      await Promise.allSettled([pending.completed, stopping]);
+    }
+  });
+
+  it("drain retains a second admitted body after an ACK until its fixed deadline", async () => {
+    const admitted = Promise.withResolvers<void>();
+    const transport = await startBounded(300_000, {}, (incoming) => {
+      if (incoming.method === "DELETE") admitted.resolve();
+    });
+    const id = await open();
+    const pending = heldDelete(id);
+    let stopping: Promise<void> | undefined;
+    try {
+      await admitted.promise;
+      stopping = transport.drain(200);
+      const accepted = await request("DELETE", "owner", id);
+      expect(accepted.status).toBe(202);
+      await accepted.text();
+      await expect(pending.completed).rejects.toThrow();
+      await stopping;
+    } finally {
+      pending.sent.destroy();
+      await transport.close();
+      await Promise.allSettled([pending.completed, stopping]);
+    }
+  });
+
+  it("drain does not extend an existing retirement deadline", async () => {
+    const admitted = Promise.withResolvers<void>();
+    const { id, transport, retire } = await retiringConnection(
+      { closeReceiptTimeoutMs: 100 },
+      (incoming) => {
+        if (incoming.method === "DELETE") admitted.resolve();
+      },
+    );
+    const pending = heldDelete(id);
+    let stopping: Promise<void> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await admitted.promise;
+      await retire();
+      stopping = transport.drain(1000);
+      const result = await Promise.race([
+        pending.completed.then(
+          () => "acknowledged",
+          () => "aborted",
+        ),
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("original deadline missed"), 500);
+        }),
+      ]);
+      expect(result).toBe("aborted");
+      await stopping;
+    } finally {
+      clearTimeout(timer);
+      pending.sent.destroy();
+      await transport.close();
+      await Promise.allSettled([pending.completed, stopping]);
+    }
+  });
 
   it.each(["organizationId", "principalId", "agentId"])(
     "retains remote cleanup only for its original %s binding",

@@ -90,9 +90,21 @@ ID, but the entry remains owned and counted until cleanup and all already
 admitted responses finish. Their original retirement deadline remains in force;
 other requests never renew it. Expiry removes the ID and aborts outstanding
 responses, but pending cleanup retains its capacity until it settles. Idle expiry,
-failed initialization and process shutdown do not create new acknowledgements.
-Shutdown rejects new work, aborts outstanding responses and joins cleanup;
-late SDK close callbacks cannot restore an expired or released entry.
+failed initialization and forced shutdown do not create new acknowledgements.
+Late SDK close callbacks cannot restore an expired or released entry.
+
+Normal process shutdown explicitly drains HTTP connections for at most five
+seconds, concurrently with WebSocket shutdown. It rejects new connections and
+GET/POST work, closes existing streams, and retains only already admitted
+connection IDs and their original bindings and cleanup results. During this
+explicit drain, authenticated same-binding DELETE requests may complete even
+though process readiness is false. Ordinary not-ready operation has no such
+exception. Workload/CCT admission, identity matching, full empty-body validation
+and cleanup-before-202 remain mandatory; cleanup failures remain failures.
+The drain does not extend an existing retirement deadline. After all entries
+finish, or when the drain expires, forced shutdown aborts any remaining responses
+and joins their cleanup before listener retirement. A held DELETE body or a
+nonresponsive peer cannot renew the shutdown window.
 
 ## Provider destinations (#28)
 

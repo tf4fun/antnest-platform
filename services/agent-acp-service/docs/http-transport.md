@@ -56,8 +56,16 @@ body is still checked: nonempty bodies return 400 and oversized bodies return
 remains a failure on subsequent DELETE requests. The deadline does not restart
 on reads, rejected bodies or repeated DELETE requests. Expiry removes the ID,
 while pending cleanup continues to occupy capacity until it settles. Idle
-expiry, failed initialization and shutdown cannot create a fresh receipt.
-Shutdown rejects new work, aborts pending responses and joins SDK cleanup.
+expiry, failed initialization and forced shutdown cannot create a fresh receipt.
+Normal process shutdown drains existing HTTP connections for at most five
+seconds concurrently with WebSocket shutdown. It rejects new connections and
+GET/POST work while closing existing streams. Only the original authenticated
+same-binding DELETE may complete during that explicit drain despite readiness
+being false; ordinary not-ready operation still rejects it. Complete empty-body
+validation and actual cleanup-before-202 remain required, and cleanup failures
+remain 503. Existing retirement deadlines are not renewed. The drain finishes
+when all entries have joined, or forces response closure at its fixed deadline
+and then joins pending cleanup before retiring the listener.
 See the [shared retirement contract](../../../contracts/agent-acp/service-authentication.md#private-http-transport-retirement).
 
 HTTP bodies use the existing ACP payload limit. Stream spans record metadata,

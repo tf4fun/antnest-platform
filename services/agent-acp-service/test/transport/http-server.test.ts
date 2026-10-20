@@ -97,6 +97,37 @@ describe("AgentAcpHttpServer", () => {
     expect(code).toBe(1001);
   });
 
+  it("drains an unacknowledged HTTP connection and stalled WebSocket within one shutdown window", async () => {
+    server = undefined;
+    const { peer, url, headers } = await openPeer();
+    const initialized = await fetch(url.replace("ws:", "http:"), {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: 1, clientCapabilities: {} },
+      }),
+    });
+    expect(initialized.status).toBe(200);
+    await initialized.text();
+    expect(initialized.headers.get("acp-connection-id")).not.toBeNull();
+    peer.pause();
+    try {
+      const started = performance.now();
+      await server!.close();
+      expect(performance.now() - started).toBeLessThan(7500);
+      expect(server!.address()).toBeNull();
+      const closed = once(peer, "close");
+      peer.resume();
+      const [code] = (await closed) as [number];
+      expect(code).toBe(1001);
+    } finally {
+      peer.resume();
+    }
+  }, 15_000);
+
   it("real HTTP receipts and observations serialize the repository mapping against the central contract", async () => {
     const schema = JSON.parse(
       readFileSync(

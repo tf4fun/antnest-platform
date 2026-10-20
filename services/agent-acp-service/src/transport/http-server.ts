@@ -182,7 +182,31 @@ export class AgentAcpHttpServer {
   }
 
   private async closeOnce(): Promise<void> {
-    await this.httpTransport.close();
+    // Both transports receive the same five-second shutdown window. Keep HTTP
+    // listening for existing connections' authenticated cleanup acknowledgements.
+    const results = await Promise.allSettled([this.httpTransport.drain(), this.closeWebSockets()]);
+    results.push(
+      ...(await Promise.allSettled(
+        [this.server, this.controlServer].map(async (server) => {
+          if (!server.listening) return;
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error === undefined ? resolve() : reject(error)));
+            server.closeAllConnections();
+          });
+        }),
+      )),
+    );
+    const errors = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (errors.length)
+      throw new AggregateError(
+        errors.map((result) => result.reason as unknown),
+        "Listener shutdown failed",
+      );
+  }
+
+  private async closeWebSockets(): Promise<void> {
     await Promise.all(
       [...this.connections].map(
         (socket) =>
@@ -202,23 +226,6 @@ export class AgentAcpHttpServer {
     await new Promise<void>((resolve) => {
       this.webSockets.close(() => resolve());
     });
-    const results = await Promise.allSettled(
-      [this.server, this.controlServer].map(async (server) => {
-        if (!server.listening) return;
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) => (error === undefined ? resolve() : reject(error)));
-          server.closeAllConnections();
-        });
-      }),
-    );
-    const errors = results.filter(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
-    if (errors.length)
-      throw new AggregateError(
-        errors.map((result) => result.reason as unknown),
-        "Listener shutdown failed",
-      );
   }
 
   private async handleHttp(

@@ -23,6 +23,13 @@ Normal process shutdown sends WebSocket close code `1001` on both protocol
 endpoints and joins the peer close before retiring the listeners. New upgrades
 are rejected once shutdown begins. A peer that does not acknowledge within five
 seconds is disconnected, so it cannot exhaust the process shutdown deadline.
+HTTP connections receive the same concurrent five-second shutdown window:
+existing streams close, new work is rejected, and only authenticated original
+connection DELETE requests may finish their actual cleanup before receiving 202.
+The explicit shutdown drain permits those acknowledgements after readiness
+stops; ordinary not-ready operation does not. At the fixed deadline outstanding
+responses are aborted and cleanup is joined before listeners retire. See the
+[HTTP retirement contract](docs/http-transport.md).
 
 Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP keys under the [development secret policy](../../contracts/platform/development-secrets.md). The exact independent `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits one variable-only WARN per affected setting and enables neither Skill learning debug mode nor removed Registry bearers.
 

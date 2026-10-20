@@ -108,6 +108,12 @@ separate from the subsequent online key rotation. See
 
 ### Changed
 
+Normal ACP shutdown lets existing authenticated HTTP connections complete their
+cleanup acknowledgement after readiness stops. HTTP and WebSocket peers share
+one five-second shutdown window; remaining responses are then aborted and cleanup
+is joined. This prevents a normal ACP restart from leaving the Workspace Bridge
+unavailable because its original DELETE was rejected during shutdown (#64).
+
 Large Workspace uploads yield between body parsing and Prompt preparation.
 ACP serializes access by Agent, so one Agent's large Prompt persistence no
 longer queues another Agent's permission and cancellation reads in the same
