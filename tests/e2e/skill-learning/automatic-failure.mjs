@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { responseFailure } from "../identity-closeout/request-failure.mjs";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
+import { summarizeFailure } from "../../support/verification/failure.mjs";
 
 const traceID = /^[a-f0-9]{32}$/u;
 const changeID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
@@ -39,6 +40,18 @@ export function learningViewReceipt(
   { status, traceID: id, text },
   { mode, agentId, sessionId, requestedAt, now = Date.now },
 ) {
+  let availability;
+  try {
+    const value = JSON.parse(text)?.availability;
+    availability =
+      value === undefined
+        ? "missing"
+        : ["ready", "busy", "offline"].includes(value)
+          ? value
+          : "unrecognized";
+  } catch {
+    availability = "invalid_json";
+  }
   return {
     status: "skill_learning_view_response",
     mode,
@@ -49,6 +62,84 @@ export function learningViewReceipt(
     requested_at: requestedAt,
     observed_at: now(),
     ...responseFailure({ status, headers: { get: () => id } }, text, 200),
+    availability,
+  };
+}
+
+// Observe the existing poll only. Keep all outcome counts and at most four
+// original samples; diagnostic Trace queries must not grow with poll count.
+export function createLearningReadinessProbe(context) {
+  const now = context.now ?? Date.now;
+  let attempts = 0,
+    responses = 0,
+    requestFailures = 0,
+    first,
+    firstFailure,
+    firstNotReady,
+    last;
+  const outcomes = {};
+  return {
+    async check(request) {
+      const attempt = ++attempts,
+        requestedAt = now();
+      let receipt, failure;
+      try {
+        const view = await request((response) => {
+          receipt = learningViewReceipt(response, {
+            ...context,
+            requestedAt,
+            now,
+          });
+        });
+        return view.body.availability === "ready";
+      } catch (error) {
+        failure = summarizeFailure(error);
+        requestFailures++;
+        return false;
+      } finally {
+        if (receipt) responses++;
+        const sample = {
+          attempt,
+          ...(receipt ?? {
+            status: failure
+              ? "skill_learning_readiness_request_failed"
+              : "skill_learning_readiness_response_unobserved",
+            mode: context.mode,
+            method: "GET",
+            operation: "agent_view",
+            agent_id: context.agentId,
+            requested_at: requestedAt,
+            observed_at: now(),
+          }),
+          ...(failure ? { request_failure: failure } : {}),
+        };
+        const outcome = receipt
+          ? receipt.http_status === 200
+            ? receipt.availability
+            : "http_failure"
+          : failure
+            ? "transport_failure"
+            : "unobserved_response";
+        outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+        first ??= sample;
+        if (failure) firstFailure ??= sample;
+        if (receipt?.http_status === 200 && receipt.availability !== "ready")
+          firstNotReady ??= sample;
+        last = sample;
+      }
+    },
+    snapshot() {
+      return structuredClone({
+        diagnostic_only: true,
+        attempts,
+        response_count: responses,
+        request_failures: requestFailures,
+        outcomes,
+        samples: [...new Set([first, firstFailure, firstNotReady, last])]
+          .filter(Boolean)
+          .sort((a, b) => a.attempt - b.attempt),
+      });
+    },
   };
 }
 

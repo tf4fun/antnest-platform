@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as failures from "./automatic-failure.mjs";
+import { GatewayClient } from "../identity-closeout/support.mjs";
+import { annotateFailure } from "../../support/verification/failure.mjs";
 import {
   captureLearningFailureTraces,
   learningClientFailure,
@@ -525,6 +528,7 @@ test("a view receipt retains the actual failed HTTP response without its private
     expected_status: 200,
     trace_id: traceID,
     response_code: "upstream_unavailable",
+    availability: "missing",
   });
   assert(!JSON.stringify(receipt).includes(privateText));
   for (const invalidID of ["0".repeat(32), "../../private", undefined]) {
@@ -541,6 +545,157 @@ test("a view receipt retains the actual failed HTTP response without its private
     assert(!JSON.stringify(unknown).includes(privateText));
   }
 });
+
+for (const [text, availability] of [
+  ['{"availability":"ready"}', "ready"],
+  ['{"availability":"busy"}', "busy"],
+  ['{"availability":"offline"}', "offline"],
+  [JSON.stringify({ availability: privateText }), "unrecognized"],
+  ["{}", "missing"],
+  ["null", "missing"],
+  ["{", "invalid_json"],
+]) {
+  test(`view diagnostics retain only allowlisted availability: ${availability}`, () => {
+    const receipt = failures.learningViewReceipt(
+      { status: 200, traceID, text },
+      { mode: "readiness", agentId: changeID, requestedAt: 1000 },
+    );
+    assert.equal(receipt.availability, availability);
+    assert(!JSON.stringify(receipt).includes(privateText));
+  });
+}
+
+test("readiness diagnostics remain bounded and preserve first failure, first non-ready and last response", async () => {
+  assert.equal(typeof failures.createLearningReadinessProbe, "function");
+  let time = 1000,
+    calls = 0;
+  const probe = failures.createLearningReadinessProbe({
+    mode: "incident-restart-readiness",
+    agentId: changeID,
+    now: () => time++,
+  });
+  for (let attempt = 1; attempt <= 300; attempt++) {
+    const ready = await probe.check(async (onResponse) => {
+      calls++;
+      const status = attempt === 2 ? 503 : 200;
+      const availability = attempt === 300 ? "ready" : "offline";
+      onResponse({
+        status,
+        traceID: attempt.toString(16).padStart(32, "0"),
+        text: JSON.stringify({ availability, detail: privateText }),
+      });
+      if (status === 503)
+        throw annotateFailure(new Error(privateText), {
+          request_phase: "http-status",
+          http_status: status,
+        });
+      return { body: { availability } };
+    });
+    assert.equal(ready, attempt === 300);
+  }
+  const snapshot = probe.snapshot();
+  assert.equal(calls, 300, "diagnostics must not replay a request");
+  assert.equal(snapshot.diagnostic_only, true);
+  assert.equal(snapshot.attempts, 300);
+  assert.equal(snapshot.response_count, 300);
+  assert.equal(snapshot.request_failures, 1);
+  assert.deepEqual(snapshot.outcomes, {
+    offline: 298,
+    http_failure: 1,
+    ready: 1,
+  });
+  assert.deepEqual(
+    snapshot.samples.map((sample) => sample.attempt),
+    [1, 2, 300],
+  );
+  assert.equal(
+    snapshot.samples[1].request_failure.request_phase,
+    "http-status",
+  );
+  assert.equal(snapshot.samples.at(-1).availability, "ready");
+  assert(!JSON.stringify(snapshot).includes(privateText));
+  snapshot.samples[0].availability = "changed-by-reader";
+  assert.equal(probe.snapshot().samples[0].availability, "offline");
+});
+
+for (const scenario of [
+  "offline",
+  "busy",
+  "http-failure",
+  "invalid-json",
+  "transport-failure",
+]) {
+  test(`readiness captures the original Gateway ${scenario} attempt without changing admission`, async (t) => {
+    assert.equal(typeof failures.createLearningReadinessProbe, "function");
+    let requests = 0;
+    const server = createServer((request, response) => {
+      requests++;
+      if (scenario === "transport-failure") {
+        request.socket.destroy();
+        return;
+      }
+      response.writeHead(scenario === "http-failure" ? 503 : 200, {
+        "content-type": "application/json",
+        ...(scenario === "busy" ? {} : { "x-antnest-trace-id": traceID }),
+      });
+      response.end(
+        scenario === "invalid-json"
+          ? "{"
+          : JSON.stringify({
+              availability: scenario,
+              detail: privateText,
+              code: "upstream_unavailable",
+            }),
+      );
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(async () => {
+      server.closeAllConnections();
+      await new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    });
+    const client = new GatewayClient(
+      `http://127.0.0.1:${server.address().port}`,
+    );
+    const probe = failures.createLearningReadinessProbe({
+      mode: "incident-restart-readiness",
+      agentId: changeID,
+    });
+    assert.equal(
+      await probe.check((onResponse) =>
+        client.request("/view", { onResponse }),
+      ),
+      false,
+    );
+    const snapshot = probe.snapshot(),
+      sample = snapshot.samples[0];
+    assert.equal(client.requests, 1);
+    assert.equal(requests, 1);
+    assert.equal(snapshot.attempts, 1);
+    if (scenario === "transport-failure") {
+      assert.equal(snapshot.response_count, 0);
+      assert.equal(sample.status, "skill_learning_readiness_request_failed");
+      assert.equal(sample.request_failure.request_phase, "fetch");
+      assert.equal(sample.trace_id, undefined);
+    } else {
+      assert.equal(snapshot.response_count, 1);
+      assert.equal(sample.status, "skill_learning_view_response");
+      assert.equal(sample.trace_id, scenario === "busy" ? undefined : traceID);
+      if (scenario === "invalid-json") {
+        assert.equal(sample.availability, "invalid_json");
+        assert.equal(sample.request_failure.request_phase, "json-parse");
+      } else if (scenario === "http-failure") {
+        assert.equal(sample.http_status, 503);
+        assert.equal(sample.request_failure.request_phase, "http-status");
+      } else {
+        assert.equal(sample.availability, scenario);
+        assert.equal(snapshot.request_failures, 0);
+      }
+    }
+    assert(!JSON.stringify(snapshot).includes(privateText));
+  });
+}
 
 test("view failure collection keeps the warm request, failed GET and private connection distinct", async () => {
   const warm = "b".repeat(32),

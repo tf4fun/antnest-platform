@@ -48,6 +48,7 @@ import { skillClientArgs } from "./client-container.mjs";
 import {
   captureLearningFailureTraces,
   collectLearningFailureEvidence,
+  createLearningReadinessProbe,
 } from "./automatic-failure.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -1559,21 +1560,90 @@ test(
           await readinessMember.request("/api/session/login", {
             body: fixtureMember,
           });
-          await until(
-            async () => {
-              try {
-                const view = await readinessMember.request(
-                  `/api/app/workspace/v1/agents/${fixture.agentID}/view`,
+          const readiness = createLearningReadinessProbe({
+            mode: "incident-restart-readiness",
+            agentId: fixture.agentID,
+          });
+          try {
+            await until(
+              () =>
+                readiness.check((onResponse) =>
+                  readinessMember.request(
+                    `/api/app/workspace/v1/agents/${fixture.agentID}/view`,
+                    { onResponse },
+                  ),
+                ),
+              "fresh ACP execution directory after incident signer restart",
+              abort.signal,
+              60_000,
+            );
+          } catch (error) {
+            const evidence = fileURLToPath(
+              new URL(
+                "../../../artifacts/verification/skill-learning/",
+                import.meta.url,
+              ),
+            );
+            const snapshot = readiness.snapshot();
+            const diagnosticSignal = AbortSignal.timeout(30000);
+            const readDocker = dockerClient(
+              config.env,
+              diagnosticSignal,
+              10000,
+            );
+            await collectLearningFailureEvidence(error, [
+              () => mkdir(evidence, { recursive: true, mode: 0o700 }),
+              () =>
+                writeFile(
+                  `${evidence}${config.project}.readiness-failure.json`,
+                  JSON.stringify(snapshot),
+                  { flag: "wx", mode: 0o600 },
+                ),
+              ...[
+                "agent-ui",
+                "edge-gateway",
+                "agent-acp-service",
+                "runtime-controller",
+              ].map((service) => async () => {
+                const id = await readDocker(
+                  composeArgs(config.project, [
+                    ...overlay,
+                    "ps",
+                    "-a",
+                    "-q",
+                    service,
+                  ]),
                 );
-                return view.body.availability === "ready";
-              } catch {
-                return false;
-              }
-            },
-            "fresh ACP execution directory after incident signer restart",
-            abort.signal,
-            60_000,
-          );
+                await writeFile(
+                  `${evidence}${config.project}.${service}-readiness-failure.json`,
+                  JSON.stringify({
+                    service,
+                    container: id || null,
+                    log: id ? logs(id) : null,
+                  }),
+                  { flag: "wx", mode: 0o600 },
+                );
+              }),
+              ...[1, 2, 3].map((attempt) => async () => {
+                if (attempt > 1)
+                  await delay(2500, undefined, { signal: diagnosticSignal });
+                await captureLearningFailureTraces({
+                  logs: [
+                    ...learningClientLogs,
+                    ...snapshot.samples.map((sample) => JSON.stringify(sample)),
+                  ].join("\n"),
+                  jaeger: config.jaeger,
+                  signal: diagnosticSignal,
+                  save: (name, value) =>
+                    writeFile(
+                      `${evidence}${config.project}.readiness-${attempt}-${name}`,
+                      JSON.stringify(value),
+                      { flag: "wx", mode: 0o600 },
+                    ),
+                });
+              }),
+            ]);
+          }
         }
         const runtimeName = `antnest-runtime-${fixture.agentID}`;
         const runtimeInspect = JSON.parse(
