@@ -16,6 +16,140 @@ const phases = [1, 2].flatMap((version) =>
     ),
   ),
 );
+
+function admittedResponse(
+  phase,
+  endpointDifference = 230,
+  eventDifference = 235,
+) {
+  const f = fixture(phase, { refresh: false });
+  const { trace, expected, request, run } = f;
+  const admission = {
+    traceID: trace.traceID,
+    spanID: "progress-admission",
+    processID: run.processID,
+    operationName: "acp.session.prompt",
+    startTime: run.startTime,
+    duration: 1,
+    references: [
+      { refType: "CHILD_OF", traceID: trace.traceID, spanID: request.spanID },
+    ],
+    tags: Object.entries({
+      "span.kind": "internal",
+      "antnest.agent.id": expected.agentId,
+      "agent.id": expected.agentId,
+      "antnest.session.id": expected.sessionId,
+      "session.id": expected.sessionId,
+      "antnest.operation.phase": "admit",
+      "antnest.outcome": "ok",
+    }).map(([key, value]) => ({ key, value })),
+    logs: [],
+  };
+  run.references[0].spanID = admission.spanID;
+  trace.spans.push(admission);
+  const runEnd = run.startTime + run.duration;
+  request.duration = runEnd - endpointDifference - request.startTime;
+  if (expected.closedBeforeResponse)
+    request.logs[0].timestamp = runEnd - eventDifference;
+  return { ...f, admission };
+}
+
+for (const phase of phases.filter((value) => value.startsWith("v1-")))
+  for (const endpointDifference of phase.endsWith("success")
+    ? [230, -5]
+    : [230])
+    test(`${phase} retains original response timing across the actual admission parent (${endpointDifference})`, () => {
+      const f = admittedResponse(phase, endpointDifference);
+      const before = structuredClone(f.trace);
+      const report = inspect(f);
+      const observations = report.time_observations.filter((row) =>
+        [
+          "progress-run-joined-by-v1-prompt",
+          "progress-run-before-closed-v1-response",
+        ].includes(row.boundary),
+      );
+      assert.equal(
+        observations.length,
+        Number(endpointDifference > 0) +
+          Number(f.expected.closedBeforeResponse),
+      );
+      for (const row of observations) {
+        assert.equal(row.reason, "deferred-same-node-sdk-sub-ms-endpoint");
+        assert.equal(row.span_id, f.run.spanID);
+        assert.equal(row.parent_span_id, f.admission.spanID);
+        assert.equal(row.request_span_id, f.request.spanID);
+        assert.equal(row.raw_left_us, f.run.startTime + f.run.duration);
+        assert.equal(
+          row.raw_right_us,
+          row.boundary === "progress-run-joined-by-v1-prompt"
+            ? f.request.startTime + f.request.duration
+            : f.request.logs[0].timestamp,
+        );
+        assert.equal(row.raw_difference_us, row.raw_left_us - row.raw_right_us);
+      }
+      assert.deepEqual(f.trace, before);
+    });
+
+for (const [name, mutate] of Object.entries({
+  missing_admission: (f) => {
+    f.run.references[0].spanID = f.request.spanID;
+    f.trace.spans = f.trace.spans.filter((span) => span !== f.admission);
+  },
+  wrong_admission_operation: (f) => {
+    f.admission.operationName = "acp.session.output";
+  },
+  wrong_admission_phase: (f) =>
+    f.set(f.admission, "antnest.operation.phase", "execute"),
+  rejected_admission: (f) => f.set(f.admission, "antnest.outcome", "rejected"),
+  wrong_admission_kind: (f) => f.set(f.admission, "span.kind", "server"),
+  foreign_agent: (f) => f.set(f.admission, "antnest.agent.id", "foreign"),
+  foreign_session: (f) => f.set(f.admission, "antnest.session.id", "foreign"),
+  foreign_agent_alias: (f) => f.set(f.admission, "agent.id", "foreign"),
+  foreign_session_alias: (f) => f.set(f.admission, "session.id", "foreign"),
+  foreign_run_agent: (f) => f.set(f.run, "antnest.agent.id", "foreign"),
+  foreign_run_agent_alias: (f) => f.set(f.run, "agent.id", "foreign"),
+  foreign_run_session_alias: (f) => f.set(f.run, "session.id", "foreign"),
+  extra_parent: (f) => {
+    const other = structuredClone(f.admission);
+    other.spanID = "intermediate";
+    f.trace.spans.push(other);
+    f.admission.references[0].spanID = other.spanID;
+  },
+  foreign_process: (f) => {
+    f.trace.processes.foreign = structuredClone(
+      f.trace.processes[f.admission.processID],
+    );
+    f.admission.processID = "foreign";
+  },
+  foreign_request: (f) => {
+    const other = structuredClone(f.request);
+    other.spanID = "foreign-request";
+    other.operationName = "unrelated";
+    f.trace.spans.push(other);
+    f.admission.references[0].spanID = other.spanID;
+  },
+  non_millisecond_admission: (f) => f.admission.startTime--,
+  non_millisecond_request: (f) => f.request.startTime--,
+  non_millisecond_run: (f) => f.run.startTime++,
+  whole_millisecond_response: (f) => {
+    f.request.duration =
+      f.run.startTime + f.run.duration - 1000 - f.request.startTime;
+    f.request.logs[0].timestamp = f.request.startTime + f.request.duration;
+  },
+  whole_millisecond_event: (f) => {
+    f.request.duration =
+      f.run.startTime + f.run.duration + 5 - f.request.startTime;
+    f.request.logs[0].timestamp = f.run.startTime + f.run.duration - 1000;
+  },
+}))
+  test(`Progress response timing rejects ${name}`, () => {
+    const f = admittedResponse("v1-managed-success");
+    mutate(f);
+    const before = structuredClone(f.trace);
+    assert.throws(() => inspect(f));
+    assert.deepEqual(f.trace, before);
+  });
+
 for (const phase of phases)
   test(`${phase} accounts for successful ACP progress persistence and output under the Tool`, () => {
     const f = fixture(phase);

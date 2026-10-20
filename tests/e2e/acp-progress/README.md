@@ -172,6 +172,13 @@ remain attached to their original values. Warnings remain visible and keep
 `strict_trace` failed; no timestamps or raw diagnostics are rewritten. The
 collector archives complete original query bytes, including failed attempts.
 
+The v1 response comparison follows the actual SERVER → admission → Run chain.
+When applying the existing same-Node observation rule, it checks the successful
+admission's Agent, Session, process and original parent edges. Request completion
+and the closed-response error event are compared independently, retaining both
+raw endpoints. The shared direct-parent check and v2 admission behavior are
+unchanged.
+
 `control-trace.mjs` checks all five barrier-admission reads and the exact
 `runtime_barrier_required` error and origin, with no Run or model work. Cancel
 notifications require the original successfully closed connector receipt, an

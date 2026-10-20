@@ -252,7 +252,87 @@ function parsedTool(trace, owner, identity, kind, ending, toolName) {
   return { ...proof, tool, work, checkedSpans, workTimeObservations };
 }
 
-function closedPrompt(request, run, ctx) {
+function runBeforeResponse(
+  trace,
+  expected,
+  request,
+  run,
+  ctx,
+  right,
+  boundary,
+) {
+  const left = end(run);
+  assert(
+    Number.isFinite(left) && Number.isFinite(right),
+    "invalid Progress response endpoint",
+  );
+  if (left <= right) return;
+  // v1 awaits completion, but Run inherits admission as its actual parent.
+  // Apply the existing same-Node observation rule to that exact two-edge
+  // chain, keeping both original endpoints and the direct-parent rule intact.
+  const admission = ctx.tree.parent(run);
+  assert.equal(admission?.operationName, "acp.session.prompt");
+  assert.equal(
+    ctx.tree.parent(admission),
+    request,
+    "foreign Progress admission",
+  );
+  expect(admission, {
+    "span.kind": "internal",
+    "antnest.agent.id": expected.agentId,
+    "antnest.session.id": expected.sessionId,
+    "antnest.operation.phase": "admit",
+    "antnest.outcome": "ok",
+  });
+  for (const [span, fields] of [
+    [
+      admission,
+      { "agent.id": expected.agentId, "session.id": expected.sessionId },
+    ],
+    [
+      run,
+      {
+        "antnest.agent.id": expected.agentId,
+        "agent.id": expected.agentId,
+        "session.id": expected.sessionId,
+      },
+    ],
+  ])
+    for (const [key, value] of Object.entries(fields))
+      if (tag(span, key) !== undefined) assert.equal(tag(span, key), value);
+  ctx.sameProcess(run, admission, "agent-acp-service");
+  ctx.sameProcess(admission, request, "agent-acp-service");
+  assert(admission.startTime >= request.startTime);
+  assert(run.startTime >= admission.startTime);
+  const resource = ctx.process(run, "agent-acp-service");
+  assert(
+    [run, admission, request].every(
+      (span) =>
+        Number.isSafeInteger(span.startTime) && span.startTime % 1000 === 0,
+    ) && left - right < 1000,
+    "Progress response outside deferred same-Node sub-ms boundary: " + boundary,
+  );
+  ctx.timeObservations.push({
+    trace_id: trace.traceID,
+    span_id: run.spanID,
+    parent_span_id: admission.spanID,
+    request_span_id: request.spanID,
+    process_id: run.processID,
+    host_name: resource["host.name"],
+    process_pid: resource["process.pid"],
+    service_instance_id: resource["service.instance.id"],
+    boundary,
+    raw_left_us: left,
+    raw_right_us: right,
+    raw_difference_us: left - right,
+    raw_child_start_us: run.startTime,
+    raw_parent_start_us: admission.startTime,
+    raw_request_start_us: request.startTime,
+    reason: "deferred-same-node-sdk-sub-ms-endpoint",
+  });
+}
+
+function closedPrompt(request, ctx, beforeResponse) {
   expect(request, {
     "antnest.outcome": "error",
     "antnest.operation.phase": "acp.dispatch",
@@ -277,13 +357,7 @@ function closedPrompt(request, run, ctx) {
   });
   assert.equal(request.logs.length, 1);
   ctx.eventsInside(request);
-  ctx.nodeBefore(
-    run,
-    request,
-    end(run),
-    failure.timestamp,
-    "progress-run-before-closed-v1-response",
-  );
+  beforeResponse(failure.timestamp, "progress-run-before-closed-v1-response");
   diagnostics(
     request,
     {
@@ -390,14 +464,10 @@ export function inspectTrace(trace, expected, secrets = [], requests = []) {
     ctx.eventsInside(span);
   }
   ctx.nodeBefore(call, run, end(call), end(run), "progress-tool-joined-by-run");
+  const beforeResponse = (right, boundary) =>
+    runBeforeResponse(trace, expected, request, run, ctx, right, boundary);
   if (protocol === "v1")
-    ctx.nodeBefore(
-      run,
-      request,
-      end(run),
-      end(request),
-      "progress-run-joined-by-v1-prompt",
-    );
+    beforeResponse(end(request), "progress-run-joined-by-v1-prompt");
   const stages = ending === "cancel" ? ["tool"] : ["tool", "final"];
   assert.deepEqual(
     requests.map((item) => item.stage),
@@ -498,7 +568,7 @@ export function inspectTrace(trace, expected, secrets = [], requests = []) {
     ),
     "missing committed Progress Run persistence",
   );
-  if (closed) closedPrompt(request, run, ctx);
+  if (closed) closedPrompt(request, ctx, beforeResponse);
   if (ending === "cancel") {
     expect(run, { "error.type": "run_unresolved" });
     assert.equal(run.logs?.length ?? 0, 0, "unexpected unresolved Run event");
