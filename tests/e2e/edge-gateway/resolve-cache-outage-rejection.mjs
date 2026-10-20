@@ -913,7 +913,8 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       assert.equal(tag(decision, prefix + "profile"), profile);
       assert.equal(tag(decision, prefix + "source"), "rpc");
       assert.equal(tag(decision, prefix + "outcome"), "unavailable");
-      assert.equal(tag(decision, prefix + "cancel_kind"), undefined);
+      assert.equal(tag(decision, prefix + "shared_source_state"), undefined);
+      assert.equal(decision.processID, root.processID);
       decisionError(decision, "unavailable");
       assert(
         !(decision.references ?? []).some(
@@ -930,6 +931,7 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
     );
     assert.equal(tree.service(client), "edge-gateway");
     assert.equal(tree.parent(client), root);
+    assert.equal(client.processID, root.processID);
     assert.equal(client.operationName, "HTTP POST identity-service");
     assert.equal(tag(client, "server.address"), "identity-service");
     assert.equal(tag(client, "http.request.method"), "POST");
@@ -952,6 +954,26 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       rootFailure.type === "deadline_exceeded" &&
       rootFailure.causes.length === 1 &&
       rootFailure.causes[0] === "context.deadlineExceededError";
+    const cancelKind = decision && tag(decision, prefix + "cancel_kind");
+    if (cancelKind !== undefined) {
+      assert(
+        waiterDeadline &&
+          ["caller-deadline", "shared-deadline"].includes(cancelKind),
+        "RPC cancellation lacks the original deadline outcome",
+      );
+      assert(
+        cancelKind === "shared-deadline"
+          ? clientFailure.type === "deadline_exceeded"
+          : ["cancelled", "deadline_exceeded"].includes(clientFailure.type),
+        "RPC cancellation differs from its actual CLIENT failure",
+      );
+      if (cancelKind === "shared-deadline")
+        assert.deepEqual(
+          clientFailure.causes,
+          ["context.deadlineExceededError"],
+          "shared deadline differs from its actual CLIENT cause",
+        );
+    }
     if (!waiterDeadline) {
       assert.equal(
         rootFailure.type,
@@ -1028,6 +1050,7 @@ export function inspectOutageRejections(evidence, collection, secrets = []) {
       root_span_id: root.spanID,
       client_span_id: client.spanID,
       decision_span_id: decision?.spanID,
+      ...(cancelKind === undefined ? {} : { cancel_kind: cancelKind }),
       observed_at: r.at,
       retained_client_after_response_us: retained,
     };

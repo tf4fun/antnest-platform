@@ -257,7 +257,7 @@ function cancelledCommand(part) {
   ];
 }
 
-function runtimeStatusCompletion(span, trace, event) {
+function runtimeStatusCompletion(span, trace, event, timeObservations) {
   const f = fields(event.fields),
     resource = trace.processes[span.processID];
   assert.equal(resource.serviceName, "antnest-runtime");
@@ -318,15 +318,45 @@ function runtimeStatusCompletion(span, trace, event) {
     ),
     "unexpected Runtime status outcome",
   );
+  const finish = end(span),
+    resourceTags = fields(resource.tags),
+    quantizedEnd =
+      resourceTags["telemetry.sdk.language"] === "rust" &&
+      resourceTags["telemetry.sdk.name"] === "opentelemetry" &&
+      [
+        span.startTime,
+        span.duration,
+        finish,
+        finish + 1,
+        event.timestamp,
+      ].every(Number.isSafeInteger) &&
+      event.timestamp === finish + 1;
   assert(
     Number.isFinite(event.timestamp) &&
       span.startTime <= event.timestamp &&
-      event.timestamp <= end(span),
+      (event.timestamp <= finish || quantizedEnd),
     "Runtime completion outside its status span",
   );
+  if (quantizedEnd)
+    // Runtime records completion while holding its span. Jaeger serializes
+    // start, duration and event independently in integer microseconds.
+    timeObservations.push({
+      trace_id: trace.traceID,
+      span_id: span.spanID,
+      process_id: span.processID,
+      boundary: "runtime-status-event-within-span",
+      event_index: span.logs.indexOf(event),
+      raw_left_us: event.timestamp,
+      raw_right_us: finish,
+      raw_difference_us: event.timestamp - finish,
+      raw_span_start_us: span.startTime,
+      raw_span_duration_us: span.duration,
+      representation_us: 1,
+      reason: "jaeger-integer-microsecond-representation",
+    });
 }
 
-function successful(span, trace, expected) {
+function successful(span, trace, expected, timeObservations) {
   const tree = traceTopology(trace),
     service = tree.service(span);
   assert(!hasError(span), "unexpected Rebuild error");
@@ -388,7 +418,7 @@ function successful(span, trace, expected) {
       f.event === "Runtime HTTP request completed" &&
       f["error.type"] === ""
     ) {
-      runtimeStatusCompletion(span, trace, event);
+      runtimeStatusCompletion(span, trace, event, timeObservations);
       continue;
     }
     assert(
@@ -1016,6 +1046,7 @@ export function inspectRebuildPreparation(evidence, collection, secrets = []) {
   const traces = [],
     owned = [],
     parts = [],
+    timeObservations = [],
     neutral = new Set();
   const expected = {
     kind: "rebuild",
@@ -1286,7 +1317,7 @@ export function inspectRebuildPreparation(evidence, collection, secrets = []) {
   for (const { trace } of parts)
     for (const span of trace.spans)
       if (!keys.has(`${trace.traceID}:${span.spanID}`) && !neutral.has(span))
-        successful(span, trace, expected);
+        successful(span, trace, expected, timeObservations);
   return {
     status: "passed",
     request_id: requestID,
@@ -1307,6 +1338,7 @@ export function inspectRebuildPreparation(evidence, collection, secrets = []) {
     requests,
     early_operation_queries: early,
     owned_error_spans: owned,
+    time_observations: timeObservations,
     ...resolveTraceDiagnostics(traces[0], traces),
   };
 }

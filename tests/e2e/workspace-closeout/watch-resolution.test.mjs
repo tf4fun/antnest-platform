@@ -17,6 +17,16 @@ const byID = (trace, id) => trace.spans.find((span) => span.spanID === id);
 const inspect = (f) =>
   inspectWorkspaceWatch(f.trace, f.expected, ["PRIVATE"], f);
 
+test("watch RPC cancellation cannot prove an authoritative rejection", () => {
+  const f = revokedWatchFixture();
+  setTag(
+    byID(f.trace, "denied-decision"),
+    prefix + "cancel_kind",
+    "caller-cancelled",
+  );
+  assert.throws(() => inspect(f));
+});
+
 function fixture(source = "rpc", background = false) {
   const f = workspaceWatchFixture();
   f.decision = byID(f.trace, "decision");

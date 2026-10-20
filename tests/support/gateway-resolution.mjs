@@ -354,6 +354,11 @@ export function inspectGatewayResolution(trace, expected, options = {}) {
     "admitted",
     "non-admission Resolve needs its separate failure evidence",
   );
+  assert.equal(
+    value(decision, "cancel_kind"),
+    undefined,
+    "cancellation cannot provide successful admission",
+  );
   if (expected.upstreamSpanID !== undefined) {
     const upstream = tree.spans.get(expected.upstreamSpanID);
     assert(

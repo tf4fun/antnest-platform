@@ -403,12 +403,20 @@ export function inspectShutdownResolutions(
       }
     } else {
       assert.equal(source, "rpc", "invalid unavailable source");
+      assert.equal(decision.processID, root.processID);
       assert.equal(
         links(decision).length,
         0,
         "rpc cancellation invented shared link",
       );
-      assert.equal(value(decision, "cancel_kind"), undefined);
+      assert(
+        value(decision, "cancel_kind") === undefined ||
+          (ttlMs > 0 &&
+            ["caller-cancelled", "process-shutdown"].includes(
+              value(decision, "cancel_kind"),
+            )),
+        "RPC cancellation differs from the observed shutdown",
+      );
       assert.equal(value(decision, "shared_source_state"), undefined);
       selected = {
         trace,
@@ -428,14 +436,16 @@ export function inspectShutdownResolutions(
       };
     }
     if (selected) {
+      if (source === "rpc")
+        assert.equal(selected.client.processID, root.processID);
       clientShape(selected.tree, selected.client);
       assert(
         selected.client.startTime <= end(decision),
         "CLIENT created after cancellation snapshot",
       );
       const cancelled = cancelledTransport(selected.client);
-      // rpc markers lack a cancellation reason. A successful receipt alone
-      // cannot distinguish shutdown from other unavailable outcomes.
+      // A creator snapshot alone cannot replace actual transport cancellation
+      // and the independently observed shutdown window.
       if (source === "rpc")
         assert(cancelled, "rpc unavailable lacks actual cancellation evidence");
       if (source === "rpc" && ttlMs === 0)

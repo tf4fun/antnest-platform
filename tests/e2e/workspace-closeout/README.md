@@ -144,6 +144,10 @@ valid snapshot and feed-proof budget; actual RPCs need their receiving Identity
 SERVER and SQL. Shared decisions bind the exact archived CLIENT, with the
 original request or refresh root and its cache trigger. Multiple shared waiters
 may reuse one actual SQL owner; multiple RPC creators cannot claim one CLIENT.
+Creator cancellation snapshots bind the actual same-process CLIENT started
+within that decision. A watch's caller closure accepts `caller-cancelled`;
+shutdown and shared deadlines cannot substitute for that cause. Cancelled
+decisions cannot prove successful admission or an authoritative 401.
 The collector archives current, source and trigger traces and requires three
 consecutive identical complete snapshots before returning evidence.
 

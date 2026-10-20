@@ -642,6 +642,27 @@ test("Session ordinary RPC still requires completion before its decision", () =>
   assert.throws(() => inspect(f), /actual failed workspace CLIENT/u);
 });
 
+test("Session creator deadline retains late transport cleanup within the actual outage", () => {
+  const f = bridgeSessionCauseFixture("unavailable");
+  const { client, decision } = f.terminal;
+  setTag(decision, "antnest.identity.resolve.cancel_kind", "shared-deadline");
+  client.duration =
+    decision.startTime + decision.duration + 250000 - client.startTime;
+  failureDiagnostic(
+    client,
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["context.deadlineExceededError"],
+    "send",
+  );
+  const before = structuredClone(f.collection.traces);
+  assert.equal(inspect(f).authorizationCauseVerified, true);
+  assert.deepEqual(f.collection.traces, before);
+  client.duration += 5000000;
+  client.logs[0].timestamp += 5000000;
+  assert.throws(() => inspect(f));
+});
+
 for (const [name, change] of [
   [
     "missing shared deadline",
