@@ -7,7 +7,11 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
 } from "../../support/verification/development-runtime.mjs";
-import { inspectPublication, selectPublications } from "./publication.mjs";
+import {
+  inspectPublication,
+  publicationCandidates,
+  selectPublications,
+} from "./publication.mjs";
 import assert from "node:assert/strict";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { mkdirSync } from "node:fs";
@@ -22,7 +26,6 @@ import {
 } from "../../support/verification/agent-state.mjs";
 import { inspectDevelopmentLifecycle } from "./lifecycle-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import { traceTopology } from "../observability/trace-tree.mjs";
 
 const { values } = parseArgs({ options: { config: { type: "string" } } });
 if (!values.config) throw new Error("--config is required");
@@ -150,19 +153,14 @@ async function publications(organization) {
   // A fresh deployment may not yet have completed three periodic publications.
   // Wait for that prerequisite, preserving all topology and publication checks.
   const end = Date.now() + 120000;
-  let roots = [];
+  let roots = [],
+    searchRound = 0;
   while (Date.now() < end) {
     const data = await searchJaegerTraces(jaeger, query, {
       signal: AbortSignal.timeout(10000),
     });
-    roots = data.filter((trace) => {
-      const tree = traceTopology(trace);
-      const attempt = trace.spans.find(
-        (span) =>
-          span.operationName === "agent_controller.execution_publication",
-      );
-      return attempt && !tree.parent(attempt);
-    });
+    write(`publication-search-${++searchRound}.json`, data);
+    roots = publicationCandidates(data);
     if (roots.length >= 3) break;
     await delay(1000);
   }
@@ -171,14 +169,8 @@ async function publications(organization) {
     const filename = `publication-${found.traceID}.json`;
     mutableNames.push(filename);
     const evidence = await collectTrace(jaeger, found.traceID, (trace) => {
-      const result = inspectPublication(
-        trace,
-        found.traceID,
-        organization,
-        secrets,
-        () => write(filename, trace),
-      );
-      return result;
+      if (trace) write(filename, trace);
+      return inspectPublication(trace, found.traceID, organization, secrets);
     });
     report.publication.push(evidence);
   }

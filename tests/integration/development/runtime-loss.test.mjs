@@ -14,6 +14,7 @@ import {
   lifecycleKinds,
   addPreparationRetries,
   addLifecycleAuxiliaryAbsences,
+  publicationTrace,
 } from "../../support/fixtures/development-lifecycle.mjs";
 import {
   runtimeLossTrace,
@@ -117,6 +118,31 @@ test("runtime loss accepts individually owned auxiliary absences and retains the
   );
   assert.equal(report.source_absence_404, 1);
   assert.equal(report.lifecycle[3].missingSourceGeneration, 2);
+});
+
+test("runtime loss archives partial search results before selecting and fully collecting post-restart publications", async (t) => {
+  const f = await fixture(t);
+  const nested = publicationTrace(4);
+  nested.spans[0].references.push({
+    refType: "CHILD_OF",
+    traceID: nested.traceID,
+    spanID: "not-yet-exported-parent",
+  });
+  const partial = structuredClone(f.publications[0]);
+  partial.spans = partial.spans.filter((span) => span.spanID !== "client");
+  const search = [nested, partial, ...f.publications.slice(1)];
+  f.searchResponse = () => search;
+  const result = await f.run();
+  assert.equal(result.exit_code, 0, result.log);
+  assert.deepEqual(f.read("publication-search-1.json"), search);
+  assert.deepEqual(
+    f.read("lifecycle-report.json").publication.map((row) => row.trace_id),
+    f.publications.map((trace) => trace.traceID),
+  );
+  assert.deepEqual(
+    f.read(`publication-${partial.traceID}.json`),
+    f.publications[0],
+  );
 });
 
 test("runtime loss preserves normal stop, source generation, five absences and post-restart publications", async (t) => {

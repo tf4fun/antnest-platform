@@ -197,6 +197,78 @@ test("lifecycle waits for three independent publication roots before creating an
   assert.equal(f.read("lifecycle-report.json").publication.length, 3);
 });
 
+test("lifecycle archives partial search results and collects the original publication candidates to completion", async (t) => {
+  const f = await fixture(t);
+  const nested = publicationTrace(4);
+  nested.spans[0].references.push({
+    refType: "CHILD_OF",
+    traceID: nested.traceID,
+    spanID: "not-yet-exported-parent",
+  });
+  const partial = structuredClone(f.publications[0]);
+  partial.spans = partial.spans.filter((span) => span.spanID !== "client");
+  const search = [nested, partial, ...f.publications.slice(1)];
+  f.searchResponse = () => search;
+  const result = await f.run();
+  assert.equal(result.exit_code, 0, result.log);
+  assert.deepEqual(f.read("publication-search-1.json"), search);
+  assert.deepEqual(
+    f.read("lifecycle-report.json").publication.map((row) => row.trace_id),
+    f.publications.map((trace) => trace.traceID),
+  );
+  assert.deepEqual(
+    f.read(`publication-${partial.traceID}.json`),
+    f.publications[0],
+  );
+});
+
+test("lifecycle archives every search round, including a round with no candidates", async (t) => {
+  const f = await fixture(t);
+  let searches = 0;
+  f.searchResponse = () => (++searches === 1 ? [] : f.publications);
+  const result = await f.run();
+  assert.equal(result.exit_code, 0, result.log);
+  assert.equal(searches, 2);
+  assert.deepEqual(f.read("publication-search-1.json"), []);
+  assert.deepEqual(f.read("publication-search-2.json"), f.publications);
+});
+
+test("lifecycle stops before candidate selection if the raw search cannot be preserved", async (t) => {
+  const f = await fixture(t);
+  mkdirSync(f.config.output);
+  writeFileSync(join(f.config.output, "publication-search-1.json"), "retained");
+  const result = await f.run();
+  assert.notEqual(result.exit_code, 0);
+  const report = f.read("lifecycle-report.json");
+  assert.equal(report.failure.stage, "publication");
+  assert.match(report.failure.message, /report already exists/);
+  assert.equal(report.publication.length, 0);
+  assert(!f.requests.some((request) => request.url === "/api/admin/agents"));
+});
+
+test("lifecycle keeps a permanently broken selected publication and its raw details instead of substituting a fourth", async (t) => {
+  const f = await fixture(t);
+  f.publications.push(publicationTrace(4));
+  const bad = f.publications[0];
+  bad.spans = bad.spans.filter((span) => span.spanID !== "client");
+  const result = await f.run();
+  assert.notEqual(result.exit_code, 0);
+  assert.match(
+    f.read("lifecycle-report.json").failure.message,
+    /missing synchronous parent/,
+  );
+  assert.deepEqual(f.read("publication-search-1.json"), f.publications);
+  assert.deepEqual(f.read(`publication-${bad.traceID}.json`), bad);
+  assert.equal(
+    f.requests.filter(
+      (request) => request.url === `/api/traces/${f.publications[3].traceID}`,
+    ).length,
+    1,
+    "the fourth trace is searched but never substituted for the selected one",
+  );
+  assert(!f.requests.some((request) => request.url === "/api/admin/agents"));
+});
+
 test("lifecycle publication wait expires without creating an Agent", async (t) => {
   const f = await fixture(t);
   let searches = 0;

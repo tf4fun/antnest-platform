@@ -87,8 +87,17 @@ oracle used by `lifecycle.mjs`, `runtime-loss.mjs` and their integration
 fixtures. It selects three independent root publication Traces after an
 optional start-time cutoff and checks their topology, organization and that
 content capture is disabled. Lifecycle drivers wait up to two minutes for
-three periodic publications on a fresh deployment; HTTP, topology and
-publication validation failures still fail the run.
+three periodic publications on a fresh deployment. Discovery uses each
+publication's own synchronous parent references and start time, so partial
+unrelated or nested Traces do not abort discovery. The original first three
+candidates are then collected and fully validated with the existing bounded
+collector; a broken candidate is never replaced by a later healthy Trace.
+HTTP, topology and publication validation failures still fail the run.
+
+Each completed search is saved before selection as `publication-search-N.json`,
+including empty searches. Selected details are saved before inspection as
+`publication-<trace-id>.json`; this file retains the latest original sample if
+validation fails. Failure to preserve a search result stops the driver.
 
 ## Configuration rules
 
@@ -193,9 +202,8 @@ written in the temporary Runtime, never in the retained Agent.
 The created Agent must differ from the retained Agent before it becomes a
 cleanup target. Before marker access, the driver checks the full Docker ID,
 container name, Agent and managed-Runtime labels, `runtimeControllerScope` and
-the complete read-write workspace volume. A structurally valid publication
-Trace is saved before unexpected warnings fail the run, so failure evidence is
-kept.
+the complete read-write workspace volume. Original publication details are
+saved before topology or warning validation, so failed samples remain available.
 
 `runtime-loss.mjs` derives the scope and publication cutoff from two private
 inputs:

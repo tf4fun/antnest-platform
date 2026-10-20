@@ -7,7 +7,11 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
 } from "../../support/verification/development-runtime.mjs";
-import { inspectPublication, selectPublications } from "./publication.mjs";
+import {
+  inspectPublication,
+  publicationCandidates,
+  selectPublications,
+} from "./publication.mjs";
 import assert from "node:assert/strict";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { mkdirSync } from "node:fs";
@@ -156,18 +160,14 @@ async function publications(organization) {
   });
   const cutoff = publicationCutoff;
   const end = Date.now() + 120000;
-  let roots = [];
+  let roots = [],
+    searchRound = 0;
   while (Date.now() < end) {
     const data = await searchJaegerTraces(jaeger, query, {
       signal: AbortSignal.timeout(10000),
     });
-    roots = (data ?? []).filter((trace) => {
-      const tree = traceTopology(trace);
-      const attempt = trace.spans.find(
-        (s) => s.operationName === "agent_controller.execution_publication",
-      );
-      return attempt && !tree.parent(attempt) && attempt.startTime >= cutoff;
-    });
+    write(`publication-search-${++searchRound}.json`, data);
+    roots = publicationCandidates(data, cutoff);
     if (roots.length >= 3) break;
     await delay(1000);
   }
@@ -183,16 +183,17 @@ async function publications(organization) {
     traceIDs.add(found.traceID);
     const filename = `publication-${found.traceID}.json`;
     mutableNames.push(filename);
-    const evidence = await collectTrace(jaeger, found.traceID, (trace) =>
-      inspectPublication(
+    const evidence = await collectTrace(jaeger, found.traceID, (trace) => {
+      if (trace) write(filename, trace);
+      return inspectPublication(
         trace,
         found.traceID,
         organization,
         secrets,
-        () => write(filename, trace),
+        undefined,
         cutoff,
-      ),
-    );
+      );
+    });
     report.publication.push(evidence);
   }
   assert.equal(report.publication.length, 3);
