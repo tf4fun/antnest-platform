@@ -20,6 +20,137 @@ for (const phase of ["body-incomplete", "body-completion-and-parse"])
 const ui = (r) => r.upload.trace.spans[1];
 const event = (r, i) =>
   ui(r).logs[i].fields.find((t) => t.key === "monotonic_ns");
+
+test("same-source EOF causality bounds the parse window without changing original calibration or timestamps", () => {
+  const r = capacityFixture();
+  for (const sample of r.calibration.before) sample.complete_ns = "4000000";
+  event(r, 1).value = "59000000";
+  r.input_observation.eof.notice.monotonic_ns = "59000000";
+  r.input_observation.eof.received_ns = "59001000";
+  const original = structuredClone(r);
+  const result = inspectCapacityCase(r);
+  assert.deepEqual(result.clock_offset_ns, {
+    lower_ns: "-1999000",
+    upper_ns: "1100",
+    overlaps: true,
+  });
+  assert.deepEqual(result.input_phase_offset_ns, {
+    lower_ns: "-1000",
+    upper_ns: "1100",
+  });
+  assert.deepEqual(r, original);
+});
+
+for (const [name, mutate] of [
+  ["missing observation", (r) => delete r.input_observation],
+  ["missing observer", (r) => delete r.input_observer],
+  [
+    "different planned Trace",
+    (r) => (r.upload.requested_trace_id = "9".repeat(32)),
+  ],
+  [
+    "different armed Trace",
+    (r) => (r.input_observation.trace_id = "9".repeat(32)),
+  ],
+  ["different armed byte count", (r) => r.input_observation.body_bytes--],
+  ["duplicate callback", (r) => r.input_observation.triggered++],
+  ["late arm", (r) => (r.input_observation.armed_ns = r.upload.sent_ns + "0")],
+  ["missing receive notice", (r) => delete r.input_observation.receive],
+  ["missing EOF notice", (r) => delete r.input_observation.eof],
+  [
+    "foreign receive Trace",
+    (r) => (r.input_observation.receive.notice.traceId = "9".repeat(32)),
+  ],
+  [
+    "foreign EOF span",
+    (r) => (r.input_observation.eof.notice.spanId = "9".repeat(16)),
+  ],
+  [
+    "foreign EOF process",
+    (r) => r.input_observation.eof.notice.processIdentity["process.pid"]++,
+  ],
+  [
+    "extra process field",
+    (r) =>
+      (r.input_observation.receive.notice.processIdentity.extra = "invalid"),
+  ],
+  [
+    "different receive bytes",
+    (r) => r.input_observation.receive.notice.bytes--,
+  ],
+  ["different EOF bytes", (r) => r.input_observation.eof.notice.bytes--],
+  [
+    "different EOF stamp",
+    (r) => (r.input_observation.eof.notice.monotonic_ns = "50000001"),
+  ],
+  [
+    "different EOF phase",
+    (r) => (r.input_observation.eof.notice.phase = "body-parsed"),
+  ],
+  [
+    "extra notice field",
+    (r) => (r.input_observation.eof.notice.content = "forbidden"),
+  ],
+  [
+    "receive before upload",
+    (r) => (r.input_observation.receive.received_ns = "4999999"),
+  ],
+  [
+    "receive after EOF",
+    (r) => (r.input_observation.receive.received_ns = "51000000"),
+  ],
+  [
+    "EOF receipt before client EOF",
+    (r) => (r.input_observation.eof.received_ns = "48000000"),
+  ],
+  [
+    "cancel before EOF receipt",
+    (r) => (r.input_observation.eof.received_ns = "60000001"),
+  ],
+  [
+    "contradictory causal bound",
+    (r) => (r.input_observation.eof.received_ns = "49998000"),
+  ],
+  ["missing socket preparation", (r) => delete r.cancel.prepared_ns],
+  [
+    "socket ready before preparation",
+    (r) => (r.cancel.socket_ready_ns = "3000000"),
+  ],
+  ["socket ready after arm", (r) => (r.cancel.socket_ready_ns = "5000000")],
+  ["missing write completion", (r) => delete r.cancel.written_ns],
+  ["write completion before send", (r) => (r.cancel.written_ns = "59999999")],
+  [
+    "write completion after response",
+    (r) => (r.cancel.written_ns = "80000001"),
+  ],
+  ["wrong cancel body bytes", (r) => r.cancel.body_bytes++],
+  ["cancel client not joined", (r) => (r.cancel.joined = false)],
+  ["observer not joined", (r) => (r.input_observer.joined = false)],
+  ["observer failure", (r) => (r.input_observer.failure = "connection lost")],
+  ["observer reconnect", (r) => r.input_observer.connections++],
+  ["missing original notices", (r) => (r.input_observer.messages = 1)],
+]) {
+  test("parse proof rejects " + name, () => {
+    const r = capacityFixture();
+    mutate(r);
+    assert.throws(() => inspectCapacityCase(r));
+  });
+}
+
+test("the actual write must finish strictly before parsed, including the full upper clock bound", () => {
+  const r = capacityFixture();
+  r.cancel.written_ns = "99998900";
+  r.cancel.complete_ns = "110000000";
+  r.cancel.complete_perf_ms = 110;
+  for (const stream of r.pool) stream.live_after_ns = "120000000";
+  assert.throws(
+    () => inspectCapacityCase(r),
+    /cancel not proved inside actual input phase/u,
+  );
+  r.cancel.written_ns = "99998899";
+  assert.equal(inspectCapacityCase(r).completion_ms, 50);
+});
+
 const mutations = [
   ["same user", (r) => (r.scope.user_b = r.scope.user_a)],
   ["same Agent", (r) => (r.scope.agent_b = r.scope.agent_a)],
@@ -53,7 +184,7 @@ const mutations = [
       (r.calibration.before[0].trace.spans[1].tags.at(-1).value = "8000000"),
   ],
   [
-    "only midpoint overlaps",
+    "calibration completes after upload starts",
     (r) => r.calibration.before.forEach((s) => (s.complete_ns = "40000000")),
   ],
   ["clock uncertainty crosses EOF", (r) => (r.cancel.sent_ns = "50000000")],

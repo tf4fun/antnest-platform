@@ -213,6 +213,23 @@ Cancellation HTTP, the original Runtime process probe and original SSE terminal
 are observed concurrently. Each records its own completion receipt; the strict
 one-second bound covers the latest complete receipt, including process
 observation, and every observer is joined on success or failure.
+Each Runtime sample starts physical discovery, its authenticated live status
+request and its original process-group read independently under one deadline.
+It retains all identity and storage checks and joins every read before recording
+the complete receipt; discovery latency cannot postpone the process read.
+
+For the parse cases, the host prepares B's TCP connection before A uploads.
+A test-only server preload forwards bounded native phase metadata over one
+authenticated connection to the existing test process. The Compose overlay
+mounts only this module and connects UI to the diagnostic ingress network;
+healthchecks do not load it. A matching EOF notice synchronously sends B's
+original cancellation request. The proof matches both notices to A's original
+OTLP Trace, span, process, byte count and timestamps, and requires B's actual
+write to finish before native parsing ends under the full upper clock bound.
+EOF-to-host causality can tighten the parse window's lower bound; the original
+calibration and HTTP/SSE evidence remain unchanged. No parser delay, fixed
+clock tolerance or retry is added, and both TCP clients and the observer are
+joined before admission.
 
 Private raw evidence lives in `artifacts/verification/agent-ui-upload-capacity-*`.
 

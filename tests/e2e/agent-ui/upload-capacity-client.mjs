@@ -100,6 +100,127 @@ export function startHeldUpload(url, headers, body, signal) {
   };
 }
 
+// Preparing opens only TCP; send() is the first HTTP write. The write callback
+// proves local write completion, not remote receipt or cancellation processing.
+export function prepareCapacityCancellation(url, headers, body, signal) {
+  signal?.throwIfAborted();
+  const bytes = Buffer.from(JSON.stringify(body));
+  assert(bytes.length > 0 && bytes.length <= 16 * 1024);
+  const ready = Promise.withResolvers(),
+    written = Promise.withResolvers(),
+    pending = Promise.withResolvers(),
+    closed = Promise.withResolvers();
+  const evidence = { prepared_ns: stamp(), body_bytes: bytes.length };
+  let socketReady = false,
+    sent = false,
+    responseEnded = false,
+    closing;
+  const fail = (error) => {
+    ready.reject(error);
+    written.reject(error);
+    pending.reject(error);
+  };
+  const outgoing = request(
+    url,
+    {
+      method: "POST",
+      agent: false,
+      signal: AbortSignal.any(
+        [signal, AbortSignal.timeout(45000)].filter(Boolean),
+      ),
+      headers: {
+        ...headers,
+        "content-type": "application/json",
+        "content-length": bytes.length,
+      },
+    },
+    async (incoming) => {
+      try {
+        assert(sent, "cancellation response preceded send");
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of incoming) {
+          size += chunk.length;
+          assert(size < 128 * 1024, "capacity response exceeded budget");
+          chunks.push(chunk);
+        }
+        const response = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        const result = {
+          status: incoming.statusCode,
+          trace_id: incoming.headers["x-antnest-trace-id"],
+          response_trace_id: incoming.headers["x-antnest-trace-id"],
+          response,
+          complete_ns: stamp(),
+          complete_perf_ms: performance.now(),
+        };
+        responseEnded = true;
+        Object.assign(evidence, result);
+        pending.resolve(result);
+      } catch (error) {
+        fail(error);
+        incoming.destroy();
+        outgoing.destroy(error);
+      }
+    },
+  );
+  outgoing.once("socket", (socket) => {
+    socket.setNoDelay(true);
+    const connected = () => {
+      if (outgoing.destroyed) return;
+      socketReady = true;
+      evidence.socket_ready_ns = stamp();
+      ready.resolve();
+    };
+    if (socket.connecting) socket.once("connect", connected);
+    else connected();
+  });
+  outgoing.on("error", fail);
+  outgoing.once("close", () => {
+    written.reject(new Error("cancellation closed before write completion"));
+    if (!responseEnded)
+      fail(new Error("cancellation closed before complete response"));
+    closed.resolve();
+  });
+  for (const value of [ready, written, pending])
+    void value.promise.catch(() => {});
+  return {
+    evidence,
+    ready: ready.promise,
+    response: pending.promise,
+    send() {
+      signal?.throwIfAborted();
+      assert(!sent, "cancellation already sent");
+      assert(
+        socketReady && !outgoing.destroyed,
+        "cancellation socket not ready",
+      );
+      sent = true;
+      evidence.sent_ns = stamp();
+      evidence.sent_perf_ms = performance.now();
+      outgoing.end(bytes, (error) => {
+        if (error) fail(error);
+        else {
+          evidence.written_ns = stamp();
+          written.resolve();
+        }
+      });
+      return pending.promise;
+    },
+    closeAndWait() {
+      return (closing ??= (async () => {
+        if (!responseEnded) outgoing.destroy(new Error("cancellation cleanup"));
+        await closed.promise;
+        await Promise.allSettled([
+          ready.promise,
+          written.promise,
+          pending.promise,
+        ]);
+        evidence.joined = true;
+      })());
+    },
+  };
+}
+
 // Callers provide bounded operations. Start all observations with the send, then
 // join every branch even on failure; a rejected HTTP request must not abandon a
 // Runtime exec or the original SSE waiter. Branches stamp their own receipts.

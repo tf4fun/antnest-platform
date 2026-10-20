@@ -90,6 +90,83 @@ function elapsed(start, end) {
   return value;
 }
 
+function parseOffsetBounds(r, source, phases, bounds) {
+  const observation = r.input_observation,
+    observer = r.input_observer;
+  assert(observation && observer, "missing native input observation");
+  assert.equal(r.upload.requested_trace_id, r.upload.trace_id);
+  assert.equal(observation.trace_id, r.upload.trace_id);
+  assert.equal(observation.body_bytes, r.upload.body_bytes);
+  assert.equal(
+    observation.triggered,
+    1,
+    "native EOF must trigger exactly once",
+  );
+  assert.equal(observer.connections, 1);
+  assert(
+    Number.isSafeInteger(observer.messages) &&
+      observer.messages >= 2 &&
+      observer.messages <= 256,
+  );
+  assert.equal(observer.failure, undefined, "native input observer failed");
+  assert.equal(observer.joined, true, "native input observer not joined");
+  assert.equal(r.cancel.joined, true, "prepared cancel client not joined");
+  assert.equal(
+    r.cancel.body_bytes,
+    Buffer.byteLength(JSON.stringify(r.cancel.request)),
+  );
+  for (const [key, index] of [
+    ["receive", 0],
+    ["eof", 1],
+  ]) {
+    assert(observation[key], "missing native " + key + " notice");
+    assert.deepEqual(
+      observation[key].notice,
+      {
+        traceId: r.upload.trace_id,
+        spanId: source.span.spanID,
+        processIdentity: source.identity,
+        phase: phases[index].phase,
+        bytes: phases[index].bytes,
+        monotonic_ns: phases[index].monotonic_ns,
+      },
+      "notice differs from original native HTTP phase",
+    );
+  }
+  const prepared = ns(r.cancel.prepared_ns),
+    ready = ns(r.cancel.socket_ready_ns),
+    armed = ns(observation.armed_ns),
+    upload = ns(r.upload.sent_ns),
+    received = ns(observation.receive.received_ns),
+    eof = ns(observation.eof.received_ns),
+    sent = ns(r.cancel.sent_ns),
+    written = ns(r.cancel.written_ns);
+  assert(
+    prepared <= ready && ready <= armed && armed <= upload,
+    "cancel socket must be prepared before arming the original upload",
+  );
+  assert(
+    upload <= received &&
+      received <= eof &&
+      ns(r.upload.eof_sent_ns) <= eof &&
+      eof <= sent &&
+      sent <= written &&
+      written <= ns(r.cancel.complete_ns),
+    "invalid native EOF and cancellation receipt sequence",
+  );
+  // UI minus host offset: the original EOF happened before its host receipt,
+  // so offset >= native EOF - receipt. Apply this causal bound only to the
+  // parse window. Original HTTP/SSE checks retain the full calibration envelope.
+  const causalLower = ns(phases[1].monotonic_ns) - eof,
+    lower = BigInt(bounds.lower_ns),
+    upper = BigInt(bounds.upper_ns);
+  assert(causalLower <= upper, "native EOF contradicts clock calibration");
+  return {
+    lower_ns: String(causalLower > lower ? causalLower : lower),
+    upper_ns: String(upper),
+  };
+}
+
 export function inspectCapacityCase(r) {
   assert(["body-incomplete", "body-completion-and-parse"].includes(r.phase));
   assert(["operation-cancel", "commands-stop"].includes(r.cancel_path));
@@ -250,8 +327,14 @@ export function inspectCapacityCase(r) {
   );
   if (r.phase === "body-completion-and-parse")
     assert(eofSent <= ns(r.cancel.sent_ns), "parse cancel preceded client EOF");
-  const earliest = ns(r.cancel.sent_ns) + BigInt(bounds.lower_ns),
-    latest = ns(r.cancel.sent_ns) + BigInt(bounds.upper_ns);
+  const parsing = r.phase === "body-completion-and-parse";
+  const inputBounds = parsing
+    ? parseOffsetBounds(r, u, phases, bounds)
+    : bounds;
+  const earliest = ns(r.cancel.sent_ns) + BigInt(inputBounds.lower_ns),
+    latest =
+      ns(parsing ? r.cancel.written_ns : r.cancel.sent_ns) +
+      BigInt(inputBounds.upper_ns);
   const [start, end] =
     r.phase === "body-incomplete"
       ? [phases[0], phases[1]]
@@ -452,6 +535,7 @@ export function inspectCapacityCase(r) {
     completion_ms: Number(completed - ns(r.cancel.sent_ns)) / 1e6,
     sse_streams: r.pool.length,
     clock_offset_ns: bounds,
+    ...(parsing ? { input_phase_offset_ns: inputBounds } : {}),
     phase: r.phase,
     cancel_path: r.cancel_path,
   };

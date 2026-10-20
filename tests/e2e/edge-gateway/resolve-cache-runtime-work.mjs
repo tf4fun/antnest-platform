@@ -158,17 +158,39 @@ export async function createCacheRuntimeWork({
     async observe(options) {
       const bounded = operation(options);
       const started_at = performance.now();
-      const observedContainer = await physical(bounded);
-      assert.deepEqual(
-        observedContainer,
-        container,
-        "Runtime replaced during held work",
+      // Discovery, live status and /proc read the same bound Runtime
+      // independently. Join every read before exposing errors or stamping the
+      // complete sample; slow discovery must not postpone the process read.
+      const readers = [
+        async () => {
+          const current = await physical(bounded);
+          assert.deepEqual(
+            current,
+            container,
+            "Runtime replaced during held work",
+          );
+          return current;
+        },
+        () =>
+          statusReader.read(bounded.docker, {
+            signal: bounded.signal,
+            timeoutMS: bounded.remaining(),
+          }),
+        () => exec(bounded, command),
+      ];
+      const results = await Promise.allSettled(
+        readers.map((read) => Promise.resolve().then(read)),
       );
-      const observedStatus = await statusReader.read(bounded.docker, {
-        signal: bounded.signal,
-        timeoutMS: bounded.remaining(),
-      });
-      const raw = await exec(bounded, command);
+      const failures = results
+        .filter((result) => result.status === "rejected")
+        .map((result) => result.reason);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length)
+        throw new AggregateError(failures, "Runtime observation failed");
+      bounded.remaining();
+      const [observedContainer, observedStatus, raw] = results.map(
+        (result) => result.value,
+      );
       const fields = raw.split("\n");
       assert.equal(fields.length, 4, "incomplete Runtime process observation");
       const values = fields.map((value, index) => {

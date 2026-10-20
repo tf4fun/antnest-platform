@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -38,9 +38,11 @@ import {
 } from "./upload-capacity-workload.mjs";
 import {
   startHeldUpload,
+  prepareCapacityCancellation,
   observeCapacityCancellation,
 } from "./upload-capacity-client.mjs";
 import { inspectCapacityCase } from "./upload-capacity-evidence.mjs";
+import { startCapacityEofObserver } from "../../support/agent-ui/capacity-eof-observer.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const stamp = () => process.hrtime.bigint().toString();
@@ -59,10 +61,11 @@ export async function runCapacity() {
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   const timer = setTimeout(interrupt, 900000);
-  let config, before, output, failure;
+  let config, before, output, failure, inputObserver;
   const candidates = [],
     streams = [],
     uploads = [],
+    cancellations = [],
     problems = [],
     cases = [],
     requests = [];
@@ -194,6 +197,14 @@ export async function runCapacity() {
         tag,
       ]);
     }
+    inputObserver = await startCapacityEofObserver({ signal });
+    evidence.input_observer = inputObserver.evidence;
+    void inputObserver.failed.then((error) => abort.abort(error));
+    Object.assign(config.env, {
+      ANTNEST_CAPACITY_OBSERVER_HOST: "host.docker.internal",
+      ANTNEST_CAPACITY_OBSERVER_PORT: String(inputObserver.port),
+      ANTNEST_CAPACITY_OBSERVER_TOKEN: inputObserver.token,
+    });
     const compose = (args) =>
       composeArgs(config.project, [
         "-f",
@@ -207,6 +218,7 @@ export async function runCapacity() {
       compose(["up", "-d", "--wait", "--wait-timeout", "180", "--no-build"]),
       true,
     );
+    await inputObserver.ready;
     const ids = (await docker(compose(["ps", "-q"])))
       .split("\n")
       .filter(Boolean);
@@ -526,6 +538,51 @@ export async function runCapacity() {
         { status: 503, timeoutMs: 2000 },
       );
       record.overflow.body = record.overflow.response;
+      const cancelPath =
+        spec.cancel_path === "operation-cancel"
+          ? bSession + "/operations/" + heldID + "/cancel"
+          : bBase + "/commands";
+      const cancelBody =
+        spec.cancel_path === "operation-cancel"
+          ? { expectedRunId: record.accepted.runId }
+          : {
+              text: "/stop",
+              sessionId: b.session_id,
+              operationId: heldID,
+              expectedRunId: record.accepted.runId,
+            };
+      let preparedCancel, inputArm, plannedTrace;
+      if (spec.phase === "body-completion-and-parse") {
+        preparedCancel = prepareCapacityCancellation(
+          config.gateway + cancelPath,
+          {
+            Cookie: clientB.cookie,
+            Origin: config.gateway,
+            "X-Antnest-CSRF-Token": clientB.csrf,
+            "Idempotency-Key": randomUUID(),
+          },
+          cancelBody,
+          signal,
+        );
+        cancellations.push(preparedCancel);
+        record.cancel = Object.assign(preparedCancel.evidence, {
+          path: cancelPath,
+          request: cancelBody,
+          cookie_sha256: hash(clientB.cookie),
+        });
+        requests.push(record.cancel);
+        await preparedCancel.ready;
+        plannedTrace = randomBytes(16).toString("hex");
+        inputArm = inputObserver.arm({
+          traceId: plannedTrace,
+          bodyBytes: body.length,
+          onEof() {
+            void preparedCancel.send();
+          },
+        });
+        record.input_observation = inputArm.evidence;
+        record.input_observer = inputObserver.evidence;
+      }
       const upload = startHeldUpload(
         config.gateway + aSession + "/prompts",
         {
@@ -534,6 +591,16 @@ export async function runCapacity() {
           "X-Antnest-CSRF-Token": clientA.csrf,
           "Idempotency-Key": intentId,
           "If-Match": aView.selectedView.historyToken,
+          ...(plannedTrace
+            ? {
+                traceparent:
+                  "00-" +
+                  plannedTrace +
+                  "-" +
+                  randomBytes(8).toString("hex") +
+                  "-01",
+              }
+            : {}),
         },
         body,
         signal,
@@ -541,6 +608,7 @@ export async function runCapacity() {
       uploads.push(upload);
       record.upload = Object.assign(upload.evidence, {
         path: aSession + "/prompts",
+        ...(plannedTrace ? { requested_trace_id: plannedTrace } : {}),
         intent_id: intentId,
         wire_bytes: wire,
         limit: 16 * 1024 * 1024,
@@ -565,28 +633,23 @@ export async function runCapacity() {
           work.evidence.started.work.pgid,
         ),
       );
-      if (spec.phase === "body-completion-and-parse") {
-        await upload.finish();
-        // Leave room for the measured client/server clock uncertainty after EOF.
-        // The original native events must still prove the complete overlap.
-        await delay(20, undefined, { signal });
-      }
-      const cancelPath =
-        spec.cancel_path === "operation-cancel"
-          ? bSession + "/operations/" + heldID + "/cancel"
-          : bBase + "/commands";
-      const cancelBody =
-        spec.cancel_path === "operation-cancel"
-          ? { expectedRunId: record.accepted.runId }
-          : {
-              text: "/stop",
-              sessionId: b.session_id,
-              operationId: heldID,
-              expectedRunId: record.accepted.runId,
-            };
       signal.throwIfAborted();
       await observeCapacityCancellation({
         cancel: async () => {
+          if (preparedCancel) {
+            try {
+              // Let both observation actions start before releasing A's EOF.
+              // B's only send happens synchronously in the native EOF callback.
+              await Promise.resolve();
+              await upload.finish();
+              await inputArm.eof;
+              const result = await preparedCancel.response;
+              assert.equal(result.status, 200);
+              return record.cancel;
+            } finally {
+              await preparedCancel.closeAndWait();
+            }
+          }
           record.cancel = await http(clientB, cancelPath, { body: cancelBody });
           return record.cancel;
         },
@@ -630,6 +693,7 @@ export async function runCapacity() {
           return record.terminal;
         },
       });
+      inputArm?.release();
       for (const pool of record.pool) {
         const ref = active.find((s) => s.trace_id === pool.trace_id);
         ref.stream.assertOpen();
@@ -729,6 +793,8 @@ export async function runCapacity() {
         signal,
       });
     }
+    inputObserver.assertHealthy();
+    await inputObserver.closeAndWait();
     for (const ref of streams) await closeStream(ref);
     evidence.model = await model();
     assert.equal(evidence.model.requests.length, 8);
@@ -807,6 +873,9 @@ export async function runCapacity() {
       stack: error.stack,
     };
   } finally {
+    for (const cancel of cancellations)
+      await attempt(() => cancel.closeAndWait());
+    if (inputObserver) await attempt(() => inputObserver.closeAndWait());
     for (const upload of uploads) await attempt(() => upload.closeAndWait());
     for (const ref of streams) await attempt(() => closeStream(ref));
     if (config) {

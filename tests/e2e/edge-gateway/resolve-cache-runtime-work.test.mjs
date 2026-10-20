@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
+import {
+  setTimeout as delay,
+  setImmediate as nextTurn,
+} from "node:timers/promises";
 import * as runtimeWorkModule from "./resolve-cache-runtime-work.mjs";
 
 async function fixture({ readerOrganization = "org-1" } = {}) {
@@ -131,6 +134,118 @@ test("all Runtime status, process, freshness and emit commands use cooperative r
   assert.deepEqual(joinedCalls, runtimeCalls);
 });
 
+const samplingStage = (args) =>
+  args[0] === "ps"
+    ? "physical"
+    : args[0] === "exec" && args[1] === "-e"
+      ? "status"
+      : args[0] === "exec" && args[1] === "--user"
+        ? "process"
+        : undefined;
+
+test("a slow independent physical query does not postpone live status or process sampling", async () => {
+  const { work, intercept } = await fixture();
+  const release = Promise.withResolvers();
+  const started = [];
+  intercept(async (args) => {
+    const stage = samplingStage(args);
+    if (!stage) return;
+    started.push(stage);
+    await release.promise;
+  });
+  const count = work.evidence.observations.length;
+  const result = work.observe();
+  try {
+    await nextTurn();
+    assert.deepEqual(started, ["physical", "status", "process"]);
+    assert.equal(work.evidence.observations.length, count);
+  } finally {
+    release.resolve();
+    await result;
+  }
+  const sample = await result;
+  assert.deepEqual(sample.container, work.evidence.container);
+  assert.equal(sample.status.execution_id, work.evidence.runtime_execution_id);
+  assert.equal(sample.work.pgid, work.evidence.started.work.pgid);
+  assert.equal(work.evidence.observations.length, count + 1);
+});
+
+test("a physical query failure joins both live readers before exposing its original error", async () => {
+  const { work, intercept } = await fixture();
+  const release = Promise.withResolvers();
+  const failure = new Error("original Runtime discovery failed");
+  const joined = [];
+  let settled = false;
+  intercept(async (args) => {
+    const stage = samplingStage(args);
+    if (stage === "physical") throw failure;
+    if (stage) {
+      await release.promise;
+      joined.push(stage);
+    }
+  });
+  const count = work.evidence.observations.length;
+  const result = work.observe().then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    (error) => {
+      settled = true;
+      return error;
+    },
+  );
+  try {
+    await nextTurn();
+    assert.equal(settled, false);
+  } finally {
+    release.resolve();
+    await result;
+  }
+  assert.equal(await result, failure);
+  assert.deepEqual(joined.sort(), ["process", "status"]);
+  assert.equal(work.evidence.observations.length, count);
+});
+
+test("independent sampling failures preserve every cause after the final reader joins", async () => {
+  const { work, intercept } = await fixture();
+  const release = Promise.withResolvers();
+  const physical = new Error("Runtime replaced");
+  const process = new Error("remote process cleanup pending");
+  process.remoteCleanupPending = true;
+  let statusJoined = false;
+  intercept(async (args) => {
+    const stage = samplingStage(args);
+    if (stage === "physical") throw physical;
+    if (stage === "process") throw process;
+    if (stage === "status") {
+      await release.promise;
+      statusJoined = true;
+    }
+  });
+  const count = work.evidence.observations.length;
+  const result = work.observe().then(
+    () => undefined,
+    (error) => error,
+  );
+  try {
+    await nextTurn();
+  } finally {
+    release.resolve();
+    await result;
+  }
+  const error = await result;
+  assert(error instanceof AggregateError);
+  assert.deepEqual(error.errors, [physical, process]);
+  assert.equal(statusJoined, true);
+  assert.equal(work.evidence.observations.length, count);
+});
+
+const samplingFailure = (error) =>
+  error instanceof AggregateError
+    ? error.errors.some(samplingFailure)
+    : /sampling window expired|timed out|aborted/u.test(error.message);
+
 for (const stage of ["physical", "status", "process", "emit"])
   test(`held Runtime ${stage} observation joins interrupted work and stops issuing commands`, async () => {
     const { work, calls, intercept } = await fixture();
@@ -160,7 +275,7 @@ for (const stage of ["physical", "status", "process", "emit"])
       stage === "emit"
         ? work.emit({ signal: abort.signal, timeoutMS: 500 })
         : work.observe({ signal: abort.signal, timeoutMS: 500 }),
-      /sampling window expired|aborted/u,
+      samplingFailure,
     );
     assert.equal(active, 0);
     assert.equal(calls.length, countAtAbort);
@@ -168,16 +283,19 @@ for (const stage of ["physical", "status", "process", "emit"])
     if (stage === "emit") assert.equal(work.evidence.emit.at, undefined);
   });
 
-test("one Runtime observation shares a deadline across its sequential commands", async () => {
+test("one Runtime observation shares a deadline across discovery and independent live readers", async () => {
   const { work, calls, intercept } = await fixture();
-  const before = calls.length;
+  const count = work.evidence.observations.length;
   const budgets = [];
   intercept(async (args, options) => {
     budgets.push(options?.timeoutMS);
     await delay(30, undefined, { signal: options?.signal });
   });
-  await assert.rejects(work.observe({ timeoutMS: 65 }), /timed out|aborted/u);
-  assert(calls.length - before < 5, "sampling continued past its deadline");
+  await assert.rejects(work.observe({ timeoutMS: 65 }), samplingFailure);
+  const completedCalls = calls.length;
+  await nextTurn();
+  assert.equal(calls.length, completedCalls, "sampling continued after join");
+  assert.equal(work.evidence.observations.length, count);
   assert(budgets.length >= 2);
   assert(budgets.every((budget) => budget > 0 && budget <= 65));
   assert(budgets.at(-1) < budgets[0]);

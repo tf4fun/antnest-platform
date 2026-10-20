@@ -491,5 +491,49 @@ export function capacityFixture(
     tag("http.response.status_code", 503),
   ];
 
+  if (phase === "body-completion-and-parse") {
+    r.upload.requested_trace_id = r.upload.trace_id;
+    Object.assign(r.cancel, {
+      prepared_ns: "3500000",
+      socket_ready_ns: "4000000",
+      written_ns: String(cancelTime + 1000),
+      body_bytes: Buffer.byteLength(JSON.stringify(r.cancel.request)),
+      joined: true,
+    });
+    const notice = (index) => {
+      const source = r.upload.trace.spans[1];
+      const phase = Object.fromEntries(
+        source.logs[index].fields.map(({ key, value }) => [key, value]),
+      );
+      return {
+        traceId: source.traceID,
+        spanId: source.spanID,
+        processIdentity: Object.fromEntries(
+          r.upload.trace.processes.ui.tags.map(({ key, value }) => [
+            key,
+            value,
+          ]),
+        ),
+        phase: phase.phase,
+        bytes: phase.bytes,
+        monotonic_ns: phase.monotonic_ns,
+      };
+    };
+    r.input_observation = {
+      trace_id: r.upload.trace_id,
+      body_bytes: r.upload.body_bytes,
+      armed_ns: "4500000",
+      triggered: 1,
+      receive: { notice: notice(0), received_ns: "10000000" },
+      eof: { notice: notice(1), received_ns: "50001000" },
+    };
+    r.input_observer = {
+      connections: 1,
+      messages: 2,
+      ignored: 0,
+      joined: true,
+    };
+  }
+
   return r;
 }
