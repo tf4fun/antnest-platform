@@ -158,7 +158,7 @@
   },
   "guarded_sources": {
     "services/agent-acp-service/src/transport/acp/http-transport.ts": {
-      "sha256": "81391e4b281be56b25f02648e0bd68744e37968a6de66526c097eda826b40fd0",
+      "sha256": "12e42b76b8adad978d996a3b0f1ee050bc6c801477dd6198f188215db8bf11ef",
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
@@ -192,7 +192,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "ad6bc6c0c511dcbdcf443cd965c820a521cb481ad508d2cd4d2d3151e9d1e4fd",
+      "sha256": "740540858f677d50c3a728bd6f961891eb9e1334bbd1b0addd16d539629ad78b",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
