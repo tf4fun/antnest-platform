@@ -4,7 +4,9 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import { AcpHttpBridge } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
 import { startBridgeTelemetry } from "../../../services/agent-ui/web/server/dist/telemetry.js";
-import { testScope } from "./auth-fixture.mjs";
+import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
+import { verifiedRequestContext } from "../../../services/agent-ui/web/server/dist/http/trusted-identity.js";
+import { testScope, TestRequest } from "./auth-fixture.mjs";
 
 const fromUi = createRequire(
   new URL("../../../services/agent-ui/web/package.json", import.meta.url),
@@ -83,8 +85,32 @@ async function fixture(mode = "hold", options = {}) {
   const transport = new AcpServer({ agent });
   const handler = createNodeHttpHandler(transport);
   const requests = [];
+  const initializations = [];
   const listener = createServer((request, response) => {
+    if (options.workspace && request.url?.startsWith("/rpc/")) {
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify(
+          request.url === "/rpc/agent-acp/get-agent-execution-state"
+            ? {
+                agent_id: "agent-1",
+                access_allowed: true,
+                configuration_revision: "a".repeat(64),
+                availability: "ready",
+                active_session_id: null,
+                unavailable_reason: null,
+              }
+            : {},
+        ),
+      );
+      return;
+    }
     if (request.method !== "DELETE") {
+      if (request.method === "POST" && !request.headers["acp-connection-id"])
+        initializations.push({
+          callerContext: request.headers["antnest-caller-context"],
+        });
       if (
         request.method === "POST" &&
         !request.headers["acp-connection-id"] &&
@@ -152,9 +178,11 @@ async function fixture(mode = "hold", options = {}) {
     });
     request.resume();
     response.once("close", disconnected.resolve);
-    if (mode === "rejected") {
+    if (mode === "rejected" || options.deleteStatus) {
       response
-        .writeHead(503, { "content-type": "application/json" })
+        .writeHead(options.deleteStatus ?? 503, {
+          "content-type": "application/json",
+        })
         .end('{"code":"unavailable"}');
       deleted.resolve();
       return;
@@ -190,11 +218,13 @@ async function fixture(mode = "hold", options = {}) {
   try {
     opening = AcpHttpBridge.open({
       baseUrl: new URL(`http://127.0.0.1:${listener.address().port}`),
-      scope: testScope({
-        organizationId: "org-1",
-        principalId: "user-1",
-        agentId: "agent-1",
-      }),
+      scope:
+        options.scope ??
+        testScope({
+          organizationId: "org-1",
+          principalId: "user-1",
+          agentId: "agent-1",
+        }),
       callbacks: {
         update() {},
         requestPermission() {
@@ -211,6 +241,8 @@ async function fixture(mode = "hold", options = {}) {
         }
         let response;
         try {
+          if (method === "DELETE" && Object.hasOwn(options, "deleteError"))
+            throw options.deleteError;
           response = await fetch(input, init);
         } finally {
           if (method === "DELETE") deleteSettled++;
@@ -276,6 +308,7 @@ async function fixture(mode = "hold", options = {}) {
       },
       release: release.resolve,
       requests,
+      initializations,
       close,
     };
     if (!options.deferOpen) await opening;
@@ -404,6 +437,194 @@ test("ACP close retains a DELETE failure from automatic SDK cleanup", async () =
     assert.equal(f.requests.length, 1);
   } finally {
     await f.close();
+  }
+});
+
+test("only completed peer-loss cleanup permits retirement while its original close still fails", async () => {
+  const f = await fixture("hold", { holdDeleteBeforeFetch: true });
+  try {
+    await bounded(f.connected);
+    await bounded(f.stopListener());
+    await bounded(f.deleteAttempted);
+    await bounded(f.bridge.closed);
+    const closing = f.bridge.close();
+    assert.equal(f.bridge.canReplaceAfterPeerLoss, false);
+    assert.equal(f.deleteSettled, 0);
+    f.releaseDelete();
+    await assert.rejects(bounded(closing), /cleanup failed/);
+    await bounded(Promise.all(f.streamClosures));
+    assert.equal(f.deleteAttempts, 1);
+    assert.equal(f.deleteSettled, 1);
+    assert.equal(f.requests.length, 0, "no invented DELETE acknowledgement");
+    assert.equal(f.bridge.canReplaceAfterPeerLoss, true);
+    assert.equal(f.bridge.close(), closing);
+    await assert.rejects(closing, /cleanup failed/);
+  } finally {
+    await f.close();
+  }
+});
+
+const refused = () =>
+  Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" });
+const mixedRefused = () =>
+  Object.assign(new AggregateError([refused(), new Error("unknown leaf")]), {
+    code: "ECONNREFUSED",
+  });
+for (const [name, error, qualified] of [
+  ["direct refusal", refused, true],
+  [
+    "fetch refusal",
+    () => new TypeError("fetch failed", { cause: refused() }),
+    true,
+  ],
+  [
+    "all-address refusal",
+    () =>
+      new TypeError("fetch failed", {
+        cause: Object.assign(new AggregateError([refused(), refused()]), {
+          code: "ECONNREFUSED",
+        }),
+      }),
+    true,
+  ],
+  ["unknown", () => new Error("ECONNREFUSED"), false],
+  ["unknown wrapper", () => new Error("wrapper", { cause: refused() }), false],
+  [
+    "mixed address failures",
+    () => new TypeError("fetch failed", { cause: mixedRefused() }),
+    false,
+  ],
+  [
+    "unknown leaf",
+    () =>
+      Object.assign(new Error("refused", { cause: new Error("unknown") }), {
+        code: "ECONNREFUSED",
+      }),
+    false,
+  ],
+  ["lookalike", () => ({ code: "ECONNREFUSED" }), false],
+  ["undefined rejection", () => undefined, false],
+  [
+    "cycle",
+    () => {
+      const e = refused();
+      e.cause = e;
+      return e;
+    },
+    false,
+  ],
+  [
+    "truncated chain",
+    () => {
+      let e = refused();
+      for (let i = 0; i < 40; i++)
+        e = new TypeError("fetch failed", { cause: e });
+      return e;
+    },
+    false,
+  ],
+]) {
+  test(`peer-loss retirement checks the complete owned DELETE cause: ${name}`, async () => {
+    const f = await fixture("hold", { deleteError: error() });
+    try {
+      await bounded(f.connected);
+      f.endStream();
+      await bounded(f.bridge.closed);
+      await assert.rejects(bounded(f.bridge.close()), /cleanup failed/);
+      assert.equal(f.bridge.canReplaceAfterPeerLoss, qualified);
+      assert.equal(f.deleteAttempts, 1);
+      assert.equal(f.deleteSettled, 1);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const status of [401, 403, 404, 500, 503]) {
+  test(`peer-loss retirement does not waive an actual DELETE ${status}`, async () => {
+    const f = await fixture("hold", { deleteStatus: status });
+    try {
+      await bounded(f.connected);
+      f.endStream();
+      await bounded(f.bridge.closed);
+      await assert.rejects(bounded(f.bridge.close()), /cleanup failed/);
+      assert.equal(f.bridge.canReplaceAfterPeerLoss, false);
+      assert.equal(f.requests.length, 1);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("requested close does not gain peer-loss qualification from a refused DELETE", async () => {
+  const f = await fixture("hold", { deleteError: refused() });
+  try {
+    await bounded(f.connected);
+    await assert.rejects(bounded(f.bridge.close()), /cleanup failed/);
+    assert.equal(f.bridge.canReplaceAfterPeerLoss, false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("the first original Agent view after real ACP peer shutdown creates one fresh connection", async () => {
+  const peers = [];
+  const delegations = [];
+  const runtime = createWorkspaceRuntime({
+    connect: async (scope) => {
+      const peer = await fixture("hold", {
+        workspace: true,
+        scope,
+        holdDeleteBeforeFetch: peers.length === 0,
+      });
+      if (peers.length > 0) peer.release();
+      peers.push(peer);
+      return peer.bridge;
+    },
+  });
+  const view = () => {
+    const request = new TestRequest(
+      "http://localhost/api/app/workspace/v1/agents/agent-1/view",
+      {
+        headers: {
+          "x-antnest-organization-id": "org-1",
+          "x-antnest-principal-id": "user-1",
+          "x-antnest-agent-id": "agent-1",
+        },
+      },
+    );
+    delegations.push(verifiedRequestContext(request.headers).token);
+    return runtime.handle(request);
+  };
+  try {
+    assert.equal((await view()).status, 200);
+    await bounded(peers[0].connected);
+    await bounded(peers[0].stopListener());
+    await bounded(peers[0].deleteAttempted);
+    peers[0].releaseDelete();
+    await assert.rejects(bounded(peers[0].bridge.close()), /cleanup failed/);
+    const response = await view();
+    assert.equal(
+      response.status,
+      200,
+      "the original GET must succeed without resending it",
+    );
+    await response.json();
+    assert.equal(peers.length, 2, "no hidden business or connection retry");
+    assert.notEqual(delegations[0], delegations[1]);
+    assert.deepEqual(
+      peers.map((peer) => peer.initializations),
+      delegations.map((callerContext) => [{ callerContext }]),
+      "each real ACP initialization must carry its original GET's delegation",
+    );
+    await assert.rejects(peers[0].bridge.close(), /cleanup failed/);
+  } finally {
+    for (const peer of peers) {
+      peer.release();
+      peer.releaseDelete();
+    }
+    await runtime.drain(100);
+    for (const peer of peers) await peer.close();
   }
 });
 

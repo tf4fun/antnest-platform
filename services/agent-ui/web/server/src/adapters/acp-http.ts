@@ -350,6 +350,10 @@ export class AcpHttpBridge {
     return this.connection.closed;
   }
 
+  public get canReplaceAfterPeerLoss(): boolean {
+    return this.transport.canReplaceAfterPeerLoss;
+  }
+
   public async load(sessionId: string): Promise<{
     response: acp.LoadSessionResponse;
     cut: { sealedWatermark: number; appendVersion: number };

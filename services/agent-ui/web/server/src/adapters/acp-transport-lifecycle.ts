@@ -24,6 +24,10 @@ export class AcpTransportLifecycle {
   private deleteCompleted = 0;
   private deleteStatus = 0;
   private streamJoined = false;
+  private connectionEnded = false;
+  private closeTrigger: AcpCloseTrigger | undefined;
+  private peerLossFailure: Error | undefined;
+  private replaceAfterPeerLoss = false;
   private readonly failures = new AcpCloseFailures();
   private readonly stopStream: () => Promise<void>;
   private cancelInitialization: (() => void) | undefined;
@@ -92,7 +96,15 @@ export class AcpTransportLifecycle {
     if (this.parentSignal?.aborted) this.cancelInitialization();
     // Keep the rejection observed without discarding the stable close result.
     // Never join this callback from close(), which would wait on itself.
-    void connection.closed.then(() => this.close()).catch(() => {});
+    void connection.closed.then(() => {
+      this.connectionEnded = true;
+      return this.close();
+    }).catch(() => {});
+  }
+
+  /** A retirement qualification; the original close promise still rejects. */
+  public get canReplaceAfterPeerLoss(): boolean {
+    return this.replaceAfterPeerLoss;
   }
 
   public completeInitialization(): void {
@@ -104,6 +116,7 @@ export class AcpTransportLifecycle {
 
   public beginClose(trigger: AcpCloseTrigger): void {
     if (this.closeTrace) return;
+    this.closeTrigger = trigger;
     this.detachInitialization();
     this.closeTrace = this.startTrace(trigger);
     this.cleanupTimer = setTimeout(() => {
@@ -140,6 +153,12 @@ export class AcpTransportLifecycle {
           deleteStatus: this.deleteStatus, pendingRequests: this.pending.size,
           streamJoined: this.streamJoined, failures: this.failures,
         });
+        this.replaceAfterPeerLoss = this.closeTrigger === "transport_failure" &&
+          this.initialized && this.connectionEnded && this.targetObserved &&
+          this.deletes === 1 && this.deleteResponses === 0 && this.deleteCompleted === 0 &&
+          this.streamJoined && this.pending.size === 0 &&
+          this.peerLossFailure !== undefined &&
+          this.errors.length === 1 && this.errors[0] === this.peerLossFailure;
       }
     });
     void this.closing.catch(() => {});
@@ -196,6 +215,8 @@ export class AcpTransportLifecycle {
       this.failures.record(phase, error);
       // Never retain remote response contents, preparation errors or credentials.
       const failure = new Error("ACP DELETE cleanup failed");
+      if (phase === "delete_request" && isConnectionRefused(error))
+        this.peerLossFailure = failure;
       this.errors.push(failure);
       throw failure;
     }
@@ -209,6 +230,30 @@ export class AcpTransportLifecycle {
     }));
     return owned.response;
   }
+}
+
+// Inspect the complete owned fetch cause, not the bounded telemetry summary.
+// Only native fetch wrappers and exclusively refused connection leaves qualify.
+function isConnectionRefused(error: unknown): boolean {
+  const seen = new Set<Error>();
+  const visit = (value: unknown, depth: number): boolean => {
+    if (!(value instanceof Error) || depth > 8 || seen.size >= 32 || seen.has(value))
+      return false;
+    seen.add(value);
+    const code = (value as Error & { code?: unknown }).code;
+    const hasCause = Object.hasOwn(value, "cause");
+    if (value instanceof AggregateError) {
+      return code === "ECONNREFUSED" && Array.isArray(value.errors) &&
+        value.errors.length > 0 && value.errors.length <= 16 &&
+        value.errors.every((cause: unknown) => visit(cause, depth + 1)) &&
+        (!hasCause || visit(value.cause, depth + 1));
+    }
+    if (code === "ECONNREFUSED")
+      return !hasCause || visit(value.cause, depth + 1);
+    return value instanceof TypeError && code === undefined && hasCause &&
+      visit(value.cause, depth + 1);
+  };
+  try { return visit(error, 0); } catch { return false; }
 }
 
 async function discardCleanupBody(response: Response): Promise<void> {

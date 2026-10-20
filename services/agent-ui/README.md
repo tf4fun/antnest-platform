@@ -141,10 +141,30 @@ response contents, credentials or identity labels enter these summaries.
 An attempted DELETE with no receiver response remains a failed close. ACP
 process shutdown does not promise a new acknowledgement; a normal UI drain
 with ACP still online requires the complete DELETE 202 response.
+
+After an initialized ACP connection ends unexpectedly, the next authorized
+observation can replace its retired owner when the only cleanup failure is a
+single DELETE attempt refused before any response. This qualification requires
+the complete network cause to contain only connection refusals, all transport
+work and streams to finish, the owner watch and local cleanup callbacks to
+finish successfully, and no held registry work. Initialization failures,
+requested closes, denied access, HTTP error responses, deadlines, unknown or
+mixed causes and additional cleanup failures do not qualify. The original close
+promise and ERROR trace still report failure. Concurrent observations share one
+replacement initialized with the current request's delegation; no View request
+or Prompt is replayed.
+
+An unqualified failed retirement retains its registry slot and capacity charge.
+Later observations and sweeps continue to report that failure instead of
+bypassing cleanup. A complete service drain joins those retirements, reports
+forced cleanup and releases the captured slots. Other idle owners can still be
+evicted, with their leases and work rechecked after each awaited retirement.
+
 Failed Agent views add `antnest.ui.agent_view.failure` to the active HTTP span,
 distinguishing owner acquisition/retirement from view preparation. Its bounded
 cause list contains fixed classifications only, without exception messages,
-stacks, credentials or identity labels; HTTP failure semantics remain unchanged.
+stacks, credentials or identity labels. These diagnostic summaries do not grant
+retirement qualification.
 
 Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
 16 requests per process and 64 MiB / 4 requests per signed user in an

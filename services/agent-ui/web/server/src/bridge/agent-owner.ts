@@ -41,6 +41,7 @@ import {
 export type AcpBridgePort = {
   skillCommands?: WorkspaceCommand[];
   closed?: Promise<unknown>;
+  readonly canReplaceAfterPeerLoss?: boolean;
   capabilities?: Pick<AgentCapabilities, "promptCapabilities" | "sessionCapabilities">;
   list?(cursor?: string): Promise<ListSessionsResponse>;
   createSession?(): Promise<NewSessionResponse>;
@@ -174,6 +175,8 @@ export class AgentBridgeOwner {
   private acp: AcpBridgePort | undefined;
   private currentSkillCommands: WorkspaceCommand[] = [];
   private retired = false;
+  private peerLost = false;
+  private replaceAfterPeerLoss = false;
   private closing: Promise<void> | undefined;
   private watchTask: Promise<void> = Promise.resolve();
   private draining = false;
@@ -341,8 +344,13 @@ export class AgentBridgeOwner {
       }, input.signal);
       input.signal?.throwIfAborted();
       owner.currentSkillCommands = projectSkillCommands(owner.acp.skillCommands ?? []);
-      if (owner.acp.closed !== undefined)
-        void owner.acp.closed.then(() => owner.close(), () => owner.close()).catch(() => {});
+      if (owner.acp.closed !== undefined) {
+        const disconnected = () => {
+          if (!owner.retired && !owner.draining) owner.peerLost = true;
+          return owner.close();
+        };
+        void owner.acp.closed.then(disconnected, disconnected).catch(() => {});
+      }
       owner.watchTask = owner.watchAgentState();
       void owner.watchTask.catch(() => owner.close()).catch(() => {});
       return owner;
@@ -355,6 +363,10 @@ export class AgentBridgeOwner {
 
   public get isClosed(): boolean {
     return this.retired;
+  }
+
+  public get canReplaceAfterPeerLoss(): boolean {
+    return this.replaceAfterPeerLoss;
   }
 
   public get permissions(): PendingPermission[] {
@@ -1162,6 +1174,11 @@ export class AgentBridgeOwner {
     void Promise.allSettled([cleanup, this.watchTask]).then((results) => {
       for (const result of results) if (result.status === "rejected") failures.push(result.reason);
       try { this.closed(this); } catch (error) { failures.push(error); }
+      try {
+        this.replaceAfterPeerLoss = this.peerLost && !this.accessRevoked &&
+          results[0].status === "rejected" && results[1].status === "fulfilled" &&
+          failures.length === 1 && this.acp?.canReplaceAfterPeerLoss === true;
+      } catch (error) { failures.push(error); }
       if (failures.length) fail(new AggregateError(failures, "Bridge owner cleanup failed"));
       else complete();
     });

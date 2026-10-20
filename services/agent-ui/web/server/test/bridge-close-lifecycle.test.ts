@@ -155,6 +155,9 @@ test("sweep waits for all owner cleanups before reporting one failure", async ()
   finally { cleanup.resolve(); }
   const error = await swept;
   assert(error === failure || (error instanceof AggregateError && error.errors.includes(failure)));
+  assert.equal(registry.snapshotMetrics().owners, 1, "failed retirement remains quarantined");
+  await assert.rejects(registry.sweep(), /sweep failed/);
+  assert.deepEqual(await registry.drain(0), { forced: true });
   assert.equal(registry.snapshotMetrics().owners, 0);
 });
 
@@ -177,7 +180,7 @@ test("Agent watch cancellation joins the first underlying reader cancellation", 
   } finally { cleanup.resolve(); await watching; }
 });
 
-test("drain retains a concurrent retirement failure after its slot disappears", async () => {
+test("drain retains a concurrent retirement failure until all captured slots finish", async () => {
   const cleanup = deferred(), streamDrain = deferred();
   const registry = new BridgeRegistry({ ...registryOptions, create: () => ({
     close: () => cleanup.promise, beginDrain: () => streamDrain.promise,
@@ -189,9 +192,10 @@ test("drain retains a concurrent retirement failure after its slot disappears", 
     await turn();
     cleanup.reject(new Error("concurrent retirement failed"));
     await sweep;
-    assert.equal(registry.snapshotMetrics().owners, 0);
+    assert.equal(registry.snapshotMetrics().owners, 1, "stream drain is not finished");
   } finally { cleanup.resolve(); streamDrain.resolve(); }
   assert.deepEqual(await drain, { forced: true });
+  assert.equal(registry.snapshotMetrics().owners, 0);
 });
 
 test("execution watch cancellation failure survives owner close", async () => {
