@@ -9,6 +9,11 @@ import { observedHeldRun } from "./browser-control.mjs";
 import { readC4View } from "./c4-view.mjs";
 import { c4RebuildReady } from "./c4-rebuild.mjs";
 import { runC4BrowserScope } from "./c4-browser-scope.mjs";
+import {
+  beforeC4Responses,
+  c4BootstrapDenial,
+  observeC4Responses,
+} from "./c4-responses.mjs";
 import { captureC4Login } from "./c4-login.mjs";
 import { captureC4PromptReceipt } from "./c4-prompt-receipt.mjs";
 import { observeC4PageStreams } from "./c4-stream-observer.mjs";
@@ -66,12 +71,18 @@ async function runBrowserInContext(
 ) {
   const { context } = scope;
   const frames = [];
-  const errors = [];
+  const errors = (report.browser_observer_errors = []);
   const prompts = (report.prompt_receipts = []);
+  const bootstrapDenials = (report.bootstrap_denials = []);
   let originalLogin;
-  let browserPhase = "startup";
+  let lastCompletedCheck = null;
   const paths = [];
   const streams = new Map();
+  const responses = new Map();
+  const beforePageChange = (target, change) =>
+    responses.get(target).before(change);
+  const beforeContextChange = (change) =>
+    beforeC4Responses([...responses.values()], change);
   const track = async (page) => {
     const observer = observeC4PageStreams(page, {
       gateway: config.gateway,
@@ -97,7 +108,7 @@ async function runBrowserInContext(
     page.on("pageerror", (error) => {
       scope.recordFailure(error);
       errors.push({
-        phase: browserPhase,
+        lastCompletedCheck,
         url: page.url(),
         message: error.message,
       });
@@ -107,18 +118,12 @@ async function runBrowserInContext(
       scope.recordFailure(error);
       errors.push(error.message);
     });
-    page.on("response", (response) => {
-      const url = new URL(response.url());
-      // SSE watches have no finite response body. Their state payloads are
-      // schema-checked by the production client; audit finite JSON here.
-      if (
-        url.pathname.startsWith("/api/app/") &&
-        !url.pathname.endsWith("/watch") &&
-        !url.pathname.endsWith("/events") &&
-        !response.headers()["content-type"]?.startsWith("text/event-stream")
-      ) {
-        paths.push(url.pathname);
-        scope.track(async () => {
+    responses.set(
+      page,
+      observeC4Responses(page, scope, async (response, url) => {
+        const previousCheck = lastCompletedCheck;
+        try {
+          paths.push(url.pathname);
           if (
             url.pathname.endsWith("/prompts") &&
             response.request().method() === "POST"
@@ -136,10 +141,26 @@ async function runBrowserInContext(
               receipt,
             );
             frames.push(receipt.rawBody);
-          } else frames.push(await response.text());
-        });
-      }
-    });
+          } else {
+            const denial = c4BootstrapDenial(
+              page,
+              response,
+              config.gateway,
+              previousCheck,
+            );
+            if (denial) bootstrapDenials.push(denial);
+            else frames.push(await response.text());
+          }
+        } catch (error) {
+          errors.push({
+            lastCompletedCheck: previousCheck,
+            url: url.href,
+            message: error.message,
+          });
+          throw error;
+        }
+      }),
+    );
     await observer.ready;
     return page;
   };
@@ -182,7 +203,7 @@ async function runBrowserInContext(
             "/api/app/workspace/v1/bootstrap" && response.status() === 200,
       ),
     );
-    await target.goto(url);
+    await beforePageChange(target, () => target.goto(url));
     await bootstrap;
   };
   async function prompt(phase, response, target = page) {
@@ -214,7 +235,7 @@ async function runBrowserInContext(
     );
   }
   async function check(name) {
-    browserPhase = name;
+    lastCompletedCheck = name;
     report.checks.push(name);
     console.error(`C4 passed: ${name}`);
     await checkpoint();
@@ -239,7 +260,9 @@ async function runBrowserInContext(
     );
   }
   try {
-    await page.goto(`${config.gateway}/workspace/`);
+    await beforePageChange(page, () =>
+      page.goto(`${config.gateway}/workspace/`),
+    );
     for (const [name, value] of Object.entries(member))
       await page.locator(`[name="${name}"]`).fill(value);
     const loginResponse = scope.track(
@@ -347,10 +370,10 @@ async function runBrowserInContext(
       .first()
       .waitFor();
     const firstURL = page.url();
-    await page.reload();
+    await beforePageChange(page, () => page.reload());
     await enabled();
     const observer = await track(await context.newPage());
-    await observer.goto(firstURL);
+    await beforePageChange(observer, () => observer.goto(firstURL));
     await enabled(observer);
     const firstSession = workspaceLocation(firstURL).sessionId;
     const previousMetadata = await sessionInfo(firstSession);
@@ -368,7 +391,7 @@ async function runBrowserInContext(
     assert.equal(metadata.title, "c4-browser-write");
     await visibleInfo(page, metadata);
     await visibleInfo(observer, metadata);
-    await observer.reload();
+    await beforePageChange(observer, () => observer.reload());
     await enabled(observer);
     const listedResponse = await gatewayBrowserRequest(
       context,
@@ -392,7 +415,7 @@ async function runBrowserInContext(
       observers: 2,
       list_and_reload: "matched without changing activity time",
     };
-    await observer.close();
+    await beforePageChange(observer, () => observer.close());
     await check("cross_page_metadata_matches_list_and_reload");
 
     await page.getByLabel("File attachments", { exact: true }).setInputFiles([
@@ -428,7 +451,7 @@ async function runBrowserInContext(
       path: `${output}/desktop-attachments.png`,
       fullPage: true,
     });
-    await page.reload();
+    await beforePageChange(page, () => page.reload());
     await enabled();
     const negative = await track(await context.newPage());
     await openAgentPage(negative);
@@ -454,7 +477,7 @@ async function runBrowserInContext(
       path: `${output}/desktop-capability-rejection.png`,
       fullPage: true,
     });
-    await negative.close();
+    await beforePageChange(negative, () => negative.close());
     await check("attachment_bytes_previews_format_and_capability_rejections");
 
     await page.getByRole("combobox", { name: "Mode", exact: true }).click();
@@ -523,16 +546,16 @@ async function runBrowserInContext(
       workspaceLocation(other.url()).sessionId,
       workspaceLocation(firstURL).sessionId,
     );
-    await other.close();
+    await beforePageChange(other, () => other.close());
     await enabled();
     await check("two_sessions_busy_cancel_and_readmission");
 
     await held("c4-browser-hold-offline");
     const offlineURL = page.url();
-    await context.setOffline(true);
+    await beforeContextChange(() => context.setOffline(true));
     // A navigation closes the page's existing Bridge event stream even when
     // network emulation leaves established connections open.
-    await page.goto(offlineURL).catch(() => {});
+    await beforePageChange(page, () => page.goto(offlineURL).catch(() => {}));
     await model("/release/c4-browser-hold-offline", "POST");
     await until(
       async () => !(await fixture.state()).active_session_id,
@@ -540,7 +563,7 @@ async function runBrowserInContext(
       signal,
     );
     await context.setOffline(false);
-    await page.goto(offlineURL);
+    await beforePageChange(page, () => page.goto(offlineURL));
     await page
       .getByText("c4-browser-hold-offline completed", { exact: true })
       .waitFor();
@@ -555,10 +578,10 @@ async function runBrowserInContext(
 
     await held("c4-browser-hold-close");
     const closedURL = page.url();
-    await page.close();
+    await beforePageChange(page, () => page.close());
     await model("/release/c4-browser-hold-close", "POST");
     page = await track(await context.newPage());
-    await page.goto(closedURL);
+    await beforePageChange(page, () => page.goto(closedURL));
     await page
       .getByText("c4-browser-hold-close completed", { exact: true })
       .waitFor();
@@ -770,8 +793,9 @@ async function runBrowserInContext(
       fullPage: true,
     });
     await check("open_page_identity_revocation");
-    // Closing pages also settles response reads aborted by a navigation.
-    await scope.closeContext();
+    // Complete the finite payload audit before normal closure. Failure and
+    // cancellation still close resources first in the enclosing scope.
+    await beforeContextChange(() => scope.closeContext());
     await scope.joinTasks();
     assert.deepEqual(errors, []);
     assert(paths.length > 0 && frames.length > 0);

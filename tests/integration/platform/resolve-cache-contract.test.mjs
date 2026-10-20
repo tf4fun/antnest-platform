@@ -842,6 +842,19 @@ test("cancelled shared waiters cannot invent an RPC or waive an existing source"
   });
 });
 
+test("RPC creator cancellation diagnostics require an already published CLIENT", () => {
+  assert.deepEqual(policy().diagnostics.rpc_cancellation, {
+    source: "rpc",
+    snapshot: "linearized-with-client-creation-and-publication",
+    cancel_kind_requires_actual_client: true,
+    before_client_omits_cancel_kind: true,
+    source_link: false,
+    shared_source_state: false,
+    permits_upstream_admission: false,
+    transport_cleanup_keeps_work_slot: true,
+  });
+});
+
 test("work limits include completed results and every retained generation", () => {
   const { limits } = policy();
   assert.equal(limits.completed_results_keep_work_slot_until_delivery, true);

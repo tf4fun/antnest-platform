@@ -165,6 +165,50 @@ function fixture(source = "rpc", completion = "cancelled", background = false) {
   return f;
 }
 
+test("watch RPC retains its actual caller cancellation snapshot", () => {
+  const f = fixture();
+  setTag(f.decision, prefix + "cancel_kind", "caller-cancelled");
+  assert.equal(inspect(f).gateway_revalidations[0].cancellation_verified, true);
+});
+
+for (const [name, change] of [
+  [
+    "future CLIENT",
+    (f) => {
+      byID(f.trace, "pending-client").startTime =
+        f.decision.startTime + f.decision.duration + 1;
+    },
+  ],
+  [
+    "shared state",
+    (f) => setTag(f.decision, prefix + "shared_source_state", "actual-client"),
+  ],
+  ...["pending-client", "cancelled-decision"].map((id) => [
+    `foreign process ${id}`,
+    (f) => {
+      const span = byID(f.trace, id);
+      f.trace.processes.foreign = structuredClone(
+        f.trace.processes[span.processID],
+      );
+      span.processID = "foreign";
+    },
+  ]),
+]) {
+  test(`watch creator snapshot rejects ${name}`, () => {
+    const f = fixture();
+    setTag(f.decision, prefix + "cancel_kind", "caller-cancelled");
+    change(f);
+    assert.throws(() => inspect(f));
+  });
+}
+
+for (const kind of ["shared-deadline", "caller-deadline", "process-shutdown"])
+  test(`watch RPC cannot substitute ${kind} for its caller closure`, () => {
+    const f = fixture();
+    setTag(f.decision, prefix + "cancel_kind", kind);
+    assert.throws(() => inspect(f));
+  });
+
 for (const [source, completion, background] of [
   ["rpc", "cancelled", false],
   ["rpc", "success", false],

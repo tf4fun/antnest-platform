@@ -84,6 +84,87 @@ function deadlineRejection(shared = false) {
     );
   return f;
 }
+
+function creatorDeadlineCleanup() {
+  const f = deadlineRejection();
+  setTag(f.decision, "antnest.identity.resolve.cancel_kind", "shared-deadline");
+  f.client.duration =
+    f.decision.startTime + f.decision.duration + 25 - f.client.startTime;
+  f.client.logs[0].timestamp = f.client.startTime + f.client.duration;
+  return f;
+}
+
+test("standalone 503 binds a creator deadline to its actual CLIENT after the decision ends", () => {
+  const f = creatorDeadlineCleanup();
+  const before = structuredClone(f.collection.traces);
+  const result = inspect(f);
+  assert.equal(result.no_execution, true);
+  assert.equal(result.resolution.source, "rpc");
+  assert.equal(result.resolution.cancel_kind, "shared-deadline");
+  assert.equal(result.resolution.rpc_client_span_id, f.client.spanID);
+  assert.deepEqual(f.collection.traces, before);
+});
+
+for (const [name, change] of [
+  [
+    "missing published-client cancellation snapshot",
+    (f) =>
+      setTag(f.decision, "antnest.identity.resolve.cancel_kind", undefined),
+  ],
+  [
+    "caller deadline",
+    (f) =>
+      setTag(
+        f.decision,
+        "antnest.identity.resolve.cancel_kind",
+        "caller-deadline",
+      ),
+  ],
+  [
+    "client starts after decision",
+    (f) => {
+      f.client.startTime = f.decision.startTime + f.decision.duration + 1;
+      f.client.duration = 1;
+      f.client.logs[0].timestamp = f.client.startTime + 1;
+    },
+  ],
+  [
+    "duplicate actual CLIENT",
+    (f) =>
+      f.trace.spans.push({
+        ...structuredClone(f.client),
+        spanID: "duplicate-client",
+      }),
+  ],
+  ["different Gateway process", (f) => foreignGateway(f.trace, f.client)],
+  [
+    "non-deadline failure",
+    (f) =>
+      failureDiagnostic(
+        f.client,
+        "cancelled",
+        "Request was cancelled",
+        ["*errors.errorString"],
+        "send",
+      ),
+  ],
+  [
+    "invented shared state",
+    (f) =>
+      setTag(
+        f.decision,
+        "antnest.identity.resolve.shared_source_state",
+        "actual-client",
+      ),
+  ],
+]) {
+  test(`creator deadline rejects ${name}`, () => {
+    const f = creatorDeadlineCleanup();
+    change(f);
+    assert.throws(() => inspect(f));
+  });
+}
+
 for (const shared of [false, true])
   test(`standalone 503 binds an unwrapped deadline to its completed ${shared ? "shared" : "rpc"} CLIENT`, () => {
     const f = deadlineRejection(shared);

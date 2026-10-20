@@ -241,10 +241,64 @@ test("independent sampling failures preserve every cause after the final reader 
   assert.equal(work.evidence.observations.length, count);
 });
 
+for (const failedStage of ["status", "process"])
+  test(`a ${failedStage} exec failure preserves its private receipt before status wrapping and waits for other readers`, async () => {
+    const { work, intercept } = await fixture();
+    const release = Promise.withResolvers();
+    const failure = new Error("Runtime exec reported failure");
+    failure.remoteCleanupPending = false;
+    Object.defineProperty(failure, "runtimeExec", {
+      value: { ready: true, joined: true, remote: { code: "EACCES" } },
+    });
+    let settled = false;
+    intercept(async (args) => {
+      const stage = samplingStage(args);
+      if (stage === failedStage) throw failure;
+      if (stage) await release.promise;
+    });
+    const count = work.evidence.observations.length;
+    const pending = work.observe().catch((error) => {
+      settled = true;
+      return error;
+    });
+    try {
+      await nextTurn();
+      assert.equal(settled, false);
+    } finally {
+      release.resolve();
+      await pending;
+    }
+    const error = await pending;
+    assert(error instanceof Error);
+    assert.equal(work.evidence.observations.length, count);
+    assert.deepEqual(work.evidence.exec_failures, [
+      {
+        stage: failedStage,
+        name: failure.name,
+        message: failure.message,
+        remote_cleanup_pending: false,
+        receipt: failure.runtimeExec,
+      },
+    ]);
+  });
+
 const samplingFailure = (error) =>
   error instanceof AggregateError
     ? error.errors.some(samplingFailure)
     : /sampling window expired|timed out|aborted/u.test(error.message);
+
+test("repeated exec failures keep the first bounded private receipts and count omitted failures", async () => {
+  const { work, intercept } = await fixture();
+  const failure = new Error("Runtime exec reported failure");
+  intercept(async (args) => {
+    if (samplingStage(args) === "process") throw failure;
+  });
+  for (let index = 0; index < 18; index++)
+    await assert.rejects(work.observe(), (error) => error === failure);
+  assert.equal(work.evidence.exec_failures.length, 16);
+  assert.equal(work.evidence.exec_failures_dropped, 2);
+  assert(work.evidence.exec_failures.every((row) => row.stage === "process"));
+});
 
 for (const stage of ["physical", "status", "process", "emit"])
   test(`held Runtime ${stage} observation joins interrupted work and stops issuing commands`, async () => {

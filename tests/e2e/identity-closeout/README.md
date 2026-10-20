@@ -727,7 +727,12 @@ may retain `actual-client / shared-deadline` only with its exact source Link and
 that completed deadline receipt. The shared deadline may release its waiter
 before transport cleanup completes: the actual CLIENT must have started by the
 decision's end, and its completed receipt must remain inside the independently
-observed Identity outage. Ordinary RPC and shared-result decisions still require
+observed Identity outage. An RPC creator may use the same late-cleanup case
+only with its own `shared-deadline` snapshot, which Gateway emits only after
+the actual CLIENT has been published. It keeps no shared state or source Link;
+its unique CLIENT must belong to the same request and Gateway process and
+start within the decision. A missing marker cannot be inferred from a small
+timestamp difference. Ordinary RPC and shared-result decisions still require
 source completion before the decision ends. Caller cancellation, unfinished shared work,
 and unrelated network or DNS errors cannot use this case. The raw error chain
 does not identify which context-return branch won the race.

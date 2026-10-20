@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspect } from "node:util";
 
 const container = "a".repeat(64);
 const load = () => import("./resolve-cache-runtime-exec.mjs");
@@ -167,6 +168,188 @@ test("an attachment exit without a remote join receipt cannot certify remote cle
     }),
     (error) => {
       assert.equal(error.remoteCleanupPending, true);
+      return true;
+    },
+  );
+});
+
+test("a failed sampling shell retains its bounded private cause after joining", async () => {
+  const { joinedRuntimeExec } = await load();
+  await assert.rejects(
+    joinedRuntimeExec({
+      args: args("printf 'sampling-shell-canary\\n' >&2; exit 7"),
+      spawnProcess: localRemote(),
+      timeoutMS: 5000,
+    }),
+    (error) => {
+      assert.equal(error.remoteCleanupPending, false);
+      assert.equal(error.runtimeExec.ready, true);
+      assert.equal(error.runtimeExec.result_seen, false);
+      assert.equal(error.runtimeExec.joined, true);
+      assert.equal(error.runtimeExec.forced, false);
+      assert.equal(error.runtimeExec.exit_code, 1);
+      assert.equal(error.runtimeExec.signal, null);
+      assert.equal(
+        error.runtimeExec.remote.message,
+        "Runtime sampling command failed",
+      );
+      assert.equal(error.runtimeExec.remote.shell.exit_code, 7);
+      assert.equal(error.runtimeExec.remote.shell.signal, null);
+      assert.equal(
+        error.runtimeExec.remote.shell.stderr,
+        "sampling-shell-canary\n",
+      );
+      assert.equal(error.runtimeExec.remote.shell.stderr_truncated, false);
+      assert.equal(Object.keys(error).includes("runtimeExec"), false);
+      assert.equal(
+        inspect(new AggregateError([error])).includes("sampling-shell-canary"),
+        false,
+      );
+      return true;
+    },
+  );
+});
+
+test("pre-handshake attachment failure retains stderr without credentials or false join", async () => {
+  const { joinedRuntimeExec } = await load();
+  const secret = "fixture-credential-canary";
+  const invocation = args("true");
+  invocation.splice(1, 0, "-e", `PRIVATE_TOKEN=${secret}`);
+  await assert.rejects(
+    joinedRuntimeExec({
+      args: invocation,
+      spawnProcess: (_command, _invocation, options) =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `process.stderr.write("attachment-canary ${secret}\\n"); process.exitCode=1;`,
+          ],
+          options,
+        ),
+      timeoutMS: 5000,
+    }),
+    (error) => {
+      assert.equal(error.remoteCleanupPending, true);
+      assert.equal(error.runtimeExec.ready, false);
+      assert.equal(error.runtimeExec.result_seen, false);
+      assert.equal(error.runtimeExec.joined, null);
+      assert.equal(error.runtimeExec.exit_code, 1);
+      assert.equal(error.runtimeExec.remote, null);
+      assert.equal(error.runtimeExec.stderr, "attachment-canary [redacted]\n");
+      assert.equal(JSON.stringify(error.runtimeExec).includes(secret), false);
+      return true;
+    },
+  );
+});
+
+test("sampling diagnostics have a fixed byte bound and retain truncation and exit cause", async () => {
+  const { joinedRuntimeExec } = await load();
+  await assert.rejects(
+    joinedRuntimeExec({
+      args: args(
+        "awk 'BEGIN { for (i=0; i<12000; i++) printf \"x\" }' >&2; exit 9",
+      ),
+      spawnProcess: localRemote(),
+      timeoutMS: 5000,
+    }),
+    (error) => {
+      assert.equal(error.remoteCleanupPending, false);
+      const shell = error.runtimeExec.remote.shell;
+      assert.equal(shell.exit_code, 9);
+      assert.equal(shell.stderr_bytes, 12000);
+      assert.equal(Buffer.byteLength(shell.stderr), 8192);
+      assert.equal(shell.stderr_truncated, true);
+      return true;
+    },
+  );
+});
+
+test("attachment diagnostics redact credentials across chunks and at the byte limit", async () => {
+  const { joinedRuntimeExec } = await load();
+  const secret = "fixture-long-credential-canary";
+  const invocation = args("true");
+  invocation.splice(1, 0, "-e", `PRIVATE_TOKEN=${secret}`);
+  for (const prefixLength of [0, 8180, 8187])
+    await assert.rejects(
+      joinedRuntimeExec({
+        args: invocation,
+        spawnProcess: (_command, _invocation, options) =>
+          spawn(
+            process.execPath,
+            [
+              "-e",
+              `
+            process.stdin.resume();
+            process.stderr.write(${JSON.stringify("x".repeat(prefixLength))} + ${JSON.stringify(secret.slice(0, 12))});
+            setTimeout(() => {
+              process.stderr.write(${JSON.stringify(secret.slice(12))});
+              process.stdin.destroy();
+              process.exitCode = 1;
+            }, 20);
+          `,
+            ],
+            options,
+          ),
+        timeoutMS: 5000,
+      }),
+      (error) => {
+        assert.equal(
+          error.runtimeExec.stderr,
+          ("x".repeat(prefixLength) + "[redacted]").slice(0, 8192),
+        );
+        assert(Buffer.byteLength(error.runtimeExec.stderr) <= 8192);
+        assert.equal(error.runtimeExec.stderr_truncated, prefixLength > 0);
+        assert.equal(error.runtimeExec.forced, false);
+        return true;
+      },
+    );
+});
+
+test("attachment stderr remains byte bounded when truncation splits a UTF-8 character", async () => {
+  const { joinedRuntimeExec } = await load();
+  await assert.rejects(
+    joinedRuntimeExec({
+      args: args("true"),
+      spawnProcess: (_command, _invocation, options) =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            "process.stderr.write('x'.repeat(8191) + '€tail'); process.exitCode = 1;",
+          ],
+          options,
+        ),
+      timeoutMS: 5000,
+    }),
+    (error) => {
+      assert(error.runtimeExec.stderr_truncated);
+      assert(Buffer.byteLength(error.runtimeExec.stderr) <= 8192);
+      assert.equal(error.runtimeExec.stderr_bytes, 8198);
+      return true;
+    },
+  );
+});
+
+test("remote shell startup diagnostics retain the original error code without invocation", async () => {
+  const { joinedRuntimeExec } = await load();
+  await assert.rejects(
+    joinedRuntimeExec({
+      args: args("true"),
+      environment: {
+        ...process.env,
+        PATH: "/nonexistent-runtime-diagnostic-path",
+      },
+      spawnProcess: localRemote(),
+      timeoutMS: 5000,
+    }),
+    (error) => {
+      assert.equal(error.runtimeExec.remote.code, "ENOENT");
+      assert.equal(
+        error.runtimeExec.remote.message,
+        "Runtime sampling could not start",
+      );
+      assert.equal(error.remoteCleanupPending, false);
       return true;
     },
   );

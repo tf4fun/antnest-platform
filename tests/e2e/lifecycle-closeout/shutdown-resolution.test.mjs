@@ -355,6 +355,52 @@ test("retained rpc cancellation may finish after its caller, while TTL zero must
   f.expected.resolveTTLMS = 0;
   assert.throws(() => inspect(f), /synchronous/);
 });
+
+for (const kind of ["caller-cancelled", "process-shutdown"])
+  test(`shutdown retains the creator's ${kind} snapshot and actual cancelled CLIENT`, () => {
+    const f = shutdownResolutionFixture("rpc");
+    const actual = addShutdownCheck(f, {
+      source: "rpc",
+      cancelledClient: true,
+    });
+    setTag(actual.decision, prefix + "cancel_kind", kind);
+    actual.client.duration = 15000;
+    const before = structuredClone(f.trace);
+    assert.equal(
+      inspect(f).gateway_revalidations[0].cancellation_verified,
+      true,
+    );
+    assert.deepEqual(f.trace, before);
+    f.expected.resolveTTLMS = 0;
+    assert.throws(() => inspect(f));
+  });
+
+for (const kind of ["shared-deadline", "caller-deadline", "shared-cancelled"])
+  test(`shutdown creator rejects unrelated ${kind}`, () => {
+    const f = shutdownResolutionFixture("rpc");
+    const actual = addShutdownCheck(f, {
+      source: "rpc",
+      cancelledClient: true,
+    });
+    setTag(actual.decision, prefix + "cancel_kind", kind);
+    assert.throws(() => inspect(f));
+  });
+
+for (const role of ["client", "decision"])
+  test(`shutdown creator cannot claim a foreign process ${role}`, () => {
+    const f = shutdownResolutionFixture("rpc");
+    const actual = addShutdownCheck(f, {
+      source: "rpc",
+      cancelledClient: true,
+    });
+    setTag(actual.decision, prefix + "cancel_kind", "process-shutdown");
+    const span = actual[role];
+    f.trace.processes.foreign = structuredClone(
+      f.trace.processes[span.processID],
+    );
+    span.processID = "foreign";
+    assert.throws(() => inspect(f));
+  });
 test("watch cannot finish after the same clean Gateway process has already exited", () => {
   const f = shutdownResolutionFixture();
   inspect(f);

@@ -36,6 +36,7 @@ test("C4 entry retains page, response and business failures while joining browse
     page.emit("response", {
       url: () => gateway + "/api/app/workspace/v1/bootstrap",
       headers: () => ({ "content-type": "application/json" }),
+      status: () => 200,
       request: () => ({}),
       text: async () => {
         throw responseError;

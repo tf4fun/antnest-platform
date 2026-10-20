@@ -63,9 +63,9 @@ func (decision *resolveDecision) finish(principal Principal, err error) {
 		if decision.sharedSourceState != "" {
 			decision.span.SetAttributes(attribute.String(resolveAttribute+"shared_source_state", decision.sharedSourceState))
 		}
-		if decision.cancelKind != "" {
-			decision.span.SetAttributes(attribute.String(resolveAttribute+"cancel_kind", decision.cancelKind))
-		}
+	}
+	if decision.cancelKind != "" {
+		decision.span.SetAttributes(attribute.String(resolveAttribute+"cancel_kind", decision.cancelKind))
 	}
 	decision.span.End()
 }
@@ -80,7 +80,12 @@ func (decision *resolveDecision) cacheHit(principal Principal, proof, now time.T
 // Called with the same lock used to create and publish the real CLIENT. A
 // cancellation cannot confuse an unpublished context with an unstarted RPC.
 func (decision *resolveDecision) sourceSnapshot(ctx context.Context, cache *resolveCache, flight *resolveFlight) {
-	if decision == nil || decision.source != "shared" {
+	if decision == nil || decision.source != "shared" && decision.source != "rpc" {
+		return
+	}
+	// A creator's cancellation marker proves that its real CLIENT existed at
+	// this snapshot. A CLIENT published after cancellation cannot acquire it.
+	if decision.source == "rpc" && !flight.rpcSpan.IsValid() {
 		return
 	}
 	decision.rpcSpan = flight.rpcSpan
@@ -95,6 +100,9 @@ func (decision *resolveDecision) sourceSnapshot(ctx context.Context, cache *reso
 		decision.cancelKind = "shared-deadline"
 	case !flight.completed && flight.ctx.Err() != nil || errors.Is(flight.err, context.Canceled):
 		decision.cancelKind = "shared-cancelled"
+	}
+	if decision.source != "shared" {
+		return
 	}
 	if decision.rpcSpan.IsValid() {
 		decision.sharedSourceState = "actual-client"

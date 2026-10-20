@@ -84,6 +84,17 @@ HTTP limit. Transport classification is extracted before the raw cause is
 discarded; the sanitized Gateway error has no `cause` property. These helpers
 do not retry rejected requests, extend timeouts or waive cleanup failures.
 
+Resolve-cache and upload-capacity Runtime sampling retain a separate private
+`runtime.exec_failures` list. It records the failed sampling phase, handshake,
+result and remote join state, local exit/signal and bounded remote shell
+diagnostics. Each stderr field is limited to 8 KiB after credential redaction;
+byte counts and truncation flags remain. Only the first 16 failed exec receipts
+are retained, with a count of omitted failures. Invocation arguments, environment
+and command stdout are not copied. These diagnostics are non-enumerable on the
+thrown error and are saved explicitly in private evidence. They neither certify
+cleanup without the original join receipt nor change failures, deadlines,
+cancellation or the requirement to join all independent Runtime readers.
+
 ## Execution and evidence tools
 
 `acp-http-close-timing.mjs` observes the actual private ACP SDK's 37-request

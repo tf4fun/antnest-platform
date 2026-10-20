@@ -315,7 +315,6 @@ export function inspectWorkspaceFailureSource(trace, root, decision, options) {
   let selected,
     origin = { kind: "request", outcome, gateways: [] };
   if (source === "rpc") {
-    assert.equal(cancelKind, undefined, "RPC creator has shared cancellation");
     assert.equal(links(decision).length, 0);
     assert.equal(value(decision, "shared_source_state"), undefined);
     selected = {
@@ -329,7 +328,8 @@ export function inspectWorkspaceFailureSource(trace, root, decision, options) {
             tag(span, "span.kind") === "client" &&
             span.operationName === "HTTP POST identity-service" &&
             span.startTime >= decision.startTime &&
-            end(span) <= end(decision),
+            span.startTime <= end(decision) &&
+            (cancelKind === "shared-deadline" || end(span) <= end(decision)),
         ),
         "actual failed workspace CLIENT",
       ),
@@ -365,7 +365,8 @@ export function inspectWorkspaceFailureSource(trace, root, decision, options) {
       tag(selected.span, "otel.status_description"),
       "Request deadline exceeded",
     );
-    // The shared deadline releases waiters before transport cleanup joins.
+    // A creator's marker requires a published CLIENT at its locked snapshot.
+    // The shared deadline releases all waiters before transport cleanup joins.
     // Its archived CLIENT must still be complete and already have started;
     // the owning caller independently bounds its completion by the outage.
     assert(
@@ -536,6 +537,14 @@ export function inspectWatchResolutions(
         }
       } else {
         assert.equal(source, "rpc", "invalid cancelled Resolve source");
+        assert.equal(decision.processID, root.processID);
+        assert.equal(value(decision, "shared_source_state"), undefined);
+        assert(
+          value(decision, "cancel_kind") === undefined ||
+            (ttlMs > 0 &&
+              value(decision, "cancel_kind") === "caller-cancelled"),
+          "RPC cancellation differs from the observed caller closure",
+        );
         assert.equal(
           links(decision).length,
           0,
@@ -572,13 +581,13 @@ export function inspectWatchResolutions(
         );
       if (selected) {
         const { trace: sourceTrace, tree: sourceTree, span: client } = selected;
+        if (source === "rpc") assert.equal(client.processID, root.processID);
         claimRpcClient(decision, sourceTrace, client);
         clientShape(sourceTree, client);
-        if (source === "shared")
-          assert(
-            client.startTime <= end(decision),
-            "shared CLIENT created after cancellation snapshot",
-          );
+        assert(
+          client.startTime <= end(decision),
+          "CLIENT created after cancellation snapshot",
+        );
         const cancelled = cancelledTransport(client, expected, closureContext);
         const receivers = sourceTrace.spans.filter(
           (span) =>
@@ -666,6 +675,11 @@ export function inspectWatchResolutions(
     assert.equal(expected.revoked, true, "undeclared watch revocation");
     assert(inWindow(decision), "Resolve denial outside revocation window");
     errorDecision(decision, "rejected");
+    assert.equal(
+      value(decision, "cancel_kind"),
+      undefined,
+      "cancelled waiter cannot prove rejection",
+    );
     const source = value(decision, "source");
     let selected,
       sourceRoot = "request";

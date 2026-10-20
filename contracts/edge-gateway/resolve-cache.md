@@ -517,7 +517,12 @@ integer-microsecond start, duration and event timestamps are checked as half-ope
 representation intervals: an event one microsecond beyond the summed raw end
 can still overlap its represented end, but two microseconds cannot. Record this
 representation ambiguity without claiming nanosecond ordering or treating Rust
-events as Node SDK findings. The consumer and fresh Docker
+events as Node SDK findings. This also applies to the Runtime `/status`
+completion used by Rebuild preparation: require the actual Rust/OpenTelemetry
+resource, unique successful completion, matching identity and safe integer
+timestamps. Preserve the raw endpoint pair in `time_observations`; two
+microseconds, an earlier-than-start event or unrelated diagnostics still fail.
+The consumer and fresh Docker
 integration must pass before this new admission is complete.
 
 Every request-admission resolution decision has an INTERNAL `gateway.identity.resolve` span
@@ -545,6 +550,20 @@ request ancestry and cancellation evidence. Another waiter may start the RPC
 later. Normal replies, denials and cancellation after CLIENT creation retain
 the exact link, archived source and both-parent-chain requirements. Never wait
 for a future RPC or invent a span merely to decorate a cancelled request.
+
+The first caller of a process-owned flight remains `source=rpc`. It records
+`cancel_kind` only if the same linearized cancellation snapshot already contains
+the actual published CLIENT. Cancellation before CLIENT creation omits that
+attribute; a CLIENT created later cannot change the finished decision or qualify
+for a late-completion exception. The creator adds neither a SpanLink nor
+`shared_source_state`: its actual CLIENT retains the same request parent.
+Cancelled decisions cannot prove successful admission. A creator carrying
+`shared-deadline` may finish before transport cleanup, provided the consumer
+binds the unique same-process CLIENT that started within that decision to its
+complete deadline failure and the independently observed outage window. Other
+cancel kinds cannot substitute for this deadline proof. Ordinary RPC completion
+keeps its existing ordering. The worker retains its capacity slot until actual
+transport cleanup finishes, and process shutdown joins the worker.
 
 A half-TTL background refresh is process-owned work with its own root and a
 link to the triggering request-admission decision. It must not extend a

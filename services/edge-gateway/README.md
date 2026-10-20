@@ -98,6 +98,13 @@ Successful activity retires old cache observations while preserving already
 attached live readers within their original deadlines and security checks.
 Subsequent reads resolve again; obsolete results cannot refill the cache.
 
+The first caller and shared waiters can leave a Resolve flight at their
+deadline before its HTTP transport finishes cleanup. The worker retains its
+capacity slot until cleanup completes. Creator cancellation records
+`cancel_kind` only when its locked snapshot already contains the actual CLIENT;
+pre-CLIENT cancellation cannot claim a later RPC. Its source remains `rpc`
+and its request parentage remains unchanged.
+
 Login and password change validate Identity's complete status, body and single
 `Retry-After` value before returning `429 credential_rate_limited` (1–900
 seconds) or `503 credential_busy` (1 second). Both responses have the fixed

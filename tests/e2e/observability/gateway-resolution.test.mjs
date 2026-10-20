@@ -13,6 +13,17 @@ import {
 
 const inspect = (f) => inspectGatewayResolution(f.trace, f.expected, f);
 
+for (const source of ["rpc", "cache", "shared"])
+  for (const kind of ["shared-deadline", "caller-cancelled"])
+    test(`${source} admission rejects a cancellation snapshot`, () => {
+      const f =
+        source === "shared"
+          ? sharedResolutionFixture()
+          : resolutionFixture(source);
+      setTag(f.decision, prefix + "cancel_kind", kind);
+      assert.throws(() => inspect(f), /cancellation/u);
+    });
+
 test("cache admission needs no new SQL and preserves raw evidence", () => {
   const f = resolutionFixture();
   const original = JSON.stringify(f.trace);

@@ -41,6 +41,7 @@ async function remoteProgram() {
   const timer = setTimeout(cancel, Number(process.argv[2]));
   let sent = false;
   let joined = true;
+  let shell = null;
   const start = new Promise((resolve, reject) => {
     abort.signal.addEventListener("abort", () => reject(abort.signal.reason), {
       once: true,
@@ -62,6 +63,14 @@ async function remoteProgram() {
         stdio: ["ignore", "pipe", "pipe"],
       });
       joined = false;
+      shell = {
+        exit_code: null,
+        signal: null,
+        stderr: "",
+        stderr_bytes: 0,
+        stderr_truncated: false,
+      };
+      let stderr = Buffer.alloc(0);
       let output = "";
       let bytes = 0;
       let failure;
@@ -84,12 +93,22 @@ async function remoteProgram() {
       });
       child.stderr.on("data", (value) => {
         bytes += value.length;
+        shell.stderr_bytes += value.length;
+        stderr = Buffer.concat([
+          stderr,
+          value.subarray(0, Math.max(0, 8192 - stderr.length)),
+        ]);
+        shell.stderr_truncated = shell.stderr_bytes > 8192;
         if (bytes > 1024 * 1024) terminate();
       });
-      child.once("error", () => {
+      child.once("error", (error) => {
         failure = new Error("Runtime sampling could not start");
+        failure.code = error.code;
       });
-      child.once("close", (code) => {
+      child.once("close", (code, signal) => {
+        shell.exit_code = code;
+        shell.signal = signal;
+        shell.stderr = stderr.toString("utf8");
         const finish = async () => {
           if (child.pid && (await groupAlive(child.pid))) {
             failure ??= new Error("Runtime sampling left a live descendant");
@@ -113,6 +132,17 @@ async function remoteProgram() {
     });
     abort.signal.throwIfAborted();
     process.stdout.write(JSON.stringify({ kind: "result", output }) + "\n");
+  } catch (error) {
+    process.stdout.write(
+      JSON.stringify({
+        kind: "failure",
+        name: error.name,
+        message: error.message,
+        code: error.code ?? null,
+        shell,
+      }) + "\n",
+    );
+    throw error;
   } finally {
     clearTimeout(timer);
     input.off("close", cancel);
@@ -136,6 +166,36 @@ export async function joinedRuntimeExec({
   assert.match(args.at(-4), /^[a-f0-9]{64}$/u);
   assert(Number.isFinite(timeoutMS) && timeoutMS > 0);
   signal?.throwIfAborted();
+  // Docker diagnostics may quote explicit environment overrides. Retain
+  // bounded stderr privately, never the invocation or credential values.
+  const secrets = args.flatMap((value, index) =>
+    args[index - 1] === "-e" && value.includes("=")
+      ? [value.slice(value.indexOf("=") + 1)].filter(Boolean)
+      : [],
+  );
+  const redact = (value, truncated = false) => {
+    for (const secret of secrets) {
+      value = value.replaceAll(secret, "[redacted]");
+      if (truncated)
+        for (
+          let length = Math.min(secret.length - 1, value.length);
+          length > 0;
+          length--
+        )
+          if (value.endsWith(secret.slice(0, length))) {
+            value = value.slice(0, -length) + "[redacted]";
+            break;
+          }
+    }
+    return value;
+  };
+  const diagnosticText = (value, truncated = false) => {
+    const bytes = Buffer.from(redact(value, truncated));
+    return {
+      text: new TextDecoder().decode(bytes.subarray(0, 8192), { stream: true }),
+      truncated: truncated || bytes.length > 8192,
+    };
+  };
   return new Promise((resolve, reject) => {
     const child = spawnProcess(
       "docker",
@@ -160,6 +220,9 @@ export async function joinedRuntimeExec({
     let fallback;
     let forced = false;
     let joined;
+    let remote;
+    let stderr = Buffer.alloc(0);
+    let stderrBytes = 0;
     const terminate = (reason) => {
       failure ??= reason;
       if (fallback) return;
@@ -205,6 +268,53 @@ export async function joinedRuntimeExec({
             assert.deepEqual(Object.keys(value).sort(), ["joined", "kind"]);
             assert.equal(typeof value.joined, "boolean");
             joined = value.joined;
+          } else if (value.kind === "failure") {
+            assert(ready);
+            assert.equal(remote, undefined);
+            assert.deepEqual(Object.keys(value).sort(), [
+              "code",
+              "kind",
+              "message",
+              "name",
+              "shell",
+            ]);
+            assert.equal(typeof value.name, "string");
+            assert.equal(typeof value.message, "string");
+            assert(value.code === null || typeof value.code === "string");
+            if (value.shell !== null) {
+              const shell = value.shell;
+              assert.deepEqual(Object.keys(shell).sort(), [
+                "exit_code",
+                "signal",
+                "stderr",
+                "stderr_bytes",
+                "stderr_truncated",
+              ]);
+              assert(
+                shell.exit_code === null || Number.isInteger(shell.exit_code),
+              );
+              assert(shell.signal === null || typeof shell.signal === "string");
+              assert.equal(typeof shell.stderr, "string");
+              assert(
+                Number.isSafeInteger(shell.stderr_bytes) &&
+                  shell.stderr_bytes >= 0,
+              );
+              assert.equal(typeof shell.stderr_truncated, "boolean");
+              const stderr = diagnosticText(
+                shell.stderr,
+                shell.stderr_truncated,
+              );
+              shell.stderr = stderr.text;
+              shell.stderr_truncated = stderr.truncated;
+            }
+            const { kind: _kind, ...diagnostic } = value;
+            remote = {
+              ...diagnostic,
+              name: diagnosticText(value.name).text,
+              message: diagnosticText(value.message).text,
+              code:
+                value.code === null ? null : diagnosticText(value.code).text,
+            };
           } else {
             assert(ready);
             assert.equal(result, undefined);
@@ -218,9 +328,14 @@ export async function joinedRuntimeExec({
         }
       }
     });
-    child.stderr.on("data", () =>
-      terminate(new Error("Runtime exec reported failure")),
-    );
+    child.stderr.on("data", (value) => {
+      stderrBytes += value.length;
+      stderr = Buffer.concat([
+        stderr,
+        value.subarray(0, Math.max(0, 8192 - stderr.length)),
+      ]);
+      terminate(new Error("Runtime exec reported failure"));
+    });
     child.once("error", () => {
       failure ??= new Error("Runtime exec could not start");
     });
@@ -230,7 +345,11 @@ export async function joinedRuntimeExec({
       signal?.removeEventListener("abort", interrupt);
       if (
         !failure &&
-        (code !== 0 || output !== "" || result === undefined || joined !== true)
+        (code !== 0 ||
+          output !== "" ||
+          result === undefined ||
+          joined !== true ||
+          remote !== undefined)
       )
         failure = new Error("Runtime exec did not complete cleanly");
       if (failure) {
@@ -238,6 +357,24 @@ export async function joinedRuntimeExec({
         // must keep the failure and let the owning project cleanup finish.
         failure.remoteCleanupPending =
           joined !== true || forced || child.signalCode !== null;
+        const diagnostic = diagnosticText(
+          stderr.toString("utf8"),
+          stderrBytes > 8192,
+        );
+        Object.defineProperty(failure, "runtimeExec", {
+          value: {
+            ready,
+            result_seen: result !== undefined,
+            joined: joined ?? null,
+            forced,
+            exit_code: code,
+            signal: child.signalCode,
+            stderr: diagnostic.text,
+            stderr_bytes: stderrBytes,
+            stderr_truncated: diagnostic.truncated,
+            remote: remote ?? null,
+          },
+        });
         return reject(failure);
       }
       resolve(result.trim());

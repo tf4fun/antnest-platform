@@ -560,6 +560,16 @@
     "shared_source_link": "actual-rpc-client-span",
     "shared_source_trace_archived": true,
     "shared_source_states": ["actual-client", "cancelled-before-client"],
+    "rpc_cancellation": {
+      "source": "rpc",
+      "snapshot": "linearized-with-client-creation-and-publication",
+      "cancel_kind_requires_actual_client": true,
+      "before_client_omits_cancel_kind": true,
+      "source_link": false,
+      "shared_source_state": false,
+      "permits_upstream_admission": false,
+      "transport_cleanup_keeps_work_slot": true
+    },
     "cancelled_before_client": {
       "outcome": "unavailable",
       "requires_cancellation_evidence": true,

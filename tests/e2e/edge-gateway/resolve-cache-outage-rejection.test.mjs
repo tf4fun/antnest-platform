@@ -969,6 +969,90 @@ test("process-owned Resolve cancellation can finish its real CLIENT after the HT
   );
 });
 
+function creatorDeadlineFixture(kind) {
+  const f = fixture();
+  const part = f.parts["stopped-cold-console"],
+    client = part.trace.spans.at(-1);
+  setTag(part.decision, resolvePrefix + "cancel_kind", kind);
+  client.duration = 100000;
+  failed(
+    part.root,
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["context.deadlineExceededError"],
+    "request",
+  );
+  failed(
+    client,
+    kind === "caller-deadline" ? "cancelled" : "deadline_exceeded",
+    kind === "caller-deadline"
+      ? "Request was cancelled"
+      : "Request deadline exceeded",
+    [
+      kind === "caller-deadline"
+        ? "*errors.errorString"
+        : "context.deadlineExceededError",
+    ],
+    "send",
+  );
+  return { f, part, client };
+}
+
+for (const kind of ["caller-deadline", "shared-deadline"])
+  test(`stopped Identity retains an RPC ${kind} with its original deadline failure`, () => {
+    const { f, part } = creatorDeadlineFixture(kind);
+    const before = structuredClone(f.collection.traces);
+    assert(
+      inspectOutageRejections(f.evidence, f.collection).requests.find(
+        (r) => r.label === "stopped-cold-console",
+      ).retained_client_after_response_us > 0,
+    );
+    assert.deepEqual(f.collection.traces, before);
+    setTag(part.decision, resolvePrefix + "cancel_kind", "process-shutdown");
+    assert.throws(() => inspectOutageRejections(f.evidence, f.collection));
+  });
+
+for (const [name, change] of [
+  [
+    "shared state",
+    ({ part }) =>
+      setTag(
+        part.decision,
+        resolvePrefix + "shared_source_state",
+        "actual-client",
+      ),
+  ],
+  [
+    "different transport deadline",
+    ({ client }) =>
+      failed(
+        client,
+        "deadline_exceeded",
+        "Request deadline exceeded",
+        ["*net.OpError", "*net.timeoutError"],
+        "send",
+      ),
+  ],
+  ...["client", "decision"].map((role) => [
+    `foreign process ${role}`,
+    ({ part, client }) => {
+      const span = role === "client" ? client : part.decision;
+      part.trace.processes.foreign = structuredClone(
+        part.trace.processes[span.processID],
+      );
+      span.processID = "foreign";
+    },
+  ]),
+]) {
+  test(`stopped Identity creator snapshot rejects ${name}`, () => {
+    const fixture = creatorDeadlineFixture("shared-deadline");
+    change(fixture);
+    assert.throws(() =>
+      inspectOutageRejections(fixture.f.evidence, fixture.f.collection),
+    );
+  });
+}
+
 test("outage error claims do not absorb unrelated archived source failures", () => {
   const f = fixture();
   const source = resolutionFixture("rpc").trace;

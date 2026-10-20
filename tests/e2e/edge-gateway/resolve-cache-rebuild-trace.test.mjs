@@ -730,6 +730,77 @@ test("Rebuild preserves a configuration consumer's successful Runtime status com
   assert.deepEqual({ e: f.evidence, trace: f.command.trace }, before);
 });
 
+function quantizedRuntimeStatus(f) {
+  const r = runtimeStatus(f);
+  setTag(f.command.trace.processes.rust, "telemetry.sdk.language", "rust");
+  setTag(f.command.trace.processes.rust, "telemetry.sdk.name", "opentelemetry");
+  r.event.timestamp = r.span.startTime + r.span.duration + 1;
+  return r;
+}
+
+test("Rebuild retains a Runtime status event at the integer microsecond end boundary", () => {
+  const f = rebuildTraceFixture();
+  const { span, event } = quantizedRuntimeStatus(f);
+  const before = structuredClone({ e: f.evidence, trace: f.command.trace });
+  const result = inspect(f);
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.time_observations, [
+    {
+      trace_id: f.command.trace.traceID,
+      span_id: span.spanID,
+      process_id: span.processID,
+      boundary: "runtime-status-event-within-span",
+      event_index: 0,
+      raw_left_us: event.timestamp,
+      raw_right_us: span.startTime + span.duration,
+      raw_difference_us: 1,
+      raw_span_start_us: span.startTime,
+      raw_span_duration_us: span.duration,
+      representation_us: 1,
+      reason: "jaeger-integer-microsecond-representation",
+    },
+  ]);
+  assert.deepEqual({ e: f.evidence, trace: f.command.trace }, before);
+});
+
+for (const [name, change] of [
+  ["two microseconds late", ({ event }) => event.timestamp++],
+  [
+    "before the start",
+    ({ span, event }) => {
+      event.timestamp = span.startTime - 1;
+    },
+  ],
+  ["fractional event", ({ event }) => (event.timestamp -= 0.5)],
+  ["fractional start", ({ span }) => (span.startTime += 0.5)],
+  ["fractional duration", ({ span }) => (span.duration += 0.5)],
+  [
+    "unidentified SDK language",
+    (_, f) =>
+      setTag(f.command.trace.processes.rust, "telemetry.sdk.language", "go"),
+  ],
+  [
+    "unidentified SDK name",
+    (_, f) =>
+      setTag(f.command.trace.processes.rust, "telemetry.sdk.name", "other"),
+  ],
+  [
+    "wrong event owner",
+    ({ event }) => setEventField(event, "span_id", "foreign"),
+  ],
+  [
+    "error diagnostic",
+    ({ event }) => setEventField(event, "exception.type", "UnexpectedError"),
+  ],
+]) {
+  test(`Rebuild Runtime status representation rejects ${name}`, () => {
+    const f = rebuildTraceFixture();
+    const r = quantizedRuntimeStatus(f);
+    change(r, f);
+    assert.throws(() => inspect(f));
+  });
+}
+
 for (const [name, change] of [
   [
     "wrong event",
