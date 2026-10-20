@@ -3,7 +3,9 @@ import { EventEmitter, once } from "node:events";
 import { createServer } from "node:http";
 import { before, after, test } from "node:test";
 import { inspect } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
+import { inspectC4NetworkTiming } from "./c4-network-timing.mjs";
 
 const moduleURL = new URL("./c4-stream-observer.mjs", import.meta.url);
 const { observeC4PageStreams } = await import(moduleURL).catch((error) => {
@@ -30,6 +32,22 @@ before(async () => {
 after(async () => {
   await browser?.close();
 });
+function attachMockCDP(page) {
+  const session = new EventEmitter();
+  session.send = async (method) => {
+    if (method === "Page.getFrameTree")
+      return { frameTree: { frame: { id: "main-frame" } } };
+    if (method === "Performance.getMetrics")
+      return {
+        metrics: [
+          { name: "Timestamp", value: (performance.now() + 100000) / 1000 },
+        ],
+      };
+    return {};
+  };
+  session.detach = async () => {};
+  page.context = () => ({ newCDPSession: async () => session });
+}
 
 async function fixture(t, options = {}) {
   assert.equal(typeof observeC4PageStreams, "function");
@@ -75,11 +93,29 @@ async function fixture(t, options = {}) {
     cookies.map((cookie) => ({ ...cookie, url: gateway })),
   );
   const page = await context.newPage();
+  const delayed = [],
+    emit = page.emit;
+  let holding = Boolean(options.delayCallbacks);
+  if (holding)
+    page.emit = function (name, ...args) {
+      const request =
+        name === "request"
+          ? args[0]
+          : name === "response"
+            ? args[0].request()
+            : null;
+      if (holding && request?.resourceType() === "eventsource") {
+        delayed.push([name, ...args]);
+        return true;
+      }
+      return emit.call(this, name, ...args);
+    };
   observer = observeC4PageStreams(page, {
     gateway,
     agentId: "agent-1",
     signal: options.signal,
   });
+  await observer.ready;
   await page.goto(gateway);
   const start = async (
     path = "/api/app/workspace/v1/agents/agent-1/events?sessionId=session-1&cursor=original-cursor",
@@ -102,7 +138,21 @@ async function fixture(t, options = {}) {
       await page.waitForFunction(() => source.readyState === EventSource.OPEN);
     else await page.waitForFunction(() => sourceError);
   };
-  return { gateway, context, page, observer, wire, streams, start };
+  const releaseCallbacks = () => {
+    holding = false;
+    for (const args of delayed) emit.call(page, ...args);
+    delayed.length = 0;
+  };
+  return {
+    gateway,
+    context,
+    page,
+    observer,
+    wire,
+    streams,
+    start,
+    releaseCallbacks,
+  };
 }
 const checkpoint = (observer, overrides = {}) =>
   observer.checkpoint({
@@ -143,6 +193,30 @@ test("C4 observes the page's original EventSource normal EOF before local browse
     1,
     "observation must not open a substitute host stream",
   );
+});
+
+test("C4 records native dispatch despite delayed Playwright notifications and never replays the stream", async (t) => {
+  const f = await fixture(t, { delayCallbacks: true });
+  await f.start();
+  // Delay only delivery of the test-process callbacks, after Chromium has
+  // already opened the actual EventSource. The wire request is untouched.
+  await delay(50);
+  f.releaseCallbacks();
+  const point = await checkpoint(f.observer);
+  assert.equal(point.stream.network.request.url, f.gateway + f.wire[0].path);
+  assert.equal(
+    point.stream.network.request.frame_id,
+    point.stream.network.main_frame_id,
+  );
+  const raw = structuredClone(point);
+  f.streams[0].end();
+  const result = await f.observer.waitForRemoteEnd(point, { timeoutMs: 1000 });
+  const native = inspectC4NetworkTiming(result);
+  assert(native.dispatch.upper < point.stream.started_at);
+  assert.equal(result.networkEnd.event.kind, "loadingFinished");
+  assert.deepEqual(point, raw);
+  assert.equal(f.wire.length, 1);
+  assert(!JSON.stringify(result).includes(cookies[0].value));
 });
 
 test("an EventSource that ended before the revocation trigger cannot satisfy C4", async (t) => {
@@ -279,6 +353,7 @@ test("C4 joins original asynchronous header failures without losing their Error 
     frame = {};
   page.mainFrame = () => frame;
   page.isClosed = () => false;
+  attachMockCDP(page);
   const requestFailure = new Error("original request headers failed");
   const responseFailure = new Error("original response headers failed");
   const request = {
@@ -328,6 +403,7 @@ test("C4 retains parent cancellation together with a deferred original header er
     frame = {};
   page.mainFrame = () => frame;
   page.isClosed = () => false;
+  attachMockCDP(page);
   const started = Promise.withResolvers(),
     headers = Promise.withResolvers();
   const headerFailure = new Error("original delayed header failure");

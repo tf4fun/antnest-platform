@@ -72,7 +72,7 @@ function originalPageLogin(boundary, expected, secrets, collection) {
     assert.equal(tag(root, key), value);
   gatewayObservation(boundary, trace, root, receipt);
   assert(
-    end(root) <= boundary.root.startTime,
+    root.startTime <= boundary.root.startTime,
     "original C4 login followed SSE dispatch",
   );
   const { server, database } = owningServerTopology(trace, {

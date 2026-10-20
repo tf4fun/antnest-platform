@@ -32,6 +32,42 @@ function inspect(f) {
     f.collection,
   );
 }
+test("HTTP handler epilogue may finish after the original browser body receipt", () => {
+  const f = feedFixture();
+  f.mutationRoot.duration += 5000000;
+  const before = structuredClone([...f.collection.traces]);
+  const report = inspect(f);
+  assert.equal(report.authorizationCauseVerified, true);
+  assert.deepEqual([...f.collection.traces], before);
+});
+
+for (const startTime of [99, 201])
+  test(`HTTP source still rejects SERVER start outside its actual receipt: ${startTime}`, () => {
+    const identity = {
+      serviceName: "edge-gateway",
+      tags: [
+        { key: "host.name", value: "host-1" },
+        { key: "service.instance.id", value: "instance-1" },
+        { key: "process.pid", value: 42 },
+      ],
+    };
+    const root = { processID: "gateway", startTime, duration: 5 };
+    const trace = { processes: { gateway: identity } };
+    const boundary = {
+      trace,
+      root,
+      clock: { lower: (at) => at, upper: (at) => at },
+    };
+    assert.throws(
+      () =>
+        implementation.gatewayObservation(boundary, trace, root, {
+          startedMono: 100,
+          completedMono: 200,
+        }),
+      /outside its actual receipt/,
+    );
+  });
+
 for (const typed of [false, true])
   test(`actual Membership feed termination retains the original errors (typed cause: ${typed})`, () => {
     const f = feedFixture(typed),

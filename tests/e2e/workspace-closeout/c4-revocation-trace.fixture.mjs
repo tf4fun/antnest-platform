@@ -3,6 +3,7 @@ import { userBrowserFixture } from "../acp-closeout/user-browser-fixture.mjs";
 import { bridgeSessionCauseFixture } from "../identity-closeout/bridge-session-cause-fixtures.mjs";
 import { sessionTraceBase as base } from "../identity-closeout/bridge-session-trace-fixtures.mjs";
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
+import { addC4NetworkTiming } from "./c4-network-timing.fixture.mjs";
 
 // Controlled composition of existing source-shaped fixtures only.
 export function c4RevocationTraceFixture({ feed = false } = {}) {
@@ -108,5 +109,6 @@ export function c4RevocationTraceFixture({ feed = false } = {}) {
     model: { requests: [], pending: [], errors: [] },
   };
   expected.after = structuredClone(expected.before);
+  addC4NetworkTiming(expected);
   return f;
 }

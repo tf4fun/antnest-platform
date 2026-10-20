@@ -45,10 +45,28 @@ test("C4 entry retains page, response and business failures while joining browse
     throw businessError;
   };
   const cleanup = [];
+  const cdp = new EventEmitter();
+  let detached = false;
+  cdp.send = async (method) => {
+    if (method === "Page.getFrameTree")
+      return { frameTree: { frame: { id: "main-frame" } } };
+    if (method === "Performance.getMetrics")
+      return {
+        metrics: [
+          { name: "Timestamp", value: (performance.now() + 100000) / 1000 },
+        ],
+      };
+    return {};
+  };
+  cdp.detach = async () => {
+    detached = true;
+  };
   const context = {
     newPage: async () => page,
+    newCDPSession: async () => cdp,
     close: async () => cleanup.push("context"),
   };
+  page.context = () => context;
   const browser = {
     newContext: async () => context,
     close: async () => cleanup.push("browser"),
@@ -88,4 +106,7 @@ test("C4 entry retains page, response and business failures while joining browse
   assert.deepEqual(cleanup, ["context", "browser"]);
   assert.deepEqual(report.model, { requests: [], pending: [], errors: [] });
   assert.deepEqual(report.page_streams, []);
+  assert.equal(detached, true);
+  assert.equal(report.page_network_observations.length, 1);
+  assert.equal(report.page_network_observations[0].clock_samples.length, 1);
 });

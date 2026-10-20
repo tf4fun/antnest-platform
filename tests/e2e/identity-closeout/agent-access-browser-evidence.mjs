@@ -65,7 +65,7 @@ export function gatewayObservation(boundary, trace, root, row) {
   );
   assert(
     root.startTime >= boundary.clock.lower(row.startedMono) &&
-      end(root) <= boundary.clock.upper(row.completedMono),
+      root.startTime <= boundary.clock.upper(row.completedMono),
     "HTTP source outside its actual receipt",
   );
 }
@@ -331,7 +331,8 @@ export function inspectBrowserAccessCause(
       resolutions.push(terminal.record);
     }
   }
-  if (end(b.root) - b.root.startTime > 10000000) assert(resolutions.length > 1);
+  if (b.termination - b.root.startTime > 10000000)
+    assert(resolutions.length > 1);
   const failedTransport = hasError(b.root) || hasError(b.upstream);
   const witness = inspectBrowserFeedWitness(b.root, {
     reason: cause.kind,
@@ -341,7 +342,7 @@ export function inspectBrowserAccessCause(
     agentId: expected.agentId,
     mutationStart: mutationRoot.startTime,
     lowerBound: b.clock.lower(cause.startedMono),
-    upperBound: b.clock.upper(closure.at),
+    upperBound: b.clock.closedUpper,
     transportFailureAt: failedTransport
       ? b.upstream.logs?.[0]?.timestamp
       : undefined,
@@ -389,7 +390,7 @@ export function inspectBrowserAccessCause(
     const delta = (marker.timestamp - b.ui.startTime) / 1000;
     assert(
       checkpoint.stream.headers_at + delta >= cause.startedMono &&
-        checkpoint.stream.started_at + delta <= closure.at,
+        b.clock.dispatchedAt + delta <= b.clock.closedAt,
       "UI witness outside actual mutation/closure window",
     );
   }

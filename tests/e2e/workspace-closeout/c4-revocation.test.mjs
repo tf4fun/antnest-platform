@@ -361,6 +361,7 @@ async function httpFixture(t, options = {}) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const observer = observeC4PageStreams(page, { gateway, agentId: "agent-1" });
+  await observer.ready;
   t.after(async () => {
     await context.close();
     await observer.closeAndWait();

@@ -5,6 +5,8 @@ import {
   sessionTraceBase,
 } from "../identity-closeout/bridge-session-trace-fixtures.mjs";
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
+import { addC4NetworkTiming } from "./c4-network-timing.fixture.mjs";
+import { c4RevocationTraceFixture } from "./c4-revocation-trace.fixture.mjs";
 
 const moduleURL = new URL("./c4-stream-trace.mjs", import.meta.url);
 const { inspectC4StreamBoundary } = await import(moduleURL).catch((error) => {
@@ -73,6 +75,7 @@ function fixture() {
     "idleExpiresAt",
   ])
     delete point[key];
+  addC4NetworkTiming(expected);
   return f;
 }
 const inspect = (f) => {
@@ -96,6 +99,36 @@ test("C4 page boundary uses its actual cursor and original login lifetime withou
   assert.equal(result.authorizationCauseVerified, false);
   assert.equal(JSON.stringify([f.trace, f.expected]), raw);
 });
+
+test("C4 delayed request callback does not replace actual native dispatch", () => {
+  const f = fixture();
+  f.expected.checkpoint.stream.started_at = 1190;
+  const before = structuredClone(f.expected);
+  assert.equal(inspect(f).authorizationCauseVerified, false);
+  assert.deepEqual(f.expected, before);
+});
+
+test("C4 original feed termination precedes EOF even when the handler epilogue finishes later", () => {
+  const f = c4RevocationTraceFixture({ feed: true });
+  f.root.duration += 5000000;
+  const before = structuredClone([f.trace, f.expected]);
+  assert.equal(inspect(f).authorizationCauseVerified, false);
+  assert.deepEqual([f.trace, f.expected], before);
+});
+
+for (const [name, change] of [
+  ["missing native timing", (f) => delete f.expected.checkpoint.stream.network],
+  ["missing native EOF", (f) => delete f.expected.networkEnd],
+  [
+    "foreign native request",
+    (f) => (f.expected.networkEnd.event.request_id = "other"),
+  ],
+])
+  test("C4 cannot fall back to callback timing for " + name, () => {
+    const f = fixture();
+    change(f);
+    assert.throws(() => inspect(f));
+  });
 
 for (const [name, change] of [
   [

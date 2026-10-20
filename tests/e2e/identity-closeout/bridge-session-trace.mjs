@@ -5,6 +5,7 @@ import {
   assertGatewayResolutionAttributes,
 } from "../../support/gateway-resolution.mjs";
 import { resolveTraceSources } from "../../support/gateway-resolution-evidence.mjs";
+import { inspectC4NetworkTiming } from "../workspace-closeout/c4-network-timing.mjs";
 
 const prefix = "antnest.identity.resolve.";
 const one = (rows, message) => {
@@ -31,7 +32,7 @@ const fields = (rows) => {
   return result;
 };
 
-function streamClock(root, stream) {
+function streamClock(root, stream, expected) {
   const date = Date.parse(stream.server_date);
   assert(
     Number.isFinite(date) &&
@@ -41,10 +42,32 @@ function streamClock(root, stream) {
   // The proxy preserves Agent UI's Date. Gateway's own root starts between
   // sending this exact request and receiving its headers; bind only that clock
   // to the client monotonic interval, never to the upstream Date or client wall.
+  const native =
+    expected.pageOwned === true ? inspectC4NetworkTiming(expected) : undefined;
+  const dispatchedAt = native ? native.dispatch.lower : stream.started_at;
+  const callbackCloseUpper =
+    root.startTime + (expected.closure.at - dispatchedAt) * 1000;
+  // Both native events share Chromium's monotonic clock. Gateway starts only
+  // after dispatch, so its start plus that original elapsed time is an upper
+  // bound for the remote EOF on the Gateway clock, without callback latency.
+  const closedUpper = native
+    ? Math.min(
+        callbackCloseUpper,
+        root.startTime +
+          (expected.networkEnd.event.timestamp -
+            stream.network.request.timestamp) *
+            1000000,
+      )
+    : callbackCloseUpper;
   return {
     uiDate: date,
+    dispatchedAt,
+    closedAt: native
+      ? Math.min(native.end.upper, expected.closure.at)
+      : expected.closure.at,
+    closedUpper,
     lower: (at) => root.startTime + (at - stream.headers_at) * 1000,
-    upper: (at) => root.startTime + (at - stream.started_at) * 1000,
+    upper: (at) => root.startTime + (at - dispatchedAt) * 1000,
   };
 }
 
@@ -60,6 +83,10 @@ export function inspectBridgeSessionBoundary(
   const point = expected.checkpoint,
     closure = expected.closure,
     stream = point?.stream;
+  assert(
+    !Object.hasOwn(expected, "pageOwned"),
+    "Bridge receipt contains C4 page evidence",
+  );
   assert.equal(expected.transport, "http-sse");
   assert([1, 2].includes(expected.protocolVersion));
   assert.equal(expected.silent, true);
@@ -176,9 +203,27 @@ export function inspectWorkspaceSSETrace(trace, expected, secrets, collection) {
   );
   for (const span of trace.spans)
     assert(tree.chain(span).includes(root), "detached original SSE span");
-  const clock = streamClock(root, stream);
+  const clock = streamClock(root, stream, expected);
+  let termination = end(root);
+  if (expected.pageOwned === true && expected.reason === "revoked") {
+    const events = (root.logs ?? []).filter((event) =>
+      event.fields?.some(
+        ({ key, value }) =>
+          key === "event" && value === "antnest.stream.termination",
+      ),
+    );
+    if (events.length) {
+      const event = one(events, "one original C4 Gateway termination required");
+      const values = fields(event.fields);
+      assert.equal(values.source, "identity-session-feed");
+      assert.equal(values.reason, "session_revoked");
+      finite(event.timestamp);
+      assert(event.timestamp >= root.startTime && event.timestamp <= end(root));
+      termination = event.timestamp;
+    }
+  }
   assert(
-    end(root) >= clock.lower(point.at) && end(root) <= clock.upper(closure.at),
+    termination >= clock.lower(point.at) && termination <= clock.closedUpper,
     "Gateway completion outside observed trigger and remote close",
   );
   const initial = one(
@@ -222,7 +267,7 @@ export function inspectWorkspaceSSETrace(trace, expected, secrets, collection) {
   // inside this original UI request and before that request's initial headers.
   // This also prevents a mismatched expiry/remaining pair from extending it.
   const sample = expires - remaining;
-  const admissionMS = stream.headers_at - stream.started_at;
+  const admissionMS = stream.headers_at - clock.dispatchedAt;
   assert(
     (sample + 1) * 1000 > ui.startTime &&
       sample * 1000 <= end(ui) &&
@@ -231,7 +276,7 @@ export function inspectWorkspaceSSETrace(trace, expected, secrets, collection) {
       sample < clock.uiDate + 1000,
     "original delegation sample is outside UI admission",
   );
-  const earliest = stream.started_at + remaining;
+  const earliest = clock.dispatchedAt + remaining;
   if (expected.reason === "expired") {
     assert(
       point.idleExpiresAt >= point.expiresAt,
@@ -256,7 +301,7 @@ export function inspectWorkspaceSSETrace(trace, expected, secrets, collection) {
       "natural CCT expiry cannot prove logout or outage",
     );
     assert(
-      end(root) <
+      termination <
         (Math.min(point.expiresAt, point.idleExpiresAt) - 1000) * 1000,
       "natural Session expiry cannot prove logout or outage",
     );
@@ -268,6 +313,7 @@ export function inspectWorkspaceSSETrace(trace, expected, secrets, collection) {
     upstream,
     ui,
     clock,
+    termination,
     sources,
     initialResolution,
     delegation: {

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
+import { observeC4Network } from "./c4-network-observer.mjs";
+import { inspectC4NetworkTiming } from "./c4-network-timing.mjs";
 
 const now = () => ({ at: performance.now(), observed_at_ms: Date.now() });
 const tracePattern = /^(?!0{32}$)[a-f0-9]{32}$/u;
@@ -17,6 +19,7 @@ const transportKind = (failure) =>
 export function observeC4PageStreams(page, { gateway, agentId, signal }) {
   const origin = new URL(gateway).origin;
   const path = `/api/app/workspace/v1/agents/${encodeURIComponent(agentId)}/events`;
+  const network = observeC4Network(page, { origin, path });
   const rows = new Map(),
     tasks = new Set(),
     errors = [],
@@ -38,7 +41,7 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
   };
   async function joined() {
     while (tasks.size) await Promise.allSettled([...tasks]);
-    const failures = [...errors];
+    const failures = [...new Set(errors)];
     if (failures.length && signal?.aborted && !failures.includes(signal.reason))
       failures.push(signal.reason);
     if (failures.length === 1) throw failures[0];
@@ -130,6 +133,7 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
   };
   for (const [name, handler] of Object.entries(handlers))
     page.on(name, handler);
+  schedule(() => network.ready);
 
   const original = (point) => {
     const entry = points.get(point);
@@ -137,6 +141,10 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
     return entry;
   };
   return {
+    ready: network.ready,
+    get nativeRecords() {
+      return { requests: network.records, clock_samples: network.clockSamples };
+    },
     get records() {
       return [...rows.values()].map((row) => ({
         ...row.evidence,
@@ -170,7 +178,12 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
         const live = matching.filter((value) => !value.closure);
         assert(live.length <= 1, "ambiguous live C4 page streams");
         row = live[0];
-        if (row?.headersReady && row.cookie !== undefined) break;
+        if (
+          row?.headersReady &&
+          row.cookie !== undefined &&
+          network.match(row.evidence)
+        )
+          break;
         assert(
           !matching.length || live.length > 0,
           "C4 page stream ended before its trigger",
@@ -207,9 +220,16 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
         !row.closure && !page.isClosed(),
         "C4 page stream ended before its trigger",
       );
+      const native = await network.admission(row.evidence);
+      signal?.throwIfAborted();
+      assert(
+        !row.closure && !page.isClosed() && !disposed,
+        "C4 page stream ended before its trigger",
+      );
       const credentialScope = randomUUID();
       const stream = Object.freeze({
         ...row.evidence,
+        network: native,
         credential_scope: credentialScope,
       });
       const point = Object.freeze({
@@ -219,6 +239,7 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
         reason: "revoked",
         stream,
       });
+      inspectC4NetworkTiming({ checkpoint: point });
       points.set(point, { row, cookie: row.cookie });
       triggered = true;
       return point;
@@ -236,7 +257,12 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
         await joined();
         signal?.throwIfAborted();
         assert(!disposed, "C4 page observer disposed before remote EOF");
-        if (row.closure) break;
+        if (
+          row.closure &&
+          (!["remote-end", "transport-end"].includes(row.closure.kind) ||
+            network.ended(point.stream))
+        )
+          break;
         assert(
           performance.now() < point.at + timeoutMs,
           "C4 page remote EOF deadline exceeded",
@@ -261,7 +287,9 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
         ...row.closure,
         trace_id: row.evidence.trace_id,
       });
-      entry.result = Object.freeze({
+      const networkEnd = await network.completion(point.stream);
+      signal?.throwIfAborted();
+      const result = {
         transport: "http-sse",
         pageOwned: true,
         agentId,
@@ -273,9 +301,12 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
         closedAt: closure.observed_at_ms,
         checkpoint: point,
         closure,
+        networkEnd,
         localClose: false,
         authorizationCauseVerified: false,
-      });
+      };
+      inspectC4NetworkTiming(result);
+      entry.result = Object.freeze(result);
       return entry.result;
     },
     closeAndWait() {
@@ -284,6 +315,11 @@ export function observeC4PageStreams(page, { gateway, agentId, signal }) {
         local("observer-disposed");
         for (const [name, handler] of Object.entries(handlers))
           page.off(name, handler);
+        try {
+          await network.closeAndWait();
+        } catch (error) {
+          errors.push(error);
+        }
         await joined();
       })());
     },

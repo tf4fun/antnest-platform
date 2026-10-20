@@ -6,6 +6,9 @@ import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 import { hasDiagnosticError } from "../acp-plan/requests.mjs";
 import { privateACPDiagnosticInventory } from "../observability/private-acp-inventory.mjs";
 import { with403 } from "../identity-closeout/agent-access-denial.fixture.mjs";
+import { addC4NetworkTiming } from "./c4-network-timing.fixture.mjs";
+import { inspectBridgeSessionBoundary } from "../identity-closeout/bridge-session-trace.mjs";
+import { membershipFeedFixture } from "../identity-closeout/agent-access-browser-fixtures.mjs";
 
 const moduleURL = new URL("./c4-revocation-trace.mjs", import.meta.url);
 const { inspectC4RevocationTrace } = await import(moduleURL).catch((error) => {
@@ -27,6 +30,28 @@ const reasons = new Set([
   "public-sse-revoked-response",
   "serialization-retry",
 ]);
+for (const timestamp of [101.25, 102.1])
+  test(`C4 delayed EOF callback cannot move native closure after its trigger or feed: ${timestamp}`, () => {
+    const f = fixture({ feed: true });
+    f.expected.networkEnd.event.timestamp = timestamp;
+    assert.throws(() => inspect(f));
+  });
+test("Bridge evidence cannot opt into C4 timing exceptions", () => {
+  const f = membershipFeedFixture();
+  f.expected.pageOwned = true;
+  f.expected.checkpoint.stream.origin = "http://127.0.0.1:8123";
+  f.expected.checkpoint.stream.started_at_ms = 1700000000000;
+  addC4NetworkTiming(f.expected);
+  f.root.duration += 5000000;
+  assert.throws(() =>
+    inspectBridgeSessionBoundary(f.trace, f.expected, [], f.collection),
+  );
+});
+test("original login handler epilogue may overlap subsequent browser dispatch", () => {
+  const f = fixture();
+  f.login.root.duration += 1000000;
+  assert.equal(inspect(f).authorizationCauseVerified, true);
+});
 test("C4 owns the exact original 403 ancestry without claiming readiness reads", () => {
   const f = with403(fixture());
   f.expected.denial.rawBody = JSON.stringify(f.expected.denial.body);
@@ -94,6 +119,7 @@ test("C4 proves original truncated browser transport through the exact Gateway r
   f.expected.closure.failure = {
     errorText: "net::ERR_INCOMPLETE_CHUNKED_ENCODING",
   };
+  addC4NetworkTiming(f.expected);
   const original = structuredClone([f.expected, [...f.collection.traces]]);
   const result = inspect(f);
   assert.equal(result.closure, "transport-end");
@@ -102,6 +128,32 @@ test("C4 proves original truncated browser transport through the exact Gateway r
   assert.deepEqual([f.expected, [...f.collection.traces]], original);
   f.root.logs = f.root.logs.filter((event) => event !== f.feed);
   assert.throws(() => inspect(f));
+});
+
+test("C4 binds the exact feed before browser EOF while both HTTP handlers finish later", () => {
+  const f = fixture({ feed: true });
+  f.root.duration += 20000000;
+  f.mutationRoot.duration += 5000000;
+  const raw = structuredClone([f.expected, [...f.collection.traces]]);
+  assert.equal(inspect(f).authorizationCauseVerified, true);
+  assert.deepEqual([f.expected, [...f.collection.traces]], raw);
+  for (const change of [
+    () => {
+      f.feed.timestamp = f.root.startTime + f.root.duration;
+    },
+    () => {
+      f.feed.fields.find((v) => v.key === "antnest.revocation.span_id").value =
+        "foreign";
+    },
+    () => {
+      f.root.logs = f.root.logs.filter((event) => event !== f.feed);
+    },
+  ]) {
+    const original = structuredClone(f.feed);
+    change();
+    assert.throws(() => inspect(f));
+    Object.assign(f.feed, original);
+  }
 });
 
 test("a browser transport failure without original Gateway failure cannot prove C4 revocation", () => {
@@ -152,7 +204,8 @@ for (const [name, change] of [
   [
     "login outside original receipt",
     (f) => {
-      f.expected.login.receipt.completedMono = 710;
+      f.expected.login.receipt.startedMono = 600;
+      f.expected.login.receipt.completedMono = 650;
     },
   ],
   [

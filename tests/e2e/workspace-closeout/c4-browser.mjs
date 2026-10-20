@@ -72,7 +72,7 @@ async function runBrowserInContext(
   let browserPhase = "startup";
   const paths = [];
   const streams = new Map();
-  const track = (page) => {
+  const track = async (page) => {
     const observer = observeC4PageStreams(page, {
       gateway: config.gateway,
       agentId: fixture.agentID,
@@ -86,6 +86,9 @@ async function runBrowserInContext(
         } finally {
           report.page_streams = [...streams.values()].flatMap(
             (value) => value.records,
+          );
+          report.page_network_observations = [...streams.values()].map(
+            (value) => value.nativeRecords,
           );
         }
       },
@@ -137,9 +140,10 @@ async function runBrowserInContext(
         });
       }
     });
+    await observer.ready;
     return page;
   };
-  let page = track(await context.newPage());
+  let page = await track(await context.newPage());
   const url = `${config.gateway}/workspace/${encodeURIComponent(fixture.agentID)}/`;
   const input = (target = page) =>
     target.getByRole("combobox", { name: "Message", exact: true });
@@ -345,7 +349,7 @@ async function runBrowserInContext(
     const firstURL = page.url();
     await page.reload();
     await enabled();
-    const observer = track(await context.newPage());
+    const observer = await track(await context.newPage());
     await observer.goto(firstURL);
     await enabled(observer);
     const firstSession = workspaceLocation(firstURL).sessionId;
@@ -426,7 +430,7 @@ async function runBrowserInContext(
     });
     await page.reload();
     await enabled();
-    const negative = track(await context.newPage());
+    const negative = await track(await context.newPage());
     await openAgentPage(negative);
     await newConversation(negative);
     const beforeRejected = (await model()).requests.length;
@@ -473,7 +477,7 @@ async function runBrowserInContext(
     await page.getByRole("option", { name: /^Auto\b/ }).click();
     await check("real_tool_permission_interaction");
 
-    const other = track(await context.newPage());
+    const other = await track(await context.newPage());
     await openAgentPage(other);
     await newConversation(other);
     await input(other).fill("Waiting in a separate draft");
@@ -553,7 +557,7 @@ async function runBrowserInContext(
     const closedURL = page.url();
     await page.close();
     await model("/release/c4-browser-hold-close", "POST");
-    page = track(await context.newPage());
+    page = await track(await context.newPage());
     await page.goto(closedURL);
     await page
       .getByText("c4-browser-hold-close completed", { exact: true })

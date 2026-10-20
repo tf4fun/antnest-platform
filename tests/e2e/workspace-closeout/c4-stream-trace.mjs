@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
 import { assertOrganizationSession } from "../identity-closeout/organization-session.mjs";
 import { inspectWorkspaceSSETrace } from "../identity-closeout/bridge-session-trace.mjs";
+import { inspectC4NetworkTiming } from "./c4-network-timing.mjs";
 
 const tracePattern = /^(?!0{32}$)[a-f0-9]{32}$/u;
 const finite = (value) =>
@@ -105,6 +106,7 @@ export function inspectC4StreamBoundary(trace, expected, secrets, collection) {
   );
   assert.equal(expected.startedAt, point.observed_at_ms);
   assert.equal(expected.closedAt, closure.observed_at_ms);
+  const native = inspectC4NetworkTiming(expected);
 
   const { issued, receipt } = expected.login ?? {};
   assert(issued && receipt, "original C4 page login required");
@@ -121,12 +123,12 @@ export function inspectC4StreamBoundary(trace, expected, secrets, collection) {
     finite(receipt[key]);
   assert(
     receipt.startedMono <= receipt.completedMono &&
-      receipt.completedMono <= stream.started_at,
+      receipt.completedMono <= native.dispatch.lower,
     "C4 page stream precedes its original login",
   );
   assert(
     receipt.startedAt <= receipt.completedAt &&
-      receipt.completedAt <= stream.started_at_ms,
+      receipt.completedAt <= stream.network.request.wall_time * 1000,
   );
   let body;
   try {

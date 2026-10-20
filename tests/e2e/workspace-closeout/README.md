@@ -240,6 +240,24 @@ Final acceptance requires the original Gateway failure diagnostics and Identity
 revocation feed bound to the administrator mutation. Local abort, navigation
 and browser cleanup cannot replace that evidence; normal EOF stays `remote-end`.
 
+Before navigation, the observer attaches an independent Chromium CDP session.
+It binds the original network request, response and EOF by main frame, document
+loader, complete URL, method, request ID and response Trace ID. The existing
+Playwright callback timestamps remain unchanged. Browser `TimeTicks` samples
+from `Performance.getMetrics` are bracketed by host monotonic observations;
+validation retains the complete calibration interval and observed drift,
+rather than treating callback delivery as request dispatch. Failed observation
+also preserves the allowlisted native records and clock samples, without
+request headers, Cookies or response bodies.
+
+An original native EOF interval wholly before the live checkpoint is rejected. The exact
+request-to-EOF interval also bounds the Gateway revocation-feed event, so a
+delayed callback cannot move closure after the mutation. A server handler's
+epilogue may finish after the browser receives its body; HTTP receipt binding
+checks the same-process SERVER start, while C4 feed closure uses the original
+termination event and still requires the complete owning revocation proof.
+Bridge SDK evidence cannot opt into the page-owned C4 rules.
+
 The C4 Trace inspector binds the original page login window and committed token
 issuance to the actual SSE, then reuses the existing directory mutation,
 committed revocation/feed, denial and stream-termination checks. Automatic
