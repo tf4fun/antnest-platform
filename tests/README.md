@@ -734,7 +734,18 @@ complete outage/recovery admission. Authority, cancellation and HTTP rejection
 have separate owning results. Recovery Run, original-authority gates, mutation
 HTTP receipts, stream retirement diagnostics and stopped-feed errors each retain
 their separate owning results.
-Complete integration CI remains a separate admission gate. Successful
+Complete integration CI remains a separate admission gate.
+
+Membership deactivation may include a recovered Runtime completion transaction:
+the HTTP inspector requires the same completed `disable_runtime` operation,
+process and Identity ancestry, exact completion SQL, serializable BEGIN,
+40001 observation-retention DELETE, ROLLBACK, and subsequent successful replay
+through COMMIT. At most ten attempts are admitted. Other errors remain blocking;
+the original SQL error and strict failure remain in the archive with the owning
+`runtime-completion-serialization-recovered` claim. This local rule does not
+apply to other mutations or replace fresh Docker acceptance.
+
+Successful
 Run telemetry uses `outcome=ok` with `terminal_class=completed`. Explicit
 principal-revocation cancellation permits the observed `DomainError` /
 `access_denied` Provider rejection with its exact event and ModelError origin;
