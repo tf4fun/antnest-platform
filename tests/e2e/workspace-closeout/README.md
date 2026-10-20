@@ -79,6 +79,11 @@ tests:
   Physical process-start cancellation also accepts its owned pre-header abort
   without inventing HTTP response metadata, retaining the full unknown-effect
   execution chain. Other consumers keep their original response-start checks.
+  Run completion and the closed v1 response are compared using the actual
+  `SERVER → admission → Run` chain, with matching process, Agent and Session.
+  Existing same-Node sub-millisecond SDK observations retain both original
+  endpoints and the admission/receiver identities; the Run need not repeat its
+  inherited Agent tags. The shared direct-parent timing checker is unchanged.
 - `current-evidence.mjs` binds each actual Runtime ready response to the same
   container's Agent and generation before associating its execution ID with
   the Agent's Runtime revision.

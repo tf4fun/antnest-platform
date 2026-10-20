@@ -72,6 +72,104 @@ const inspect = (f, original) => {
   );
 };
 
+function responseTiming(f, endpointDifference = 215, eventDifference = 218) {
+  const runEnd = f.run.startTime + f.run.duration;
+  f.request.duration = runEnd - endpointDifference - f.request.startTime;
+  f.request.logs[0].timestamp = runEnd - eventDifference;
+}
+
+for (const phase of ["c4-cancel", "c4-offline"])
+  test(
+    `${phase} preserves same-Node SDK timing across the actual admission parent`,
+    { timeout: 15000 },
+    async (t) => {
+      const original = await receipt(t, phase);
+      for (const endpointDifference of [215, -5]) {
+        const f = workspaceDisconnectTraceFixture(original, { refresh: false });
+        responseTiming(f, endpointDifference);
+        // Production Run identity is inherited; it need not repeat Agent tags.
+        f.set(f.run, "antnest.agent.id", undefined);
+        f.set(f.run, "agent.id", undefined);
+        const before = structuredClone(f.trace);
+        const report = await inspect(f, original);
+        const observations = report.time_observations.filter((row) =>
+          [
+            "workspace-run-joined-by-v1-prompt",
+            "workspace-run-before-closed-v1-response",
+          ].includes(row.boundary),
+        );
+        assert.equal(observations.length, endpointDifference > 0 ? 2 : 1);
+        for (const row of observations) {
+          assert.equal(row.reason, "deferred-same-node-sdk-sub-ms-endpoint");
+          assert.equal(row.span_id, f.run.spanID);
+          assert.equal(row.parent_span_id, f.admission.spanID);
+          assert.equal(row.request_span_id, f.request.spanID);
+          assert.equal(row.raw_left_us, f.run.startTime + f.run.duration);
+          assert.equal(
+            row.raw_right_us,
+            row.boundary === "workspace-run-joined-by-v1-prompt"
+              ? f.request.startTime + f.request.duration
+              : f.request.logs[0].timestamp,
+          );
+        }
+        assert.deepEqual(f.trace, before);
+      }
+    },
+  );
+
+test(
+  "Workspace response timing cannot borrow foreign ancestry or exceed the existing SDK boundary",
+  { timeout: 15000 },
+  async (t) => {
+    const original = await receipt(t, "c4-cancel");
+    for (const [name, mutate] of Object.entries({
+      direct_run_without_admission: (f) => {
+        f.run.references[0].spanID = f.request.spanID;
+        f.trace.spans = f.trace.spans.filter((span) => span !== f.admission);
+      },
+      wrong_admission_operation: (f) => {
+        f.admission.operationName = "acp.session.output";
+      },
+      wrong_admission_phase: (f) =>
+        f.set(f.admission, "antnest.operation.phase", "execute"),
+      foreign_admission_agent: (f) =>
+        f.set(f.admission, "antnest.agent.id", "foreign"),
+      foreign_admission_session: (f) =>
+        f.set(f.admission, "antnest.session.id", "foreign"),
+      foreign_admission_agent_alias: (f) =>
+        f.set(f.admission, "agent.id", "foreign"),
+      foreign_admission_session_alias: (f) =>
+        f.set(f.admission, "session.id", "foreign"),
+      foreign_admission_process: (f) => {
+        f.trace.processes.foreign = structuredClone(
+          f.trace.processes[f.admission.processID],
+        );
+        f.admission.processID = "foreign";
+      },
+      foreign_server: (f) => {
+        const other = structuredClone(f.request);
+        other.spanID = "foreign-server";
+        other.operationName = "unrelated";
+        f.trace.spans.push(other);
+        f.admission.references[0].spanID = other.spanID;
+      },
+      non_millisecond_admission_anchor: (f) => f.admission.startTime--,
+      non_millisecond_request_anchor: (f) => f.request.startTime--,
+      whole_millisecond_response_inversion: (f) =>
+        responseTiming(f, 1000, 1003),
+      whole_millisecond_event_inversion: (f) => responseTiming(f, -5, 1000),
+    }))
+      await t.test(name, async () => {
+        const f = workspaceDisconnectTraceFixture(original, { refresh: false });
+        responseTiming(f);
+        mutate(f);
+        const before = structuredClone(f.trace);
+        await assert.rejects(inspect(f, original), undefined, name);
+        assert.deepEqual(f.trace, before);
+      });
+  },
+);
+
 test(
   "Workspace process-start cancellation preserves the original abort before response headers",
   { timeout: 15000 },

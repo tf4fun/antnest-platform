@@ -82,6 +82,37 @@ export function workspaceDisconnectTraceFixture(
     runId: tag(run, "antnest.run.id"),
     connectionTrace,
   });
+  // The supervisor starts execution in the admission context, while the v1
+  // SERVER separately awaits completion before attempting its response.
+  const admission = {
+    traceID: trace.traceID,
+    spanID: "workspace-admission",
+    operationName: "acp.session.prompt",
+    processID: run.processID,
+    startTime: run.startTime,
+    duration: 1,
+    references: [
+      {
+        refType: "CHILD_OF",
+        traceID: trace.traceID,
+        spanID: request.spanID,
+      },
+    ],
+    tags: Object.entries({
+      "span.kind": "internal",
+      "agent.id": receipt.agentId,
+      "antnest.agent.id": receipt.agentId,
+      "session.id": receipt.sessionId,
+      "antnest.session.id": receipt.sessionId,
+      "antnest.operation.phase": "admit",
+      "antnest.outcome": "ok",
+    }).map(([key, value]) => ({ key, value })),
+    logs: [],
+  };
+  const runParent = run.references.find((ref) => ref.refType === "CHILD_OF");
+  assert.equal(runParent.spanID, request.spanID);
+  runParent.spanID = admission.spanID;
+  trace.spans.push(admission);
   delete expected.closedBeforeResponse;
   // Admission gives the Run its own request_<32hex>; only the RPC ID changes.
   f.set(request, "antnest.request.id", receipt.requestId);
@@ -156,5 +187,5 @@ export function workspaceDisconnectTraceFixture(
     f.set(f.server, "error.type", "outcome_unknown");
     f.server.logs = [];
   }
-  return { ...f, connectionTrace, invocationClient };
+  return { ...f, admission, connectionTrace, invocationClient };
 }

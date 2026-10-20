@@ -36,7 +36,65 @@ function errorStatus(span) {
   return allowed;
 }
 
-function closedResponse(request, run, ctx) {
+function runBeforeResponse(trace, expected, request, run, ctx) {
+  const admission = ctx.tree.parent(run);
+  assert.equal(admission?.operationName, "acp.session.prompt");
+  assert.equal(ctx.tree.parent(admission), request, "foreign Run admission");
+  expect(admission, {
+    "span.kind": "internal",
+    "antnest.agent.id": expected.agentId,
+    "antnest.session.id": expected.sessionId,
+    "antnest.operation.phase": "admit",
+    "antnest.outcome": "ok",
+  });
+  for (const [key, value] of Object.entries({
+    "agent.id": expected.agentId,
+    "session.id": expected.sessionId,
+  }))
+    if (tag(admission, key) !== undefined)
+      assert.equal(tag(admission, key), value);
+  ctx.sameProcess(run, admission, "agent-acp-service");
+  ctx.sameProcess(admission, request, "agent-acp-service");
+  assert(admission.startTime >= request.startTime);
+  assert(run.startTime >= admission.startTime);
+  const resource = ctx.process(run, "agent-acp-service");
+  return (right, boundary) => {
+    const left = end(run);
+    assert(Number.isFinite(right), "invalid Workspace response endpoint");
+    if (left <= right) return;
+    // v1 awaits execution, but Run inherits admission as its actual parent.
+    // Preserve the existing SDK observation rule for this exact two-edge
+    // chain without pretending the SERVER is the Run's direct parent.
+    assert(
+      [run, admission, request].every(
+        (span) =>
+          Number.isSafeInteger(span.startTime) && span.startTime % 1000 === 0,
+      ) && left - right < 1000,
+      "Workspace response outside deferred same-Node sub-ms boundary: " +
+        boundary,
+    );
+    ctx.timeObservations.push({
+      trace_id: trace.traceID,
+      span_id: run.spanID,
+      parent_span_id: admission.spanID,
+      request_span_id: request.spanID,
+      process_id: run.processID,
+      host_name: resource["host.name"],
+      process_pid: resource["process.pid"],
+      service_instance_id: resource["service.instance.id"],
+      boundary,
+      raw_left_us: left,
+      raw_right_us: right,
+      raw_difference_us: left - right,
+      raw_child_start_us: run.startTime,
+      raw_parent_start_us: admission.startTime,
+      raw_request_start_us: request.startTime,
+      reason: "deferred-same-node-sdk-sub-ms-endpoint",
+    });
+  };
+}
+
+function closedResponse(request, ctx, beforeResponse) {
   expect(request, {
     "antnest.outcome": "error",
     "antnest.operation.phase": "acp.dispatch",
@@ -65,13 +123,7 @@ function closedResponse(request, run, ctx) {
   });
   assert.equal(request.logs.length, 1);
   ctx.eventsInside(request);
-  ctx.nodeBefore(
-    run,
-    request,
-    end(run),
-    failure.timestamp,
-    "workspace-run-before-closed-v1-response",
-  );
+  beforeResponse(failure.timestamp, "workspace-run-before-closed-v1-response");
   diagnostics(
     request,
     {
@@ -219,6 +271,7 @@ export async function inspectWorkspaceDisconnectedTrace(
     "Workspace Tool proof",
   );
   const ctx = runtimeToolEvidence(trace, call, { agentId: expected.agentId });
+  const beforeResponse = runBeforeResponse(trace, expected, request, run, ctx);
   for (const span of [run, call]) {
     assert.equal(span.processID, request.processID);
     assert(span.startTime >= tree.parent(span).startTime);
@@ -231,14 +284,8 @@ export async function inspectWorkspaceDisconnectedTrace(
     end(run),
     "workspace-tool-joined-by-run",
   );
-  ctx.nodeBefore(
-    run,
-    request,
-    end(run),
-    end(request),
-    "workspace-run-joined-by-v1-prompt",
-  );
-  closedResponse(request, run, ctx);
+  beforeResponse(end(request), "workspace-run-joined-by-v1-prompt");
+  closedResponse(request, ctx, beforeResponse);
 
   const stages = cancelled ? ["tool"] : ["tool", "reply"];
   assert.deepEqual(
