@@ -8,6 +8,10 @@ import {
   moveSessionTrace,
 } from "./bridge-session-cause-fixtures.mjs";
 import { sessionTraceBase } from "./bridge-session-trace-fixtures.mjs";
+import {
+  sessionRejectionFixture,
+  failureDiagnostic,
+} from "./session-rejection-trace-fixtures.mjs";
 import { addCompletedRead } from "../edge-gateway/resolve-cache-completed-read-fixtures.mjs";
 import {
   addReadEndpointObservation,
@@ -557,6 +561,166 @@ test("Session outage accepts the actual five-second shared Resolve timeout cap",
     setTag(span, "antnest.request.timeout_ms", 5000);
   assert.equal(inspect(f).authorizationCauseVerified, true);
 });
+
+function sharedDeadlineCleanupFixture() {
+  const f = bridgeSessionCauseFixture("unavailable");
+  const { source, sourceRoot, sourceClient, sourceDecision } =
+    sessionRejectionFixture(503, true);
+  const decision = f.terminal.decision;
+  moveSessionTrace(
+    source,
+    "c".repeat(32),
+    decision.startTime + decision.duration - 1011000,
+  );
+  source.processes = structuredClone(f.trace.processes);
+  setTag(sourceClient, "antnest.request.timeout_ms", 1000);
+  const completed = decision.startTime + decision.duration + 250000;
+  sourceClient.duration = completed - sourceClient.startTime;
+  failureDiagnostic(
+    sourceClient,
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["context.deadlineExceededError"],
+    "send",
+  );
+  sourceDecision.duration = completed + 1000 - sourceDecision.startTime;
+  sourceRoot.duration = completed + 2000 - sourceRoot.startTime;
+  failureDiagnostic(
+    sourceRoot,
+    "deadline_exceeded",
+    "Request deadline exceeded",
+    ["context.deadlineExceededError"],
+    "request",
+  );
+  f.trace.spans = f.trace.spans.filter((span) => span !== f.terminal.client);
+  setTag(decision, "antnest.identity.resolve.source", "shared");
+  setTag(
+    decision,
+    "antnest.identity.resolve.shared_source_state",
+    "actual-client",
+  );
+  setTag(decision, "antnest.identity.resolve.cancel_kind", "shared-deadline");
+  decision.references.push({
+    refType: "FOLLOWS_FROM",
+    traceID: source.traceID,
+    spanID: sourceClient.spanID,
+  });
+  f.collection.traces.set(source.traceID, source);
+  f.collection.archivedTraceIDs.add(source.traceID);
+  f.shared = {
+    trace: source,
+    root: sourceRoot,
+    decision: sourceDecision,
+    client: sourceClient,
+  };
+  return f;
+}
+
+test("Session shared deadline releases its waiter before the actual transport finishes cleanup", () => {
+  const f = sharedDeadlineCleanupFixture();
+  const original = structuredClone(f.collection.traces);
+  const checked = inspect(f);
+  assert.equal(checked.authorizationCauseVerified, true);
+  const resolution = checked.gateway_revalidations.find(
+    (record) => record.decision_span_id === f.terminal.decision.spanID,
+  );
+  assert.equal(resolution.admission, false);
+  assert.equal(resolution.source_trace_id, f.shared.trace.traceID);
+  assert.equal(resolution.rpc_client_span_id, f.shared.client.spanID);
+  assert.deepEqual(f.collection.traces, original);
+});
+
+test("Session ordinary RPC still requires completion before its decision", () => {
+  const f = bridgeSessionCauseFixture("unavailable");
+  const client = f.terminal.client;
+  client.duration =
+    f.terminal.decision.startTime +
+    f.terminal.decision.duration +
+    250000 -
+    client.startTime;
+  client.logs[0].timestamp = client.startTime + client.duration;
+  assert.throws(() => inspect(f), /actual failed workspace CLIENT/u);
+});
+
+for (const [name, change] of [
+  [
+    "missing shared deadline",
+    (f) =>
+      setTag(
+        f.terminal.decision,
+        "antnest.identity.resolve.cancel_kind",
+        undefined,
+      ),
+  ],
+  [
+    "ordinary RPC",
+    (f) =>
+      setTag(f.terminal.decision, "antnest.identity.resolve.source", "rpc"),
+  ],
+  [
+    "unfinished CLIENT",
+    (f) => {
+      delete f.shared.client.duration;
+    },
+  ],
+  [
+    "CLIENT not yet started",
+    (f) => {
+      const end = f.shared.client.startTime + f.shared.client.duration;
+      f.shared.client.startTime =
+        f.terminal.decision.startTime + f.terminal.decision.duration + 1000;
+      f.shared.client.duration = end - f.shared.client.startTime;
+    },
+  ],
+  [
+    "ordinary cancellation",
+    (f) =>
+      failureDiagnostic(
+        f.shared.client,
+        "cancelled",
+        "Request was cancelled",
+        ["*errors.errorString"],
+        "send",
+      ),
+  ],
+  [
+    "successful CLIENT",
+    (f) => {
+      f.shared.client.tags = f.shared.client.tags.filter(
+        (tag) => !/^(error|otel.status_)/u.test(tag.key),
+      );
+      f.shared.client.logs = [];
+      setTag(f.shared.client, "http.response.status_code", 200);
+    },
+  ],
+  [
+    "unarchived source",
+    (f) => f.collection.archivedTraceIDs.delete(f.shared.trace.traceID),
+  ],
+  [
+    "different process",
+    (f) => {
+      f.shared.trace.processes.edge.tags.find(
+        (tag) => tag.key === "service.instance.id",
+      ).value = "other";
+    },
+  ],
+  [
+    "outside independently stopped interval",
+    (f) => {
+      f.shared.client.duration += 5000000;
+      f.shared.root.duration += 5000000;
+      f.shared.decision.duration += 5000000;
+      f.shared.client.logs[0].timestamp += 5000000;
+      f.shared.root.logs[0].timestamp += 5000000;
+    },
+  ],
+])
+  test(`Session shared deadline still rejects ${name}`, () => {
+    const f = sharedDeadlineCleanupFixture();
+    change(f);
+    assert.throws(() => inspect(f));
+  });
 
 for (const [name, change] of [
   [

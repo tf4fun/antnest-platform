@@ -365,12 +365,20 @@ export function inspectWorkspaceFailureSource(trace, root, decision, options) {
       tag(selected.span, "otel.status_description"),
       "Request deadline exceeded",
     );
+    // The shared deadline releases waiters before transport cleanup joins.
+    // Its archived CLIENT must still be complete and already have started;
+    // the owning caller independently bounds its completion by the outage.
+    assert(
+      selected.span.startTime <= end(decision),
+      "shared deadline precedes its actual source start",
+    );
+  } else {
+    assert(
+      end(selected.span) <= end(decision),
+      "failed decision precedes its actual source completion",
+    );
   }
   assert.equal(tag(selected.span, "server.address"), "identity-service");
-  assert(
-    end(selected.span) <= end(decision),
-    "failed decision precedes its actual source completion",
-  );
   const process = (raw, span) => {
     const metadata = raw.processes[span.processID];
     const tags = Object.fromEntries(

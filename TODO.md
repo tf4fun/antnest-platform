@@ -18,6 +18,16 @@ Issue 状态最后核对于 2026-10-16：136 个 issue，78 个已关闭，58 �
 
 ## 当前批次
 
+- #64 / PR #262 当前剩余清单（2026-10-20）：最新已推送提交 5c99c30f 的常规 CI 已结束，33 成功／4 跳过／0 失败；共享测试依赖拆分已提交，1,423 项相关本地回归通过，实际 Docker 复验仍待完成。最近完整集成仍是旧提交 e0b5efb3 的 run 39356321967，21 分片 10 成功／11 失败；不能将本地修复或新提交常规 CI 作为完整集成通过。PR 继续保持 Draft。
+  - [ ] Session shared-deadline 验收：内部验证器已修正，11 项新正反例先红后绿，1,451 项相关回归全绿；原 CI 的 24 份 Trace／8 条关闭记录重放全部通过，原件 SHA 和时间未改写。独立复审无本地 blocker；实际 Docker／最终 CI 复验仍待完成，未计为部署验收。证据：artifacts/verification/issue-64/final-ci-fixes/session-shared-deadline-green-2.json、session-original-ci-green-1.json；原始失败和离线未重做运行时 Cookie canary 的范围说明均保留。
+  - [ ] Stage3 base 与四个 Skill profile 的 CI 接线／完成报告：保留业务、完整 Trace、已审阅诊断和实际清理要求，修正 runner、strict 标志与 completion 契约，禁止笼统接受 exit 2。
+  - [ ] ACP 重启后 Bridge 首次读取 503：影响 Skill 工具可用性、密钥轮换及泄露处置三套场景；需补足实际失败回执并确认内部连接退役／重建根因，不能以请求重试掩盖。
+  - [ ] 上传容量的两个 parse 阶段取消场景：移除 EOF 后固定 20 ms 等待的时机假设，证明取消发生在原生解析期间，保留四场景、64 SSE 和 1 秒上限；现有终结测量不等于完整验收通过。
+  - [ ] C4 浏览器撤权时钟证据：修正将异步浏览器 request 通知当作真实发送前界，以及整个 server span 必须早于客户端 body 接收结束的错误假设；保留原请求、进程和撤权归属，不加固定容差。
+  - [ ] 同一最终候选的部署与全量 CI：先复验受影响 Docker 场景（包含已提交依赖修复），再完成 85 套／21 分片完整集成，逐项核对实际结论、资源清理及最新提交。
+  - [ ] 最终 review 与交付：审查全部改动和必要状态检查、更新 PR 说明与 TODO；无剩余内部问题且当前 head 必需检查通过后移除 Draft，达到可合并状态。
+  - 状态原件：artifacts/verification/issue-64/final-ci-fixes/pr-262-5c99c30-status.json。以上五组为当前已定位的修复项，后续真实复验若发现新问题继续追加，不预先承诺必然只剩固定步数。
+
 - #64 最终 CI 首轮与依赖修复检查点（2026-10-20）：e0b5efb3 的普通 CI 为 33 成功／4 跳过／0 失败；完整集成 run 39356321967 已结束，21 分片中 10 成功、11 失败，不能合并。已定位工具权限／进度、ACP 重启／响应丢失、Managed MCP v1／v2 及 Stage2／生命周期的共同测试依赖缺口：纯生命周期 helpers 静态引入浏览器 decoder／schema，隔离容器缺源码或 zod。已将浏览器 projection 原样拆到 workspace-contracts，保留全部原断言与唯一业务调用；六个隔离加载反例先红，1,423 项相关本地回归全绿，独立 review 无本批 blocker。首轮本地权限 Docker 在获取 Go 基础镜像元数据时 TLS 超时，未进入业务；源码未变、进程组退出、Docker／镜像库存恢复，失败原件双份保存，不计 Docker 通过。Session shared-deadline 采集、Skill 与其余最终分片仍在逐项核对；下一步修复已确认缺口、完成当前候选 Docker／全量 CI 和最终 review，继续保持 Draft。证据：artifacts/verification/issue-64/final-ci/39356321967/；artifacts/verification/issue-64/final-ci-fixes/protocol-dependency-red-1.json、protocol-dependency-green-1.json、protocol-dependency-permissions-docker-1.json。提交／推送状态以对应检查点为准。
 
 - #64 Development 真部署批次完成（2026-10-20）：第八轮 fresh-candidate Docker 全流程通过（482.153 秒），真实浏览器 13 项、9 个顺序 driver、6 次受控模型请求和 3 次实际 Runtime 工具调用完成；原 Session 的真实 PostgreSQL／私有 ACP 回放、拒绝零模型／工具工作、两组五动作 lifecycle、原 Runtime 正常退出与丢失、同容器执行身份变化后的显式 Rebuild、完整 workspace SHA 保留及最终 state／replay 均通过。生命周期 absence 按原 owner／请求阶段逐条验证并要求必要边界，保留实际总数与原始 strict 诊断，不用固定 4／5 计数；Runtime-loss 仍要求唯一 source generation probe 和 replacement。162 项相关回归、格式／存储／238 份 Markdown 链接通过，局部实现独立复审无 blocker。源码全程未变、进程组退出、Docker／全部镜像恢复基线；231 原件／16,802,958 字节双份 SHA 保存。第七轮计数误报及此前失败证据保留。Development 本地与真实部署已完成；剩余本批 review／提交与 PR 说明更新、最终候选 85 套／21 分片全量 CI（包含容量／取消四场景）、最终 head 检查与移除 Draft。远端旧 cad33474 的 33 成功／4 跳过／0 失败不代替最终候选完整集成。证据：artifacts/verification/issue-64/consumers/development/development-deployed-complete.json、development-deployed-docker-8.json、development-absence-ownership-local-1.json。PR #262 保持 Draft，提交／推送及最终 CI 以对应检查点为准。

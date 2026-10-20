@@ -151,13 +151,9 @@ for (const [name, change] of [
   ],
   ["foreign source process", (f) => foreignGateway(f.source, f.sourceClient)],
   [
-    "unfinished source at decision",
+    "source without a completed receipt",
     (f) => {
-      f.sourceClient.duration =
-        f.decision.startTime +
-        f.decision.duration +
-        1 -
-        f.sourceClient.startTime;
+      delete f.sourceClient.duration;
     },
   ],
   [
