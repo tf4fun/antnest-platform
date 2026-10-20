@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { channel } from "node:diagnostics_channel";
 import { once } from "node:events";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { setImmediate as turn } from "node:timers/promises";
@@ -34,6 +35,19 @@ const listen = async (server: Server) => {
 
 test("native Prompt input phases remain exact, private and request-owned through failure and cancellation", { timeout: 20_000 }, async t => {
   const batches: any[] = [], observed: Promise<number>[] = [];
+  const inputChannel = channel("antnest.ui.prompt_input.v1");
+  const notices: { value: any; received: bigint }[] = [];
+  const subscriberErrors: unknown[] = [];
+  let replayEof: (() => void) | undefined;
+  // Subscriber callbacks must not throw: node:diagnostics_channel reports
+  // subscriber exceptions as uncaught exceptions, outside publish's caller.
+  const receive = (value: unknown) => {
+    try {
+      notices.push({ value, received: process.hrtime.bigint() });
+      if ((value as { phase: string }).phase === "body-eof") replayEof?.();
+    } catch (error) { subscriberErrors.push(error); }
+  };
+  const synchronousCounts: number[] = [];
   const collector = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -67,7 +81,7 @@ test("native Prompt input phases remain exact, private and request-owned through
   const offServer = createTestWorkspaceHttpServer({ handle: handler }, options(disabled));
   const origin = await listen(server), offOrigin = await listen(offServer);
   let next = 0;
-  type Case = { id: string; name: string; before: bigint; after: bigint; expected: string[]; bytes?: number; firstBytes?: number; disabled?: boolean };
+  type Case = { id: string; name: string; before: bigint; after: bigint; expected: string[]; bytes?: number; firstBytes?: number; disabled?: boolean; unsubscribed?: boolean };
   const cases: Case[] = [];
   const begin = (name: string, expected: string[], bytes?: number, isDisabled = false) => {
     const result: Case = { name, id: (++next).toString(16).padStart(32, "0"), before: process.hrtime.bigint(),
@@ -110,6 +124,7 @@ test("native Prompt input phases remain exact, private and request-owned through
       item.after = process.hrtime.bigint();
     } finally { client.destroy(); await closed; }
   };
+  inputChannel.subscribe(receive);
   try {
     // Complete both uploads concurrently with distinct incoming traces and byte counts.
     await Promise.all([
@@ -135,6 +150,12 @@ test("native Prompt input phases remain exact, private and request-owned through
       { intent: "refused", extra: { "Antnest-Caller-Context": "invalid-context" } });
     await post("disabled with recording provider", valid("disabled", 20), 202, [],
       { intent: "disabled", disabled: true });
+    inputChannel.unsubscribe(receive);
+    try {
+      await post("no local subscriber", valid("unsubscribed", 20), 202, phaseNames,
+        { intent: "unsubscribed" });
+      cases.at(-1)!.unsubscribed = true;
+    } finally { inputChannel.subscribe(receive); }
     await partial("declared oversize", 64 * 1024 * 1024 + 1, "{", 413, []);
     await partial("deadline before EOF", 8192, '{"partial":', 504, phaseNames.slice(0, 1));
 
@@ -174,25 +195,56 @@ test("native Prompt input phases remain exact, private and request-owned through
     }, { traceparent: `00-${cancelled.id}-${parent}-01` });
     cancelled.after = process.hrtime.bigint();
 
+    const retired = begin("ended HTTP before EOF", ["receive-started"], 1);
+    let retiredObserver: observation.PromptInputObserver | undefined;
+    await telemetry.observeHttp("POST", "/fixture/prompt", async () => {
+      retiredObserver = observation.capturePromptInput();
+      retiredObserver?.("receive-started", 1);
+      return 499;
+    }, { traceparent: `00-${retired.id}-${parent}-01` });
+    retired.after = process.hrtime.bigint();
+    retiredObserver?.("body-eof", 1);
+    const fresh = begin("old observer cannot borrow a new HTTP boundary", phaseNames, 2);
+    await telemetry.observeHttp("POST", "/fixture/prompt", async () => {
+      retiredObserver?.("body-eof", 1);
+      const observer = observation.capturePromptInput();
+      observer?.("receive-started", 2); observer?.("body-eof", 2);
+      observer?.("body-parsed", 2); observation.recordPromptInputPrepared();
+      return 202;
+    }, { traceparent: `00-${fresh.id}-${parent}-01` });
+    fresh.after = process.hrtime.bigint();
+
     const bounded = begin("bounded phases and ended boundary", phaseNames, 42);
     bounded.firstBytes = 8;
     let late: undefined | ((stage: string, bytes: number) => void);
     await telemetry.observeHttp("POST", "/fixture/prompt", async () => {
       late = (observation as any).capturePromptInput?.();
-      late?.("body-eof", 42); late?.("receive-started", 0); late?.("receive-started", 8);
-      late?.("receive-started", 9); late?.("body-eof", 7); late?.("body-eof", 42);
-      late?.("body-parsed", 43); late?.("body-parsed", 42);
+      const count = () => synchronousCounts.push(notices.filter(({ value }) => value.traceId === bounded.id).length);
+      late?.("body-eof", 42); late?.("receive-started", 0); count();
+      late?.("receive-started", 8); count();
+      late?.("receive-started", 9); late?.("body-eof", 7); count();
+      replayEof = () => { replayEof = undefined; late?.("body-eof", 42); };
+      const foreign = begin("live observer retains source in another active HTTP context", []);
+      await telemetry.observeHttp("GET", "/fixture/another", async () => {
+        late?.("body-eof", 42); count();
+        return 200;
+      }, { traceparent: `00-${foreign.id}-${parent}-01` });
+      foreign.after = process.hrtime.bigint();
+      late?.("body-parsed", 43); count();
+      late?.("body-parsed", 42); count();
       (observation as any).recordPromptInputPrepared?.();
-      (observation as any).recordPromptInputPrepared?.();
+      count(); (observation as any).recordPromptInputPrepared?.(); count();
       return 202;
     }, { traceparent: `00-${bounded.id}-${parent}-01` });
     late?.("receive-started", 1); late?.("body-eof", 1); late?.("body-parsed", 1);
     (observation as any).recordPromptInputPrepared?.();
     bounded.after = process.hrtime.bigint();
   } finally {
-    await close(server); await close(offServer);
-    await Promise.all(observed);
-    await disabled.shutdown(); await telemetry.shutdown(); await close(collector);
+    try {
+      await close(server); await close(offServer);
+      await Promise.all(observed);
+      await disabled.shutdown(); await telemetry.shutdown(); await close(collector);
+    } finally { inputChannel.unsubscribe(receive); }
   }
   const spans = batches.flatMap(batch => batch.resourceSpans.flatMap((resource: any) =>
     resource.scopeSpans.flatMap((scope: any) => scope.spans)));
@@ -203,6 +255,23 @@ test("native Prompt input phases remain exact, private and request-owned through
     assert.equal(span.parentSpanId, parent);
     const events = (span.events ?? []).filter((event: any) => event.name === eventName);
     assert.deepEqual(events.map((event: any) => fields(event.attributes).phase), item.expected);
+    const local = notices.filter(({ value }) => value.traceId === item.id);
+    assert.deepEqual(local.map(({ value }) => value.phase), item.unsubscribed ? [] : item.expected.slice(0, 2));
+    for (const [index, notice] of local.entries()) {
+      const value = notice.value, event = fields(events[index].attributes);
+      assert(Object.isFrozen(value) && Object.isFrozen(value.processIdentity));
+      assert.deepEqual(Object.keys(value).sort(),
+        ["bytes", "monotonic_ns", "phase", "processIdentity", "spanId", "traceId"]);
+      assert.equal(value.spanId, span.spanId);
+      assert.equal(value.monotonic_ns, event.monotonic_ns, "local and OTLP must share the original sample");
+      assert.equal(value.bytes, event.bytes);
+      assert(BigInt(value.monotonic_ns) <= notice.received && notice.received <= item.after);
+      const resource = batches.flatMap(batch => batch.resourceSpans).find((candidate: any) =>
+        candidate.scopeSpans.some((scope: any) => scope.spans.includes(span)));
+      const identity = fields(resource.resource.attributes);
+      assert.deepEqual(value.processIdentity, Object.fromEntries(
+        ["host.name", "process.pid", "service.instance.id"].map(key => [key, identity[key]])));
+    }
     const start = fields(span.attributes)[clockKey];
     if (item.disabled) assert.equal(start, undefined);
     else {
@@ -226,8 +295,15 @@ test("native Prompt input phases remain exact, private and request-owned through
       else { assert(value.bytes >= firstBytes); assert.equal(value.bytes, item.bytes); }
     }
   });
+  await t.test("local phase notifications are synchronous, ordered and exactly once", () => {
+    assert.deepEqual(subscriberErrors, []);
+    assert.equal(replayEof, undefined);
+    assert.deepEqual(synchronousCounts, [0, 1, 1, 2, 2, 2, 2, 2]);
+    assert.equal(notices.length, cases.filter(item => !item.unsubscribed)
+      .reduce((sum, item) => sum + Math.min(item.expected.length, 2), 0));
+  });
   await t.test("no input values, credentials or identities enter the new evidence", () => {
-    const raw = JSON.stringify(batches);
+    const raw = JSON.stringify([batches, notices.map(notice => notice.value)]);
     assert(!raw.includes(privateBody)); assert(!raw.includes(privateHeader));
     for (const span of spans) for (const event of span.events ?? [])
       if (event.name === eventName)

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { channel } from "node:diagnostics_channel";
 import { hostname } from "node:os";
 import { context, createContextKey, isSpanContextValid, metrics, propagation, ROOT_CONTEXT,
   SpanKind, SpanStatusCode, trace, type Span } from "@opentelemetry/api";
@@ -27,6 +28,7 @@ type HttpBoundary = { active: boolean; span: Span; streamDelegationRecorded?: bo
 export type PromptInputPhase = "receive-started" | "body-eof" | "body-parsed";
 export type PromptInputObserver = (phase: PromptInputPhase, bytes: number) => void;
 const promptInputPhases = ["receive-started", "body-eof", "body-parsed", "input-prepared"] as const;
+const promptInputChannel = channel("antnest.ui.prompt_input.v1");
 
 function recordPromptInput(boundary: HttpBoundary, state: PromptInputState, phase: string, bytes: number): void {
   try {
@@ -34,10 +36,19 @@ function recordPromptInput(boundary: HttpBoundary, state: PromptInputState, phas
       boundary.promptInput !== state || phase !== promptInputPhases[state.next] ||
       !Number.isSafeInteger(bytes) || bytes < 1 || bytes > 64 * 1024 * 1024 ||
       (state.next === 1 && bytes < state.bytes) || (state.next >= 2 && bytes !== state.bytes)) return;
-    boundary.span.addEvent("antnest.ui.prompt_input", {
-      phase, bytes, monotonic_ns: process.hrtime.bigint().toString(),
-    });
+    const monotonic_ns = process.hrtime.bigint().toString();
+    boundary.span.addEvent("antnest.ui.prompt_input", { phase, bytes, monotonic_ns });
     state.next++; state.bytes = bytes;
+    if ((phase === "receive-started" || phase === "body-eof") && promptInputChannel.hasSubscribers) {
+      const source = boundary.span.spanContext();
+      if (!isSpanContextValid(source)) return;
+      // Advance the phase before notifying; a subscriber cannot repeat this EOF.
+      // Subscribers own their errors and must not wait or extend native parsing.
+      promptInputChannel.publish(Object.freeze({
+        traceId: source.traceId, spanId: source.spanId, processIdentity,
+        phase, bytes, monotonic_ns,
+      }));
+    }
   } catch { /* Diagnostics must not change request outcomes or resource cleanup. */ }
 }
 

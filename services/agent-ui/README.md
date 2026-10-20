@@ -178,6 +178,20 @@ reservation and Session lease stay held until the handler finishes.
 With telemetry enabled, the original HTTP span records native upload phases
 and a process-monotonic clock sample. These bounded receipts support the
 cross-service capacity gate without recording attachment contents or credentials.
+The local Node `diagnostics_channel` channel `antnest.ui.prompt_input.v1`
+synchronously publishes each accepted `receive-started` and `body-eof` phase
+when a subscriber is present. Its frozen message contains only `traceId`,
+`spanId`, the frozen `processIdentity` resource fields above, `phase`, `bytes`,
+and the exact `monotonic_ns` sample also attached to the original HTTP span.
+The phase advances before publication; duplicates, invalid byte counts,
+disabled telemetry and ended HTTP boundaries cannot publish. Parsing and
+preparation still produce their original OTLP events without local notification.
+Subscribers must isolate their own errors and must not wait, delay parsing or
+issue business operations inside the service. Node reports thrown subscriber
+errors as uncaught exceptions; the publisher does not install a global exception
+handler. A test observer can forward the small notification over a connection
+prepared before the upload. Such a notification establishes the native input
+boundary, not receipt or processing of another request.
 
 `make e2e-agent-ui-upload-capacity` exercises two real users against Gateway,
 Agent UI, ACP and Runtime with 64 live SSE streams: four owners, two Session
