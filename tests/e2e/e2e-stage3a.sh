@@ -533,6 +533,7 @@ compose() {
 
 cleanup() {
   status=$?
+  stage3_entry_status=$status
   trap - EXIT INT TERM
   if [ -n "$tool_profile" ]; then
     export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+120000))')
@@ -613,6 +614,9 @@ cleanup() {
   fi
   rm -rf -- "${temporary_root:?}" "${credentials_root:?}/credentials"
   rmdir -- "$credentials_root" 2>/dev/null || true
+  if [ "$tool_profile" = stage3-base ] && { [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; }; then
+    node tests/e2e/stage3-base/completion.mjs "$COMPOSE_PROJECT_NAME" "$stage3_entry_status" || status=1
+  fi
   if [ -n "$tool_profile" ] && [ "$status" -eq 0 ]; then
     if [ "$tool_profile" = managed-mcp ]; then
       echo "ACP v${ANTNEST_E2E_MANAGED_MCP_VERSION:-1} deployed $tool_profile E2E passed; owned resources removed"

@@ -580,23 +580,35 @@ function foundation(runner) {
 // Stage 3a profiles that report strict-only trace findings (expected
 // rejection errors, clock skew) as exit 2 run the make recipe directly so
 // that exit code survives.
-function stage3aProfile(profile) {
-  return { run: `${profile} sh tests/e2e/e2e-stage3a.sh`, strict: true };
+function stage3aProfile(profile = "") {
+  return {
+    run: `${profile ? profile + " " : ""}sh tests/e2e/e2e-stage3a.sh`,
+    strict: true,
+  };
 }
 
 function tierC() {
   const families = {
     "Stage 3a": [
-      ["e2e-stage3-local", "base"],
+      ["e2e-stage3-local", "base", stage3aProfile()],
+      ...["acp-restart", "rpc-response-loss"].map((name) => [
+        `e2e-${name}`,
+        name,
+      ]),
       ...[
-        "acp-restart",
-        "rpc-response-loss",
-        "stage3-skill-delivery",
-        "stage4-skill-offline-reuse",
-        "stage4-skill-registry-outage",
-        "stage4-skill-restart-rebuild",
-      ].map((name) => [`e2e-${name}`, name]),
-      ...[
+        ["stage3-skill-delivery", "ANTNEST_E2E_SKILL_DELIVERY=true"],
+        [
+          "stage4-skill-offline-reuse",
+          "ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_OFFLINE_REUSE=true",
+        ],
+        [
+          "stage4-skill-registry-outage",
+          "ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_REGISTRY_OUTAGE=true",
+        ],
+        [
+          "stage4-skill-restart-rebuild",
+          "ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_RESTART_REBUILD=true",
+        ],
         ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
         ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
         ["slash-commands", "ANTNEST_E2E_SLASH_COMMANDS=true"],

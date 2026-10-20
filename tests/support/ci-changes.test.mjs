@@ -655,6 +655,11 @@ test("Progress CI supplies the fixture carrier while its deployment builds the c
 test("tier C Stage 3a profiles keep their strict exit 2 by running the make recipe directly", () => {
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   for (const name of [
+    "stage3-local",
+    "stage3-skill-delivery",
+    "stage4-skill-offline-reuse",
+    "stage4-skill-registry-outage",
+    "stage4-skill-restart-rebuild",
     "acp-closeout",
     "acp-session",
     "slash-commands",
@@ -696,7 +701,7 @@ test("foundation runners report strict-only findings through exit 2", () => {
   for (const suite of suites) {
     const entry = matrixEntry(suite);
     if (!Object.hasOwn(foundation, suite.id)) {
-      if (!/ sh tests\/e2e\/e2e-stage3a\.sh$/u.test(entry.run))
+      if (!/(?:^| )sh tests\/e2e\/e2e-stage3a\.sh$/u.test(entry.run))
         assert.equal(entry.strict_exit, false, suite.id);
       continue;
     }

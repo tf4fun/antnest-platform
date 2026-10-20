@@ -18,9 +18,9 @@ Issue 状态最后核对于 2026-10-16：136 个 issue，78 个已关闭，58 �
 
 ## 当前批次
 
-- #64 / PR #262 当前剩余清单（2026-10-20）：最新已推送提交 5c99c30f 的常规 CI 已结束，33 成功／4 跳过／0 失败；共享测试依赖拆分已提交，1,423 项相关本地回归通过，实际 Docker 复验仍待完成。最近完整集成仍是旧提交 e0b5efb3 的 run 39356321967，21 分片 10 成功／11 失败；不能将本地修复或新提交常规 CI 作为完整集成通过。PR 继续保持 Draft。
+- #64 / PR #262 当前剩余清单（2026-10-20）：最新已推送提交 73e073c8（包含 Session 本地修复）的常规 CI 已结束，33 成功／4 跳过／0 失败；共享测试依赖拆分已提交，1,423 项相关本地回归通过，实际 Docker 复验仍待完成。最近完整集成仍是旧提交 e0b5efb3 的 run 39356321967，21 分片 10 成功／11 失败；不能将本地修复或新提交常规 CI 作为完整集成通过。17 套受共享依赖与 Session 修复影响的定向集成 run 39362086114 正在 73e073c8 上运行，尚无最终结论；不代替最终 85 套全量验收。PR 继续保持 Draft。
   - [ ] Session shared-deadline 验收：内部验证器已修正，11 项新正反例先红后绿，1,451 项相关回归全绿；原 CI 的 24 份 Trace／8 条关闭记录重放全部通过，原件 SHA 和时间未改写。独立复审无本地 blocker；实际 Docker／最终 CI 复验仍待完成，未计为部署验收。证据：artifacts/verification/issue-64/final-ci-fixes/session-shared-deadline-green-2.json、session-original-ci-green-1.json；原始失败和离线未重做运行时 Cookie canary 的范围说明均保留。
-  - [ ] Stage3 base 与四个 Skill profile 的 CI 接线／完成报告：保留业务、完整 Trace、已审阅诊断和实际清理要求，修正 runner、strict 标志与 completion 契约，禁止笼统接受 exit 2。
+  - [ ] Stage3 base 与四个 Skill profile 的 CI 接线／完成报告：本地修复已完成，两路独立 review 后 460 项回归通过；五份原 CI 报告逐项重放一致，原 strict failed／exit 2 与完整诊断保留。实际外层清理完成后才生成 completion，业务／归档／清理／写入失败仍为 1；offline-reuse 的额外 Rebuild 已纳入正反例。此为本地检查点，新的真实 Docker／CI 待验收。证据：artifacts/verification/issue-64/final-ci-fixes/stage3-ci-completion-green-2.json、stage3-original-ci-report-replay-1.json。
   - [ ] ACP 重启后 Bridge 首次读取 503：影响 Skill 工具可用性、密钥轮换及泄露处置三套场景；需补足实际失败回执并确认内部连接退役／重建根因，不能以请求重试掩盖。
   - [ ] 上传容量的两个 parse 阶段取消场景：移除 EOF 后固定 20 ms 等待的时机假设，证明取消发生在原生解析期间，保留四场景、64 SSE 和 1 秒上限；现有终结测量不等于完整验收通过。
   - [ ] C4 浏览器撤权时钟证据：修正将异步浏览器 request 通知当作真实发送前界，以及整个 server span 必须早于客户端 body 接收结束的错误假设；保留原请求、进程和撤权归属，不加固定容差。

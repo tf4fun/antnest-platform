@@ -64,6 +64,16 @@ written directly into the ignored evidence directory. A log archival or
 resource cleanup failure returns 1 even when the original client returned the
 reviewed diagnostic code 2.
 
+For base, Skill delivery, Registry outage, offline reuse and restart/rebuild,
+the outer runner publishes `completion.json` only after inner archival and
+cleanup have succeeded and both Docker ownership labels have no remaining
+containers, volumes or networks. The finalizer links the original business,
+lifecycle, private-request and Logout reports without changing their diagnostics.
+CI runs these five original shell recipes directly, preserving exit 2 for
+completed work with reviewed strict findings and exit 1 for business, evidence
+or cleanup failures. Unknown warnings remain failures under the existing CI
+rules. Other fault profiles retain their separate completion contracts.
+
 `make test-stage3-base-fixtures` runs local gates. `make e2e-stage3-local`
 uses already built local images; `make e2e-stage3` builds first. Both default
 to an isolated, bounded, disposable project. Existing development containers,
