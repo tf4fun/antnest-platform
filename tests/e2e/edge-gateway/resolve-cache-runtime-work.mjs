@@ -45,10 +45,16 @@ export async function createCacheRuntimeWork({
   assert(agent.executable_execution_revision);
   assert(agent.runtime?.runtime_revision);
   let runtimeID;
-  const operation = ({
-    signal: requestSignal = signal,
-    timeoutMS = 15000,
-  } = {}) => {
+  const evidence = {
+    organization_id: principal.organization_id,
+    observations: [],
+    exec_failures: [],
+    exec_failures_dropped: 0,
+  };
+  const operation = (
+    { signal: requestSignal = signal, timeoutMS = 15000 } = {},
+    stage = "process",
+  ) => {
     assert(Number.isFinite(timeoutMS) && timeoutMS > 0);
     const deadline = performance.now() + timeoutMS;
     const bounded = AbortSignal.any(
@@ -71,10 +77,35 @@ export async function createCacheRuntimeWork({
           signal: AbortSignal.any([bounded, options.signal].filter(Boolean)),
           timeoutMS: Math.min(remaining(), options.timeoutMS ?? Infinity),
         };
-        const result =
-          args[0] === "exec" && args.at(-4) === runtimeID
-            ? await execRuntime({ args, environment: config.env, ...call })
-            : await docker(args, long, call);
+        let result;
+        if (args[0] === "exec" && args.at(-4) === runtimeID) {
+          try {
+            result = await execRuntime({
+              args,
+              environment: config.env,
+              ...call,
+            });
+          } catch (error) {
+            // Capture before the status reader wraps a rejected credential.
+            // Retain the original rejection and join behavior, and bound
+            // diagnostics even during initial credential selection.
+            if (evidence.exec_failures.length < 16)
+              evidence.exec_failures.push({
+                stage:
+                  args[1] === "-e"
+                    ? stage === "initial"
+                      ? "status-selection"
+                      : "status"
+                    : stage,
+                name: error.name,
+                message: error.message,
+                remote_cleanup_pending: error.remoteCleanupPending ?? null,
+                receipt: error.runtimeExec ?? null,
+              });
+            else evidence.exec_failures_dropped++;
+            throw error;
+          }
+        } else result = await docker(args, long, call);
         remaining();
         return result;
       },
@@ -100,7 +131,7 @@ export async function createCacheRuntimeWork({
       volume: row.volume,
     };
   };
-  const initial = operation();
+  const initial = operation(undefined, "initial");
   const container = await physical(initial);
   runtimeID = container.id;
   const statusReader = await prepareRuntimeStatus(
@@ -115,14 +146,12 @@ export async function createCacheRuntimeWork({
   const status = statusReader.status;
   assert.equal(status.status, "ready");
   assert(typeof status.execution_id === "string" && status.execution_id.length);
-  const evidence = {
-    organization_id: principal.organization_id,
+  Object.assign(evidence, {
     container,
     runtime_revision: agent.runtime.runtime_revision,
     runtime_execution_id: status.execution_id,
     execution_revision: agent.executable_execution_revision,
-    observations: [],
-  };
+  });
   const exec = (bounded, command) =>
     bounded.docker([
       "exec",
@@ -149,7 +178,7 @@ export async function createCacheRuntimeWork({
     evidence,
     async assertFresh(options) {
       await exec(
-        operation(options),
+        operation(options, "freshness"),
         Object.values(cacheRuntimeFiles)
           .map((path) => `test ! -e ${path}`)
           .join(" && "),
@@ -221,7 +250,7 @@ export async function createCacheRuntimeWork({
       return row;
     },
     async emit(options) {
-      const bounded = operation(options);
+      const bounded = operation(options, "emit");
       assert(evidence.started, "Runtime work not observed before emit");
       assert(!evidence.emit, "Runtime stdout gate already emitted");
       const row = {
