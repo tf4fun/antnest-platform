@@ -13,6 +13,120 @@ export const retainedAgent = "agent_" + "b".repeat(32);
 export const temporaryAgent = "agent_" + "c".repeat(32);
 export const lifecycleOrganization = "organization-fixture";
 
+export function addPreparationRetries(trace, kind) {
+  const activity = kind === "create" ? "admit_agent" : "admit_lifecycle";
+  const success = trace.spans.find(
+    (span) => span.operationName === `RunActivity:${activity}`,
+  );
+  if (!success) throw new Error("fixture admission activity missing");
+  return ["queued", "preparing"].map((state, index) => {
+    const retry = structuredClone(success);
+    retry.spanID = `preparation-${state}`;
+    retry.startTime = success.startTime - (4 - index * 2);
+    retry.duration = 1;
+    retry.tags = retry.tags.filter(
+      ({ key }) =>
+        ![
+          "span.kind",
+          "otel.status_code",
+          "error",
+          "otel.status_description",
+        ].includes(key),
+    );
+    retry.tags.push(
+      { key: "span.kind", value: "server" },
+      { key: "otel.status_code", value: "ERROR" },
+      { key: "error", value: true },
+      {
+        key: "otel.status_description",
+        value: `dependency unavailable: Skill preparation ${state}`,
+      },
+    );
+    trace.spans.push(retry);
+    return retry;
+  });
+}
+
+export function addLifecycleAuxiliaryAbsences(trace, kind) {
+  const probeTags = {
+    "span.kind": "client",
+    "peer.service": "docker",
+    "http.request.method": "GET",
+    "http.response.status_code": 404,
+    "antnest.outcome": "absent",
+  };
+  const add = (id, parent, operationName, fields) => {
+    const span = {
+      traceID: trace.traceID,
+      spanID: id,
+      processID: "runtime-controller",
+      operationName,
+      startTime: parent.startTime,
+      duration: 1,
+      references: [
+        { refType: "CHILD_OF", traceID: trace.traceID, spanID: parent.spanID },
+      ],
+      tags: Object.entries(fields).map(([key, value]) => ({ key, value })),
+    };
+    trace.spans.push(span);
+    return span;
+  };
+  if (["create", "enable", "rebuild"].includes(kind)) {
+    const platform = trace.spans.find(
+      (span) => span.operationName === "runtime.platform.create",
+    );
+    // Instance authority preparation adds Runtime, volume and helper probes.
+    for (let index = 0; index < 3; index++)
+      add(
+        `fixture-auth-probe-${index}`,
+        platform,
+        "HTTP GET docker",
+        probeTags,
+      );
+    const admission = trace.spans.find(
+      (span) =>
+        span.operationName ===
+        `RunActivity:${kind === "create" ? "admit_agent" : "admit_lifecycle"}`,
+    );
+    const preparation = add(
+      "fixture-skill-prepare",
+      admission,
+      "HTTP POST /internal/runtimes/{agent_id}/skill-sets/prepare",
+      {
+        "span.kind": "server",
+        "http.status_code": 202,
+        "antnest.outcome": "completed",
+      },
+    );
+    add("fixture-skill-probe", preparation, "HTTP GET docker", probeTags);
+  }
+  const phase = {
+    disable: "runtime_disable",
+    rebuild: "runtime_update",
+    delete: "runtime_delete",
+  }[kind];
+  if (phase) {
+    const command = trace.spans.find(
+      (span) => span.spanID === `rpc-lifecycle.${phase}`,
+    );
+    const owner = add(
+      "fixture-platform-cleanup",
+      command,
+      "runtime.platform.delete",
+      {
+        "antnest.agent.id": trace.spans
+          .find((span) =>
+            span.tags.some((tag) => tag.key === "antnest.agent.id"),
+          )
+          .tags.find((tag) => tag.key === "antnest.agent.id").value,
+        "antnest.outcome": "completed",
+        "antnest.platform": "docker",
+      },
+    );
+    add("fixture-cleanup-probe", owner, "HTTP GET docker", probeTags);
+  }
+}
+
 export function lifecycleAgent(kind = "create", agentId = temporaryAgent) {
   const row = {
     ...recoveryAgentState(true),

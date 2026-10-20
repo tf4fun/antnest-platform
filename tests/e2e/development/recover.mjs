@@ -120,6 +120,7 @@ try {
       const recovered = await waitForAgentReady(read);
       const item = {
         kind: "rebuild",
+        skillPreparation: true,
         traceID: response.traceID,
         agentId,
         requestId,

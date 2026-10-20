@@ -7,6 +7,7 @@ import { mkdir } from "node:fs/promises";
 import { parseArgs, parseEnv } from "node:util";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { collectDevelopmentChatTraces } from "../development/chat-trace.mjs";
+import { developmentBrowserProvider } from "../development/browser-provider.mjs";
 import { createDevelopmentWriter } from "../../support/development-configuration.mjs";
 import { readC4View } from "./c4-view.mjs";
 import { captureC4PromptReceipt } from "./c4-prompt-receipt.mjs";
@@ -27,6 +28,9 @@ const { values } = parseArgs({
     "secret-file": { type: "string", default: "../.secret" },
     agent: { type: "string" },
     output: { type: "string" },
+    "provider-scope": { type: "string" },
+    "provider-endpoint": { type: "string" },
+    "runtime-image": { type: "string" },
     jaeger: { type: "string", default: "http://127.0.0.1:16686" },
     "confirm-development": { type: "boolean", default: false },
   },
@@ -34,6 +38,7 @@ const { values } = parseArgs({
 values["env-file"] = durablePath(values["env-file"]);
 values["secret-file"] = durablePath(values["secret-file"]);
 assert(values["confirm-development"], "development confirmation required");
+const providerScope = developmentBrowserProvider(values);
 const origin = new URL(values.gateway).origin;
 assert(["127.0.0.1", "localhost"].includes(new URL(origin).hostname));
 const settings = parseEnv(readFileSync(values["env-file"], "utf8"));
@@ -47,7 +52,13 @@ assert(
 process.umask(0o077);
 await mkdir(output, { recursive: true, mode: 0o700 });
 const write = createDevelopmentWriter({ output }, ["report.json"]);
-const report = { status: "running", gateway: origin, traces: {}, checks: [] };
+const report = {
+  status: "running",
+  gateway: origin,
+  provider: providerScope,
+  traces: {},
+  checks: [],
+};
 let scope, originalCookies;
 const abort = new AbortController(),
   handlers = new Map();
@@ -152,12 +163,15 @@ async function initialize(page, principal) {
   const secrets = parseEnv(readFileSync(values["secret-file"], "utf8"));
   assert(secrets.DEEPSEEK_API_KEY, "DeepSeek credential is required");
   await dialog.locator('[name="api_key"]').fill(secrets.DEEPSEEK_API_KEY);
+  if (providerScope.endpoint) {
+    await dialog.getByText("Connection settings", { exact: true }).click();
+    await dialog.locator('input[type="url"]').fill(providerScope.endpoint);
+  }
   await dialog
     .getByRole("button", { name: "Select models", exact: true })
     .click();
   const targetModel = dialog.getByRole("checkbox", {
-    name: "DeepSeek V4 Flash",
-    exact: true,
+    name: /^(?:DeepSeek V4 Flash|deepseek-v4-flash)$/u,
   });
   await targetModel.waitFor({ state: "visible" });
   for (const checkbox of await dialog.getByRole("checkbox").all())
@@ -212,7 +226,7 @@ async function initialize(page, principal) {
     "template",
   );
   report.template_id = template.template_id;
-  assert.equal(template.runtime.image_ref, "antnest/antnest-runtime:local");
+  assert.equal(template.runtime.image_ref, providerScope.runtimeImage);
   report.checks.push("template_created_through_console");
   console.log(
     JSON.stringify({ stage, status: "passed", trace: report.traces.template }),
@@ -513,7 +527,7 @@ try {
       stage = "greeting";
       const greeting = await prompt(chat, "\u4f60\u597d");
       report.greeting_blocks = greeting.content.finalResponse.length;
-      report.checks.push("real_deepseek_greeting");
+      report.checks.push(providerScope.greetingCheck);
       report.session_id = workspaceLocation(chat.url()).sessionId;
       assert(report.session_id);
       console.log(

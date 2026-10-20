@@ -32,6 +32,7 @@ const owners = [
   "temporal",
 ];
 const entrypoints = {
+  development: ["node", "tests/e2e/development/run.mjs"],
   workspace: ["node", "tests/e2e/workspace-closeout/run.mjs"],
   "workspace-browser": ["node", "tests/e2e/workspace-closeout/browser-run.mjs"],
   "stage4-skill-storage-restore": [

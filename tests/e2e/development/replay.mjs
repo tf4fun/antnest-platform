@@ -20,8 +20,7 @@ const base = config.gateway;
 const admin = new GatewayClient(base);
 const sessionId = config.sessionId;
 const agentId = config.agentId;
-assert.match(sessionId, /^[a-f0-9-]{36}$/);
-assert.match(agentId, /^agent_[a-f0-9]+$/);
+// readDevelopmentConfiguration already validated both original identifiers.
 const sql = (q) =>
   execFileSync(
     "docker",

@@ -232,6 +232,10 @@ e2e-workspace:
 e2e-workspace-browser:
 	node tests/support/authenticated-shell-e2e.mjs workspace-browser
 
+.PHONY: e2e-development
+e2e-development:
+	node tests/support/authenticated-shell-e2e.mjs development
+
 .PHONY: e2e-agent-ui-upload-capacity
 e2e-agent-ui-upload-capacity:
 	node tests/e2e/agent-ui/upload-capacity-docker.mjs

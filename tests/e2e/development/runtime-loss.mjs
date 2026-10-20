@@ -21,7 +21,7 @@ import {
   assertAgentDisabled,
   assertAgentDeleted,
 } from "../../support/verification/agent-state.mjs";
-import { inspectLifecycle } from "../stage3-base/trace.mjs";
+import { inspectDevelopmentLifecycle } from "./lifecycle-trace.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import { traceTopology, tag } from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
@@ -122,6 +122,9 @@ async function record(kind, result, requestId) {
     agentId,
     requestId,
     ...(kind === "rebuild" ? { missingSourceGeneration } : {}),
+    ...(["create", "enable", "rebuild"].includes(kind)
+      ? { skillPreparation: true }
+      : {}),
   };
   report.lifecycle.push(item);
   write("lifecycle-progress.json", report);
@@ -387,7 +390,8 @@ try {
       stage = "lifecycle_trace";
       for (const item of report.lifecycle) {
         const evidence = await collectTrace(jaeger, item.traceID, (trace) => {
-          const result = inspectLifecycle(trace, item, secrets);
+          if (trace) write(`lifecycle-${item.kind}.json`, trace);
+          const result = inspectDevelopmentLifecycle(trace, item, secrets);
           assert.equal(result.platform_probe_errors, 0);
           const tree = traceTopology(trace);
           assert(
@@ -406,20 +410,12 @@ try {
             assert(!hasError(probes[0]));
             report.source_absence_404 = 1;
           }
-          write(`lifecycle-${item.kind}.json`, trace);
           return result;
         });
         item.evidence = evidence;
       }
-      assert.equal(
-        report.lifecycle.reduce(
-          (n, l) => n + l.evidence.platform_absence_probes,
-          0,
-        ),
-        5,
-      );
       report.checks.push(
-        "five_lifecycle_topologies_and_five_expected_absence_probes",
+        "five_lifecycle_topologies_and_owned_absence_coverage",
       );
       assert.equal(docker("ps", "-aq", "--filter", "name=^/" + name + "$"), "");
       assert.equal(

@@ -213,6 +213,43 @@ function replayFixture(t) {
   return f;
 }
 
+for (const profile of ["replay", "trace-review", "rejection-trace"]) {
+  test(`${profile} accepts original Bridge and private ACP Session IDs without rewriting them`, (t) => {
+    const f = profile === "replay" ? replayFixture(t) : fixture(t, profile);
+    const key =
+      profile === "rejection-trace" ? "rejectedSessionId" : "sessionId";
+    for (const original of [sessionId, "session_" + "b".repeat(32)]) {
+      f.config[key] = original;
+      assert.equal(f.read().config[key], original);
+    }
+    const reportKey =
+      profile === "rejection-trace" ? "metadataReport" : "browserReport";
+    const field =
+      profile === "rejection-trace" ? "rejected_session_id" : "session_id";
+    f.config[reportKey] = join(f.root, "original-session.json");
+    const original = "session_" + "c".repeat(32);
+    writeFileSync(f.config[reportKey], JSON.stringify({ [field]: original }));
+    delete f.config[key];
+    assert.equal(f.read().config[key], original);
+  });
+  test(`${profile} rejects malformed or unsafe Bridge Session IDs before execution`, (t) => {
+    const f = profile === "replay" ? replayFixture(t) : fixture(t, profile);
+    const key =
+      profile === "rejection-trace" ? "rejectedSessionId" : "sessionId";
+    for (const invalid of [
+      "session_" + "a".repeat(31),
+      "session_" + "a".repeat(33),
+      "session_" + "g".repeat(32),
+      "session_" + "A".repeat(32),
+      "session_" + "a".repeat(32) + "/other",
+      "session_" + "a".repeat(32) + "' OR true--",
+    ]) {
+      f.config[key] = invalid;
+      assert.throws(() => f.read(), /invalid .*SessionId|invalid sessionId/u);
+    }
+  });
+}
+
 test("replay validates both identities, database and all fixed output leaves", (t) => {
   const f = replayFixture(t);
   assert.equal(f.read().config.sessionId, sessionId);

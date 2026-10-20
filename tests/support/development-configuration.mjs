@@ -16,8 +16,10 @@ import { parseEnv } from "node:util";
 import { durablePath, readConfiguration } from "./storage.mjs";
 
 const agentPattern = /^agent_[a-f0-9]{32}$/u;
+// Browser Bridge sessions and existing private ACP sessions retain their
+// original identifiers; neither is converted before replay or Trace lookup.
 const sessionPattern =
-  /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
+  /^(?:session_[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/u;
 function text(value, name, pattern) {
   assert(
     typeof value === "string" && value.length && !value.includes("\0"),

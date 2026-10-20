@@ -14,6 +14,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { runCommand } from "../../support/run-command.mjs";
 import { developmentPrivateStateFixture } from "../../support/fixtures/development-private-state.mjs";
+import { addPreparationRetries } from "../../support/fixtures/development-lifecycle.mjs";
 import {
   recoveryAgent,
   recoveryScope,
@@ -22,6 +23,29 @@ import {
   recoveryInspection,
   recoveryTrace,
 } from "../../support/fixtures/development-recovery.mjs";
+
+for (const scenario of ["completed", "unknown failure", "no later success"])
+  test(`recovery preparation: ${scenario}`, async (t) => {
+    const f = await fixture(t);
+    f.preload =
+      "import timers from 'node:timers/promises';import {syncBuiltinESMExports} from 'node:module';const delay=timers.setTimeout;timers.setTimeout=(ms,...args)=>delay(Math.min(ms,1),...args);syncBuiltinESMExports();";
+    const [retry] = addPreparationRetries(f.trace, "rebuild");
+    if (scenario === "unknown failure")
+      retry.tags.find((tag) => tag.key === "otel.status_description").value =
+        "dependency unavailable: Skill preparation rejected";
+    if (scenario === "no later success") retry.startTime += 1000000;
+    const result = await f.run();
+    if (scenario !== "completed") {
+      assert.notEqual(result.exit_code, 0);
+      assert.equal(f.read("recovery-report.json").status, "failed");
+      return;
+    }
+    assert.equal(result.exit_code, 0, result.log);
+    const item = f.read("recovery-report.json").lifecycle[0];
+    assert.equal(item.skillPreparation, true);
+    assert.equal(item.evidence.skill_preparation_retries, 2);
+    assert.deepEqual(f.read("recovery-trace.private.json"), f.trace);
+  });
 
 async function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "antnest-recovery-cli-"));
@@ -144,6 +168,12 @@ async function fixture(t) {
       graceMs: 1000,
       command: [
         process.execPath,
+        ...(f.preload
+          ? [
+              "--import",
+              "data:text/javascript," + encodeURIComponent(f.preload),
+            ]
+          : []),
         "tests/e2e/development/recover.mjs",
         "--config",
         path,

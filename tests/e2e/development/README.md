@@ -1,15 +1,53 @@
 # Development deployment drivers
 
-This directory contains explicit opt-in E2E drivers that run against an
-existing development deployment. They use the deployed Gateway, Identity,
+This directory contains explicit opt-in E2E drivers that run against a
+development deployment. They use the deployed Gateway, Identity,
 private ACP transport, PostgreSQL and Jaeger to check Agent state, Session replay,
-chat Traces, lifecycle operations, Runtime loss and recovery. No default `make`
-target runs them, and they never start or deploy the platform themselves.
+chat Traces, lifecycle operations, Runtime loss and recovery. Individual drivers
+use an existing deployment. The explicit `e2e-development` target builds and
+owns a disposable deployment for their combined acceptance; no default `make`
+target runs it.
 
 The in-progress migration of retired browser routes follows the
 [private execution consumer contract](private-contract.md). Configuration,
 state, replay and browser consumers are verified separately before the full
 development deployment gate; shared-component acceptance is not driver acceptance.
+
+## Complete disposable deployment
+
+```sh
+make e2e-development
+```
+
+The existing authenticated shell wrapper builds the Runtime and application
+images from the current source with one fresh candidate tag. The runner starts
+that stack, discovers its actual loopback diagnostic ports, and opens the real
+Console and Agent UI in a browser. It creates the provider, model, Template and
+Agent from the empty instance; controlled acceptance cannot reuse an Agent.
+
+The test-only model implements the selected DeepSeek model's discovery and tool
+protocol. Its six completion requests answer the original greeting, write/read
+and restored-read prompts only after the actual Runtime tool results match.
+Reports explicitly label this provider scope `controlled`; this gate does not
+claim external provider availability. The separate browser CLI retains its
+external-provider default.
+
+After browser closure the runner executes state-before, replay-before,
+chat-trace, rejection-trace, lifecycle, runtime-loss, recover, state-after and
+replay-after in that order. The unsupported-audio prompt uses the original
+Identity-authorized private connection. Its real RPC Trace is selected from the
+original connection and request IDs before the CLIENT exporter shuts down.
+Recovery stops the owned Agent Controller, restarts the original Runtime,
+observes a healthy new execution identity, and starts the same Controller. It
+waits for Controller health and the actual `runtime_execution_changed` state
+before rebuilding, without modifying database state.
+
+Acceptance requires all browser and driver reports, original Trace bindings,
+candidate Runtime identities and retained workspace bytes. Service logs and
+original failures are saved under fresh private `artifacts/verification/`
+directories. Cleanup joins the owned resources and removes candidate image
+references before the wrapper can report success. Unit and component results
+alone do not constitute a passing deployed run.
 
 ## Running a driver
 
@@ -48,7 +86,9 @@ package. Install `services/agent-ui/web` dependencies before running them.
 oracle used by `lifecycle.mjs`, `runtime-loss.mjs` and their integration
 fixtures. It selects three independent root publication Traces after an
 optional start-time cutoff and checks their topology, organization and that
-content capture is disabled.
+content capture is disabled. Lifecycle drivers wait up to two minutes for
+three periodic publications on a fresh deployment; HTTP, topology and
+publication validation failures still fail the run.
 
 ## Configuration rules
 
@@ -56,7 +96,9 @@ content capture is disabled.
 
 - URLs (`gateway`, `jaeger`) must be HTTP(S) origins without credentials, path,
   query or fragment.
-- Agent and Session IDs must match the platform identifier format.
+- Agent IDs must match the platform identifier format. Session IDs retain the
+  original `session_` plus 32 lowercase hex digits from the Browser Bridge or
+  the UUID from an existing private ACP Session.
 - Configuration, environment and report inputs must be ordinary durable files.
   Unknown options, existing report targets and symbolic-link report paths are
   rejected before any HTTP call.
@@ -125,6 +167,22 @@ before login. Loading a Session can update Session activity, so unchanged row
 counts do not prove that no existing row changed.
 
 ### Lifecycle and Runtime loss
+
+Create, Enable and Rebuild declare asynchronous Skill preparation, including an
+empty Skill set. The existing lifecycle inspector accepts only its precise
+preparation states on the original Workflow with a later successful admission;
+unknown errors and missing successful retries fail. Raw lifecycle Traces are
+saved before inspection so failed validation retains its original evidence.
+
+Absence probes are validated individually and grouped by their original owning
+Span. Create requires storage and Runtime creation probes; Enable and Rebuild
+require Runtime creation probes. Preparation and cleanup may add valid probes,
+so their total is recorded rather than fixed. Missing required boundaries,
+foreign owners, ERROR probes and missing successful allocation still fail.
+Runtime loss independently requires its single original source-generation
+absence and the subsequent replacement. Docker resource names are not present
+in these Traces; owner groups do not claim to identify individual helper or
+receiver resources.
 
 `fixtureName` names the temporary Agent. `workspaceFile` is the marker path
 under `/workspace` and `workspaceMarker` is its exact expected content. Neither

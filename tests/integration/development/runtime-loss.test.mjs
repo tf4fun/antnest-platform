@@ -10,7 +10,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { developmentPrivateStateFixture } from "../../support/fixtures/development-private-state.mjs";
 import { lifecycleCliFixture } from "../../support/fixtures/development-lifecycle-cli.mjs";
-import { lifecycleKinds } from "../../support/fixtures/development-lifecycle.mjs";
+import {
+  lifecycleKinds,
+  addPreparationRetries,
+  addLifecycleAuxiliaryAbsences,
+} from "../../support/fixtures/development-lifecycle.mjs";
 import {
   runtimeLossTrace,
   runtimeLossSnapshots,
@@ -99,6 +103,21 @@ else if(args[0]==='ps'||args[0]==='volume')process.stdout.write(s.residue);else 
   };
   return f;
 }
+
+test("runtime loss accepts individually owned auxiliary absences and retains the missing source probe", async (t) => {
+  const f = await fixture(t);
+  for (const kind of lifecycleKinds)
+    addLifecycleAuxiliaryAbsences(f.lifecycles[kind].trace, kind);
+  const result = await f.run();
+  assert.equal(result.exit_code, 0, result.log);
+  const report = f.read("lifecycle-report.json");
+  assert.deepEqual(
+    report.lifecycle.map((item) => item.evidence.platform_absence_probes),
+    [6, 1, 5, 7, 1],
+  );
+  assert.equal(report.source_absence_404, 1);
+  assert.equal(report.lifecycle[3].missingSourceGeneration, 2);
+});
 
 test("runtime loss preserves normal stop, source generation, five absences and post-restart publications", async (t) => {
   const f = await fixture(t),
@@ -344,6 +363,46 @@ for (const [name, mutate, error] of [
     assert.equal(result.complete, true);
     assert.match(f.read("lifecycle-report.json").failure.message, error);
   });
+
+for (const scenario of ["completed", "unknown failure", "no later success"])
+  test(`runtime loss preparation: ${scenario}`, async (t) => {
+    const f = await fixture(t);
+    for (const kind of ["create", "enable", "rebuild"]) {
+      const [retry] = addPreparationRetries(f.lifecycles[kind].trace, kind);
+      if (scenario === "unknown failure")
+        retry.tags.find((tag) => tag.key === "otel.status_description").value =
+          "dependency unavailable: Skill preparation rejected";
+      if (scenario === "no later success") retry.startTime += 1000000;
+    }
+    const result = await f.run();
+    if (scenario !== "completed") {
+      assert.notEqual(result.exit_code, 0);
+      assert.equal(
+        f.read("lifecycle-report.json").failure.stage,
+        "lifecycle_trace",
+      );
+      return;
+    }
+    assert.equal(result.exit_code, 0, result.log);
+    for (const item of f.read("lifecycle-report.json").lifecycle)
+      if (["create", "enable", "rebuild"].includes(item.kind)) {
+        assert.equal(item.skillPreparation, true);
+        assert.equal(item.evidence.skill_preparation_retries, 2);
+      }
+  });
+
+test("runtime loss preserves the original failed lifecycle Trace", async (t) => {
+  const f = await fixture(t);
+  const trace = f.lifecycles.create.trace;
+  trace.spans[0].tags.push({ key: "error", type: "bool", value: true });
+  const result = await f.run();
+  assert.notEqual(result.exit_code, 0);
+  assert.equal(
+    f.read("lifecycle-report.json").failure.stage,
+    "lifecycle_trace",
+  );
+  assert.deepEqual(f.read("lifecycle-create.json"), trace);
+});
 
 test("runtime loss polls until three post-restart publication roots exist", async (t) => {
   const f = await fixture(t);
