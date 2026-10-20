@@ -144,12 +144,13 @@ with ACP still online requires the complete DELETE 202 response.
 
 After an initialized ACP connection ends unexpectedly, the next authorized
 observation can replace its retired owner when the only cleanup failure is a
-single DELETE attempt refused before any response. This qualification requires
-the complete network cause to contain only connection refusals, all transport
-work and streams to finish, the owner watch and local cleanup callbacks to
+single DELETE attempt refused or reset before any response. This qualification
+requires the complete network cause to contain only `ECONNREFUSED` or
+`ECONNRESET`, all transport work and streams to finish, the owner watch and local cleanup callbacks to
 finish successfully, and no held registry work. Initialization failures,
-requested closes, denied access, HTTP error responses, deadlines, unknown or
-mixed causes and additional cleanup failures do not qualify. The original close
+requested closes, denied access, HTTP error responses, deadlines, unknown
+causes, causes mixed with other failures and additional cleanup failures do not
+qualify. The original close
 promise and ERROR trace still report failure. Concurrent observations share one
 replacement initialized with the current request's delegation; no View request
 or Prompt is replayed.

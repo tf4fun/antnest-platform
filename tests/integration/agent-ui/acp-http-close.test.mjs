@@ -62,7 +62,8 @@ async function fixture(mode = "hold", options = {}) {
   let sessions = 0,
     holdPost,
     deleteAttempts = 0,
-    deleteSettled = 0;
+    deleteSettled = 0,
+    deleteErrorCode;
   const agent = acp
     .agent({ name: "close-receipt-fixture" })
     .onRequest(acp.methods.agent.initialize, () => ({
@@ -178,6 +179,11 @@ async function fixture(mode = "hold", options = {}) {
     });
     request.resume();
     response.once("close", disconnected.resolve);
+    if (options.resetDelete) {
+      request.socket.resetAndDestroy();
+      deleted.resolve();
+      return;
+    }
     if (mode === "rejected" || options.deleteStatus) {
       response
         .writeHead(options.deleteStatus ?? 503, {
@@ -244,6 +250,10 @@ async function fixture(mode = "hold", options = {}) {
           if (method === "DELETE" && Object.hasOwn(options, "deleteError"))
             throw options.deleteError;
           response = await fetch(input, init);
+        } catch (error) {
+          if (method === "DELETE" && options.resetDelete)
+            deleteErrorCode = error?.cause?.code ?? error?.code;
+          throw error;
         } finally {
           if (method === "DELETE") deleteSettled++;
         }
@@ -295,6 +305,9 @@ async function fixture(mode = "hold", options = {}) {
       },
       get deleteSettled() {
         return deleteSettled;
+      },
+      get deleteErrorCode() {
+        return deleteErrorCode;
       },
       async stopListener() {
         const stopped = new Promise((resolve, reject) =>
@@ -466,12 +479,60 @@ test("only completed peer-loss cleanup permits retirement while its original clo
 
 const refused = () =>
   Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" });
+const reset = () =>
+  Object.assign(new Error("peer reset"), { code: "ECONNRESET" });
 const mixedRefused = () =>
   Object.assign(new AggregateError([refused(), new Error("unknown leaf")]), {
     code: "ECONNREFUSED",
   });
 for (const [name, error, qualified] of [
   ["direct refusal", refused, true],
+  ["direct reset", reset, true],
+  [
+    "fetch reset",
+    () => new TypeError("fetch failed", { cause: reset() }),
+    true,
+  ],
+  [
+    "only disconnected address failures",
+    () =>
+      new TypeError("fetch failed", {
+        cause: Object.assign(new AggregateError([refused(), reset()]), {
+          code: "ECONNRESET",
+        }),
+      }),
+    true,
+  ],
+  [
+    "reset with an unknown leaf",
+    () =>
+      new TypeError("fetch failed", {
+        cause: Object.assign(
+          new AggregateError([reset(), new Error("unknown")]),
+          {
+            code: "ECONNRESET",
+          },
+        ),
+      }),
+    false,
+  ],
+  [
+    "reset with another network failure",
+    () =>
+      Object.assign(
+        new AggregateError([
+          reset(),
+          Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }),
+        ]),
+        { code: "ECONNRESET" },
+      ),
+    false,
+  ],
+  [
+    "unknown reset wrapper",
+    () => new Error("wrapper", { cause: reset() }),
+    false,
+  ],
   [
     "fetch refusal",
     () => new TypeError("fetch failed", { cause: refused() }),
@@ -556,77 +617,91 @@ for (const status of [401, 403, 404, 500, 503]) {
   });
 }
 
-test("requested close does not gain peer-loss qualification from a refused DELETE", async () => {
-  const f = await fixture("hold", { deleteError: refused() });
-  try {
-    await bounded(f.connected);
-    await assert.rejects(bounded(f.bridge.close()), /cleanup failed/);
-    assert.equal(f.bridge.canReplaceAfterPeerLoss, false);
-  } finally {
-    await f.close();
-  }
-});
-
-test("the first original Agent view after real ACP peer shutdown creates one fresh connection", async () => {
-  const peers = [];
-  const delegations = [];
-  const runtime = createWorkspaceRuntime({
-    connect: async (scope) => {
-      const peer = await fixture("hold", {
-        workspace: true,
-        scope,
-        holdDeleteBeforeFetch: peers.length === 0,
-      });
-      if (peers.length > 0) peer.release();
-      peers.push(peer);
-      return peer.bridge;
-    },
-  });
-  const view = () => {
-    const request = new TestRequest(
-      "http://localhost/api/app/workspace/v1/agents/agent-1/view",
-      {
-        headers: {
-          "x-antnest-organization-id": "org-1",
-          "x-antnest-principal-id": "user-1",
-          "x-antnest-agent-id": "agent-1",
-        },
-      },
-    );
-    delegations.push(verifiedRequestContext(request.headers).token);
-    return runtime.handle(request);
-  };
-  try {
-    assert.equal((await view()).status, 200);
-    await bounded(peers[0].connected);
-    await bounded(peers[0].stopListener());
-    await bounded(peers[0].deleteAttempted);
-    peers[0].releaseDelete();
-    await assert.rejects(bounded(peers[0].bridge.close()), /cleanup failed/);
-    const response = await view();
-    assert.equal(
-      response.status,
-      200,
-      "the original GET must succeed without resending it",
-    );
-    await response.json();
-    assert.equal(peers.length, 2, "no hidden business or connection retry");
-    assert.notEqual(delegations[0], delegations[1]);
-    assert.deepEqual(
-      peers.map((peer) => peer.initializations),
-      delegations.map((callerContext) => [{ callerContext }]),
-      "each real ACP initialization must carry its original GET's delegation",
-    );
-    await assert.rejects(peers[0].bridge.close(), /cleanup failed/);
-  } finally {
-    for (const peer of peers) {
-      peer.release();
-      peer.releaseDelete();
+for (const [name, error] of [
+  ["refused", refused],
+  ["reset", reset],
+])
+  test(`requested close does not gain peer-loss qualification from a ${name} DELETE`, async () => {
+    const f = await fixture("hold", { deleteError: error() });
+    try {
+      await bounded(f.connected);
+      await assert.rejects(bounded(f.bridge.close()), /cleanup failed/);
+      assert.equal(f.bridge.canReplaceAfterPeerLoss, false);
+    } finally {
+      await f.close();
     }
-    await runtime.drain(100);
-    for (const peer of peers) await peer.close();
-  }
-});
+  });
+
+for (const mode of ["refused", "reset"])
+  test(`the first original Agent view after real ACP peer ${mode} creates one fresh connection`, async () => {
+    const peers = [];
+    const delegations = [];
+    const runtime = createWorkspaceRuntime({
+      connect: async (scope) => {
+        const peer = await fixture("hold", {
+          workspace: true,
+          scope,
+          holdDeleteBeforeFetch: peers.length === 0 && mode === "refused",
+          resetDelete: peers.length === 0 && mode === "reset",
+        });
+        if (peers.length > 0) peer.release();
+        peers.push(peer);
+        return peer.bridge;
+      },
+    });
+    const view = () => {
+      const request = new TestRequest(
+        "http://localhost/api/app/workspace/v1/agents/agent-1/view",
+        {
+          headers: {
+            "x-antnest-organization-id": "org-1",
+            "x-antnest-principal-id": "user-1",
+            "x-antnest-agent-id": "agent-1",
+          },
+        },
+      );
+      delegations.push(verifiedRequestContext(request.headers).token);
+      return runtime.handle(request);
+    };
+    try {
+      assert.equal((await view()).status, 200);
+      await bounded(peers[0].connected);
+      if (mode === "refused") await bounded(peers[0].stopListener());
+      else peers[0].endStream();
+      await bounded(peers[0].deleteAttempted);
+      await bounded(peers[0].bridge.closed);
+      peers[0].releaseDelete();
+      await assert.rejects(bounded(peers[0].bridge.close()), /cleanup failed/);
+      if (mode === "reset")
+        assert.equal(
+          peers[0].deleteErrorCode,
+          "ECONNRESET",
+          "actual TCP reset required",
+        );
+      const response = await view();
+      assert.equal(
+        response.status,
+        200,
+        "the original GET must succeed without resending it",
+      );
+      await response.json();
+      assert.equal(peers.length, 2, "no hidden business or connection retry");
+      assert.notEqual(delegations[0], delegations[1]);
+      assert.deepEqual(
+        peers.map((peer) => peer.initializations),
+        delegations.map((callerContext) => [{ callerContext }]),
+        "each real ACP initialization must carry its original GET's delegation",
+      );
+      await assert.rejects(peers[0].bridge.close(), /cleanup failed/);
+    } finally {
+      for (const peer of peers) {
+        peer.release();
+        peer.releaseDelete();
+      }
+      await runtime.drain(100);
+      for (const peer of peers) await peer.close();
+    }
+  });
 
 test("ACP close joins cleanup already started by a failed SDK SSE stream", async () => {
   const f = await fixture();

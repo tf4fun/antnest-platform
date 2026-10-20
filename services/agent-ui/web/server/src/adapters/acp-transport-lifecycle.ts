@@ -215,7 +215,7 @@ export class AcpTransportLifecycle {
       this.failures.record(phase, error);
       // Never retain remote response contents, preparation errors or credentials.
       const failure = new Error("ACP DELETE cleanup failed");
-      if (phase === "delete_request" && isConnectionRefused(error))
+      if (phase === "delete_request" && isDisconnectedPeer(error))
         this.peerLossFailure = failure;
       this.errors.push(failure);
       throw failure;
@@ -233,22 +233,24 @@ export class AcpTransportLifecycle {
 }
 
 // Inspect the complete owned fetch cause, not the bounded telemetry summary.
-// Only native fetch wrappers and exclusively refused connection leaves qualify.
-function isConnectionRefused(error: unknown): boolean {
+// Only native fetch wrappers and exclusively refused/reset connection leaves
+// qualify. A reset has no acknowledgement; the original close still rejects.
+function isDisconnectedPeer(error: unknown): boolean {
   const seen = new Set<Error>();
   const visit = (value: unknown, depth: number): boolean => {
     if (!(value instanceof Error) || depth > 8 || seen.size >= 32 || seen.has(value))
       return false;
     seen.add(value);
     const code = (value as Error & { code?: unknown }).code;
+    const disconnected = code === "ECONNREFUSED" || code === "ECONNRESET";
     const hasCause = Object.hasOwn(value, "cause");
     if (value instanceof AggregateError) {
-      return code === "ECONNREFUSED" && Array.isArray(value.errors) &&
+      return disconnected && Array.isArray(value.errors) &&
         value.errors.length > 0 && value.errors.length <= 16 &&
         value.errors.every((cause: unknown) => visit(cause, depth + 1)) &&
         (!hasCause || visit(value.cause, depth + 1));
     }
-    if (code === "ECONNREFUSED")
+    if (disconnected)
       return !hasCause || visit(value.cause, depth + 1);
     return value instanceof TypeError && code === undefined && hasCause &&
       visit(value.cause, depth + 1);
