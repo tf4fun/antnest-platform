@@ -186,6 +186,7 @@ export function prepareCapacityCancellation(url, headers, body, signal) {
   return {
     evidence,
     ready: ready.promise,
+    written: written.promise,
     response: pending.promise,
     send() {
       signal?.throwIfAborted();
@@ -221,14 +222,24 @@ export function prepareCapacityCancellation(url, headers, body, signal) {
   };
 }
 
-// Callers provide bounded operations. Start all observations with the send, then
-// join every branch even on failure; a rejected HTTP request must not abandon a
-// Runtime exec or the original SSE waiter. Branches stamp their own receipts.
-export async function observeCapacityCancellation(actions) {
+// Callers provide bounded operations. Start the send and original SSE waiter
+// together. A prepared request can defer costly Runtime sampling until its
+// actual write completes; the original send still starts the acceptance clock.
+// Join every branch even on failure. Branches stamp their own complete receipts.
+export async function observeCapacityCancellation(
+  actions,
+  { cancellationWritten } = {},
+) {
   const names = ["cancel", "quiescent", "terminal"];
   for (const name of names) assert.equal(typeof actions[name], "function");
   const results = await Promise.allSettled(
-    names.map((name) => Promise.resolve().then(actions[name])),
+    names.map((name) =>
+      Promise.resolve().then(async () => {
+        if (name === "quiescent" && cancellationWritten !== undefined)
+          await cancellationWritten;
+        return actions[name]();
+      }),
+    ),
   );
   const errors = results
     .filter((result) => result.status === "rejected")

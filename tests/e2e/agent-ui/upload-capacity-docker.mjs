@@ -634,65 +634,70 @@ export async function runCapacity() {
         ),
       );
       signal.throwIfAborted();
-      await observeCapacityCancellation({
-        cancel: async () => {
-          if (preparedCancel) {
-            try {
-              // Let both observation actions start before releasing A's EOF.
-              // B's only send happens synchronously in the native EOF callback.
-              await Promise.resolve();
-              await upload.finish();
-              await inputArm.eof;
-              const result = await preparedCancel.response;
-              assert.equal(result.status, 200);
-              return record.cancel;
-            } finally {
-              await preparedCancel.closeAndWait();
+      await observeCapacityCancellation(
+        {
+          cancel: async () => {
+            if (preparedCancel) {
+              try {
+                // Register the original SSE waiter before releasing A's EOF.
+                // B's only send happens synchronously in the native EOF callback.
+                await Promise.resolve();
+                await upload.finish();
+                await inputArm.eof;
+                const result = await preparedCancel.response;
+                assert.equal(result.status, 200);
+                return record.cancel;
+              } finally {
+                await preparedCancel.closeAndWait();
+              }
             }
-          }
-          record.cancel = await http(clientB, cancelPath, { body: cancelBody });
-          return record.cancel;
+            record.cancel = await http(clientB, cancelPath, {
+              body: cancelBody,
+            });
+            return record.cancel;
+          },
+          quiescent: async () => {
+            work.evidence.quiescent = await poll(
+              async (samplingSignal) => {
+                const v = await observe(samplingSignal);
+                return (
+                  !groupAlive(
+                    v.work.processes,
+                    work.evidence.started.work.pgid,
+                  ) && v
+                );
+              },
+              "original Runtime work stopped",
+              signal,
+              5000,
+              10,
+            );
+            return work.evidence.quiescent;
+          },
+          terminal: async () => {
+            const terminal = await b.streams[0].stream.wait((view) =>
+              view.operations.some(
+                (o) =>
+                  o.operationId === heldID &&
+                  o.runId === record.accepted.runId &&
+                  o.phase === "uncertain" &&
+                  o.errorClass === "cancelled_tool_outcome_unknown",
+              ),
+            );
+            record.terminal = {
+              operation: terminal.view.operations.find(
+                (o) => o.operationId === heldID,
+              ),
+              at_ns: stamp(),
+              at_perf_ms: performance.now(),
+              source_at_perf_ms: terminal.at,
+              source_trace_id: b.streams[0].trace_id,
+            };
+            return record.terminal;
+          },
         },
-        quiescent: async () => {
-          work.evidence.quiescent = await poll(
-            async (samplingSignal) => {
-              const v = await observe(samplingSignal);
-              return (
-                !groupAlive(
-                  v.work.processes,
-                  work.evidence.started.work.pgid,
-                ) && v
-              );
-            },
-            "original Runtime work stopped",
-            signal,
-            5000,
-            10,
-          );
-          return work.evidence.quiescent;
-        },
-        terminal: async () => {
-          const terminal = await b.streams[0].stream.wait((view) =>
-            view.operations.some(
-              (o) =>
-                o.operationId === heldID &&
-                o.runId === record.accepted.runId &&
-                o.phase === "uncertain" &&
-                o.errorClass === "cancelled_tool_outcome_unknown",
-            ),
-          );
-          record.terminal = {
-            operation: terminal.view.operations.find(
-              (o) => o.operationId === heldID,
-            ),
-            at_ns: stamp(),
-            at_perf_ms: performance.now(),
-            source_at_perf_ms: terminal.at,
-            source_trace_id: b.streams[0].trace_id,
-          };
-          return record.terminal;
-        },
-      });
+        { cancellationWritten: preparedCancel?.written },
+      );
       inputArm?.release();
       for (const pool of record.pool) {
         const ref = active.find((s) => s.trace_id === pool.trace_id);

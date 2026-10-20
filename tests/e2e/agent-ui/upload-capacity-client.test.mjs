@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import * as capacityClient from "./upload-capacity-client.mjs";
 const { startHeldUpload } = capacityClient;
 
@@ -160,6 +161,8 @@ test("prepared cancellation aborts and joins before sending any HTTP bytes", asy
   t.after(() => cancel.closeAndWait());
   await cancel.ready;
   abort.abort(new Error("test prepared cancellation interrupted"));
+  assert(cancel.written instanceof Promise);
+  await assert.rejects(cancel.written);
   await assert.rejects(cancel.response);
   await cancel.closeAndWait();
   assert.equal(calls, 0);
@@ -167,6 +170,47 @@ test("prepared cancellation aborts and joins before sending any HTTP bytes", asy
   assert.equal(cancel.evidence.written_ns, undefined);
   assert.equal(cancel.evidence.joined, true);
   assert.throws(() => cancel.send());
+});
+
+test("prepared cancellation exposes actual write completion while the original HTTP response is held", async (t) => {
+  const release = Promise.withResolvers();
+  const url = await fixture(t, async (req, res) => {
+    req.resume();
+    await release.promise;
+    res.writeHead(200).end("{}");
+  });
+  const cancel = capacityClient.prepareCapacityCancellation(url, {}, {});
+  t.after(async () => {
+    release.resolve();
+    await cancel.closeAndWait();
+  });
+  await cancel.ready;
+  assert(cancel.written instanceof Promise);
+  let written = false,
+    completed = false;
+  const writeReceipt = cancel.written.then(() => {
+    written = true;
+    assert(
+      BigInt(cancel.evidence.written_ns) >= BigInt(cancel.evidence.sent_ns),
+    );
+  });
+  await nextTurn();
+  assert.equal(written, false, "preconnecting must not resolve the write");
+  const response = cancel.send().then((value) => {
+    completed = true;
+    return value;
+  });
+  try {
+    await writeReceipt;
+    assert.equal(written, true);
+    assert.equal(completed, false);
+    assert.equal(cancel.evidence.complete_ns, undefined);
+  } finally {
+    release.resolve();
+  }
+  assert.equal((await response).status, 200);
+  await cancel.closeAndWait();
+  assert.equal(cancel.evidence.joined, true);
 });
 
 test("prepared cancellation rejects an unsolicited response and joins without send", async (t) => {

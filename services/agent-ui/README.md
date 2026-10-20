@@ -226,6 +226,10 @@ healthchecks do not load it. A matching EOF notice synchronously sends B's
 original cancellation request. The proof matches both notices to A's original
 OTLP Trace, span, process, byte count and timestamps, and requires B's actual
 write to finish before native parsing ends under the full upper clock bound.
+The original SSE waiter starts before A's EOF; Runtime sampling waits for B's
+actual write callback so Docker and process reads do not compete with that send.
+The one-second limit still starts at B's original send and includes the complete
+HTTP, SSE and Runtime observation.
 EOF-to-host causality can tighten the parse window's lower bound; the original
 calibration and HTTP/SSE evidence remain unchanged. No parser delay, fixed
 clock tolerance or retry is added, and both TCP clients and the observer are
