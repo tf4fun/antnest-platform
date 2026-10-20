@@ -327,6 +327,21 @@ must not skip later observers or mask the original business failure.
 Awaiting a tracked response still rejects with its original failure. Page errors
 are recorded when they arrive, so a later business failure cannot skip them;
 an unexpected browser WebSocket also remains a failure on every exit path.
+Each page joins its observed finite HTTP response reads before an explicit
+navigation, reload or close; all pages drain before going offline or normal
+context closure. This group excludes SSE and future bootstrap waiters, which
+still belong to the browser scope. Failed reads retain their original errors
+and response URL/last completed check and block admission. Failure and
+cancellation cleanup still closes resources before joining blocked readers.
+The sole body-audit exclusion is a same-Gateway, main-frame, unredirected
+`GET /api/app/workspace/v1/bootstrap` returning 401 without query parameters.
+The page consumes that denial and navigates to login itself; the browser SDK
+cannot retain its body reliably across that navigation. The observer records
+the original URL, status, Trace ID and last completed check, explicitly marks
+the body unobserved, and does not count it as a scanned payload. Successful
+bootstrap responses, other denials and every other body-read error retain the
+normal audit. Remote SSE closure, the original authenticated Prompt refusal,
+login recovery, cleared UI and no-new-execution checks remain required.
 
 Two real browser connections observe the same Session. Its activity time must
 change after a new prompt, both pages must display the received title and time,
