@@ -18,15 +18,15 @@ Issue 状态最后核对于 2026-10-16：136 个 issue，78 个已关闭，58 �
 
 ## 当前批次
 
-- #64 / PR #262 当前剩余清单（2026-10-20）：最新已推送提交 73e073c8（包含 Session 本地修复）的常规 CI 已结束，33 成功／4 跳过／0 失败；共享测试依赖拆分已提交，1,423 项相关本地回归通过，实际 Docker 复验仍待完成。最近完整集成仍是旧提交 e0b5efb3 的 run 39356321967，21 分片 10 成功／11 失败；不能将本地修复或新提交常规 CI 作为完整集成通过。17 套受共享依赖与 Session 修复影响的定向集成 run 39362086114 正在 73e073c8 上运行，尚无最终结论；不代替最终 85 套全量验收。PR 继续保持 Draft。
-  - [ ] Session shared-deadline 验收：内部验证器已修正，11 项新正反例先红后绿，1,451 项相关回归全绿；原 CI 的 24 份 Trace／8 条关闭记录重放全部通过，原件 SHA 和时间未改写。独立复审无本地 blocker；实际 Docker／最终 CI 复验仍待完成，未计为部署验收。证据：artifacts/verification/issue-64/final-ci-fixes/session-shared-deadline-green-2.json、session-original-ci-green-1.json；原始失败和离线未重做运行时 Cookie canary 的范围说明均保留。
+- #64 / PR #262 当前剩余清单（2026-10-20）：提交 f4ea3865（包含 Session 与 Stage3 本地修复）的常规 CI 已结束，33 成功／4 跳过／0 失败。17 套受共享依赖与 Session 修复影响的定向集成 run 39362086114 在 73e073c8 上完成，7 个执行分片全部成功；逐套核对为 11 passed／6 accepted warning，原 strict 诊断未改写。7 份 artifact／13,454 文件／372,570,878 字节已校验 GitHub SHA 并双份保存。Stage3 的 5 套定向集成 run 39363415067 正在 f4ea3865 上执行两个分片。最近完整集成仍是旧提交 e0b5efb3 的 run 39356321967（21 分片 10 成功／11 失败）；定向通过不代替最终 85 套全量验收。PR 继续保持 Draft。
+  - [x] Session shared-deadline 定向验收：内部验证器修正已提交，11 项新正反例先红后绿，1,451 项相关回归通过；原 CI 的 24 份 Trace／8 条关闭记录重放通过，原件 SHA 和时间未改写。真实部署 c-acp-session 已在 run 39362086114 完成准入，原 strict failed／exit 2 保留，7 个定向分片全部成功；仍须参加最终全量集成。证据：artifacts/verification/issue-64/final-ci-fixes/protocol-session-targeted-ci-39362086114.json。
   - [ ] Stage3 base 与四个 Skill profile 的 CI 接线／完成报告：本地修复已完成，两路独立 review 后 460 项回归通过；五份原 CI 报告逐项重放一致，原 strict failed／exit 2 与完整诊断保留。实际外层清理完成后才生成 completion，业务／归档／清理／写入失败仍为 1；offline-reuse 的额外 Rebuild 已纳入正反例。此为本地检查点，新的真实 Docker／CI 待验收。证据：artifacts/verification/issue-64/final-ci-fixes/stage3-ci-completion-green-2.json、stage3-original-ci-report-replay-1.json。
-  - [ ] ACP 重启后 Bridge 首次读取 503：影响 Skill 工具可用性、密钥轮换及泄露处置三套场景；需补足实际失败回执并确认内部连接退役／重建根因，不能以请求重试掩盖。
+  - [ ] ACP 重启后 Bridge 首次读取 503：影响 Skill 工具可用性、密钥轮换及泄露处置三套场景，根因尚未确认。已补原 GET 安全回执、此前成功 View、私有 ACP 与独立 close 候选的三轮采集，以及清理前 UI／Gateway 私有日志；不重发业务 GET、不自动归属或放行。目录失败覆盖原错误的实际宿主反例先红后绿，最终 76 项回归、格式／存储／链接通过，独立 review 无诊断接线 blocker。首轮本地 Docker 在业务前因 Docker Hub Rust token EOF 失败；源码未变、进程组退出、资源库存恢复，不计业务验收。下一步真实失败采证及内部修复。证据：artifacts/verification/issue-64/final-ci-fixes/skill-learning-view-diagnostics-green-2.json、skill-learning-key-rotation-diagnostic-docker-1.json。
   - [ ] 上传容量的两个 parse 阶段取消场景：移除 EOF 后固定 20 ms 等待的时机假设，证明取消发生在原生解析期间，保留四场景、64 SSE 和 1 秒上限；现有终结测量不等于完整验收通过。
   - [ ] C4 浏览器撤权时钟证据：修正将异步浏览器 request 通知当作真实发送前界，以及整个 server span 必须早于客户端 body 接收结束的错误假设；保留原请求、进程和撤权归属，不加固定容差。
   - [ ] 同一最终候选的部署与全量 CI：先复验受影响 Docker 场景（包含已提交依赖修复），再完成 85 套／21 分片完整集成，逐项核对实际结论、资源清理及最新提交。
   - [ ] 最终 review 与交付：审查全部改动和必要状态检查、更新 PR 说明与 TODO；无剩余内部问题且当前 head 必需检查通过后移除 Draft，达到可合并状态。
-  - 状态原件：artifacts/verification/issue-64/final-ci-fixes/pr-262-5c99c30-status.json。以上五组为当前已定位的修复项，后续真实复验若发现新问题继续追加，不预先承诺必然只剩固定步数。
+  - 状态原件：artifacts/verification/issue-64/final-ci-fixes/protocol-session-targeted-ci-39362086114.json；原状态快照 pr-262-f4ea3865-remaining-work-status.json 保留。当前为三组待修复、一组 Stage3 待部署复验，随后完成全量集成与最终 review；后续真实复验若发现新问题继续追加。
 
 - #64 最终 CI 首轮与依赖修复检查点（2026-10-20）：e0b5efb3 的普通 CI 为 33 成功／4 跳过／0 失败；完整集成 run 39356321967 已结束，21 分片中 10 成功、11 失败，不能合并。已定位工具权限／进度、ACP 重启／响应丢失、Managed MCP v1／v2 及 Stage2／生命周期的共同测试依赖缺口：纯生命周期 helpers 静态引入浏览器 decoder／schema，隔离容器缺源码或 zod。已将浏览器 projection 原样拆到 workspace-contracts，保留全部原断言与唯一业务调用；六个隔离加载反例先红，1,423 项相关本地回归全绿，独立 review 无本批 blocker。首轮本地权限 Docker 在获取 Go 基础镜像元数据时 TLS 超时，未进入业务；源码未变、进程组退出、Docker／镜像库存恢复，失败原件双份保存，不计 Docker 通过。Session shared-deadline 采集、Skill 与其余最终分片仍在逐项核对；下一步修复已确认缺口、完成当前候选 Docker／全量 CI 和最终 review，继续保持 Draft。证据：artifacts/verification/issue-64/final-ci/39356321967/；artifacts/verification/issue-64/final-ci-fixes/protocol-dependency-red-1.json、protocol-dependency-green-1.json、protocol-dependency-permissions-docker-1.json。提交／推送状态以对应检查点为准。
 

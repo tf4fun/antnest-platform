@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import * as failures from "./automatic-failure.mjs";
 import {
   captureLearningFailureTraces,
@@ -486,4 +488,286 @@ test("index archive failures are propagated to the owning failure handler", asyn
     }),
     (actual) => actual === error,
   );
+});
+
+test("a view receipt retains the actual failed HTTP response without its private payload", () => {
+  assert.equal(typeof failures.learningViewReceipt, "function");
+  const context = {
+    mode: "update",
+    agentId: "bbbbbbbb-bbbb-4bbb-abbb-bbbbbbbbbbbb",
+    sessionId: "cccccccc-cccc-4ccc-accc-cccccccccccc",
+    requestedAt: 1000,
+    now: () => 1007,
+    cookie: privateText,
+  };
+  const receipt = failures.learningViewReceipt(
+    {
+      status: 503,
+      traceID,
+      text: JSON.stringify({
+        code: "upstream_unavailable",
+        detail: privateText,
+      }),
+      headers: { cookie: privateText },
+    },
+    context,
+  );
+  assert.deepEqual(receipt, {
+    status: "skill_learning_view_response",
+    mode: "update",
+    method: "GET",
+    operation: "agent_view",
+    agent_id: context.agentId,
+    session_id: context.sessionId,
+    requested_at: 1000,
+    observed_at: 1007,
+    http_status: 503,
+    expected_status: 200,
+    trace_id: traceID,
+    response_code: "upstream_unavailable",
+  });
+  assert(!JSON.stringify(receipt).includes(privateText));
+  for (const invalidID of ["0".repeat(32), "../../private", undefined]) {
+    const unknown = failures.learningViewReceipt(
+      {
+        status: 503,
+        traceID: invalidID,
+        text: JSON.stringify({ code: privateText }),
+      },
+      context,
+    );
+    assert.equal(unknown.trace_id, undefined);
+    assert.equal(unknown.response_code, undefined);
+    assert(!JSON.stringify(unknown).includes(privateText));
+  }
+});
+
+test("view failure collection keeps the warm request, failed GET and private connection distinct", async () => {
+  const warm = "b".repeat(32),
+    failed = "c".repeat(32),
+    close = "d".repeat(32);
+  const saved = new Map(),
+    queried = [];
+  const raw = (id) => ({
+    data: [{ traceID: id, spans: [], warnings: ["original diagnostic"] }],
+    errors: null,
+  });
+  // Close roots are independent of the failed GET. These are raw candidates,
+  // not an ownership verdict: exact initialization Link/process review follows.
+  const foreignClose = {
+    traceID: close,
+    spans: [{ operationName: "agent_ui.acp.close", references: [] }],
+  };
+  const result = await captureLearningFailureTraces({
+    logs: [
+      {
+        status: "skill_learning_view_response",
+        http_status: 200,
+        trace_id: warm,
+      },
+      {
+        status: "skill_learning_view_response",
+        http_status: 503,
+        trace_id: failed,
+      },
+      {
+        status: "skill_learning_client_failed",
+        connection_trace_id: traceID,
+      },
+    ]
+      .map((value) => JSON.stringify(value))
+      .join("\n"),
+    jaeger: "http://jaeger.invalid:16686",
+    fetchImpl: async (url) => {
+      const id = new URL(url).pathname.split("/").at(-1);
+      queried.push(id);
+      assert([warm, failed, traceID].includes(id));
+      return new Response(JSON.stringify(raw(id)));
+    },
+    searchImpl: async (base, query, options) => {
+      assert.equal(base, "http://jaeger.invalid:16686");
+      assert.deepEqual(Object.fromEntries(query), {
+        service: "agent-ui",
+        operation: "agent_ui.acp.close",
+        lookback: "1h",
+        limit: "100",
+      });
+      assert(options.signal instanceof AbortSignal);
+      return [foreignClose];
+    },
+    save: async (name, value) => saved.set(name, structuredClone(value)),
+  });
+  assert.deepEqual(queried, [warm, failed, traceID]);
+  assert.equal(result.diagnostic_only, true);
+  assert.deepEqual(
+    result.captures.map(({ trace_id, sources, status }) => ({
+      trace_id,
+      sources,
+      status,
+    })),
+    [
+      { trace_id: warm, sources: ["view_success"], status: "captured" },
+      { trace_id: failed, sources: ["view_failure"], status: "captured" },
+      {
+        trace_id: traceID,
+        sources: ["private_connection"],
+        status: "captured",
+      },
+    ],
+  );
+  for (const id of queried)
+    assert.deepEqual(saved.get(`stream-failure-${id}.json`), raw(id));
+  assert.deepEqual(saved.get("view-close-candidates.json"), [foreignClose]);
+  assert.deepEqual(result.close_search, {
+    status: "captured",
+    count: 1,
+    ownership: "unattributed",
+  });
+});
+
+test("missing or zero HTTP Trace IDs remain explicit gaps without invented request traces", async () => {
+  let searches = 0;
+  const result = await captureLearningFailureTraces({
+    logs: [undefined, "0".repeat(32), "../../private"]
+      .map((id) =>
+        JSON.stringify({
+          status: "skill_learning_view_response",
+          http_status: 503,
+          trace_id: id,
+        }),
+      )
+      .join("\n"),
+    jaeger: "http://jaeger.invalid:16686",
+    fetchImpl: async () => {
+      assert.fail("a missing request Trace must not be invented");
+    },
+    searchImpl: async () => {
+      searches++;
+      return [];
+    },
+    save: async () => {},
+  });
+  assert.equal(result.record_count, 3);
+  assert.equal(result.unobserved_trace_count, 3);
+  assert.equal(result.discovery_status, "no_observed_trace");
+  assert.deepEqual(result.captures, []);
+  assert.equal(searches, 1);
+  assert.deepEqual(result.close_search, {
+    status: "empty",
+    count: 0,
+    ownership: "unattributed",
+  });
+});
+
+for (const failure of ["query", "archive"]) {
+  test(`independent close ${failure} failure stays diagnostic and preserves the original failure`, async () => {
+    const original = new Error("original HTTP 503");
+    let result;
+    await assert.rejects(
+      failures.collectLearningFailureEvidence(original, [
+        async () => {
+          result = await captureLearningFailureTraces({
+            logs: JSON.stringify({
+              status: "skill_learning_view_response",
+              http_status: 503,
+            }),
+            jaeger: "http://jaeger.invalid:16686",
+            searchImpl: async () => {
+              if (failure === "query") throw new Error(privateText);
+              return [{ traceID }];
+            },
+            save: async (name) => {
+              if (
+                failure === "archive" &&
+                name === "view-close-candidates.json"
+              )
+                throw new Error(privateText);
+            },
+          });
+        },
+      ]),
+      (error) => error === original,
+    );
+    assert.equal(result.close_search.status, "unavailable");
+    assert.equal(result.close_search.failure_stage, failure);
+    assert.equal(result.close_search.ownership, "unattributed");
+    assert(!JSON.stringify(result).includes(privateText));
+  });
+}
+
+test("the actual host catch preserves a directory failure and still attempts every diagnostic", async () => {
+  const sourceURL = new URL("./automatic-flow.test.mjs", import.meta.url);
+  const source = await readFile(sourceURL, "utf8");
+  const start = source.indexOf(
+    "} catch (error) {",
+    source.indexOf("const runClient ="),
+  );
+  const end = source.indexOf(
+    "\n        }\n        learningClientLogs.push(output);",
+    start,
+  );
+  assert(start >= 0 && end > start);
+  const body = source
+    .slice(start + "} catch (error) {".length, end)
+    .replaceAll("import.meta.url", "sourceURL");
+  const original = new Error("original Docker HTTP 503"),
+    directory = new Error("evidence directory unavailable"),
+    archive = new Error("evidence file unavailable");
+  const attempted = [];
+  const environment = {
+    sourceURL,
+    fileURLToPath,
+    config: {
+      project: "antnest-lifecycle-12345678",
+      env: {},
+      jaeger: "http://jaeger.invalid",
+    },
+    clientName: "failed-client",
+    learningClientLogs: ["earlier successful client"],
+    mkdir: async () => {
+      attempted.push("directory");
+      throw directory;
+    },
+    logs: () => "original client log",
+    docker: async () => "",
+    composeArgs: (_project, args) => args,
+    overlay: [],
+    discovery: false,
+    writeFile: async (path) => {
+      attempted.push(
+        path.endsWith(".failure.json")
+          ? "archive"
+          : path.includes("agent-ui")
+            ? "agent-ui"
+            : "edge-gateway",
+      );
+      throw archive;
+    },
+    dockerClient: () => async () => "",
+    collectLearningFailureEvidence: failures.collectLearningFailureEvidence,
+    delay: async () => {},
+    captureLearningFailureTraces: async () => {
+      attempted.push("traces");
+    },
+  };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFunction("error", ...Object.keys(environment), body);
+  await assert.rejects(
+    run(original, ...Object.values(environment)),
+    (error) => {
+      assert(error instanceof AggregateError);
+      assert.deepEqual(error.errors.slice(0, 2), [original, directory]);
+      assert(error.errors.includes(archive));
+      return true;
+    },
+  );
+  assert.deepEqual(attempted, [
+    "directory",
+    "archive",
+    "agent-ui",
+    "edge-gateway",
+    "traces",
+    "traces",
+    "traces",
+  ]);
 });

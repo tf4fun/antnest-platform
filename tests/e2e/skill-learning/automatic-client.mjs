@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { openSkillACP } from "./private-client.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../workspace-closeout/c4-setup.mjs";
-import { learningFailureBoundary } from "./automatic-failure.mjs";
+import {
+  learningFailureBoundary,
+  learningViewReceipt,
+} from "./automatic-failure.mjs";
 
 const agentId = process.env.ANTNEST_E2E_AGENT_ID;
 const mode = process.env.ANTNEST_E2E_LEARNING_MODE;
@@ -31,6 +34,7 @@ const client = await openSkillACP(1, agentId, member, {
 const setup = { cwd: "/workspace", mcpServers: [] };
 let sessionId, persistedNotice;
 let phase = "initialize";
+let warmViewObserved = false;
 const withFailure = learningFailureBoundary((receipt) =>
   console.log(JSON.stringify(receipt)),
 );
@@ -88,9 +92,26 @@ await withFailure(
       assert.equal(result.stopReason, "end_turn");
     };
     const notices = async () => {
+      const requestedAt = Date.now();
       const view = (
         await member.request(
           `/api/app/workspace/v1/agents/${agentId}/view?sessionId=${sessionId}`,
+          {
+            onResponse(response) {
+              if (response.status !== 200 || !warmViewObserved)
+                console.log(
+                  JSON.stringify(
+                    learningViewReceipt(response, {
+                      mode,
+                      agentId,
+                      sessionId,
+                      requestedAt,
+                    }),
+                  ),
+                );
+              warmViewObserved ||= response.status === 200;
+            },
+          },
         )
       ).body;
       return view.systemNotices ?? [];

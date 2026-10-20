@@ -5,6 +5,7 @@ import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
   configuration,
@@ -44,7 +45,10 @@ import {
 } from "../security/stack.mjs";
 import { rotatePlatformKeys } from "../encryption-key-rotation/flow.mjs";
 import { skillClientArgs } from "./client-container.mjs";
-import { collectLearningFailureEvidence } from "./automatic-failure.mjs";
+import {
+  captureLearningFailureTraces,
+  collectLearningFailureEvidence,
+} from "./automatic-failure.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const debugLearning = process.env.ANTNEST_E2E_SKILL_LEARNING_DEBUG === "true";
@@ -128,12 +132,16 @@ const overlay = deployment
 // so they get their own budget instead of consuming the workflow's.
 const imageBuildBudgetMs = 1_200_000;
 const workflowBudgetMs = 1_200_000;
-const logs = (name) => {
-  const result = spawnSync("docker", ["logs", "--tail", "200", name], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 10_000,
-  });
+const logs = (name, { full = false } = {}) => {
+  const result = spawnSync(
+    "docker",
+    ["logs", ...(full ? [] : ["--tail", "200"]), name],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+    },
+  );
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 };
 
@@ -610,6 +618,7 @@ test(
           ),
         });
       }
+      const learningClientLogs = [];
       const runClient = async (mode, created) => {
         if (learningBrowser)
           return mode === "create"
@@ -662,8 +671,7 @@ test(
               import.meta.url,
             ),
           );
-          await mkdir(evidence, { recursive: true, mode: 0o700 });
-          const clientLog = logs(clientName);
+          const clientLog = logs(clientName, { full: true });
           const modelContainer = await docker(
             composeArgs(config.project, [
               ...overlay,
@@ -722,42 +730,83 @@ test(
                 "SELECT run_id,disposition,COALESCE(reason,'') FROM learning_source_decisions ORDER BY decided_at",
               ]).catch(() => "decision query unavailable")
             : "postgres container unavailable";
-          await writeFile(
-            `${evidence}${config.project}.failure.json`,
-            JSON.stringify({
-              clientLog,
-              modelStatus,
-              tasks,
-              decisions,
-              ...(discovery && postgresContainer
-                ? {
-                    unresolved: await docker([
-                      "exec",
-                      "-e",
-                      "PGPASSWORD=antnest-agent-acp-dev",
-                      postgresContainer,
-                      "psql",
-                      "-U",
-                      "antnest_agent_acp",
-                      "-d",
-                      "antnest_agent_acp",
-                      "-Atc",
-                      "SELECT task_id,request_id,action,state,receipt FROM learning_maintenance_intents WHERE state <> 'settled' ORDER BY created_at",
-                    ]).catch(() => "unresolved query unavailable"),
-                    runtimeLog: logs(`antnest-runtime-${fixture.agentID}`),
-                  }
-                : {}),
-              acpLog: acpContainer
-                ? logs(acpContainer)
-                : "ACP container unavailable",
+          const failure = {
+            clientLog,
+            modelStatus,
+            tasks,
+            decisions,
+            ...(discovery && postgresContainer
+              ? {
+                  unresolved: await docker([
+                    "exec",
+                    "-e",
+                    "PGPASSWORD=antnest-agent-acp-dev",
+                    postgresContainer,
+                    "psql",
+                    "-U",
+                    "antnest_agent_acp",
+                    "-d",
+                    "antnest_agent_acp",
+                    "-Atc",
+                    "SELECT task_id,request_id,action,state,receipt FROM learning_maintenance_intents WHERE state <> 'settled' ORDER BY created_at",
+                  ]).catch(() => "unresolved query unavailable"),
+                  runtimeLog: logs(`antnest-runtime-${fixture.agentID}`),
+                }
+              : {}),
+            acpLog: acpContainer
+              ? logs(acpContainer)
+              : "ACP container unavailable",
+          };
+          const diagnosticSignal = AbortSignal.timeout(30000);
+          const readDocker = dockerClient(config.env, diagnosticSignal, 10000);
+          await collectLearningFailureEvidence(error, [
+            () => mkdir(evidence, { recursive: true, mode: 0o700 }),
+            () =>
+              writeFile(
+                `${evidence}${config.project}.failure.json`,
+                JSON.stringify(failure),
+                { flag: "wx", mode: 0o600 },
+              ),
+            ...["agent-ui", "edge-gateway"].map((service) => async () => {
+              const id = await readDocker(
+                composeArgs(config.project, [
+                  ...overlay,
+                  "ps",
+                  "-a",
+                  "-q",
+                  service,
+                ]),
+              );
+              await writeFile(
+                `${evidence}${config.project}.${service}-failure.json`,
+                JSON.stringify({
+                  service,
+                  container: id || null,
+                  log: id ? logs(id) : null,
+                }),
+                { flag: "wx", mode: 0o600 },
+              );
             }),
-            { flag: "wx", mode: 0o600 },
-          );
-          throw new Error(
-            `Skill learning client failed; model status: ${modelStatus}; tasks: ${tasks}; decisions: ${decisions}; client: ${clientLog.slice(-1000)}`,
-            { cause: error },
-          );
+            // Export can lag the failed response. Save each diagnostic sample
+            // separately; never resend the original business GET.
+            ...[1, 2, 3].map((attempt) => async () => {
+              if (attempt > 1)
+                await delay(2500, undefined, { signal: diagnosticSignal });
+              await captureLearningFailureTraces({
+                logs: [...learningClientLogs, clientLog].join("\n"),
+                jaeger: config.jaeger,
+                signal: diagnosticSignal,
+                save: (name, value) =>
+                  writeFile(
+                    `${evidence}${config.project}.failure-${attempt}-${name}`,
+                    JSON.stringify(value),
+                    { flag: "wx", mode: 0o600 },
+                  ),
+              });
+            }),
+          ]);
         }
+        learningClientLogs.push(output);
         return JSON.parse(output.trim().split("\n").at(-1));
       };
       const created = await runClient("create");

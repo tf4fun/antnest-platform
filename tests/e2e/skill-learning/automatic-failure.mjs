@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { responseFailure } from "../identity-closeout/request-failure.mjs";
+import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 
 const traceID = /^[a-f0-9]{32}$/u;
 const changeID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
@@ -31,6 +33,23 @@ function notice(value) {
   if (!kinds.has(value?.kind) || !changeID.test(value?.changeId ?? ""))
     return null;
   return { kind: value.kind, change_id: value.changeId };
+}
+
+export function learningViewReceipt(
+  { status, traceID: id, text },
+  { mode, agentId, sessionId, requestedAt, now = Date.now },
+) {
+  return {
+    status: "skill_learning_view_response",
+    mode,
+    method: "GET",
+    operation: "agent_view",
+    agent_id: agentId,
+    session_id: sessionId,
+    requested_at: requestedAt,
+    observed_at: now(),
+    ...responseFailure({ status, headers: { get: () => id } }, text, 200),
+  };
 }
 
 // Keep protocol receipts, never prompts, chunks, cookies or free-form notices.
@@ -118,10 +137,12 @@ export async function captureLearningFailureTraces({
   save,
   signal = AbortSignal.timeout(10000),
   fetchImpl = fetch,
+  searchImpl = searchJaegerTraces,
 }) {
-  const ids = new Set();
+  const ids = new Map();
   let records = 0,
-    unobserved = 0;
+    unobserved = 0,
+    views = 0;
   for (const line of logs.split("\n")) {
     let value;
     try {
@@ -129,13 +150,25 @@ export async function captureLearningFailureTraces({
     } catch {
       continue;
     }
-    if (value?.status !== "skill_learning_client_failed") continue;
+    const view = value?.status === "skill_learning_view_response";
+    if (!view && value?.status !== "skill_learning_client_failed") continue;
     records++;
-    if (traceID.test(value.connection_trace_id ?? ""))
-      ids.add(value.connection_trace_id);
-    else unobserved++;
+    if (view) views++;
+    const id = view ? value.trace_id : value.connection_trace_id;
+    if (traceID.test(id ?? "") && !/^0+$/u.test(id)) {
+      if (!ids.has(id)) ids.set(id, new Set());
+      ids
+        .get(id)
+        .add(
+          view
+            ? value.http_status === 200
+              ? "view_success"
+              : "view_failure"
+            : "private_connection",
+        );
+    } else unobserved++;
   }
-  assert(ids.size <= 32, "too many failed learning connections");
+  assert(ids.size <= 32, "too many learning diagnostic traces");
   const result = {
     diagnostic_only: true,
     discovery_status: ids.size
@@ -147,8 +180,12 @@ export async function captureLearningFailureTraces({
     unobserved_trace_count: unobserved,
     captures: [],
   };
-  for (const id of ids) {
-    const item = { trace_id: id, status: "unavailable" };
+  for (const [id, sources] of ids) {
+    const item = {
+      trace_id: id,
+      sources: [...sources],
+      status: "unavailable",
+    };
     let response,
       stage = "query";
     try {
@@ -187,6 +224,34 @@ export async function captureLearningFailureTraces({
       }
     }
     result.captures.push(item);
+  }
+  if (views) {
+    // Close spans are independent roots and carry no Agent scope attribute.
+    // Preserve candidates for exact initialization Link/process review; a
+    // service/operation search alone must never claim owner attribution.
+    result.close_search = {
+      status: "unavailable",
+      ownership: "unattributed",
+    };
+    let stage = "query";
+    try {
+      const candidates = await searchImpl(
+        jaeger,
+        new URLSearchParams({
+          service: "agent-ui",
+          operation: "agent_ui.acp.close",
+          lookback: "1h",
+          limit: "100",
+        }),
+        { signal, fetchImpl },
+      );
+      stage = "archive";
+      await save("view-close-candidates.json", candidates);
+      result.close_search.status = candidates.length ? "captured" : "empty";
+      result.close_search.count = candidates.length;
+    } catch {
+      result.close_search.failure_stage = stage;
+    }
   }
   await save("stream-failure-index.json", result);
   return result;
