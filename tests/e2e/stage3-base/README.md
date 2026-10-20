@@ -52,6 +52,12 @@ responses and Logout observations are archived before client removal. Each
 connection and exporter is joined; business, archive and cleanup failures are
 retained independently.
 
+Browser projection checks live in `workspace-contracts.mjs`, which loads the
+production frontend decoder and Workspace schema. Protocol and lifecycle
+helpers in `contracts.mjs` do not load either dependency. The isolated import
+regression copies the test sources into an ACP-only harness layout, so the
+host checkout cannot hide missing container dependencies.
+
 The runner pins its client to the actual deployed ACP image ID and mounts the
 Gateway-to-Identity and Agent-UI-to-ACP grants read-only. Private evidence is
 written directly into the ignored evidence directory. A log archival or

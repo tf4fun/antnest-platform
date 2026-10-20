@@ -34,8 +34,8 @@ import {
   assertBuildSnapshot,
   runtimeCommandId,
   assertRuntimeOperation,
-  assertWorkspaceProjection,
 } from "./contracts.mjs";
+import { assertWorkspaceProjection } from "./workspace-contracts.mjs";
 import {
   exerciseWorkspace,
   restoreWorkspace,

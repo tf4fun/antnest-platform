@@ -6,8 +6,8 @@ import {
   templateInput,
   assertBuildSnapshot,
   assertRuntimeOperation,
-  assertWorkspaceProjection,
 } from "./contracts.mjs";
+import { assertWorkspaceProjection } from "./workspace-contracts.mjs";
 
 const principal = {
   user_id: "member",
