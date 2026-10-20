@@ -16,6 +16,14 @@ keep the failed GET, prior successful View and private ACP connection as
 distinct sources. The original business request is never resent by this
 diagnostic path, and collection errors cannot replace the original failure.
 
+The real propagation browser pass also observes its original scoped GET View
+responses without reading bodies or sending requests. It keeps response counts
+and at most the first, first failed and last receipts. On failure it detaches
+the observer before independently saving the original failure, screenshot and
+Trace samples under the existing `preset-<phase>-` artifact prefix. Missing
+Trace headers and observer failures remain explicit diagnostic gaps; business
+timeouts and assertions are unchanged.
+
 `agent_ui.acp.close` is an independent root without an Agent scope attribute.
 Its service/operation search results are saved as **unattributed candidates**.
 Attribution requires review of the exact initialization Link, source request

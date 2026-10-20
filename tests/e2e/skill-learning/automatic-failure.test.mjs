@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { test } from "node:test";
@@ -14,6 +15,133 @@ import {
 const traceID = "a".repeat(32);
 const changeID = "bbbbbbbb-bbbb-4bbb-abbb-bbbbbbbbbbbb";
 const privateText = "private-cookie-prompt-and-notice-body";
+
+const browserGateway = "http://127.0.0.1:12345";
+const browserAgent = "agent-fixture";
+const browserViewURL = `${browserGateway}/api/app/workspace/v1/agents/${browserAgent}/view`;
+const browserResponse = (overrides = {}) => ({
+  url: () => browserViewURL,
+  request: () => ({ method: () => "GET" }),
+  status: () => 503,
+  headers: () => ({
+    "x-antnest-trace-id": traceID,
+    "set-cookie": privateText,
+  }),
+  text: () => {
+    throw new Error("diagnostic observer must not consume the browser body");
+  },
+  ...overrides,
+});
+const observeViews = (page, options = {}) =>
+  failures.observeLearningBrowserViews(page, {
+    gateway: browserGateway,
+    agentId: browserAgent,
+    mode: "propagation-rebuilt",
+    ...options,
+  });
+
+test("browser failure diagnostics retain the original scoped view receipt without reading or replaying its body", () => {
+  const page = new EventEmitter();
+  const observer = observeViews(page, { now: () => 1234 });
+  page.emit("response", browserResponse());
+  const evidence = observer.stop();
+  assert.equal(evidence.response_count, 1);
+  assert.equal(evidence.observation_failures, 0);
+  assert.deepEqual(evidence.samples, [
+    {
+      status: "skill_learning_view_response",
+      mode: "propagation-rebuilt",
+      method: "GET",
+      operation: "agent_view",
+      agent_id: browserAgent,
+      trace_id: traceID,
+      http_status: 503,
+      observed_at: 1234,
+    },
+  ]);
+  assert(!JSON.stringify(evidence).includes(privateText));
+  assert.equal(page.listenerCount("response"), 0);
+  page.emit("response", browserResponse());
+  assert.deepEqual(observer.stop(), evidence);
+});
+
+test("browser view diagnostics exclude another origin, Agent, endpoint and method", () => {
+  const page = new EventEmitter();
+  const observer = observeViews(page);
+  for (const overrides of [
+    {
+      url: () =>
+        browserViewURL.replace(browserGateway, "https://foreign.invalid"),
+    },
+    { url: () => browserViewURL.replace(browserAgent, "another-agent") },
+    { url: () => browserViewURL.replace("/view", "/sessions") },
+    { request: () => ({ method: () => "POST" }) },
+  ])
+    page.emit(
+      "response",
+      browserResponse({
+        ...overrides,
+        headers: () => {
+          throw new Error("unrelated headers must not be inspected");
+        },
+      }),
+    );
+  const evidence = observer.stop();
+  assert.equal(evidence.response_count, 0);
+  assert.equal(evidence.observation_failures, 0);
+  assert.deepEqual(evidence.samples, []);
+});
+
+test("browser diagnostic sampling stays bounded while retaining the first response, first failure and last response", () => {
+  const page = new EventEmitter();
+  let now = 0;
+  const observer = observeViews(page, { now: () => now++ });
+  for (let index = 0; index < 40; index++)
+    page.emit(
+      "response",
+      browserResponse({ status: () => (index === 5 ? 503 : 200) }),
+    );
+  const evidence = observer.stop();
+  assert.equal(evidence.response_count, 40);
+  assert.deepEqual(evidence.outcomes, { 200: 39, 503: 1 });
+  assert.deepEqual(
+    evidence.samples.map((row) => row.observed_at),
+    [0, 5, 39],
+  );
+});
+
+for (const id of [privateText, "0".repeat(32)])
+  test(`browser diagnostics do not invent an identity from ${id === privateText ? "invalid" : "zero"} Trace headers`, () => {
+    const page = new EventEmitter();
+    const observer = observeViews(page);
+    page.emit(
+      "response",
+      browserResponse({ headers: () => ({ "x-antnest-trace-id": id }) }),
+    );
+    const evidence = observer.stop();
+    assert.equal(evidence.response_count, 1);
+    assert.equal(evidence.samples[0].trace_id, null);
+    assert(!JSON.stringify(evidence).includes(privateText));
+  });
+
+test("browser response observation errors remain diagnostics and do not escape the event listener", () => {
+  const page = new EventEmitter();
+  const observer = observeViews(page);
+  assert.doesNotThrow(() =>
+    page.emit(
+      "response",
+      browserResponse({
+        headers: () => {
+          throw new Error(privateText);
+        },
+      }),
+    ),
+  );
+  const evidence = observer.stop();
+  assert.equal(evidence.observation_failures, 1);
+  assert.deepEqual(evidence.samples, []);
+  assert(!JSON.stringify(evidence).includes(privateText));
+});
 
 test("host failure capture attempts every archive and retains the original failure", async () => {
   assert.equal(typeof failures.collectLearningFailureEvidence, "function");

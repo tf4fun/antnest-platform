@@ -30,6 +30,71 @@ export async function collectLearningFailureEvidence(error, captures) {
   );
 }
 
+// Observe existing browser responses synchronously. Never read a body, issue a
+// request or change the business wait; retain only bounded diagnostic receipts.
+export function observeLearningBrowserViews(
+  page,
+  { gateway, agentId, mode, now = Date.now },
+) {
+  const expected = new URL(
+    `/api/app/workspace/v1/agents/${agentId}/view`,
+    gateway,
+  );
+  let responses = 0,
+    observationFailures = 0,
+    first,
+    firstFailure,
+    last;
+  const outcomes = {};
+  const observe = (response) => {
+    try {
+      const url = new URL(response.url());
+      if (
+        url.origin !== expected.origin ||
+        url.pathname !== expected.pathname ||
+        response.request().method() !== "GET"
+      )
+        return;
+      const status = response.status();
+      assert(Number.isInteger(status) && status >= 100 && status <= 599);
+      const id = response.headers()["x-antnest-trace-id"];
+      const receipt = {
+        status: "skill_learning_view_response",
+        mode,
+        method: "GET",
+        operation: "agent_view",
+        agent_id: agentId,
+        trace_id:
+          typeof id === "string" && traceID.test(id) && !/^0+$/u.test(id)
+            ? id
+            : null,
+        http_status: status,
+        observed_at: now(),
+      };
+      responses++;
+      outcomes[status] = (outcomes[status] ?? 0) + 1;
+      first ??= receipt;
+      if (status !== 200) firstFailure ??= receipt;
+      last = receipt;
+    } catch {
+      observationFailures++;
+    }
+  };
+  page.on("response", observe);
+  return {
+    stop() {
+      page.off("response", observe);
+      return structuredClone({
+        diagnostic_only: true,
+        response_count: responses,
+        observation_failures: observationFailures,
+        outcomes,
+        samples: [...new Set([first, firstFailure, last])].filter(Boolean),
+      });
+    },
+  };
+}
+
 function notice(value) {
   if (!kinds.has(value?.kind) || !changeID.test(value?.changeId ?? ""))
     return null;

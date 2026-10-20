@@ -18,6 +18,11 @@ import {
 import { assertFrozenSkill } from "../skill-registry/stage3-fixture.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
 import { unexpectedStatus } from "./response-diagnostic.mjs";
+import {
+  captureLearningFailureTraces,
+  collectLearningFailureEvidence,
+  observeLearningBrowserViews,
+} from "./automatic-failure.mjs";
 
 const skillName = "fixture-procedure";
 const firstRule = "For the fixture task, inspect the target before editing it.";
@@ -235,6 +240,11 @@ export async function openPropagationFlow({
   };
   const verify = async (agentId, version, ready, phase) => {
     const chat = track(await context.newPage());
+    const views = observeLearningBrowserViews(chat, {
+      gateway: config.gateway,
+      agentId,
+      mode: `propagation-${phase}`,
+    });
     try {
       await chat.goto(`${config.gateway}/workspace/${agentId}/`);
       const input = chat.getByRole("combobox", {
@@ -319,23 +329,40 @@ export async function openPropagationFlow({
         phase,
         url: chat.url(),
         error: error.message,
+        browser_views: views.stop(),
       };
       diagnostic.runs = await sql(
         `SELECT json_agg(json_build_object('run_id',r.id,'session_id',r.session_id,'state',r.state,'error_class',r.error_class,'tools',(SELECT json_agg(json_build_object('name',a.tool_name,'state',a.state,'effect',a.tool_effect_state)) FROM tool_attempts a WHERE a.run_id=r.id))) FROM runs r JOIN acp_sessions s ON s.id=r.session_id WHERE s.agent_id='${agentId}'`,
       ).catch(() => "unavailable");
-      await writeFile(
-        `${output}/preset-${phase}-failure.json`,
-        JSON.stringify(diagnostic),
-        { mode: 0o600, flag: "wx" },
-      );
-      await chat
-        .screenshot({
-          path: `${output}/preset-${phase}-failure.png`,
-          fullPage: true,
-        })
-        .catch(() => {});
-      throw error;
+      await collectLearningFailureEvidence(error, [
+        () =>
+          writeFile(
+            `${output}/preset-${phase}-failure.json`,
+            JSON.stringify(diagnostic),
+            { mode: 0o600, flag: "wx" },
+          ),
+        () =>
+          chat.screenshot({
+            path: `${output}/preset-${phase}-failure.png`,
+            fullPage: true,
+          }),
+        () =>
+          captureLearningFailureTraces({
+            logs: diagnostic.browser_views.samples
+              .map((sample) => JSON.stringify(sample))
+              .join("\n"),
+            jaeger: config.jaeger,
+            signal: AbortSignal.timeout(10000),
+            save: (name, value) =>
+              writeFile(
+                `${output}/preset-${phase}-${name}`,
+                JSON.stringify(value),
+                { mode: 0o600, flag: "wx" },
+              ),
+          }),
+      ]);
     } finally {
+      views.stop();
       await chat.close();
     }
   };
