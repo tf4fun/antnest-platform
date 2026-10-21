@@ -168,38 +168,35 @@ test("Permissions admits the real v1 owner stream without a live accepted user-m
   assert.deepEqual(evidence, before);
 });
 
-test("Permissions binds all original Run snapshots to the public ready Agent without inventing a public connection ID", () => {
+test("Permissions binds original Runs to the actual public Agent and audit snapshot projections", () => {
   api();
   const evidence = fixture();
   for (const agent of evidence.agents) {
-    // ready is the unwrapped waitForAgentReady() result, not a Runtime Docker
-    // inspection or an ACP execution-snapshot DTO.
+    // Physical Runtime identity is checked by the separate actual Docker ACK.
+    // Admin's public Agent and Run projections do not expose private authority.
     assert.equal(agent.ready.agent_id, agent.agent_id);
     assert.equal(agent.ready.owner_user_id, evidence.principal_id);
-    assert.equal(Object.hasOwn(agent.ready.runtime, "connection_id"), false);
-    assert.equal(Object.hasOwn(agent.ready.runtime, "connectionId"), false);
-    for (const [index, { run }] of agent.all.entries()) {
+    assert.equal(Object.hasOwn(agent.ready, "organization_id"), false);
+    assert.equal(Object.hasOwn(agent.ready, "access_revision"), false);
+    assert.deepEqual(Object.keys(agent.ready.runtime), ["runtime_revision"]);
+    assert.equal(typeof agent.ready.runtime.runtime_revision, "string");
+    assert(agent.ready.runtime.runtime_revision.length > 0);
+    for (const { run } of agent.all) {
       const snapshot = run.execution_snapshot;
-      assert.equal(snapshot.organizationId, agent.ready.organization_id);
+      assert.equal(run.agent_id, agent.ready.agent_id);
+      assert.equal(run.principal_id, agent.ready.owner_user_id);
       assert.equal(
         snapshot.executionRevision,
         agent.ready.executable_execution_revision,
       );
-      assert.equal(
-        snapshot.runtime.revision,
-        agent.ready.runtime.runtime_revision,
-      );
-      assert.equal(
-        snapshot.runtime.executionId,
-        agent.ready.runtime.runtime_execution_id,
-      );
-      assert.equal(
-        snapshot.runtime.mcpEndpoint,
-        agent.ready.runtime.mcp_endpoint,
-      );
-      // Public Controller DTOs cannot establish private authority identity.
-      // Any retained nonempty private ID is allowed by this business boundary.
-      snapshot.runtime.connectionId = `rci_${String(index + 1).padStart(32, "0")}`;
+      assert.equal(snapshot.agentSpecRevision, agent.ready.agent_spec_revision);
+      assert.deepEqual(Object.keys(snapshot).sort(), [
+        "agentSpecRevision",
+        "configurationRevision",
+        "executionRevision",
+        "modelProfileId",
+        "providerConnectionId",
+      ]);
     }
   }
   const before = structuredClone(evidence);
@@ -207,7 +204,7 @@ test("Permissions binds all original Run snapshots to the public ready Agent wit
   assert.deepEqual(evidence, before);
 });
 
-const runtimeMutations = [
+const publicationMutations = [
   [
     "missing original ready Agent",
     (_e, agent) => {
@@ -221,9 +218,15 @@ const runtimeMutations = [
     },
   ],
   [
-    "ready has no organization",
+    "ready has no owner",
     (_e, agent) => {
-      delete agent.ready.organization_id;
+      delete agent.ready.owner_user_id;
+    },
+  ],
+  [
+    "ready belongs to another owner",
+    (_e, agent) => {
+      agent.ready.owner_user_id = "another-owner";
     },
   ],
   [
@@ -233,21 +236,45 @@ const runtimeMutations = [
     },
   ],
   [
-    "ready has no Runtime binding",
+    "ready has no Agent spec revision",
+    (_e, agent) => {
+      delete agent.ready.agent_spec_revision;
+    },
+  ],
+  [
+    "ready has no public Runtime record",
     (_e, agent) => {
       delete agent.ready.runtime;
     },
   ],
   [
-    "Run has no organization",
-    (_e, _agent, snapshot) => {
-      delete snapshot.organizationId;
+    "ready has no public Runtime revision",
+    (_e, agent) => {
+      delete agent.ready.runtime.runtime_revision;
     },
   ],
   [
-    "Run has another organization",
+    "ready has an empty public Runtime revision",
+    (_e, agent) => {
+      agent.ready.runtime.runtime_revision = "";
+    },
+  ],
+  [
+    "ready has a nonstring public Runtime revision",
+    (_e, agent) => {
+      agent.ready.runtime.runtime_revision = null;
+    },
+  ],
+  [
+    "Run has no executable revision",
     (_e, _agent, snapshot) => {
-      snapshot.organizationId = "another-organization";
+      delete snapshot.executionRevision;
+    },
+  ],
+  [
+    "Run has no Agent spec revision",
+    (_e, _agent, snapshot) => {
+      delete snapshot.agentSpecRevision;
     },
   ],
   [
@@ -257,72 +284,23 @@ const runtimeMutations = [
     },
   ],
   [
-    "Run borrows the other Agent binding",
+    "Run has a stale Agent spec revision",
+    (_e, _agent, snapshot) => {
+      snapshot.agentSpecRevision = "old-agent-spec";
+    },
+  ],
+  [
+    "Run borrows the other Agent publication",
     (_e, _agent, snapshot, other) => {
       snapshot.executionRevision = other.ready.executable_execution_revision;
-      snapshot.runtime = structuredClone(
-        other.all[0].run.execution_snapshot.runtime,
-      );
-    },
-  ],
-  [
-    "Run has no Runtime binding",
-    (_e, _agent, snapshot) => {
-      delete snapshot.runtime;
-    },
-  ],
-  [
-    "Run has no private connection identity",
-    (_e, _agent, snapshot) => {
-      delete snapshot.runtime.connectionId;
-    },
-  ],
-  [
-    "Run has an empty private connection identity",
-    (_e, _agent, snapshot) => {
-      snapshot.runtime.connectionId = "";
-    },
-  ],
-  [
-    "Run has a nonstring private connection identity",
-    (_e, _agent, snapshot) => {
-      snapshot.runtime.connectionId = null;
+      snapshot.agentSpecRevision = other.ready.agent_spec_revision;
     },
   ],
 ];
-for (const [stored, publicField] of [
-  ["revision", "runtime_revision"],
-  ["executionId", "runtime_execution_id"],
-  ["mcpEndpoint", "mcp_endpoint"],
-]) {
-  runtimeMutations.push(
-    [
-      `ready lacks ${publicField}`,
-      (_e, agent) => {
-        delete agent.ready.runtime[publicField];
-      },
-    ],
-    [
-      `Run lacks ${stored}`,
-      (_e, _agent, snapshot) => {
-        delete snapshot.runtime[stored];
-      },
-    ],
-    [
-      `Run has stale or foreign ${stored}`,
-      (_e, _agent, snapshot) => {
-        snapshot.runtime[stored] =
-          stored === "mcpEndpoint"
-            ? "http://old-runtime:8080/mcp"
-            : "old-runtime-binding";
-      },
-    ],
-  );
-}
 for (const version of [1, 2]) {
-  test(`Permissions v${version} rejects missing, stale or foreign ready/Run Runtime bindings`, () => {
+  test(`Permissions v${version} rejects missing, stale or foreign public Agent/Run publication identities`, () => {
     api();
-    for (const [name, mutate] of runtimeMutations) {
+    for (const [name, mutate] of publicationMutations) {
       const evidence = fixture();
       const agent = evidence.agents.find(
         (item) => item.agent_id === evidence.agent_ids[version - 1],
@@ -337,15 +315,15 @@ for (const version of [1, 2]) {
       assert.throws(() => inspect(evidence), undefined, name);
     }
   });
-  test(`Permissions v${version} validates Runtime binding after the first Run, including undispatched and resumed Runs`, () => {
+  test(`Permissions v${version} validates public publication revisions after the first Run, including undispatched and resumed Runs`, () => {
     api();
     for (const entry of ["follow", "deny", "cancel", "reconnect"]) {
-      const evidence = fixture();
-      saved(
-        evidence,
-        `v${version}-${entry}`,
-      ).run.execution_snapshot.runtime.executionId = "foreign-execution";
-      assert.throws(() => inspect(evidence), undefined, entry);
+      for (const field of ["executionRevision", "agentSpecRevision"]) {
+        const evidence = fixture();
+        saved(evidence, `v${version}-${entry}`).run.execution_snapshot[field] =
+          "stale-publication-revision";
+        assert.throws(() => inspect(evidence), undefined, `${entry} ${field}`);
+      }
     }
   });
 }

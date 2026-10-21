@@ -116,15 +116,10 @@ export async function runPlanPrompt(
   const expected = caseFor(phase);
   assert.equal(typeof release, "function");
   client.updates.length = 0;
+  const input = [{ type: "text", text: phase }];
   let completed = false;
   const observed = Promise.resolve()
-    .then(() =>
-      client.request(
-        "prompt",
-        { sessionId, prompt: [{ type: "text", text: phase }] },
-        120000,
-      ),
-    )
+    .then(() => client.request("prompt", { sessionId, prompt: input }, 120000))
     .then(
       (response) => {
         completed = version === 1;
@@ -175,6 +170,7 @@ export async function runPlanPrompt(
       "foreign live Plan Session",
     );
     return {
+      input: structuredClone(input),
       response: result.response,
       request: planRequestIdentity(client, "session/prompt", sessionId, {
         phase,

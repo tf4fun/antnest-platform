@@ -69,37 +69,32 @@ function execution(version, label, step, sessionId, runtime) {
     created_at: timestamp(step === "write" ? 0 : 1000),
     updated_at: timestamp(step === "write" ? 500 : 1500),
     input: [{ type: "text", text: phase }],
+    // Match Admin Console's auditExecutionSnapshot allowlist. Runtime authority
+    // stays in the separately captured Agent/Runtime receipts below.
     execution_snapshot: {
-      organizationId,
       providerConnectionId: "rpc-provider",
       modelProfileId: "rpc-model-profile",
       configurationRevision: version + 10,
-      accessRevision: "rpc-access",
       deadlineAt: timestamp(120000),
       agentSpecRevision: "rpc-agent-spec",
       executionRevision: runtime.execution_revision,
-      runtimeMcpSourceDigest: "a".repeat(64),
       agentExecutionSpecDigest: "b".repeat(64),
-      runtime: {
-        revision: runtime.runtime_revision,
-        executionId: runtime.runtime_execution_id,
-        mcpEndpoint: runtime.mcp_endpoint,
-        connectionId: `rci_${runtime.runtime_revision.slice(4)}`,
-      },
       executionSpec: {
         systemPrompt: "RPC_PRIVATE_AUDIT_CANARY",
         contextPolicyVersion: "context-v1",
-        skillInstructions: [],
         model: {
-          baseUrl: "http://rpc-model-peer:8080/v1",
           model: "rpc-model",
           contextWindow: 8192,
           maxOutputTokens: version === 1 ? 3072 : 4096,
           supportsImages: false,
         },
         maxModelRequests: 8,
+        configuration: {
+          modelProfileId: "rpc-model-profile",
+          authorizationRevision: 1,
+          authorization: { mode: "auto", toolRules: [] },
+        },
       },
-      clientMcpRevisionId: sessionId + "-mcp",
     },
     terminal_class: "completed",
     executor_state: "quiescent",
@@ -417,7 +412,7 @@ function fixture() {
         runs: [write, read],
         fault: fault(label, index, kind),
         replay: { before: checkpoint(), after: checkpoint() },
-        ...(kind === "settle" ? { replacement } : {}),
+        ...(kind === "settle" ? { source: before, replacement } : {}),
       };
       if (kind === "settle") {
         const rejected = record(

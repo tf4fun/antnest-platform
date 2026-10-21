@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
+import * as contracts from "./contracts.mjs";
+const {
   assertResourceId,
   modelEdit,
   templateInput,
   assertBuildSnapshot,
   assertRuntimeOperation,
-} from "./contracts.mjs";
+} = contracts;
 import { assertWorkspaceProjection } from "./workspace-contracts.mjs";
 
 const principal = {
@@ -259,4 +260,98 @@ test("new resource IDs preserve kind and use exactly 32 lowercase hex digits", (
       assert.throws(() => assertResourceId(kind, invalid));
     }
   }
+});
+
+function readyEventFixture() {
+  // Original Admin agentEventProjectionSource fields; Trace is optional there.
+  return {
+    event_id: "event_" + "a".repeat(32),
+    global_sequence: 10,
+    aggregate_sequence: 3,
+    schema_version: 1,
+    agent_id: "agent_" + "b".repeat(32),
+    event_type: "agent_ready",
+    operation_request_id: "ready-operation",
+    trace_id: "c".repeat(32),
+    occurred_at: "2026-10-22T00:00:00Z",
+  };
+}
+
+function findReady(events, requestId = "ready-operation") {
+  assert.equal(
+    typeof contracts.findAgentReadyEvent,
+    "function",
+    "findAgentReadyEvent is required",
+  );
+  return contracts.findAgentReadyEvent(events, requestId);
+}
+
+test("Agent ready business finds the original event for its lifecycle operation", () => {
+  const ready = readyEventFixture();
+  const events = [
+    { ...ready, event_type: "agent_created" },
+    { ...ready, operation_request_id: "another-operation" },
+    ready,
+  ];
+  const before = structuredClone(events);
+  assert.equal(findReady(events), ready);
+  assert.deepEqual(events, before);
+});
+
+test("Agent ready business accepts a missing Trace without altering the original event", () => {
+  const ready = readyEventFixture();
+  delete ready.trace_id;
+  const events = [ready],
+    before = structuredClone(events);
+  assert.equal(findReady(events), ready);
+  assert.deepEqual(events, before);
+  assert(!Object.hasOwn(ready, "trace_id"));
+});
+
+test("Agent ready business accepts malformed Trace values without rewriting raw evidence", () => {
+  for (const trace_id of [
+    null,
+    "",
+    "invalid-trace",
+    "A".repeat(32),
+    "a".repeat(31),
+  ]) {
+    const ready = { ...readyEventFixture(), trace_id };
+    const events = [ready],
+      before = structuredClone(events);
+    assert.equal(findReady(events), ready);
+    assert.deepEqual(events, before);
+  }
+});
+
+test("Agent ready business does not require matching events to be unique", () => {
+  const first = readyEventFixture(),
+    second = { ...first, global_sequence: 11 };
+  const events = [first, second],
+    before = structuredClone(events);
+  assert.equal(findReady(events), first);
+  assert.deepEqual(events, before);
+});
+
+test("Agent ready business still rejects a different event type or lifecycle operation", () => {
+  const ready = readyEventFixture();
+  assert.equal(findReady([ready]), ready);
+  for (const events of [
+    [{ ...ready, event_type: "agent_created" }],
+    [{ ...ready, operation_request_id: "another-operation" }],
+    [{ ...ready, operation_request_id: undefined }],
+    [
+      { ...ready, event_type: "agent_created" },
+      { ...ready, operation_request_id: "another-operation" },
+    ],
+  ])
+    assert.throws(() => findReady(events));
+  assert.throws(() => findReady([ready], "another-operation"));
+});
+
+test("Agent ready business rejects missing or empty original event inventory", () => {
+  const ready = readyEventFixture();
+  assert.equal(findReady([ready]), ready);
+  for (const events of [undefined, null, {}, []])
+    assert.throws(() => findReady(events));
 });

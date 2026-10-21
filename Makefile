@@ -290,14 +290,14 @@ e2e-tool-progress:
 
 .PHONY: test-file-observation-fixtures e2e-file-observations
 test-file-observation-fixtures:
-	node --test --test-concurrency=1 tests/e2e/acp-files/*.test.mjs
+	node --import ./tests/e2e/identity-closeout/acp-client-dependencies.fixture.mjs --test --test-concurrency=1 tests/e2e/acp-files/*.test.mjs
 
 e2e-file-observations:
 	ANTNEST_E2E_FILE_OBSERVATIONS=true sh tests/e2e/e2e-stage3a.sh
 
 .PHONY: test-plan-fixtures e2e-structured-plan
 test-plan-fixtures:
-	node --test --test-concurrency=1 tests/e2e/acp-plan/*.test.mjs
+	node --import ./tests/e2e/identity-closeout/acp-client-dependencies.fixture.mjs --test --test-concurrency=1 tests/e2e/acp-plan/*.test.mjs
 
 e2e-structured-plan:
 	ANTNEST_E2E_STRUCTURED_PLAN=true sh tests/e2e/e2e-stage3a.sh

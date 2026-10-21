@@ -5,21 +5,29 @@ import { setTimeout as delay } from "node:timers/promises";
 export async function collectInterruptedTrace(
   base,
   id,
-  { fetcher = fetch, wait = () => delay(1000), attempts = 12 } = {},
+  {
+    fetcher = fetch,
+    wait = (signal) => delay(1000, undefined, { signal }),
+    attempts = 12,
+    signal,
+  } = {},
 ) {
   let latest,
     previous,
     stable = 0;
   for (let attempt = 0; attempt < attempts; attempt++) {
+    signal?.throwIfAborted();
     const response = await fetcher(`${base}/api/traces/${id}`, {
-      signal: AbortSignal.timeout(5000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
+        : AbortSignal.timeout(5000),
     });
     if (response.status === 404) {
       // The killed process may never have exported any spans for this ID.
       await response.arrayBuffer();
       stable = 0;
       previous = undefined;
-      if (attempt + 1 < attempts) await wait();
+      if (attempt + 1 < attempts) await wait(signal);
       continue;
     }
     assert(response.ok, "Jaeger diagnostic request failed");
@@ -36,7 +44,8 @@ export async function collectInterruptedTrace(
       previous = current;
       if (stable >= 3) return latest;
     }
-    if (attempt + 1 < attempts) await wait();
+    if (attempt + 1 < attempts) await wait(signal);
   }
+  signal?.throwIfAborted();
   return latest;
 }

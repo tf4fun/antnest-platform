@@ -4,7 +4,6 @@ import { permissionClientFixture } from "./client-evidence.fixture.mjs";
 import { indexPermissionRequests } from "./client-evidence.mjs";
 
 const at = "2026-10-22T00:00:00.000000Z";
-const organization = "permission-organization";
 const measurement = { inputTokens: 100, outputTokens: 20 };
 const summaryKeys = [
   "run_id",
@@ -124,27 +123,23 @@ function permissionPhase(delivery) {
   return tool.rawInput.value ?? tool.rawInput.path.slice(0, -4);
 }
 
-// waitForAgentReady() returns the public Agent DTO itself. Its Runtime uses
-// snake_case and deliberately has no private ACP connection_id field.
+// waitForAgentReady() returns Admin's public Agent projection. Its Runtime
+// contains only runtime_revision; organization and private authority are omitted.
 function readyAgent(agentId, index, owner) {
   const revision = (index === 0 ? "a" : "b").repeat(64);
   return {
     agent_id: agentId,
-    organization_id: organization,
     owner_user_id: owner,
     name: `Permissions v${index + 1}`,
     desired_state: "enabled",
     lifecycle_state: "created",
     activation_state: "enabled",
     runtime_state: "available",
-    access_revision: `permission-access-${index + 1}`,
     agent_spec_revision: `permission-spec-${index + 1}`,
     executable_execution_revision: revision,
     last_successful_execution_revision: revision,
     runtime: {
       runtime_revision: `rtv_${String(index + 1).repeat(32)}`,
-      runtime_execution_id: `permission-execution-${index + 1}`,
-      mcp_endpoint: `http://permission-runtime-${index + 1}:8080/mcp`,
     },
     aggregate_sequence: 3,
     created_at: at,
@@ -232,7 +227,6 @@ export function permissionRunBusinessFixture() {
         updated_at: at,
         input: structuredClone(row.requestParams.prompt),
         execution_snapshot: {
-          organizationId: agent.ready.organization_id,
           providerConnectionId: "permission-provider",
           modelProfileId: [
             "once",
@@ -244,15 +238,8 @@ export function permissionRunBusinessFixture() {
             ? captured.alternateModelID
             : "default-profile",
           configurationRevision: 1,
-          accessRevision: agent.ready.access_revision,
           agentSpecRevision: agent.ready.agent_spec_revision,
           executionRevision: agent.ready.executable_execution_revision,
-          runtime: {
-            revision: agent.ready.runtime.runtime_revision,
-            executionId: agent.ready.runtime.runtime_execution_id,
-            mcpEndpoint: agent.ready.runtime.mcp_endpoint,
-            connectionId: `rci_${String(connection.version).repeat(32)}`,
-          },
         },
         terminal_class: cancelled ? "cancelled" : "completed",
         executor_state: "quiescent",

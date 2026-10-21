@@ -310,7 +310,10 @@ function checkRun(record, original, eventIds, sequences, input, ready) {
   require(
     run.agent_id === request.agentId && run.session_id === request.sessionId,
   );
-  require(run.principal_id === input.principal_id);
+  require(
+    run.principal_id === input.principal_id &&
+      run.principal_id === ready.owner_user_id,
+  );
   same(run.input, request.requestParams.prompt);
   const cancelled = entry === "cancel",
     chat = entry === "chat";
@@ -336,25 +339,14 @@ function checkRun(record, original, eventIds, sequences, input, ready) {
   require(object(snapshot));
   id(snapshot.providerConnectionId);
   id(snapshot.modelProfileId);
+  id(snapshot.agentSpecRevision);
   id(snapshot.executionRevision);
   require(
     Number.isSafeInteger(snapshot.configurationRevision) &&
       snapshot.configurationRevision > 0,
   );
-  same(snapshot.organizationId, ready.organization_id);
+  same(snapshot.agentSpecRevision, ready.agent_spec_revision);
   same(snapshot.executionRevision, ready.executable_execution_revision);
-  require(object(snapshot.runtime));
-  for (const [stored, publicField] of [
-    ["revision", "runtime_revision"],
-    ["executionId", "runtime_execution_id"],
-    ["mcpEndpoint", "mcp_endpoint"],
-  ])
-    same(snapshot.runtime[stored], ready.runtime[publicField]);
-  // Controller's public Agent DTO has no private ACP connection identity.
-  require(
-    typeof snapshot.runtime.connectionId === "string" &&
-      snapshot.runtime.connectionId.length > 0,
-  );
   const selected = original.connection.evidence.find(
     (row) =>
       row.method === "session/set_config_option" &&
@@ -784,18 +776,12 @@ function inspect(input) {
     );
     const ready = agent.ready;
     require(object(ready) && ready.agent_id === agentId);
-    id(ready.organization_id);
+    id(ready.owner_user_id);
+    same(ready.owner_user_id, input.principal_id);
+    id(ready.agent_spec_revision);
     id(ready.executable_execution_revision);
     require(object(ready.runtime));
-    for (const field of [
-      "runtime_revision",
-      "runtime_execution_id",
-      "mcp_endpoint",
-    ])
-      require(
-        typeof ready.runtime[field] === "string" &&
-          ready.runtime[field].length > 0,
-      );
+    id(ready.runtime.runtime_revision);
     const listed = page(agent.page),
       all = list(agent.all);
     require(listed.length === 13 && all.length === 13);

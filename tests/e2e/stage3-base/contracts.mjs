@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
+export function findAgentReadyEvent(events, requestId) {
+  assert(Array.isArray(events), "Agent event inventory required");
+  assert(typeof requestId === "string" && requestId.length > 0);
+  const event = events.find(
+    (row) =>
+      row?.event_type === "agent_ready" &&
+      row.operation_request_id === requestId,
+  );
+  assert(event, "Agent ready event for the original operation required");
+  return event;
+}
+
 // This assertion applies to fresh resources in a disposable deployment only.
 // Product consumers continue to treat already-issued IDs as opaque strings.
 export function assertResourceId(kind, value) {

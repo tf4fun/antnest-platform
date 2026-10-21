@@ -23,6 +23,16 @@ const summaryFields = [
   "created_at",
   "updated_at",
 ];
+const publicSnapshotFields = new Set([
+  "providerConnectionId",
+  "modelProfileId",
+  "configurationRevision",
+  "agentSpecRevision",
+  "executionRevision",
+  "deadlineAt",
+  "agentExecutionSpecDigest",
+  "executionSpec",
+]);
 const metadata = new Set([
   "available_commands_update",
   "session_info_update",
@@ -562,41 +572,31 @@ function inspectAudits(input, scenario, calls, state) {
       "RPC Run is not bound to one original prompt",
     );
     const snapshot = run.execution_snapshot;
+    // Admin deliberately omits private organization/access/client-MCP/Runtime
+    // authority. Retain its public projection rather than inventing those
+    // fields on the original response.
+    assert(object(snapshot), "Original public RPC execution snapshot required");
     assert(
-      object(snapshot) && object(snapshot.runtime),
-      "Original RPC execution snapshot required",
-    );
-    same(
-      snapshot.organizationId,
-      input.organizationId,
-      "Foreign RPC execution organization",
+      Object.keys(snapshot).every((field) => publicSnapshotFields.has(field)),
+      "Unexpected public RPC execution snapshot field",
     );
     for (const field of [
       "providerConnectionId",
       "modelProfileId",
-      "accessRevision",
       "agentSpecRevision",
       "executionRevision",
-      "clientMcpRevisionId",
+      "agentExecutionSpecDigest",
     ])
       nonempty(
         snapshot[field],
-        "Complete original RPC execution authority required",
+        "Complete original public RPC execution snapshot required",
       );
     assert(
-      positive(snapshot.configurationRevision) && date(snapshot.deadlineAt),
+      positive(snapshot.configurationRevision) &&
+        date(snapshot.deadlineAt) &&
+        object(snapshot.executionSpec),
       "Original RPC execution boundary required",
     );
-    for (const field of [
-      "revision",
-      "executionId",
-      "mcpEndpoint",
-      "connectionId",
-    ])
-      nonempty(
-        snapshot.runtime[field],
-        "Original RPC Runtime binding required",
-      );
     const userId = inspectEvents(
       saved,
       `v${scenario.version}-${scenario.kind}-${step}`,
@@ -623,34 +623,51 @@ function inspectAudits(input, scenario, calls, state) {
 
 function inspectReplacement(input, scenario, byStep) {
   if (scenario.kind !== "settle") return;
+  const source = scenario.source;
   const replacement = scenario.replacement;
-  assert(object(replacement), "Actual replacement Runtime receipt required");
+  for (const receipt of [source, replacement]) {
+    assert(
+      object(receipt),
+      "Actual source and replacement Runtime receipts required",
+    );
+    same(receipt.agent_id, input.agentId, "Foreign captured Runtime Agent");
+    for (const field of [
+      "runtime_revision",
+      "runtime_execution_id",
+      "mcp_endpoint",
+      "execution_revision",
+      "template_id",
+    ])
+      nonempty(receipt[field], "Complete captured Runtime receipt required");
+    assert(
+      positive(receipt.template_revision),
+      "Captured Runtime template revision required",
+    );
+  }
   same(
-    replacement.agent_id,
-    input.agentId,
-    "Foreign replacement Runtime Agent",
+    [replacement.template_id, replacement.template_revision],
+    [source.template_id, source.template_revision],
+    "RPC replacement Runtime changed its original template",
   );
   const old = byStep.get("write").run.execution_snapshot;
   const current = byStep.get("read").run.execution_snapshot;
+  // The public Run's execution revision binds it to captureRuntime()'s
+  // original Agent/Runtime projection. Endpoint and process identity come from
+  // those separately validated receipts, never from a private Admin Run field.
   same(
-    [
-      current.runtime.revision,
-      current.runtime.executionId,
-      current.runtime.mcpEndpoint,
-      current.executionRevision,
-    ],
-    [
-      replacement.runtime_revision,
-      replacement.runtime_execution_id,
-      replacement.mcp_endpoint,
-      replacement.execution_revision,
-    ],
-    "RPC read Run did not capture actual replacement Runtime",
+    old.executionRevision,
+    source.execution_revision,
+    "RPC write Run differs from its actual source execution revision",
+  );
+  same(
+    current.executionRevision,
+    replacement.execution_revision,
+    "RPC read Run differs from its actual replacement execution revision",
   );
   assert(
-    current.runtime.revision !== old.runtime.revision &&
-      current.runtime.executionId !== old.runtime.executionId &&
-      current.executionRevision !== old.executionRevision,
+    replacement.runtime_revision !== source.runtime_revision &&
+      replacement.runtime_execution_id !== source.runtime_execution_id &&
+      replacement.execution_revision !== source.execution_revision,
     "RPC Rebuild retained old executable authority",
   );
 }

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { IncomingMessage, request as httpRequest } from "node:http";
+import { IncomingMessage, request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { Socket } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 import { CALLER_CONTEXT_HEADER, CallerContextVerifier } from "../../src/adapters/caller-context.js";
@@ -181,33 +181,50 @@ it.each(routes)(
     if (!address || typeof address === "string") throw new Error("Expected TCP listener");
     const url = `http://127.0.0.1:${address.port}${path}`;
     const headers = { ...workloadHeaders("edge-gateway"), [CALLER_CONTEXT_HEADER]: claims() };
-    let status: number;
+    let received: { status: number; headers: IncomingHttpHeaders; text: string };
     if (method === "UPGRADE") {
-      status = await new Promise<number>((resolve, reject) => {
-        const request = httpRequest(url, {
-          agent: false,
-          signal: AbortSignal.timeout(5000),
-          headers: {
-            ...headers,
-            Connection: "Upgrade",
-            Upgrade: "websocket",
-            "Sec-WebSocket-Version": "13",
-            "Sec-WebSocket-Key": Buffer.alloc(16).toString("base64"),
-          },
-        });
-        request.once("error", reject);
-        request.once("upgrade", (response, socket) => {
-          socket.destroy();
-          request.destroy();
-          resolve(response.statusCode!);
-        });
-        request.once("response", (response) => {
-          response.resume();
-          response.once("end", () => resolve(response.statusCode!));
-          response.once("error", reject);
-        });
-        request.end();
-      });
+      received = await new Promise<{ status: number; headers: IncomingHttpHeaders; text: string }>(
+        (resolve, reject) => {
+          const request = httpRequest(url, {
+            agent: false,
+            signal: AbortSignal.timeout(5000),
+            headers: {
+              ...headers,
+              Connection: "Upgrade",
+              Upgrade: "websocket",
+              "Sec-WebSocket-Version": "13",
+              "Sec-WebSocket-Key": Buffer.alloc(16).toString("base64"),
+            },
+          });
+          request.once("error", reject);
+          request.once("upgrade", (_response, socket) => {
+            socket.destroy();
+            request.destroy();
+            reject(new Error("Retired Gateway accepted a WebSocket upgrade"));
+          });
+          request.once("response", (response) => {
+            const chunks: Buffer[] = [];
+            let ended = false;
+            response.on("data", (chunk: Buffer) => chunks.push(chunk));
+            response.once("end", () => {
+              ended = true;
+            });
+            response.once("close", () => {
+              if (!ended || !response.complete) {
+                reject(new Error("Retired Gateway rejection did not finish before close"));
+                return;
+              }
+              resolve({
+                status: response.statusCode!,
+                headers: response.headers,
+                text: Buffer.concat(chunks).toString("utf8"),
+              });
+            });
+            response.once("error", reject);
+          });
+          request.end();
+        },
+      );
     } else {
       const response = await fetch(url, {
         method,
@@ -216,11 +233,23 @@ it.each(routes)(
         ...(method === "POST" ? { body: "{" } : {}),
         signal: AbortSignal.timeout(5000),
       });
-      status = response.status;
-      const body: unknown = await response.json();
-      expect(body).toMatchObject({ code: "caller_not_allowed", retryable: false });
+      received = {
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries()),
+        text: await response.text(),
+      };
     }
-    expect(status).toBe(403);
+    expect(received.status).toBe(403);
+    const body: unknown = JSON.parse(received.text);
+    expect(body).toEqual({
+      code: "caller_not_allowed",
+      message: "Service caller is not allowed",
+      retryable: false,
+    });
+    expect((received.text.match(/"(?:[^"\\]|\\.)*"\s*:/g) ?? []).length).toBe(3);
+    expect(received.headers.connection).toBe("close");
+    for (const name of ["antnest-caller-context", "antnest-service-authorization", "set-cookie"])
+      expect(received.headers[name]).toBeUndefined();
     expect(keys).not.toHaveBeenCalled();
     expect(ready).not.toHaveBeenCalled();
     expect(access).not.toHaveBeenCalled();

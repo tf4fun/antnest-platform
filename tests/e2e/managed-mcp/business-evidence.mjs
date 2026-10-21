@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { assertPromptComplete, assertReplay } from "./protocol.mjs";
 import { assertModelSequence } from "./rebuild-evidence.mjs";
@@ -20,6 +21,16 @@ const summaryFields = [
   "created_at",
   "updated_at",
 ];
+const publicSnapshotFields = new Set([
+  "providerConnectionId",
+  "modelProfileId",
+  "configurationRevision",
+  "agentSpecRevision",
+  "executionRevision",
+  "deadlineAt",
+  "agentExecutionSpecDigest",
+  "executionSpec",
+]);
 const messageKinds = new Set([
   "user_message",
   "agent_message",
@@ -107,19 +118,33 @@ function originalRequests(evidence) {
 
 function inspectSnapshot(run, captured) {
   const snapshot = run.execution_snapshot;
+  // Admin exposes an allowlisted snapshot, not private Runtime authority.
+  // Its execution revision binds this Run to the original captureRuntime()
+  // receipt; process and endpoint identity remain in that separate receipt.
+  assert(object(snapshot), "durable public execution snapshot required");
   assert(
-    object(snapshot) && object(snapshot.runtime),
-    "durable execution snapshot required",
+    Object.keys(snapshot).every((field) => publicSnapshotFields.has(field)),
+    "unexpected public execution snapshot field",
   );
+  for (const field of [
+    "providerConnectionId",
+    "modelProfileId",
+    "agentSpecRevision",
+    "executionRevision",
+    "agentExecutionSpecDigest",
+  ])
+    nonempty(snapshot[field], "captured public execution field required");
   assert.equal(snapshot.executionRevision, captured.execution_revision);
-  assert.equal(snapshot.runtime.revision, captured.runtime_revision);
-  assert.equal(snapshot.runtime.executionId, captured.runtime_execution_id);
-  assert.equal(snapshot.runtime.mcpEndpoint, captured.mcp_endpoint);
-  nonempty(snapshot.agentSpecRevision, "captured Agent specification required");
   assert(
     Number.isSafeInteger(snapshot.configurationRevision) &&
       snapshot.configurationRevision > 0,
     "captured configuration revision required",
+  );
+  assert(
+    typeof snapshot.deadlineAt === "string" &&
+      Number.isFinite(Date.parse(snapshot.deadlineAt)) &&
+      object(snapshot.executionSpec),
+    "captured public execution boundary required",
   );
 }
 
@@ -278,7 +303,7 @@ function inspectReply(events, phase, terminalSequence) {
   ]);
 }
 
-function inspectTools(events, expected, seenCalls) {
+function inspectTools(events, expected, seenCalls, runId) {
   const stored = events.items.filter((event) => event.kind === "tool_call");
   const proposals = events.items
     .filter((event) => event.kind === "agent_message")
@@ -313,7 +338,10 @@ function inspectTools(events, expected, seenCalls) {
     failed = 0,
     terminalSequence = 0;
   for (const [step, name] of expected.names.entries()) {
-    const id = `${expected.phase}-${step}`;
+    const providerId = `${expected.phase}-${step}`;
+    const id = createHash("sha256")
+      .update(JSON.stringify([runId, step, providerId]))
+      .digest("hex");
     assert(!seenCalls.has(id), "Tool belongs to more than one Run");
     seenCalls.add(id);
     const lifecycle = calls.get(id);
@@ -632,7 +660,7 @@ export function inspectManagedBusinessEvidence(evidence) {
     failed = 0,
     previousSequence = 0;
   for (const [index, current] of expected.entries()) {
-    const { events } = ordered[index];
+    const { run, events } = ordered[index];
     for (const event of events.items) {
       assert(
         event.sequence > previousSequence,
@@ -640,7 +668,7 @@ export function inspectManagedBusinessEvidence(evidence) {
       );
       previousSequence = event.sequence;
     }
-    const tools = inspectTools(events, current, calls);
+    const tools = inspectTools(events, current, calls, run.run_id);
     inspectReply(events, current.phase, tools.terminalSequence);
     allTools.push(...tools.stored);
     toolCount += tools.calls;

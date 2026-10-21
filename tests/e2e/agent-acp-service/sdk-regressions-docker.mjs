@@ -489,17 +489,15 @@ try {
       value?.code === "caller_not_allowed" && value.retryable === false,
       "retired Gateway error changed",
     );
-    const fields =
-      method === "UPGRADE" ? "code,retryable" : "code,message,retryable";
+    const fields = "code,message,retryable";
     assert(
       Object.keys(value).sort().join(",") === fields,
       "retired Gateway error fields changed",
     );
-    if (method !== "UPGRADE")
-      assert(
-        value.message === "Request authentication failed",
-        "retired Gateway public message changed",
-      );
+    assert(
+      value.message === "Service caller is not allowed",
+      "retired Gateway public message changed",
+    );
     assert(
       (response.body.match(/"(?:[^"\\]|\\.)*"\s*:/g) ?? []).length ===
         fields.split(",").length,

@@ -26,6 +26,8 @@ import {
   writeEvidenceFile,
 } from "../../support/storage.mjs";
 import { collectStage3Logouts } from "./logout-trace.mjs";
+import { inspectStage3LogoutBusiness } from "./logout-business.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import { collectLifecycleAdmissionTrace } from "./resolve-trace.mjs";
 import { identity, gateway, login } from "./identity.mjs";
 import { catalog, editCatalog } from "./catalog.mjs";
@@ -34,6 +36,7 @@ import {
   assertBuildSnapshot,
   runtimeCommandId,
   assertRuntimeOperation,
+  findAgentReadyEvent,
 } from "./contracts.mjs";
 import { assertWorkspaceProjection } from "./workspace-contracts.mjs";
 import {
@@ -97,6 +100,7 @@ const api = async (path, body, status = 200) =>
 const agent = () => api(`/api/admin/agents/${agentId}`);
 const directory = evidenceDirectory(process.env.ANTNEST_STAGE3_EVIDENCE_DIR);
 assert(directory, "Stage3 durable evidence directory required");
+const diagnostics = createTraceDiagnostics({ directory });
 const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
 const clients = new Set(),
   connections = [],
@@ -1180,13 +1184,14 @@ async function main() {
     );
     assert.equal(foreign.code, "organization_mismatch");
     const events = (await api(`/api/admin/agents/${agentId}/events`)).events;
-    assert(
-      events.some(
-        (e) =>
-          e.event_type === "agent_ready" &&
-          e.operation_request_id === requestId &&
-          /^[a-f0-9]{32}$/.test(e.trace_id),
-      ),
+    const readyEvent = findAgentReadyEvent(events, requestId);
+    writeEvidenceFile(
+      directory,
+      "agent-ready-events.private.json",
+      asciiJSON(events),
+    );
+    await diagnostics.run("agent-ready-trace", () =>
+      assert.match(readyEvent.trace_id ?? "", /^[a-f0-9]{32}$/u),
     );
     await eventStream();
     const bootstrap = (await member.request("/api/app/workspace/v1/bootstrap"))
@@ -1507,25 +1512,7 @@ async function main() {
         : {}),
       revocations,
     };
-    await writeFile(directory + "/business.json", JSON.stringify(business));
-    console.log(asciiJSON(business));
-    const lifecycleTraces = [],
-      sessionTraces = [];
-    await mkdir(directory + "/traces", { mode: 0o700, recursive: true });
-    for (const expected of lifecycle) {
-      stage = `trace:${expected.kind}`;
-      lifecycleTraces.push(
-        await collectLifecycleAdmissionTrace(
-          "http://jaeger:16686",
-          expected,
-          secrets,
-          {
-            directory: directory + "/traces",
-            inspect: inspectLifecycle,
-          },
-        ),
-      );
-    }
+    // Raw requests, scoped Logout and cleanup receipts are independent of Trace.
     const privateRequests = connections.flatMap((client) => [
       client.initializationRequest,
       ...client.records,
@@ -1549,80 +1536,116 @@ async function main() {
       directory,
       "private-inventory.json",
       JSON.stringify(
-        { requests: privateRequests, provider_requests: providerRequests },
+        {
+          requests: privateRequests,
+          provider_requests: providerRequests,
+          lifecycle,
+          connections: connections.map((client) => client.snapshot()),
+        },
         null,
         2,
       ),
     );
-    for (const expected of privateRequests) {
-      stage = `trace:${expected.label}`;
-      sessionTraces.push(
-        await collectPrivateCommandTrace("http://jaeger:16686", expected, {
-          directory: directory + "/traces",
-          flush: () => telemetry.flush(),
-          secrets,
-          requests: expected.kind === "ordinary" ? providerRequests : [],
-        }),
-      );
-    }
-    assert.equal(
-      new Set(sessionTraces.map((row) => row.trace_id)).size,
-      privateRequests.length,
+    assert.deepEqual(
+      logouts.map((row) => row.protocolVersion),
+      [1, 2],
     );
-    for (const observation of logouts)
+    for (const observation of logouts) {
+      assert.equal(observation.agentId, agentId);
+      inspectStage3LogoutBusiness(observation);
       observation.closingLifecycle = lifecycle.find(
         (row) => row.kind === "delete",
       );
+    }
     writeEvidenceFile(
       directory,
       "logout-observations.json",
       JSON.stringify(logouts, null, 2),
     );
+    writeEvidenceFile(directory, "business.json", JSON.stringify(business));
+    const lifecycleTraces = [],
+      sessionTraces = [];
+    for (const [index, expected] of lifecycle.entries()) {
+      stage = `trace:${expected.kind}`;
+      const diagnostic = await diagnostics.run(`lifecycle-${index}`, (signal) =>
+        collectLifecycleAdmissionTrace(
+          "http://jaeger:16686",
+          expected,
+          secrets,
+          {
+            directory: directory + "/traces",
+            inspect: inspectLifecycle,
+            signal,
+          },
+        ),
+      );
+      lifecycleTraces.push(
+        diagnostic.value ?? { kind: expected.kind, diagnostic },
+      );
+    }
+    for (const [index, expected] of privateRequests.entries()) {
+      stage = `trace:${expected.label}`;
+      const diagnostic = await diagnostics.run(`private-${index}`, (signal) =>
+        collectPrivateCommandTrace("http://jaeger:16686", expected, {
+          directory: directory + "/traces",
+          flush: () => telemetry.flush(),
+          secrets,
+          requests: expected.kind === "ordinary" ? providerRequests : [],
+          signal,
+        }),
+      );
+      sessionTraces.push(
+        diagnostic.value ?? { label: expected.label, diagnostic },
+      );
+    }
     stage = "trace:logout";
-    const logoutTraces = await collectStage3Logouts(
-      "http://jaeger:16686",
-      logouts,
-      secrets,
-      { directory: directory + "/traces" },
+    const logoutDiagnostic = await diagnostics.run("logout", (signal) =>
+      collectStage3Logouts("http://jaeger:16686", logouts, secrets, {
+        directory: directory + "/traces",
+        signal,
+      }),
     );
-    assert.equal(logoutTraces.length, 2);
-    const privateOutcome = privateCommandStrictOutcome(sessionTraces);
-    assert.equal(
-      privateOutcome.accepted,
-      true,
-      "unowned private ACP diagnostic",
-    );
-    const lifecycleAccepted = restartRebuildMode
-      ? reviewedFencedRestartOnly(lifecycleTraces)
-      : clockWarningsOnly(lifecycleTraces);
-    const strict = [...lifecycleTraces, ...sessionTraces, ...logoutTraces].some(
-      (row) => row.strict_trace === "failed",
-    )
-      ? "failed"
-      : "passed";
-    const report = {
-      status: "topology_passed",
-      strict_trace: strict,
-      lifecycle_diagnostics_accepted: lifecycleAccepted,
-      private_acp: privateOutcome,
-      lifecycle_traces: lifecycleTraces,
-      session_traces: sessionTraces,
-      logout_traces: logoutTraces,
-    };
-    writeEvidenceFile(
-      directory,
-      "report.json",
-      JSON.stringify(report, null, 2),
-    );
-    console.log(asciiJSON(report));
-    // Keep raw strict failures visible; confirmed external SDK diagnostics do
-    // not invalidate the owning business/transport admissions.
-    if (
-      !lifecycleAccepted ||
-      privateOutcome.exit_code === 2 ||
-      logoutTraces.some((row) => row.strict_trace === "failed")
-    )
-      process.exitCode = 2;
+    const logoutTraces = logoutDiagnostic.value ?? [];
+    await diagnostics.run("trace-assessment", () => {
+      assert.equal(logoutTraces.length, 2);
+      assert.equal(
+        new Set(sessionTraces.map((row) => row.trace_id)).size,
+        privateRequests.length,
+      );
+      const privateOutcome = privateCommandStrictOutcome(sessionTraces);
+      const lifecycleAccepted = restartRebuildMode
+        ? reviewedFencedRestartOnly(lifecycleTraces)
+        : clockWarningsOnly(lifecycleTraces);
+      const strict = [
+        ...lifecycleTraces,
+        ...sessionTraces,
+        ...logoutTraces,
+      ].some((row) => row.strict_trace === "failed")
+        ? "failed"
+        : "passed";
+      writeEvidenceFile(
+        directory,
+        "report.json",
+        JSON.stringify(
+          {
+            status: "trace_assessment",
+            role: "auxiliary",
+            strict_trace: strict,
+            lifecycle_diagnostics_accepted: lifecycleAccepted,
+            private_acp: privateOutcome,
+            lifecycle_traces: lifecycleTraces,
+            session_traces: sessionTraces,
+            logout_traces: logoutTraces,
+          },
+          null,
+          2,
+        ),
+      );
+      assert.equal(privateOutcome.exit_code, 0, "private ACP Trace findings");
+      assert.equal(lifecycleAccepted, true, "lifecycle Trace findings");
+      assert.equal(strict, "passed", "Logout Trace findings");
+    });
+    return business;
   } catch (error) {
     primaryFailure = error;
     throw error;
@@ -1644,9 +1667,19 @@ async function main() {
   }
 }
 try {
-  await withPrivateCommandResources(clients, telemetry, () =>
-    withPrivateCommandConnection({ closeAndWait: saveState }, [], main),
+  const business = await withPrivateCommandResources(
+    clients,
+    telemetry,
+    () => withPrivateCommandConnection({ closeAndWait: saveState }, [], main),
+    { directory },
   );
+  if (business?.status === "business_passed") {
+    business.resources_joined = true;
+    writeEvidenceFile(directory, "business.json", JSON.stringify(business));
+    console.log(
+      asciiJSON({ ...business, trace_diagnostics: diagnostics.summary() }),
+    );
+  }
 } catch (error) {
   try {
     writeEvidenceFile(

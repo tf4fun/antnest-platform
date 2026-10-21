@@ -4,7 +4,7 @@ export async function archiveCompleted(
   requests,
   cache,
   collect,
-  { initializations = [], signal } = {},
+  { initializations = [], signal, diagnostics } = {},
 ) {
   signal?.throwIfAborted();
   for (const request of [...initializations, ...requests]) {
@@ -18,12 +18,26 @@ export async function archiveCompleted(
       );
       continue;
     }
-    const report = await collect(request);
+    let report, diagnostic;
+    if (diagnostics) {
+      diagnostic = await diagnostics.run(
+        `restart-archive-${cache.size}`,
+        async (diagnosticSignal) => {
+          const value = await collect(request, { signal: diagnosticSignal });
+          assert(value?.trace_id, "missing completed request trace report");
+          return value;
+        },
+      );
+      report = diagnostic.value;
+    } else {
+      report = await collect(request);
+      assert(report?.trace_id, "missing completed request trace report");
+    }
     signal?.throwIfAborted();
-    assert(report?.trace_id, "missing completed request trace report");
     cache.set(request.label, {
       request: structuredClone(request),
       report: structuredClone(report),
+      ...(diagnostic ? { diagnostic } : {}),
     });
   }
 }

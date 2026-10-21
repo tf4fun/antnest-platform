@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { complete, guidance, skillSummary } from "./model.mjs";
 
@@ -65,38 +66,39 @@ function capturedRuntime(generation) {
 }
 
 function storedSnapshot(captured) {
+  // Admin Console's execution_snapshot projection omits private authority.
+  // Each original prompt retains captureRuntime() separately for its binding.
   return {
-    organizationId: "organization-managed",
     providerConnectionId: "provider-managed",
     modelProfileId: "model-managed",
     configurationRevision: captured.template_revision,
-    accessRevision: "access-managed",
     deadlineAt: time(120000),
     agentSpecRevision: `agent-spec-${captured.template_revision}`,
     executionRevision: captured.execution_revision,
-    runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
-    runtime: {
-      revision: captured.runtime_revision,
-      executionId: captured.runtime_execution_id,
-      mcpEndpoint: captured.mcp_endpoint,
-      connectionId: `rci_${String(captured.template_revision).repeat(32)}`,
-    },
     executionSpec: {
       systemPrompt: "PRIVATE_MANAGED_BUSINESS_CANARY",
       contextPolicyVersion: "context-v1",
-      skillInstructions: [],
       model: {
-        baseUrl: "http://model:8080",
         model: "managed-fixture",
         contextWindow: 32768,
         maxOutputTokens: 4096,
         supportsImages: false,
       },
       maxModelRequests: 12,
+      configuration: {
+        modelProfileId: "model-managed",
+        authorizationRevision: 1,
+        authorization: { mode: "auto", toolRules: [] },
+      },
     },
-    clientMcpRevisionId: "client-mcp-managed",
   };
+}
+
+function toolIdentity(run, step, providerId = `${run.input[0].text}-${step}`) {
+  return createHash("sha256")
+    .update(JSON.stringify([run.run_id, step, providerId]))
+    .digest("hex");
 }
 
 function echo(phase, calls) {
@@ -242,6 +244,7 @@ function fixture(version = 1) {
       const decision = complete(modelPayload(phase, results));
       const call = decision.choices[0].message.tool_calls[0];
       assert.equal(call.function.name, name);
+      const toolCallId = toolIdentity(run, step, call.id);
       const arguments_ = JSON.parse(call.function.arguments);
       evidence.model.requests.push({ phase, step, outcome: "validated" });
       append(
@@ -249,14 +252,14 @@ function fixture(version = 1) {
           kind: "agent_message",
           messageId: `proposal-${index}-${step}`,
           content: [],
-          toolCalls: [{ id: call.id, name, arguments: arguments_ }],
+          toolCalls: [{ id: toolCallId, name, arguments: arguments_ }],
         },
         false,
       );
       const start = {
         kind: "tool_call",
         initial: true,
-        toolCallId: call.id,
+        toolCallId,
         title: name,
         modelName: name,
         arguments: clone(arguments_),
@@ -265,7 +268,7 @@ function fixture(version = 1) {
       append(start);
       const started = frame(evidence.sessionId, {
         sessionUpdate: version === 1 ? "tool_call" : "tool_call_update",
-        toolCallId: call.id,
+        toolCallId,
         title: name,
         name,
         rawInput: clone(arguments_),
@@ -277,7 +280,7 @@ function fixture(version = 1) {
       const terminal = {
         kind: "tool_call",
         initial: false,
-        toolCallId: call.id,
+        toolCallId,
         status: name === "mcp__alpha__fail" ? "failed" : "completed",
         content: [{ type: "text", text }],
         ...(name.endsWith("__echo") ? { rawOutput: JSON.parse(text) } : {}),
@@ -288,7 +291,7 @@ function fixture(version = 1) {
       append(terminal);
       const finished = frame(evidence.sessionId, {
         sessionUpdate: "tool_call_update",
-        toolCallId: call.id,
+        toolCallId,
         status: terminal.status,
         content: terminal.content.map((content) => ({
           type: "content",
@@ -483,6 +486,47 @@ async function withCleanup(body, cleanup) {
 }
 
 for (const version of [1, 2]) {
+  test(`v${version}: actual public Admin DTOs bind to the original captured execution revision`, () => {
+    const inspect = inspector();
+    const evidence = fixture(version);
+    for (const { run } of evidence.runs) {
+      const snapshot = run.execution_snapshot;
+      // services/admin-console/internal/server/execution_snapshot_projection.go
+      // exposes these fields; it does not expose Runtime process/endpoint data.
+      assert.deepEqual(
+        Object.keys(snapshot).sort(),
+        [
+          "providerConnectionId",
+          "modelProfileId",
+          "configurationRevision",
+          "agentSpecRevision",
+          "executionRevision",
+          "deadlineAt",
+          "agentExecutionSpecDigest",
+          "executionSpec",
+        ].sort(),
+      );
+      assert.deepEqual(
+        Object.keys(snapshot.executionSpec).sort(),
+        [
+          "systemPrompt",
+          "contextPolicyVersion",
+          "maxModelRequests",
+          "model",
+          "configuration",
+        ].sort(),
+      );
+      assert(!Object.hasOwn(snapshot.executionSpec.model, "baseUrl"));
+      const request = evidence.requests.find(
+        (value) => value.phase === run.input[0].text,
+      );
+      assert.equal(
+        snapshot.executionRevision,
+        request.snapshot.execution_revision,
+      );
+    }
+    assert.deepEqual(inspect(evidence), expectedSummary);
+  });
   test(`v${version}: six actual audit Runs and ten paired Tools pass without Trace`, () => {
     const inspect = inspector();
     const evidence = fixture(version);
@@ -741,22 +785,33 @@ const invalidCases = [
     },
   ],
   [
-    "Runtime revision changed",
+    "original captured execution revision changed",
     (e) => {
-      e.runs[0].run.execution_snapshot.runtime.revision = "foreign";
+      e.requests[0].snapshot.execution_revision = "foreign";
     },
   ],
   [
-    "Runtime instance changed",
+    "original captured Runtime revision missing",
     (e) => {
-      e.runs[0].run.execution_snapshot.runtime.executionId = "foreign";
+      delete e.requests[0].snapshot.runtime_revision;
     },
   ],
   [
-    "Runtime endpoint changed",
+    "original captured Runtime instance missing",
     (e) => {
-      e.runs[0].run.execution_snapshot.runtime.mcpEndpoint =
-        "http://foreign/mcp";
+      delete e.requests[0].snapshot.runtime_execution_id;
+    },
+  ],
+  [
+    "original captured Runtime endpoint missing",
+    (e) => {
+      delete e.requests[0].snapshot.mcp_endpoint;
+    },
+  ],
+  [
+    "original Runtime capture missing",
+    (e) => {
+      delete e.requests[0].snapshot;
     },
   ],
   [
@@ -886,7 +941,7 @@ const invalidCases = [
     (e) => {
       e.runs[1].events.items.find(
         ({ payload }) =>
-          payload.toolCallId === "managed-exercise-0" &&
+          payload.toolCallId === toolIdentity(e.runs[1].run, 0) &&
           payload.initial === false,
       ).payload.status = "completed";
     },
@@ -945,7 +1000,7 @@ const invalidCases = [
       e.original = e.original.filter(
         ({ update }) =>
           !(
-            update.toolCallId === "managed-bootstrap-0" &&
+            update.toolCallId === toolIdentity(e.runs[0].run, 0) &&
             update.status === "completed"
           ),
       );
@@ -962,7 +1017,7 @@ const invalidCases = [
     (e) => {
       e.original.find(
         ({ update }) =>
-          update.toolCallId === "managed-bootstrap-0" &&
+          update.toolCallId === toolIdentity(e.runs[0].run, 0) &&
           update.status === "completed",
       ).update.content[0].content.text = "changed";
     },
@@ -971,7 +1026,7 @@ const invalidCases = [
     "replay Tool absent",
     (e) => {
       e.replayed = e.replayed.filter(
-        ({ update }) => update.toolCallId !== "managed-bootstrap-0",
+        ({ update }) => update.toolCallId !== toolIdentity(e.runs[0].run, 0),
       );
     },
   ],
@@ -994,7 +1049,7 @@ const invalidCases = [
     (e) => {
       e.replayed.find(
         ({ update }) =>
-          update.toolCallId === "managed-bootstrap-0" &&
+          update.toolCallId === toolIdentity(e.runs[0].run, 0) &&
           update.status === "completed",
       ).update.content[0].content.text = "changed";
     },
@@ -1005,7 +1060,7 @@ const invalidCases = [
       for (const rows of [e.original, e.replayed])
         rows.find(
           ({ update }) =>
-            update.toolCallId === "managed-bootstrap-0" &&
+            update.toolCallId === toolIdentity(e.runs[0].run, 0) &&
             update.status === "completed",
         ).update.content[0].content.text = "same fabricated result";
     },
@@ -1026,6 +1081,36 @@ for (const version of [1, 2])
     });
 
 for (const version of [1, 2]) {
+  test(`v${version}: coherent Tool receipts still reject bare, foreign-Run or foreign-Provider identities`, () => {
+    const inspect = inspector();
+    for (const variant of ["bare", "foreign-run", "foreign-provider"]) {
+      const evidence = fixture(version);
+      let text = JSON.stringify(evidence);
+      for (const [index, [phase, names]] of plans.entries()) {
+        const run = evidence.runs[index].run;
+        for (const step of names.keys()) {
+          const providerId = `${phase}-${step}`;
+          const original = toolIdentity(run, step, providerId);
+          const replacement =
+            variant === "bare"
+              ? providerId
+              : toolIdentity(
+                  variant === "foreign-run"
+                    ? { ...run, run_id: "foreign-run" }
+                    : run,
+                  step,
+                  variant === "foreign-provider"
+                    ? "foreign-provider-call"
+                    : providerId,
+                );
+          // Change the proposal, durable lifecycle and original/replay wire
+          // together, so only the binding to the actual Run/model can reject it.
+          text = text.replaceAll(original, replacement);
+        }
+      }
+      assert.throws(() => inspect(JSON.parse(text)));
+    }
+  });
   test(`v${version}: additional durable Tool cannot hide behind correct model totals`, () => {
     const inspect = inspector();
     const evidence = fixture(version);

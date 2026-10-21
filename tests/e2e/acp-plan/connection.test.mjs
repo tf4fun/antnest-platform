@@ -301,6 +301,7 @@ for (const version of [1, 2]) {
     );
     assert.equal(result.request.requestId, "2");
     assert.equal(result.request.phase, f.phase);
+    assert.deepEqual(result.input, [{ type: "text", text: f.phase }]);
     assert.equal(result.request.inputSessionID, f.sessionId);
     assert.equal(result.outcome.plans, 1);
     assert.equal(result.outcome.remote_calls, 0);

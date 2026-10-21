@@ -445,6 +445,8 @@ async function exercise(version, kind, template, model) {
     saved = await savedRun(sessionId);
   if (kind === "settle") {
     const before = captureRuntime(await agent(), await runtime());
+    scenario.source = before;
+    preserveBusiness();
     await proxy("/__test/arm", {
       method: "settle-agent",
       organization_id: organizationId,

@@ -151,7 +151,7 @@ export function observeFileModelRequest(payload) {
   };
 }
 
-function start() {
+export function createModelServer() {
   const requests = [];
   const errors = [];
   return createServer(async (request, response) => {
@@ -164,10 +164,6 @@ function start() {
     try {
       assert.equal(request.url, "/v1/chat/completions");
       assert.equal(request.headers.authorization, "Bearer file-model-test");
-      assert.match(
-        request.headers.traceparent ?? "",
-        /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
-      );
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -178,11 +174,32 @@ function start() {
       const result = observeFileModelRequest(
         JSON.parse(Buffer.concat(chunks).toString()),
       );
+      const stage = result.call ? "tool" : "final";
+      assert(
+        !requests.some(
+          (item) => item.phase === result.phase && item.stage === stage,
+        ),
+        "duplicate model request",
+      );
+      const parent = request.headers.traceparent;
+      const trace =
+        typeof parent === "string"
+          ? /^00-([a-f0-9]{32})-([a-f0-9]{16})-(?:00|01)$/u.exec(parent)
+          : null;
+      const traced =
+        trace !== null &&
+        trace[1] !== "0".repeat(32) &&
+        trace[2] !== "0".repeat(16);
       requests.push({
         phase: result.phase,
-        stage: result.call ? "tool" : "final",
-        trace_id: request.headers.traceparent.split("-")[1],
-        model_span_id: request.headers.traceparent.split("-")[2],
+        stage,
+        traceparent: parent,
+        ...(traced
+          ? {
+              trace_id: trace[1],
+              model_span_id: trace[2],
+            }
+          : { trace_diagnostic: "traceparent_unavailable" }),
         ...(result.tool_result ? { tool_result: result.tool_result } : {}),
       });
       response.writeHead(200, { "content-type": "text/event-stream" });
@@ -191,7 +208,10 @@ function start() {
       errors.push(error.message);
       json(400, { error: error.message });
     }
-  }).listen(8080, "0.0.0.0");
+  });
+}
+function start() {
+  return createModelServer().listen(8080, "0.0.0.0");
 }
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url)
   start();

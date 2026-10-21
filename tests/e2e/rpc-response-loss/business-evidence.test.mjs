@@ -19,6 +19,23 @@ const tools = (e, index = 0, step = 0) =>
   );
 const clone = (value) => structuredClone(value);
 
+// Keep original checkpoint copies consistent so a changed Run revision must
+// be rejected by its Runtime binding, not an unrelated replay mismatch.
+function replaceExecutionRevision(evidence, index, step, revision) {
+  const selected = scenario(evidence, index);
+  const runId = selected.runs[step].run.run_id;
+  for (const execution of [
+    ...selected.runs,
+    selected.replay.before.execution,
+    selected.replay.after.execution,
+    selected.denial?.before.execution,
+    selected.denial?.after.execution,
+  ].filter(Boolean)) {
+    if (execution.run.run_id === runId)
+      execution.run.execution_snapshot.executionRevision = revision;
+  }
+}
+
 test("RPC loss admits the original four cases and eight durable Tools without any Trace", () => {
   requireAPI();
   const original = fixture(),
@@ -42,6 +59,73 @@ test("RPC loss admits the original four cases and eight durable Tools without an
     );
   assert(!Object.hasOwn(result, "deleted"));
   assert(!Object.hasOwn(result, "cleanup_completed"));
+});
+
+test("RPC loss accepts only the actual public Admin snapshot shape and separately captured Runtime bindings", () => {
+  requireAPI();
+  const original = fixture();
+  for (const selected of original.scenarios) {
+    for (const execution of [
+      ...selected.runs,
+      selected.replay.before.execution,
+      selected.replay.after.execution,
+      selected.denial?.before.execution,
+      selected.denial?.after.execution,
+    ].filter(Boolean)) {
+      const snapshot = execution.run.execution_snapshot;
+      // services/admin-console/internal/server/execution_snapshot_projection.go
+      // deliberately omits organization/access/client-MCP/Runtime authority.
+      assert.deepEqual(
+        Object.keys(snapshot).sort(),
+        [
+          "providerConnectionId",
+          "modelProfileId",
+          "configurationRevision",
+          "agentSpecRevision",
+          "executionRevision",
+          "deadlineAt",
+          "agentExecutionSpecDigest",
+          "executionSpec",
+        ].sort(),
+      );
+      assert.deepEqual(
+        Object.keys(snapshot.executionSpec).sort(),
+        [
+          "systemPrompt",
+          "contextPolicyVersion",
+          "maxModelRequests",
+          "model",
+          "configuration",
+        ].sort(),
+      );
+      assert(!Object.hasOwn(snapshot.executionSpec.model, "baseUrl"));
+    }
+    if (selected.kind === "settle") {
+      assert.equal(
+        selected.runs[0].run.execution_snapshot.executionRevision,
+        selected.source.execution_revision,
+      );
+      assert.equal(
+        selected.runs[1].run.execution_snapshot.executionRevision,
+        selected.replacement.execution_revision,
+      );
+      // These are captureRuntime() receipts, not private fields invented on
+      // the Admin Run. They do not claim a Run exposed an endpoint or process ID.
+      assert.deepEqual(
+        Object.keys(selected.source).sort(),
+        [
+          "agent_id",
+          "runtime_revision",
+          "runtime_execution_id",
+          "mcp_endpoint",
+          "execution_revision",
+          "template_id",
+          "template_revision",
+        ].sort(),
+      );
+    }
+  }
+  assert.deepEqual(inspect(original), summary);
 });
 
 test("RPC Tool counting permits actual progress and Session-local sequence gaps", () => {
@@ -151,7 +235,7 @@ const groups = [
         saved(e).run.agent_id = "foreign-agent";
       },
       (e) => {
-        saved(e).run.execution_snapshot.organizationId = "foreign-organization";
+        e.organizationId = "foreign-organization";
       },
     ],
   ],
@@ -221,27 +305,78 @@ const groups = [
     ],
   ],
   [
-    "post-Rebuild Run bound to old or foreign Runtime",
-    [
+    "public Run revision inconsistent with its captured source or replacement",
+    [1, 3].flatMap((index) => [
+      (e) => replaceExecutionRevision(e, index, 0, "foreign-write-revision"),
       (e) => {
-        saved(e, 1, 1).run.execution_snapshot.runtime = clone(
-          saved(e, 1, 0).run.execution_snapshot.runtime,
-        );
+        scenario(e, index).source.execution_revision =
+          "foreign-source-revision";
       },
+      (e) => replaceExecutionRevision(e, index, 1, "foreign-read-revision"),
       (e) => {
-        saved(e, 1, 1).run.execution_snapshot.executionRevision = saved(
+        scenario(e, index).replacement.execution_revision =
+          "foreign-replacement-revision";
+      },
+      (e) =>
+        replaceExecutionRevision(
           e,
+          index,
           1,
-          0,
-        ).run.execution_snapshot.executionRevision;
+          scenario(e, index).source.execution_revision,
+        ),
+      (e) => {
+        const old = scenario(e, index).source.execution_revision;
+        scenario(e, index).replacement.execution_revision = old;
+        replaceExecutionRevision(e, index, 1, old);
+      },
+    ]),
+  ],
+  [
+    "missing or foreign captured Runtime receipts",
+    [1, 3].flatMap((index) => [
+      (e) => {
+        delete scenario(e, index).source;
       },
       (e) => {
-        scenario(e, 1).replacement.agent_id = "foreign-agent";
+        delete scenario(e, index).replacement;
       },
       (e) => {
-        delete scenario(e, 3).replacement;
+        scenario(e, index).source.agent_id = "foreign-agent";
       },
-    ],
+      (e) => {
+        scenario(e, index).replacement.agent_id = "foreign-agent";
+      },
+    ]),
+  ],
+  [
+    "replacement Runtime retains its old binding or changes its template",
+    [1, 3].flatMap((index) => [
+      (e) => {
+        scenario(e, index).replacement.runtime_revision = scenario(
+          e,
+          index,
+        ).source.runtime_revision;
+      },
+      (e) => {
+        scenario(e, index).replacement.runtime_execution_id = scenario(
+          e,
+          index,
+        ).source.runtime_execution_id;
+      },
+      (e) => {
+        scenario(e, index).source.runtime_revision = "";
+      },
+      (e) => {
+        scenario(e, index).replacement.runtime_execution_id = "";
+      },
+      (e) => {
+        scenario(e, index).replacement.template_id = "foreign-template";
+      },
+      (e) => {
+        scenario(e, index).replacement.template_revision =
+          scenario(e, index).source.template_revision + 1;
+      },
+    ]),
   ],
   [
     "lost or changed proxy acknowledgement",
