@@ -1,5 +1,29 @@
 # Workspace E2E Suites
 
+The private protocol profile admits business independently of Trace collection.
+`inspectWorkspaceBusiness` checks the original five ACP connections, twelve
+business requests, three persisted Runs, five Provider requests, actual Runtime
+process cancellation and replacement, unchanged replay effects, revocation and
+resource deletion. State polling and authority receipt counts must match the
+complete actual inventories; they are not fixed to one historical run's counts.
+Every lifecycle operation must complete, and every model request must retain its
+actual receive time.
+
+`private-flow.mjs` only emits a joined resource receipt after actual connection,
+watch, authority and held-request work finishes. Raw business archival failures,
+producer stop failures and parent cancellation remain blocking. The producer
+`flushTraceProducers` helper stops seven real services and checks normal exits;
+its misleading name does not make those checks optional.
+
+Collectors, private exporter flush and strict Trace admission share a bounded
+auxiliary diagnostic budget and await cancelled collectors before returning.
+Exporter shutdown has its own budget and is also joined. Raw failures and
+strict verdicts remain available; missing Spans or collector SQL support cannot
+override business admission. `business-completion.mjs` returns
+`business_passed` only after the independent checks, and the outer runner emits
+success only after Docker cleanup. Historical strict inspectors and fixtures
+below remain diagnostic references.
+
 These suites exercise the Agent workspace end to end: private ACP execution
 state, real Runtime tools, cancellation and recovery, and the Agent UI in a real
 browser. Historical public-path fixtures retain the earlier Gateway admission

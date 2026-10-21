@@ -5,6 +5,15 @@ embedded text and links) through the deployed ACP service on a disposable full
 stack. It validates platform delivery and recovery, not a real model's
 recognition quality.
 
+Business admission requires all three transports, nine Provider requests,
+twelve Runs, the complete SDK request inventory, both actual Runtime ACKs,
+two completed Agent deletions and joined connections. Trace collection and
+inspection are auxiliary diagnostics with one shared 60-second budget. The
+final success report is emitted only after resource cleanup has completed.
+The twelve Runs are independently verified through the Admin execution-audit
+API backed by PostgreSQL, including their Session and Principal bindings,
+nine completed outcomes, three local failures and persisted prompt/reply content.
+
 ## Running
 
 ```sh
@@ -49,11 +58,19 @@ grants read-only, runs as the evidence owner, and has no Docker socket.
    Selecting an authorized text-only Model on a Session with native history
    fails locally, makes no Provider HTTP request and durably ends the Run.
    Restoring the native Model permits a new successful prompt without losing
-   attachment context.
-5. Each JSON-RPC request has its own Trace evidence. SDK request observation
+   attachment context. Before Runtime inspection and Agent deletion, complete
+   execution-audit pages must contain twelve unique Runs for the original Agent
+   and none for the other Agent. Every detail and complete execution-event page
+   must match its original prompt phase, Session, Principal and normalized input.
+   Completed Runs require the expected persisted assistant reply; local failures
+   require `model_unsupported_content`. All twelve executors must be quiescent
+   with no Tool effects. The v2 admitted message ID binds to the persisted user
+   message, independently of auxiliary Trace correlation.
+5. Auxiliary Trace inspection binds each JSON-RPC request to its own evidence.
+   SDK request observation
    records actual IDs; WebSocket Traces link to their original connection, and
    HTTP requests bind their exported private CLIENT to the actual workspace
-   HTTP receiver and RPC. Run Traces require
+   HTTP receiver and RPC. Run Trace checks cover
    PostgreSQL terminal persistence, model HTTP correlation, fresh Runtime
    information and catalog reads, and no Tool execution. Replay, configuration
    and denial Traces must not execute Runs or contact the model. Any Runtime
@@ -74,25 +91,37 @@ is forbidden.
 
 ## Results
 
-Collection begins after every original SDK connection has closed and joined.
-Complete raw HTTP query responses are saved before parsing, with byte counts
+Business audit collection begins after every original SDK connection has closed
+and joined, before either Runtime ACK or Agent deletion. Actual audit response
+status and decoded text are saved as `run-audit-response-*.private.json`;
+`run-business.private.json` retains complete or partial collected audit bodies
+even when a read or inspection fails. Audit reads and business archive failures
+remain blocking. The final report includes the verified counts in `run_business`
+and the private receipt filename in `run_business_receipt`.
+
+Auxiliary Trace collection follows Runtime inspection and Agent cleanup.
+Complete raw Trace query responses are saved before parsing, with byte counts
 and SHA-256, and all sources must stabilize over three rounds. Primary Run and
 Provider correlation cannot drop requests with a missing or foreign phase.
 
-The driver reports business, topology and privacy results separately from raw
-strict diagnostics. It exits 0 for strict success, 2 for complete business and
-topology with only reviewed findings, and 1 for other failures. CI runs the
-Stage 3 recipe directly to preserve exit 2 as the existing warning category.
+The driver reports original strict results under `observability` and auxiliary
+warnings under `trace_diagnostics`. Collection failure, missing Traces and
+topology, SQL or timing findings cannot change a completed business result.
+Every failed or uncollected request retains its original inventory position;
+no replacement Trace or Run is invented. Collector cancellation is joined.
+Telemetry shutdown is awaited separately with its own 30-second diagnostic
+budget, even when the collection budget has been exhausted.
+The driver exits 0 after business checks and actual cleanup complete, and 1
+for business, connection, resource cleanup or business archive failures.
 The final completion report counts the transports that finished in `outcomes`
 as `scenarios`, so the existing CI gate can recognize the complete business
-report. An incomplete report, later cleanup failure or unreviewed warning
-still fails that gate.
-Raw errors, warnings and failed strict status remain visible. The same-Node SDK
-investigation is deferred only for original endpoint differences strictly below
-1 ms, with matching process identity and SDK anchors; timestamps are never
-rewritten. Cross-process differences and larger gaps do not use that deferral.
-Streaming response persistence is checked separately from Provider transport:
-only the owning message-append SQL and Session output reads are accepted.
+report. An incomplete report or later cleanup failure still fails that gate.
+Raw errors, warnings and failed strict status remain visible without rewriting
+their timestamps or outcomes. Existing SDK timing and ownership observations
+remain diagnostic evidence.
+Business response persistence is checked through the stored execution events,
+separately from Provider transport. Owning message-append SQL and Session output
+Trace reads remain auxiliary diagnostics.
 Output publication is asynchronous in the owning service and may finish after
 the model span; those original endpoints and warnings are retained, without
 claiming a synchronous join or applying the sub-millisecond deferral.

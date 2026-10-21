@@ -83,5 +83,9 @@ export interface RunEventRepository {
   startToolAttempt(input: StartToolAttemptInput): Promise<SessionEvent>;
   appendRejectedToolCall(input: AppendRejectedToolCallInput): Promise<SessionEvent>;
   finishToolAttempt(input: FinishToolAttemptInput): Promise<SessionEvent>;
-  interruptToolAttempts(runId: string, interruptedAt: Date): Promise<InterruptedToolEffects>;
+  interruptToolAttempts(
+    runId: string,
+    interruptedAt: Date,
+    reason?: "service_restart" | "persistence_failure",
+  ): Promise<InterruptedToolEffects>;
 }

@@ -8,13 +8,15 @@ import type {
   ExecutionRepository,
   FinishLocalRunInput,
   RecoveryWork,
+  RunRecoveryReader,
+  RunRecoveryState,
   RuntimeProtectionRepository,
   RuntimeProtectionScope,
 } from "../../ports/execution-repository.js";
 import type { PostgresKernel } from "./kernel.js";
 
 export class PostgresExecutionRepository
-  implements ExecutionRepository, RuntimeProtectionRepository
+  implements ExecutionRepository, RunRecoveryReader, RuntimeProtectionRepository
 {
   public constructor(private readonly kernel: PostgresKernel) {}
 
@@ -47,6 +49,21 @@ export class PostgresExecutionRepository
       [runId],
     );
     return result.rows[0]?.state ?? null;
+  }
+
+  public async getRecoveryState(runId: string): Promise<RunRecoveryState | null> {
+    const result = await this.kernel.query<TerminalOutcomeRow & { state: RunState }>(
+      `SELECT state, terminal_class, executor_state, tool_effect_state,
+              unknown_effect_source, stop_reason, error_class
+         FROM runs WHERE id = $1`,
+      [runId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return null;
+    if (row.state === "admitting" || row.state === "running") return { kind: row.state };
+    const outcome = storedOutcome(row);
+    if (row.state !== outcome.terminalClass) throw new Error("Run has inconsistent terminal state");
+    return { kind: "terminal", outcome };
   }
 
   public async finish(input: FinishLocalRunInput): Promise<void> {

@@ -243,15 +243,16 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
   });
 
   it("rolls back stopping proof when the terminal event cannot commit", async () => {
-    const { runId, snapshot } = await accept();
-    const eventId = randomUUID();
+    const { runId, sessionId, snapshot } = await accept();
+    const startEventId = randomUUID();
+    const finishEventId = randomUUID();
     const scope = {
       organizationId: "organization-1",
       agentId: "agent-1",
       runtimeRevision: snapshot.runtime.revision,
     };
     await events.startToolAttempt({
-      id: eventId,
+      id: startEventId,
       runId,
       toolCallId: "call-1",
       tool: {
@@ -265,28 +266,121 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
       requestDigest: "digest",
       createdAt: new Date(),
     });
-    await expect(
-      events.finishToolAttempt({
-        id: eventId,
-        runId,
-        toolCallId: "call-1",
-        status: "completed",
-        content: [],
-        resultSummary: [],
-        toolEffectState: "settled",
-        runtimeCallStopped: true,
-        createdAt: new Date(),
-      }),
-    ).rejects.toMatchObject({ code: "23505" });
-    expect(await executions.hasUnstoppedRuntimeCalls(scope)).toBe(true);
+    const finishInput = {
+      id: finishEventId,
+      runId,
+      toolCallId: "call-1",
+      status: "completed" as const,
+      content: [],
+      resultSummary: [],
+      toolEffectState: "settled" as const,
+      runtimeCallStopped: true,
+      createdAt: new Date(),
+    };
+    const sequenceBefore = (
+      await pool.query(
+        "SELECT last_message_sequence FROM acp_sessions WHERE id = $1",
+        [sessionId],
+      )
+    ).rows;
+    try {
+      await pool.query(`
+        CREATE FUNCTION reject_stopping_proof_terminal_event() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM tool_attempts
+            WHERE run_id = NEW.run_id
+              AND tool_call_id = NEW.payload->>'toolCallId'
+              AND source = 'runtime'
+              AND state = 'completed'
+              AND tool_effect_state = 'settled'
+              AND runtime_call_stopped = true
+              AND finish_runtime_call_stopped = true
+          ) THEN
+            RAISE EXCEPTION 'terminal event reached before stopping proof'
+              USING ERRCODE = 'P0053';
+          END IF;
+          RAISE EXCEPTION 'controlled terminal event insert failure after stopping proof'
+            USING ERRCODE = 'P0052';
+        END $$;
+        CREATE TRIGGER reject_stopping_proof_terminal_event
+          BEFORE INSERT ON session_messages
+          FOR EACH ROW WHEN (NEW.id = '${finishEventId}')
+          EXECUTE FUNCTION reject_stopping_proof_terminal_event()
+      `);
+      await expect(events.finishToolAttempt(finishInput)).rejects.toMatchObject(
+        {
+          code: "P0052",
+          message:
+            "controlled terminal event insert failure after stopping proof",
+        },
+      );
+      expect(await executions.hasUnstoppedRuntimeCalls(scope)).toBe(true);
+      expect(
+        (
+          await pool.query(
+            "SELECT state, runtime_call_stopped, finish_runtime_call_stopped FROM tool_attempts WHERE run_id = $1",
+            [runId],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          state: "in_progress",
+          runtime_call_stopped: false,
+          finish_runtime_call_stopped: null,
+        },
+      ]);
+      expect(
+        (
+          await pool.query("SELECT id FROM session_messages WHERE id = $1", [
+            finishEventId,
+          ])
+        ).rows,
+      ).toEqual([]);
+      expect(
+        (
+          await pool.query(
+            "SELECT last_message_sequence FROM acp_sessions WHERE id = $1",
+            [sessionId],
+          )
+        ).rows,
+      ).toEqual(sequenceBefore);
+    } finally {
+      await pool.query(`
+        DROP TRIGGER IF EXISTS reject_stopping_proof_terminal_event ON session_messages;
+        DROP FUNCTION IF EXISTS reject_stopping_proof_terminal_event()
+      `);
+    }
+    await expect(events.finishToolAttempt(finishInput)).resolves.toEqual({
+      kind: "tool_call",
+      initial: false,
+      toolCallId: "call-1",
+      status: "completed",
+      content: [],
+    });
+    expect(await executions.hasUnstoppedRuntimeCalls(scope)).toBe(false);
     expect(
       (
         await pool.query(
-          "SELECT state, runtime_call_stopped FROM tool_attempts WHERE run_id = $1",
+          "SELECT state, runtime_call_stopped, finish_runtime_call_stopped FROM tool_attempts WHERE run_id = $1",
           [runId],
         )
       ).rows,
-    ).toEqual([{ state: "in_progress", runtime_call_stopped: false }]);
+    ).toEqual([
+      {
+        state: "completed",
+        runtime_call_stopped: true,
+        finish_runtime_call_stopped: true,
+      },
+    ]);
+    expect(
+      (
+        await pool.query("SELECT id FROM session_messages WHERE id = $1", [
+          finishEventId,
+        ])
+      ).rows,
+    ).toEqual([{ id: finishEventId }]);
   });
 
   it("stores local identity/configuration and deadline without a Controller admission column", async () => {

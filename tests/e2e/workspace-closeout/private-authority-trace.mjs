@@ -30,7 +30,11 @@ const reasons = new Set([
   "workspace-identity-denied-server",
 ]);
 
-export function assertWorkspaceAuthorityReceipt(receipt, expected) {
+export function assertWorkspaceAuthorityReceipt(
+  receipt,
+  expected,
+  { requireTrace = true } = {},
+) {
   same(expected.kind, "workspace_identity");
   assert(
     Number.isSafeInteger(expected.scope?.operation_id) &&
@@ -47,15 +51,17 @@ export function assertWorkspaceAuthorityReceipt(receipt, expected) {
     assert(
       typeof expected.principal[key] === "string" && expected.principal[key],
     );
-  same(receipt.traceID, expected.traceID);
-  same(receipt.clientSpanID, expected.clientSpanID);
-  assert(
-    /^[a-f0-9]{32}$/u.test(receipt.traceID) &&
-      /^[a-f0-9]{16}$/u.test(receipt.clientSpanID),
-  );
+  if (requireTrace) {
+    same(receipt.traceID, expected.traceID);
+    same(receipt.clientSpanID, expected.clientSpanID);
+    assert(
+      /^[a-f0-9]{32}$/u.test(receipt.traceID) &&
+        /^[a-f0-9]{16}$/u.test(receipt.clientSpanID),
+    );
+  }
   if (receipt.status === 401) {
     same(expected.scope.kind, "denied-connection");
-    return assertWorkspaceResolveDenied(receipt, expected);
+    return assertWorkspaceResolveDenied(receipt, expected, { requireTrace });
   }
   assert(["connection", "watch", "state"].includes(expected.scope.kind));
   same(receipt.status, 200);
@@ -68,7 +74,7 @@ export function assertWorkspaceAuthorityReceipt(receipt, expected) {
   same(receipt.errors, []);
   same(receipt.client_ended, true);
   same(receipt.body_outcome, "eof");
-  if (receipt.response_trace_id !== null)
+  if (requireTrace && receipt.response_trace_id !== null)
     same(receipt.response_trace_id, receipt.traceID);
   assert(/^application\/json(?:\s*;|$)/iu.test(receipt.content_type));
   const times = [

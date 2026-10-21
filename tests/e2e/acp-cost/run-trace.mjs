@@ -19,6 +19,7 @@ const appendQueries = new Map(
     "SELECT session_id FROM runs WHERE id = $1",
     "SELECT last_message_sequence FROM acp_sessions WHERE id = $1 FOR UPDATE",
     "SELECT session_id, state FROM runs WHERE id = $1 FOR UPDATE",
+    "SELECT run_id, session_id, kind, visible, payload, created_at FROM session_messages WHERE id = $1",
     `INSERT INTO session_messages(
        id, session_id, run_id, sequence, kind, visible, payload, created_at
      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
@@ -71,15 +72,10 @@ const finishQuery = normalize(`WITH finished AS (UPDATE runs
 const replyQueries = [...appendQueries.keys()]
   .filter((sql) => sql !== "COMMIT")
   .concat("COMMIT");
-const storedUsage =
-  "SELECT run_id, payload FROM session_messages WHERE id = $1";
 const usageQueries = [
-  "BEGIN",
-  storedUsage,
-  ...replyQueries.slice(1, 4),
-  storedUsage,
+  ...replyQueries.slice(0, 5),
   "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'usage' ORDER BY sequence DESC LIMIT 1",
-  ...replyQueries.slice(4),
+  ...replyQueries.slice(5),
 ];
 const [sessionRead, outputRead, configurationRead] = [...outputQueries.keys()];
 const outputSequence = [

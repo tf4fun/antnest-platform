@@ -243,6 +243,7 @@ describe.skipIf(databaseUrl === undefined)(
       const publish = vi.fn(() => Promise.resolve());
       const events = new DurableRunEvents({
         repository: app.events,
+        ownershipSignal: new AbortController().signal,
         publish,
         id: () => "unused",
         now: () => new Date(),

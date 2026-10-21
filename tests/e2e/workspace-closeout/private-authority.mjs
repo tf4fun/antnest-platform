@@ -226,7 +226,11 @@ export function createWorkspaceAuthority({
   };
 }
 
-export function assertWorkspaceResolveDenied(receipt, expected) {
+export function assertWorkspaceResolveDenied(
+  receipt,
+  expected,
+  { requireTrace = true } = {},
+) {
   assert(receipt, "actual Workspace Resolve receipt required");
   assert.equal(receipt.agentId, expected.agentID);
   assert.deepEqual(receipt.principal, expected.principal);
@@ -243,9 +247,11 @@ export function assertWorkspaceResolveDenied(receipt, expected) {
     401,
     "owner revocation requires original Identity 401",
   );
-  assert.match(receipt.traceID, /^[a-f0-9]{32}$/u);
-  assert.match(receipt.clientSpanID, /^[a-f0-9]{16}$/u);
-  if (receipt.response_trace_id !== null)
+  if (requireTrace) {
+    assert.match(receipt.traceID, /^[a-f0-9]{32}$/u);
+    assert.match(receipt.clientSpanID, /^[a-f0-9]{16}$/u);
+  }
+  if (requireTrace && receipt.response_trace_id !== null)
     assert(
       receipt.response_trace_id === receipt.traceID,
       "Identity response Trace differs from the actual CLIENT",

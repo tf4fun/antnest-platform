@@ -29,6 +29,13 @@ version fails startup. Database migrations are forward-only; rolling the
 service binary back requires restoring a database backup whose migration
 journal matches that older release.
 
+Migration `0021_tool_finish_receipts.sql` retains the original Tool finish
+stopping-evidence input separately from the current `runtime_call_stopped`
+value, which temporary Skill cleanup can later advance. Historical rows retain
+NULL because that original input cannot be inferred safely; they are not
+acknowledged as an exact finish retry. The new field is private persistence
+metadata and is not added to ACP events.
+
 Migration `0004_session_configuration.sql` adds Session overrides/revision and
 the configuration captured in each Run intent. Historical intents may retain
 NULL, but startup does not replay any intent. The current configuration is
@@ -281,16 +288,26 @@ Collector retention. This service adds no retention service.
 - A confirmed Runtime-managed MCP error is returned to the model as a Tool
   result; an unknown transport effect still terminates the Run as unresolved.
 - PostgreSQL unavailable: readiness fails and no prompt is accepted.
-- An unconfirmed Run admission or completion write stops new Run admission and
+- An unconfirmed Run admission write stops new Run admission and
   requires service recovery. An unacknowledged prompt returns JSON-RPC `-32603`
   with `code: database_error` and `retryable: false`; its public message contains
   no database details. The original cause remains available to internal
-  diagnostics. A v2 prompt already acknowledged keeps that receipt and its
-  connection closes on completion failure; ACP does not invent a new outcome.
+  diagnostics. ACP does not invent a new outcome.
   Startup classifies the durable Run without repeating model or Tool work.
   Component coverage uses production service composition and real PostgreSQL
   with fake outbound Runtime/model peers in
   [`persistence-faults.postgres.test.ts`](../../../tests/integration/agent-acp-service/e2e/persistence-faults.postgres.test.ts).
+- Run-event or terminal acknowledgement loss retries the identical write up to
+  three times. Exhaustion isolates that Run's Agent while scoped recovery
+  reads durable state; healthy Agents continue in the same service instance.
+  Recovery retains the busy slot and Runtime pin until an outcome is confirmed.
+  It does not replay model or Tool effects, and a missing row is not a successful
+  recovery. Committed terminal results are returned unchanged. Event failure
+  closes undispatched calls and records `persistence_interrupted`; unknown
+  effects or temporary cleanup failure remain unresolved and retain their barrier.
+  Recovery retries use 250 ms to 5 s backoff plus jitter and stop on worker
+  ownership loss or shutdown. Admission uncertainty still uses the startup path
+  above; this does not yet provide complete admission-failure isolation.
 - Run worker lock unavailable: startup fails because another replica owns Run
   execution. A same-session heartbeat detects loss of the dedicated lock
   connection; loss makes readiness false, aborts startup recovery and local

@@ -1,3 +1,5 @@
+import { RunRecovery } from "../../../../services/agent-acp-service/src/application/run-recovery.js";
+import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
 import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { runtimeConnections } from "../../../../services/agent-acp-service/test/support/runtime-connections.js";
 import { SessionConfigurationService } from "../../../../services/agent-acp-service/src/application/session-configuration.js";
@@ -174,6 +176,7 @@ export async function startBoundaryApplication(
           };
   const access = new AccessService({ directory });
   const permissionRepository = new PostgresToolPermissions(kernel);
+  const ownership = new AbortController();
   const supervisor = new RunSupervisor(
     new RunExecutor({
       runtimeConnections: connections,
@@ -193,8 +196,14 @@ export async function startBoundaryApplication(
       providers,
       tools,
       events,
-      ownershipSignal: new AbortController().signal,
-      recoveryRequired,
+      ownershipSignal: ownership.signal,
+      recovery: new RunRecovery({
+        executions,
+        runs,
+        events,
+        telemetry: NOOP_TELEMETRY,
+        now: () => new Date(),
+      }),
       id: newResourceId,
       now: () => new Date(),
     }),
@@ -245,6 +254,7 @@ export async function startBoundaryApplication(
   });
   const clients: AcpWireClient[] = [];
   async function close() {
+    ownership.abort(new Error("ACP boundary fixture is closing"));
     for (const client of clients) await client.close();
     await server.close();
     await supervisor.shutdown();

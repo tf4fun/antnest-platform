@@ -10,6 +10,13 @@ export type FinishLocalRunInput = RunOutcome & {
   finishedAt: Date;
 };
 
+export type RunRecoveryState =
+  { kind: "admitting" | "running" } | { kind: "terminal"; outcome: RunOutcome };
+
+export interface RunRecoveryReader {
+  getRecoveryState(runId: string): Promise<RunRecoveryState | null>;
+}
+
 export interface ExecutionRepository {
   getState(runId: string): Promise<RunState | null>;
   finish(input: FinishLocalRunInput): Promise<void>;

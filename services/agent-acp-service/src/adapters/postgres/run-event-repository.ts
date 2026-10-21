@@ -27,7 +27,24 @@ export class PostgresRunEventRepository implements RunEventRepository {
 
   public appendPlan(input: Parameters<RunEventRepository["appendPlan"]>[0]): Promise<boolean> {
     return this.kernel.transaction(async (client) => {
-      const locked = await lockRunAndSession(client, input.runId);
+      const locked = await lockSessionRun(client, input.runId);
+      const receipts: Array<SessionEvent | undefined> = [];
+      for (const [index, event] of input.events.entries()) {
+        receipts.push(
+          await storedEventReceipt(client, locked, {
+            id: deriveResourceId("message", "plan", `${input.id}:${index}`),
+            kind: event.kind,
+            event,
+            createdAt: input.createdAt,
+          }),
+        );
+      }
+      if (receipts.some((receipt) => receipt !== undefined)) {
+        if (receipts.some((receipt) => receipt === undefined))
+          throw new Error("Plan receipt is incomplete");
+        return true;
+      }
+      requireRunning(locked.state);
       const run = await client.query<{ cancel_requested_at: Date | null }>(
         "SELECT cancel_requested_at FROM runs WHERE id = $1",
         [input.runId],
@@ -55,16 +72,24 @@ export class PostgresRunEventRepository implements RunEventRepository {
       status: "in_progress",
       content: input.content,
     };
-    await this.kernel.transaction(async (client) => {
-      const locked = await lockRunAndSession(client, input.runId);
+    return this.kernel.transaction(async (client) => {
+      const locked = await lockSessionRun(client, input.runId);
+      const receipt = await storedEventReceipt(client, locked, {
+        id: input.id,
+        kind: "tool_call",
+        event,
+        createdAt: input.createdAt,
+      });
+      if (receipt !== undefined) return receipt;
+      requireRunning(locked.state);
       const attempt = await client.query(
         "SELECT id FROM tool_attempts WHERE run_id = $1 AND tool_call_id = $2 AND state = 'in_progress'",
         [input.runId, input.toolCallId],
       );
       if (attempt.rowCount !== 1) throw new Error("Tool attempt is not in progress");
       await appendLocked(client, locked, input.id, "tool_call", event, input.createdAt);
+      return event;
     });
-    return event;
   }
 
   public async appendAgentMessage(input: AppendAgentMessageInput): Promise<SessionEvent> {
@@ -75,7 +100,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       ...(input.toolCalls === undefined ? {} : { toolCalls: input.toolCalls }),
       ...(input.responseId === undefined ? {} : { responseId: input.responseId }),
     };
-    await this.append(
+    return this.append(
       input.runId,
       input.id,
       "agent_message",
@@ -83,7 +108,6 @@ export class PostgresRunEventRepository implements RunEventRepository {
       input.createdAt,
       input.content.length > 0,
     );
-    return event;
   }
 
   public async appendAgentThought(input: AppendAgentMessageInput): Promise<SessionEvent> {
@@ -93,19 +117,16 @@ export class PostgresRunEventRepository implements RunEventRepository {
       ...(input.responseId === undefined ? {} : { responseId: input.responseId }),
       content: input.content,
     };
-    await this.append(input.runId, input.id, "agent_thought", event, input.createdAt);
-    return event;
+    return this.append(input.runId, input.id, "agent_thought", event, input.createdAt);
   }
 
   public appendUsage(
     input: Parameters<RunEventRepository["appendUsage"]>[0],
   ): Promise<SessionEvent> {
     return this.kernel.transaction(async (client) => {
-      const existing = await storedUsage(client, input);
-      if (existing !== undefined) return existing;
       const locked = await lockSessionRun(client, input.runId);
-      const concurrent = await storedUsage(client, input);
-      if (concurrent !== undefined) return concurrent;
+      const receipt = await storedUsage(client, locked, input);
+      if (receipt !== undefined) return receipt;
       requireRunning(locked.state);
       const previous = await client.query<{ payload: StoredSessionEvent }>(
         "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'usage' ORDER BY sequence DESC LIMIT 1",
@@ -137,8 +158,19 @@ export class PostgresRunEventRepository implements RunEventRepository {
       arguments: input.arguments,
       status: "in_progress",
     };
-    await this.kernel.transaction(async (client) => {
-      const locked = await lockRunAndSession(client, input.runId);
+    return this.kernel.transaction(async (client) => {
+      const locked = await lockSessionRun(client, input.runId);
+      const receipt = await storedEventReceipt(client, locked, {
+        id: input.id,
+        kind: "tool_call",
+        event,
+        createdAt: input.createdAt,
+      });
+      if (receipt !== undefined) {
+        await requireToolStartReceipt(client, input);
+        return receipt;
+      }
+      requireRunning(locked.state);
       await client.query(
         `INSERT INTO tool_attempts(
            id, run_id, tool_call_id, source, source_id, tool_name, request_digest,
@@ -156,8 +188,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
         ],
       );
       await appendLocked(client, locked, input.id, "tool_call", event, input.createdAt);
+      return event;
     });
-    return event;
   }
 
   public async appendRejectedToolCall(input: AppendRejectedToolCallInput): Promise<SessionEvent> {
@@ -171,8 +203,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       status: "failed",
       content: [{ type: "text", text: input.message }],
     };
-    await this.append(input.runId, input.id, "tool_call", event, input.createdAt);
-    return event;
+    return this.append(input.runId, input.id, "tool_call", event, input.createdAt);
   }
 
   public async finishToolAttempt(input: FinishToolAttemptInput): Promise<SessionEvent> {
@@ -185,12 +216,24 @@ export class PostgresRunEventRepository implements RunEventRepository {
       ...(input.rawOutput === undefined ? {} : { rawOutput: input.rawOutput }),
       ...(input.file === undefined ? {} : { file: input.file }),
     };
-    await this.kernel.transaction(async (client) => {
-      const locked = await lockRunAndSession(client, input.runId);
+    return this.kernel.transaction(async (client) => {
+      const locked = await lockSessionRun(client, input.runId);
+      const receipt = await storedEventReceipt(client, locked, {
+        id: input.id,
+        kind: "tool_call",
+        event,
+        createdAt: input.createdAt,
+      });
+      if (receipt !== undefined) {
+        await requireToolFinishReceipt(client, input);
+        return receipt;
+      }
+      requireRunning(locked.state);
       const updated = await client.query(
         `UPDATE tool_attempts
             SET state = $3, result_summary = $4::jsonb, tool_effect_state = $5,
-                finished_at = $6, updated_at = $6, runtime_call_stopped = $7
+                finished_at = $6, updated_at = $6, runtime_call_stopped = $7,
+                finish_runtime_call_stopped = $7
           WHERE run_id = $1 AND tool_call_id = $2 AND state = 'in_progress'`,
         [
           input.runId,
@@ -206,13 +249,14 @@ export class PostgresRunEventRepository implements RunEventRepository {
         throw new Error("Tool attempt is not in progress");
       }
       await appendLocked(client, locked, input.id, "tool_call", event, input.createdAt);
+      return event;
     });
-    return event;
   }
 
   public async interruptToolAttempts(
     runId: string,
     interruptedAt: Date,
+    reason: "service_restart" | "persistence_failure" = "service_restart",
   ): Promise<InterruptedToolEffects> {
     return this.kernel.transaction(async (client) => {
       const locked = await lockRunAndSession(client, runId);
@@ -266,9 +310,13 @@ export class PostgresRunEventRepository implements RunEventRepository {
           {
             type: "text" as const,
             text:
-              attempt.source === "agent" && !attempt.temporary_scope
-                ? "Skill discovery read was interrupted by Agent ACP Service restart. No Runtime mutation was dispatched."
-                : "Tool outcome is unknown because Agent ACP Service restarted.",
+              reason === "persistence_failure"
+                ? attempt.source === "agent" && !attempt.temporary_scope
+                  ? "Skill discovery read was interrupted by Run persistence failure. No Runtime mutation was dispatched."
+                  : "Tool outcome is unknown after Run persistence was interrupted."
+                : attempt.source === "agent" && !attempt.temporary_scope
+                  ? "Skill discovery read was interrupted by Agent ACP Service restart. No Runtime mutation was dispatched."
+                  : "Tool outcome is unknown because Agent ACP Service restarted.",
           },
         ];
         await client.query(
@@ -301,7 +349,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
         );
         interrupted += 1;
       }
-      await appendUnstartedToolResults(client, locked, runId, interruptedAt, interrupted);
+      await appendUnstartedToolResults(client, locked, runId, interruptedAt, interrupted, reason);
       if (effectState === "unknown") {
         return {
           toolEffectState: "unknown",
@@ -319,10 +367,20 @@ export class PostgresRunEventRepository implements RunEventRepository {
     event: SessionEvent,
     createdAt: Date,
     visible = true,
-  ): Promise<void> {
-    await this.kernel.transaction(async (client) => {
-      const locked = await lockRunAndSession(client, runId);
+  ): Promise<SessionEvent> {
+    return this.kernel.transaction(async (client) => {
+      const locked = await lockSessionRun(client, runId);
+      const receipt = await storedEventReceipt(client, locked, {
+        id,
+        kind,
+        event,
+        createdAt,
+        visible,
+      });
+      if (receipt !== undefined) return receipt;
+      requireRunning(locked.state);
       await appendLocked(client, locked, id, kind, event, createdAt, visible);
+      return event;
     });
   }
 }
@@ -339,25 +397,144 @@ function mergeUnknownEffectSource(
 
 type LockedRun = { runId: string; sessionId: string; nextSequence: number };
 
-async function storedUsage(
+type EventReceiptExpectation = {
+  id: string;
+  kind: string;
+  event?: SessionEvent;
+  createdAt: Date;
+  visible?: boolean;
+};
+
+async function storedEventReceipt(
   client: PoolClient,
-  input: Parameters<RunEventRepository["appendUsage"]>[0],
+  locked: LockedRun,
+  expected: EventReceiptExpectation,
 ): Promise<SessionEvent | undefined> {
-  const result = await client.query<{ run_id: string; payload: StoredSessionEvent }>(
-    "SELECT run_id, payload FROM session_messages WHERE id = $1",
-    [input.id],
+  const result = await client.query<{
+    run_id: string | null;
+    session_id: string;
+    kind: string;
+    visible: boolean;
+    payload: StoredSessionEvent;
+    created_at: Date;
+  }>(
+    "SELECT run_id, session_id, kind, visible, payload, created_at FROM session_messages WHERE id = $1",
+    [expected.id],
   );
   const row = result.rows[0];
   if (row === undefined) return undefined;
   const event = decodeSessionEvent(row.payload);
   if (
-    row.run_id !== input.runId ||
+    row.run_id !== locked.runId ||
+    row.session_id !== locked.sessionId ||
+    row.kind !== expected.kind ||
+    row.visible !== (expected.visible ?? true) ||
+    row.created_at.getTime() !== expected.createdAt.getTime() ||
+    event.kind !== expected.kind ||
+    (expected.event !== undefined &&
+      !isDeepStrictEqual(event, normalizeSessionEvent(expected.event)))
+  )
+    throw new Error("Run event receipt identity conflict");
+  return event;
+}
+
+function normalizeSessionEvent(event: SessionEvent): SessionEvent {
+  // Compare the event as persisted, including JSON's treatment of undefined and
+  // the codec's escaping of NUL and lone surrogates in Tool observations.
+  const stored = JSON.parse(JSON.stringify(encodeSessionEvent(event))) as StoredSessionEvent;
+  return decodeSessionEvent(stored);
+}
+
+async function storedUsage(
+  client: PoolClient,
+  locked: LockedRun,
+  input: Parameters<RunEventRepository["appendUsage"]>[0],
+): Promise<SessionEvent | undefined> {
+  const event = await storedEventReceipt(client, locked, {
+    id: input.id,
+    kind: "usage",
+    createdAt: input.createdAt,
+  });
+  if (event === undefined) return undefined;
+  if (
     event.kind !== "usage" ||
     event.size !== input.contextSize ||
-    !isDeepStrictEqual(event.measurement, input.usage)
+    !isDeepStrictEqual(event.measurement, JSON.parse(JSON.stringify(input.usage)))
   )
     throw new Error("Usage receipt identity conflict");
   return event;
+}
+
+async function requireToolStartReceipt(
+  client: PoolClient,
+  input: StartToolAttemptInput,
+): Promise<void> {
+  const id = deriveResourceId("toolattempt", "tool-start", input.id);
+  const result = await client.query<{
+    id: string;
+    run_id: string;
+    tool_call_id: string;
+    source: string;
+    source_id: string;
+    tool_name: string;
+    request_digest: string;
+    started_at: Date | null;
+    created_at: Date;
+  }>(
+    `SELECT id, run_id, tool_call_id, source, source_id, tool_name,
+            request_digest, started_at, created_at
+       FROM tool_attempts WHERE id = $1`,
+    [id],
+  );
+  const row = result.rows[0];
+  // State, effects and completion evidence can advance after the start commits.
+  if (
+    row === undefined ||
+    row.id !== id ||
+    row.run_id !== input.runId ||
+    row.tool_call_id !== input.toolCallId ||
+    row.source !== input.tool.source ||
+    row.source_id !== input.tool.sourceId ||
+    row.tool_name !== input.tool.name ||
+    row.request_digest !== input.requestDigest ||
+    row.started_at?.getTime() !== input.createdAt.getTime() ||
+    row.created_at.getTime() !== input.createdAt.getTime()
+  )
+    throw new Error("Tool start receipt identity conflict");
+}
+
+async function requireToolFinishReceipt(
+  client: PoolClient,
+  input: FinishToolAttemptInput,
+): Promise<void> {
+  const result = await client.query<{
+    run_id: string;
+    tool_call_id: string;
+    state: string;
+    tool_effect_state: ToolEffectState;
+    result_summary: unknown;
+    finished_at: Date | null;
+    finish_runtime_call_stopped: boolean | null;
+  }>(
+    `SELECT run_id, tool_call_id, state, tool_effect_state, result_summary,
+            finished_at, finish_runtime_call_stopped
+       FROM tool_attempts WHERE run_id = $1 AND tool_call_id = $2`,
+    [input.runId, input.toolCallId],
+  );
+  const row = result.rows[0];
+  // Cleanup may advance runtime_call_stopped. A NULL original input is unknown
+  // and cannot establish a receipt for a historical finish.
+  if (
+    row === undefined ||
+    row.run_id !== input.runId ||
+    row.tool_call_id !== input.toolCallId ||
+    row.state !== input.status ||
+    row.tool_effect_state !== input.toolEffectState ||
+    !isDeepStrictEqual(row.result_summary, JSON.parse(JSON.stringify(input.resultSummary))) ||
+    row.finished_at?.getTime() !== input.createdAt.getTime() ||
+    row.finish_runtime_call_stopped !== (input.runtimeCallStopped === true)
+  )
+    throw new Error("Tool finish receipt identity conflict");
 }
 
 async function lockRunAndSession(client: PoolClient, runId: string): Promise<LockedRun> {
@@ -450,6 +627,7 @@ async function appendUnstartedToolResults(
   runId: string,
   interruptedAt: Date,
   sequenceOffset: number,
+  reason: "service_restart" | "persistence_failure",
 ): Promise<void> {
   const assistant = await client.query<{ id: string; sequence: string; payload: unknown }>(
     `SELECT id, sequence, payload
@@ -487,7 +665,10 @@ async function appendUnstartedToolResults(
     const content = [
       {
         type: "text" as const,
-        text: "Tool was not executed because Agent ACP Service restarted before dispatch.",
+        text:
+          reason === "persistence_failure"
+            ? "Tool was not executed because Run persistence was interrupted before dispatch."
+            : "Tool was not executed because Agent ACP Service restarted before dispatch.",
       },
     ];
     await appendLocked(

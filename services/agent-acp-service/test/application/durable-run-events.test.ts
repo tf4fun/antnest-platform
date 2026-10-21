@@ -34,6 +34,7 @@ describe("DurableRunEvents", () => {
     };
     const events = new DurableRunEvents({
       repository,
+      ownershipSignal: new AbortController().signal,
       publish: vi.fn(() =>
         Promise.resolve().then(() => {
           order.push("publish");
@@ -86,6 +87,7 @@ describe("DurableRunEvents", () => {
     const publish = vi.fn(() => new Promise<void>(() => undefined));
     const events = new DurableRunEvents({
       repository,
+      ownershipSignal: new AbortController().signal,
       publish,
       id: () => "message-1",
       now: () => new Date("2026-08-30T00:00:00Z"),
@@ -116,6 +118,7 @@ describe("DurableRunEvents", () => {
     const publish = vi.fn();
     const events = new DurableRunEvents({
       repository,
+      ownershipSignal: new AbortController().signal,
       publish,
       id: () => "message-1",
       now: () => new Date("2026-08-30T00:00:00Z"),

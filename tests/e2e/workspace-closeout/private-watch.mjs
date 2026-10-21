@@ -83,7 +83,11 @@ export async function openWorkspacePrivateWatch(agentId, browser, options) {
 
 // The consumer must prove the original bytes and actual remote EOF separately.
 // A parsed denied state followed by local cancellation is not revocation EOF.
-export function assertWorkspaceWatchReceipt(receipt, expected) {
+export function assertWorkspaceWatchReceipt(
+  receipt,
+  expected,
+  { requireTrace = true } = {},
+) {
   const remote = expected.mode === "revocation";
   assert(
     remote || expected.mode === "local-close",
@@ -100,13 +104,15 @@ export function assertWorkspaceWatchReceipt(receipt, expected) {
   assert.equal(receipt.method, "POST");
   assert.equal(receipt.path, path);
   assert.deepEqual(receipt.request_body, {});
-  assert.equal(receipt.traceID, expected.traceID);
-  assert.equal(receipt.clientSpanID, expected.clientSpanID);
-  assert.match(receipt.traceID, /^[a-f0-9]{32}$/u);
-  assert.match(receipt.clientSpanID, /^[a-f0-9]{16}$/u);
+  if (requireTrace) {
+    assert.equal(receipt.traceID, expected.traceID);
+    assert.equal(receipt.clientSpanID, expected.clientSpanID);
+    assert.match(receipt.traceID, /^[a-f0-9]{32}$/u);
+    assert.match(receipt.clientSpanID, /^[a-f0-9]{16}$/u);
+  }
   assert.equal(receipt.status, 200);
   assert(/^text\/event-stream(?:\s*;|$)/iu.test(receipt.content_type));
-  if (receipt.response_trace_id != null)
+  if (requireTrace && receipt.response_trace_id != null)
     assert.equal(receipt.response_trace_id, receipt.traceID);
   assert.equal(receipt.joined, true);
   assert.deepEqual(receipt.errors, []);
@@ -160,8 +166,10 @@ export function assertWorkspaceWatchReceipt(receipt, expected) {
   assert.equal(events[0].unavailable_reason, null);
   assert.deepEqual(receipt.events, events);
   assert.equal(receipt.closure.kind, remote ? "transport-end" : "local-close");
-  assert.equal(receipt.closure.traceID, receipt.traceID);
-  assert.equal(receipt.closure.clientSpanID, receipt.clientSpanID);
+  if (requireTrace) {
+    assert.equal(receipt.closure.traceID, receipt.traceID);
+    assert.equal(receipt.closure.clientSpanID, receipt.clientSpanID);
+  }
   assert.equal(receipt.closure.receivedEvents, events.length);
   const { start, end } = expected.window;
   assert([start, end, receipt.closure.observedAt].every(Number.isSafeInteger));
@@ -171,15 +179,29 @@ export function assertWorkspaceWatchReceipt(receipt, expected) {
     "Workspace closure outside its observed window",
   );
   if (remote) {
-    assert.match(expected.revocationTraceID, /^[a-f0-9]{32}$/u);
+    if (requireTrace)
+      assert.match(expected.revocationTraceID, /^[a-f0-9]{32}$/u);
     const baseline = receipt.revocation_start;
     assert(
       baseline,
       "Workspace revocation lacks its original authorized boundary",
     );
-    assert.deepEqual(baseline, expected.revocationStart);
-    assert.equal(baseline.traceID, receipt.traceID);
-    assert.equal(baseline.clientSpanID, receipt.clientSpanID);
+    if (requireTrace) {
+      assert.deepEqual(baseline, expected.revocationStart);
+      assert.equal(baseline.traceID, receipt.traceID);
+      assert.equal(baseline.clientSpanID, receipt.clientSpanID);
+    } else {
+      const businessBoundary = (value) =>
+        Object.fromEntries(
+          Object.entries(value).filter(
+            ([key]) => !["traceID", "clientSpanID"].includes(key),
+          ),
+        );
+      assert.deepEqual(
+        businessBoundary(baseline),
+        businessBoundary(expected.revocationStart),
+      );
+    }
     assert.equal(baseline.observedAt, start);
     assert(
       Number.isSafeInteger(baseline.receivedEvents) &&

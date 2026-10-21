@@ -17,7 +17,13 @@ export async function withWorkerOwnership<T>(
   });
 
   try {
-    const result = await Promise.race([Promise.resolve().then(operation), lost]);
+    const result = await Promise.race([
+      Promise.resolve().then(() => {
+        assertWorkerOwnership(signal);
+        return operation();
+      }),
+      lost,
+    ]);
     assertWorkerOwnership(signal);
     return result;
   } catch (error) {

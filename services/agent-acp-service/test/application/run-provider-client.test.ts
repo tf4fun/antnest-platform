@@ -89,7 +89,7 @@ function setup() {
     events,
     executions: { finish, getState: vi.fn(), listRecoveryWork: vi.fn() },
     ownershipSignal: new AbortController().signal,
-    recoveryRequired: vi.fn(),
+    recovery: { recoverRun: vi.fn() },
     now: () => now,
     id: () => `event-${++sequence}`,
   });

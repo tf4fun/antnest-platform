@@ -39,7 +39,7 @@ import {
   workspaceFailures,
   workspacePublicResult,
 } from "../workspace-closeout/private-flow.mjs";
-import { workspacePrivateAdmission } from "../workspace-closeout/private-evidence.mjs";
+import { admitWorkspaceBusiness } from "../workspace-closeout/business-completion.mjs";
 import {
   shutdownPrivateAdmission,
   shutdownPublicResult,
@@ -264,7 +264,9 @@ export async function runFoundation(
                             await import("../workspace-closeout/browser-current-flow.mjs")
                           ).runBrowserProfile
                         : undefined;
-    result = await runFoundationFlow(config, docker, abort.signal, scenario);
+    result = await runFoundationFlow(config, docker, abort.signal, scenario, {
+      workspaceTraceAuxiliary: profile === "workspace",
+    });
     writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result));
     if (profile === "foundation")
       admission = foundationPrivateAdmission(result);
@@ -291,7 +293,10 @@ export async function runFoundation(
     }
     if (profile === "workspace") {
       workspaceFailures(result.workspaceErrors);
-      admission = workspacePrivateAdmission(result);
+      admission = await admitWorkspaceBusiness(result, {
+        directory: config.evidence,
+        signal: abort.signal,
+      });
     }
   } catch (error) {
     failure =
@@ -432,11 +437,13 @@ export async function runFoundation(
   console.log(
     JSON.stringify({
       status:
-        code === 1
-          ? "business_passed_trace_failed"
-          : profile === "crash"
-            ? "business_and_recovery_topology_passed"
-            : "business_and_topology_passed",
+        profile === "workspace"
+          ? "business_passed"
+          : code === 1
+            ? "business_passed_trace_failed"
+            : profile === "crash"
+              ? "business_and_recovery_topology_passed"
+              : "business_and_topology_passed",
       ...(profile === "foundation"
         ? foundationPublicResult(result)
         : profile === "health"
@@ -455,6 +462,9 @@ export async function runFoundation(
                       ? workspacePublicResult(result)
                       : result),
       ...(admission ? { private_admission: admission } : {}),
+      ...(profile === "workspace"
+        ? { trace_diagnostics: admission.trace_diagnostics }
+        : {}),
       deployment,
       cleanup: "verified",
       strict_exit: strictCode,

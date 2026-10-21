@@ -11,6 +11,7 @@ import {
   saveFoundationFailure,
 } from "./foundation-trace.mjs";
 import {
+  assertLifecycleCommandReceipt,
   collectLifecycleEvidence,
   foundationLifecycleExpectation,
 } from "./foundation-evidence.mjs";
@@ -90,7 +91,14 @@ async function firstEvent(client, agentID, after = 0) {
   }
 }
 
-export async function runFoundationFlow(config, docker, signal, scenario) {
+export async function runFoundationFlow(
+  config,
+  docker,
+  signal,
+  scenario,
+  options = {},
+) {
+  const requireTrace = !options.workspaceTraceAuxiliary;
   const client = new GatewayClient(config.gateway);
   const api = async (path, options) => {
     signal.throwIfAborted();
@@ -168,9 +176,8 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       headers: { "Idempotency-Key": randomUUID() },
     };
     const response = await api(path, options);
-    const op = response.body.operation ?? response.body;
+    const op = assertLifecycleCommandReceipt(response, { requireTrace });
     const id = response.body.agent?.agent_id ?? agentID;
-    assert(op.request_id && /^[a-f0-9]{32}$/.test(response.traceID));
     if (during) await during({ requestID: op.request_id, path, options });
     const terminal = await waitOperation(op.request_id, expectation.outcome);
     // Provisioning completion and observed Runtime readiness are distinct. The
@@ -321,8 +328,13 @@ export async function runFoundationFlow(config, docker, signal, scenario) {
       return collectWorkspaceLifecycles(
         result,
         admitted,
-        (operation) =>
-          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, localSignal) =>
+          collectFoundationLifecycle(
+            config,
+            operation,
+            traceSecrets,
+            localSignal,
+          ),
         (operation, error) => saveFoundationFailure(config, operation, error),
         signal,
       );

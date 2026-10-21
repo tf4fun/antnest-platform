@@ -56,7 +56,11 @@ async function fixture(t, failFirst = false, mutation) {
         ? 503
         : 202
       : 200;
-    response.setHeader("x-antnest-trace-id", "b".repeat(32));
+    if (mutation !== "missing Trace")
+      response.setHeader(
+        "x-antnest-trace-id",
+        mutation === "malformed Trace" ? "bad" : "b".repeat(32),
+      );
     response.setHeader("set-cookie", "private-header=DO_NOT_ARCHIVE; Path=/");
     const agent = request.url.includes("one") ? "agent-one" : "agent-two";
     const operation = request.url.includes("one")
@@ -117,6 +121,38 @@ const summary = async (f) =>
   JSON.parse(
     await readFile(join(f.directory, "cleanup-lifecycle.private.json"), "utf8"),
   );
+
+for (const mutation of ["missing Trace", "malformed Trace"])
+  test(`actual cleanup remains blocking while ${mutation} is auxiliary`, async (t) => {
+    const f = await fixture(t, false, mutation);
+    const host = f.host();
+    const client = f.track(
+      run(
+        agents,
+        f.client,
+        (consumed) =>
+          requestMultimodalRuntimeInspection(agents, {
+            ...f.options,
+            consumed,
+          }),
+        { directory: f.directory },
+      ),
+    );
+    await Promise.all([host, client]);
+    const report = await summary(f);
+    assert.equal(report.status, "verified");
+    assert.equal(report.trace_diagnostics.role, "auxiliary");
+    assert.equal(report.trace_diagnostics.status, "warning");
+    assert.equal(f.calls.length, 4);
+    assert(
+      report.events
+        .filter((row) => row.kind === "response-complete")
+        .every(
+          (row) =>
+            row.trace_id === (mutation === "missing Trace" ? null : "bad"),
+        ),
+    );
+  });
 
 test("actual HTTP deletion and completed operations follow the consumed host ACK on one client clock", async (t) => {
   const f = await fixture(t);

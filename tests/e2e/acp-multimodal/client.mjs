@@ -41,10 +41,12 @@ import {
   imageData,
   marker,
 } from "./fixtures.mjs";
+import { collectNativeTraceDiagnostics } from "./diagnostics.mjs";
 import {
-  collectPrivateNativeTrace,
-  privateNativeStrictOutcome,
-} from "./collector.mjs";
+  collectNativeRunBusiness,
+  inspectNativeRunBusiness,
+} from "./run-business.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 
 const admin = new GatewayClient(gateway),
@@ -73,6 +75,7 @@ const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
 const directory = evidenceDirectory(
   process.env.ANTNEST_MULTIMODAL_EVIDENCE_DIR,
 );
+const diagnostics = createTraceDiagnostics({ directory });
 let modelStatusCount = 0;
 const setup = { cwd: "/workspace", mcpServers: [] };
 const validators = [v1Schema, v2Schema].map((schema) =>
@@ -472,176 +475,244 @@ async function main() {
   const seeded = await seedNative(api, process.env.TEST_RUNTIME_IMAGE);
   const template = seeded.template;
   textModelID = seeded.textModelID;
-  const { requests, runtimeInspection } = await withMultimodalAgentCleanup(
-    agents,
-    admin,
-    async (consumed) => {
-      for (const name of ["Native", "Other Agent"]) {
-        const created = await api(
-          "/api/admin/agents",
-          {
-            owner_user_id: user.user.id,
-            name,
-            template_id: template.template_id,
-            template_revision: template.revision,
-          },
-          202,
-        );
-        agents.push(created.agent.agent_id);
-        await operation(created.operation.request_id);
-        await waitForAgentReady(() =>
-          api(`/api/admin/agents/${agents.at(-1)}`),
-        );
-      }
-      for (const profile of [
-        { name: "v1-ws", version: 1 },
-        { name: "v2-ws", version: 2 },
-        { name: "v1-http", version: 1, http: true },
-      ]) {
-        const foreign = await connect(profile, agents[0], stranger);
-        await use(foreign, async () => {
-          await assertAgentDenied(foreign);
-          record(foreign, `${profile.name}:foreign-user`, "request", {
-            rejection: "access_denied",
+  const { requests, runtimeInspection, runBusiness } =
+    await withMultimodalAgentCleanup(
+      agents,
+      admin,
+      async (consumed) => {
+        for (const name of ["Native", "Other Agent"]) {
+          const created = await api(
+            "/api/admin/agents",
+            {
+              owner_user_id: user.user.id,
+              name,
+              template_id: template.template_id,
+              template_revision: template.revision,
+            },
+            202,
+          );
+          agents.push(created.agent.agent_id);
+          await operation(created.operation.request_id);
+          await waitForAgentReady(() =>
+            api(`/api/admin/agents/${agents.at(-1)}`),
+          );
+        }
+        for (const profile of [
+          { name: "v1-ws", version: 1 },
+          { name: "v2-ws", version: 2 },
+          { name: "v1-http", version: 1, http: true },
+        ]) {
+          const foreign = await connect(profile, agents[0], stranger);
+          await use(foreign, async () => {
+            await assertAgentDenied(foreign);
+            record(foreign, `${profile.name}:foreign-user`, "request", {
+              rejection: "access_denied",
+            });
           });
-        });
-        await exercise(profile);
-      }
-      const requests = await modelStatus();
-      assert.equal(requests.length, 9);
-      assert.deepEqual(
-        requests.map((item) => item.phase),
-        ["v1-ws", "v2-ws", "v1-http"].flatMap((profile) =>
-          ["native", "continue", "restored"].map(
-            (phase) => `${profile} ${phase}`,
+          await exercise(profile);
+        }
+        const requests = await modelStatus();
+        assert.equal(requests.length, 9);
+        assert.deepEqual(
+          requests.map((item) => item.phase),
+          ["v1-ws", "v2-ws", "v1-http"].flatMap((profile) =>
+            ["native", "continue", "restored"].map(
+              (phase) => `${profile} ${phase}`,
+            ),
           ),
-        ),
-      );
-      assert.equal(new Set(requests.map((item) => item.trace_id)).size, 9);
-      assert.equal(traces.length, 48);
-      assert.equal(
-        traces.filter((trace) => trace.kind === "request").length,
-        36,
-      );
-      assert.equal(traces.filter((trace) => trace.rejection).length, 18);
-      assert.equal(
-        traces.filter((trace) => trace.kind === "request" && !trace.rejection)
-          .length,
-        18,
-      );
-      assert.equal(traces.filter((trace) => trace.kind === "native").length, 9);
-      assert.equal(
-        traces.filter((trace) => trace.kind === "local-failure").length,
-        3,
-      );
-      secrets.push(
-        ...requests.map((item) => item.phase),
-        ...admin.cookies.values(),
-        ...member.cookies.values(),
-        ...stranger.cookies.values(),
-      );
-      assert.equal(
-        clients.size,
-        0,
-        "all original native connections must be joined",
-      );
-      assert.equal(initializationRequests.length, 12);
-      assert.equal(connectionInventory.length, 12);
-      for (const profile of ["v1-ws", "v2-ws", "v1-http"]) {
+        );
+        assert.equal(traces.length, 48);
         assert.equal(
-          traces.filter((item) => item.label.startsWith(profile + ":")).length,
-          16,
+          traces.filter((trace) => trace.kind === "request").length,
+          36,
+        );
+        assert.equal(traces.filter((trace) => trace.rejection).length, 18);
+        assert.equal(
+          traces.filter((trace) => trace.kind === "request" && !trace.rejection)
+            .length,
+          18,
         );
         assert.equal(
-          initializationRequests.filter((item) =>
-            item.label.startsWith(profile + ":"),
-          ).length,
-          4,
+          traces.filter((trace) => trace.kind === "native").length,
+          9,
         );
-      }
-      const wire = connectionInventory.flatMap((connection) =>
-        connection.transport === "http"
-          ? connection.http_connection.requests.filter(
-              (item) => item.method === "POST",
-            )
-          : connection.requests,
-      );
-      assert.equal(
-        wire.length,
-        60,
-        "all actual SDK requests must be inventoried",
-      );
-      const identities = [...traces, ...initializationRequests].map(
-        nativeRequestKey,
-      );
-      assert.equal(
-        new Set(identities).size,
-        60,
-        "duplicate native request inventory",
-      );
-      for (const [name, value] of [
-        ["model-requests.private.json", requests],
-        ["request-inventory.private.json", traces],
-        ["initialization-inventory.private.json", initializationRequests],
-        ["connection-inventory.private.json", connectionInventory],
-      ])
-        writeEvidenceFile(directory, name, JSON.stringify(value) + "\n");
-      stage = "runtime-inspection";
-      const runtimeInspection = await requestMultimodalRuntimeInspection(
-        agents,
-        { consumed },
-      );
-      return { requests, runtimeInspection };
-    },
-    { directory },
-  );
-  const checked = [];
-  for (const expected of [...traces, ...initializationRequests]) {
-    stage = `trace:${expected.label}`;
-    checked.push(
-      await collectPrivateNativeTrace("http://jaeger:16686", expected, {
-        directory,
-        flush: () => telemetry.flush(),
-        secrets,
-        requests,
-      }),
+        assert.equal(
+          traces.filter((trace) => trace.kind === "local-failure").length,
+          3,
+        );
+        secrets.push(
+          ...requests.map((item) => item.phase),
+          ...admin.cookies.values(),
+          ...member.cookies.values(),
+          ...stranger.cookies.values(),
+        );
+        assert.equal(
+          clients.size,
+          0,
+          "all original native connections must be joined",
+        );
+        assert.equal(initializationRequests.length, 12);
+        assert.equal(connectionInventory.length, 12);
+        for (const profile of ["v1-ws", "v2-ws", "v1-http"]) {
+          assert.equal(
+            traces.filter((item) => item.label.startsWith(profile + ":"))
+              .length,
+            16,
+          );
+          assert.equal(
+            initializationRequests.filter((item) =>
+              item.label.startsWith(profile + ":"),
+            ).length,
+            4,
+          );
+        }
+        const wire = connectionInventory.flatMap((connection) =>
+          connection.transport === "http"
+            ? connection.http_connection.requests.filter(
+                (item) => item.method === "POST",
+              )
+            : connection.requests,
+        );
+        assert.equal(
+          wire.length,
+          60,
+          "all actual SDK requests must be inventoried",
+        );
+        const identities = [...traces, ...initializationRequests].map(
+          nativeRequestKey,
+        );
+        assert.equal(
+          new Set(identities).size,
+          60,
+          "duplicate native request inventory",
+        );
+        for (const [name, value] of [
+          ["model-requests.private.json", requests],
+          ["request-inventory.private.json", traces],
+          ["initialization-inventory.private.json", initializationRequests],
+          ["connection-inventory.private.json", connectionInventory],
+        ])
+          writeEvidenceFile(directory, name, JSON.stringify(value) + "\n");
+        stage = "run-business";
+        let auditResponseCount = 0;
+        const runEvidence = await collectNativeRunBusiness({
+          agentIds: agents,
+          requests: traces,
+          principalId: issuedSessions.get(member).principal.user_id,
+          read: async (path) => {
+            const file = `run-audit-response-${String(++auditResponseCount).padStart(3, "0")}.private.json`;
+            let archiveFailure,
+              captured = false,
+              result;
+            try {
+              result = await admin.request(path, {
+                onResponse: (response) => {
+                  captured = true;
+                  try {
+                    assert(
+                      directory,
+                      "native business evidence directory required",
+                    );
+                    writeEvidenceFile(
+                      directory,
+                      file,
+                      JSON.stringify({
+                        method: "GET",
+                        path,
+                        ...response,
+                      }) + "\n",
+                    );
+                  } catch (error) {
+                    archiveFailure = error;
+                  }
+                },
+              });
+            } catch (error) {
+              if (archiveFailure)
+                throw new AggregateError(
+                  [error, archiveFailure],
+                  "Native audit request and archive failed",
+                );
+              throw error;
+            }
+            if (archiveFailure) throw archiveFailure;
+            assert(captured, "actual native audit response was not observed");
+            return result.body;
+          },
+          preserve: (value) => {
+            assert(directory, "native business evidence directory required");
+            writeEvidenceFile(
+              directory,
+              "run-business.private.json",
+              JSON.stringify(value) + "\n",
+            );
+          },
+        });
+        const runBusiness = inspectNativeRunBusiness(runEvidence);
+        stage = "runtime-inspection";
+        const runtimeInspection = await requestMultimodalRuntimeInspection(
+          agents,
+          { consumed },
+        );
+        return { requests, runtimeInspection, runBusiness };
+      },
+      { directory },
     );
-  }
-  assert.equal(new Set(checked.map((trace) => trace.trace_id)).size, 60);
-  assert.equal(
-    new Set(checked.map((trace) => trace.run_id).filter(Boolean)).size,
-    12,
+  // Both physical Runtime receipts and Agent delete operations have completed
+  // before auxiliary Trace collection begins.
+  stage = "trace-diagnostics";
+  const observed = await collectNativeTraceDiagnostics(
+    "http://jaeger:16686",
+    { requests: traces, initializations: initializationRequests },
+    {
+      directory,
+      diagnostics,
+      flush: () => telemetry.flush(),
+      secrets,
+      requests,
+    },
   );
-  assert.deepEqual(
-    new Set(
-      checked
-        .filter((trace) => trace.kind === "native")
-        .map((trace) => trace.trace_id),
-    ),
-    new Set(requests.map((item) => item.trace_id)),
-  );
-  const { exit_code: exitCode, ...strict } =
-    privateNativeStrictOutcome(checked);
-  console.log(
-    asciiJSON({
-      status: "business_passed",
-      ...strict,
-      scenarios: outcomes.length,
-      outcomes,
-      model_requests: requests.length,
-      business_requests: traces.length,
-      initialization_requests: initializationRequests.length,
-      connections: connectionInventory.length,
-      runtime_inspection: runtimeInspection,
-      cross_user_rejections: 3,
-      traces: checked.slice(0, traces.length),
-      initialization_traces: checked.slice(traces.length),
-    }),
-  );
-  process.exitCode = exitCode;
+  return {
+    scenarios: outcomes.length,
+    outcomes,
+    model_requests: requests.length,
+    business_requests: traces.length,
+    initialization_requests: initializationRequests.length,
+    connections: connectionInventory.length,
+    runtime_inspection: runtimeInspection,
+    run_business: runBusiness,
+    run_business_receipt: "run-business.private.json",
+    cross_user_rejections: 3,
+    traces: observed.checked.slice(0, traces.length),
+    initialization_traces: observed.checked.slice(traces.length),
+    observability: observed.strict,
+  };
 }
 try {
-  await withPrivateCommandResources(clients, telemetry, main);
+  // Exhausting collection's budget cannot skip the actual telemetry shutdown.
+  const shutdownDiagnostics = createTraceDiagnostics({
+    directory,
+    budgetMs: 30_000,
+  });
+  const result = await withPrivateCommandResources(
+    clients,
+    {
+      shutdown: () =>
+        shutdownDiagnostics.run("telemetry-shutdown", () =>
+          telemetry.shutdown(),
+        ),
+    },
+    main,
+  );
+  console.log(
+    asciiJSON({
+      ...result,
+      status: "business_passed",
+      trace_diagnostics: diagnostics.summary(),
+    }),
+  );
+  console.log(asciiJSON({ trace_diagnostics: shutdownDiagnostics.summary() }));
+  process.exitCode = 0;
 } catch (error) {
   console.error(
     asciiJSON(

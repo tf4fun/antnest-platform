@@ -410,6 +410,13 @@ export function buildComponents(
     new ToolPermissions(permissionRepository, permissionConnections, access),
     telemetry,
   );
+  const recovery = new RunRecovery({
+    executions,
+    runs,
+    events,
+    telemetry,
+    now,
+  });
   const executor = new RunExecutor({
     runtimeConnections,
     temporarySkills,
@@ -427,7 +434,7 @@ export function buildComponents(
     tools,
     events,
     ownershipSignal,
-    recoveryRequired,
+    recovery,
     id: newResourceId,
     now,
   });
@@ -468,13 +475,6 @@ export function buildComponents(
     }),
     telemetry,
   );
-  const recovery = new RunRecovery({
-    executions,
-    runs,
-    events,
-    telemetry,
-    now,
-  });
   const learningChangeRead = new PostgresLearningChangeRead(kernel);
   const learningNotices = new LearningNoticePublisher(access, learningChangeRead);
   const learningWorker = buildLearningWorker({

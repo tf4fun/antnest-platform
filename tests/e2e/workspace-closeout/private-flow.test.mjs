@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { workspaceStateTraceFixture } from "./private-http-trace.fixture.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
+
+const diagnosticDirectory = mkdtempSync(join(tmpdir(), "workspace-flow-"));
+after(() => rmSync(diagnosticDirectory, { recursive: true, force: true }));
 
 const implementation = await import("./private-flow.mjs").catch((error) => {
   if (
@@ -145,7 +152,7 @@ function fixture() {
     config: {
       gateway: "http://127.0.0.1:1",
       project: "workspace-test",
-      evidence: "unused",
+      evidence: diagnosticDirectory,
       jaeger: "unused",
     },
     principal: encodeURIComponent(
@@ -350,8 +357,11 @@ test("business, one Trace, archive and cleanup failures retain original identiti
     await f.scenario(...args);
     throw businessError;
   });
-  for (const error of [businessError, traceError, archiveError, cleanupError])
+  for (const error of [businessError, cleanupError])
     assert(result.workspaceErrors.includes(error));
+  for (const error of [traceError, archiveError])
+    assert(!result.workspaceErrors.includes(error));
+  assert.equal(result.trace_diagnostics.status, "warning");
   assert.equal(result.request_traces[0].topology, "failed");
   assert.equal(result.request_traces[0].request_id, "1");
   assert.equal(
@@ -469,13 +479,14 @@ test("all four explicit lifecycle collectors run after a Workspace failure and r
       throw archive;
     },
     new AbortController().signal,
+    createTraceDiagnostics({ directory: diagnosticDirectory }),
   );
   assert.deepEqual(visited, ["1", "2", "3", "4"]);
   assert.equal(complete.operations, 4);
   assert.equal(complete.traces.length, 4);
   assert.equal(complete.traces[1].topology, "failed");
-  for (const error of [business, collection, archive])
-    assert(complete.workspaceErrors.includes(error));
+  assert.deepEqual(complete.workspaceErrors, [business]);
+  assert.equal(complete.trace_diagnostics.status, "warning");
   assert.deepEqual(complete.private_workspace.lifecycle_admissions, admitted);
   assert(!Object.keys(complete).includes("workspaceErrors"));
 });
@@ -497,4 +508,106 @@ test("public Workspace summaries exclude raw credentials, authority receipts and
   assert.equal(result.model_requests, 5);
   assert.deepEqual(result.authority_traces, [{ status: 401 }]);
   assert(!JSON.stringify(result).includes(canary));
+});
+
+for (const channel of [
+  "collectRequest",
+  "collectHTTP",
+  "collectNotification",
+  "collectAuthority",
+  "collectOffboarding",
+]) {
+  test(
+    "Workspace " + channel + " failure remains diagnostic after resource joins",
+    async () => {
+      const f = fixture();
+      f.overrides[channel] = async () => {
+        throw new Error("original " + channel + " failure");
+      };
+      const result = await f.run();
+      assert.deepEqual(result.workspaceErrors, []);
+      assert.equal(result.finished_business, true);
+      assert.equal(result.private_cleanup_completed, true);
+      assert.deepEqual(result.private_resource_cleanup, {
+        version: 1,
+        status: "joined",
+        connections: 1,
+        watches: 1,
+        state_receipts: 1,
+        authority_receipts: 1,
+      });
+      assert.equal(result.trace_diagnostics.role, "auxiliary");
+      assert.equal(result.trace_diagnostics.status, "warning");
+      assert(
+        f.events.includes("client:join") && f.events.includes("exporter:join"),
+      );
+      assert(f.events.includes("persist:workspace-private"));
+    },
+  );
+}
+test("Workspace collector deadline waits for collector cancellation and keeps business resources joined", async () => {
+  const f = fixture();
+  let joined = false;
+  f.overrides.diagnosticBudgetMs = 10;
+  f.overrides.collectHTTP = async (_expected, signal) => {
+    assert(signal instanceof AbortSignal);
+    await new Promise((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", resolve, { once: true });
+    });
+    joined = true;
+    signal.throwIfAborted();
+  };
+  const result = await f.run();
+  assert.equal(joined, true);
+  assert.deepEqual(result.workspaceErrors, []);
+  assert.equal(result.private_cleanup_completed, true);
+  assert.equal(result.trace_diagnostics.status, "warning");
+});
+test("Workspace service facts remain available when login response has no Trace header", async () => {
+  const f = fixture();
+  const result = await f.run(async (_input, work) => {
+    work.login(
+      f.owner,
+      { status: 200, traceID: "", body: { principal: f.principal } },
+      { agent_id: "agent", owner_user_id: "owner" },
+      "agent",
+    );
+  });
+  assert.deepEqual(result.workspaceErrors, []);
+  assert.equal(result.private_workspace.logins[0].trace_id, "");
+});
+test("Workspace actual private business archive failure still blocks", async () => {
+  const f = fixture(),
+    original = new Error("business evidence unavailable");
+  f.overrides.persist = async () => {
+    throw original;
+  };
+  const result = await f.run();
+  assert(result.workspaceErrors.includes(original));
+  assert.throws(() => implementation.workspaceFailures(result.workspaceErrors));
+});
+
+test("Workspace actual producer stop failure remains blocking", async () => {
+  const f = fixture(),
+    original = new Error("producer stop failed");
+  f.overrides.flush = async () => {
+    throw original;
+  };
+  const result = await f.run();
+  assert(result.workspaceErrors.includes(original));
+  assert.throws(
+    () => implementation.workspaceFailures(result.workspaceErrors),
+    (error) => error === original,
+  );
+});
+test("Workspace private exporter flush failure remains auxiliary", async () => {
+  const f = fixture();
+  f.access.flush = async () => {
+    throw new Error("exporter flush failed");
+  };
+  const result = await f.run();
+  assert.deepEqual(result.workspaceErrors, []);
+  assert.equal(result.private_cleanup_completed, true);
+  assert.equal(result.trace_diagnostics.status, "warning");
 });

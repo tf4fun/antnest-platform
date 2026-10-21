@@ -73,7 +73,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   assert(
     workspaceFailureIndex > archiveIndex &&
       workspaceFailureIndex <
-        source.indexOf("admission = workspacePrivateAdmission(result)"),
+        source.indexOf("admission = await admitWorkspaceBusiness(result, {"),
     "Workspace must archive original evidence and propagate failures before admission",
   );
   assert(

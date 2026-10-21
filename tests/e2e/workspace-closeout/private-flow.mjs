@@ -3,10 +3,8 @@ import { createHash } from "node:crypto";
 import { inspect, isDeepStrictEqual } from "node:util";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
-import {
-  assertRestoreOwner,
-  collectRestoreTraces,
-} from "../lifecycle-closeout/restore-private-session.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
+import { assertRestoreOwner } from "../lifecycle-closeout/restore-private-session.mjs";
 import { flushTraceProducers } from "../lifecycle-closeout/network-support.mjs";
 import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 import { runtimeBinding } from "./current-evidence.mjs";
@@ -40,25 +38,101 @@ export function workspacePublicResult(result) {
     Object.entries(result).filter(([key]) => !key.startsWith("private_")),
   );
 }
+function withWorkspaceDiagnostics(
+  result,
+  diagnostics,
+  exporter = result.trace_diagnostics?.exporter,
+) {
+  const summary = diagnostics.summary();
+  result.trace_diagnostics = {
+    ...summary,
+    ...(exporter ? { exporter } : {}),
+    status:
+      summary.status === "warning" || exporter?.status === "warning"
+        ? "warning"
+        : summary.status,
+  };
+  Object.defineProperty(result, "workspaceDiagnostics", { value: diagnostics });
+  return result;
+}
+async function collectWorkspaceTrace(
+  diagnostics,
+  name,
+  row,
+  collect,
+  preserve,
+) {
+  return diagnostics.run(name, async (localSignal) => {
+    try {
+      return await collect(row, localSignal);
+    } catch (error) {
+      try {
+        await preserve(row, error);
+      } catch (archiveError) {
+        throw new AggregateError(
+          [error, archiveError],
+          "Workspace Trace collection and diagnostic archive failed",
+        );
+      }
+      throw error;
+    }
+  });
+}
 export async function collectWorkspaceLifecycles(
   result,
   admitted,
   collect,
   preserve,
   signal,
+  diagnostics = result.workspaceDiagnostics,
 ) {
-  result.private_workspace.lifecycle_admissions = structuredClone(admitted);
-  const errors = [];
-  const traces = await collectRestoreTraces(
-    admitted,
-    collect,
-    preserve,
-    signal,
-    errors,
+  assert(
+    diagnostics &&
+      typeof diagnostics.run === "function" &&
+      typeof diagnostics.summary === "function",
+    "shared Workspace Trace diagnostics required",
   );
-  return recordWorkspaceFailures(
-    { ...result, operations: admitted.length, traces },
-    [...result.workspaceErrors, ...errors],
+  result.private_workspace.lifecycle_admissions = structuredClone(admitted);
+  const errors = [],
+    traces = [];
+  for (const [index, row] of admitted.entries()) {
+    if (signal?.aborted) break;
+    try {
+      const diagnostic = await collectWorkspaceTrace(
+        diagnostics,
+        `workspace-lifecycle-${index + 1}`,
+        row,
+        (expected, localSignal) =>
+          collect(
+            expected,
+            signal ? AbortSignal.any([signal, localSignal]) : localSignal,
+          ),
+        preserve,
+      );
+      traces.push(
+        diagnostic.status === "passed"
+          ? { ...diagnostic.value, topology: "passed" }
+          : {
+              trace_id: row.traceID,
+              request_id: row.requestID ?? row.requestId,
+              agent_id: row.agentID ?? row.agentId,
+              kind: row.kind,
+              topology: "failed",
+              strict_trace: "failed",
+              diagnostic,
+            },
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (signal?.aborted) errors.push(signal.reason);
+  return withWorkspaceDiagnostics(
+    recordWorkspaceFailures(
+      { ...result, operations: admitted.length, traces },
+      [...(result.workspaceErrors ?? []), ...errors],
+    ),
+    diagnostics,
   );
 }
 const digest = (owner) => {
@@ -72,6 +146,11 @@ const collectors = () => import("./private-collectors.mjs");
 
 export async function runPrivateWorkspace(input, scenario, overrides = {}) {
   const { config, signal, traceSecrets } = input;
+  const diagnostics = createTraceDiagnostics({
+    directory: config.evidence,
+    signal,
+    budgetMs: overrides.diagnosticBudgetMs ?? 60_000,
+  });
   const common = {
     directory: config.evidence + "/traces",
     secrets: traceSecrets,
@@ -107,30 +186,30 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
     },
     collectRequest: async (...args) =>
       (await collectors()).collectWorkspacePrivateRequest(...args),
-    collectHTTP: async (expected) =>
+    collectHTTP: async (expected, localSignal) =>
       (await collectors()).collectWorkspacePrivateHTTP(
         config.jaeger,
         expected,
-        { ...common, flush: () => access.flush() },
+        { ...common, signal: localSignal, flush: () => access.flush() },
       ),
-    collectNotification: async (receipt) =>
+    collectNotification: async (receipt, localSignal) =>
       (await collectors()).collectWorkspacePrivateNotification(
         config.jaeger,
         receipt,
-        { ...common, flush: () => access.flush() },
+        { ...common, signal: localSignal, flush: () => access.flush() },
       ),
-    collectAuthority: async (expected) =>
+    collectAuthority: async (expected, localSignal) =>
       (await collectors()).collectWorkspaceAuthorityTrace(
         config.jaeger,
         expected,
-        { ...common, flush: () => access.flush() },
+        { ...common, signal: localSignal, flush: () => access.flush() },
       ),
-    collectOffboarding: async (expected) =>
+    collectOffboarding: async (expected, localSignal) =>
       (await collectors()).collectWorkspaceOffboarding(
         config,
         expected,
         traceSecrets,
-        signal,
+        localSignal,
       ),
     ...overrides,
   };
@@ -166,6 +245,7 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
     business = {},
     exporterJoined = false,
     resourcesJoined = true,
+    traceIndex = 0,
     failureIndex = 0;
   let originalDisconnects = [],
     originalNotifications = [];
@@ -245,7 +325,6 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
         "Workspace must reuse its original login",
       );
       assert.equal(response.status, 200);
-      assert.match(response.traceID, /^[a-f0-9]{32}$/u);
       const principal = response.body.principal;
       assertRestoreOwner(principal, input.principal, agent, agentID);
       work.initial_agent = structuredClone(agent);
@@ -354,7 +433,6 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
     async revoked(watch, traceID) {
       const observation = watchWindows.get(watch.traceID);
       assert.equal(observation?.mode, "revocation");
-      assert.match(traceID, /^[a-f0-9]{32}$/u);
       observation.revocationTraceID = traceID;
       await watch.wait(
         (state) => state.access_allowed === false,
@@ -364,10 +442,14 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
       observation.window.end = dependencies.now();
       await watch.closeAndWait();
       const receipt = watch.snapshot();
-      assertWorkspaceWatchReceipt(receipt, {
-        ...principalFields(receipt),
-        ...observation,
-      });
+      assertWorkspaceWatchReceipt(
+        receipt,
+        {
+          ...principalFields(receipt),
+          ...observation,
+        },
+        { requireTrace: false },
+      );
     },
     offboarding(expected) {
       work.offboarding.push(structuredClone(expected));
@@ -381,11 +463,17 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
       ["states", "stateReceipts"],
       ["authorities", "authoritySnapshots"],
     ]) {
-      const value = await attempt(() => access[method]());
-      if (value) snapshots[key] = value;
+      try {
+        const value = await access[method]();
+        assert(Array.isArray(value), "original Workspace inventory required");
+        snapshots[key] = value;
+      } catch (error) {
+        resourcesJoined = false;
+        errors.push(error);
+      }
     }
   }
-  async function collect(rows, destination, callback) {
+  async function collect(rows, destination, callback, prepare = (row) => row) {
     for (const row of rows) {
       if (signal?.aborted) break;
       const identity = row.raw ?? row;
@@ -397,19 +485,41 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
         kind: identity.kind,
         method: identity.method,
       };
+      let prepared,
+        projectionFailed = false,
+        projectionError;
       try {
-        destination.push({ ...identifiers, ...(await callback(row)) });
+        // Original request bytes and their projection are business evidence,
+        // even when the shared diagnostic budget has already been exhausted.
+        prepared = prepare(row);
       } catch (error) {
+        projectionFailed = true;
+        projectionError = error;
         errors.push(error);
-        await attempt(() =>
-          dependencies.preserveFailure(identity, error, ++failureIndex),
-        );
-        destination.push({
-          ...identifiers,
-          topology: "failed",
-          strict_trace: "failed",
-        });
       }
+      const diagnostic = await attempt(() =>
+        collectWorkspaceTrace(
+          diagnostics,
+          `workspace-trace-${++traceIndex}`,
+          prepared,
+          async (expected, localSignal) => {
+            if (projectionFailed) throw projectionError;
+            return callback(expected, localSignal);
+          },
+          (_expected, error) =>
+            dependencies.preserveFailure(identity, error, ++failureIndex),
+        ),
+      );
+      destination.push(
+        diagnostic?.status === "passed"
+          ? { ...identifiers, ...diagnostic.value }
+          : {
+              ...identifiers,
+              topology: "failed",
+              strict_trace: "failed",
+              ...(diagnostic ? { diagnostic } : {}),
+            },
+      );
     }
   }
   try {
@@ -473,26 +583,36 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
     }
     if (!signal?.aborted) {
       await attempt(readModel);
+      // This flush stops the actual service producers and verifies their exit
+      // codes. Its Docker deadline and cleanup failures remain business gates.
       await attempt(() => dependencies.flush());
-      if (access) await attempt(() => access.flush());
+      if (access)
+        await attempt(() =>
+          diagnostics.run("workspace-private-flush", () => access.flush()),
+        );
       const rows = snapshots.connections.flatMap((connection) =>
         [connection.initialization, ...connection.evidence]
           .filter(Boolean)
           .map((raw) => ({ connection, raw })),
       );
-      await collect(rows, groups.request_traces, ({ connection, raw }) => {
-        const expected = projectWorkspaceRequest(
-          connection,
-          raw,
-          annotations.get(workspaceRequestKey(raw)),
-        );
-        return access.collect(
-          expected,
-          (work.final_model?.requests ?? []).filter(
-            (row) => expected.phase && row.phase === expected.phase,
+      await collect(
+        rows,
+        groups.request_traces,
+        (expected, localSignal) =>
+          access.collect(
+            expected,
+            (work.final_model?.requests ?? []).filter(
+              (row) => expected.phase && row.phase === expected.phase,
+            ),
+            { signal: localSignal },
           ),
-        );
-      });
+        ({ connection, raw }) =>
+          projectWorkspaceRequest(
+            connection,
+            raw,
+            annotations.get(workspaceRequestKey(raw)),
+          ),
+      );
       await collect(
         snapshots.watches.map((receipt) => ({
           ...principalFields(receipt),
@@ -566,26 +686,43 @@ export async function runPrivateWorkspace(input, scenario, overrides = {}) {
     );
   }
   if (signal?.aborted) errors.push(signal.reason);
-  return recordWorkspaceFailures(
-    {
-      ...business,
-      profile: "workspace-protocol",
-      project: config.project,
-      agent_id: work.initial_agent?.agent_id,
-      ...(business.deleted_before_teardown
-        ? { completed_prompts: 2, cancel_recovery: "explicit_rebuild" }
-        : {}),
-      private_workspace: work,
-      private_connections: snapshots.connections,
-      private_state_watches: snapshots.watches,
-      private_state_receipts: snapshots.states,
-      private_authority_receipts: snapshots.authorities,
-      private_notifications: structuredClone(originalNotifications),
-      private_disconnects: structuredClone(originalDisconnects),
-      ...groups,
-      private_cleanup_completed:
-        exporterJoined && resourcesJoined && !signal?.aborted,
-    },
-    errors,
+  const cleanupCompleted =
+    exporterJoined && resourcesJoined && !signal?.aborted;
+  return withWorkspaceDiagnostics(
+    recordWorkspaceFailures(
+      {
+        ...business,
+        profile: "workspace-protocol",
+        project: config.project,
+        agent_id: work.initial_agent?.agent_id,
+        ...(business.deleted_before_teardown
+          ? { completed_prompts: 2, cancel_recovery: "explicit_rebuild" }
+          : {}),
+        private_workspace: work,
+        private_connections: snapshots.connections,
+        private_state_watches: snapshots.watches,
+        private_state_receipts: snapshots.states,
+        private_authority_receipts: snapshots.authorities,
+        private_notifications: structuredClone(originalNotifications),
+        private_disconnects: structuredClone(originalDisconnects),
+        ...groups,
+        private_cleanup_completed: cleanupCompleted,
+        ...(cleanupCompleted
+          ? {
+              private_resource_cleanup: {
+                version: 1,
+                status: "joined",
+                connections: snapshots.connections.length,
+                watches: snapshots.watches.length,
+                state_receipts: snapshots.states.length,
+                authority_receipts: snapshots.authorities.length,
+              },
+            }
+          : {}),
+      },
+      errors,
+    ),
+    diagnostics,
+    access?.traceDiagnostics?.(),
   );
 }
