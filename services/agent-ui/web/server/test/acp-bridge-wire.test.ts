@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { RequestError } from "@agentclientprotocol/sdk";
 import { testScope } from "./support/auth-fixture.ts";
+import * as acpHttp from "../src/adapters/acp-http.ts";
+import { classifyAcpError } from "../src/adapters/acp-errors.ts";
 import {
   bridgeFetch,
   bridgeHeaders,
@@ -234,3 +237,60 @@ test("a hidden or deleted Session keeps its permanent absence across ACP observa
     code: "upstream_unavailable", retryable: true,
   })), undefined);
 });
+
+const errorCatalog = JSON.parse(readFileSync(
+  new URL("../../../../../contracts/agent-acp/errors.json", import.meta.url), "utf8",
+)) as {
+  errors: Record<string, { json_rpc_code: number; message: string; retryable: boolean; retry_after_ms?: number }>;
+  terminal_outcomes: Record<string, { json_rpc_code: number; message: string }>;
+};
+
+function wrappedLoadError(cause: unknown, capability: 1 | null) {
+  const constructor = (acpHttp as unknown as {
+    AcpLoadError?: new (cause: unknown, capability: 1 | null) => Error & {
+      classification: ReturnType<typeof classifyAcpError>;
+    };
+  }).AcpLoadError;
+  assert.equal(typeof constructor, "function", "AcpLoadError is required");
+  return new constructor!(cause, capability);
+}
+
+test("typed Load failure retains the original service receipt and exposes only its classified message", () => {
+  const entry = errorCatalog.errors.configuration_not_ready!;
+  const original = new RequestError(entry.json_rpc_code, entry.message, {
+    code: "configuration_not_ready", retryable: true,
+    retry_after_ms: entry.retry_after_ms,
+  });
+  const error = wrappedLoadError(original, 1);
+  assert.equal(error.cause, original);
+  assert.equal(error.message, entry.message);
+  assert.deepEqual(error.classification, classifyAcpError(original, 1));
+  assert.equal(error.classification.retryDirective, "backoff");
+  assert.equal(error.classification.retryAfterMs, entry.retry_after_ms);
+});
+
+for (const [name, original, capability] of [
+  ["unclassified transport", new Error("PRIVATE-LOAD-FAILURE-CANARY"), 1],
+  ["unknown capability", new RequestError(
+    errorCatalog.errors.agent_busy!.json_rpc_code,
+    errorCatalog.errors.agent_busy!.message,
+    { code: "agent_busy", retryable: true, retry_after_ms: errorCatalog.errors.agent_busy!.retry_after_ms },
+  ), null],
+  ...Object.entries(errorCatalog.terminal_outcomes).map(([name, terminal]) => [
+    "terminal " + name,
+    new RequestError(terminal.json_rpc_code, terminal.message, {
+      code: "model_unsupported_content", retryable: false,
+    }),
+    1,
+  ] as const),
+] as const) {
+  test("typed Load " + name + " is nonreplayable without inventing a Run query", () => {
+    const error = wrappedLoadError(original, capability);
+    assert.equal(error.cause, original);
+    assert.deepEqual(error.classification, classifyAcpError(original, capability));
+    assert.equal(error.message, error.classification.message);
+    assert.equal(error.classification.retryable, false);
+    assert.equal(Object.hasOwn(error.classification, "retryAfterMs"), false);
+    assert(!error.message.includes("PRIVATE-LOAD-FAILURE-CANARY"));
+  });
+}

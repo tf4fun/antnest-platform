@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { RequestError } from "@agentclientprotocol/sdk";
 import type {
   RequestPermissionRequest,
   SessionNotification,
@@ -9,6 +11,8 @@ import {
   type AcpBridgePort,
 } from "../src/bridge/agent-owner.ts";
 import { AgentAccessRevokedError, SessionNotFoundError } from "../src/adapters/acp-http.ts";
+import * as acpHttp from "../src/adapters/acp-http.ts";
+import type { AcpErrorClassification } from "../src/adapters/acp-errors.ts";
 import { StreamCapacityError } from "../src/bridge/stream-journal.ts";
 
 const scope = {
@@ -16,6 +20,35 @@ const scope = {
   principalId: "user-1",
   agentId: "agent-1",
 };
+const errorCatalog = JSON.parse(readFileSync(
+  new URL("../../../../../contracts/agent-acp/errors.json", import.meta.url), "utf8",
+)) as {
+  errors: Record<string, {
+    json_rpc_code: number; message: string; retryable: boolean; retry_after_ms?: number;
+  }>;
+  terminal_outcomes: Record<string, { json_rpc_code: number; message: string }>;
+};
+type LoadFailure = Error & { classification: AcpErrorClassification };
+function typedLoadFailure(cause: unknown, capability: 1 | null = 1): LoadFailure {
+  const constructor = (acpHttp as unknown as {
+    AcpLoadError?: new (cause: unknown, capability: 1 | null) => LoadFailure;
+  }).AcpLoadError;
+  assert.equal(typeof constructor, "function", "AcpLoadError is required");
+  return new constructor!(cause, capability);
+}
+function loadReceipt(code: string, overrides: Record<string, unknown> = {}): RequestError {
+  const entry = errorCatalog.errors[code]!;
+  return new RequestError(entry.json_rpc_code, entry.message, {
+    code, retryable: entry.retryable,
+    ...(entry.retry_after_ms === undefined ? {} : { retry_after_ms: entry.retry_after_ms }),
+    ...overrides,
+  });
+}
+const nextEventTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+const outcome = <T,>(work: Promise<T>) => work.then(
+  (value) => ({ status: "fulfilled" as const, value }),
+  (reason: unknown) => ({ status: "rejected" as const, reason }),
+);
 const permission: RequestPermissionRequest = {
   sessionId: "session-1",
   toolCall: { toolCallId: "tool-1", title: "Edit" },
@@ -402,6 +435,7 @@ test("cold Session replay records one outcome without counting warm reads", asyn
 
 test("transient cold replay owns its backoff and retries once for concurrent readers", async () => {
   const f = fixture();
+  const failure = typedLoadFailure(loadReceipt("configuration_not_ready", { retry_after_ms: 20 }));
   const samples: Array<{ durationMs: number; outcome: "success" | "error" }> =
     [];
   let attempts = 0;
@@ -413,7 +447,7 @@ test("transient cold replay owns its backoff and retries once for concurrent rea
     return {
       ...port,
       async load(sessionId) {
-        if (attempts++ === 0) { firstFailed(); throw new Error("replay unavailable"); }
+        if (attempts++ === 0) { firstFailed(); throw failure; }
         return load(sessionId);
       },
     };
@@ -427,9 +461,9 @@ test("transient cold replay owns its backoff and retries once for concurrent rea
     recordColdReplay: (durationMs, outcome) =>
       samples.push({ durationMs, outcome }),
   });
+  const first = owner.authorizeSession("session-1");
+  const second = owner.authorizeSession("session-1");
   try {
-    const first = owner.authorizeSession("session-1");
-    const second = owner.authorizeSession("session-1");
     void first.catch(() => {});
     void second.catch(() => {});
     await failed;
@@ -441,7 +475,8 @@ test("transient cold replay owns its backoff and retries once for concurrent rea
     assert.deepEqual(samples.map((sample) => sample.outcome), ["success"]);
     assert.equal(f.work(), 0);
   } finally {
-    owner.close();
+    try { await owner.close(); }
+    finally { await Promise.allSettled([first, second]); }
   }
 });
 
@@ -461,34 +496,217 @@ test("permanent missing Session ends cold replay without a background retry", as
 
 test("retiring the owner cancels cold replay backoff before another ACP load", async () => {
   const f = fixture();
+  const failure = typedLoadFailure(loadReceipt("configuration_not_ready", { retry_after_ms: 1_000 }));
   let attempts = 0;
   let firstFailed!: () => void;
   const failed = new Promise<void>((resolve) => { firstFailed = resolve; });
   const owner = await AgentBridgeOwner.open({ scope, retainWork: f.retainWork,
     replayRetryBackoffMs: 1_000,
     connect: async (identity, callbacks) => ({ ...await f.connect(identity, callbacks),
-      async load() { attempts++; firstFailed(); throw new Error("temporary load failure"); } }) });
+      async load() { attempts++; firstFailed(); throw failure; } }) });
   const pending = owner.authorizeSession("session-1");
   void pending.catch(() => {});
-  await failed;
-  owner.close();
-  await assert.rejects(pending, /retired/u);
-  assert.equal(attempts, 1);
-  assert.equal(f.work(), 0);
+  try {
+    await failed;
+    await owner.close();
+    await assert.rejects(pending, /retired/u);
+    assert.equal(attempts, 1);
+    assert.equal(f.work(), 0);
+  } finally {
+    try { await owner.close(); }
+    finally { await Promise.allSettled([pending]); }
+  }
 });
 
 test("cold replay exhausts bounded retries and releases its work owner", async () => {
   const f = fixture();
+  const failure = typedLoadFailure(loadReceipt("configuration_not_ready", { retry_after_ms: 1 }));
   let attempts = 0;
   const owner = await AgentBridgeOwner.open({ scope, retainWork: f.retainWork,
     replayRetryBackoffMs: 1,
     connect: async (identity, callbacks) => ({ ...await f.connect(identity, callbacks),
-      async load() { attempts++; throw new Error("temporary load failure"); } }) });
+      async load() { attempts++; throw failure; } }) });
   try {
-    await assert.rejects(owner.authorizeSession("session-1"), /temporary load failure/u);
+    await assert.rejects(owner.authorizeSession("session-1"), (error: unknown) => error === failure);
     assert.equal(attempts, 4);
     assert.equal(f.work(), 0);
-  } finally { owner.close(); }
+  } finally { await owner.close(); }
+});
+
+const forbiddenLoadRetries: Array<[string, () => LoadFailure]> = [
+  ...["access_denied", "session_access_denied", "model_unavailable", "invalid_params",
+    "agent_unavailable", "runtime_connection_unavailable", "runtime_barrier_required", "service_stopping"]
+    .map((code): [string, () => LoadFailure] => [code, () => typedLoadFailure(loadReceipt(code))]),
+  ["unknown transport", () => typedLoadFailure(new Error("PRIVATE-LOAD-CAUSE"))],
+  ["unsupported error capability", () => typedLoadFailure(loadReceipt("agent_busy"), null)],
+  ["backoff without an actual delay", () => {
+    const entry = errorCatalog.errors.configuration_not_ready!;
+    return typedLoadFailure(new RequestError(entry.json_rpc_code, entry.message, {
+      code: "configuration_not_ready", retryable: true,
+    }));
+  }],
+  ...Object.entries(errorCatalog.terminal_outcomes).map(
+    ([name, terminal]): [string, () => LoadFailure] => ["terminal " + name, () => typedLoadFailure(
+      new RequestError(terminal.json_rpc_code, terminal.message, {
+        code: "model_unsupported_content", retryable: false,
+      }),
+    )],
+  ),
+];
+
+for (const [name, makeFailure] of forbiddenLoadRetries) {
+  test("cold Load does not replay or query a Run for " + name, async () => {
+    const failure = makeFailure(), f = fixture();
+    let attempts = 0, connections = 0;
+    const owner = await AgentBridgeOwner.open({
+      scope, retainWork: f.retainWork, replayRetryBackoffMs: 1,
+      connect: async (identity, callbacks) => {
+        connections++;
+        return {
+          ...await f.connect(identity, callbacks),
+          canReplaceAfterPeerLoss: true,
+          async load() { attempts++; throw failure; },
+        };
+      },
+    });
+    try {
+      await assert.rejects(owner.authorizeSession("session-1"), (error: unknown) => error === failure);
+      assert.equal(attempts, 1);
+      assert.equal(connections, 1, "Load error replaced its current connection");
+      assert.equal(f.work(), 0);
+      assert.equal(f.calls.some((call) => /^(intent:|prompt:|cancel:|execution:|close$)/u.test(call)), false);
+      assert(!failure.message.includes("PRIVATE-LOAD-CAUSE"));
+    } finally { await owner.close(); }
+  });
+}
+
+test("catalog Load backoff waits for its actual service delay and shares concurrent readers", async (t) => {
+  const f = fixture();
+  const delay = errorCatalog.errors.configuration_not_ready!.retry_after_ms!;
+  const failure = typedLoadFailure(loadReceipt("configuration_not_ready"));
+  let attempts = 0, firstFailed!: () => void;
+  const failed = new Promise<void>((resolve) => { firstFailed = resolve; });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let owner: AgentBridgeOwner | undefined;
+  const pending: Promise<unknown>[] = [];
+  try {
+    owner = await AgentBridgeOwner.open({
+      scope, retainWork: f.retainWork, replayRetryBackoffMs: 1, idleMs: 0,
+      connect: async (identity, callbacks) => {
+        const port = await f.connect(identity, callbacks);
+        return { ...port, async load(sessionId) {
+          attempts++;
+          if (attempts === 1) { firstFailed(); throw failure; }
+          return port.load(sessionId);
+        } };
+      },
+    });
+    const first = owner.authorizeSession("session-1");
+    const second = owner.authorizeSession("session-1");
+    pending.push(first, second);
+    void first.catch(() => {});
+    void second.catch(() => {});
+    await failed;
+    await nextEventTurn();
+    assert.equal(f.work(), 1);
+    await owner.sweep();
+    t.mock.timers.tick(delay - 1);
+    await nextEventTurn();
+    assert.equal(attempts, 1, "Load retried before the advertised service delay");
+    assert.equal(f.work(), 1);
+    t.mock.timers.tick(1);
+    await nextEventTurn();
+    assert.equal(attempts, 2);
+    await Promise.all([first, second]);
+    assert.equal(f.work(), 0);
+    assert.equal(f.calls.some((call) => /^(intent:|prompt:|cancel:)/u.test(call)), false);
+  } finally {
+    try { await owner?.close(); }
+    finally {
+      await Promise.allSettled(pending);
+      t.mock.timers.reset();
+    }
+  }
+});
+
+test("retiring a catalog backoff joins every waiter and prevents any later retry", async (t) => {
+  const f = fixture();
+  const delay = errorCatalog.errors.configuration_not_ready!.retry_after_ms!;
+  const failure = typedLoadFailure(loadReceipt("configuration_not_ready"));
+  let attempts = 0, entered!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let owner: AgentBridgeOwner | undefined;
+  const pending: Promise<unknown>[] = [];
+  try {
+    owner = await AgentBridgeOwner.open({
+      scope, retainWork: f.retainWork, replayRetryBackoffMs: 1,
+      connect: async (identity, callbacks) => ({
+        ...await f.connect(identity, callbacks),
+        async load() { attempts++; entered(); throw failure; },
+      }),
+    });
+    const first = owner.authorizeSession("session-1");
+    const second = owner.authorizeSession("session-1");
+    const joined = [outcome(first), outcome(second)];
+    pending.push(...joined);
+    await started;
+    await nextEventTurn();
+    assert.equal(f.work(), 1);
+    await owner.close();
+    const results = await Promise.all(joined);
+    assert(results.every((result) => result.status === "rejected"));
+    assert.equal(f.work(), 0);
+    t.mock.timers.tick(delay * 8);
+    await nextEventTurn();
+    assert.equal(attempts, 1);
+    assert.equal(f.calls.some((call) => /^(intent:|prompt:|cancel:)/u.test(call)), false);
+  } finally {
+    try { await owner?.close(); }
+    finally {
+      await Promise.allSettled(pending);
+      t.mock.timers.reset();
+    }
+  }
+});
+
+test("owner retirement waits for the actual held Load workflow to join", async () => {
+  const f = fixture();
+  let entered!: () => void, release!: () => void, loadJoined = false, closed = false;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const owner = await AgentBridgeOwner.open({
+    scope, retainWork: f.retainWork,
+    connect: async (identity, callbacks) => ({
+      ...await f.connect(identity, callbacks),
+      async load() {
+        entered();
+        try { await held; }
+        finally { loadJoined = true; }
+        return { cut: { sealedWatermark: 0, appendVersion: 3 } };
+      },
+    }),
+  });
+  const pending = outcome(owner.authorizeSession("session-1"));
+  let closing: ReturnType<typeof outcome> | undefined;
+  try {
+    await started;
+    closing = outcome(owner.close().then(() => { closed = true; }));
+    await nextEventTurn();
+    assert.equal(loadJoined, false);
+    assert.equal(closed, false, "owner.close returned while its actual Load was still running");
+    assert.equal(f.work(), 1);
+    release();
+    const result = await pending;
+    assert.equal(result.status, "rejected");
+    assert.equal((await closing).status, "fulfilled");
+    assert.equal(loadJoined, true);
+    assert.equal(f.work(), 0);
+    assert.equal(f.calls.some((call) => /^(intent:|prompt:|cancel:|execution:)/u.test(call)), false);
+  } finally {
+    release();
+    await Promise.allSettled([pending, ...(closing ? [closing] : []), owner.close()]);
+  }
 });
 
 test("a large live update preserves the complete View without replaying it", async () => {

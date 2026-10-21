@@ -11,6 +11,7 @@ import type {
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   AcpHttpBridge,
+  AcpLoadError,
   AgentAccessRevokedError,
   BridgeCapabilityError,
   type AcpBridgeCallbacks,
@@ -28,7 +29,7 @@ import {
 } from "./compact-transcript.ts";
 import { OperationCoordinator } from "./operations.ts";
 import { PermissionInbox, type PendingPermission } from "./permission-inbox.ts";
-import { ReplayCapacityError, ReplayLoadGate } from "./replay-load-gate.ts";
+import { ReplayLoadGate } from "./replay-load-gate.ts";
 import type { BridgeScope } from "./registry.ts";
 import { SessionReplay } from "./session-replay.ts";
 import { ViewPager, type ViewContext } from "./view-pager.ts";
@@ -796,9 +797,15 @@ export class AgentBridgeOwner {
         return;
       } catch (error) {
         if (this.retired) throw new Error("Bridge owner is retired");
-        if (attempt === 3 || error instanceof BridgeCapabilityError ||
-          error instanceof ReplayCapacityError || error instanceof RangeError) throw error;
-        await this.waitReplayRetry(this.replayRetryBackoffMs * 2 ** attempt);
+        if (attempt === 3 || !(error instanceof AcpLoadError)) throw error;
+        const classification = error.classification;
+        if (classification.kind !== "admission" || !classification.retryable ||
+          classification.retryDirective !== "backoff" ||
+          classification.retryAfterMs === undefined) throw error;
+        await this.waitReplayRetry(Math.max(
+          classification.retryAfterMs,
+          this.replayRetryBackoffMs * 2 ** attempt,
+        ));
       }
     }
   }
@@ -1150,6 +1157,7 @@ export class AgentBridgeOwner {
     this.closing = new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
     void this.closing.catch(() => {});
     this.retired = true;
+    const authorizations = [...this.authorizationWorkflows.values()];
     const failures: unknown[] = [];
     try {
       this.beginDrain();
@@ -1171,8 +1179,11 @@ export class AgentBridgeOwner {
     let cleanup: Promise<void>;
     try { cleanup = Promise.resolve(this.acp?.close()); }
     catch (error) { cleanup = Promise.reject(error); }
-    void Promise.allSettled([cleanup, this.watchTask]).then((results) => {
-      for (const result of results) if (result.status === "rejected") failures.push(result.reason);
+    void Promise.allSettled([cleanup, this.watchTask, ...authorizations]).then((results) => {
+      // Authorization failures belong to their callers. Join them before
+      // releasing the owner, while retaining transport/watch cleanup failures.
+      for (const result of results.slice(0, 2))
+        if (result.status === "rejected") failures.push(result.reason);
       try { this.closed(this); } catch (error) { failures.push(error); }
       try {
         this.replaceAfterPeerLoss = this.peerLost && !this.accessRevoked &&

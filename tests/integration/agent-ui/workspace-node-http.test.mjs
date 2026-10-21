@@ -13,6 +13,20 @@ import { get } from "node:http";
 import { createRequire } from "node:module";
 import { HistoryTokens } from "../../../services/agent-ui/web/server/dist/bridge/history-token.js";
 import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
+import { AcpLoadError } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
+
+const fromUi = createRequire(
+  new URL("../../../services/agent-ui/web/package.json", import.meta.url),
+);
+const { RequestError } = await import(
+  fromUi.resolve("@agentclientprotocol/sdk")
+);
+const loadPending = JSON.parse(
+  readFileSync(
+    new URL("../../../contracts/agent-acp/errors.json", import.meta.url),
+    "utf8",
+  ),
+).errors.configuration_not_ready;
 
 const requireFromAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -788,69 +802,86 @@ test("Node HTTP entry accepts prompt without waiting for ACP completion and supp
   }
 });
 
-test("one HTTP selection survives a transient cold replay failure", async () => {
-  let loads = 0;
-  const runtime = createWorkspaceRuntime({
-    connect: async () => ({
-      async readAgentExecutionState() {
-        return { availability: "ready", activeSessionId: null };
-      },
-      async load() {
-        if (loads++ === 0) throw new Error("temporary ACP load failure");
-        return { cut: { sealedWatermark: 0, appendVersion: 1 } };
-      },
-      async readExecution(sessionId) {
-        return {
-          sessionId,
-          appendVersion: 1,
-          outputWatermark: 0,
-          activeRunId: null,
-          recentReceipts: [],
-          configurationRevision: null,
-        };
-      },
-      async readIntent() {
-        return { kind: "unknown" };
-      },
-      async prompt() {
-        return { stopReason: "end_turn" };
-      },
-      async cancel() {},
-      close() {},
-    }),
-  });
-  const server = createWorkspaceHttpServer(runtime);
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  try {
-    const address = server.address();
-    assert.ok(address && typeof address !== "string");
-    const response = await fetch(
-      `http://127.0.0.1:${address.port}/api/app/workspace/v1/agents/agent-1/view?sessionId=session-1`,
-      {
-        headers: {
-          "x-antnest-organization-id": "org-1",
-          "x-antnest-principal-id": "user-1",
-          "x-antnest-agent-id": "agent-1",
+for (const typed of [true, false])
+  test(`one HTTP selection ${typed ? "survives negotiated transient cold replay" : "does not retry an unclassified cold replay failure"}`, async () => {
+    let loads = 0;
+    const runtime = createWorkspaceRuntime({
+      connect: async () => ({
+        async readAgentExecutionState() {
+          return { availability: "ready", activeSessionId: null };
         },
-      },
-    );
-    const view = await response.json();
-    assert.equal(response.status, 200, JSON.stringify(view));
-    assert.equal(
-      validateAgentView(view),
-      true,
-      JSON.stringify(validateAgentView.errors),
-    );
-    assert.equal(view.selectedView.historyState, "ready");
-    assert.equal(loads, 2);
-    assert.deepEqual(await runtime.drain(1_000), { forced: false });
-  } finally {
-    server.closeAllConnections();
-    server.close();
-    await once(server, "close");
-  }
-});
+        async load() {
+          if (loads++ === 0)
+            throw typed
+              ? new AcpLoadError(
+                  new RequestError(
+                    loadPending.json_rpc_code,
+                    loadPending.message,
+                    {
+                      code: "configuration_not_ready",
+                      retryable: loadPending.retryable,
+                      retry_after_ms: loadPending.retry_after_ms,
+                    },
+                  ),
+                  1,
+                )
+              : new Error("temporary ACP load failure");
+          return { cut: { sealedWatermark: 0, appendVersion: 1 } };
+        },
+        async readExecution(sessionId) {
+          return {
+            sessionId,
+            appendVersion: 1,
+            outputWatermark: 0,
+            activeRunId: null,
+            recentReceipts: [],
+            configurationRevision: null,
+          };
+        },
+        async readIntent() {
+          return { kind: "unknown" };
+        },
+        async prompt() {
+          return { stopReason: "end_turn" };
+        },
+        async cancel() {},
+        close() {},
+      }),
+    });
+    const server = createWorkspaceHttpServer(runtime);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const address = server.address();
+      assert.ok(address && typeof address !== "string");
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/app/workspace/v1/agents/agent-1/view?sessionId=session-1`,
+        {
+          headers: {
+            "x-antnest-organization-id": "org-1",
+            "x-antnest-principal-id": "user-1",
+            "x-antnest-agent-id": "agent-1",
+          },
+        },
+      );
+      const view = await response.json();
+      assert.equal(response.status, typed ? 200 : 503, JSON.stringify(view));
+      if (typed) {
+        assert.equal(
+          validateAgentView(view),
+          true,
+          JSON.stringify(validateAgentView.errors),
+        );
+        assert.equal(view.selectedView.historyState, "ready");
+      } else assert.equal(view.code, "upstream_unavailable");
+      assert.equal(loads, typed ? 2 : 1);
+      assert.deepEqual(await runtime.drain(1_000), { forced: false });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+      await once(server, "close");
+    }
+  });
 
 test("Node HTTP SSE flushes headers, delivers a live delta and releases a disconnected observer", async () => {
   let update;

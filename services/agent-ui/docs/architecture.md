@@ -325,11 +325,16 @@ automatic retry or a model capability hint. `intentReceipt: 1` is unchanged.
 See the [shared receipt contract](../../../contracts/agent-acp/workspace-bridge.md#receipt-failure-classification)
 and [shared validation fixtures](../../../tests/support/fixtures/agent-acp/bridge-receipts.json).
 
-Selected-Session cold replay retries transient ACP failures up to four total
-attempts under one server-owned work lease. The lease spans each backoff and
-keeps concurrent readers on the same recovery workflow; permanent missing or
-revoked Session errors stop immediately. Exhausted recovery returns an error
-without replacing an earlier sealed transcript.
+Selected-Session cold replay negotiates `antnest.dev/errors: {version: 1}`
+per ACP connection. It retries only a catalog-validated admission error with
+`retryable: true`, recovery `backoff`, and a valid wire `retry_after_ms`, up to
+four total attempts. Each wait is at least the wire delay. Unknown errors,
+unsupported capabilities, permanent denials, and wait/rebuild/reconnect
+directives return an error immediately. One server-owned work lease spans
+the attempts and keeps concurrent readers on the same recovery workflow.
+Retiring the owner aborts backoff, closes the transport, and waits for its
+authorization workflows to settle. Exhausted recovery preserves an earlier
+sealed transcript. This Load policy does not resubmit Prompt or intent work.
 
 Prompt admission checks the full serialized ACP request against the ACP POST
 body limit before returning `202`. The default is 16 MiB; Compose passes

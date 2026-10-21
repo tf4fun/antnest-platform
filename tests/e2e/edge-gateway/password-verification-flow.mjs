@@ -15,6 +15,7 @@ import { assertNoStore } from "../identity-closeout/support.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { withPasswordHolder } from "./password-pressure.mjs";
+import { assertPasswordHolderTransaction } from "./password-holder-transaction.mjs";
 import { collectResolveTraceEvidence } from "../../support/gateway-resolution-evidence.mjs";
 import { inspectLoginRefusalTransaction } from "./resolve-cache-recovery-http.mjs";
 import { passwordBrowserRequest } from "./password-browser-request.mjs";
@@ -727,6 +728,7 @@ async function verifyBusy({
   let holderResponse, probeResponse, holderTransaction, responses;
   evidence.holder = {
     policy: holderPolicy,
+    phase: "starting",
     started: 0,
     http_joined: false,
     server_drained: false,
@@ -755,9 +757,13 @@ async function verifyBusy({
         { traceRoot: true },
       );
       evidence.holder.http_joined = true;
+      evidence.holder.completion_phase = evidence.holder.phase;
+      evidence.holder.completed_before_cpu_restore =
+        evidence.holder.cpu_restore_started !== true;
       evidence.holder.trace_id = holderResponse.traceID;
     },
     exercise: async (assertHeld) => {
+      evidence.holder.phase = "initial-transaction-observation";
       while (true) {
         assertHeld();
         const rows = verifying(await query());
@@ -770,6 +776,7 @@ async function verifyBusy({
       }
       evidence.holder.before = holderTransaction;
       assertHeld();
+      evidence.holder.phase = "probe-admission";
       // A nonempty invalid namespace takes the actual no-database dummy KDF.
       // One wait_expired receipt corroborates admission; it is never retried.
       probeResponse = await f.signIn(
@@ -785,6 +792,7 @@ async function verifyBusy({
       assertPasswordRejection(probeResponse, "credential_busy");
       evidence.holder.probe = await actualBusy(probeResponse, "local-login");
       assertHeld();
+      evidence.holder.phase = "public-targets";
       const targets = await Promise.allSettled(
         requests.map((r) =>
           preserve(
@@ -803,19 +811,25 @@ async function verifyBusy({
           "one-shot public password targets failed",
         );
       responses = targets.map((r) => r.value);
+      evidence.holder.phase = "target-completion";
       assertHeld();
+      evidence.holder.phase = "transaction-observation";
       const after = verifying(await query());
-      assert.equal(
-        after.length,
-        1,
-        "holder left Verify before target completion",
-      );
-      assert.deepEqual(
-        after[0],
+      evidence.holder.phase = "transaction-comparison";
+      evidence.holder.after_row_count = after.length;
+      evidence.holder.stable_identity_matches =
+        after.length === 1 &&
+        ["pid", "backend_start", "xact_start"].every(
+          (field) => after[0][field] === holderTransaction[field],
+        );
+      evidence.holder.wait_event_changed =
+        after.length === 1 &&
+        after[0].wait_event_type !== holderTransaction.wait_event_type;
+      evidence.holder.after = assertPasswordHolderTransaction(
         holderTransaction,
-        "holder transaction advanced during targets",
+        after,
       );
-      evidence.holder.after = after[0];
+      evidence.holder.phase = "target-owner-receipts";
       evidence.busy = [];
       for (let n = 0; n < responses.length; n++)
         evidence.busy.push({
@@ -823,9 +837,12 @@ async function verifyBusy({
           ...(await actualBusy(responses[n], requests[n].method)),
         });
       assertHeld();
+      evidence.holder.phase = "durable-effects-check";
       assert.deepEqual(await facts(), before);
+      evidence.holder.phase = "pressure-checks-complete";
     },
     restore: async () => {
+      evidence.holder.cpu_restore_started = true;
       await clean(["update", "--cpu-quota", "-1", f.mainID]);
       const restored = await f.cpu(clean);
       assert.deepEqual(restored, originalCPU);
