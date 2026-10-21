@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
+import {
   stage2ConnectionFixture,
   setup,
 } from "./stage2-private-connection.fixture.mjs";
@@ -89,11 +93,17 @@ test(
       prompts[0].requestResult.messageId,
       prompts[0].completion.ack.messageId,
     );
+    const busy = admissionErrorReceipt("agent_busy");
     assert.deepEqual(prompts[1].rejectionReceipt, {
-      rpcCode: -32020,
+      rpcCode: busy.code,
       code: "agent_busy",
-      retryable: false,
+      retryable: busy.data.retryable,
     });
+    const refusal = snapshot.raw_frames.find(
+      (frame) => String(frame.id) === prompts[1].requestId,
+    );
+    assert(refusal, "original busy refusal frame required");
+    assertAdmissionError(refusal.error, "agent_busy");
     assert.deepEqual(
       f.identities.map((row) => row.body),
       [

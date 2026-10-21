@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 const url = new URL("./loss-private-session.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
   if (
@@ -11,19 +12,14 @@ const implementation = await import(url).catch((error) => {
 });
 test("Loss requires the semantic refusal and preserves unexpected original failures", async () => {
   assert.equal(typeof implementation.expectLossDenial, "function");
-  const denied = Object.assign(
-    new Error("Operation reported agent_unavailable"),
-    {
-      code: -32020,
-      data: { code: "agent_unavailable", retryable: false },
-    },
-  );
+  const rejection = admissionErrorReceipt("agent_unavailable");
+  const denied = Object.assign(new Error(rejection.message), rejection);
   await implementation.expectLossDenial(async () => {
     throw denied;
   });
   for (const original of [
     new Error("socket closed"),
-    { ...denied, data: { code: "agent_busy", retryable: false } },
+    admissionErrorReceipt("agent_busy"),
     null,
     undefined,
   ]) {

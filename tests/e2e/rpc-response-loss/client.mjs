@@ -51,6 +51,7 @@ import {
   captureTraceAfterFailure,
 } from "./trace-samples.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
 const recordTraceSample = traceSampleRecorder("/tmp/rpc-traces");
 const admin = new GatewayClient("http://edge-gateway:8080"),
@@ -404,10 +405,10 @@ async function exercise(version, kind, template, model) {
           rejection: "agent_unavailable",
         },
       ),
-      (e) =>
-        e.code === -32020 &&
-        e.data?.code === "agent_unavailable" &&
-        e.data?.retryable === false,
+      (error) => {
+        assertAdmissionError(error, "agent_unavailable");
+        return true;
+      },
     );
     assert.equal(c.updates.length, offset);
     assert.deepEqual(await savedRun(sessionId), saved);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { terminalStatus } from "./evidence.mjs";
 
 // Controlled business producer for the scenario unit tests. The separate
@@ -112,11 +113,12 @@ export function progressScenarioFixture(version, source, ending, options = {}) {
         }
         assert.equal(name, "prompt");
         if (terminal) {
-          const error = Object.assign(new Error("Runtime barrier"), {
-            code: -32020,
+          const rejection = admissionErrorReceipt("runtime_barrier_required");
+          const error = Object.assign(new Error(rejection.message), {
+            code: rejection.code,
             data: {
-              code: "runtime_barrier_required",
-              retryable: options.retryable ?? false,
+              ...rejection.data,
+              retryable: options.retryable ?? rejection.data.retryable,
             },
           });
           Object.assign(row, {

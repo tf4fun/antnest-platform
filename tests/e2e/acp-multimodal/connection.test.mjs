@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 import { once } from "node:events";
 import { commandFixture, setup } from "../acp-commands/connection.fixture.mjs";
 
@@ -25,6 +29,7 @@ const initialize = (version) =>
   version === 1
     ? {
         protocolVersion: 1,
+        _meta: { "antnest.dev/errors": { version: 1 } },
         agentCapabilities: {
           loadSession: true,
           promptCapabilities: {
@@ -36,6 +41,7 @@ const initialize = (version) =>
       }
     : {
         protocolVersion: 2,
+        _meta: { "antnest.dev/errors": { version: 1 } },
         info: { name: "native-peer", version: "1" },
         capabilities: {
           session: { prompt: { image: {}, audio: {}, embeddedContext: {} } },
@@ -138,18 +144,19 @@ for (const profile of profiles) {
       denyNew: true,
     });
     const client = await open(f, profile);
-    await assert.rejects(
-      client.request("new", setup),
-      (error) => error.code === -32020,
-    );
+    await assert.rejects(client.request("new", setup), (error) => {
+      assertAdmissionError(error, "access_denied");
+      return true;
+    });
     const identity = required("nativeRequestIdentity");
     const denied = identity(client, "denied", "request", {
       rejection: "access_denied",
     });
+    const receipt = admissionErrorReceipt("access_denied");
     assert.deepEqual(denied.rejectionReceipt, {
-      rpcCode: -32020,
-      code: "access_denied",
-      retryable: false,
+      rpcCode: receipt.code,
+      code: receipt.data.code,
+      retryable: receipt.data.retryable,
     });
     assert.equal(denied.inputSessionID, null);
     assert.throws(() => identity(client, "denied"));

@@ -4,6 +4,10 @@ import {
   createPrivateACPRecorder,
 } from "../../support/private-acp-recorder.mjs";
 import { replayRequest } from "../managed-mcp/protocol.mjs";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 
 export { preservePrivateACPFailure as preserveRestartFailure } from "../../support/private-acp-recorder.mjs";
 
@@ -149,15 +153,13 @@ export function indexRestartRequests({ agentId, connections }) {
           if (method === "new")
             assert.equal(row.requestResult.sessionId, target);
           if (rejection) {
-            assert.equal(row.failureCode, -32020);
-            assert.deepEqual(row.failureData, {
-              code: rejection,
-              retryable: false,
-            });
+            const expected = admissionErrorReceipt(rejection);
+            assert.equal(row.failureCode, expected.code);
+            assert.deepEqual(row.failureData, expected.data);
             assert.deepEqual(row.rejectionReceipt, {
-              rpcCode: -32020,
+              rpcCode: expected.code,
               code: rejection,
-              retryable: false,
+              retryable: expected.data.retryable,
             });
             const raw = c.raw_frames.filter(
               (frame) =>
@@ -169,6 +171,7 @@ export function indexRestartRequests({ agentId, connections }) {
               1,
               "original barrier rejection reply required",
             );
+            assertAdmissionError(raw[0].error, rejection);
             assert.equal(raw[0].error.code, row.failureCode);
             assert.deepEqual(raw[0].error.data, row.failureData);
           }

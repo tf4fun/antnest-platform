@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { replayRequest } from "../managed-mcp/protocol.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 const implementation = await import("./client-evidence.mjs").catch((error) => {
   if (
     error.code !== "ERR_MODULE_NOT_FOUND" ||
@@ -13,6 +14,10 @@ const setup = { cwd: "/workspace", mcpServers: [] };
 let identity = 0;
 function controlledClient(version) {
   const n = ++identity;
+  const initializationResult = {
+    protocolVersion: version,
+    _meta: { "antnest.dev/errors": { version: 1 } },
+  };
   const c = {
     boundary: "private-acp",
     transport: "websocket",
@@ -20,9 +25,9 @@ function controlledClient(version) {
     agentId: "agent",
     connectionTraceID: n.toString(16).padStart(32, "0"),
     clientSpanID: n.toString(16).padStart(16, "0"),
-    initializationResult: { protocolVersion: version },
+    initializationResult,
     requests: [{ requestId: "1", method: "initialize" }],
-    rawFrames: [{ id: 1, result: { protocolVersion: version } }],
+    rawFrames: [{ id: 1, result: structuredClone(initializationResult) }],
     updates: [],
     async request(method, params) {
       const id = c.requests.length + 1;
@@ -32,10 +37,8 @@ function controlledClient(version) {
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       });
       if (params.prompt?.[0]?.text.endsWith("-denied")) {
-        const error = Object.assign(new Error("Agent unavailable"), {
-          code: -32020,
-          data: { code: "agent_unavailable", retryable: false },
-        });
+        const rejection = admissionErrorReceipt("agent_unavailable");
+        const error = Object.assign(new Error(rejection.message), rejection);
         c.rawFrames.push({
           id,
           error: { code: error.code, message: error.message, data: error.data },
@@ -171,7 +174,7 @@ for (const [name, mutate] of [
   [
     "wrong raw error",
     (f) => {
-      f.connections[3].raw_frames.at(-1).error.data.retryable = true;
+      f.connections[3].raw_frames.at(-1).error.data.retryable = false;
     },
   ],
   ["missing raw rejection", (f) => f.connections[3].raw_frames.pop()],

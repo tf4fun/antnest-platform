@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 import {
   foundationConnectionFixture,
   principal,
@@ -159,10 +160,10 @@ export async function lossPrivateEvidenceFixture(t) {
         15000,
         { rejection: "agent_unavailable" },
       ),
-      (error) =>
-        error.code === -32020 &&
-        error.data.code === "agent_unavailable" &&
-        error.data.retryable === false,
+      (error) => {
+        assertAdmissionError(error, "agent_unavailable");
+        return true;
+      },
     );
     await client.closeAndWait();
     connections.push(client.snapshot());

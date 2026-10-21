@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { openBrowserPrivateACP } from "../identity-closeout/private-acp-browser.mjs";
 import { checkPrivateACPConnection } from "../../support/private-acp-recorder.mjs";
 import { assertPromptEvidence } from "./stage2-acp-evidence.mjs";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
 function fail(errors) {
   const unique = [...new Set(errors)];
@@ -235,10 +236,11 @@ export async function openStage2Connection(agentId, browser, options) {
         sessionId,
         prompt: [{ type: "text", text: "This prompt must not be admitted." }],
       }),
-      (error) =>
-        error?.code === -32020 &&
-        typeof error.data?.retryable === "boolean" &&
-        codes.includes(error.data?.code),
+      (error) => {
+        assert(codes.includes(error?.data?.code), "unexpected Stage2 denial");
+        assertAdmissionError(error, error.data.code);
+        return true;
+      },
     );
   client.prompt = (sessionId, { timeout = 180000 } = {}) => {
     if (closing || options.signal?.aborted)

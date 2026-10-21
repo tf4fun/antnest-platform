@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { serviceClient } from "../../support/service-grants.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 const [
   { WebSocketServer },
   { createPrivateACPTelemetry },
@@ -69,6 +70,7 @@ export async function stage2ConnectionFixture(t, options = {}) {
       .onRequest(v1.methods.agent.initialize, () => ({
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },
+        _meta: { "antnest.dev/errors": { version: 1 } },
       }))
       .onRequest(v1.methods.agent.session.new, () => ({
         sessionId: `session-${++count}`,
@@ -83,11 +85,14 @@ export async function stage2ConnectionFixture(t, options = {}) {
       .onRequest(
         v1.methods.agent.session.prompt,
         async ({ params, client }) => {
-          if (httpOffline)
-            throw new v1.RequestError(-32020, "Agent is unavailable", {
-              code: "agent_unavailable",
-              retryable: false,
-            });
+          if (httpOffline) {
+            const rejection = admissionErrorReceipt("agent_unavailable");
+            throw new v1.RequestError(
+              rejection.code,
+              rejection.message,
+              rejection.data,
+            );
+          }
           for (const update of [
             {
               sessionUpdate: "tool_call",
@@ -232,6 +237,7 @@ export async function stage2ConnectionFixture(t, options = {}) {
               protocolVersion: 2,
               info: { name: "stage2-peer", version: "1" },
               capabilities: {},
+              _meta: { "antnest.dev/errors": { version: 1 } },
             });
           } else if (message.method === "session/new") {
             reply(opened, message.id, { sessionId: `session-${++count}` });
@@ -241,11 +247,7 @@ export async function stage2ConnectionFixture(t, options = {}) {
                 JSON.stringify({
                   jsonrpc: "2.0",
                   id: message.id,
-                  error: {
-                    code: -32020,
-                    message: "Access denied",
-                    data: { code: "access_denied", retryable: false },
-                  },
+                  error: admissionErrorReceipt("access_denied"),
                 }),
               );
               return;
@@ -255,11 +257,7 @@ export async function stage2ConnectionFixture(t, options = {}) {
                 JSON.stringify({
                   jsonrpc: "2.0",
                   id: message.id,
-                  error: {
-                    code: -32020,
-                    message: "Agent is busy",
-                    data: { code: "agent_busy", retryable: false },
-                  },
+                  error: admissionErrorReceipt("agent_busy"),
                 }),
               );
               return;

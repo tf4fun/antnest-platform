@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 
 const url = new URL("./access-private-requests.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
@@ -49,13 +50,17 @@ function fixture() {
       requestId: String(c.requests.length + 1),
       inputSessionID: params.sessionId ?? null,
     });
+    const initializationResult = {
+      protocolVersion: version,
+      _meta: { "antnest.dev/errors": { version: 1 } },
+    };
     c.initialization = {
       ...identity("initialize", {}),
       outcome: "succeeded",
-      initializationResult: { protocolVersion: version },
+      initializationResult,
     };
     c.requests.push({ requestId: "1", method: "initialize" });
-    c.raw_frames.push({ id: 1, result: { protocolVersion: version } });
+    c.raw_frames.push({ id: 1, result: structuredClone(initializationResult) });
     connections.push(c);
     function request(name, sessionId, rejection) {
       const params =
@@ -88,14 +93,15 @@ function fixture() {
         requestId: row.requestId,
       };
       if (rejection) {
+        const expected = admissionErrorReceipt(rejection);
         Object.assign(row, {
-          failure: "original refusal",
-          failureCode: -32020,
-          failureData: { code: rejection, retryable: false },
+          failure: expected.message,
+          failureCode: expected.code,
+          failureData: structuredClone(expected.data),
           rejectionReceipt: {
-            rpcCode: -32020,
+            rpcCode: expected.code,
             code: rejection,
-            retryable: false,
+            retryable: expected.data.retryable,
           },
         });
         c.raw_frames.push({
@@ -103,7 +109,7 @@ function fixture() {
           error: {
             code: row.failureCode,
             data: structuredClone(row.failureData),
-            message: "refused",
+            message: expected.message,
           },
         });
       } else {

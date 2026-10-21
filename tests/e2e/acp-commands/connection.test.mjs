@@ -4,8 +4,10 @@ import { setImmediate as turn } from "node:timers/promises";
 import { once } from "node:events";
 import { commandFixture, principal, setup } from "./connection.fixture.mjs";
 import { until } from "../acp-closeout/wait.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 
 const implementation = await import("./connection.mjs");
+const accessDenied = admissionErrorReceipt("access_denied");
 const profiles = [
   { name: "v1-ws", version: 1 },
   { name: "v2-ws", version: 2 },
@@ -94,7 +96,7 @@ for (const profile of profiles) {
     const client = await open(f, profile, { captureRawFrames: true });
     await assert.rejects(
       client.request("new", setup),
-      (error) => error.code === -32020,
+      (error) => error.code === accessDenied.code,
     );
     assert(
       Array.isArray(client.rawFrames),
@@ -103,11 +105,7 @@ for (const profile of profiles) {
     assert.equal(client.rawFrames.length, 2);
     const frame = client.rawFrames.at(-1);
     assert.equal(String(frame.id), client.lastRequest.requestId);
-    assert.deepEqual(frame.error, {
-      code: -32020,
-      message: "fixture access denied",
-      data: { code: "access_denied", retryable: false },
-    });
+    assert.deepEqual(frame.error, accessDenied);
     await client.closeAndWait();
     if (profile.http) assert.equal(client.httpSnapshot().streamJoined, true);
   });
@@ -142,7 +140,10 @@ for (const profile of profiles) {
               },
               agentInfo: { name: "negotiation-peer", version: "71" },
               authMethods: [],
-              _meta: { negotiation: `${profile.name}-${supported}` },
+              _meta: {
+                negotiation: `${profile.name}-${supported}`,
+                "antnest.dev/errors": { version: 1 },
+              },
             }
           : {
               protocolVersion: 2,
@@ -154,7 +155,10 @@ for (const profile of profiles) {
                     : { image: null, audio: {} },
                 },
               },
-              _meta: { negotiation: `${profile.name}-${supported}` },
+              _meta: {
+                negotiation: `${profile.name}-${supported}`,
+                "antnest.dev/errors": { version: 1 },
+              },
             };
       const f = await commandFixture(t, profile, { initializationResult });
       const client = await open(f, profile);
@@ -495,12 +499,16 @@ for (const profile of profiles) {
       const client = await open(f, profile);
       await assert.rejects(
         client.request("new", setup),
-        (error) => error.code === -32020 && error.data.code === "access_denied",
+        (error) =>
+          error.code === accessDenied.code &&
+          error.message === accessDenied.message &&
+          error.data.code === "access_denied" &&
+          error.data.retryable === false,
       );
       assert.equal(client.lastRequest.method, "session/new");
       assert.equal(client.lastRequest.inputSessionID, null);
       assert.deepEqual(client.lastRequest.rejectionReceipt, {
-        rpcCode: -32020,
+        rpcCode: accessDenied.code,
         code: "access_denied",
         retryable: false,
       });

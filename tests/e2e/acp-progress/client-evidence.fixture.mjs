@@ -1,8 +1,10 @@
 import { terminalStatus } from "./evidence.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 
 // Controlled complete client inventory. Real SDK serialization/close provenance
 // and raw Trace admission remain the separate connection/collector gates.
 export function progressClientFixture() {
+  const barrier = admissionErrorReceipt("runtime_barrier_required");
   const agents = [],
     connections = [],
     scenarios = [],
@@ -87,9 +89,8 @@ export function progressClientFixture() {
                 outcome: "rejected",
                 rejection: "runtime_barrier_required",
                 rejectionReceipt: {
-                  rpcCode: -32020,
-                  code: "runtime_barrier_required",
-                  retryable: false,
+                  rpcCode: barrier.code,
+                  ...barrier.data,
                 },
               });
             if (

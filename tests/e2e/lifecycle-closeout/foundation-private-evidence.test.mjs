@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 import {
   foundationConnectionFixture,
   setup,
@@ -43,6 +44,10 @@ async function fixture(t) {
   for (let i = 0; i < 2; i++)
     await assert.rejects(
       first.request("prompt", prompt(b), 15000, { rejection: "agent_busy" }),
+      (error) => {
+        assertAdmissionError(error, "agent_busy");
+        return true;
+      },
     );
   f.release();
   await held;
@@ -226,7 +231,7 @@ for (const [name, mutate] of [
     (r) =>
       (r.active_run_rebuild.private_connections[0].raw_frames.find(
         (f) => f.error,
-      ).error.data.retryable = true),
+      ).error.data.retryable = false),
   ],
   [
     "busy session replaced",

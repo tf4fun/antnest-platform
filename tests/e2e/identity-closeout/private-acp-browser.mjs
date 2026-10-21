@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { connectACP } from "./acp-connection.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
+import { assertErrorCapability } from "../../support/acp-errors.mjs";
 
 // Delegate the existing browser session through the actual Identity service.
 // The browser Cookie itself is never sent to the private ACP receiver.
@@ -74,6 +75,7 @@ export async function openBrowserPrivateACP(
   try {
     const initializationResult = await client.initialize();
     signal?.throwIfAborted();
+    assertErrorCapability(initializationResult);
     client.initializationResult = initializationResult;
     return client;
   } catch (error) {

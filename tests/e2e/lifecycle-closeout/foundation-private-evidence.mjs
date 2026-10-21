@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 import { checkPrivateACPConnection } from "../../support/private-acp-recorder.mjs";
 import { foundationPrivateOutcome } from "./foundation-private-trace.mjs";
 import {
@@ -12,7 +16,12 @@ const unique = (values) =>
     values.length,
     "duplicate Foundation identity",
   );
-const busyReceipt = { rpcCode: -32020, code: "agent_busy", retryable: false };
+const busyError = admissionErrorReceipt("agent_busy");
+const busyReceipt = {
+  rpcCode: busyError.code,
+  code: busyError.data.code,
+  retryable: busyError.data.retryable,
+};
 
 export function foundationPublicResult(result) {
   const { private_connections, private_state_receipts, ...work } =
@@ -78,11 +87,7 @@ export function foundationPrivateAdmission(result) {
       const frame = connections[0].raw_frames.find(
         (f) => String(f.id) === row.requestId && f.error,
       );
-      assert.equal(frame?.error.code, busyReceipt.rpcCode);
-      assert.deepEqual(frame.error.data, {
-        code: "agent_busy",
-        retryable: false,
-      });
+      assertAdmissionError(frame?.error, "agent_busy");
     } else {
       assert.equal(row.outcome, "succeeded");
       assert.deepEqual(row.requestReceipt, {

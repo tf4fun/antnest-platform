@@ -116,8 +116,8 @@ for (const version of [1, 2]) {
     assert(f.clients.every((client) => client.closed));
     assert.equal(f.outcomes.length, 0);
   });
-  test(`v${version}: retryable failure cannot satisfy the Runtime barrier`, async () => {
-    const f = run(version, "managed", "cancel", { retryable: true });
+  test(`v${version}: non-retryable failure cannot satisfy the Runtime barrier`, async () => {
+    const f = run(version, "managed", "cancel", { retryable: false });
     await assert.rejects(f.execute());
     assert(f.clients.every((client) => client.closed));
     assert.equal(f.outcomes.length, 0);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import {
   openPrivateCommandConnection,
   withPrivateCommandConnection,
@@ -20,13 +21,13 @@ function identity(client, actual, method, sessionId, { phase, denial } = {}) {
   const inputSessionID = wire[0].sessionId ?? null;
   if (Object.hasOwn(actual, "inputSessionID"))
     assert.equal(actual.inputSessionID, inputSessionID);
-  if (denial)
+  if (denial) {
+    const expected = admissionErrorReceipt(denial);
     assert.deepEqual(actual.rejectionReceipt, {
-      rpcCode: -32020,
-      code: denial,
-      retryable: false,
+      rpcCode: expected.code,
+      ...expected.data,
     });
-  else
+  } else
     assert.equal(
       actual.rejectionReceipt,
       undefined,

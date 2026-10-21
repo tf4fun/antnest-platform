@@ -91,11 +91,13 @@ export async function privateTransportFixture(
                   protocolVersion: v1.PROTOCOL_VERSION,
                   agentCapabilities: { loadSession: true },
                   authMethods: [],
+                  _meta: { "antnest.dev/errors": { version: 1 } },
                 }
               : {
                   protocolVersion: v2.PROTOCOL_VERSION,
                   info: { name: "private-transport-fixture", version: "1" },
                   capabilities: {},
+                  _meta: { "antnest.dev/errors": { version: 1 } },
                 }
             : message.method === "session/new"
               ? { sessionId: "session" }

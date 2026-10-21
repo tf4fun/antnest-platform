@@ -12,6 +12,10 @@ import { observeStream, observeFetch } from "./transport.mjs";
 import { openBrowserPrivateACP } from "../identity-closeout/private-acp-browser.mjs";
 import { createPrivateACPHTTP } from "../identity-closeout/private-acp-http.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
+import {
+  assertAdmissionError,
+  assertErrorCapability,
+} from "../../support/acp-errors.mjs";
 
 const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
 
@@ -163,20 +167,24 @@ export function commandConnection(profile, agentId, browser) {
 // Opt-in owning consumer. Existing callers retain commandConnection until their
 // own private/Bridge migration and integration gates have passed.
 function commandRejectionReceipt(error) {
+  const code = error?.data?.code;
   if (
-    error?.code !== -32020 ||
-    typeof error.data?.retryable !== "boolean" ||
     ![
       "access_denied",
       "session_access_denied",
       "unsupported_resource_content",
       "unsupported_audio_content",
-    ].includes(error.data?.code)
+    ].includes(code)
   )
     return undefined;
+  try {
+    assertAdmissionError(error, code);
+  } catch {
+    return undefined;
+  }
   return {
     rpcCode: error.code,
-    code: error.data.code,
+    code,
     retryable: error.data.retryable,
   };
 }
@@ -383,6 +391,7 @@ export async function openPrivateCommandConnection(
       },
     );
     signal?.throwIfAborted();
+    assertErrorCapability(initializationResult);
     transport.completeInitialization();
     client.initializationResult = initializationResult;
     return client;

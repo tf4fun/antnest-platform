@@ -58,7 +58,7 @@ test("Loss rejects missing, foreign or substituted inventory and failed cleanup"
     (r) => r.request_traces.shift(),
     (r) => (r.private_connections[1].closed = false),
     (r) =>
-      (r.private_connections[1].evidence[1].rejectionReceipt.retryable = true),
+      (r.private_connections[1].evidence[1].rejectionReceipt.retryable = false),
     (r) =>
       (r.private_connections[1].raw_frames =
         r.private_connections[1].raw_frames.filter((f) => !f.error)),

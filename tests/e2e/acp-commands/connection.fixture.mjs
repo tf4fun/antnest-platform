@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { serviceClient } from "../../support/service-grants.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 const [v1, v2, { AcpServer }, adapters, { WebSocketServer }, telemetryModule] =
   await Promise.all([
@@ -70,11 +71,13 @@ export async function commandFixture(t, profile, options = {}) {
           ? {
               protocolVersion: sdk.PROTOCOL_VERSION,
               agentCapabilities: { loadSession: true },
+              _meta: { "antnest.dev/errors": { version: 1 } },
             }
           : {
               protocolVersion: sdk.PROTOCOL_VERSION,
               info: { name: "command-peer", version: "1" },
               capabilities: {},
+              _meta: { "antnest.dev/errors": { version: 1 } },
             };
       }),
     )
@@ -83,16 +86,25 @@ export async function commandFixture(t, profile, options = {}) {
       record("session/new", async () => {
         newStarted.resolve();
         if (options.holdNew) await releaseNew.promise;
+        if (options.newRejection !== undefined)
+          throw new sdk.RequestError(
+            options.newRejection.code,
+            options.newRejection.message,
+            structuredClone(options.newRejection.data),
+          );
         if (options.newError)
           throw new sdk.RequestError(-32603, "fixture new refused", {
             code: "provider_failure",
             retryable: true,
           });
-        if (options.denyNew)
-          throw new sdk.RequestError(-32020, "fixture access denied", {
-            code: "access_denied",
-            retryable: false,
-          });
+        if (options.denyNew) {
+          const rejection = admissionErrorReceipt("access_denied");
+          throw new sdk.RequestError(
+            rejection.code,
+            rejection.message,
+            rejection.data,
+          );
+        }
         return { sessionId: `session-${++sessions}` };
       }),
     )
@@ -122,11 +134,14 @@ export async function commandFixture(t, profile, options = {}) {
       record("session/prompt", async ({ params, client }) => {
         promptStarted.resolve();
         if (options.holdPrompt) await releasePrompt.promise;
-        if (options.barrierPrompt)
-          throw new sdk.RequestError(-32020, "fixture Runtime barrier", {
-            code: "runtime_barrier_required",
-            retryable: false,
-          });
+        if (options.barrierPrompt) {
+          const rejection = admissionErrorReceipt("runtime_barrier_required");
+          throw new sdk.RequestError(
+            rejection.code,
+            rejection.message,
+            rejection.data,
+          );
+        }
         if (options.permissionRequest) {
           const request = {
             ...structuredClone(options.permissionRequest),

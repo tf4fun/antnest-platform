@@ -11,6 +11,7 @@ import { collectTrace as collectCompleteTrace } from "../managed-mcp/trace.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import { saveSessionTrace } from "./session-trace.mjs";
 import { assertMessageReplay } from "../acp-closeout/replay.mjs";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
 export function assertUnchanged(before, after) {
   assert(
@@ -158,11 +159,7 @@ export function assertDeniedSessionError(error, boundary = "organization") {
     ["organization", "Agent"].includes(boundary),
     "unknown Session boundary",
   );
-  assert(
-    error?.code === -32020 &&
-      error.message === `Session belongs to another ${boundary}`,
-    "foreign Session must return only the generic access error",
-  );
+  assertAdmissionError(error, "session_access_denied");
   assert(
     error.data?.code === "session_access_denied" &&
       error.data.retryable === false &&

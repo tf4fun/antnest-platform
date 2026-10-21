@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 import { setImmediate as turn } from "node:timers/promises";
 import { commandFixture, setup } from "../acp-commands/connection.fixture.mjs";
 import { caseFor, stepsFor } from "./model.mjs";
@@ -92,20 +96,21 @@ for (const version of [1, 2]) {
         f.options,
       ),
     );
-    await assert.rejects(
-      client.request("new", setup),
-      (error) => error.code === -32020,
-    );
+    await assert.rejects(client.request("new", setup), (error) => {
+      assertAdmissionError(error, "access_denied");
+      return true;
+    });
     const record = required("planRequestIdentity")(
       client,
       "session/new",
       undefined,
       { denial: "access_denied" },
     );
+    const denied = admissionErrorReceipt("access_denied");
     assert.deepEqual(record.rejectionReceipt, {
-      rpcCode: -32020,
-      code: "access_denied",
-      retryable: false,
+      rpcCode: denied.code,
+      code: denied.data.code,
+      retryable: denied.data.retryable,
     });
     assert.equal(record.inputSessionID, null);
     assert.throws(() =>

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 export function assertInterrupted(before, after, kind) {
   if (kind === "completed") {
     assert.equal(before.run.state, "completed");
@@ -91,8 +92,6 @@ export function assertReplacement(before, after) {
   }
 }
 export function assertBarrierRejection(error) {
-  assert.equal(error.code, -32020);
-  assert.equal(error.data?.code, "runtime_barrier_required");
-  assert.equal(error.data?.retryable, false);
+  assertAdmissionError(error, "runtime_barrier_required");
   return true;
 }

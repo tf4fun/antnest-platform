@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 import {
   commandFixture,
   principal,
@@ -271,17 +272,17 @@ for (const profile of profiles) {
         sessionId,
         prompt: [{ type: "text", text: "blocked" }],
       }),
-      (error) =>
-        error.code === -32020 &&
-        error.data?.code === "runtime_barrier_required" &&
-        error.data?.retryable === false,
+      (error) => {
+        assertAdmissionError(error, "runtime_barrier_required");
+        return true;
+      },
     );
     assert.equal(client.lastRequest.outcome, "rejected");
     assert.equal(client.lastRequest.rejection, "runtime_barrier_required");
     assert.deepEqual(client.lastRequest.rejectionReceipt, {
-      rpcCode: -32020,
+      rpcCode: -32036,
       code: "runtime_barrier_required",
-      retryable: false,
+      retryable: true,
     });
     assert.equal(client.lastRequest.requestReceipt, undefined);
     assert.equal(client.lastRequest.closedBeforeResponse, undefined);

@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
+import { admissionErrorReceipt } from "../../../support/acp-errors.mjs";
 import type { ProtocolVersion } from "../support/acp-wire-client.js";
 import {
   boundaryState,
@@ -92,10 +93,9 @@ describe.skipIf(databaseUrl === undefined)(
                 ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
               });
               expect(result.result).toBeUndefined();
-              expect(result.error).toMatchObject({
-                code: -32020,
-                data: { code: "client_mcp_not_allowed", retryable: false },
-              });
+              expect(result.error).toMatchObject(
+                admissionErrorReceipt("client_mcp_not_allowed"),
+              );
               expect(await boundaryState(pool)).toEqual(before);
             }
             expect(JSON.stringify(client.frames.slice(offset))).not.toContain(
@@ -144,10 +144,9 @@ describe.skipIf(databaseUrl === undefined)(
           sessionId,
           prompt: [{ type: "text", text: "Do not use retained client tools" }],
         });
-        expect(denied.error).toMatchObject({
-          code: -32020,
-          data: { code: "client_mcp_not_allowed", retryable: false },
-        });
+        expect(denied.error).toMatchObject(
+          admissionErrorReceipt("client_mcp_not_allowed"),
+        );
         expect(await boundaryState(pool)).toEqual(before);
         expect(app.acceptRun).not.toHaveBeenCalled();
         expect(app.model.complete).not.toHaveBeenCalled();

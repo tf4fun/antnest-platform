@@ -1,11 +1,25 @@
 import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 
 const same = (
   actual,
   expected,
   message = "Workspace original request fields disagree",
 ) => assert(isDeepStrictEqual(actual, expected), message);
+
+// Keep raw private wire values out of assertion diagnostics.
+function matchesAdmissionError(actual, expectedCode) {
+  try {
+    assertAdmissionError(actual, expectedCode);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const workspaceRequestKey = (row) =>
   `${row.connectionTraceID}/${row.requestId}`;
@@ -105,16 +119,18 @@ export function projectWorkspaceRequest(connection, row, observation = {}) {
           rejection,
         ),
       );
-      const receipt = { rpcCode: -32020, code: rejection, retryable: false };
+      const expected = admissionErrorReceipt(rejection);
+      const receipt = {
+        rpcCode: expected.code,
+        code: expected.data.code,
+        retryable: expected.data.retryable,
+      };
       same(row.rejectionReceipt, receipt);
-      same(row.failureCode, -32020);
-      same(row.failureData?.code, rejection);
-      same(row.failureData?.retryable, false);
+      same(row.failureCode, expected.code);
       same(frames.length, 1);
       same(frames[0].result, undefined);
-      same(frames[0].error.code, -32020);
-      same(frames[0].error.data?.code, rejection);
-      same(frames[0].error.data?.retryable, false);
+      same(matchesAdmissionError(frames[0].error, rejection), true);
+      same(row.failureData, frames[0].error.data);
       same(row.method, "session/prompt");
       projected.rejection = rejection;
       projected.outcome = "rejected";

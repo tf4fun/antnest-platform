@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { serviceClient } from "../../support/service-grants.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 const [
   sdk,
@@ -73,6 +74,7 @@ export async function foundationConnectionFixture(
     .onRequest(sdk.methods.agent.initialize, () => ({
       protocolVersion: 1,
       agentCapabilities: { loadSession: true },
+      _meta: { "antnest.dev/errors": { version: 1 } },
     }))
     .onRequest(sdk.methods.agent.session.new, async ({ client }) => {
       const sessionId = `session-${++sessions}`;
@@ -85,20 +87,22 @@ export async function foundationConnectionFixture(
       return {};
     })
     .onRequest(sdk.methods.agent.session.prompt, async ({ params, client }) => {
-      if (denyPrompt?.(params))
+      if (denyPrompt?.(params)) {
+        const rejection = admissionErrorReceipt("agent_unavailable");
         throw new sdk.RequestError(
-          -32020,
-          "Operation reported agent_unavailable",
-          {
-            code: "agent_unavailable",
-            retryable: false,
-          },
+          rejection.code,
+          rejection.message,
+          rejection.data,
         );
-      if (active)
-        throw new sdk.RequestError(-32020, "Operation reported agent_busy", {
-          code: "agent_busy",
-          retryable: false,
-        });
+      }
+      if (active) {
+        const rejection = admissionErrorReceipt("agent_busy");
+        throw new sdk.RequestError(
+          rejection.code,
+          rejection.message,
+          rejection.data,
+        );
+      }
       active = true;
       const operation = (async () => {
         const permission = await client.request(

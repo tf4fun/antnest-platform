@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 
 // Independent captured-client contract fixture; this does not simulate service
 // authorization, persistence, Run execution or collector/Docker acceptance.
 export function permissionClientFixture() {
+  const accessDenied = admissionErrorReceipt("access_denied");
   const agents = ["permission-agent-1", "permission-agent-2"];
   const connections = [],
     outcomes = [],
@@ -136,9 +138,8 @@ export function permissionClientFixture() {
         requestReceipt: undefined,
         rejection: "access_denied",
         rejectionReceipt: {
-          rpcCode: -32020,
-          code: "access_denied",
-          retryable: false,
+          rpcCode: accessDenied.code,
+          ...accessDenied.data,
         },
       },
     );

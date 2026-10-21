@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { verifyModelRequests } from "./expectations.mjs";
 
 const groups = [
@@ -178,13 +179,13 @@ export function indexPermissionRequests({
           assert.equal(row.closedBeforeResponse, extra.closedBeforeResponse);
           assert.equal(row.outcome, extra.outcome ?? "succeeded");
           assert.equal(row.rejection, extra.rejection);
-          if (extra.rejection)
+          if (extra.rejection) {
+            const expected = admissionErrorReceipt("access_denied");
             assert.deepEqual(row.rejectionReceipt, {
-              rpcCode: -32020,
-              code: "access_denied",
-              retryable: false,
+              rpcCode: expected.code,
+              ...expected.data,
             });
-          else assert.equal(row.rejectionReceipt, undefined);
+          } else assert.equal(row.rejectionReceipt, undefined);
           if (row.outcome === "succeeded") {
             assert.equal(row.requestReceipt?.requestId, row.requestId);
             assert.deepEqual(row.requestReceipt.params, params);

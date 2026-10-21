@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import {
   assertInterrupted,
   assertReplacement,
@@ -126,15 +127,9 @@ test("replacement keeps template and Agent identity but replaces every execution
       assertReplacement(before, { ...after, [key]: before[key] }),
     );
 });
-test("unknown barrier uses the current non-retryable domain error, not legacy busy admission", () => {
-  assertBarrierRejection({
-    code: -32020,
-    data: { code: "runtime_barrier_required", retryable: false },
-  });
+test("unknown barrier uses its canonical admission error instead of busy", () => {
+  assertBarrierRejection(admissionErrorReceipt("runtime_barrier_required"));
   assert.throws(() =>
-    assertBarrierRejection({
-      code: -32021,
-      data: { code: "agent_busy", retryable: true },
-    }),
+    assertBarrierRejection(admissionErrorReceipt("agent_busy")),
   );
 });

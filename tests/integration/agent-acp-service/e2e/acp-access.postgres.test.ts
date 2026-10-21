@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
+import { admissionErrorReceipt } from "../../../support/acp-errors.mjs";
 import type {
   AcpWireClient,
   ProtocolVersion,
@@ -78,7 +79,6 @@ describe.skipIf(databaseUrl === undefined)(
             expectDenied(
               await foreign.request(method, params),
               "session_access_denied",
-              -32020,
             );
           }
           await rejectedCancellation(
@@ -125,11 +125,7 @@ describe.skipIf(databaseUrl === undefined)(
           ["session/list", {}],
           ...sessionCommands(version, sessionId),
         ] as Array<[string, Record<string, unknown>]>) {
-          expectDenied(
-            await owner.request(method, params),
-            "access_denied",
-            -32020,
-          );
+          expectDenied(await owner.request(method, params), "access_denied");
         }
         await rejectedCancellation(app, owner, sessionId, "access_denied");
         expect(await boundaryState(pool)).toEqual(before);
@@ -189,7 +185,6 @@ describe.skipIf(databaseUrl === undefined)(
                 ],
               }),
               "session_access_denied",
-              -32020,
             );
             const before = await boundaryState(pool);
             await rejectedCancellation(
@@ -414,12 +409,9 @@ function sessionCommands(
   ];
 }
 
-function expectDenied(frame: WireFrame, code: string, wireCode: number) {
+function expectDenied(frame: WireFrame, code: string) {
   expect(frame.result).toBeUndefined();
-  expect(frame.error).toMatchObject({
-    code: wireCode,
-    data: { code, retryable: false },
-  });
+  expect(frame.error).toMatchObject(admissionErrorReceipt(code));
 }
 
 async function rejectedCancellation(

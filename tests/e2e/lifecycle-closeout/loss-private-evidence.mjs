@@ -8,6 +8,10 @@ import { assertRestoreRun } from "./restore-evidence.mjs";
 import { foundationTraceExitCode } from "./foundation-evidence.mjs";
 import { clockWarningsOnly } from "../stage3-base/trace.mjs";
 import { lossPrivateOutcome } from "./loss-private-trace.mjs";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -192,14 +196,16 @@ export function lossPrivateAdmission(result) {
         if (denied) {
           assert.equal(row.outcome, "failed");
           assert.equal(row.rejection, "agent_unavailable");
+          const expected = admissionErrorReceipt("agent_unavailable");
           assert.deepEqual(row.rejectionReceipt, {
-            rpcCode: -32020,
+            rpcCode: expected.code,
             code: "agent_unavailable",
-            retryable: false,
+            retryable: expected.data.retryable,
           });
+          assertAdmissionError(wire[0].error, "agent_unavailable");
           assert.equal(wire[0].error.code, row.rejectionReceipt.rpcCode);
           assert.equal(wire[0].error.data.code, row.rejectionReceipt.code);
-          assert.equal(wire[0].error.data.retryable, false);
+          assert.equal(wire[0].error.data.retryable, expected.data.retryable);
           assert.equal(trace.rejection, "agent_unavailable");
           assert.equal(trace.no_execution, true);
         } else {

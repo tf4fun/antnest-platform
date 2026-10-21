@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 import { withAgentCleanup } from "../../support/verification/agent-cleanup.mjs";
 import { summarizeFailure } from "../../support/verification/failure.mjs";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -277,9 +278,7 @@ async function exercise(profile) {
         ],
       }),
       (error) => {
-        assert.equal(error.code, -32020);
-        assert.equal(error.data?.code, "unsupported_resource_content");
-        assert.equal(error.data?.retryable, false);
+        assertAdmissionError(error, "unsupported_resource_content");
         return true;
       },
     );

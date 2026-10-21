@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decide } from "./loss-model.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import {
   assertLoss,
   assertReplacement,
@@ -223,10 +224,7 @@ test("loss denial must be a semantic admission failure, not a timeout or disconn
       data: { code: "agent_build_failed", retryable: false },
     }),
   );
-  assertLossDenial({
-    code: -32020,
-    data: { code: "agent_unavailable", retryable: false },
-  });
+  assertLossDenial(admissionErrorReceipt("agent_unavailable"));
   for (const error of [
     new Error("closed"),
     { code: -32021, data: { code: "agent_rebuilding", retryable: true } },
