@@ -16,6 +16,12 @@ batches; active caller grants remain tied to service implementation.
 display consumers and explicit HTTPS outage/load integration remain separate
 pending batches.
 
+[ACP error classification](agent-acp/errors.md), its
+[catalog](agent-acp/errors.json) and [schema](agent-acp/errors.schema.json)
+define #53's shared version-1 contract. Completing this shared phase does not
+complete the ACP, Agent UI or Gateway implementation batches or their
+cross-service user workflow; those consumers and integration remain pending.
+
 ## Active Contracts
 
 | Directory                                                                    | Owner service                                                                                                     | Consumers                                                                            | Files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |

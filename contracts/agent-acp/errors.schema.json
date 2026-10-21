@@ -1,0 +1,487 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.dev/contracts/agent-acp/errors.schema.json",
+  "title": "ACP error classification catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capability",
+    "fallback",
+    "errors",
+    "terminal_outcomes"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "antnest.dev/errors"
+        },
+        "version": {
+          "type": "integer",
+          "const": 1
+        }
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "json_rpc_code",
+        "http_status",
+        "data_code",
+        "retryable",
+        "recovery",
+        "message"
+      ],
+      "properties": {
+        "json_rpc_code": {
+          "type": "integer",
+          "const": -32020
+        },
+        "http_status": {
+          "type": "integer",
+          "const": 500
+        },
+        "data_code": {
+          "type": "string",
+          "const": "internal_error"
+        },
+        "retryable": {
+          "type": "boolean",
+          "const": false
+        },
+        "recovery": {
+          "type": "string",
+          "const": "contact_operator"
+        },
+        "message": {
+          "type": "string",
+          "const": "Agent request failed"
+        }
+      }
+    },
+    "errors": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "#/$defs/code"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/catalogEntry"
+      }
+    },
+    "terminal_outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failed", "unresolved"],
+      "properties": {
+        "failed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "json_rpc_code",
+            "retryable",
+            "message",
+            "surfaces",
+            "data_code"
+          ],
+          "properties": {
+            "json_rpc_code": {
+              "type": "integer",
+              "const": -32022
+            },
+            "retryable": {
+              "type": "boolean",
+              "const": false
+            },
+            "message": {
+              "$ref": "#/$defs/message"
+            },
+            "surfaces": {
+              "$ref": "#/$defs/terminalSurfaces"
+            },
+            "data_code": {
+              "$ref": "#/$defs/terminalDataCode"
+            }
+          }
+        },
+        "unresolved": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "json_rpc_code",
+            "retryable",
+            "message",
+            "surfaces",
+            "data_code"
+          ],
+          "properties": {
+            "json_rpc_code": {
+              "type": "integer",
+              "const": -32023
+            },
+            "retryable": {
+              "type": "boolean",
+              "const": false
+            },
+            "message": {
+              "$ref": "#/$defs/message"
+            },
+            "surfaces": {
+              "$ref": "#/$defs/terminalSurfaces"
+            },
+            "data_code": {
+              "$ref": "#/$defs/terminalDataCode"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "retryAfterMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60000
+    },
+    "catalogEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "class",
+        "json_rpc_code",
+        "http_status",
+        "retryable",
+        "recovery",
+        "message",
+        "surfaces"
+      ],
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": [
+            "access",
+            "availability",
+            "configuration",
+            "conflict",
+            "request",
+            "internal",
+            "authentication",
+            "dependency",
+            "resource"
+          ]
+        },
+        "json_rpc_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -32700,
+              "maximum": -32000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "http_status": {
+          "type": "integer",
+          "minimum": 400,
+          "maximum": 599
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retry_after_ms": {
+          "$ref": "#/$defs/retryAfterMs"
+        },
+        "recovery": {
+          "type": "string",
+          "enum": [
+            "none",
+            "backoff",
+            "reconnect",
+            "wait_binding",
+            "wait_rebuild",
+            "configure",
+            "reduce_context",
+            "contact_operator",
+            "refresh",
+            "query_intent",
+            "resume_session",
+            "refresh_permission",
+            "resync",
+            "retry_read"
+          ]
+        },
+        "message": {
+          "$ref": "#/$defs/message"
+        },
+        "surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["admission", "http", "skill_source"]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "access"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "json_rpc_code": {
+                "type": "integer",
+                "minimum": -32019,
+                "maximum": -32010
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "availability"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "json_rpc_code": {
+                "type": "integer",
+                "minimum": -32039,
+                "maximum": -32030
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "configuration"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "json_rpc_code": {
+                "type": "integer",
+                "minimum": -32049,
+                "maximum": -32040
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "conflict"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "json_rpc_code": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -32059,
+                    "maximum": -32050
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "request"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "json_rpc_code": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "enum": [-32700, -32600, -32601, -32602]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "internal"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "json_rpc_code": {
+                "type": "integer",
+                "const": -32603
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "enum": ["authentication", "dependency", "resource"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "json_rpc_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["retry_after_ms"],
+            "properties": {
+              "retry_after_ms": {}
+            }
+          },
+          "then": {
+            "properties": {
+              "retryable": {
+                "const": true
+              },
+              "recovery": {
+                "const": "backoff"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["surfaces"],
+            "properties": {
+              "surfaces": {
+                "type": "array",
+                "contains": {
+                  "const": "admission"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "json_rpc_code": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "terminalSurfaces": {
+      "type": "array",
+      "const": ["terminal"],
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "const": "terminal"
+      }
+    },
+    "terminalDataCode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vocabulary", "meaning"],
+      "properties": {
+        "vocabulary": {
+          "type": "string",
+          "const": "open"
+        },
+        "meaning": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "errorData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "retryable"],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retry_after_ms": {
+          "$ref": "#/$defs/retryAfterMs"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 0
+        }
+      },
+      "if": {
+        "required": ["retry_after_ms"],
+        "properties": {
+          "retry_after_ms": {}
+        }
+      },
+      "then": {
+        "properties": {
+          "retryable": {
+            "const": true
+          }
+        }
+      }
+    }
+  }
+}

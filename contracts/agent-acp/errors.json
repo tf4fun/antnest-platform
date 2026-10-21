@@ -1,0 +1,683 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "name": "antnest.dev/errors",
+    "version": 1
+  },
+  "fallback": {
+    "json_rpc_code": -32020,
+    "http_status": 500,
+    "data_code": "internal_error",
+    "retryable": false,
+    "recovery": "contact_operator",
+    "message": "Agent request failed"
+  },
+  "errors": {
+    "access_denied": {
+      "class": "access",
+      "json_rpc_code": -32010,
+      "http_status": 403,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Agent access is not allowed",
+      "surfaces": ["admission", "http"]
+    },
+    "session_access_denied": {
+      "class": "access",
+      "json_rpc_code": -32011,
+      "http_status": 403,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Session access is not allowed",
+      "surfaces": ["admission", "http"]
+    },
+    "client_mcp_not_allowed": {
+      "class": "access",
+      "json_rpc_code": -32012,
+      "http_status": 403,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Client MCP servers are not supported by this Agent",
+      "surfaces": ["admission", "http"]
+    },
+    "agent_busy": {
+      "class": "availability",
+      "json_rpc_code": -32030,
+      "http_status": 409,
+      "retryable": true,
+      "retry_after_ms": 1000,
+      "recovery": "backoff",
+      "message": "Agent already has an active Run",
+      "surfaces": ["admission", "http"]
+    },
+    "session_busy": {
+      "class": "availability",
+      "json_rpc_code": -32031,
+      "http_status": 409,
+      "retryable": true,
+      "retry_after_ms": 1000,
+      "recovery": "backoff",
+      "message": "Session already has an active Run",
+      "surfaces": ["admission", "http"]
+    },
+    "configuration_not_ready": {
+      "class": "availability",
+      "json_rpc_code": -32032,
+      "http_status": 503,
+      "retryable": true,
+      "retry_after_ms": 1000,
+      "recovery": "backoff",
+      "message": "Execution configuration is not ready",
+      "surfaces": ["admission", "http"]
+    },
+    "agent_preparing": {
+      "class": "availability",
+      "json_rpc_code": -32033,
+      "http_status": 503,
+      "retryable": true,
+      "retry_after_ms": 1000,
+      "recovery": "backoff",
+      "message": "Agent execution is preparing",
+      "surfaces": ["admission", "http"]
+    },
+    "service_stopping": {
+      "class": "availability",
+      "json_rpc_code": -32034,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "reconnect",
+      "message": "Agent ACP Service is not accepting new Runs",
+      "surfaces": ["admission", "http"]
+    },
+    "agent_unavailable": {
+      "class": "availability",
+      "json_rpc_code": -32035,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "wait_binding",
+      "message": "Agent execution is unavailable",
+      "surfaces": ["admission", "http"]
+    },
+    "runtime_barrier_required": {
+      "class": "availability",
+      "json_rpc_code": -32036,
+      "http_status": 409,
+      "retryable": true,
+      "recovery": "wait_rebuild",
+      "message": "Previous Runtime execution requires recovery before new work",
+      "surfaces": ["admission", "http"]
+    },
+    "recovery_pending": {
+      "class": "availability",
+      "json_rpc_code": -32037,
+      "http_status": 503,
+      "retryable": true,
+      "retry_after_ms": 1000,
+      "recovery": "backoff",
+      "message": "Run recovery is pending",
+      "surfaces": ["admission", "http"]
+    },
+    "runtime_connection_unavailable": {
+      "class": "availability",
+      "json_rpc_code": -32038,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "wait_binding",
+      "message": "Runtime connection is unavailable",
+      "surfaces": ["admission", "http"]
+    },
+    "model_unavailable": {
+      "class": "configuration",
+      "json_rpc_code": -32040,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Selected model is unavailable",
+      "surfaces": ["admission", "http"]
+    },
+    "provider_unavailable": {
+      "class": "configuration",
+      "json_rpc_code": -32040,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Selected Provider is unavailable",
+      "surfaces": ["admission", "http"]
+    },
+    "skill_unavailable": {
+      "class": "configuration",
+      "json_rpc_code": -32040,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Selected Skill is unavailable",
+      "surfaces": ["admission", "http"]
+    },
+    "invalid_configuration": {
+      "class": "configuration",
+      "json_rpc_code": -32041,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Session configuration is invalid",
+      "surfaces": ["admission", "http"]
+    },
+    "invalid_execution_configuration": {
+      "class": "configuration",
+      "json_rpc_code": -32041,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Execution configuration is invalid",
+      "surfaces": ["admission", "http"]
+    },
+    "invalid_context_budget": {
+      "class": "configuration",
+      "json_rpc_code": -32041,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Model context budget configuration is invalid",
+      "surfaces": ["admission", "http"]
+    },
+    "tool_name_collision": {
+      "class": "configuration",
+      "json_rpc_code": -32041,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Tool names conflict in the execution configuration",
+      "surfaces": ["admission", "http"]
+    },
+    "context_budget_exhausted": {
+      "class": "configuration",
+      "json_rpc_code": -32042,
+      "http_status": 422,
+      "retryable": false,
+      "recovery": "reduce_context",
+      "message": "Model input exceeds the available context budget",
+      "surfaces": ["admission", "http"]
+    },
+    "budget_exceeded": {
+      "class": "configuration",
+      "json_rpc_code": -32043,
+      "http_status": 422,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Execution budget has been exceeded",
+      "surfaces": ["admission", "http"]
+    },
+    "context_compaction_failed": {
+      "class": "configuration",
+      "json_rpc_code": -32044,
+      "http_status": 500,
+      "retryable": false,
+      "recovery": "contact_operator",
+      "message": "Session context could not be compacted",
+      "surfaces": ["admission", "http"]
+    },
+    "configuration_conflict": {
+      "class": "conflict",
+      "json_rpc_code": -32050,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Configuration revision conflicts with current state",
+      "surfaces": ["admission", "http"]
+    },
+    "agent_operation_conflict": {
+      "class": "conflict",
+      "json_rpc_code": -32050,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Agent lifecycle operation conflicts with current state",
+      "surfaces": ["admission", "http"]
+    },
+    "idempotency_conflict": {
+      "class": "conflict",
+      "json_rpc_code": -32051,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "query_intent",
+      "message": "Intent identifier was already used with different input",
+      "surfaces": ["admission", "http"]
+    },
+    "intent_already_recorded": {
+      "class": "conflict",
+      "json_rpc_code": -32051,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "query_intent",
+      "message": "This prompt intent has already been recorded",
+      "surfaces": ["admission", "http"]
+    },
+    "session_append_conflict": {
+      "class": "conflict",
+      "json_rpc_code": -32051,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "query_intent",
+      "message": "Session append version conflicts with current state",
+      "surfaces": ["admission", "http"]
+    },
+    "session_not_active": {
+      "class": "conflict",
+      "json_rpc_code": -32052,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "resume_session",
+      "message": "Session is not active",
+      "surfaces": ["admission", "http"]
+    },
+    "session_workspace_mismatch": {
+      "class": "conflict",
+      "json_rpc_code": -32052,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Session workspace does not match the requested workspace",
+      "surfaces": ["admission", "http"]
+    },
+    "session_not_found": {
+      "class": "conflict",
+      "json_rpc_code": -32053,
+      "http_status": 404,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Session was not found",
+      "surfaces": ["admission", "http"]
+    },
+    "audit_not_found": {
+      "class": "conflict",
+      "json_rpc_code": -32053,
+      "http_status": 404,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Execution audit was not found",
+      "surfaces": ["admission", "http"]
+    },
+    "permission_stale": {
+      "class": "conflict",
+      "json_rpc_code": -32054,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "refresh_permission",
+      "message": "Permission request no longer matches current state",
+      "surfaces": ["admission", "http"]
+    },
+    "permission_connection_changed": {
+      "class": "conflict",
+      "json_rpc_code": -32054,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "refresh_permission",
+      "message": "Permission connection has changed",
+      "surfaces": ["admission", "http"]
+    },
+    "cursor_expired": {
+      "class": "conflict",
+      "json_rpc_code": -32055,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "resync",
+      "message": "Cursor has expired",
+      "surfaces": ["admission", "http"]
+    },
+    "run_cancelled": {
+      "class": "conflict",
+      "json_rpc_code": -32056,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Run was cancelled before execution",
+      "surfaces": ["admission", "http"]
+    },
+    "invalid_request": {
+      "class": "request",
+      "json_rpc_code": -32600,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Request is invalid",
+      "surfaces": ["admission", "http", "skill_source"]
+    },
+    "invalid_params": {
+      "class": "request",
+      "json_rpc_code": -32602,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Request parameters are invalid",
+      "surfaces": ["admission", "http"]
+    },
+    "invalid_cursor": {
+      "class": "request",
+      "json_rpc_code": -32602,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "resync",
+      "message": "Cursor is invalid",
+      "surfaces": ["admission", "http"]
+    },
+    "invalid_directory_filter": {
+      "class": "request",
+      "json_rpc_code": -32602,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Directory filter is invalid",
+      "surfaces": ["admission", "http"]
+    },
+    "invalid_agent_settlement": {
+      "class": "request",
+      "json_rpc_code": -32602,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Agent settlement request is invalid",
+      "surfaces": ["admission", "http"]
+    },
+    "unsupported_workspace": {
+      "class": "request",
+      "json_rpc_code": -32602,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Requested workspace is not supported",
+      "surfaces": ["admission", "http"]
+    },
+    "unsupported_audio_content": {
+      "class": "request",
+      "json_rpc_code": -32602,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Audio content is not supported",
+      "surfaces": ["admission", "http"]
+    },
+    "unsupported_resource_content": {
+      "class": "request",
+      "json_rpc_code": -32602,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Resource content is not supported",
+      "surfaces": ["admission", "http"]
+    },
+    "invalid_json": {
+      "class": "request",
+      "json_rpc_code": -32700,
+      "http_status": 400,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Request JSON is invalid",
+      "surfaces": ["admission", "http", "skill_source"]
+    },
+    "method_not_allowed": {
+      "class": "request",
+      "json_rpc_code": null,
+      "http_status": 405,
+      "retryable": false,
+      "recovery": "none",
+      "message": "HTTP method is not allowed for this route",
+      "surfaces": ["http", "skill_source"]
+    },
+    "request_too_large": {
+      "class": "request",
+      "json_rpc_code": null,
+      "http_status": 413,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Request exceeds the body limit",
+      "surfaces": ["http", "skill_source"]
+    },
+    "unsupported_media_type": {
+      "class": "request",
+      "json_rpc_code": null,
+      "http_status": 415,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Request media type is not supported",
+      "surfaces": ["http", "skill_source"]
+    },
+    "invalid_runtime_information": {
+      "class": "internal",
+      "json_rpc_code": -32603,
+      "http_status": 502,
+      "retryable": false,
+      "recovery": "contact_operator",
+      "message": "Runtime information could not be validated",
+      "surfaces": ["admission", "http"]
+    },
+    "runtime_execution_mismatch": {
+      "class": "internal",
+      "json_rpc_code": -32603,
+      "http_status": 502,
+      "retryable": false,
+      "recovery": "contact_operator",
+      "message": "Runtime execution does not match its binding",
+      "surfaces": ["admission", "http"]
+    },
+    "provider_handle_released": {
+      "class": "internal",
+      "json_rpc_code": -32603,
+      "http_status": 500,
+      "retryable": false,
+      "recovery": "contact_operator",
+      "message": "Provider execution handle is no longer available",
+      "surfaces": ["admission", "http"]
+    },
+    "database_error": {
+      "class": "internal",
+      "json_rpc_code": -32603,
+      "http_status": 500,
+      "retryable": false,
+      "recovery": "query_intent",
+      "message": "A database operation requires service recovery",
+      "surfaces": ["admission", "http"]
+    },
+    "service_unauthenticated": {
+      "class": "authentication",
+      "json_rpc_code": null,
+      "http_status": 401,
+      "retryable": false,
+      "recovery": "reconnect",
+      "message": "Service authentication is required",
+      "surfaces": ["http"]
+    },
+    "caller_context_required": {
+      "class": "authentication",
+      "json_rpc_code": null,
+      "http_status": 401,
+      "retryable": false,
+      "recovery": "reconnect",
+      "message": "Caller context is required",
+      "surfaces": ["http"]
+    },
+    "caller_context_invalid": {
+      "class": "authentication",
+      "json_rpc_code": null,
+      "http_status": 401,
+      "retryable": false,
+      "recovery": "reconnect",
+      "message": "Caller context is invalid",
+      "surfaces": ["http"]
+    },
+    "caller_not_allowed": {
+      "class": "authentication",
+      "json_rpc_code": null,
+      "http_status": 403,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Service caller is not allowed",
+      "surfaces": ["http"]
+    },
+    "identity_dependency_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "retry_read",
+      "message": "Identity verification is unavailable",
+      "surfaces": ["http"]
+    },
+    "configuration_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "refresh",
+      "message": "Execution configuration could not be applied",
+      "surfaces": ["http"]
+    },
+    "settlement_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "refresh",
+      "message": "Agent execution could not be settled",
+      "surfaces": ["http"]
+    },
+    "execution_audit_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "retry_read",
+      "message": "Execution audit is unavailable",
+      "surfaces": ["http"]
+    },
+    "execution_state_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "retry_read",
+      "message": "Agent execution state is unavailable",
+      "surfaces": ["http"]
+    },
+    "workspace_observation_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "retry_read",
+      "message": "Workspace observation is unavailable",
+      "surfaces": ["http"]
+    },
+    "learning_changes_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "retry_read",
+      "message": "Skill learning changes are unavailable",
+      "surfaces": ["http"]
+    },
+    "learning_status_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "retry_read",
+      "message": "Skill learning status is unavailable",
+      "surfaces": ["http"]
+    },
+    "acp_http_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "reconnect",
+      "message": "ACP HTTP transport is unavailable",
+      "surfaces": ["http"]
+    },
+    "configuration_too_large": {
+      "class": "request",
+      "json_rpc_code": null,
+      "http_status": 413,
+      "retryable": false,
+      "recovery": "configure",
+      "message": "Execution configuration exceeds the body limit",
+      "surfaces": ["http"]
+    },
+    "agent_not_found": {
+      "class": "resource",
+      "json_rpc_code": null,
+      "http_status": 404,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Agent was not found",
+      "surfaces": ["http"]
+    },
+    "intent_unknown": {
+      "class": "resource",
+      "json_rpc_code": null,
+      "http_status": 404,
+      "retryable": false,
+      "recovery": "query_intent",
+      "message": "Prompt intent has not been observed",
+      "surfaces": ["http"]
+    },
+    "unauthorized": {
+      "class": "authentication",
+      "json_rpc_code": null,
+      "http_status": 401,
+      "retryable": false,
+      "recovery": "none",
+      "message": "Source reader authorization is required",
+      "surfaces": ["skill_source"]
+    },
+    "not_found": {
+      "class": "resource",
+      "json_rpc_code": null,
+      "http_status": 404,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Skill source was not found",
+      "surfaces": ["skill_source"]
+    },
+    "content_changed": {
+      "class": "conflict",
+      "json_rpc_code": null,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Skill source content has changed",
+      "surfaces": ["skill_source"]
+    },
+    "source_unavailable": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "retry_read",
+      "message": "Skill source is unavailable",
+      "surfaces": ["skill_source"]
+    }
+  },
+  "terminal_outcomes": {
+    "failed": {
+      "json_rpc_code": -32022,
+      "retryable": false,
+      "message": "Agent Run failed",
+      "surfaces": ["terminal"],
+      "data_code": {
+        "vocabulary": "open",
+        "meaning": "Run outcome classification; never an admission retry instruction"
+      }
+    },
+    "unresolved": {
+      "json_rpc_code": -32023,
+      "retryable": false,
+      "message": "Agent Run outcome is unresolved",
+      "surfaces": ["terminal"],
+      "data_code": {
+        "vocabulary": "open",
+        "meaning": "Unknown Run effect classification; never an admission retry instruction"
+      }
+    }
+  }
+}
