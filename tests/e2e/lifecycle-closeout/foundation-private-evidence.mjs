@@ -24,9 +24,18 @@ const busyReceipt = {
 };
 
 export function foundationPublicResult(result) {
-  const { private_connections, private_state_receipts, ...work } =
-    result.active_run_rebuild;
-  return { ...result, active_run_rebuild: work };
+  const {
+    private_lifecycle_admissions,
+    private_observations,
+    ...publicResult
+  } = result;
+  const {
+    private_connections,
+    private_state_receipts,
+    private_business,
+    ...work
+  } = result.active_run_rebuild;
+  return { ...publicResult, active_run_rebuild: work };
 }
 
 // This default-only gate binds the original wire/Run/Provider inventory before

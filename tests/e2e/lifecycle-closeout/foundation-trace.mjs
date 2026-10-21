@@ -6,6 +6,7 @@ import { collectCrashAdmissionTrace } from "./crash-resolution.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import {
   inspectReplayObservation,
+  inspectReplayObservationBusiness,
   observationEventQuery,
 } from "./replay-history.mjs";
 import { lines } from "./docker.mjs";
@@ -37,6 +38,7 @@ export async function collectReplayObservation(
   expected,
   secrets,
   signal,
+  options = {},
 ) {
   const postgres = lines(
     await docker(config.compose(["ps", "-q", "postgres"])),
@@ -65,19 +67,27 @@ export async function collectReplayObservation(
     JSON.stringify({ event: expected.event, persisted }),
     { mode: 0o600 },
   );
-  return collectTrace(
-    config.jaeger,
-    expected.event.trace_id,
-    (trace) => {
-      saveFoundationTrace(config, trace);
-      return inspectReplayObservation(
-        trace,
-        { ...expected, persisted },
-        secrets,
-      );
-    },
-    signal,
+  const collect = (localSignal) =>
+    (options.collectTrace ?? collectTrace)(
+      config.jaeger,
+      expected.event.trace_id,
+      (trace) => {
+        saveFoundationTrace(config, trace);
+        return inspectReplayObservation(
+          trace,
+          { ...expected, persisted },
+          secrets,
+        );
+      },
+      localSignal,
+    );
+  if (!options.traceDiagnostics) return collect(signal);
+  const business = inspectReplayObservationBusiness({ ...expected, persisted });
+  const diagnostic = await options.traceDiagnostics.run(
+    "foundation-replay-observation",
+    (localSignal) => collect(localSignal),
   );
+  return { ...business, diagnostic };
 }
 
 export function saveFoundationTrace(config, trace) {

@@ -115,6 +115,137 @@ test("Loss can select its own collector while retaining the original shared tele
   await f.access.closeAndWait();
   assert.equal(f.connections.at(-1).snapshot.closed, true);
 });
+
+test("Foundation collection receives its bounded diagnostic signal instead of the parent signal", async (t) => {
+  const parent = new AbortController(),
+    local = new AbortController();
+  let received;
+  const f = await fixture(t, {
+    signal: parent.signal,
+    async collectTrace(_base, _expected, options) {
+      received = options.signal;
+      return { collected: true };
+    },
+  });
+  assert.deepEqual(await f.access.collect({}, [], local.signal), {
+    collected: true,
+  });
+  assert.equal(received, local.signal);
+  assert.equal(parent.signal.aborted, false);
+});
+
+test("Foundation exporter failure is auxiliary after actual shutdown and before durable state archival", async (t) => {
+  const original = new Error("private exporter diagnostic canary");
+  const order = [],
+    recorded = [];
+  const f = await fixture(t, {
+    allowCloseFailure: true,
+    telemetryFactory() {
+      return {
+        async shutdown() {
+          order.push("shutdown");
+          throw original;
+        },
+      };
+    },
+    traceDiagnostics: {
+      async run(name, inspect) {
+        try {
+          await inspect();
+        } catch (error) {
+          recorded.push({ name, error });
+        }
+      },
+    },
+    preserveState() {
+      order.push("state");
+    },
+  });
+  await f.access.closeAndWait();
+  assert.deepEqual(order, ["shutdown", "state"]);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].name, "foundation-telemetry-shutdown");
+  assert.equal(recorded[0].error, original);
+});
+
+test("Foundation exhausted diagnostics still wait for the real exporter before reporting cleanup", async (t) => {
+  const entered = Promise.withResolvers(),
+    release = Promise.withResolvers();
+  const order = [];
+  const f = await fixture(t, {
+    telemetryFactory() {
+      return {
+        async shutdown() {
+          order.push("shutdown-start");
+          entered.resolve();
+          await release.promise;
+          order.push("shutdown-end");
+        },
+      };
+    },
+    traceDiagnostics: {
+      async run() {
+        return { status: "not_collected" };
+      },
+    },
+    preserveState() {
+      order.push("state");
+    },
+  });
+  let settled = false;
+  const closed = f.access.closeAndWait();
+  void closed.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  try {
+    // A missing factory must fail promptly instead of stranding the test.
+    await Promise.race([
+      entered.promise,
+      closed.then(() => {
+        throw new Error("cleanup returned before entering the exporter");
+      }),
+    ]);
+    await new Promise(setImmediate);
+    assert.equal(settled, false);
+    assert.deepEqual(order, ["shutdown-start"]);
+  } finally {
+    release.resolve();
+    await closed;
+  }
+  assert.deepEqual(order, ["shutdown-start", "shutdown-end", "state"]);
+});
+
+test("Foundation state archival remains blocking when exporter diagnostics also fail", async (t) => {
+  const archive = new Error("original state archive failed");
+  let shutdown = 0;
+  const f = await fixture(t, {
+    allowCloseFailure: true,
+    telemetryFactory() {
+      return {
+        async shutdown() {
+          shutdown++;
+          throw new Error("exporter failed");
+        },
+      };
+    },
+    traceDiagnostics: {
+      async run() {
+        throw new Error("diagnostic archive failed");
+      },
+    },
+    preserveState() {
+      throw archive;
+    },
+  });
+  await assert.rejects(f.access.closeAndWait(), (error) => error === archive);
+  assert.equal(shutdown, 1);
+});
+
 test("Foundation retains raw state when complete configuration revision validation fails", async (t) => {
   const f = await fixture(t);
   delete f.state.configuration_revision;

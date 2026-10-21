@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import * as replayHistory from "./replay-history.mjs";
 import {
   assertReplayHistory,
   inspectReplayObservation,
@@ -429,4 +430,281 @@ test("event evidence SELECT is bounded to a validated identity and excludes secr
     "event\nunsafe",
   ])
     assert.throws(() => observationEventQuery(value));
+});
+
+function businessInspector() {
+  const inspect = replayHistory.inspectReplayObservationBusiness;
+  assert.equal(
+    typeof inspect,
+    "function",
+    "inspectReplayObservationBusiness is required",
+  );
+  return inspect;
+}
+
+function businessInput(f) {
+  return {
+    event: f.event,
+    persisted: f.persisted,
+    agentID: f.input.agentID,
+    runtimeRevision: f.input.runtimeRevision,
+  };
+}
+
+function traceFreeFixture() {
+  const f = fixture();
+  delete f.input.admissionTraceID;
+  delete f.input.replayTraceID;
+  delete f.event.trace_id;
+  delete f.persisted.trace_id;
+  return f;
+}
+
+const businessReceipt = (f) => ({
+  event_id: f.event.event_id,
+  agent_id: f.input.agentID,
+  business: "passed",
+});
+
+test("business observation validates original SQL evidence without Trace metadata or Spans", () => {
+  const inspect = businessInspector();
+  const f = traceFreeFixture();
+  const input = businessInput(f);
+  const original = structuredClone(input);
+  assert.deepEqual(inspect(input), businessReceipt(f));
+  assert.deepEqual(
+    input,
+    original,
+    "business inspection changed the original evidence",
+  );
+});
+
+test("business replay accepts mismatched diagnostic identities and uses only the business receipt", async () => {
+  const inspect = businessInspector();
+  const f = fixture();
+  f.input.admissionTraceID = "invalid-admission-trace";
+  delete f.input.replayTraceID;
+  f.event.trace_id = "PRIVATE-INVALID-TRACE-CANARY";
+  f.persisted.trace_id = "a-different-diagnostic-identity";
+  const original = structuredClone(f);
+  let reads = 0;
+  const result = await assertReplayHistory(
+    f.input,
+    async (event) => {
+      reads++;
+      assert.equal(event, f.event);
+      return inspect(businessInput(f));
+    },
+    { requireTrace: false },
+  );
+  assert.equal(reads, 1);
+  assert.deepEqual(result, [businessReceipt(f)]);
+  assert(!JSON.stringify(result).includes("PRIVATE-INVALID-TRACE-CANARY"));
+  assert.deepEqual(
+    f,
+    original,
+    "business replay changed the original evidence",
+  );
+});
+
+test("legacy replay admission remains strict when its collector returns only a business receipt", async () => {
+  const f = fixture();
+  await assert.rejects(
+    assertReplayHistory(f.input, async () => businessReceipt(f)),
+  );
+});
+
+test("business observation rejects a missing or unrelated persisted row", () => {
+  const inspect = businessInspector();
+  for (const mutate of [
+    (f) => {
+      f.persisted = null;
+    },
+    (f) => {
+      f.persisted.event_id = "event_unrelated";
+    },
+    (f) => {
+      f.persisted.agent_id = "another-agent";
+    },
+    (f) => {
+      f.event.agent_id = f.persisted.agent_id = "another-agent";
+    },
+  ]) {
+    const f = traceFreeFixture();
+    mutate(f);
+    assert.throws(() => inspect(businessInput(f)));
+  }
+});
+
+test("business observation retains public identity sequence schema and date validation", () => {
+  const inspect = businessInspector();
+  for (const mutate of [
+    (f) => {
+      f.event.event_id = f.persisted.event_id = "";
+    },
+    (f) => {
+      f.event.aggregate_sequence = f.persisted.aggregate_sequence = 0;
+    },
+    (f) => {
+      f.event.schema_version = f.persisted.schema_version = 2;
+    },
+    (f) => {
+      f.event.event_type = f.persisted.event_type = "agent_created";
+    },
+    (f) => {
+      f.event.occurred_at = "not-a-date";
+    },
+  ]) {
+    const f = traceFreeFixture();
+    mutate(f);
+    assert.throws(() => inspect(businessInput(f)));
+  }
+});
+
+test("business observation binds both persisted cursors to the original public event", () => {
+  const inspect = businessInspector();
+  for (const mutate of [
+    (f) => {
+      f.persisted.aggregate_sequence++;
+    },
+    (f) => {
+      f.persisted.global_sequence++;
+    },
+    (f) => {
+      f.event.global_sequence = f.persisted.global_sequence =
+        Number.MAX_SAFE_INTEGER + 1;
+    },
+  ]) {
+    const f = traceFreeFixture();
+    mutate(f);
+    assert.throws(() => inspect(businessInput(f)));
+  }
+});
+
+test("business observation requires original persisted Runtime data and the expected target", () => {
+  const inspect = businessInspector();
+  for (const mutate of [
+    (f) => {
+      delete f.input.runtimeRevision;
+    },
+    (f) => {
+      delete f.persisted.data;
+    },
+    (f) => {
+      f.persisted.data = [];
+    },
+    (f) => {
+      f.persisted.data.runtime_revision = "another-runtime";
+    },
+  ]) {
+    const f = traceFreeFixture();
+    mutate(f);
+    assert.throws(() => inspect(businessInput(f)));
+  }
+});
+
+test("business observation rejects command association on either original record", () => {
+  const inspect = businessInspector();
+  for (const field of ["event", "persisted"]) {
+    const f = traceFreeFixture();
+    f[field].operation_request_id = "operation-command";
+    assert.throws(() => inspect(businessInput(f)));
+  }
+});
+
+test("business replay preserves the original history prefix without Trace collection", async () => {
+  const f = traceFreeFixture();
+  f.input.after.events[0].occurred_at = "2026-10-11T00:00:00Z";
+  let reads = 0;
+  await assert.rejects(
+    assertReplayHistory(
+      f.input,
+      async () => {
+        reads++;
+        return businessReceipt(f);
+      },
+      { requireTrace: false },
+    ),
+  );
+  assert.equal(reads, 0, "history corruption reached the observation reader");
+});
+
+test("business replay still enforces complete pages cursors metadata and failed-create scope", async () => {
+  for (const mutate of [
+    (f) => {
+      f.input.after.next_sequence--;
+    },
+    (f) => {
+      f.input.after.truncated = true;
+    },
+    (f) => {
+      f.input.runtimeStartupFailure = false;
+    },
+    (f) => {
+      f.input.before.events = Array.from({ length: 100 }, (_, index) => ({
+        ...f.input.before.events[0],
+        event_id: `event_${index}`,
+        aggregate_sequence: index + 1,
+        global_sequence: index + 1,
+      }));
+      f.input.before.next_sequence = 100;
+      f.input.after = structuredClone(f.input.before);
+    },
+  ]) {
+    const f = traceFreeFixture();
+    mutate(f);
+    await assert.rejects(
+      assertReplayHistory(f.input, async () => businessReceipt(f), {
+        requireTrace: false,
+      }),
+    );
+  }
+});
+
+test("business replay propagates the original SQL read failure", async () => {
+  const f = traceFreeFixture();
+  const failure = new Error("original observation SQL read failed");
+  let reads = 0;
+  await assert.rejects(
+    assertReplayHistory(
+      f.input,
+      async () => {
+        reads++;
+        throw failure;
+      },
+      { requireTrace: false },
+    ),
+    (error) => error === failure,
+  );
+  assert.equal(reads, 1);
+});
+
+test("business replay requires a matching successful business receipt from its reader", async () => {
+  const f = fixture();
+  for (const result of [
+    undefined,
+    { ...businessReceipt(f), event_id: "event_unrelated" },
+    { ...businessReceipt(f), agent_id: "another-agent" },
+    { ...businessReceipt(f), business: "failed" },
+    {
+      kind: "runtime-observation",
+      topology: "passed",
+      event_id: f.event.event_id,
+      agent_id: f.input.agentID,
+      trace_id: f.event.trace_id,
+      spans: 1,
+      error_spans: 0,
+      warnings: [],
+      warning_count: 0,
+      strict_trace: "passed",
+    },
+  ])
+    await assert.rejects(
+      assertReplayHistory(f.input, async () => result, {
+        requireTrace: false,
+      }),
+    );
+  await assert.rejects(
+    assertReplayHistory(f.input, undefined, { requireTrace: false }),
+  );
 });
