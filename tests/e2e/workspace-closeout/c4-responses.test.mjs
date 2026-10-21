@@ -11,13 +11,36 @@ import {
 import { runC4BrowserScope } from "./c4-browser-scope.mjs";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 
+const request = (path = "/api/app/workspace/v1/bootstrap") => ({
+  url: () => `http://gateway${path}`,
+  method: () => "GET",
+  resourceType: () => "fetch",
+  redirectedFrom: () => null,
+  redirectedTo: () => null,
+  response: () => Promise.resolve(null),
+  failure: () => null,
+});
 const response = (
   path = "/api/app/workspace/v1/bootstrap",
   type = "application/json",
-) => ({
-  url: () => `http://gateway${path}`,
-  headers: () => ({ "content-type": type }),
-});
+  original = request(path),
+) => {
+  const value = {
+    url: () => `http://gateway${path}`,
+    status: () => 200,
+    headers: () => ({ "content-type": type }),
+    request: () => original,
+  };
+  original.response = () => Promise.resolve(value);
+  return value;
+};
+function emitResponse(page, value = response()) {
+  const original = value.request();
+  page.emit("request", original);
+  page.emit("response", value);
+  page.emit("requestfinished", original);
+  return value;
+}
 
 function denialFixture() {
   const frame = {},
@@ -141,9 +164,17 @@ test("C4 bootstrap denial requires its original Gateway Trace ID", () => {
 async function fixture(work, options = {}) {
   const page = new EventEmitter(),
     cleanup = [];
+  let pageClosed = false;
+  const closePage = () => {
+    if (!pageClosed) {
+      pageClosed = true;
+      page.emit("close");
+    }
+  };
   const context = {
     close: async () => {
       cleanup.push("context");
+      closePage();
       await options.close?.();
     },
   };
@@ -154,6 +185,7 @@ async function fixture(work, options = {}) {
         newContext: async () => context,
         close: async () => {
           cleanup.push("browser");
+          closePage();
           await options.close?.();
         },
       }),
@@ -173,7 +205,7 @@ for (const action of ["navigate", "reload", "close", "offline"]) {
         await body.promise;
         order.push("body captured");
       });
-      page.emit("response", response());
+      emitResponse(page);
       const pending = reader.before(async () => {
         order.push(action);
         future.resolve();
@@ -205,11 +237,11 @@ test("C4 joins another finite response registered during the first body read", a
     const reader = observeC4Responses(page, scope, async (_response, url) => {
       if (url.pathname.endsWith("bootstrap")) {
         await first.promise;
-        page.emit("response", response("/api/app/workspace/v1/agents"));
+        emitResponse(page, response("/api/app/workspace/v1/agents"));
       } else await second.promise;
       order.push(url.pathname);
     });
-    page.emit("response", response());
+    emitResponse(page);
     const pending = reader.before(() => order.push("closed"));
     try {
       first.resolve();
@@ -232,7 +264,7 @@ test("C4 rechecks a response registered between an empty drain and navigation", 
   let changed = false;
   await fixture(async ({ page, scope }) => {
     const reader = observeC4Responses(page, scope, () => body.promise);
-    queueMicrotask(() => page.emit("response", response()));
+    queueMicrotask(() => emitResponse(page));
     const pending = reader.before(() => {
       changed = true;
     });
@@ -257,13 +289,13 @@ test("C4 rechecks earlier pages before a context-wide change", async () => {
     const other = new EventEmitter();
     const first = observeC4Responses(page, scope, () => firstBody.promise);
     const second = observeC4Responses(other, scope, () => secondBody.promise);
-    other.emit("response", response());
+    emitResponse(other);
     const pending = beforeC4Responses([first, second], () => {
       changed = true;
     });
     try {
       await turn();
-      page.emit("response", response());
+      emitResponse(page);
       secondBody.resolve();
       await turn();
       assert.equal(changed, false);
@@ -287,18 +319,18 @@ test("C4 drains only the selected page and excludes long-lived streams", async (
       observed.push(value.url());
     });
     observeC4Responses(other, scope, () => otherBody.promise);
-    other.emit("response", response());
+    emitResponse(other);
     for (const path of [
       "/api/app/a/watch",
       "/api/app/a/events",
       "/api/session/login",
     ])
-      page.emit("response", response(path));
-    page.emit(
-      "response",
+      emitResponse(page, response(path));
+    emitResponse(
+      page,
       response("/api/app/stream", "text/event-stream; charset=utf-8"),
     );
-    page.emit("response", response());
+    emitResponse(page);
     try {
       await reader.before(() => observed.push("navigation"));
       assert.deepEqual(observed, [
@@ -321,7 +353,7 @@ test("C4 keeps a body failure after it settles and prevents later navigation", a
         const reader = observeC4Responses(page, scope, async () => {
           throw original;
         });
-        page.emit("response", response());
+        emitResponse(page);
         await turn();
         await assert.rejects(
           reader.before(() => {
@@ -347,7 +379,7 @@ test("C4 normal context closure follows all finite body reads", async () => {
         await body.promise;
         order.push("body");
       });
-      page.emit("response", response());
+      emitResponse(page);
       const pending = reader.before(() => scope.closeContext());
       try {
         await turn();
@@ -380,7 +412,7 @@ test("C4 abort closes resources to unblock body reads and retains both failures"
             joined = true;
           }
         });
-        page.emit("response", response());
+        emitResponse(page);
         abort.abort(cancellation);
         await reader.wait();
       },
@@ -400,6 +432,392 @@ test("C4 abort closes resources to unblock body reads and retains both failures"
   );
   assert.equal(joined, true);
 });
+
+test("C4 requestfailed without a response releases the finite request", async () => {
+  await fixture(async ({ page, scope }) => {
+    const captured = [];
+    const reader = observeC4Responses(page, scope, (value) => {
+      captured.push(value);
+      return Promise.resolve();
+    });
+    const original = request("/api/app/workspace/v1/process");
+    page.emit("request", original);
+    let changed = false;
+    const pending = reader.before(() => {
+      changed = true;
+    });
+    try {
+      await turn();
+      assert.equal(changed, false);
+      original.failure = () => ({ errorText: "net::ERR_ABORTED" });
+      page.emit("requestfailed", original);
+      await pending;
+      assert.equal(changed, true);
+      assert.equal(reader.ready(), true);
+      assert.deepEqual(captured, []);
+    } finally {
+      page.emit("requestfailed", original);
+      await scope.capture(() => pending);
+    }
+  });
+});
+
+test("C4 captured response still waits for requestfinished", async () => {
+  await fixture(async ({ page, scope }) => {
+    const captured = Promise.withResolvers();
+    const reader = observeC4Responses(page, scope, () => {
+      captured.resolve();
+      return Promise.resolve();
+    });
+    const value = response();
+    page.emit("request", value.request());
+    page.emit("response", value);
+    await captured.promise;
+    let changed = false;
+    const pending = reader.before(() => {
+      changed = true;
+    });
+    try {
+      await turn();
+      assert.equal(changed, false, "capture alone is not a terminal request");
+      page.emit("requestfinished", value.request());
+      await pending;
+      assert.equal(changed, true);
+    } finally {
+      page.emit("requestfinished", value.request());
+      await scope.capture(() => pending);
+    }
+  });
+});
+
+test("C4 requestfinished still waits for the response body capture", async () => {
+  const body = Promise.withResolvers();
+  const order = [];
+  await fixture(async ({ page, scope }) => {
+    const reader = observeC4Responses(page, scope, async () => {
+      await body.promise;
+      order.push("captured");
+    });
+    const value = response();
+    page.emit("request", value.request());
+    page.emit("response", value);
+    page.emit("requestfinished", value.request());
+    const pending = reader.before(() => order.push("navigation"));
+    try {
+      await turn();
+      assert.deepEqual(order, []);
+      body.resolve();
+      await pending;
+      assert.deepEqual(order, ["captured", "navigation"]);
+    } finally {
+      body.resolve();
+      await scope.capture(() => pending);
+    }
+  });
+});
+
+test("C4 follows a redirect chain until the target request and body finish", async () => {
+  const body = Promise.withResolvers();
+  const targetReceived = Promise.withResolvers();
+  await fixture(async ({ page, scope }) => {
+    const source = request("/api/app/workspace/v1/redirect");
+    const target = request("/api/app/workspace/v1/process");
+    source.redirectedTo = () => target;
+    target.redirectedFrom = () => source;
+    const redirect = response(
+      "/api/app/workspace/v1/redirect",
+      "application/json",
+      source,
+    );
+    redirect.status = () => 302;
+    redirect.headers = () => ({
+      location: target.url(),
+      "content-type": "application/json",
+    });
+    const final = response(
+      "/api/app/workspace/v1/process",
+      "application/json",
+      target,
+    );
+    const reader = observeC4Responses(page, scope, async (value) => {
+      if (value.request() === target) {
+        targetReceived.resolve();
+        await body.promise;
+      }
+    });
+    page.emit("request", source);
+    page.emit("response", redirect);
+    page.emit("requestfinished", source);
+    page.emit("request", target);
+    let changed = false;
+    const pending = reader.before(() => {
+      changed = true;
+    });
+    try {
+      await turn();
+      assert.equal(changed, false, "redirect target has not returned headers");
+      page.emit("response", final);
+      page.emit("requestfinished", target);
+      await targetReceived.promise;
+      await turn();
+      assert.equal(
+        changed,
+        false,
+        "redirect target body has not been captured",
+      );
+      body.resolve();
+      await pending;
+      assert.equal(changed, true);
+    } finally {
+      body.resolve();
+      page.emit("requestfailed", target);
+      await scope.capture(() => pending);
+    }
+  });
+});
+
+test("C4 releases an unknown stream route when SSE response headers arrive", async () => {
+  await fixture(async ({ page, scope }) => {
+    const captured = [];
+    const reader = observeC4Responses(page, scope, (value) => {
+      captured.push(value);
+      return Promise.resolve();
+    });
+    const value = response(
+      "/api/app/future-stream",
+      "text/event-stream; charset=utf-8",
+    );
+    page.emit("request", value.request());
+    let changed = false;
+    const pending = reader.before(() => {
+      changed = true;
+    });
+    try {
+      await turn();
+      assert.equal(changed, false);
+      page.emit("response", value);
+      // No terminal event: this stream remains open while navigation is allowed.
+      await turn();
+      assert.equal(changed, true);
+      await pending;
+      assert.equal(reader.ready(), true);
+      assert.deepEqual(captured, []);
+    } finally {
+      page.emit("requestfailed", value.request());
+      await scope.capture(() => pending);
+    }
+  });
+});
+
+for (const suffix of ["watch", "events"]) {
+  test(`C4 excludes /${suffix} before response headers exist`, async () => {
+    await fixture(async ({ page, scope }) => {
+      const reader = observeC4Responses(page, scope, () => {
+        throw new Error("Stream body must not be captured");
+      });
+      const original = request(`/api/app/workspace/v1/${suffix}`);
+      page.emit("request", original);
+      let changed = false;
+      const pending = reader.before(() => {
+        changed = true;
+      });
+      try {
+        await turn();
+        assert.equal(changed, true);
+        await pending;
+        assert.equal(reader.ready(), true);
+      } finally {
+        page.emit("requestfailed", original);
+        await scope.capture(() => pending);
+      }
+    });
+  });
+}
+
+test("C4 context close joins an issued request that never received a response", async () => {
+  let joined = false;
+  await fixture(async ({ page, scope }) => {
+    const reader = observeC4Responses(page, scope, () => {
+      throw new Error("Closed request has no response body");
+    });
+    page.emit("request", request());
+    const pending = reader.wait().then(() => {
+      joined = true;
+    });
+    try {
+      await turn();
+      assert.equal(joined, false);
+      await scope.closeContext();
+      await pending;
+      assert.equal(joined, true);
+    } finally {
+      await scope.closeContext();
+      await scope.capture(() => pending);
+    }
+  });
+  assert.equal(joined, true);
+});
+
+test("C4 abort joins an issued request without a response and preserves cancellation", async () => {
+  const abort = new AbortController();
+  const cancellation = new Error("cancel before response headers");
+  let joined = false;
+  await assert.rejects(
+    fixture(
+      async ({ page, scope }) => {
+        const reader = observeC4Responses(page, scope, () => {
+          throw new Error("Cancelled request has no response body");
+        });
+        page.emit("request", request());
+        const pending = reader.wait().then(() => {
+          joined = true;
+        });
+        try {
+          await turn();
+          assert.equal(joined, false);
+          abort.abort(cancellation);
+          await pending;
+          assert.equal(joined, true);
+        } finally {
+          abort.abort(cancellation);
+          await scope.capture(() => pending);
+        }
+      },
+      { signal: abort.signal },
+    ),
+    (error) => error === cancellation,
+  );
+  assert.equal(joined, true);
+});
+
+test("C4 page close still joins capture for an already finished request", async () => {
+  const body = Promise.withResolvers();
+  let joined = false;
+  await fixture(async ({ page, scope }) => {
+    const reader = observeC4Responses(page, scope, () => body.promise);
+    emitResponse(page);
+    const pending = reader.wait().then(() => {
+      joined = true;
+    });
+    try {
+      await scope.closeContext();
+      await turn();
+      assert.equal(joined, false);
+      body.resolve();
+      await pending;
+      assert.equal(joined, true);
+    } finally {
+      body.resolve();
+      await scope.capture(() => pending);
+    }
+  });
+});
+
+test(
+  "C4 reload waits for an issued process request whose response headers are held",
+  { timeout: 15_000 },
+  async (t) => {
+    const path =
+      "/api/app/workspace/v1/agents/agent/sessions/session/turns/run/process";
+    const payload = '{"items":[{"text":"original process body"}]}';
+    const serverReceived = Promise.withResolvers();
+    void serverReceived.promise.catch(() => {});
+    let heldReply;
+    let processRequests = 0;
+    const releaseResponse = () => {
+      if (heldReply && !heldReply.destroyed && !heldReply.writableEnded)
+        heldReply
+          .writeHead(200, { "content-type": "application/json" })
+          .end(payload);
+    };
+    const server = createServer((incoming, reply) => {
+      if (incoming.url === path) {
+        processRequests++;
+        heldReply = reply;
+        serverReceived.resolve();
+      } else {
+        reply
+          .writeHead(200, { "content-type": "text/html" })
+          .end("<title>Held process request</title>");
+      }
+    });
+    const cancelled = () => serverReceived.reject(t.signal.reason);
+    t.signal.addEventListener("abort", cancelled, { once: true });
+    t.after(async () => {
+      t.signal.removeEventListener("abort", cancelled);
+      releaseResponse();
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening", { signal: t.signal });
+    const gateway = `http://127.0.0.1:${server.address().port}`;
+    await runC4BrowserScope(
+      {
+        signal: t.signal,
+        launch: () =>
+          chromium.launch({
+            headless: true,
+            handleSIGINT: false,
+            handleSIGTERM: false,
+            handleSIGHUP: false,
+          }),
+      },
+      async (scope) => {
+        const page = await scope.context.newPage();
+        await page.goto(`${gateway}/first`);
+        const bodies = [];
+        const reader = observeC4Responses(page, scope, async (value) => {
+          bodies.push(await value.text());
+        });
+        const browserIssued = page.waitForRequest(
+          (value) => value.url() === gateway + path,
+          { timeout: 5000 },
+        );
+        void browserIssued.catch(() => {});
+        let navigation;
+        let navigationStarted = false;
+        let bodiesAtNavigation;
+        try {
+          await page.evaluate((url) => {
+            void fetch(url).catch(() => {});
+          }, path);
+          // Both peers have observed the request; the server has sent no headers.
+          await Promise.all([browserIssued, serverReceived.promise]);
+          assert.equal(heldReply.headersSent, false);
+          assert.equal(processRequests, 1);
+          navigation = reader.before(() => {
+            navigationStarted = true;
+            bodiesAtNavigation = [...bodies];
+            return page.reload();
+          });
+          void navigation.catch(() => {});
+          await turn();
+          assert.equal(
+            navigationStarted,
+            false,
+            "reload began before the issued process request returned headers",
+          );
+          assert.equal(page.url(), `${gateway}/first`);
+          assert.deepEqual(bodies, []);
+          releaseResponse();
+          await navigation;
+          assert.equal(navigationStarted, true);
+          assert.deepEqual(bodiesAtNavigation, [payload]);
+          assert.deepEqual(bodies, [payload]);
+          assert.equal(processRequests, 1);
+        } finally {
+          releaseResponse();
+          await scope.capture(() => browserIssued);
+          if (navigation) await scope.capture(() => navigation);
+        }
+      },
+    );
+  },
+);
 
 test("C4 captures an actual browser response before cross-document navigation", async (t) => {
   const server = createServer((request, reply) => {
