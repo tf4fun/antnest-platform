@@ -283,7 +283,7 @@ docker-build-managed-runtime:
 
 .PHONY: test-tool-progress-fixtures e2e-tool-progress
 test-tool-progress-fixtures:
-	node --test --test-concurrency=1 tests/e2e/acp-progress/*.test.mjs
+	node --import ./tests/e2e/identity-closeout/acp-client-dependencies.fixture.mjs --test --test-concurrency=1 tests/e2e/acp-progress/*.test.mjs
 
 e2e-tool-progress:
 	ANTNEST_E2E_TOOL_PROGRESS=true sh tests/e2e/e2e-stage3a.sh
