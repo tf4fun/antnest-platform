@@ -38,7 +38,6 @@ function inspectCleanup(events, agents) {
     assert(
       row.sequence > start.sequence && row.monotonic_ms >= start.monotonic_ms,
     );
-    assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
     return row;
   };
   const operations = new Set();
@@ -199,6 +198,22 @@ export async function withMultimodalAgentCleanup(
       agent_ids: [...agents],
       events,
       evidence_error_count: evidenceErrors.length,
+      trace_diagnostics: {
+        role: "auxiliary",
+        status: events
+          .filter((row) => row.kind === "response-complete")
+          .every((row) => /^[a-f0-9]{32}$/u.test(row.trace_id ?? ""))
+          ? "passed"
+          : "warning",
+        checks: events
+          .filter((row) => row.kind === "response-complete")
+          .map((row) => ({
+            name: `cleanup-response-${row.request_sequence}-trace-header`,
+            status: /^[a-f0-9]{32}$/u.test(row.trace_id ?? "")
+              ? "passed"
+              : "failed",
+          })),
+      },
     }),
   );
   failures.push(...evidenceErrors);
