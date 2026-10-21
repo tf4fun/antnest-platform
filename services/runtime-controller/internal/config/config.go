@@ -44,6 +44,8 @@ type Config struct {
 	ReconciliationTimeout     time.Duration
 	MonitorMaxRetryDelay      time.Duration
 	ObservationRetention      time.Duration
+	ObservationMaxRows        int64
+	ObservationPruneInterval  time.Duration
 	SSEHeartbeat              time.Duration
 	RuntimeOTEL               map[string]string
 	MaintenanceVerifiers      deployment.MaintenanceVerifiers
@@ -92,6 +94,17 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	observationMaxRows := int64(1_000_000)
+	if raw := strings.TrimSpace(lookup("ANTNEST_OBSERVATION_MAX_ROWS")); raw != "" {
+		observationMaxRows, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || observationMaxRows <= 0 {
+			return Config{}, fmt.Errorf("ANTNEST_OBSERVATION_MAX_ROWS must be a positive 64-bit integer")
+		}
+	}
+	observationPruneInterval, err := duration(lookup, "ANTNEST_OBSERVATION_PRUNE_INTERVAL", time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 	heartbeat, err := duration(lookup, "ANTNEST_RUNTIME_SSE_HEARTBEAT", 15*time.Second)
 	if err != nil {
 		return Config{}, err
@@ -111,20 +124,22 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 			"ANTNEST_RUNTIME_CONTROLLER_SCOPE",
 			strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
 		),
-		SystemSkillsVolume:    valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
-		AgentControllerURL:    strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
-		RuntimeEgressURL:      strings.TrimSpace(lookup("ANTNEST_RUNTIME_EGRESS_URL")),
-		SkillRegistryURL:      strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
-		SkillPreparerImage:    valueOr(lookup, "ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE", "antnest/runtime-controller:local"),
-		RuntimeStatusTimeout:  statusTimeout,
-		MutationTimeout:       mutationTimeout,
-		RPCRequestTimeout:     rpcTimeout,
-		ReconciliationTimeout: reconciliationTimeout,
-		MonitorMaxRetryDelay:  monitorMaxRetryDelay,
-		ObservationRetention:  retention,
-		SSEHeartbeat:          heartbeat,
-		RuntimeOTEL:           runtimeTelemetryEnvironment(lookup),
-		MaintenanceVerifiers:  maintenanceVerifiers,
+		SystemSkillsVolume:       valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
+		AgentControllerURL:       strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
+		RuntimeEgressURL:         strings.TrimSpace(lookup("ANTNEST_RUNTIME_EGRESS_URL")),
+		SkillRegistryURL:         strings.TrimSpace(lookup("ANTNEST_SKILL_REGISTRY_URL")),
+		SkillPreparerImage:       valueOr(lookup, "ANTNEST_RUNTIME_SKILL_PREPARER_IMAGE", "antnest/runtime-controller:local"),
+		RuntimeStatusTimeout:     statusTimeout,
+		MutationTimeout:          mutationTimeout,
+		RPCRequestTimeout:        rpcTimeout,
+		ReconciliationTimeout:    reconciliationTimeout,
+		MonitorMaxRetryDelay:     monitorMaxRetryDelay,
+		ObservationRetention:     retention,
+		ObservationMaxRows:       observationMaxRows,
+		ObservationPruneInterval: observationPruneInterval,
+		SSEHeartbeat:             heartbeat,
+		RuntimeOTEL:              runtimeTelemetryEnvironment(lookup),
+		MaintenanceVerifiers:     maintenanceVerifiers,
 	}
 	if capture := config.RuntimeOTEL["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"]; capture != "true" && capture != "false" {
 		return Config{}, fmt.Errorf("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT must be true or false")

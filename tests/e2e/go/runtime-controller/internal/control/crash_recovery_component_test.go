@@ -159,7 +159,7 @@ func crashService(t *testing.T, ctx context.Context, job crashJob) (*control.Ser
 		t.Fatal("open dedicated lock database failed")
 	}
 	t.Cleanup(func() { _ = locks.Close() })
-	repo, err := postgres.New(db, locks, time.Hour)
+	repo, err := postgres.New(db, locks, time.Hour, 1_000_000)
 	if err != nil {
 		t.Fatal(err)
 	}

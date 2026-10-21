@@ -36,7 +36,9 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_RPC_TIMEOUT`                        | no       | Go duration; finite internal RPC execution bound; default `3m` and must exceed mutation timeout                |
 | `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT`             | no       | Go duration; complete physical/logical inventory reconciliation bound; default `2m`                            |
 | `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no       | Go duration; observation retry cap including jitter; default `30s`, minimum `1s`                               |
-| `ANTNEST_OBSERVATION_RETENTION`                      | no       | Go duration; journal retention; default `168h`                                                                 |
+| `ANTNEST_OBSERVATION_RETENTION`                      | no       | Positive Go duration; asynchronous journal age target; default `168h`                                           |
+| `ANTNEST_OBSERVATION_MAX_ROWS`                       | no       | Positive int64; asynchronous journal row-count target; default `1,000,000`                                      |
+| `ANTNEST_OBSERVATION_PRUNE_INTERVAL`                 | no       | Positive Go duration; interval between cleanup cycles; default `1m`                                           |
 | `ANTNEST_RUNTIME_SSE_HEARTBEAT`                      | no       | Go duration; internal SSE heartbeat; default `15s`                                                             |
 
 Workload configuration is mandatory: follow the [exact authentication and listening profile](../api/service-authentication.md) and shared [token/mTLS contract](../../../contracts/platform/service-authentication.md). Only Controller workload identity may reach control routes, including all three Skill preparation routes; raw user/CCT headers do not authorize them. Registry downloads use receiver-specific sender files and no environment proxy or redirects. Remove the retired `ANTNEST_SKILL_REGISTRY_API_TOKEN`, which now fails startup when nonempty.
@@ -136,7 +138,8 @@ Consecutive failures use exponential backoff from `1s`, doubling up to
 positive jitter is added without exceeding the configured cap. A successful
 Watch-readiness announcement or ready-leader probe resets the backoff. Healthy
 followers poll leadership/readiness once per second. Shutdown interrupts retry
-waits and releases an acquired lease.
+waits, cancels and joins both the Watch monitor and pruner, and releases an
+acquired lease only after they stop.
 
 During an initial outage, startup keeps waiting for monitor readiness and does
 not open the HTTP listener yet; the process remains running and its healthcheck
@@ -237,14 +240,43 @@ fact.
 
 Across Controller replicas, PostgreSQL elects exactly one platform-Watch
 consumer. Followers continue serving control and observation RPCs and take over
-after leadership loss. Transactional PostgreSQL notifications wake each
+after leadership loss. The winner increments the durable monitor epoch on the
+same dedicated connection after acquiring the session advisory lock. Monitor
+and reconciliation appends and pruning transactions check that epoch under
+`FOR SHARE` and hold the check through commit. Operation completion retains its
+per-Agent owner fence. Monitor writes, pruning, and epoch changes each use a
+five-second context deadline and database statement and idle-in-transaction
+budgets. Transactional PostgreSQL notifications wake each
 replica's local SSE clients; reconnecting clients always resume from the
 durable sequence and never rely on notification delivery.
 Observation SSE connections retain one HTTP SERVER span until delivery ends,
 plus existing lifecycle metrics; each finite journal read remains traced.
-If a consumer cursor falls outside the configured retention window, List or
-Watch returns `observation_cursor_expired`. The consumer performs a full Runtime
-List, then resumes from the returned reset sequence.
+If a nonzero consumer cursor is below durable `pruned_through`, List or Watch
+returns `observation_cursor_expired`. Equality with that floor remains valid;
+bootstrap zero also remains valid. The consumer performs a full Runtime List,
+then resumes from the returned reset sequence. If pruning removes every row,
+the journal still remembers the floor as its latest and reset sequence.
+
+### Observation journal retention
+
+The leader starts pruning immediately, commits consecutive batches until no
+eligible rows remain, then waits `ANTNEST_OBSERVATION_PRUNE_INTERVAL` before
+the next cycle. Each independent `READ COMMITTED`
+transaction removes at most 1,000 rows and commits its deleted prefix together
+with the new `pruned_through` watermark. Observation append does not run
+`DELETE`; pruning therefore continues during idle periods without extending
+the append transaction. A failed pruning attempt records
+`observation_prune_failed` and retries on the next cycle. On leadership loss,
+the monitor and pruner are cancelled and joined before release and re-election.
+
+The age and row-count settings are asynchronous convergence targets, so the
+journal can temporarily exceed either target. Count pruning uses the actual
+row count and retains the newest N rows; sparse sequence values do not count
+as rows. Age pruning finds the largest expired sequence and removes a prefix
+through that cutoff. If `recorded_at` is out of order, that prefix can contain
+more recently recorded rows. Neither age pruning nor the row-count target
+guarantees at least `168h` of retained history. Pruning never removes an interior
+section while leaving an older prefix in place.
 
 ## Coordinated Resources
 
@@ -349,19 +381,20 @@ drift observations.
 ### Upgrading observation ordering
 
 The commit-order guarantee requires every Runtime Controller writer to use the
-journal transaction lock. There is no schema or wire change, but an older binary
-does not take this lock. Stop admission on the old replicas, drain their in-flight
-operation and observation transactions, and stop all old writers before starting
-the upgraded replicas. Do not claim commit ordering while old and new writers
-overlap. Retain the sequence's migration-defined `CACHE 1`; manually increasing
-its cache permits different connections to allocate out of order even with the
-transaction lock.
+journal transaction lock. Schema 13 additionally persists the monitor epoch
+and pruning floor. Stop admission on every old replica, drain its in-flight
+operation and observation transactions, and stop all old writers before
+starting the new replicas and applying schema 13. Old binaries reject the new
+schema; mixed-version rolling upgrades are unsupported. Do not claim commit
+ordering or epoch fencing while old and new writers overlap. Retain the
+sequence's migration-defined `CACHE 1`; manually increasing its cache permits
+different connections to allocate out of order even with the transaction lock.
 
 The upgrade prevents new skipped facts; it cannot replay facts already skipped
 by an old consumer cursor. Rebuild affected consumer projections from Runtime
 List before resuming observation consumption. Existing retention expiry and
-platform gap recovery rules still apply. Time-based inline pruning and leader
-write fencing are separate work tracked in #39.
+platform gap recovery rules still apply. Migration does not reconstruct
+historically skipped facts or repair consumer projections automatically.
 
 For sizing this change, the reference peak is **100 committed observations/s**:
 250 Runtime environments each changing health once per five seconds, plus 50

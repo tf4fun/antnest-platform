@@ -142,10 +142,10 @@ func TestOperationSourceMustMatchEnvironmentHead(t *testing.T) {
 }
 
 func TestNewRejectsInvalidRetention(t *testing.T) {
-	if _, err := New(&sql.DB{}, &sql.DB{}, 0); err == nil {
+	if _, err := New(&sql.DB{}, &sql.DB{}, 0, 1_000_000); err == nil {
 		t.Fatal("zero retention was accepted")
 	}
-	if _, err := New(&sql.DB{}, nil, time.Hour); err == nil {
+	if _, err := New(&sql.DB{}, nil, time.Hour, 1_000_000); err == nil {
 		t.Fatal("missing dedicated Agent lock database was accepted")
 	}
 }

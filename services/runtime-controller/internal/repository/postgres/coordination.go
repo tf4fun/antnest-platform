@@ -18,6 +18,7 @@ const (
 )
 
 type observationLeadership struct {
+	epoch       repository.ObservationEpoch
 	connection  *sql.Conn
 	cancel      context.CancelFunc
 	done        chan struct{}
@@ -52,17 +53,29 @@ func (r *Repository) TryAcquireObservationLeadership(
 		}
 		return nil, false, nil
 	}
-	return newObservationLeadership(connection, r.leadershipProbeInterval), true, nil
+	epoch, err := advanceObservationEpoch(ctx, connection)
+	if err != nil {
+		discardErr := discardConnection(connection)
+		closeErr := connection.Close()
+		if errors.Is(closeErr, sql.ErrConnDone) {
+			closeErr = nil
+		}
+		return nil, false, errors.Join(err, discardErr, closeErr)
+	}
+	return newObservationLeadership(connection, epoch, r.leadershipProbeInterval), true, nil
 }
 
-func newObservationLeadership(connection *sql.Conn, probeInterval time.Duration) *observationLeadership {
+func newObservationLeadership(connection *sql.Conn, epoch repository.ObservationEpoch, probeInterval time.Duration) *observationLeadership {
 	ctx, cancel := context.WithCancel(context.Background())
 	leadership := &observationLeadership{
+		epoch:      epoch,
 		connection: connection, cancel: cancel, done: make(chan struct{}), workerDone: make(chan struct{}),
 	}
 	go leadership.monitor(ctx, probeInterval)
 	return leadership
 }
+
+func (l *observationLeadership) Epoch() repository.ObservationEpoch { return l.epoch }
 
 func (l *observationLeadership) Done() <-chan struct{} { return l.done }
 

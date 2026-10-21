@@ -249,6 +249,7 @@ func TestTerminalLifecycleRequestReplayDoesNotRepeatPlatformMutation(t *testing.
 func TestObservationCursorExpiryRequiresProjectionReset(t *testing.T) {
 	t.Parallel()
 	repository := newLifecycleRepository()
+	repository.prunedThrough = 9
 	repository.observations = []deployment.Observation{
 		{Sequence: 10, Kind: deployment.ObservationReconciled},
 		{Sequence: 11, Kind: deployment.ObservationReconciled},
@@ -298,7 +299,7 @@ func TestReconcileRetainedStorageRecordsDisabledWorkspaceDrift(t *testing.T) {
 			}
 			service := newLifecycleService(t, repository, platform)
 
-			if err := service.ReconcileRetainedStorage(context.Background()); err != nil {
+			if err := service.ReconcileRetainedStorage(context.Background(), 7); err != nil {
 				t.Fatal(err)
 			}
 			if len(repository.observations) != 1 || repository.observations[0].Kind != test.kind ||
@@ -347,7 +348,7 @@ func TestReconcileExpectedRuntimeInventoryRecordsMissingReadyCompute(t *testing.
 	}
 	service := newLifecycleService(t, repository, newLifecyclePlatform())
 
-	err := service.ReconcileExpectedRuntimes(context.Background(), []deployment.Inspection{{
+	err := service.ReconcileExpectedRuntimes(context.Background(), 7, []deployment.Inspection{{
 		AgentID: "present-agent", Generation: 8, SpecDigest: lifecycleDigest,
 		PlatformPhase: deployment.PhaseRunning, Health: deployment.HealthHealthy,
 	}})
@@ -378,7 +379,7 @@ func TestReconcileRetainedStorageSkipsReadyAndFailsOnUnknownPlatformOutcome(t *t
 	}
 	service := newLifecycleService(t, repository, platform)
 
-	if err := service.ReconcileRetainedStorage(context.Background()); err == nil {
+	if err := service.ReconcileRetainedStorage(context.Background(), 7); err == nil {
 		t.Fatal("inconclusive workspace verification was accepted")
 	}
 	if platform.verifyStorageCalls != 1 || len(repository.observations) != 0 {
@@ -450,6 +451,7 @@ type lifecycleRepository struct {
 	environments      map[string]deployment.Environment
 	claims            map[deployment.Key]repositoryport.GenerationClaim
 	observations      []deployment.Observation
+	prunedThrough     uint64
 	prepared          *skillset.PreparedMaterialization
 	preparedReference *skillset.PreparedReference
 }
@@ -630,7 +632,7 @@ func (r *lifecycleRepository) MaxClaimedGeneration(_ context.Context, agentID st
 }
 
 func (r *lifecycleRepository) AppendObservation(
-	_ context.Context, value deployment.Observation,
+	_ context.Context, _ repositoryport.ObservationEpoch, value deployment.Observation,
 ) (deployment.Observation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -644,7 +646,7 @@ func (r *lifecycleRepository) ListObservations(
 ) (deployment.ObservationWindow, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	window := deployment.ObservationWindow{Observations: make([]deployment.Observation, 0, limit)}
+	window := deployment.ObservationWindow{Observations: make([]deployment.Observation, 0, limit), PrunedThrough: r.prunedThrough}
 	if len(r.observations) > 0 {
 		window.OldestSequence = r.observations[0].Sequence
 		window.LatestSequence = r.observations[len(r.observations)-1].Sequence

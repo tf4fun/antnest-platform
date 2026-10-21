@@ -657,7 +657,7 @@ func (s *Service) inspectEnvironment(
 // complete platform inventory. It records missing compute instead of silently
 // declaring a one-sided platform List converged.
 func (s *Service) ReconcileExpectedRuntimes(
-	ctx context.Context, inspections []deployment.Inspection,
+	ctx context.Context, epoch repositoryport.ObservationEpoch, inspections []deployment.Inspection,
 ) error {
 	present := make(map[deployment.Key]struct{}, len(inspections))
 	for _, inspection := range inspections {
@@ -692,7 +692,7 @@ func (s *Service) ReconcileExpectedRuntimes(
 		if inspection.Health != deployment.HealthAbsent {
 			continue
 		}
-		_, err = s.RecordPlatformObservation(ctx, deployment.Observation{
+		_, err = s.RecordPlatformObservation(ctx, epoch, deployment.Observation{
 			AgentID: environment.AgentID, RuntimeRevision: environment.RuntimeRevision,
 			Generation: environment.Generation, SpecDigest: environment.SpecDigest,
 			Kind: deployment.ObservationRuntimeMissing, Source: "platform_reconciliation",
@@ -725,7 +725,7 @@ func (s *Service) ListRuntimes(ctx context.Context) ([]deployment.Environment, e
 // ReconcileRetainedStorage verifies the workspace owned by every disabled
 // Runtime. Ready Runtime storage is verified with its compute inspection, while
 // deleted Runtime storage is intentionally absent.
-func (s *Service) ReconcileRetainedStorage(ctx context.Context) error {
+func (s *Service) ReconcileRetainedStorage(ctx context.Context, epoch repositoryport.ObservationEpoch) error {
 	environments, err := s.repository.ListEnvironments(ctx)
 	if err != nil {
 		return fmt.Errorf("list Runtime environments for storage reconciliation: %w", err)
@@ -747,7 +747,7 @@ func (s *Service) ReconcileRetainedStorage(ctx context.Context) error {
 			return fmt.Errorf("verify retained workspace for Agent %q: %s",
 				environment.AgentID, sanitizedDetail(outcome))
 		}
-		_, err = s.RecordPlatformObservation(ctx, deployment.Observation{
+		_, err = s.RecordPlatformObservation(ctx, epoch, deployment.Observation{
 			AgentID: environment.AgentID, RuntimeRevision: environment.RuntimeRevision,
 			Kind: kind, Source: "platform_reconciliation",
 			DiagnosticSummary: summary, ObservedAt: s.now().UTC(),
@@ -793,7 +793,7 @@ func (s *Service) ListObservations(
 	if after == 0 {
 		return window, nil
 	}
-	if window.LatestSequence == 0 || cursorPrecedesWindow(after, window.OldestSequence) {
+	if window.LatestSequence == 0 || after < window.PrunedThrough {
 		return deployment.ObservationWindow{}, &ObservationCursorExpiredError{
 			ResetSequence: window.LatestSequence,
 		}
@@ -804,10 +804,6 @@ func (s *Service) ListObservations(
 		)
 	}
 	return window, nil
-}
-
-func cursorPrecedesWindow(after, oldest uint64) bool {
-	return oldest > 1 && after < oldest-1
 }
 
 func (s *Service) ValidateRuntimeInspection(
@@ -853,7 +849,7 @@ func (s *Service) InspectPlatformRuntime(
 }
 
 func (s *Service) RecordPlatformObservation(
-	ctx context.Context, observation deployment.Observation,
+	ctx context.Context, epoch repositoryport.ObservationEpoch, observation deployment.Observation,
 ) (deployment.Observation, error) {
 	if observation.ObservedAt.IsZero() {
 		observation.ObservedAt = s.now().UTC()
@@ -871,7 +867,7 @@ func (s *Service) RecordPlatformObservation(
 		}
 		observation.RuntimeRevision = claim.RuntimeRevision
 	}
-	return s.repository.AppendObservation(ctx, observation)
+	return s.repository.AppendObservation(ctx, epoch, observation)
 }
 
 func (s *Service) persistOperation(

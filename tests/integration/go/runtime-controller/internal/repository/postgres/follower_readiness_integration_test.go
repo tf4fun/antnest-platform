@@ -55,7 +55,7 @@ func TestRepositoryFollowerHTTPReadinessMirrorsLeaderWatchLease(t *testing.T) {
 	}
 	followerCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
-	go func() { done <- runner.RunCoordinated(followerCtx, repository, func() {}) }()
+	go func() { done <- runner.RunCoordinated(followerCtx, repository, repository, time.Minute, func() {}) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

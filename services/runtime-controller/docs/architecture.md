@@ -94,10 +94,15 @@ capability drop/add sets, security options, healthcheck, resource limits, and
 restart policy. A versioned adapter mapping makes a physical mapping change
 explicit.
 
-The observation journal is a time-retained diagnostic and delivery history.
-Entries older than `ANTNEST_OBSERVATION_RETENTION` are pruned when new facts are
-appended; the journal has no size bound. It does not replace platform
-List/Inspect as current-state authority.
+The observation journal is diagnostic and delivery history with asynchronous
+time and row-count retention targets. `ANTNEST_OBSERVATION_RETENTION` defaults
+to `168h`; `ANTNEST_OBSERVATION_MAX_ROWS` is a positive int64 and defaults to
+`1,000,000`. A leader-owned pruner runs immediately on leadership startup and
+then every `ANTNEST_OBSERVATION_PRUNE_INTERVAL` (a positive duration, default
+`1m`). Appending facts never deletes history. Temporary excess is allowed while
+the pruner converges; neither target is an instantaneous limit or a promise to
+retain every fact for at least 168 hours. Platform List/Inspect remains the
+current-state authority.
 
 ## Identity
 
@@ -432,7 +437,17 @@ Docker/Kubernetes health and events
 ```
 
 Exactly one Controller replica holds the PostgreSQL observation-leadership
-lock and consumes the platform Watch. The leader announces shared readiness
+session advisory lock and consumes the platform Watch. After taking that lock,
+the leader increments a durable epoch on the same dedicated connection. Every
+monitor or reconciliation append and every pruning transaction verifies that
+epoch with `FOR SHARE`, retaining the row lock until commit. An epoch change
+therefore cannot overtake a transaction authorized by the previous epoch.
+`CompleteOperation` continues to use its per-Agent owner fence rather than the
+monitor epoch. Monitor writes, pruning, and epoch changes each have a
+five-second context budget plus database statement and idle-in-transaction
+timeouts.
+
+The leader announces shared readiness
 only after the deployment platform accepts the Watch request; inventory
 reconciliation alone is never treated as an active stream. Followers probe
 that shared readiness lease rather than trusting leadership ownership. Other
@@ -441,6 +456,18 @@ leadership. Observation commits send
 a transaction-scoped PostgreSQL notification; every replica turns that shared
 wakeup into a local SSE Hub notification. Notifications carry no facts and may
 coalesce: consumers always recover facts from the ordered journal.
+
+The pruner uses independent `READ COMMITTED` transactions, each deleting and
+committing at most 1,000 rows from the journal prefix. Its time cutoff is the
+largest expired sequence; its count cutoff uses the actual retained row count
+to keep the newest N rows, rather than subtracting sequence numbers. Deletion
+does not create holes in the middle of retained history. If `recorded_at` is
+out of sequence order, time pruning can also remove more recently recorded
+facts in that prefix. The durable `pruned_through` watermark advances with the
+same commit as deletion. A pruning failure logs `observation_prune_failed`
+and is retried on the next pruning cycle. Leadership loss stops and cancels
+the monitor and pruner; both are joined before leadership is released and
+election resumes.
 
 Transient leadership/readiness query failures and reconciliation failures do
 not end the process. Failed initial reconciliation withdraws shared readiness
@@ -475,13 +502,16 @@ Rules:
    cannot expose a later committed fact while a lower sequence can still commit.
    Both operation completion and monitor appends use this path; aborted inserts
    leave permanent gaps. This ordering lock is independent of observation
-   leadership and does not fence stale leaders (tracked separately in #39).
+   leadership; the durable monitor epoch separately fences stale leaders.
 4. A consumer resumes with `ListRuntimeObservations(after_sequence)` before
    reopening Watch.
-5. A cursor older than the retained journal receives
-   `observation_cursor_expired` plus a reset sequence. The consumer reconstructs
-   from logical Runtime List before resuming; retention expiry is not a
-   platform observation gap.
+5. A nonzero cursor below durable `pruned_through` receives
+   `observation_cursor_expired` plus a reset sequence. A cursor equal to that
+   floor remains valid, as does bootstrap cursor zero. Rollback sequence gaps
+   do not advance the pruning floor or imply lost facts. If pruning empties the
+   journal, `latest_sequence` and the expiry reset sequence still retain that
+   floor. The consumer reconstructs from logical Runtime List before resuming;
+   retention expiry is not a platform observation gap.
 6. On a detected platform gap, the service first records one service-wide
    `observation_gap`, reconciles physical inventory in both directions against
    logical provisioned Environment heads, and records one service-wide `reconciled`
@@ -557,14 +587,15 @@ The private store contains only facts this service must recover:
    stable or transitional state, and private current/target deployment identity;
 2. idempotent lifecycle operations and payload digests;
 3. immutable private Runtime generation claims mapped to opaque revisions;
-4. ordered, time-retained Runtime observations and consumer recovery sequence;
+4. ordered Runtime observations with time and row-count retention targets,
+   durable `pruned_through`, and consumer recovery sequence;
 5. system Skill sets, preparations, per-package checkpoints, and lifecycle and
    current Agent Skill references.
 
 It also provides coordination primitives, not business data: Agent-scoped
-mutation advisory locks, one observation-monitor leadership lock, a separate
-Watch-readiness lease, and transactional `LISTEN/NOTIFY` wakeups for journal
-consumers.
+mutation advisory locks, one observation-monitor leadership lock and durable
+epoch, a separate Watch-readiness lease, and transactional `LISTEN/NOTIFY`
+wakeups for journal consumers.
 
 It does not store AgentSpec, desired/candidate configuration, operation
 admission, Run, Tool, Provider, Egress policy, Channel, or identity records.

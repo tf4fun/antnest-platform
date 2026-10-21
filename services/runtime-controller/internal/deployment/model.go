@@ -641,11 +641,13 @@ type Observation struct {
 }
 
 // ObservationWindow is one consistent view of the retained journal and its
-// sequence bounds. Sequence zero means the journal is currently empty.
+// sequence bounds. PrunedThrough survives an empty retained window; numeric
+// sequence gaps alone never imply that a committed observation was pruned.
 type ObservationWindow struct {
 	Observations   []Observation
 	OldestSequence uint64
 	LatestSequence uint64
+	PrunedThrough  uint64
 }
 
 func (o Observation) RuntimeKey() (Key, bool) {

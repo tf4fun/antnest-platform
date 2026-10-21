@@ -313,7 +313,20 @@ under a new request ID.
 `GET /internal/runtime-observations?after_sequence={n}&limit={n}` returns an
 ordered page from the bounded Controller journal. The response carries
 `oldest_sequence`, `latest_sequence`, and `next_sequence`. Sequence zero is the
-bootstrap cursor and always starts at the oldest retained observation.
+bootstrap cursor and remains valid even when pruning has removed every row;
+when rows remain, it starts at the oldest retained observation.
+
+Retention defaults to an age target of `168h` and a row-count target of
+`1,000,000`, controlled by `ANTNEST_OBSERVATION_RETENTION` and the positive
+int64 `ANTNEST_OBSERVATION_MAX_ROWS`. A separate leader-owned pruner runs
+immediately and then every positive `ANTNEST_OBSERVATION_PRUNE_INTERVAL`
+(default `1m`). Independent `READ COMMITTED` batches delete at most 1,000 rows
+and commit; append never deletes rows. Both targets converge asynchronously
+and permit temporary excess. Count pruning retains the newest N actual rows.
+Age pruning takes the largest expired sequence and removes a prefix through
+it; out-of-order `recorded_at` values can cause newer records in that prefix to
+be removed too. The journal does not promise at least 168 hours of history or
+remove interior sections while retaining an older prefix.
 
 Sequence allocation is serialized with commit: a page never contains sequence
 `S` unless every sequence `< S` that will ever exist is already committed or
@@ -324,12 +337,20 @@ observations. Retention may remove committed history and continues to use the
 expiry behavior below; a platform `observation_gap` describes missing platform
 events, not PostgreSQL sequence gaps.
 
-If a non-zero cursor is older than the retained window, List and Watch return
-HTTP 410 `observation_cursor_expired` with `reset_sequence` set to the latest
-committed sequence visible to that read. The consumer must rebuild its logical
-projection with `GET /internal/runtimes`, then resume Watch from
-`reset_sequence`. Consumer-history expiry is deliberately distinct from a
-platform `observation_gap`.
+Deletion atomically persists the `pruned_through` floor. List and Watch return
+HTTP 410 `observation_cursor_expired` when a nonzero `after_sequence` is
+less than that floor; equality is valid, and rollback sequence gaps do not
+expire a cursor. `reset_sequence` is the latest committed sequence visible to
+that read, including the durable floor when no retained row has a larger
+sequence. When the journal is empty, `latest_sequence` and `reset_sequence`
+therefore remain at the floor. The consumer must rebuild its logical projection
+with `GET /internal/runtimes`, then resume Watch from `reset_sequence`.
+Consumer-history expiry is deliberately distinct from a platform
+`observation_gap`.
+
+A nonzero cursor against an empty journal with no recorded history also
+returns HTTP 410 with reset sequence zero, preserving recovery after a journal
+reset. A cursor newer than a nonempty journal's latest sequence is invalid.
 
 `GET /internal/runtime-observations/watch?after_sequence={n}` returns
 `text/event-stream`. Watch is only a low-latency wake-up path: clients first

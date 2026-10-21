@@ -50,7 +50,7 @@ func TestRuntimeLossReconciliationRechecksStaleInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := len(repository.observations)
-	if err := service.ReconcileExpectedRuntimes(context.Background(), staleInventory); err != nil {
+	if err := service.ReconcileExpectedRuntimes(context.Background(), 7, staleInventory); err != nil {
 		t.Fatal(err)
 	}
 	if len(repository.observations) != before {
@@ -77,7 +77,7 @@ func TestRuntimeLossDoesNotTurnInspectionFailureIntoAbsence(t *testing.T) {
 			if _, err := service.ListRuntimes(context.Background()); !errors.Is(err, failure) {
 				t.Fatalf("List inspection error=%v", err)
 			}
-			if err := service.ReconcileExpectedRuntimes(context.Background(), nil); !errors.Is(err, failure) {
+			if err := service.ReconcileExpectedRuntimes(context.Background(), 7, nil); !errors.Is(err, failure) {
 				t.Fatalf("reconciliation fabricated absence: %v", err)
 			}
 			if len(repository.observations) != before {
@@ -125,7 +125,7 @@ func TestRuntimeLossRejectsContradictoryAbsentInspection(t *testing.T) {
 			if _, err := service.ListRuntimes(context.Background()); err == nil {
 				t.Fatal("List accepted contradictory absence")
 			}
-			if err := service.ReconcileExpectedRuntimes(context.Background(), nil); err == nil {
+			if err := service.ReconcileExpectedRuntimes(context.Background(), 7, nil); err == nil {
 				t.Fatal("reconciliation accepted contradictory absence")
 			}
 			if len(repository.observations) != before {
@@ -162,7 +162,7 @@ func TestRuntimeLossPresentResourceStillRequiresDigestAndClaim(t *testing.T) {
 			if _, err := service.ListRuntimes(context.Background()); !errors.Is(err, ErrDrift) {
 				t.Fatalf("List bypassed identity validation: %v", err)
 			}
-			if err := service.ReconcileExpectedRuntimes(context.Background(), nil); !errors.Is(err, ErrDrift) {
+			if err := service.ReconcileExpectedRuntimes(context.Background(), 7, nil); !errors.Is(err, ErrDrift) {
 				t.Fatalf("reinspection bypassed identity validation: %v", err)
 			}
 			if len(repository.observations) != before {
@@ -206,7 +206,7 @@ func TestRuntimeLossReinspectionIsBoundedReadOnlyAndCancellable(t *testing.T) {
 	expected := platform.containers["agent-1"].RuntimeKey()
 	platform.keys = nil
 	beforeMutations, beforeVerifications := platform.mutationCalls(), platform.verifications
-	if err := service.ReconcileExpectedRuntimes(context.Background(), nil); err != nil {
+	if err := service.ReconcileExpectedRuntimes(context.Background(), 7, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(platform.keys, []deployment.Key{expected}) || platform.mutationCalls() != beforeMutations ||
@@ -215,7 +215,7 @@ func TestRuntimeLossReinspectionIsBoundedReadOnlyAndCancellable(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := service.ReconcileExpectedRuntimes(ctx, nil); !errors.Is(err, context.Canceled) {
+	if err := service.ReconcileExpectedRuntimes(ctx, 7, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation not propagated to inspection: %v", err)
 	}
 	if len(repository.observations) != 1 {

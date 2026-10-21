@@ -148,7 +148,7 @@ func run(ctx context.Context) (resultErr error) {
 	if err := postgresrepository.Migrate(ctx, database); err != nil {
 		return classified("repository", "database_migration_failed", err)
 	}
-	baseRepository, err := postgresrepository.New(database, lockDatabase, configuration.ObservationRetention)
+	baseRepository, err := postgresrepository.New(database, lockDatabase, configuration.ObservationRetention, configuration.ObservationMaxRows)
 	if err != nil {
 		return classified("repository", "repository_initialization_failed", err)
 	}
@@ -332,7 +332,7 @@ func run(ctx context.Context) (resultErr error) {
 	monitorReady := make(chan struct{})
 	var monitorReadyOnce sync.Once
 	go func() {
-		err := monitor.RunCoordinated(ctx, baseRepository, func() {
+		err := monitor.RunCoordinated(ctx, baseRepository, baseRepository, configuration.ObservationPruneInterval, func() {
 			monitorReadyOnce.Do(func() { close(monitorReady) })
 		})
 		observationHealth.MarkMonitor(false)

@@ -48,7 +48,7 @@ func TestRepositoryPublishesOnlyPersistedObservations(t *testing.T) {
 	notifications, cancel := hub.Subscribe()
 	defer cancel()
 
-	stored, err := repository.AppendObservation(context.Background(), deployment.Observation{
+	stored, err := repository.AppendObservation(context.Background(), 7, deployment.Observation{
 		AgentID: "agent-1", Generation: 7, Kind: deployment.ObservationHealthy,
 		SpecDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Source:     "test", ObservedAt: time.Now().UTC(),
@@ -66,7 +66,7 @@ func TestRepositoryPublishesOnlyPersistedObservations(t *testing.T) {
 	}
 
 	base.appendErr = context.Canceled
-	if _, err := repository.AppendObservation(context.Background(), deployment.Observation{}); err == nil {
+	if _, err := repository.AppendObservation(context.Background(), 7, deployment.Observation{}); err == nil {
 		t.Fatal("append failure was hidden")
 	}
 	select {
@@ -126,7 +126,7 @@ func (*fakeRepository) GetEnvironment(context.Context, string) (deployment.Envir
 func (*fakeRepository) ListEnvironments(context.Context) ([]deployment.Environment, error) {
 	return nil, nil
 }
-func (r *fakeRepository) AppendObservation(_ context.Context, value deployment.Observation) (deployment.Observation, error) {
+func (r *fakeRepository) AppendObservation(_ context.Context, _ repository.ObservationEpoch, value deployment.Observation) (deployment.Observation, error) {
 	if r.appendErr != nil {
 		return deployment.Observation{}, r.appendErr
 	}

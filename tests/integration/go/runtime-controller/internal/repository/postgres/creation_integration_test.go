@@ -9,6 +9,7 @@ import (
 
 func TestRepositoryCreationCompletionIsIndependentFromObservations(t *testing.T) {
 	repository, _, ctx := integrationRepository(t)
+	epoch := observationTestEpoch(t, repository, ctx)
 	now := time.Now().UTC()
 	input := integrationOperation("create-observation", deployment.OperationInitializeRuntime, now)
 	input.Transition = deployment.LifecycleInitializing
@@ -24,7 +25,7 @@ func TestRepositoryCreationCompletionIsIndependentFromObservations(t *testing.T)
 		t.Fatal(err)
 	}
 	for _, kind := range []deployment.ObservationKind{deployment.ObservationStarting, deployment.ObservationHealthy, deployment.ObservationUnhealthy} {
-		_, err := repository.AppendObservation(ctx, deployment.Observation{
+		_, err := repository.AppendObservation(ctx, epoch, deployment.Observation{
 			AgentID: operation.AgentID, Generation: operation.Generation, SpecDigest: operation.SpecDigest,
 			RuntimeRevision: operation.RuntimeRevision, Kind: kind, Source: "test", ObservedAt: now,
 		})
