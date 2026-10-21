@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate as turn } from "node:timers/promises";
 import { once } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { commandFixture, principal, setup } from "./connection.fixture.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
 const implementation = await import("./connection.mjs");
 const accessDenied = admissionErrorReceipt("access_denied");
@@ -569,8 +573,28 @@ test("command connection cleanup preserves the original business and close failu
   assert.equal(records[0].httpConnection, receipt);
 });
 
-test("command resource cleanup attempts every connection before telemetry shutdown and preserves all failures", async () => {
+function resourceWarnings(t) {
+  const messages = [];
+  for (const method of ["warn", "error", "log", "info", "debug"])
+    t.mock.method(console, method, (...args) =>
+      messages.push({ method, args }),
+    );
+  return messages;
+}
+
+function assertSafeResourceWarnings(messages) {
+  for (const { method, args } of messages) {
+    assert.equal(method, "warn");
+    assert.equal(args.length, 1);
+    assert.equal(typeof args[0], "string");
+    assert.match(args[0], /telemetry|diagnostic/iu);
+    assert(!args[0].includes("PRIVATE-"));
+  }
+}
+
+test("command resource cleanup attempts every connection before telemetry shutdown and preserves business failures", async (t) => {
   assert.equal(typeof implementation.withPrivateCommandResources, "function");
+  const warnings = resourceWarnings(t);
   const calls = [],
     business = new Error("business"),
     first = new Error("first close"),
@@ -603,13 +627,258 @@ test("command resource cleanup attempts every connection before telemetry shutdo
       },
     ),
     (error) => {
-      assert.deepEqual(error.errors, [business, first, telemetry]);
+      assert.deepEqual(error.errors, [business, first]);
       return true;
     },
   );
   assert.deepEqual(calls, ["first", "second", "telemetry"]);
   assert.equal(clients.size, 0);
+  assertSafeResourceWarnings(warnings);
 });
+
+test("telemetry failure preserves the original action result and emits only a fixed warning", async (t) => {
+  const warnings = resourceWarnings(t);
+  const result = { original: "action-result" };
+  for (const message of [
+    "PRIVATE-FIRST-TELEMETRY",
+    "PRIVATE-SECOND-TELEMETRY",
+  ]) {
+    let shutdowns = 0;
+    const returned = await implementation.withPrivateCommandResources(
+      new Set(),
+      {
+        shutdown() {
+          shutdowns++;
+          throw new Error(message, {
+            cause: new Error("PRIVATE-EXPORT-CAUSE"),
+          });
+        },
+      },
+      () => Promise.resolve(result),
+    );
+    assert.strictEqual(returned, result);
+    assert.equal(shutdowns, 1);
+  }
+  assert.equal(warnings.length, 2);
+  assert.equal(warnings[0].args[0], warnings[1].args[0]);
+  assertSafeResourceWarnings(warnings);
+});
+
+test("held telemetry shutdown is joined before its warning and original action result return", async (t) => {
+  const warnings = resourceWarnings(t);
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const result = { original: "held-action-result" };
+  const calls = [];
+  let joined = false,
+    settled = false;
+  const clients = new Set([
+    {
+      closeAndWait: () => {
+        calls.push("client");
+        return Promise.resolve();
+      },
+    },
+  ]);
+  const pending = implementation.withPrivateCommandResources(
+    clients,
+    {
+      async shutdown() {
+        calls.push("shutdown-entered");
+        entered.resolve();
+        try {
+          await release.promise;
+          throw new Error("PRIVATE-HELD-TELEMETRY");
+        } finally {
+          joined = true;
+          calls.push("shutdown-joined");
+        }
+      },
+    },
+    () => Promise.resolve(result),
+  );
+  const outcome = pending.then(
+    (value) => {
+      settled = true;
+      return { value };
+    },
+    (error) => {
+      settled = true;
+      return { error };
+    },
+  );
+  try {
+    await within(entered.promise);
+    await turn();
+    assert.equal(settled, false);
+    assert.equal(joined, false);
+    assert.equal(clients.size, 0);
+    assert.deepEqual(calls, ["client", "shutdown-entered"]);
+    release.resolve();
+    const completed = await within(outcome);
+    assert.equal(completed.error, undefined);
+    assert.strictEqual(completed.value, result);
+    assert.equal(joined, true);
+    assert.deepEqual(calls, ["client", "shutdown-entered", "shutdown-joined"]);
+    assertSafeResourceWarnings(warnings);
+  } finally {
+    release.resolve();
+    await within(outcome);
+  }
+});
+
+test("an exhausted diagnostic budget never skips actual telemetry shutdown or later work", async (t) => {
+  const warnings = resourceWarnings(t);
+  const directory = mkdtempSync(
+    join(tmpdir(), "antnest-command-cleanup-diagnostics-"),
+  );
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const traceDiagnostics = createTraceDiagnostics({ directory, budgetMs: 0 });
+  const calls = [];
+  const result = { original: "budget-action-result" };
+  const returned = await implementation.withPrivateCommandResources(
+    new Set(),
+    {
+      shutdown() {
+        calls.push("shutdown");
+        return Promise.reject(new Error("PRIVATE-OVER-BUDGET-TELEMETRY"));
+      },
+    },
+    () => {
+      calls.push("action");
+      return Promise.resolve(result);
+    },
+    { traceDiagnostics },
+  );
+  calls.push("after");
+  assert.strictEqual(returned, result);
+  assert.deepEqual(calls, ["action", "shutdown", "after"]);
+  assert.equal(traceDiagnostics.summary().status, "warning");
+  assert.equal(
+    traceDiagnostics.summary().checks.at(-1).status,
+    "not_collected",
+  );
+  assertSafeResourceWarnings(warnings);
+});
+
+test("the optional diagnostic callback receives the original telemetry error after shutdown", async (t) => {
+  const warnings = resourceWarnings(t);
+  const failure = new Error("PRIVATE-ORIGINAL-TELEMETRY", {
+    cause: { detail: "PRIVATE-ORIGINAL-CAUSE" },
+  });
+  const result = { original: "diagnostic-action-result" };
+  const calls = [];
+  let recorded;
+  const traceDiagnostics = {
+    async run(name, check) {
+      calls.push("diagnostic");
+      assert.equal(typeof name, "string");
+      try {
+        await check(new AbortController().signal);
+        assert.fail("the telemetry failure was hidden from diagnostics");
+      } catch (error) {
+        recorded = error;
+      }
+      return { name, status: "failed" };
+    },
+  };
+  const returned = await implementation.withPrivateCommandResources(
+    new Set(),
+    {
+      shutdown() {
+        calls.push("shutdown");
+        return Promise.reject(failure);
+      },
+    },
+    () => Promise.resolve(result),
+    { traceDiagnostics },
+  );
+  assert.strictEqual(returned, result);
+  assert.strictEqual(recorded, failure);
+  assert.deepEqual(calls, ["shutdown", "diagnostic"]);
+  assertSafeResourceWarnings(warnings);
+});
+
+for (const asynchronous of [false, true])
+  test(`a ${asynchronous ? "rejected" : "thrown"} diagnostic recording failure cannot replace business or skip shutdown`, async (t) => {
+    const warnings = resourceWarnings(t);
+    const result = { original: "recording-action-result" };
+    const calls = [];
+    const returned = await implementation.withPrivateCommandResources(
+      new Set(),
+      {
+        shutdown() {
+          calls.push("shutdown");
+          return Promise.reject(new Error("PRIVATE-TELEMETRY-FAILURE"));
+        },
+      },
+      () => Promise.resolve(result),
+      {
+        traceDiagnostics: {
+          run() {
+            calls.push("diagnostic");
+            const failure = new Error("PRIVATE-DIAGNOSTIC-ARCHIVE-FAILURE");
+            if (asynchronous) return Promise.reject(failure);
+            throw failure;
+          },
+        },
+      },
+    );
+    calls.push("after");
+    assert.strictEqual(returned, result);
+    assert.deepEqual(calls, ["shutdown", "diagnostic", "after"]);
+    assertSafeResourceWarnings(warnings);
+  });
+
+for (const failing of ["action", "client"])
+  test(`the original ${failing} failure remains fatal when telemetry and diagnostic recording also fail`, async (t) => {
+    const warnings = resourceWarnings(t);
+    const failure = new Error(`original ${failing} failure`);
+    const calls = [];
+    const clients = new Set([
+      {
+        closeAndWait() {
+          calls.push("first");
+          return failing === "client"
+            ? Promise.reject(failure)
+            : Promise.resolve();
+        },
+      },
+      {
+        async closeAndWait() {
+          await turn();
+          calls.push("second");
+        },
+      },
+    ]);
+    await assert.rejects(
+      implementation.withPrivateCommandResources(
+        clients,
+        {
+          shutdown() {
+            calls.push("shutdown");
+            return Promise.reject(new Error("PRIVATE-TELEMETRY-FAILURE"));
+          },
+        },
+        () =>
+          failing === "action"
+            ? Promise.reject(failure)
+            : Promise.resolve("result"),
+        {
+          traceDiagnostics: {
+            run() {
+              calls.push("diagnostic");
+              throw new Error("PRIVATE-DIAGNOSTIC-FAILURE");
+            },
+          },
+        },
+      ),
+      (error) => error === failure,
+    );
+    assert.deepEqual(calls, ["first", "second", "shutdown", "diagnostic"]);
+    assert.equal(clients.size, 0);
+    assertSafeResourceWarnings(warnings);
+  });
 
 test(
   "HTTP authority is checked again for business traffic after initialization",

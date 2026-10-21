@@ -16,6 +16,7 @@ import {
   assertAdmissionError,
   assertErrorCapability,
 } from "../../support/acp-errors.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
 const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
 
@@ -56,7 +57,15 @@ export function withPrivateCommandConnection(client, records, action) {
   ]);
 }
 
-export function withPrivateCommandResources(clients, telemetry, action) {
+export function withPrivateCommandResources(
+  clients,
+  telemetry,
+  action,
+  {
+    traceDiagnostics,
+    directory = process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+  } = {},
+) {
   return finishCommandAction(action, [
     async () => {
       const errors = [];
@@ -73,7 +82,26 @@ export function withPrivateCommandResources(clients, telemetry, action) {
       if (errors.length)
         throw new AggregateError(errors, "Command connection cleanup failed");
     },
-    () => telemetry.shutdown(),
+    async () => {
+      try {
+        // Joining the actual exporter is independent of the diagnostic budget.
+        await telemetry.shutdown();
+      } catch (error) {
+        console.warn(
+          "Private ACP telemetry shutdown failed; auxiliary diagnostics retained",
+        );
+        try {
+          const diagnostics =
+            traceDiagnostics ??
+            (directory ? createTraceDiagnostics({ directory }) : undefined);
+          await diagnostics?.run("telemetry-shutdown", () => {
+            throw error;
+          });
+        } catch {
+          console.warn("Private ACP telemetry diagnostic recording failed");
+        }
+      }
+    },
   ]);
 }
 

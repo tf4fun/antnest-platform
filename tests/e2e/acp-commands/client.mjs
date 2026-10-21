@@ -35,6 +35,11 @@ import {
 } from "./evidence.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 import { requestCommandRuntimeInspection } from "./runtime-inspection.mjs";
+import {
+  collectCommandRunBusiness,
+  inspectCommandRunBusiness,
+} from "./run-business.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -46,7 +51,8 @@ const agents = [],
 const marker = "F08_PRIVATE_ATTACHMENT";
 const clients = new Set(),
   issuedSessions = new WeakMap(),
-  recordings = new WeakMap();
+  recordings = new WeakMap(),
+  promptReceipts = new WeakMap();
 const secrets = [
   marker,
   "acp-closeout-model",
@@ -56,6 +62,7 @@ const secrets = [
 ];
 const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
 const directory = evidenceDirectory(process.env.ANTNEST_COMMAND_EVIDENCE_DIR);
+const diagnostics = createTraceDiagnostics({ directory });
 const validators = [v1Schema, v2Schema].map((schema) =>
   new Ajv2020({ strict: false, validateFormats: false }).compile({
     $ref: "#/$defs/SessionUpdate",
@@ -63,6 +70,7 @@ const validators = [v1Schema, v2Schema].map((schema) =>
   }),
 );
 let stage = "setup";
+let modelStatusCount = 0;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const login = async (client, email, password) => {
@@ -92,6 +100,11 @@ function record(client, label, kind = "request", extra = {}) {
     "actual SDK request missing",
   );
   const recorded = { ...client.lastRequest, label, kind, ...extra };
+  if (["command", "ordinary"].includes(kind)) {
+    const receipt = promptReceipts.get(client);
+    assert.equal(receipt?.requestId, recorded.requestId);
+    recorded.promptReceipt = structuredClone(receipt);
+  }
   assert(clients.has(client), "command connection is not active");
   recordings.get(client).push(recorded);
   traces.push(recorded);
@@ -142,6 +155,7 @@ function validate(client, version) {
 
 async function prompt(client, version, sessionId, content) {
   client.updates.length = 0;
+  const input = structuredClone(content);
   const response = await client.request(
     "prompt",
     { sessionId, prompt: content },
@@ -170,6 +184,13 @@ async function prompt(client, version, sessionId, content) {
     );
   }
   validate(client, version);
+  promptReceipts.set(client, {
+    requestId: client.lastRequest.requestId,
+    sessionId,
+    input,
+    result: structuredClone(response),
+    updates: structuredClone(client.updates),
+  });
   return transcript(client.updates, sessionId).filter(
     ({ role }) => role === "assistant",
   );
@@ -181,6 +202,11 @@ async function modelStatus() {
   });
   assert.equal(response.status, 200);
   const status = await response.json();
+  writeEvidenceFile(
+    directory,
+    `model-status-${String(++modelStatusCount).padStart(3, "0")}.private.json`,
+    JSON.stringify(status) + "\n",
+  );
   assert.deepEqual(
     status.errors,
     [],
@@ -395,46 +421,78 @@ async function main() {
     "commands-stranger-password",
   );
   const template = await seedCommands(api, process.env.TEST_RUNTIME_IMAGE);
-  const runtimeInspection = await withAgentCleanup(agents, api, async () => {
-    for (const name of ["Commands", "Other agent"]) {
-      const created = await api(
-        "/api/admin/agents",
-        {
-          owner_user_id: user.user.id,
-          name,
-          template_id: template.template_id,
-          template_revision: template.revision,
-        },
-        202,
-      );
-      agents.push(created.agent.agent_id);
-      await operation(created.operation.request_id);
-      await waitForAgentReady(() => api(`/api/admin/agents/${agents.at(-1)}`));
-    }
-    for (const profile of [
-      { name: "v1-ws", version: 1 },
-      { name: "v2-ws", version: 2 },
-      { name: "v1-http", version: 1, http: true },
-    ]) {
-      const foreign = await connect(profile, agents[0], stranger);
-      await use(foreign, async () => {
-        await assertAgentDenied(foreign);
-        record(foreign, `${profile.name}:foreign-user`, "request", {
-          rejection: "access_denied",
+  const { requests, runtimeInspection, runBusiness } = await withAgentCleanup(
+    agents,
+    api,
+    async () => {
+      for (const name of ["Commands", "Other agent"]) {
+        const created = await api(
+          "/api/admin/agents",
+          {
+            owner_user_id: user.user.id,
+            name,
+            template_id: template.template_id,
+            template_revision: template.revision,
+          },
+          202,
+        );
+        agents.push(created.agent.agent_id);
+        await operation(created.operation.request_id);
+        await waitForAgentReady(() =>
+          api(`/api/admin/agents/${agents.at(-1)}`),
+        );
+      }
+      for (const profile of [
+        { name: "v1-ws", version: 1 },
+        { name: "v2-ws", version: 2 },
+        { name: "v1-http", version: 1, http: true },
+      ]) {
+        const foreign = await connect(profile, agents[0], stranger);
+        await use(foreign, async () => {
+          await assertAgentDenied(foreign);
+          record(foreign, `${profile.name}:foreign-user`, "request", {
+            rejection: "access_denied",
+          });
         });
+        await exercise(profile);
+      }
+      stage = "run-business";
+      assert.equal(
+        clients.size,
+        0,
+        "join all command connections before Runtime inspection",
+      );
+      const requests = await modelStatus();
+      writeEvidenceFile(
+        directory,
+        "model-requests.private.json",
+        JSON.stringify(requests) + "\n",
+      );
+      writeEvidenceFile(
+        directory,
+        "request-inventory.private.json",
+        JSON.stringify(traces) + "\n",
+      );
+      const runEvidence = await collectCommandRunBusiness({
+        read: (path) => api(path),
+        agentIds: agents,
+        requests: traces,
+        principalId: issuedSessions.get(member).principal.user_id,
+        modelRequests: requests,
+        preserve: (evidence) =>
+          writeEvidenceFile(
+            directory,
+            "run-business.private.json",
+            JSON.stringify(evidence) + "\n",
+          ),
       });
-      await exercise(profile);
-    }
-    stage = "runtime-inspection";
-    assert.equal(
-      clients.size,
-      0,
-      "join all command connections before Runtime inspection",
-    );
-    return requestCommandRuntimeInspection(agents);
-  });
+      const runBusiness = inspectCommandRunBusiness(runEvidence);
+      stage = "runtime-inspection";
+      const runtimeInspection = await requestCommandRuntimeInspection(agents);
+      return { requests, runtimeInspection, runBusiness };
+    },
+  );
   stage = "trace-verification";
-  const requests = await modelStatus();
   assert.equal(requests.length, 4);
   for (const phase of ["v1-baseline", "v2-baseline"])
     assert.deepEqual(
@@ -443,7 +501,6 @@ async function main() {
         .map((request) => request.stage),
       ["tool", "reply"],
     );
-  assert.equal(new Set(requests.map((request) => request.trace_id)).size, 2);
   assert.equal(traces.length, 40);
   assert.equal(traces.filter((trace) => trace.kind === "command").length, 6);
   assert.equal(traces.filter((trace) => trace.kind === "request").length, 32);
@@ -462,58 +519,79 @@ async function main() {
       traces.filter((item) => item.label.startsWith(profile + ":")).length,
       count,
     );
-  writeEvidenceFile(
-    directory,
-    "model-requests.private.json",
-    JSON.stringify(requests) + "\n",
-  );
-  writeEvidenceFile(
-    directory,
-    "request-inventory.private.json",
-    JSON.stringify(traces) + "\n",
-  );
   const checked = [];
-  for (const expected of traces) {
+  for (const [index, expected] of traces.entries()) {
     stage = `trace:${expected.label}`;
+    const diagnostic = await diagnostics.run(
+      `command-request-${index}`,
+      (signal) =>
+        collectPrivateCommandTrace("http://jaeger:16686", expected, {
+          directory,
+          flush: () => telemetry.flush(),
+          secrets,
+          requests,
+          signal,
+        }),
+    );
     checked.push(
-      await collectPrivateCommandTrace("http://jaeger:16686", expected, {
-        directory,
-        flush: () => telemetry.flush(),
-        secrets,
-        requests,
-      }),
+      diagnostic.status === "passed"
+        ? diagnostic.value
+        : { label: expected.label, diagnostic },
     );
   }
-  assert.equal(new Set(checked.map((trace) => trace.trace_id)).size, 40);
   const normal = checked.filter((trace) => trace.kind === "ordinary");
-  assert.deepEqual(
-    new Set(normal.map((trace) => trace.trace_id)),
-    new Set(requests.map((request) => request.trace_id)),
-  );
-  assert.equal(
-    new Set(checked.map((trace) => trace.run_id).filter(Boolean)).size,
-    8,
-  );
-  const { exit_code: exitCode, ...strict } =
-    privateCommandStrictOutcome(checked);
-  console.log(
-    asciiJSON({
-      status: "business_passed",
-      ...strict,
-      scenarios: outcomes.length,
-      outcomes,
-      model_requests: requests.length,
-      runtime_inspection: runtimeInspection,
-      cross_user_rejections: 3,
-      traces: checked.filter((trace) => trace.kind !== "ordinary"),
-      normal_traces: normal,
-    }),
-  );
-  process.exitCode = exitCode;
+  await diagnostics.run("command-trace-inventory", () => {
+    assert.equal(new Set(requests.map((request) => request.trace_id)).size, 2);
+    assert.equal(new Set(checked.map((trace) => trace.trace_id)).size, 40);
+    assert.deepEqual(
+      new Set(normal.map((trace) => trace.trace_id)),
+      new Set(requests.map((request) => request.trace_id)),
+    );
+    assert.equal(
+      new Set(checked.map((trace) => trace.run_id).filter(Boolean)).size,
+      8,
+    );
+  });
+  let strict;
+  await diagnostics.run("command-strict-trace-result", () => {
+    strict = privateCommandStrictOutcome(checked);
+    assert.equal(
+      strict.exit_code,
+      0,
+      "original strict Trace findings retained as auxiliary diagnostics",
+    );
+  });
+  return {
+    scenarios: outcomes.length,
+    outcomes,
+    model_requests: requests.length,
+    runtime_inspection: runtimeInspection,
+    run_business: runBusiness,
+    run_business_receipt: "run-business.private.json",
+    cross_user_rejections: 3,
+    traces: checked.filter((trace) => trace.kind !== "ordinary"),
+    normal_traces: normal,
+    observability: strict,
+  };
 }
 
 try {
-  await withPrivateCommandResources(clients, telemetry, main);
+  const shutdownDiagnostics = createTraceDiagnostics({
+    directory,
+    budgetMs: 30_000,
+  });
+  const result = await withPrivateCommandResources(clients, telemetry, main, {
+    traceDiagnostics: shutdownDiagnostics,
+  });
+  console.log(
+    asciiJSON({
+      ...result,
+      status: "business_passed",
+      trace_diagnostics: diagnostics.summary(),
+      shutdown_diagnostics: shutdownDiagnostics.summary(),
+    }),
+  );
+  process.exitCode = 0;
 } catch (error) {
   console.error(
     asciiJSON({

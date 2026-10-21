@@ -56,15 +56,19 @@ separate from the fixed Egress and Jaeger addresses.
    access; the foreign user's `session/new` must fail with `access_denied`.
 5. After help, ordinary v1 and v2 prompts still execute a real Runtime Bash
    command and return its actual output.
-6. Jaeger must contain one distinct Trace for each recorded request: six
-   command Runs, two ordinary Runs and 32 setup, restore and rejection
-   requests. Commands require the actual private ACP request ancestry, the current Run identity and
-   committed ACP PostgreSQL writes, but no model, credential or Runtime
-   operations. Runs must not call management services. Setup, restore and
-   rejection Traces must contain the actual request without Run execution.
-   Ordinary Traces correlate the model fixture's HTTP CLIENT IDs through
-   `model.complete` to the owning Run, fresh Runtime preparation and exactly one
-   real Bash invocation.
+6. The admin execution audit independently proves eight completed Runs: six
+   commands and two ordinary prompts, with no Runs on the other Agent. Original
+   SDK request IDs, complete inputs (including attachments), results and
+   notifications bind the three Sessions to persisted Run details and complete
+   event pages. Command replies have no usage or Tool work; ordinary prompts
+   retain the completed Bash lifecycle, settled effects and actual output.
+   The model inventory contains only the two ordinary prompts' Tool/reply pairs.
+   Partial audit reads are archived even on failure, and a failed business
+   archive remains a failure.
+7. Auxiliary Jaeger diagnostics inspect the original 40-request inventory and
+   its ancestry, Run identity, persistence, model and Runtime operations. Missing
+   Traces, collection failures and strict findings remain visible without
+   replacing the independent business acceptance.
 
 ## Trace collection
 
@@ -76,7 +80,8 @@ Initialization, POST acknowledgement, SSE and DELETE retain their original
 response and fully joined close receipts. Auxiliary transport requests do not
 increase the 40 business-request count. Fork input and resulting Session IDs are
 checked separately. Observers
-keep method, request and Session IDs, never prompt payloads. The domain-level
+keep method, request and Session IDs. The owning command client separately saves
+complete original prompt receipts in private business evidence. The domain-level
 resume operation can be `acp.session.resume`, while the request boundary must
 carry the actual wire method and JSON-RPC ID.
 
@@ -168,7 +173,7 @@ boundary and domain operation, with the original SDK denial receipt. Collection
 starts after each original connection is fully closed and its telemetry flushed.
 It archives the complete raw HTTP response before parsing, follows the complete
 Trace closure, and requires three stable rounds. Unrelated errors and timing
-warnings fail acceptance. Reviewed normal-close/rejection diagnostics and the
+warnings fail that diagnostic check. Reviewed normal-close/rejection diagnostics and the
 existing Jaeger clock-skew warning policy are accounted for individually; raw
 errors, warnings and `strict_trace=failed` remain visible even when business and
 topology are accepted. The strictly sub-millisecond Node SDK investigation is
@@ -200,14 +205,16 @@ collection evidence and does not itself grant diagnostic admission or clear raw
 `strict_trace=failed`. Consumers must bind their own policy decision to that
 receipt and final result. Consumers without the hook keep their existing output.
 
-The runner exits 0 for strict success, 2 when complete business/topology checks
-pass with only reviewed strict findings, and 1 for failures. CI runs the Stage 3
-recipe directly so exit 2 retains the existing warning classification; Make can
-map a failed recipe to its own exit status. Cleanup failures always fail the run.
+The command client exits 0 only after independent business checks, the live
+Runtime inspection, Agent deletion and actual connection cleanup pass. Trace
+collection and strict checks share a bounded diagnostic budget. Telemetry
+shutdown is always awaited, even after that budget expires; exporter failure is
+an auxiliary warning. Actual business or resource cleanup failure exits 1.
 
 The transcript and Trace validators have positive and deliberately corrupted
-fixtures. Missing Traces, missing persistence, duplicated replies, extra
-execution and unrelated Runtime spans must fail. Raw queries, the independent
+fixtures. Missing persistence, duplicated replies and extra execution fail
+business acceptance; missing Traces and unrelated Runtime spans fail the
+auxiliary diagnostic. Raw queries, the independent
 model-request inventory, business-request inventory and intermediate reports are
 retained privately under `artifacts/verification/acp-commands/<project>/` with
 restricted permissions. Console output uses ASCII JSON summaries. Evidence and
