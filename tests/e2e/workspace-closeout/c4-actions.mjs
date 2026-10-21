@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertC4BodyDiagnostics } from "./c4-body-audit.mjs";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -269,6 +270,13 @@ export function createC4Actions({ signal, output, report }, overrides = {}) {
         current.traces,
         secrets(config),
       );
+      current.browser_body_review = assertC4BodyDiagnostics(current, config);
+      assert.equal(
+        current.browser_bodies_unobserved,
+        (current.bootstrap_denials?.length ?? 0) +
+          current.browser_body_review.body_count,
+      );
+      assert.equal(current.browser_payload_coverage, "observed_bodies_only");
       return {
         exitCode: 0,
         rawExitCode: outcome.exit_code,
