@@ -119,7 +119,7 @@ test("Stage3 completion preserves the exact diagnostic reports and exit 2", () =
   assert.equal(verdict(2, JSON.stringify(result), true), "warning");
   assert.equal(verdict(1, JSON.stringify(result), true), "failed");
   result.traces[0].warnings = ["unknown diagnostic"];
-  assert.equal(verdict(2, JSON.stringify(result), true), "failed");
+  assert.equal(verdict(2, JSON.stringify(result), true), "warning");
 });
 
 test("Stage3 without strict findings retains successful exit 0", () => {

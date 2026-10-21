@@ -33,9 +33,10 @@ The actual Gateway Resolve TTL is checked against the value forwarded to the
 client, including a disabled cache or a non-default TTL.
 
 The child has a 30-minute total budget for 151 ACP requests and 19 pricing
-commands, each requiring three stable full-source Trace samples. The actual
-restart and health/ACK sequence has its own 90-second bound. CI invokes the
-Stage 3a recipe directly so exit 2 survives.
+commands. Auxiliary Trace inspection has a shared 60-second active collection
+budget; each successful collector retains its three stable full-source samples.
+Missing or failed observations remain explicit warnings. The actual restart
+and health/ACK sequence keeps its independent 90-second bound.
 
 ## Contract
 
@@ -86,11 +87,13 @@ connection is joined before restart or successful cleanup. Completed transport
 outcomes are recorded only after replay, subsequent execution and connection
 closure, and supply the final CI scenario count.
 
-Strict Jaeger diagnostics retain their original nonzero exit 2. Delivery focuses
-on internal-service logic: confirmed external SDK issues are non-blocking under
-the repository policy in [AGENTS.md](../../../AGENTS.md). Unknown diagnostics,
-missing spans, incorrect parentage, internal errors and incomplete business
-evidence still fail.
+All Span and Trace findings are auxiliary under [AGENTS.md](../../../AGENTS.md).
+The client preserves each original collector failure and strict result in
+`trace_diagnostics` and `observability`; it exits successfully only after the
+independent business assertions and actual resource cleanup pass. Missing spans,
+Jaeger query failures, topology, timestamps and Trace metadata do not prevent
+subsequent business checks. Provider count/phase, usage/cost, authorization,
+persistence, restart, Runtime ACK and deletion remain blocking requirements.
 
 The Cost and Progress collectors call `reviewCostWarningSources` for both live
 inspection and archive revalidation. Standard Jaeger clock-skew diagnostics on
@@ -114,18 +117,17 @@ cannot authorize a failed tool, unexpected error or missing actual-stop
 evidence. The raw calculated Jaeger delta and original span
 timestamps are never rewritten.
 
-The diagnostic helper alone does not grant admission. The collector still
-checks the complete business sources and binds three consecutive stable samples,
+The strict diagnostic collector still checks its full Trace sources and binds
+three consecutive stable samples,
 original query bytes and SHA-256 receipts. The public projection records the
 waiver count without replacing raw warnings or `strict_trace=failed`.
 Pricing uses the same fixed SDK policy on every complete Resolve sample. Its
 content validator retains topology, duration, service, header and RPC-payload
-checks after warning review; callers without that review keep the strict warning
-gate. Resolve and pricing inventory use the same raw-error predicate, so an
+checks after warning review; these remain auxiliary inspection findings. Resolve and pricing inventory use the same raw-error predicate, so an
 empty `error.type` on a successful span remains neutral; nonempty error details
 and failed outcomes still fail.
 
-Final ACP admission requires the original returned object and unchanged report,
+A successful strict ACP diagnostic requires the original returned object and unchanged report,
 manifest, raw archive and private review. Clones, accessors, delayed mutations,
 duplicate business Traces and inconsistent shared sources fail. Aggregation
 uses the private checked snapshots and counts shared warning occurrences once.
@@ -153,7 +155,8 @@ The client consumes that final Runtime ACK before successful Agent deletion.
 checks each distinct delete operation through completion, and attempts all
 four deletions even after business, deletion or evidence-recording failures.
 The shell archives client/model logs and then removes the disposable project.
-Cleanup failure remains exit 1, including after an otherwise strict-only exit 2.
+Cleanup failure remains exit 1 even when all business assertions have passed
+and only auxiliary Trace findings remain.
 
 Private evidence is under `artifacts/verification/acp-cost/<project>/`, with
 Trace bodies in `traces/`, restart evidence in `restart/`, and Runtime request,

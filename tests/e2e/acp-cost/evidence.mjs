@@ -98,13 +98,12 @@ export function assertCost(updates, sessionId, expected) {
   return structuredClone(usage);
 }
 
-export function assertAttempts(actual, expected) {
+export function assertProviderAttempts(actual, expected) {
   assert.equal(
     actual.length,
     expected.length,
     "Provider attempt count mismatch",
   );
-  const ids = new Set();
   for (let index = 0; index < actual.length; index++) {
     const request = actual[index];
     assert.equal(
@@ -112,6 +111,14 @@ export function assertAttempts(actual, expected) {
       expected[index].phase,
       "Provider phase mismatch",
     );
+  }
+}
+
+export function assertAttempts(actual, expected) {
+  assertProviderAttempts(actual, expected);
+  const ids = new Set();
+  for (let index = 0; index < actual.length; index++) {
+    const request = actual[index];
     if (expected[index].trace_id)
       assert.equal(
         request.trace_id,

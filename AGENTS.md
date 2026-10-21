@@ -28,6 +28,14 @@ issues are non-blocking: retain their diagnostics and continue internal-service
 and business acceptance without adding SDK investigations or workarounds.
 This rule supersedes earlier SDK timing investigation deferrals.
 
+Span and Trace collection and inspection are auxiliary diagnostics only. They
+must not block CI, delivery, or merging. Retain raw findings and report warnings
+for unavailable collection, missing spans, topology, and timing assertions.
+Keep business results, authorization, persistence, Runtime behavior, capacity
+deadlines, and actual resource cleanup as independent blocking checks. Continue
+those checks after diagnostic failures; never count unexecuted business checks
+as passed. This policy supersedes historical strict Trace admission requirements.
+
 ## Test source and evidence storage
 
 Never author, stage, or keep project test scripts, fixtures, source snapshots,

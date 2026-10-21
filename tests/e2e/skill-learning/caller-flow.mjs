@@ -8,6 +8,7 @@ import {
   waitForAgentReady,
 } from "../../support/verification/agent-state.mjs";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   assertCaptureDisabled,
   tag,
@@ -36,6 +37,10 @@ export async function callerAcpFlow({
   output,
 }) {
   await mkdir(output, { recursive: true, mode: 0o700 });
+  const traceDiagnostics = createTraceDiagnostics({
+    directory: output,
+    signal,
+  });
   const peer = await fixture.json("/api/admin/agents", {
     status: 202,
     body: {
@@ -197,130 +202,164 @@ export async function callerAcpFlow({
         tool.stopped,
     ),
   );
-  // The default SDK batch period is five seconds. Read the completed Trace once
-  // after the acceptance buffer; early detail polling can persist Jaeger warnings.
-  await delay(6000, undefined, { signal });
-  const traces = await searchJaegerTraces(
-    config.jaeger,
-    new URLSearchParams({
-      service: "agent-acp-service",
-      operation: "agent.run",
-      tags: JSON.stringify({ "antnest.run.id": run.run_id }),
-      lookback: "30m",
-      limit: "20",
-    }),
-    { signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]) },
+  const callerTrace = await traceDiagnostics.run(
+    "caller-run",
+    async (diagSignal) => {
+      // The default SDK batch period is five seconds. Read the completed Trace once
+      // after the acceptance buffer; early detail polling can persist Jaeger warnings.
+      await delay(6000, undefined, { signal: diagSignal });
+      const traces = await searchJaegerTraces(
+        config.jaeger,
+        new URLSearchParams({
+          service: "agent-acp-service",
+          operation: "agent.run",
+          tags: JSON.stringify({ "antnest.run.id": run.run_id }),
+          lookback: "30m",
+          limit: "20",
+        }),
+        { signal: AbortSignal.any([diagSignal, AbortSignal.timeout(10000)]) },
+      );
+      assert.equal(
+        traces.length,
+        1,
+        "completed caller Run Trace must be exported",
+      );
+      const trace = traces[0];
+      let topologyError;
+      try {
+        traceTopology(trace);
+      } catch (error) {
+        topologyError = error.message;
+      }
+      await writeFile(
+        `${output}/caller-trace-observation.json`,
+        JSON.stringify({ trace, topology_error: topologyError }),
+        { mode: 0o600, flag: "wx" },
+      );
+      assert.equal(
+        topologyError,
+        undefined,
+        "caller Trace must have complete parents",
+      );
+      const topology = traceTopology(trace);
+      assertCaptureDisabled(trace);
+      const search = trace.spans.filter(
+        (span) => span.operationName === "skill.discovery.search",
+      );
+      const loads = trace.spans.filter(
+        (span) => span.operationName === "skill.discovery.load",
+      );
+      assert.equal(search.length, 1);
+      assert.equal(loads.length, 2);
+      assert.equal(
+        trace.spans.filter(
+          (span) => span.operationName === "skill.source.observe",
+        ).length,
+        2,
+        "both peer source checks must join the calling Run Trace",
+      );
+      for (const span of [...search, ...loads]) {
+        assert.equal(tag(span, "run.id"), run.run_id);
+        const parent = topology.parent(span);
+        assert.equal(parent.operationName, "mcp.tools.call");
+        assert.equal(tag(parent, "mcp.source_id"), "skill_registry");
+      }
+      const formalLoad = loads.find(
+        (span) => tag(span, "skill.source.kind") === "registry",
+      );
+      const peerLoad = loads.find(
+        (span) => tag(span, "skill.source.kind") === "agent",
+      );
+      assert(formalLoad && peerLoad);
+      assert.equal(tag(formalLoad, "skill.id"), formal.skill_id);
+      assert.equal(tag(formalLoad, "skill.version"), formal.version);
+      assert.equal(
+        tag(formalLoad, "skill.content_digest"),
+        formal.content_digest,
+      );
+      assert.equal(tag(peerLoad, "skill.source.agent_id"), peerId);
+      assert.equal(tag(peerLoad, "skill.source.sequence"), 1);
+      assert.equal(
+        tag(peerLoad, "skill.content_digest"),
+        called.peer_projection.content_digest,
+      );
+      for (const span of trace.spans.filter(
+        (node) => node.operationName === "skill.source.observe",
+      )) {
+        assert.equal(
+          tag(span, "antnest.agent_id"),
+          peerId,
+          "active caller must never inspect its own source",
+        );
+        assert.equal(tag(span, "antnest.skill.source_sequence"), 1);
+        const sourceServer = topology.parent(span);
+        assert.equal(topology.service(sourceServer), "agent-acp-service");
+        assert(
+          [
+            "HTTP POST /internal/skill-sources/inspect",
+            "HTTP POST /internal/skill-sources/artifact",
+          ].includes(sourceServer.operationName),
+        );
+        const sourceClient = topology.parent(sourceServer);
+        assert.equal(topology.service(sourceClient), "skill-registry");
+        assert.equal(sourceClient.operationName, "HTTP POST agent-acp-service");
+        const registryServer = topology.parent(sourceClient);
+        assert.equal(topology.service(registryServer), "skill-registry");
+        assert(
+          [
+            "HTTP POST /internal/skill-discovery/search",
+            "HTTP POST /internal/skill-discovery/load",
+          ].includes(registryServer.operationName),
+        );
+        const registryClient = topology.parent(registryServer);
+        assert.equal(topology.service(registryClient), "agent-acp-service");
+        assert.equal(registryClient.operationName, "HTTP POST skill_registry");
+        assert(
+          [search[0].spanID, peerLoad.spanID].includes(
+            topology.parent(registryClient).spanID,
+          ),
+          "source access must belong to the actual find/load operation",
+        );
+      }
+      assert(
+        !JSON.stringify(trace).includes(
+          "For the fixture task, inspect the target",
+        ),
+      );
+      await writeFile(`${output}/caller-trace.json`, JSON.stringify(trace), {
+        flag: "wx",
+        mode: 0o600,
+      });
+      return {
+        trace_id: trace.traceID,
+        span_count: trace.spans.length,
+        searches: 1,
+        loads: 2,
+        peer_observations: 2,
+        own_observations: 0,
+        complete_parents: true,
+        capture_disabled: true,
+      };
+    },
   );
-  assert.equal(traces.length, 1, "completed caller Run Trace must be exported");
-  const trace = traces[0];
-  let topologyError;
-  try {
-    traceTopology(trace);
-  } catch (error) {
-    topologyError = error.message;
-  }
-  await writeFile(
-    `${output}/caller-trace-observation.json`,
-    JSON.stringify({ trace, topology_error: topologyError }),
-    { mode: 0o600, flag: "wx" },
+  const peerLearningDiagnostic = await traceDiagnostics.run(
+    "peer-learning",
+    async (diagSignal) => {
+      const peerLearning = await collectLearningTraces(
+        config,
+        peerId,
+        [learned.created_change_id],
+        diagSignal,
+        { fileSuffix: "-caller-peer" },
+      );
+      assert.equal(peerLearning.summaries[0].debug, false);
+      assert.equal(peerLearning.summaries[0].modelCalls, 1);
+      return peerLearning.summaries;
+    },
   );
-  assert.equal(
-    topologyError,
-    undefined,
-    "caller Trace must have complete parents",
+  console.log(
+    JSON.stringify({ trace_diagnostics: traceDiagnostics.summary() }),
   );
-  const topology = traceTopology(trace);
-  assertCaptureDisabled(trace);
-  const search = trace.spans.filter(
-    (span) => span.operationName === "skill.discovery.search",
-  );
-  const loads = trace.spans.filter(
-    (span) => span.operationName === "skill.discovery.load",
-  );
-  assert.equal(search.length, 1);
-  assert.equal(loads.length, 2);
-  assert.equal(
-    trace.spans.filter((span) => span.operationName === "skill.source.observe")
-      .length,
-    2,
-    "both peer source checks must join the calling Run Trace",
-  );
-  for (const span of [...search, ...loads]) {
-    assert.equal(tag(span, "run.id"), run.run_id);
-    const parent = topology.parent(span);
-    assert.equal(parent.operationName, "mcp.tools.call");
-    assert.equal(tag(parent, "mcp.source_id"), "skill_registry");
-  }
-  const formalLoad = loads.find(
-    (span) => tag(span, "skill.source.kind") === "registry",
-  );
-  const peerLoad = loads.find(
-    (span) => tag(span, "skill.source.kind") === "agent",
-  );
-  assert(formalLoad && peerLoad);
-  assert.equal(tag(formalLoad, "skill.id"), formal.skill_id);
-  assert.equal(tag(formalLoad, "skill.version"), formal.version);
-  assert.equal(tag(formalLoad, "skill.content_digest"), formal.content_digest);
-  assert.equal(tag(peerLoad, "skill.source.agent_id"), peerId);
-  assert.equal(tag(peerLoad, "skill.source.sequence"), 1);
-  assert.equal(
-    tag(peerLoad, "skill.content_digest"),
-    called.peer_projection.content_digest,
-  );
-  for (const span of trace.spans.filter(
-    (node) => node.operationName === "skill.source.observe",
-  )) {
-    assert.equal(
-      tag(span, "antnest.agent_id"),
-      peerId,
-      "active caller must never inspect its own source",
-    );
-    assert.equal(tag(span, "antnest.skill.source_sequence"), 1);
-    const sourceServer = topology.parent(span);
-    assert.equal(topology.service(sourceServer), "agent-acp-service");
-    assert(
-      [
-        "HTTP POST /internal/skill-sources/inspect",
-        "HTTP POST /internal/skill-sources/artifact",
-      ].includes(sourceServer.operationName),
-    );
-    const sourceClient = topology.parent(sourceServer);
-    assert.equal(topology.service(sourceClient), "skill-registry");
-    assert.equal(sourceClient.operationName, "HTTP POST agent-acp-service");
-    const registryServer = topology.parent(sourceClient);
-    assert.equal(topology.service(registryServer), "skill-registry");
-    assert(
-      [
-        "HTTP POST /internal/skill-discovery/search",
-        "HTTP POST /internal/skill-discovery/load",
-      ].includes(registryServer.operationName),
-    );
-    const registryClient = topology.parent(registryServer);
-    assert.equal(topology.service(registryClient), "agent-acp-service");
-    assert.equal(registryClient.operationName, "HTTP POST skill_registry");
-    assert(
-      [search[0].spanID, peerLoad.spanID].includes(
-        topology.parent(registryClient).spanID,
-      ),
-      "source access must belong to the actual find/load operation",
-    );
-  }
-  assert(
-    !JSON.stringify(trace).includes("For the fixture task, inspect the target"),
-  );
-  await writeFile(`${output}/caller-trace.json`, JSON.stringify(trace), {
-    flag: "wx",
-    mode: 0o600,
-  });
-  const peerLearning = await collectLearningTraces(
-    config,
-    peerId,
-    [learned.created_change_id],
-    signal,
-    { fileSuffix: "-caller-peer" },
-  );
-  assert.equal(peerLearning.summaries[0].debug, false);
-  assert.equal(peerLearning.summaries[0].modelCalls, 1);
   const deleted = await fixture.json(`/api/admin/agents/${peerId}/delete`, {
     status: 202,
     body: {},
@@ -340,17 +379,11 @@ export async function callerAcpFlow({
   const report = {
     ...called,
     run,
-    peer_learning: peerLearning.summaries,
-    trace: {
-      trace_id: trace.traceID,
-      span_count: trace.spans.length,
-      searches: 1,
-      loads: 2,
-      peer_observations: 2,
-      own_observations: 0,
-      complete_parents: true,
-      capture_disabled: true,
-    },
+    ...(peerLearningDiagnostic.status === "passed"
+      ? { peer_learning: peerLearningDiagnostic.value }
+      : {}),
+    ...(callerTrace.status === "passed" ? { trace: callerTrace.value } : {}),
+    trace_diagnostics: traceDiagnostics.summary(),
     peer_delete_request_id: operation.request_id,
     own_projection_remains_active: true,
   };
@@ -359,7 +392,11 @@ export async function callerAcpFlow({
     flag: "wx",
   });
   console.log(
-    `Caller acceptance ${config.project}: identities, actual Trace and normal peer deletion passed`,
+    `Caller acceptance ${config.project}: identities, ${
+      report.trace_diagnostics.status === "passed"
+        ? "Trace checks passed"
+        : "Trace diagnostics recorded"
+    } and normal peer deletion passed`,
   );
   return report;
 }

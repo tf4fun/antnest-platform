@@ -10,6 +10,7 @@ import {
   waitForAgentReady,
 } from "../../support/verification/agent-state.mjs";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   assertCaptureDisabled,
   tag,
@@ -41,6 +42,10 @@ export async function openPropagationFlow({
   output,
 }) {
   await mkdir(output, { recursive: true, mode: 0o700 });
+  const traceDiagnostics = createTraceDiagnostics({
+    directory: output,
+    signal,
+  });
   const report = {
     status: "running",
     source_agent_id: fixture.agentID,
@@ -695,57 +700,84 @@ export async function openPropagationFlow({
         );
         const traces = [];
         for (const run of report.runs) {
-          const trace = await until(
-            async () => {
-              const found = await searchJaegerTraces(
-                config.jaeger,
-                new URLSearchParams({
-                  service: "agent-acp-service",
-                  operation: "agent.run",
-                  tags: JSON.stringify({ "antnest.run.id": run.run_id }),
-                  lookback: "30m",
-                  limit: "20",
-                }),
-                {
-                  signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+          const diagnostic = await traceDiagnostics.run(
+            `preset-run:${run.run_id}`,
+            async (diagSignal) => {
+              const trace = await until(
+                async () => {
+                  const found = await searchJaegerTraces(
+                    config.jaeger,
+                    new URLSearchParams({
+                      service: "agent-acp-service",
+                      operation: "agent.run",
+                      tags: JSON.stringify({ "antnest.run.id": run.run_id }),
+                      lookback: "30m",
+                      limit: "20",
+                    }),
+                    {
+                      signal: AbortSignal.any([
+                        diagSignal,
+                        AbortSignal.timeout(10000),
+                      ]),
+                    },
+                  );
+                  assert(found.length <= 1);
+                  if (!found[0]) return null;
+                  try {
+                    traceTopology(found[0]);
+                  } catch {
+                    return null;
+                  }
+                  return found[0].spans.some(
+                    (span) => span.operationName === "model.complete",
+                  ) &&
+                    found[0].spans.some(
+                      (span) => span.operationName === "mcp.tools.call",
+                    )
+                    ? found[0]
+                    : null;
                 },
+                "exported preset Run Trace with complete parents",
+                diagSignal,
+                45000,
               );
-              assert(found.length <= 1);
-              if (!found[0]) return null;
-              try {
-                traceTopology(found[0]);
-              } catch {
-                return null;
-              }
-              return found[0].spans.some(
-                (span) => span.operationName === "model.complete",
-              ) &&
-                found[0].spans.some(
-                  (span) => span.operationName === "mcp.tools.call",
-                )
-                ? found[0]
-                : null;
+              assertCaptureDisabled(trace);
+              assert(!JSON.stringify(trace).includes(firstRule));
+              const root = trace.spans.find(
+                (span) => span.operationName === "agent.run",
+              );
+              assert.equal(tag(root, "antnest.run.id"), run.run_id);
+              await writeFile(
+                `${output}/preset-${run.run_id}-trace.json`,
+                JSON.stringify(trace),
+                { mode: 0o600, flag: "wx", signal: diagSignal },
+              );
+              return trace;
             },
-            "exported preset Run Trace with complete parents",
-            signal,
-            45000,
           );
-          assertCaptureDisabled(trace);
-          assert(!JSON.stringify(trace).includes(firstRule));
-          const root = trace.spans.find(
-            (span) => span.operationName === "agent.run",
-          );
-          assert.equal(tag(root, "antnest.run.id"), run.run_id);
-          traces.push(trace);
-          run.trace_id = trace.traceID;
+          if (diagnostic.status === "passed") {
+            traces.push(diagnostic.value);
+            run.trace_id = diagnostic.value.traceID;
+          }
         }
-        await writeFile(
-          `${output}/preset-traces.json`,
-          JSON.stringify(traces),
-          { mode: 0o600, flag: "wx" },
+        if (traces.length)
+          await traceDiagnostics.run("preset-trace-archive", (diagSignal) =>
+            writeFile(`${output}/preset-traces.json`, JSON.stringify(traces), {
+              mode: 0o600,
+              flag: "wx",
+              signal: diagSignal,
+            }),
+          );
+        report.trace_diagnostics = traceDiagnostics.summary();
+        console.log(
+          JSON.stringify({ trace_diagnostics: report.trace_diagnostics }),
         );
         assert.deepEqual(errors, []);
-        await checkpoint("preset Run Trace topology and zero browser errors");
+        await checkpoint(
+          report.trace_diagnostics.status === "passed"
+            ? "preset Run Trace topology passed and zero browser errors"
+            : "preset Run Trace diagnostics recorded and zero browser errors",
+        );
         const model = await docker([
           "ps",
           "-q",
@@ -785,6 +817,7 @@ export async function openPropagationFlow({
       },
       async captureFailure(error) {
         report.status = "failed";
+        report.trace_diagnostics = traceDiagnostics.summary();
         report.error = { name: error.name, message: error.message };
         report.browser_errors = errors;
         await writeFile(`${output}/failure.json`, JSON.stringify(report), {

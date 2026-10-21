@@ -74,7 +74,8 @@ export function encodeCompletion(result) {
 
 export function createModelFixture() {
   const requests = [],
-    errors = [];
+    errors = [],
+    traceDiagnostics = [];
   let checkpoint = "running",
     blocked;
   return createServer(async (request, response) => {
@@ -86,6 +87,7 @@ export function createModelFixture() {
       return json(200, {
         requests,
         errors,
+        trace_diagnostics: traceDiagnostics,
         checkpoint,
         blocked: blocked?.phase,
       });
@@ -105,10 +107,10 @@ export function createModelFixture() {
       assert.equal(request.method, "POST");
       assert.equal(request.url, "/v1/chat/completions");
       assert.equal(request.headers.authorization, "Bearer cost-model-test");
-      assert.match(
-        request.headers.traceparent ?? "",
-        /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
-      );
+      const traceparent = request.headers.traceparent;
+      const trace =
+        typeof traceparent === "string" &&
+        /^00-([a-f0-9]{32})-([a-f0-9]{16})-01$/u.exec(traceparent);
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -117,11 +119,17 @@ export function createModelFixture() {
         chunks.push(chunk);
       }
       const result = decide(JSON.parse(Buffer.concat(chunks).toString()));
+      if (!trace)
+        traceDiagnostics.push({
+          phase: result.phase,
+          status: "unavailable",
+          reason: "invalid-or-missing-traceparent",
+        });
       requests.push({
         phase: result.phase,
         model: result.model,
-        trace_id: request.headers.traceparent.split("-")[1],
-        model_span_id: request.headers.traceparent.split("-")[2],
+        trace_id: trace ? trace[1] : null,
+        model_span_id: trace ? trace[2] : null,
       });
       const complete = () => {
         response.writeHead(200, { "content-type": "text/event-stream" });

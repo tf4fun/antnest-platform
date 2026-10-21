@@ -1,8 +1,6 @@
-// Gates a suite that exited 2 (business and topology passed, strict trace
-// findings remain). Jaeger clock skew adjustments are the only reviewed
-// warning; error spans on denial and cancellation paths are recorded by
-// contract (docs/observability-contract.md) and checked by each runner's
-// topology. Any other Jaeger warning fails the suite.
+// Legacy exit-2 completion recognition and raw warning classification.
+// All Span findings are auxiliary; warning classification is retained for
+// diagnostics only. A business completion record is still required for exit 2.
 import {
   isResolveCacheCompletion,
   resolveCacheSuite,

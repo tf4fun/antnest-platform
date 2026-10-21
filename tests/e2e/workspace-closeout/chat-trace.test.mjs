@@ -110,7 +110,7 @@ test("strict-only trace findings exit 2 so the reviewed gate decides", () => {
     "failed",
   );
   traces[1].diagnostics[0].warnings.push("unexpected Jaeger warning");
-  assert.equal(verdict(2, JSON.stringify(report), true), "failed");
+  assert.equal(verdict(2, JSON.stringify(report), true), "warning");
 });
 for (const [name, mutate] of [
   [

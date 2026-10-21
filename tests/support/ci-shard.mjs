@@ -4,29 +4,42 @@ import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hasStrictCompletion, unreviewedWarnings } from "./strict-findings.mjs";
+import { hasStrictCompletion } from "./strict-findings.mjs";
 import {
   hasResolveCacheCompletion,
   resolveCacheCISuite,
 } from "./resolve-cache-admission.mjs";
 
-// Strict runners exit 2 when business and topology checks pass but strict
-// trace findings remain; only reviewed findings pass, with a warning.
+function hasAuxiliaryTraceWarning(output) {
+  for (const line of output.split(/\r?\n/u)) {
+    const text = line.trim().replace(/^# /u, "");
+    if (!text.startsWith("{")) continue;
+    try {
+      const diagnostics = JSON.parse(text).trace_diagnostics;
+      if (
+        diagnostics?.version === 1 &&
+        diagnostics.role === "auxiliary" &&
+        diagnostics.status === "warning"
+      )
+        return true;
+    } catch {
+      // Ordinary command output is not necessarily JSON.
+    }
+  }
+  return false;
+}
+
+// Strict runners retain exit 2 and their original Trace findings. A completed
+// business report admits those findings as auxiliary diagnostics with a warning.
 export function verdict(code, output, strict, suiteID) {
   if (
     suiteID === resolveCacheCISuite &&
-    (!hasResolveCacheCompletion(output, code === 0 ? "passed" : "failed") ||
-      unreviewedWarnings(output).length > 0)
+    !hasResolveCacheCompletion(output, code === 0 ? "passed" : "failed")
   )
     return "failed";
-  if (code === 0) return "passed";
-  if (
-    code === 2 &&
-    strict &&
-    hasStrictCompletion(output) &&
-    unreviewedWarnings(output).length === 0
-  )
-    return "warning";
+  if (code === 0)
+    return hasAuxiliaryTraceWarning(output) ? "warning" : "passed";
+  if (code === 2 && strict && hasStrictCompletion(output)) return "warning";
   return "failed";
 }
 
@@ -128,16 +141,13 @@ export async function runShard(
       timedOut || interrupted
         ? "failed"
         : verdict(code, output, suite.strict, suite.id);
-    if (status === "failed" && code === 2 && suite.strict)
-      for (const warning of unreviewedWarnings(output))
-        write(`unreviewed strict trace warning: ${warning}`);
     if (status === "failed")
       write(
         `::error title=${suite.name}::${interrupted ? "interrupted" : timedOut ? "timed out" : `exited ${code}`}`,
       );
     else if (status === "warning")
       write(
-        `::warning title=${suite.name}::Business and topology checks passed; only reviewed strict trace findings remain, recorded in the evidence artifact.`,
+        `::warning title=${suite.name}::Business checks passed; auxiliary Trace diagnostics are retained in the evidence artifact.`,
       );
     record({
       id: suite.id,
