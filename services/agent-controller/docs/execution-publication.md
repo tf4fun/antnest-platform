@@ -52,11 +52,22 @@ custom application spans. See the [management contract](../../../contracts/agent
 
 ## Publication Application Boundary
 
-`ExecutionPublisher.Publish` serializes publication within an organization.
-After acquiring that cancellable local boundary, it reads current source data,
-checks the requested organization, builds the projection and sends it through
-the ACP client. Database reads finish before credential opening or HTTP calls.
+`ExecutionPublisher.Publish` serializes publication within an organization,
+including callers in separate Controller instances. After its cancellable local
+gate, the repository acquires a PostgreSQL session advisory lock before reading
+current source data. Ownership covers projection building, credential opening,
+Runtime authority resolution, ACP delivery and acknowledgement persistence.
+Source transactions and ordinary pool connections finish before credential
+opening or HTTP calls; a dedicated connection holds the publication lock.
 The result contains only the non-secret acknowledgement, never the snapshot.
+
+Publication uses the `APUB` lock namespace, separate from the `AEXP` locks used
+by short configuration mutations. Credential rotation and authorization changes
+can therefore commit while an existing publication waits on ACP. The next
+publisher rereads the newly committed state after acquiring ownership. Lock
+acquisition is cancellable; release and connection cleanup have an independent
+bounded context. A coordination or cleanup failure returns no successful
+acknowledgement, including when ACP already applied the configuration.
 
 Every explicit attempt rereads the current source, including an equal-revision
 resend. There is no cached payload or acknowledged-revision shortcut. Another
@@ -395,6 +406,13 @@ resend, source/acknowledgement scope, failure and cancellation. Standard Go
 `testing/synctest` verifies that waiting publishers cannot read an outdated
 source, cancelled waiters exit, and failures at read/send/acknowledgement release
 the organization boundary. A different organization remains independent.
+`execution_publication_ownership_integration_test.go` uses independent repository
+pools and HTTP peers against real PostgreSQL to verify that a waiting publisher
+cannot read, decrypt or send early, mutations and other organizations remain
+independent, cancellation leaves no publication work, and failed delivery
+releases ownership. These are in-process repository integration checks; they
+do not establish one publication per revision or the complete multi-process
+capacity acceptance for issue #43.
 `execution_publisher_component_test.go` combines real PostgreSQL, `SecretBox`,
 the application and the HTTP adapter with a synthetic ACP peer. It drops the
 first HTTP response, rotates credentials and verifies current-state resend,

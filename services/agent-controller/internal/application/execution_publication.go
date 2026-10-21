@@ -49,7 +49,19 @@ func (publisher *ExecutionPublisher) publish(ctx context.Context, organizationID
 	if err := ctx.Err(); err != nil {
 		return ports.ExecutionAcknowledgement{}, err
 	}
-	return publisher.publishCurrent(ctx, organizationID, settlement)
+	var acknowledgement ports.ExecutionAcknowledgement
+	err = publisher.store.WithExecutionPublication(ctx, organizationID, func(ownedContext context.Context) error {
+		if err := ownedContext.Err(); err != nil {
+			return err
+		}
+		var publishErr error
+		acknowledgement, publishErr = publisher.publishCurrent(ownedContext, organizationID, settlement)
+		return publishErr
+	})
+	if err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	return acknowledgement, nil
 }
 
 func (publisher *ExecutionPublisher) publishCurrent(ctx context.Context, organizationID string, settlement *ports.LifecycleSettlementRequest) (ports.ExecutionAcknowledgement, error) {

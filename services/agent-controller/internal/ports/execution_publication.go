@@ -14,6 +14,7 @@ type ExecutionSynchronization struct {
 }
 
 type ExecutionPublicationStore interface {
+	WithExecutionPublication(context.Context, string, func(context.Context) error) error
 	ReadExecutionSource(context.Context, string) (ExecutionSource, error)
 	ListExecutionOrganizations(context.Context, string, int) ([]string, error)
 	GetExecutionSynchronization(context.Context, string) (ExecutionSynchronization, error)

@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,8 +13,50 @@ import (
 
 type executionPublicationStoreStub struct {
 	ports.ExecutionPublicationStore
-	read   func(context.Context, string) (ports.ExecutionSource, error)
-	record func(context.Context, ports.ExecutionAcknowledgement) error
+	read             func(context.Context, string) (ports.ExecutionSource, error)
+	record           func(context.Context, ports.ExecutionAcknowledgement) error
+	publicationMu    sync.Mutex
+	publicationGates map[string]*executionPublicationStoreGate
+}
+
+type executionPublicationStoreGate struct {
+	slot  chan struct{}
+	users int
+}
+
+func (store *executionPublicationStoreStub) WithExecutionPublication(ctx context.Context, organizationID string, callback func(context.Context) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store.publicationMu.Lock()
+	if store.publicationGates == nil {
+		store.publicationGates = make(map[string]*executionPublicationStoreGate)
+	}
+	gate := store.publicationGates[organizationID]
+	if gate == nil {
+		gate = &executionPublicationStoreGate{slot: make(chan struct{}, 1)}
+		store.publicationGates[organizationID] = gate
+	}
+	gate.users++
+	store.publicationMu.Unlock()
+	defer func() {
+		store.publicationMu.Lock()
+		defer store.publicationMu.Unlock()
+		gate.users--
+		if gate.users == 0 {
+			delete(store.publicationGates, organizationID)
+		}
+	}()
+	select {
+	case gate.slot <- struct{}{}:
+		defer func() { <-gate.slot }()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return callback(ctx)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (store *executionPublicationStoreStub) ReadExecutionSource(ctx context.Context, organizationID string) (ports.ExecutionSource, error) {
