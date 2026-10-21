@@ -97,7 +97,7 @@ check-links:
 # Compose rendering requires the CLI, but does not contact a Docker daemon.
 .PHONY: test-deployment-ports e2e-deployment-ports
 test-deployment-ports:
-	node --test --test-concurrency=1 tests/integration/deployment/host-ports.test.mjs tests/integration/deployment/e2e-overlays.test.mjs tests/support/dependencies.test.mjs
+	node --test --test-concurrency=1 tests/integration/deployment/host-ports.test.mjs tests/integration/deployment/e2e-overlays.test.mjs tests/integration/deployment/agent-ui-receipt-gate.test.mjs tests/support/dependencies.test.mjs
 
 e2e-deployment-ports:
 	node tests/e2e/service-authentication/deployment-ports/run.mjs
@@ -122,7 +122,7 @@ test-node: test-repo
 test-repo:
 	$(MAKE) test-verification-python
 	node --test --test-concurrency=1 tests/integration/deployment/dependency-secrets.test.mjs
-	node --test --test-concurrency=1 tests/integration/deployment/e2e-overlays.test.mjs
+	node --test --test-concurrency=1 tests/integration/deployment/e2e-overlays.test.mjs tests/integration/deployment/agent-ui-receipt-gate.test.mjs
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs tests/integration/skill-registry/prepare-auth.test.mjs
@@ -163,7 +163,7 @@ test-repo:
 	$(MAKE) test-lifecycle-fixtures
 	$(MAKE) test-workspace-fixtures
 	$(MAKE) test-resolve-cache-fixtures
-	node --test --test-concurrency=1 tests/e2e/agent-ui/upload-capacity-*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/agent-ui/upload-capacity-*.test.mjs tests/e2e/agent-ui/acp-gate.test.mjs
 	node --test --test-concurrency=1 tests/e2e/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/edge-gateway/tls-certificates.test.mjs tests/e2e/edge-gateway/oidc-linking-fixture.test.mjs tests/e2e/edge-gateway/browser-session-revocation.test.mjs tests/e2e/edge-gateway/password-verification-evidence.test.mjs tests/e2e/edge-gateway/password-pressure.test.mjs tests/e2e/edge-gateway/password-browser-request.test.mjs tests/e2e/edge-gateway/login-admission-client.test.mjs tests/e2e/edge-gateway/login-admission-evidence.test.mjs tests/e2e/edge-gateway/login-admission-process.test.mjs tests/e2e/edge-gateway/scim-lifecycle-evidence.test.mjs tests/e2e/edge-gateway/shutdown-interruption.test.mjs
