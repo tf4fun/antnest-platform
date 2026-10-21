@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { inspectBridgeOutageWindow } from "./resolve-cache-bridge-outage.mjs";
-import { parseDeliveryMark } from "../../../services/agent-ui/web/server/src/bridge/delivery.ts";
+import { parseDeliveryMark } from "./resolve-cache-delivery.mjs";
 
 export const outagePhase = "c4-cache-outage";
 export const outageText = `${outagePhase}: fresh output before cancellation.`;
