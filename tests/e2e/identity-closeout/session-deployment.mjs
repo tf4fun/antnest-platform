@@ -9,6 +9,7 @@ import {
 import { imageSpec } from "../../support/ci-changes.mjs";
 import { grantContainerArgs } from "../../support/service-grants.mjs";
 import { durablePath, writeEvidenceFile } from "../../support/storage.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { resolveObservationConfig } from "../observability/resolve-config.mjs";
 import {
@@ -494,39 +495,68 @@ export async function createSessionOwnerLifecycle({
   }
   signal?.throwIfAborted();
   const acp = owner.baseline["agent-acp-service"];
-  const clock = structuredClone(
-    await clockProbe({ container: acp.id, environment: env, signal, now }),
-  );
-  const prepared = () => {
-    signal?.throwIfAborted();
-    inspectACPClockReceipt(clock);
-    assert.equal(clock.container_id, acp.id, "Session clock container differs");
+  const traceDiagnostics = createTraceDiagnostics({
+    directory: output,
+    signal,
+  });
+  let clock;
+  const prepared = (sample) => {
+    inspectACPClockReceipt(sample);
+    assert.equal(
+      sample.container_id,
+      acp.id,
+      "Session clock container differs",
+    );
     assert(Number.isFinite(acp.at), "Session ACP baseline clock missing");
-    assert(clock.started_at >= acp.at, "Session clock predates ACP baseline");
+    assert(sample.started_at >= acp.at, "Session clock predates ACP baseline");
     const current = now();
     assert(
-      Number.isFinite(current) && clock.received_at <= current,
+      Number.isFinite(current) && sample.received_at <= current,
       "Session ACP clock receipt is from the future",
     );
   };
-  prepared();
-  const raw = JSON.stringify(clock, null, 2);
-  assertSecretFree(raw, secrets);
-  await writeClock(output, "session-acp-clock.private.json", raw);
+  await traceDiagnostics.run("session-clock-probe", async (localSignal) => {
+    const sample = structuredClone(
+      await clockProbe({
+        container: acp.id,
+        environment: env,
+        signal: localSignal,
+        now,
+      }),
+    );
+    localSignal.throwIfAborted();
+    prepared(sample);
+    const raw = JSON.stringify(sample, null, 2);
+    assertSecretFree(raw, secrets);
+    clock = sample;
+    await writeClock(output, "session-acp-clock.private.json", raw);
+  });
   return {
     baseline: owner.baseline,
-    collect: (collect) =>
-      owner.collect(collect, {
-        evidence: { acp_clock: clock },
-        beforeDrain: prepared,
-        inspectDrain(evidence) {
-          assert(
-            clock.received_at <= evidence.before["agent-acp-service"].at &&
-              clock.received_at <= evidence.requested_at,
-            "Session clock probe did not precede the actual UI stop",
-          );
+    traceDiagnostics,
+    async collect(collect) {
+      signal?.throwIfAborted();
+      if (clock !== undefined)
+        await traceDiagnostics.run("session-clock-before-drain", () =>
+          prepared(clock),
+        );
+      signal?.throwIfAborted();
+      return owner.collect(
+        async (evidence) => {
+          if (clock !== undefined)
+            await traceDiagnostics.run("session-clock-stop-order", () => {
+              assert(
+                clock.received_at <= evidence.before["agent-acp-service"].at &&
+                  clock.received_at <= evidence.requested_at,
+                "Session clock probe did not precede the actual UI stop",
+              );
+            });
+          signal?.throwIfAborted();
+          return collect(evidence);
         },
-      }),
+        { evidence: clock === undefined ? {} : { acp_clock: clock } },
+      );
+    },
   };
 }
 

@@ -135,3 +135,143 @@ test("HTTP barrier must be observed, explicitly released once, and rejects repla
     400,
   );
 });
+
+async function modelHTTP(t) {
+  const server = createSessionModel();
+  t.after(
+    () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(resolve);
+      }),
+  );
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const base = `http://127.0.0.1:${server.address().port}`;
+  return async (path, options = {}) => {
+    const response = await fetch(`${base}${path}`, {
+      ...options,
+      signal: AbortSignal.timeout(3000),
+    });
+    const raw = await response.text();
+    return { status: response.status, body: JSON.parse(raw), raw };
+  };
+}
+
+const invalidTraceparentCanary = "PRIVATE-INVALID-TRACEPARENT-CANARY";
+for (const [label, traceparent] of [
+  ["missing", undefined],
+  ["invalid", invalidTraceparentCanary],
+])
+  test(`${label} traceparent does not block authenticated HTTP Tool and reply decisions`, async (t) => {
+    const exchange = await modelHTTP(t);
+    const headers = {
+      "content-type": "application/json",
+      authorization: "Bearer acp-session-private-key",
+      ...(traceparent === undefined ? {} : { traceparent }),
+    };
+    const responses = [];
+    for (const version of [1, 2]) {
+      const phase = `v${version}-recovered`;
+      const tool = await exchange("/v1/chat/completions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload(phase)),
+      });
+      assert.equal(tool.status, 200);
+      const choice = tool.body.choices[0];
+      assert.equal(choice.finish_reason, "tool_calls");
+      assert.equal(choice.message.tool_calls.length, 1);
+      const call = choice.message.tool_calls[0];
+      assert.equal(call.id, `${phase}-tool`);
+      assert.equal(call.function.name, "bash");
+      const args = JSON.parse(call.function.arguments);
+      assert(args.command.includes(phase));
+      assert(args.command.includes(">> /workspace/session-effects.log"));
+      const reply = await exchange("/v1/chat/completions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload(phase, [bashResult(phase)])),
+      });
+      assert.equal(reply.status, 200);
+      assert.equal(reply.body.choices[0].finish_reason, "stop");
+      assert.deepEqual(reply.body.choices[0].message, {
+        role: "assistant",
+        content: `${phase} verified`,
+      });
+      responses.push(tool, reply);
+    }
+    const state = await exchange("/status");
+    assert.equal(state.status, 200);
+    assert.deepEqual(state.body.errors, []);
+    assert.deepEqual(state.body.held, []);
+    assert.deepEqual(
+      state.body.requests.map(({ phase, stage }) => ({ phase, stage })),
+      [1, 2].flatMap((version) =>
+        ["tool", "reply"].map((stage) => ({
+          phase: `v${version}-recovered`,
+          stage,
+        })),
+      ),
+    );
+    for (const row of state.body.requests) {
+      assert.equal(row.trace_id, undefined);
+      assert.equal(row.model_span_id, undefined);
+      assert.equal(row.trace_diagnostic, "missing_or_invalid_traceparent");
+    }
+    assert(
+      !JSON.stringify({ responses, state }).includes(invalidTraceparentCanary),
+    );
+  });
+
+for (const [label, input] of [
+  [
+    "wrong authentication",
+    {
+      authorization: "Bearer private-wrong-auth-canary",
+      body: JSON.stringify(payload("v1-recovered")),
+    },
+  ],
+  ["malformed JSON", { body: "{not-json" }],
+  [
+    "an unintended phase",
+    { body: JSON.stringify(payload("denied-must-not-run")) },
+  ],
+  [
+    "absent Runtime bash",
+    { body: JSON.stringify({ ...payload("v1-recovered"), tools: [] }) },
+  ],
+  [
+    "an unsettled Tool result",
+    {
+      body: JSON.stringify(
+        payload("v1-recovered", [
+          bashResult("v1-recovered", { effect_state: "unknown" }),
+        ]),
+      ),
+    },
+  ],
+])
+  test(`missing Trace cannot excuse ${label} in the actual model HTTP request`, async (t) => {
+    const exchange = await modelHTTP(t);
+    const response = await exchange("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: input.authorization ?? "Bearer acp-session-private-key",
+      },
+      body: input.body,
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(response.body, { error: "fixture request rejected" });
+    const state = await exchange("/status");
+    assert.equal(state.status, 200);
+    assert.deepEqual(state.body.requests, []);
+    assert.deepEqual(state.body.held, []);
+    assert.deepEqual(state.body.errors, ["fixture request rejected"]);
+    assert(
+      !JSON.stringify({ response, state }).includes(
+        "private-wrong-auth-canary",
+      ),
+    );
+  });

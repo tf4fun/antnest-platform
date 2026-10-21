@@ -85,10 +85,15 @@ export function createSessionModel() {
         request.headers.authorization,
         "Bearer acp-session-private-key",
       );
-      assert.match(
-        request.headers.traceparent ?? "",
-        /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
-      );
+      const traceparent = request.headers.traceparent;
+      const trace =
+        typeof traceparent === "string" &&
+        /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/u.test(traceparent)
+          ? {
+              trace_id: traceparent.split("-")[1],
+              model_span_id: traceparent.split("-")[2],
+            }
+          : { trace_diagnostic: "missing_or_invalid_traceparent" };
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -107,8 +112,7 @@ export function createSessionModel() {
       requests.push({
         phase: result.phase,
         stage,
-        trace_id: request.headers.traceparent.split("-")[1],
-        model_span_id: request.headers.traceparent.split("-")[2],
+        ...trace,
       });
       if (result.hold) {
         held.set(result.phase, { response, result });

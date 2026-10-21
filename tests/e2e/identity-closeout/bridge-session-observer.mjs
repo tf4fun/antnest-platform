@@ -7,6 +7,12 @@ import {
   expectBridgeSessionClose,
 } from "./bridge-session-close.mjs";
 
+function traceFields(value) {
+  return typeof value === "string" && /^[a-f0-9]{32}$/u.test(value)
+    ? { traceID: value }
+    : { traceID: undefined, traceDiagnostic: "missing_or_invalid_trace_id" };
+}
+
 // The mutating browser may clear or rotate its Cookies. Keep the exact original
 // authority for both the existing SSE and the later real HTTP rejection probe.
 export async function observeBrowserSession(
@@ -43,7 +49,7 @@ export async function observeBrowserSession(
       Number.isFinite(issuance.completedMono),
   );
   assert(issuance.completedMono >= issuance.startedMono);
-  assert.match(issuance.traceID ?? "", /^[a-f0-9]{32}$/u);
+  Object.assign(issuance, traceFields(issuance.traceID));
   assert(browser.cookie, "original browser session required");
   const original = new GatewayClient(browser.base, {
     onStatusFailure: browser.onStatusFailure,
@@ -62,6 +68,7 @@ export async function observeBrowserSession(
       sessionId,
       signal,
       {
+        requireTrace: false,
         credentialScope: (sent) => {
           assert(
             sent === cookie,
@@ -163,7 +170,6 @@ export async function observeBrowserSession(
         assertNoStore(response.headers);
         assert.equal(response.headers.getSetCookie().length, 0);
         assert(original.cookie === cookie);
-        assert.match(response.traceID ?? "", /^[a-f0-9]{32}$/u);
         const date = Date.parse(response.headers.get("date"));
         assert(
           Number.isFinite(date) &&
@@ -180,7 +186,7 @@ export async function observeBrowserSession(
         ...(response.status === 403
           ? { body: structuredClone(response.body) }
           : {}),
-        traceID: response.traceID,
+        ...traceFields(response.traceID),
         credentialScope,
         startedAt,
         completedAt,

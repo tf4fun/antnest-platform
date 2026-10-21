@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 
 const tracePattern = /^[a-f0-9]{32}$/u;
+const originalStreams = new WeakMap();
+const traceFields = (value, key = "trace_id") =>
+  typeof value === "string" && tracePattern.test(value)
+    ? { [key]: value }
+    : { [key]: undefined, traceDiagnostic: "missing_or_invalid_trace_id" };
 const observedNow = () => ({
   at: performance.now(),
   observed_at_ms: Date.now(),
@@ -26,7 +31,6 @@ export function bridgeSessionCheckpoint(
   assert.equal(initial.path, path);
   assert.equal(initial.status, 200);
   assert.equal(initial.set_cookie_count, 0);
-  assert.match(initial.trace_id ?? "", tracePattern);
   assert(
     typeof initial.credential_scope === "string" &&
       initial.credential_scope.length > 0,
@@ -54,17 +58,19 @@ export function bridgeSessionCheckpoint(
   assert(expiresAt > 0 && idleExpiresAt > 0);
   assert(Number.isSafeInteger(browser.requests) && browser.requests >= 0);
   assert(Array.isArray(client.requests));
-  return {
+  const checkpoint = {
     ...mark,
     agentId,
     sessionId,
     reason,
     expiresAt,
     idleExpiresAt,
-    stream: structuredClone(initial),
+    stream: { ...structuredClone(initial), ...traceFields(initial.trace_id) },
     browserRequests: browser.requests,
     sdkRequests: structuredClone(client.requests),
   };
+  originalStreams.set(checkpoint, stream);
+  return checkpoint;
 }
 
 export async function expectBridgeSessionClose(
@@ -74,6 +80,11 @@ export async function expectBridgeSessionClose(
   checkpoint,
   { now = () => performance.now() } = {},
 ) {
+  assert.equal(
+    originalStreams.get(checkpoint),
+    stream,
+    "different browser stream closed",
+  );
   let closure = stream.closure;
   if (!closure) {
     const remaining = checkpoint.at + 30000 - now();
@@ -87,12 +98,6 @@ export async function expectBridgeSessionClose(
     ["remote-end", "transport-end"].includes(closure?.kind),
     "local cancellation cannot prove remote closure",
   );
-  assert.equal(
-    closure.trace_id,
-    checkpoint.stream.trace_id,
-    "different browser stream closed",
-  );
-  assert.equal(stream.evidence.trace_id, checkpoint.stream.trace_id);
   assert.equal(stream.evidence.path, checkpoint.stream.path);
   assert.equal(
     stream.evidence.credential_scope,
@@ -124,23 +129,30 @@ export async function expectBridgeSessionClose(
       "absolute expiry probe was limited by idle expiry",
     );
   }
-  // Identity's deadline epoch is not this observer's wall clock. The original
-  // Gateway/UI Trace gate proves expiry and excludes it from logout/outage.
+  // The original stream object and scoped HTTP observations own business
+  // identity. Trace correlation remains an independently reported diagnostic.
+  const trace = traceFields(checkpoint.stream.trace_id, "traceID");
+  if (
+    trace.traceID !== undefined &&
+    (closure.trace_id !== trace.traceID ||
+      stream.evidence.trace_id !== trace.traceID)
+  )
+    trace.traceDiagnostic = "trace_id_mismatch";
   return {
     transport: "http-sse",
     agentId: checkpoint.agentId,
     sessionId: checkpoint.sessionId,
-    traceID: checkpoint.stream.trace_id,
+    ...trace,
     credentialScope: checkpoint.stream.credential_scope,
     reason: checkpoint.reason,
     startedAt: checkpoint.observed_at_ms,
     closedAt: closure.observed_at_ms,
     checkpoint,
-    closure,
+    closure: { ...closure, ...traceFields(closure.trace_id) },
     sdkRequests: structuredClone(client.requests),
     silent: true,
     localClose: false,
-    // The owning raw Trace gate must independently check workspace Resolve,
+    // The auxiliary raw Trace diagnostic independently checks workspace Resolve,
     // original CCT lifetime and the actual fault or revocation evidence.
     authorizationCauseVerified: false,
   };

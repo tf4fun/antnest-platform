@@ -42,10 +42,15 @@ async function fixture(t, override = {}) {
           : null,
       };
       requests.push(row);
-      response.setHeader(
-        "x-antnest-trace-id",
-        (request.method === "GET" ? "a" : "b").repeat(32),
-      );
+      const traceID =
+        request.method === "GET" && Object.hasOwn(override, "streamTraceID")
+          ? override.streamTraceID
+          : request.method === "POST" &&
+              Object.hasOwn(override, "denialTraceID")
+            ? override.denialTraceID
+            : (request.method === "GET" ? "a" : "b").repeat(32);
+      if (traceID !== undefined && traceID !== null)
+        response.setHeader("x-antnest-trace-id", traceID);
       response.setHeader("cache-control", "no-store");
       if (
         request.method === "GET" &&
@@ -461,3 +466,106 @@ test("global User observation rejects Identity unavailable as an authorization d
   await observer.waitForClose(point);
   await assert.rejects(() => observer.rejectPrompt());
 });
+
+const invalidTraceCanary = "PRIVATE-INVALID-TRACE-CANARY";
+for (const [label, traceID] of [
+  ["missing", undefined],
+  ["invalid", invalidTraceCanary],
+]) {
+  test(`${label} login Trace ID does not block the original browser authority`, async (t) => {
+    const f = await fixture(t);
+    f.issued.observation.traceID = traceID;
+    const observer = await f.open();
+    const point = observer.checkpoint("revoked");
+    assert.equal(point.issuance.traceID, undefined);
+    assert.equal(point.issuance.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.deepEqual(observer.principal, f.issued.principal);
+    await f.browser.request("/api/session", { method: "DELETE", status: 204 });
+    const closure = await observer.waitForClose(point);
+    const denial = await observer.rejectPrompt();
+    assert.equal(closure.localClose, false);
+    assert.equal(closure.silent, true);
+    assert.equal(denial.status, 401);
+    assert.equal(denial.code, "unauthenticated");
+    assert.equal(denial.credentialScope, point.stream.credential_scope);
+    assert(f.requests.every((row) => row.cookie === f.cookie));
+    assert.equal(f.client.requests.length, 1);
+    assert(
+      !JSON.stringify({ point, closure, denial }).includes(invalidTraceCanary),
+    );
+    await observer.closeAndWait();
+  });
+
+  test(`${label} denial Trace ID retains the actual HTTP rejection contract`, async (t) => {
+    const f = await fixture(t, { denialTraceID: traceID });
+    const observer = await f.open();
+    const point = observer.checkpoint("revoked");
+    await f.browser.request("/api/session", { method: "DELETE", status: 204 });
+    await observer.waitForClose(point);
+    const denial = await observer.rejectPrompt();
+    assert.equal(denial.traceID, undefined);
+    assert.equal(denial.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.equal(denial.status, 401);
+    assert.equal(denial.code, "unauthenticated");
+    assert.equal(denial.noStore, true);
+    assert.equal(denial.setCookieCount, 0);
+    assert.equal(new Date(denial.serverDate).toUTCString(), denial.serverDate);
+    assert.equal(denial.credentialScope, point.stream.credential_scope);
+    assert.equal(observer.browser.cookie, f.cookie);
+    assert(f.requests.every((row) => row.cookie === f.cookie));
+    assert.equal(observer.browser.requests, 1);
+    assert.equal(f.client.requests.length, 1);
+    assert(!JSON.stringify(denial).includes(invalidTraceCanary));
+    await observer.closeAndWait();
+  });
+
+  test(`${label} stream Trace ID does not replace or prevent the real remote EOF and join`, async (t) => {
+    const f = await fixture(t, {
+      streamTraceID: traceID,
+      denialTraceID: traceID,
+    });
+    const observer = await f.open();
+    const point = observer.checkpoint("revoked");
+    assert.equal(point.stream.trace_id, undefined);
+    assert.equal(point.stream.traceDiagnostic, "missing_or_invalid_trace_id");
+    await f.browser.request("/api/session", { method: "DELETE", status: 204 });
+    const closure = await observer.waitForClose(point);
+    assert.equal(closure.traceID, undefined);
+    assert.equal(closure.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert(["remote-end", "transport-end"].includes(closure.closure.kind));
+    assert.equal(closure.localClose, false);
+    assert.equal(closure.silent, true);
+    assert.equal(closure.authorizationCauseVerified, false);
+    assert.equal(closure.credentialScope, point.stream.credential_scope);
+    assert.equal(observer.browser.requests, 0);
+    const denial = await observer.rejectPrompt();
+    assert.equal(denial.status, 401);
+    assert.equal(denial.traceID, undefined);
+    assert.equal(denial.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.deepEqual(
+      f.requests.map((row) => row.method),
+      ["GET", "DELETE", "POST"],
+    );
+    assert.equal(f.client.requests.length, 1);
+    assert(
+      !JSON.stringify({ point, closure, denial }).includes(invalidTraceCanary),
+    );
+    await observer.closeAndWait();
+  });
+}
+
+for (const [label, override] of [
+  ["wrong authorization code", { code: "workspace_unavailable" }],
+  ["a renewed Cookie", { cookie: true }],
+])
+  test(`a missing Trace ID cannot excuse ${label} in the real denial`, async (t) => {
+    const f = await fixture(t, { ...override, denialTraceID: undefined });
+    const observer = await f.open();
+    const point = observer.checkpoint("revoked");
+    await f.browser.request("/api/session", { method: "DELETE", status: 204 });
+    await observer.waitForClose(point);
+    await assert.rejects(() => observer.rejectPrompt());
+    assert.equal(f.requests.filter((row) => row.method === "POST").length, 1);
+    assert.equal(f.client.requests.length, 1);
+    await observer.closeAndWait();
+  });

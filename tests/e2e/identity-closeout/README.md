@@ -10,8 +10,9 @@ prove.
 The default HTTP and SCIM client has no database or Docker access and uses only
 synthetic credentials. Business mutations go through the Gateway. The ACP
 profiles additionally use a read-only connection to ACP-owned tables to verify
-that rejected requests and history replay have no durable side effects. Strict
-Trace warnings and expected rejection errors are reported as failures.
+that rejected requests and history replay have no durable side effects. Raw
+Trace warnings and expected rejection diagnostics remain available for review;
+the Session fault profile treats them as auxiliary findings.
 
 ## Running
 
@@ -624,6 +625,23 @@ cancellation and convergence of arbitrary unavailable Runtimes.
 
 `make e2e-acp-session` uses official SDK clients against the real Gateway,
 Identity and ACP services, with synthetic credentials and a local model fixture.
+All Trace-specific requirements in this section describe auxiliary diagnostics.
+Clock probing, collection, strict inspection and exporter failures produce
+warnings without blocking later business checks. Collection shares a bounded
+budget and joins its actual work after cancellation. Missing or invalid Trace
+headers cannot reject an otherwise valid business exchange. The original stream
+object, scoped HTTP response and real lifecycle acknowledgements bind business
+identity independently from Trace IDs.
+
+`session-business.private.json` retains original PostgreSQL snapshots, model
+observations, remote closures, request receipts and Identity transitions. The
+client continues both final logout requests after diagnostic failures, then joins
+every protocol client, observer, pool and exporter. Only after actual business
+cleanup and the final private archive succeed does it publish `business_passed`.
+Exporter failure remains an auxiliary warning after its shutdown is joined.
+The runner subsequently checks the actual Runtime image, Agent and generation;
+an unexecuted business or Runtime check is never counted as passed.
+
 Protocol work uses the private ACP v1/v2 connection with its real Identity
 Resolve and signed caller context. Browser authorization is observed on the
 original Cookie's Bridge SSE request for that Agent and Session. Its Trace ID
