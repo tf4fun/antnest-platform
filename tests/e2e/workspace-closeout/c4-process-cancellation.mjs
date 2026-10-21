@@ -103,6 +103,7 @@ export async function observeC4ProcessCancellation(
     });
     await page.addInitScript(
       ({ binding, stateKey, origin, prefix }) => {
+        if (globalThis !== globalThis.top || location.origin !== origin) return;
         const originalFetch = globalThis.fetch;
         const documentId = crypto.randomUUID();
         let fetchSequence = 0,

@@ -991,6 +991,108 @@ test(
 );
 
 test(
+  "C4 ignores a real offline chrome-error Document and joins the restored original process read",
+  { timeout: 20_000 },
+  async (t) =>
+    fixture(t, async (f) => {
+      const pageErrors = [];
+      const pageError = (error) => pageErrors.push(error);
+      f.page.on("pageerror", pageError);
+      let offlineLoaded;
+      try {
+        const old = await f.begin();
+        const oldEnded = f.ended(old.requests);
+        await f.abort(old.groupId);
+        await Promise.all(oldEnded);
+        assert.equal((await f.outcomes(old.groupId))[0].kind, "body_rejected");
+        await f.observer.flushAndWait();
+        const oldProof = f.observer.match(old.requests[0]);
+        assertPrivateRecord(oldProof, "default_abort");
+
+        await f.context.setOffline(true);
+        offlineLoaded = f.page.waitForEvent("domcontentloaded", {
+          timeout: 5000,
+        });
+        void offlineLoaded.catch(() => {});
+        await assert.rejects(
+          f.page.goto(f.gateway + "/offline-error"),
+          /net::ERR_INTERNET_DISCONNECTED/u,
+        );
+        await offlineLoaded;
+        const errorDocument = await f.page.evaluate(() => ({
+          url: location.href,
+          origin: location.origin,
+        }));
+        assert.match(errorDocument.url, /^chrome-error:\/\/chromewebdata\//u);
+        assert.notEqual(errorDocument.origin, new URL(f.gateway).origin);
+        assert.deepEqual(f.observer.records, [oldProof]);
+        assert.equal(
+          f.wire.length,
+          1,
+          "the failed navigation issued no process read",
+        );
+
+        await f.context.setOffline(false);
+        await f.page.goto(f.gateway + "/restored");
+        await f.observer.flushAndWait();
+        assert.equal(
+          f.observer.match(old.requests[0]),
+          null,
+          "the restored Document must not borrow the earlier cancellation",
+        );
+        const beforeRestoredRead = f.wire.length;
+        await withLinkedProcessBodies(t, f, async (linked) => {
+          const current = await f.begin();
+          const original = await linked.first;
+          assert.equal(original.request, current.requests[0]);
+          assert.equal(f.observer.match(current.requests[0]), null);
+          const next = linked.next();
+          await f.abort(current.groupId);
+          assert.deepEqual(await next, { kind: "succeeded" });
+          assert.equal(original.joined, true);
+          assert(original.rawError instanceof Error);
+          assert.equal((await original.terminal).failure, "net::ERR_ABORTED");
+          assert.deepEqual(linked.frames, []);
+          assert.deepEqual(linked.actions, [
+            "body joined",
+            "next business action",
+          ]);
+          assert.equal(linked.diagnostics.length, 1);
+          const diagnostic = linked.diagnostics[0];
+          assert.equal(diagnostic.classification, "cancelled_process_read");
+          const proof = f.observer.match(current.requests[0]);
+          assertPrivateRecord(proof, "default_abort");
+          assert.equal(diagnostic.cancellation, proof);
+          assert.notEqual(proof.documentId, oldProof.documentId);
+          assert.notEqual(proof.fetchId, oldProof.fetchId);
+          assert.equal(f.observer.match(old.requests[0]), null);
+          assert.equal(
+            (await f.outcomes(current.groupId))[0].kind,
+            "body_rejected",
+          );
+          assert.equal(
+            f.wire.length - beforeRestoredRead,
+            1,
+            "restoration and body observation must not replay the original fetch",
+          );
+        });
+        assert.deepEqual(
+          f.observer.records.map((row) => row.reasonKind),
+          ["default_abort", "default_abort"],
+        );
+        assert.deepEqual(
+          pageErrors,
+          [],
+          "offline observation caused a pageerror",
+        );
+      } finally {
+        f.page.off("pageerror", pageError);
+        if (offlineLoaded) await Promise.allSettled([offlineLoaded]);
+      }
+    }),
+);
+
+test(
   "C4 refuses ambiguous concurrent original fetches to the exact same URL",
   { timeout: 20_000 },
   async (t) =>
