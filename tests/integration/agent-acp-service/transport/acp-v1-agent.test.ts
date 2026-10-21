@@ -168,6 +168,7 @@ describe("ACP v1 agent mapping", () => {
         Promise.reject(failure),
       );
       const application = createApplication({ execute });
+      const acceptPrompt = vi.spyOn(application, "acceptPrompt");
       const agent = createAcpV1Agent({
         binding,
         application,
@@ -198,7 +199,7 @@ describe("ACP v1 agent mapping", () => {
         });
         expect(JSON.stringify(result)).not.toContain("PRIVATE_ACCEPTED_DETAIL");
       });
-      expect(application.acceptPrompt).toHaveBeenCalledTimes(1);
+      expect(acceptPrompt).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenCalledTimes(1);
     },
   );
