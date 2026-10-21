@@ -17,6 +17,7 @@ COPY --from=ui-build --chown=node:node /app/node_modules/ ./node_modules/
 COPY --from=ui-build --chown=node:node /app/server/dist/ ./server/dist/
 COPY --from=ui-build --chown=node:node /app/dist/client/ ./dist/client/
 COPY --from=ui-build --chown=node:node /app/dist/ssr/ ./dist/ssr/
+COPY --chown=node:node contracts/agent-acp/errors.json contracts/agent-acp/errors.schema.json ./contracts/agent-acp/
 USER node
 
 EXPOSE 8080

@@ -2,6 +2,12 @@ import { learningStatusSchema, type LearningStatus } from "../protocol/learning-
 import * as acp from "@agentclientprotocol/sdk";
 import { AcpTransportLifecycle } from "./acp-transport-lifecycle.ts";
 import { OwnedHttpResponse } from "./owned-http-response.ts";
+import {
+  classifyAcpError,
+  readAcpErrorCapability,
+  type AcpErrorCapability,
+  type AcpErrorClassification,
+} from "./acp-errors.ts";
 import { z } from "zod";
 import { initialSkillCommands, type WorkspaceCommand } from "../protocol/available-commands.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
@@ -177,6 +183,17 @@ export class SessionNotFoundError extends BridgeCapabilityError {
   }
 }
 
+export class AcpLoadError extends Error {
+  public readonly classification: AcpErrorClassification;
+
+  public constructor(cause: unknown, capability: AcpErrorCapability) {
+    const classification = classifyAcpError(cause, capability);
+    super(classification.message, { cause });
+    this.name = "AcpLoadError";
+    this.classification = classification;
+  }
+}
+
 export function sessionRequestFailure(cause: unknown): SessionNotFoundError | undefined {
   if (!(cause instanceof acp.RequestError) || cause.data === null ||
     typeof cause.data !== "object" || Array.isArray(cause.data)) return undefined;
@@ -251,6 +268,7 @@ export class AcpHttpBridge {
   private readonly scope: BridgeScope;
   private readonly fetchImpl: typeof fetch;
   private readonly configurationCas: boolean;
+  private readonly errorCapability: AcpErrorCapability;
   private readonly transport: AcpTransportLifecycle;
 
   private constructor(
@@ -260,6 +278,7 @@ export class AcpHttpBridge {
     fetchImpl: typeof fetch,
     capabilities: acp.AgentCapabilities,
     configurationCas: boolean,
+    errorCapability: AcpErrorCapability,
     skillCommands: WorkspaceCommand[],
     transport: AcpTransportLifecycle,
   ) {
@@ -269,6 +288,7 @@ export class AcpHttpBridge {
     this.fetchImpl = fetchImpl;
     this.capabilities = capabilities;
     this.configurationCas = configurationCas;
+    this.errorCapability = errorCapability;
     this.skillCommands = skillCommands;
     this.transport = transport;
   }
@@ -320,6 +340,7 @@ export class AcpHttpBridge {
       if (initialized.protocolVersion !== acp.PROTOCOL_VERSION)
         throw new BridgeCapabilityError("ACP protocol version is unsupported");
       const configurationCas = requireBridgeCapabilities(initialized._meta);
+      const errorCapability = readAcpErrorCapability(initialized._meta);
       const capabilities = initialized.agentCapabilities;
       if (capabilities?.loadSession !== true)
         throw new BridgeCapabilityError(
@@ -334,6 +355,7 @@ export class AcpHttpBridge {
         tracedFetch,
         capabilities,
         configurationCas,
+        errorCapability,
         skillCommands,
         transport,
       );
@@ -369,7 +391,7 @@ export class AcpHttpBridge {
         },
       );
     } catch (cause) {
-      throw sessionRequestFailure(cause) ?? cause;
+      throw sessionRequestFailure(cause) ?? new AcpLoadError(cause, this.errorCapability);
     }
     return { response, cut: requireLoadCut(response._meta) };
   }

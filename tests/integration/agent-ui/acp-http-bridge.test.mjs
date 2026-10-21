@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import { AcpHttpBridge } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
+import * as acpHttp from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
 import { ConfigurationConflictError } from "../../../services/agent-ui/web/server/dist/bridge/configuration-token.js";
 import { SessionReplay } from "../../../services/agent-ui/web/server/dist/bridge/session-replay.js";
 import { parseDeliveryMark } from "../../../services/agent-ui/web/server/dist/bridge/delivery.js";
@@ -22,6 +24,9 @@ const { AcpServer } = await import(
 const { createNodeHttpHandler } = await import(
   fromUi.resolve("@agentclientprotocol/sdk/experimental/node")
 );
+const errorCatalog = JSON.parse(readFileSync(
+  new URL("../../../contracts/agent-acp/errors.json", import.meta.url), "utf8",
+));
 
 test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable metadata", async () => {
   const failures = [];
@@ -491,5 +496,153 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
     if (failures.length === 1) throw failures[0];
     if (failures.length)
       throw new AggregateError(failures, "ACP Bridge test and cleanup failed");
+  }
+});
+
+test("ACP Load error capability is negotiated per HTTP/SSE connection and wraps only Load", { timeout: 10_000 }, async (t) => {
+  const LoadError = acpHttp.AcpLoadError;
+  assert.equal(typeof LoadError, "function", "AcpLoadError is required");
+  const capabilities = [{ version: 1 }, undefined, { version: 2 }, { version: "1" }];
+  const loads = [];
+  const unexpectedRoutes = [];
+  let initialized = 0;
+  let listed = 0;
+  let prompted = 0;
+  const busy = errorCatalog.errors.configuration_not_ready;
+  const busyData = {
+    code: "configuration_not_ready", retryable: true,
+    retry_after_ms: busy.retry_after_ms,
+  };
+  const missing = errorCatalog.errors.session_not_found;
+  const agent = acp
+    .agent({ name: "agent-ui-errors-fixture" })
+    .onRequest(acp.methods.agent.initialize, () => {
+      const capability = capabilities[initialized++];
+      return {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1, targetCancel: 1, deliveryMark: 1, configurationCas: 1,
+          },
+          ...(capability === undefined ? {} : { "antnest.dev/errors": capability }),
+        },
+      };
+    })
+    .onRequest(acp.methods.agent.session.load, ({ params }) => {
+      loads.push(params);
+      if (params.sessionId === "missing") {
+        throw new acp.RequestError(missing.json_rpc_code, missing.message, {
+          code: "session_not_found", retryable: false,
+        });
+      }
+      throw new acp.RequestError(busy.json_rpc_code, busy.message, busyData);
+    })
+    .onRequest(acp.methods.agent.session.list, () => {
+      listed += 1;
+      throw new acp.RequestError(busy.json_rpc_code, busy.message, busyData);
+    })
+    .onRequest(acp.methods.agent.session.prompt, () => {
+      prompted += 1;
+      return { stopReason: "end_turn" };
+    });
+  const transport = new AcpServer({ agent });
+  const acpHandler = createNodeHttpHandler(transport);
+  const listener = createServer((request, response) => {
+    if (request.url === "/v1/acp") {
+      acpHandler(request, response);
+      return;
+    }
+    unexpectedRoutes.push({ method: request.method, path: request.url });
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ code: "unexpected_test_route" }));
+  });
+  const workload = new ServiceAuthentication(testSecurityEnvironment());
+  const bridges = [];
+  const failures = [];
+  try {
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    const address = listener.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = new URL(`http://127.0.0.1:${address.port}`);
+    const fetchImpl = workload.fetchFor("agent-acp-service", baseUrl.toString());
+    const scope = testScope({
+      organizationId: "org-1", principalId: "user-1", agentId: "agent-1",
+    });
+    for (let index = 0; index < capabilities.length; index++) {
+      bridges.push(await AcpHttpBridge.open({
+        baseUrl, scope, fetchImpl, signal: t.signal,
+        callbacks: {
+          update: () => {},
+          requestPermission: () => ({ outcome: { outcome: "cancelled" } }),
+        },
+      }));
+    }
+    assert.equal(initialized, capabilities.length);
+    for (const [index, bridge] of bridges.entries()) {
+      await assert.rejects(bridge.load(`session-${index}`), (error) => {
+        assert.ok(error instanceof LoadError);
+        assert.ok(error.cause instanceof acp.RequestError);
+        assert.equal(error.cause.code, busy.json_rpc_code);
+        assert.equal(error.cause.message, busy.message);
+        assert.deepEqual(error.cause.data, busyData);
+        assert.equal(error.message, error.classification.message);
+        if (index === 0) {
+          assert.equal(error.classification.kind, "admission");
+          assert.equal(error.classification.code, "configuration_not_ready");
+          assert.equal(error.classification.retryable, true);
+          assert.equal(error.classification.retryDirective, "backoff");
+          assert.equal(error.classification.retryAfterMs, busy.retry_after_ms);
+        } else {
+          assert.equal(error.classification.kind, "unknown");
+          assert.equal(error.classification.retryable, false);
+          assert.equal(Object.hasOwn(error.classification, "retryAfterMs"), false);
+        }
+        return true;
+      });
+    }
+    await assert.rejects(bridges[0].load("missing"), (error) => {
+      assert.ok(error instanceof acpHttp.SessionNotFoundError);
+      assert.equal(error instanceof LoadError, false);
+      return true;
+    });
+    await assert.rejects(bridges[0].list(), (error) => {
+      assert.ok(error instanceof acp.RequestError);
+      assert.equal(error instanceof LoadError, false);
+      assert.equal(error.code, busy.json_rpc_code);
+      assert.deepEqual(error.data, busyData);
+      return true;
+    });
+    assert.deepEqual(loads.map((params) => params.sessionId), [
+      "session-0", "session-1", "session-2", "session-3", "missing",
+    ]);
+    for (const params of loads) {
+      assert.equal(params.cwd, "/workspace");
+      assert.deepEqual(params.mcpServers, []);
+    }
+    assert.equal(listed, 1);
+    assert.equal(prompted, 0);
+    assert.deepEqual(unexpectedRoutes, []);
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    for (const close of [
+      ...bridges.map((bridge) => () => bridge.close()),
+      () => transport.close(),
+      () => workload.close(),
+      async () => {
+        if (!listener.listening) return;
+        listener.closeAllConnections();
+        await new Promise((resolve, reject) =>
+          listener.close((error) => (error ? reject(error) : resolve())),
+        );
+      },
+    ]) {
+      try { await close(); }
+      catch (error) { failures.push(error); }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length)
+      throw new AggregateError(failures, "ACP Load capability test and cleanup failed");
   }
 });
