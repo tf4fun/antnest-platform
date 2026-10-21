@@ -177,6 +177,15 @@ harness accepts isolated RC/Identity candidates through
 Gateway candidate through `ANTNEST_C4_EDGE_GATEWAY_IMAGE`; deploy the new RC
 reader before using the new Runtime status producer.
 
+The synthetic Console session browser fixture validates each POST's CSRF header
+against that same request's original Cookie and the fixture's issued values.
+A request already dispatched before Cookie replacement can retain its old pair;
+an old activity report cannot renew the replacement session's idle budget.
+Password and revocation mutations still require current delivery, and the old
+confirmation must produce no mutation after replacement. Deterministic request
+pairing regressions run in `make test-repo`; the built browser scenarios run in
+the Tier A browser shard. Real Gateway/Identity HTTPS acceptance stays separate.
+
 The Stage 3a profile runners start their client detached and read its result
 with `docker logs`. Docker splits output lines longer than 16 KiB, and the
 json-file log driver replaces a multi-byte character cut by that split with
