@@ -22,6 +22,32 @@ export const loadParticipantServices = [
   "runtime",
 ];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
+
+export async function captureOwnerStopLog({
+  docker,
+  id,
+  startedAt,
+  output,
+  artifactPrefix,
+  secrets = [],
+}) {
+  const logs = await docker(
+    ["logs", "--timestamps", "--since", startedAt, id],
+    false,
+    { captureStderr: true },
+  );
+  assertSecretFree(logs, secrets);
+  writeEvidenceFile(output, `${artifactPrefix}-owner-stop.private.log`, logs);
+  return {
+    log_checked: true,
+    log_sha256: hash(logs),
+    forced_drain:
+      /Bridge (?:drain did not close cleanly|(?:authentication client )?shutdown failed)/u.test(
+        logs,
+      ),
+  };
+}
+
 const canonical = (value) =>
   Array.isArray(value)
     ? value.map(canonical)
@@ -426,29 +452,17 @@ async function createOwnerLifecycleCore({
         await docker(["stop", "--time", "30", ids["agent-ui"]]);
         evidence.stopped_at = now();
         evidence.after = await snapshot();
-        const logs = await docker(
-          [
-            "logs",
-            "--timestamps",
-            "--since",
-            baseline["agent-ui"].started_at,
-            ids["agent-ui"],
-          ],
-          false,
-          { captureStderr: true },
+        Object.assign(
+          evidence,
+          await captureOwnerStopLog({
+            docker,
+            id: ids["agent-ui"],
+            startedAt: baseline["agent-ui"].started_at,
+            output,
+            artifactPrefix,
+            secrets,
+          }),
         );
-        assertSecretFree(logs, secrets);
-        writeEvidenceFile(
-          output,
-          `${artifactPrefix}-owner-stop.private.log`,
-          logs,
-        );
-        evidence.log_checked = true;
-        evidence.log_sha256 = hash(logs);
-        evidence.forced_drain =
-          /Bridge (?:drain did not close cleanly|(?:telemetry |authentication client )?shutdown failed)/u.test(
-            logs,
-          );
         save();
         inspectOwnerDrain(evidence);
         preparation.inspectDrain?.(evidence);
@@ -527,6 +541,7 @@ export async function createOwnerLifecycle(options) {
 
 export async function createLoadOwnerLifecycle({
   environment,
+  diagnostics,
   clockProbe = probeACPClock,
   now = () => performance.now(),
   ...options
@@ -537,34 +552,43 @@ export async function createLoadOwnerLifecycle({
     now,
   });
   const baseline = owner.baseline;
-  const clock = await clockProbe({
-    container: baseline["agent-acp-service"].id,
-    environment,
-    signal: options.signal,
-    now,
-  });
-  inspectACPClockReceipt(clock);
-  assert.equal(
-    clock.container_id,
-    baseline["agent-acp-service"].id,
-    "clock container differs",
-  );
-  assert(clock.started_at >= baseline["agent-acp-service"].at);
-  assert(clock.received_at <= now(), "clock probe receipt is from the future");
-  const clockRaw = JSON.stringify(clock, null, 2);
-  assertSecretFree(clockRaw, options.secrets ?? []);
-  writeEvidenceFile(owner.output, "load-acp-clock.private.json", clockRaw);
+  const captureClock = async (signal) => {
+    const clock = await clockProbe({
+      container: baseline["agent-acp-service"].id,
+      environment,
+      signal,
+      now,
+    });
+    inspectACPClockReceipt(clock);
+    assert.equal(
+      clock.container_id,
+      baseline["agent-acp-service"].id,
+      "clock container differs",
+    );
+    assert(clock.started_at >= baseline["agent-acp-service"].at);
+    assert(
+      clock.received_at <= now(),
+      "clock probe receipt is from the future",
+    );
+    const clockRaw = JSON.stringify(clock, null, 2);
+    assertSecretFree(clockRaw, options.secrets ?? []);
+    writeEvidenceFile(owner.output, "load-acp-clock.private.json", clockRaw);
+    return clock;
+  };
+  const clock = diagnostics
+    ? (await diagnostics.run("load-acp-clock", captureClock)).value
+    : await captureClock(options.signal);
   return {
     baseline,
     collect: (wire, collect) =>
       owner.collect(collect, {
-        evidence: { acp_clock: clock },
+        evidence: clock ? { acp_clock: clock } : {},
         beforeDrain() {
-          inspectClockBeforeLoad(wire, baseline, clock);
+          if (!diagnostics) inspectClockBeforeLoad(wire, baseline, clock);
           measured(wire, baseline, now());
         },
         inspectDrain(evidence) {
-          inspectLoadOwnerDrain(wire, evidence);
+          if (!diagnostics) inspectLoadOwnerDrain(wire, evidence);
         },
       }),
   };

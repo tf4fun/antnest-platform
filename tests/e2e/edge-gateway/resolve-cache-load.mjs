@@ -86,12 +86,13 @@ function sessionPage(body) {
   );
 }
 
-export function inspectLoadResponse(row) {
-  assert(
-    typeof row.trace_id === "string" &&
-      /^(?!0{32})[a-f0-9]{32}$/u.test(row.trace_id),
-    "actual HTTP response Trace missing",
-  );
+function inspectLoadResponseMetadata(row, requireTrace) {
+  if (requireTrace)
+    assert(
+      typeof row.trace_id === "string" &&
+        /^(?!0{32})[a-f0-9]{32}$/u.test(row.trace_id),
+      "actual HTTP response Trace missing",
+    );
   assert(row.status === 200, "load HTTP request failed");
   assert(
     row.body_complete === true &&
@@ -99,7 +100,6 @@ export function inspectLoadResponse(row) {
       row.body_bytes > 0,
     "complete HTTP response body missing",
   );
-  assert(sessionPage(row.body), "invalid workspace sessionPage response");
   assert(
     typeof row.content_type === "string" &&
       /^application\/json(?:\s*;|$)/iu.test(row.content_type),
@@ -119,7 +119,12 @@ export function inspectLoadResponse(row) {
   );
 }
 
-export function inspectLoadWire(wire) {
+export function inspectLoadResponse(row, { requireTrace = true } = {}) {
+  inspectLoadResponseMetadata(row, requireTrace);
+  assert(sessionPage(row.body), "invalid workspace sessionPage response");
+}
+
+export function inspectLoadMeasurement(wire, { requireTrace = true } = {}) {
   assert.equal(wire.policy_revision, 4, "current HTTP load policy required");
   assert.equal(wire.transport, "http");
   assert.equal(wire.profile, "workspace");
@@ -145,9 +150,11 @@ export function inspectLoadWire(wire) {
       row.method === "GET" && row.path === path,
       "load scope or HTTP route changed",
     );
-    inspectLoadResponse(row);
-    assert(!ids.has(row.trace_id), "duplicate HTTP response Trace");
-    ids.add(row.trace_id);
+    inspectLoadResponseMetadata(row, requireTrace);
+    if (requireTrace) {
+      assert(!ids.has(row.trace_id), "duplicate HTTP response Trace");
+      ids.add(row.trace_id);
+    }
     assert(
       [row.started_at, row.headers_at, row.completed_at].every(
         Number.isFinite,
@@ -165,6 +172,13 @@ export function inspectLoadWire(wire) {
     "final HTTP request must follow half TTL after the initial complete response",
   );
   return wire.requests;
+}
+
+export function inspectLoadWire(wire, options) {
+  const requests = inspectLoadMeasurement(wire, options);
+  for (const row of requests)
+    assert(sessionPage(row.body), "invalid workspace sessionPage response");
+  return requests;
 }
 
 const end = (span) => span.startTime + span.duration;

@@ -6,6 +6,9 @@ import {
   assertUnchangedAudit,
 } from "../workspace-closeout/current-evidence.mjs";
 import { pollOutageObservation } from "./resolve-cache-runtime-work.mjs";
+import { inspectRecoveryRebuild } from "./resolve-cache-rebuild-business.mjs";
+
+export { inspectRecoveryRebuild };
 
 // One command, then read-only receipt queries. A Gateway 503 is retained as a
 // failure response; only the same command's completed operation and physical
@@ -18,6 +21,7 @@ export async function rebuildRecoveryAgent({
   http,
   readStoredRun,
   observeRuntime,
+  requireTrace = true,
   poll = pollOutageObservation,
   key = randomUUID(),
   timeoutMS = 120000,
@@ -75,14 +79,20 @@ export async function rebuildRecoveryAgent({
     p.responses.push(row);
     if (label === "command") p.command = row;
     remaining();
-    const actual = evidence.http.filter((r) => r.trace_id === row.trace_id);
+    const actual = evidence.http.filter((r) =>
+      requireTrace
+        ? r.trace_id === row.trace_id
+        : ["label", "method", "path", "started_at", "at"].every(
+            (key) => r[key] === row[key],
+          ),
+    );
     assert.equal(
       actual.length,
       1,
       "actual Rebuild response missing or duplicate",
     );
     assert.deepEqual(actual[0], row);
-    assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
+    if (requireTrace) assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
     assert.equal(row.path, path);
     assert.equal(row.method, options.body ? "POST" : "GET");
     assert(
@@ -295,8 +305,9 @@ export async function rebuildRecoveryAgent({
       "Rebuild changed accepted Run inventory",
     );
     remaining();
-    p.status = "passed";
     p.at = now();
+    inspectRecoveryRebuild(evidence);
+    p.status = "passed";
     return p;
   } catch (error) {
     p.status = "failed";

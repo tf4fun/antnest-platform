@@ -31,6 +31,7 @@ export async function verifyRecovery({
   model,
   poll,
   credentialScope,
+  requireTrace = true,
 }) {
   evidence.recovery = { cases: [] };
   let current = { ...credentials };
@@ -99,7 +100,7 @@ export async function verifyRecovery({
         fixture.agentID,
         c.session_id,
         signal,
-        { credentialScope },
+        { credentialScope, requireTrace },
       );
       saveStream();
       const naturalDeadline = recoveryStreamDeadline(c, evidence.settings);
@@ -370,5 +371,5 @@ export async function verifyRecovery({
         throw new AggregateError(errors, "recovery observer cleanup failed");
     }
   }
-  return inspectRecoveryWindow(evidence);
+  return inspectRecoveryWindow(evidence, { requireTrace });
 }

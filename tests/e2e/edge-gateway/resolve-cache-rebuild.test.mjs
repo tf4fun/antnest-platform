@@ -1,6 +1,82 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { rebuildRecoveryAgent } from "./resolve-cache-rebuild.mjs";
+import * as rebuild from "./resolve-cache-rebuild.mjs";
+
+const requestID =
+  "lifecycle-" +
+  createHash("sha256").update("org\0one-command-key").digest("hex");
+
+for (const status of [202, 503])
+  test(`effectful Rebuild HTTP ${status} completes without Trace headers in auxiliary mode`, async () => {
+    const f = fixture();
+    f.controls.postStatus = status;
+    const original = f.options.http;
+    f.options.http = async (...args) => {
+      const row = await original(...args);
+      delete row.trace_id;
+      return row;
+    };
+    const result = await rebuildRecoveryAgent({
+      ...f.options,
+      requireTrace: false,
+    });
+    assert.equal(result.status, "passed");
+    assert.equal(
+      f.calls.filter((row) => row.path?.endsWith("/rebuild")).length,
+      1,
+    );
+    assert.equal(f.reads(), 2);
+  });
+
+for (const mutation of ["missing", "duplicate", "changed-body"])
+  test(`auxiliary Rebuild rejects ${mutation} real HTTP receipt`, async () => {
+    const f = fixture();
+    const original = f.options.http;
+    f.options.http = async (...args) => {
+      const row = await original(...args);
+      delete row.trace_id;
+      if (mutation === "missing") f.evidence.http.pop();
+      if (mutation === "duplicate") f.evidence.http.push(structuredClone(row));
+      if (mutation === "changed-body")
+        return { ...row, body: { foreign: true } };
+      return row;
+    };
+    await assert.rejects(
+      rebuildRecoveryAgent({ ...f.options, requireTrace: false }),
+    );
+    assert.equal(f.evidence.recovery_preparation.status, "failed");
+  });
+
+test("pure Rebuild business admission validates recorded replacement without Trace evidence", async () => {
+  assert.equal(typeof rebuild.inspectRecoveryRebuild, "function");
+  const f = fixture();
+  await rebuildRecoveryAgent(f.options);
+  const raw = structuredClone(f.evidence);
+  const strip = (value) => {
+    if (!value || typeof value !== "object") return;
+    delete value.trace_id;
+    for (const child of Object.values(value)) strip(child);
+  };
+  strip(raw);
+  const before = structuredClone(raw);
+  assert.equal(rebuild.inspectRecoveryRebuild(raw), raw.recovery_preparation);
+  assert.deepEqual(raw, before);
+  for (const change of [
+    (p) => delete p.receipt,
+    (p) => (p.operation.body.request_id = "other"),
+    (p) => (p.runtime.container.id = raw.runtime.container.id),
+    (p) => (p.runtime.observation.work.effects = "lost"),
+    (p) => (p.after.events.body.next_cursor = "truncated"),
+    (p) => (p.after.stored.record.state = "completed"),
+    (p) => (p.at = p.started_at + 120001),
+  ]) {
+    const altered = structuredClone(raw);
+    change(altered.recovery_preparation);
+    assert.throws(() => rebuild.inspectRecoveryRebuild(altered));
+  }
+});
 
 function fixture() {
   const controller = new AbortController(),
@@ -49,17 +125,37 @@ function fixture() {
     quiescent: { work: { effects: "started\\nemitted\\n" } },
   };
   const evidence = {
+    project: "project",
     agent_id: "agent",
     session_id: "session",
     run_id: "run",
-    http: [],
+    http: [
+      {
+        label: "audit-login",
+        path: "/api/session/login",
+        method: "POST",
+        status: 200,
+        started_at: -1,
+        at: 0,
+        issued_credential_scope: "admin-scope",
+        body: {
+          principal: {
+            user_id: "administrator",
+            membership_id: "membership",
+            organization_id: "org",
+            organization_role: "admin",
+            active: true,
+          },
+        },
+      },
+    ],
     identity: { healthy: { running: true, health: "healthy", at: 0 } },
     audit: { body: structuredClone(run) },
     runtime: original,
     run_storage: { after: { record: structuredClone(stored) } },
   };
   const operation = {
-    request_id: "known-command",
+    request_id: requestID,
     agent_id: "agent",
     kind: "rebuild",
     state: "completed",
@@ -74,6 +170,7 @@ function fixture() {
     runtime_state: "available",
     executable_execution_revision: "execution-new",
     runtime: { runtime_revision: "runtime-new" },
+    configuration: { template: { template_id: "template", revision: 3 } },
   };
   const observed = {
     organization_id: "org",
@@ -131,14 +228,24 @@ function fixture() {
         body =
           status === 202
             ? structuredClone(operation)
-            : { code: "upstream_unavailable" };
+            : {
+                code: "console_unavailable",
+                message: "Admin Console is unavailable",
+              };
       } else if (path.endsWith("/by-idempotency-key")) {
         status = controls.receiptStatus;
         body = structuredClone(controls.receipt);
       } else if (path.startsWith("/api/admin/operations/")) {
-        assert.equal(path, "/api/admin/operations/known-command");
+        assert.equal(path, `/api/admin/operations/${requestID}`);
         status = controls.operationStatus;
-        body = structuredClone(controls.operation);
+        body =
+          status === 404
+            ? {
+                code: "operation_not_found",
+                message: "lifecycle operation was not found",
+                retryable: false,
+              }
+            : structuredClone(controls.operation);
       } else if (path === "/api/admin/agents/agent")
         body = structuredClone(controls.agent);
       else if (path.endsWith("/events?stream=execution&limit=100"))
@@ -152,6 +259,10 @@ function fixture() {
         body = structuredClone(controls.run);
       }
       const row = {
+        label: options.label,
+        credential_scope: "admin-scope",
+        set_cookie_count: 0,
+        cache_control: "no-store, no-store",
         path,
         method: options.body ? "POST" : "GET",
         status,
@@ -181,7 +292,12 @@ function fixture() {
       assert.deepEqual(ready, controls.agent);
       options.signal.throwIfAborted();
       calls.push({ observed: true });
-      return structuredClone(controls.observed);
+      const value = structuredClone(controls.observed);
+      value.observation.container = structuredClone(value.container);
+      value.observation.started_at = clock++;
+      value.observation.at = clock++;
+      value.observations = [value.observation];
+      return value;
     },
   };
   const optionsForTest = options;
@@ -206,7 +322,7 @@ for (const status of [202, 503])
     assert.equal(result.status, "passed");
     assert.equal(result.command.status, status);
     assert.equal(f.evidence.recovery_preparation, result);
-    assert.equal(result.operation.body.request_id, "known-command");
+    assert.equal(result.operation.body.request_id, requestID);
     const commands = f.calls.filter((c) => c.path?.endsWith("/rebuild"));
     assert.equal(commands.length, 1);
     assert.equal(commands[0].headers["Idempotency-Key"], "one-command-key");

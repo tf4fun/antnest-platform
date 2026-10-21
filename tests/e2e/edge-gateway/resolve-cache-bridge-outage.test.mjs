@@ -1,7 +1,60 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectOutageWindow } from "./resolve-cache-outage.mjs";
+
+test("business model identity requires the original receive time without Trace", () => {
+  const evidence = bridgeOutageFixture();
+  inspectOutageWindow(evidence, { requireTrace: false });
+  for (const observation of [evidence.model_started, evidence.model_cancelled])
+    delete observation.state.requests[0].received_at_ms;
+  assert.throws(() => inspectOutageWindow(evidence, { requireTrace: false }));
+});
 import { bridgeOutageFixture } from "./resolve-cache-bridge-outage-fixtures.mjs";
+
+function stripTraceFields(value) {
+  if (!value || typeof value !== "object") return;
+  for (const key of ["trace_id", "traceID", "model_span_id"]) delete value[key];
+  for (const child of Object.values(value)) stripTraceFields(child);
+}
+
+test("policy4 business inspection accepts missing Trace fields only when explicitly requested and preserves raw evidence", () => {
+  const value = bridgeOutageFixture();
+  const expected = inspectOutageWindow(value);
+  stripTraceFields(value);
+  const before = structuredClone(value);
+  assert.throws(() => inspectOutageWindow(value));
+  assert.deepEqual(
+    inspectOutageWindow(value, { requireTrace: false }),
+    expected,
+  );
+  assert.deepEqual(value, before);
+});
+
+for (const [name, change] of [
+  [
+    "short business window",
+    (value) => (value.identity.restart_started_at = 5999),
+  ],
+  [
+    "surviving Runtime process group child",
+    (value) =>
+      (value.runtime.quiescent.work.processes += "\n43 (sleep) S 1 30 0 0"),
+  ],
+  [
+    "Run still running in storage",
+    (value) => (value.run_storage.after.record.state = "running"),
+  ],
+]) {
+  test(`policy4 business inspection without Trace still rejects ${name}`, () => {
+    const value = bridgeOutageFixture();
+    stripTraceFields(value);
+    inspectOutageWindow(value, { requireTrace: false });
+    change(value);
+    const before = structuredClone(value);
+    assert.throws(() => inspectOutageWindow(value, { requireTrace: false }));
+    assert.deepEqual(value, before);
+  });
+}
 
 test("policy4 accepts HTTP cancellation only after new SSE tool output from the same held Runtime", () => {
   const result = inspectOutageWindow(bridgeOutageFixture());

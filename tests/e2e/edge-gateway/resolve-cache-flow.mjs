@@ -10,6 +10,11 @@ import { inspectLoadWire, inspectLoadResponse } from "./resolve-cache-load.mjs";
 import { collectResolveLoad } from "./resolve-cache-collect.mjs";
 import { createLoadOwnerLifecycle } from "./resolve-cache-owner-drain.mjs";
 import { assertLoadAdmission } from "../../support/resolve-cache-admission.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
+import {
+  createLoadBusinessReceipt,
+  assertLoadBusinessReceipt,
+} from "../../support/resolve-cache-business.mjs";
 
 export async function verifyResolveLoad(
   { config, fixture, settings, signal, output, docker, compose, images },
@@ -18,7 +23,10 @@ export async function verifyResolveLoad(
     createOwner = createLoadOwnerLifecycle,
     measure = measureResolveLoad,
     collect = collectResolveLoad,
-    admit = assertLoadAdmission,
+    business = createLoadBusinessReceipt,
+    admit = assertLoadBusinessReceipt,
+    admitTrace = assertLoadAdmission,
+    diagnostics = createTraceDiagnostics({ directory: output, signal }),
     write = writeEvidenceFile,
   } = {},
 ) {
@@ -52,6 +60,7 @@ export async function verifyResolveLoad(
     output,
     secrets,
     signal,
+    diagnostics,
   });
   const wire = {};
   const failures = [];
@@ -84,40 +93,69 @@ export async function verifyResolveLoad(
       "Bridge load measurement and archive failed",
     );
   let ownerReceipt;
-  const result = await owner.collect(wire, async (receipt) => {
+  const diagnostic = await owner.collect(wire, async (receipt) => {
     ownerReceipt = receipt;
-    return collect(config.jaeger, wire, fixture.agentID, settings, secrets, {
-      signal,
-      directory: join(output, "load"),
-      ownerLifecycle: receipt,
-      ownerScope,
-    });
+    return diagnostics.run("load-collection", (localSignal) =>
+      collect(config.jaeger, wire, fixture.agentID, settings, secrets, {
+        signal: localSignal,
+        directory: join(output, "load"),
+        ownerLifecycle: receipt,
+        ownerScope,
+      }),
+    );
   });
   assert.equal(
     ownerReceipt?.restored,
     true,
     "load owner restoration incomplete",
   );
-  assert(
-    result.background_refreshes >= 1,
-    "half-TTL load did not witness actual refresh",
-  );
-  const completed = { ...result, owner_lifecycle: ownerReceipt };
-  assert.deepEqual(
-    completed.owner_cleanup?.owner_scope,
+  const completed = business({
+    wire,
+    ownerLifecycle: ownerReceipt,
     ownerScope,
-    "load cleanup differs from actual authenticated owner",
+  });
+  assert.deepEqual(
+    completed.owner_scope,
+    ownerScope,
+    "load business receipt differs from actual authenticated owner",
   );
   admit(completed);
-  const raw = JSON.stringify(completed, null, 2);
+  const observability =
+    diagnostic.status === "passed"
+      ? { ...diagnostic.value, owner_lifecycle: ownerReceipt }
+      : { diagnostic };
+  await diagnostics.run("load-trace-admission", async () => {
+    assert(diagnostic.status === "passed", "load Trace collection unavailable");
+    assert(
+      observability.background_refreshes >= 1,
+      "half-TTL load did not witness actual refresh",
+    );
+    assert.deepEqual(
+      observability.owner_cleanup?.owner_scope,
+      ownerScope,
+      "load cleanup differs from actual authenticated owner",
+    );
+    admitTrace(observability);
+    assert.equal(
+      observability.strict_trace,
+      "passed",
+      "original strict Trace findings retained",
+    );
+  });
+  const result = {
+    ...completed,
+    observability,
+    trace_diagnostics: diagnostics.summary(),
+  };
+  const raw = JSON.stringify(result, null, 2);
   assertSecretFree(raw, secrets);
   await write(join(output, "load"), "load-completed.json", raw);
-  return completed;
+  return result;
 }
 
 // The caller supplies a freshly provisioned Agent with no prior Bridge owner.
 // No activity, view, SSE or extra initialization request is sent in this window.
-// The trace gate independently proves the first actual HTTP request initialized
+// Auxiliary Trace inspection checks whether the first HTTP request initialized
 // ACP and the final actual request triggered the background refresh.
 export async function measureResolveLoad({
   gateway,
@@ -222,13 +260,13 @@ export async function measureResolveLoad({
       // Validate before retaining any remote strings. Failed responses leave
       // only timing, status and byte counts, never a body or arbitrary headers.
       assertSecretFree(JSON.stringify(candidate), privateValues);
-      inspectLoadResponse(candidate);
+      inspectLoadResponse(candidate, { requireTrace: false });
       Object.assign(row, candidate);
       assert(!deadline.aborted, "Bridge load cancelled");
     }
   } finally {
     wire.completed_at = now();
   }
-  inspectLoadWire(wire);
+  inspectLoadWire(wire, { requireTrace: false });
   return wire;
 }

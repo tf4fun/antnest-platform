@@ -34,6 +34,12 @@ function hasAuxiliaryTraceWarning(output) {
 export function verdict(code, output, strict, suiteID) {
   if (
     suiteID === resolveCacheCISuite &&
+    code !== 0 &&
+    hasResolveCacheCompletion(output, undefined, { policyRevision: 5 })
+  )
+    return "failed";
+  if (
+    suiteID === resolveCacheCISuite &&
     !hasResolveCacheCompletion(output, code === 0 ? "passed" : "failed")
   )
     return "failed";

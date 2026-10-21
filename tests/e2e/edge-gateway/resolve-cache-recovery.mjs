@@ -48,10 +48,9 @@ export function recoveryMembershipUpdate(entry, active) {
   };
 }
 
-// These are actual HTTP, socket and model observations, not callbacks reporting
-// a verdict. The separate Trace gate proves the original authority budget and
-// binds each accepted Run to its single Provider request and durable closure.
-export function inspectRecoveryWindow(evidence) {
+// Inspect actual HTTP, socket and model observations. Original authority and
+// Run/Provider topology are retained separately as auxiliary Trace diagnostics.
+export function inspectRecoveryWindow(evidence, { requireTrace = true } = {}) {
   const cases = evidence.recovery?.cases;
   assert.deepEqual(
     cases?.map(({ name, phase }) => ({ name, phase })),
@@ -66,6 +65,12 @@ export function inspectRecoveryWindow(evidence) {
       `reused ${key}`,
     );
   const scopes = new Set();
+  const sameRequest = (left, right) =>
+    requireTrace
+      ? left.trace_id === right.trace_id
+      : ["label", "method", "path", "started_at", "at"].every(
+          (key) => left[key] === right[key],
+        );
   let previous = evidence.identity.healthy.at;
   const reports = cases.map((c) => {
     const base = `/api/app/workspace/v1/agents/${encodeURIComponent(evidence.agent_id)}`;
@@ -74,12 +79,12 @@ export function inspectRecoveryWindow(evidence) {
       assert(row, "actual recovery response missing");
       assert.deepEqual(
         one(
-          evidence.http.filter((r) => r.trace_id === row.trace_id),
+          evidence.http.filter((r) => sameRequest(r, row)),
           "actual response missing or duplicate",
         ),
         row,
       );
-      assert.match(row.trace_id, /^[a-f0-9]{32}$/u);
+      if (requireTrace) assert.match(row.trace_id, /^[a-f0-9]{32}$/u);
       assert.equal(row.path, path);
       assert.equal(row.method, method);
       assert.equal(row.status, status);
@@ -210,8 +215,10 @@ export function inspectRecoveryWindow(evidence) {
         "single actual held model required",
       );
       assert.equal(request.stage, "reply");
-      assert.equal(request.trace_id, c.prompt.trace_id);
-      assert.match(request.model_span_id ?? "", /^[a-f0-9]{16}$/u);
+      if (requireTrace) {
+        assert.equal(request.trace_id, c.prompt.trace_id);
+        assert.match(request.model_span_id ?? "", /^[a-f0-9]{16}$/u);
+      }
       finite(request.received_at_ms);
       if (mode === "held") {
         assert(r.state.pending.includes(c.phase));
@@ -300,7 +307,7 @@ export function inspectRecoveryWindow(evidence) {
           r.credential_scope === scope &&
           r.started_at >= c.trigger.at &&
           r.started_at < closed &&
-          r.trace_id !== c.mutation.trace_id,
+          !sameRequest(r, c.mutation),
       ),
       [],
       "silent observer sent a new request",
@@ -325,10 +332,11 @@ export function inspectRecoveryWindow(evidence) {
     audit(c.audit_terminal, terminal);
     assert(c.audit_terminal.at > c.mutation.at);
     const finalModel = model(c.model_terminal, terminal);
-    assert.equal(
-      finalModel.model_span_id,
-      model(c.model_started, "held").model_span_id,
-    );
+    if (requireTrace)
+      assert.equal(
+        finalModel.model_span_id,
+        model(c.model_started, "held").model_span_id,
+      );
     assert.equal(
       finalModel.received_at_ms,
       model(c.model_started, "held").received_at_ms,
@@ -447,7 +455,8 @@ export function inspectRecoveryWindow(evidence) {
     } else {
       const afterClose = model(c.model_after_close, "held");
       const original = model(c.model_started, "held");
-      assert.equal(afterClose.model_span_id, original.model_span_id);
+      if (requireTrace)
+        assert.equal(afterClose.model_span_id, original.model_span_id);
       assert.equal(afterClose.received_at_ms, original.received_at_ms);
       audit(c.audit_after_close, "running");
       assert(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { inspectBridgeOutageWindow } from "./resolve-cache-bridge-outage.mjs";
-import { parseDeliveryMark } from "../../../services/agent-ui/web/server/src/bridge/delivery.ts";
+import { parseDeliveryMark } from "./resolve-cache-delivery.mjs";
 
 export const outagePhase = "c4-cache-outage";
 export const outageText = `${outagePhase}: fresh output before cancellation.`;
@@ -11,7 +11,10 @@ const finite = (value) =>
 // These verifiers retain keys only in process memory. A successful admission
 // in a new process loads keys no earlier than process start. The restart call's
 // start is an earlier, conservative bound; no unlabelled JWKS span is attributed.
-export function inspectFreshConsumerWindow(evidence) {
+export function inspectFreshConsumerWindow(
+  evidence,
+  { requireTrace = true } = {},
+) {
   const bridge = evidence.policy_revision === 4;
   if (bridge) assert.equal(evidence.transport, "http-sse");
   assert.match(evidence.project ?? "", /^antnest-lifecycle-[a-f0-9]{8}$/u);
@@ -29,7 +32,7 @@ export function inspectFreshConsumerWindow(evidence) {
   finite(restartedAt);
   for (const row of [synchronization, state]) {
     assert.equal(row.status, 200);
-    traceID(row.trace_id);
+    if (requireTrace) traceID(row.trace_id);
     finite(row.started_at);
     finite(row.at);
     assert(row.started_at > restartedAt && row.at >= row.started_at);
@@ -114,7 +117,7 @@ export function inspectFreshConsumerWindow(evidence) {
       admission.status,
       row.service === "agent-acp-service" && !bridge ? 101 : 200,
     );
-    traceID(admission.trace_id);
+    if (requireTrace) traceID(admission.trace_id);
     const at =
       row.service === "agent-acp-service" ? admission.at : admission.headers_at;
     finite(at);
@@ -252,11 +255,11 @@ export function outageDelivery(
   };
 }
 
-// Business-window evidence only. Authority budgets and complete raw Trace
-// admission are separate gates and cannot be inferred from these observations.
-export function inspectOutageWindow(evidence) {
+// Business-window evidence only. Authority budgets require independent checks;
+// complete raw Trace diagnostics cannot be inferred from these observations.
+export function inspectOutageWindow(evidence, { requireTrace = true } = {}) {
   if (evidence.policy_revision === 4)
-    return inspectBridgeOutageWindow(evidence);
+    return inspectBridgeOutageWindow(evidence, { requireTrace });
   const {
     identity,
     wire,
@@ -320,10 +323,10 @@ export function inspectOutageWindow(evidence) {
     assert(at >= start && at < end, "observation outside Identity stop");
   };
   assert.equal(wire.upgrade.status, 101);
-  traceID(wire.upgrade.trace_id);
+  if (requireTrace) traceID(wire.upgrade.trace_id);
   assert(wire.upgrade.at < start);
   assert.equal(stream.status, 200);
-  traceID(stream.trace_id);
+  if (requireTrace) traceID(stream.trace_id);
   assert(stream.headers_at < start);
   if (stream.closure)
     assert(
@@ -383,9 +386,16 @@ export function inspectOutageWindow(evidence) {
   assert(terminal, "same-Run Workspace cancelled terminal missing");
   const phaseRows = (observation) => {
     assert.deepEqual(observation.state.errors, [], "model fixture error");
-    return observation.state.requests.filter(
-      (row) => row.phase === outagePhase,
-    );
+    return observation.state.requests
+      .filter((row) => row.phase === outagePhase)
+      .map((row) => {
+        finite(row.received_at_ms);
+        if (requireTrace) return row;
+        const business = { ...row };
+        for (const key of ["trace_id", "traceID", "model_span_id"])
+          delete business[key];
+        return business;
+      });
   };
   assert(evidence.model_started.at < start);
   const initial = phaseRows(evidence.model_started);
@@ -430,7 +440,7 @@ export function inspectOutageWindow(evidence) {
   assert(audit.started_at >= cancel.at && audit.at >= audit.started_at);
   assert.equal(audit.status, 200);
   assert.equal(audit.set_cookie_count, 0);
-  traceID(audit.trace_id);
+  if (requireTrace) traceID(audit.trace_id);
   for (const [name, value] of Object.entries({
     run_id: runID,
     agent_id: agentID,

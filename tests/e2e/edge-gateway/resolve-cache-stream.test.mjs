@@ -7,7 +7,7 @@ import { reset, delta } from "./resolve-cache-stream-fixtures.mjs";
 
 async function fixture(
   t,
-  { headers = {}, initial = reset("session-1", 2) } = {},
+  { headers = {}, initial = reset("session-1", 2), omitTrace = false } = {},
 ) {
   let response,
     observer,
@@ -21,7 +21,7 @@ async function fixture(
     response = reply;
     reply.writeHead(200, {
       "content-type": "text/event-stream",
-      "x-antnest-trace-id": "a".repeat(32),
+      ...(omitTrace ? {} : { "x-antnest-trace-id": "a".repeat(32) }),
       ...headers,
     });
     reply.flushHeaders();
@@ -67,6 +67,51 @@ async function fixture(
     },
   };
 }
+
+for (const mode of ["missing", "malformed"])
+  test(`Workspace auxiliary Trace mode retains real ${mode} header and joins the observer`, async (t) => {
+    const f = await fixture(t, {
+      omitTrace: mode === "missing",
+      headers: mode === "malformed" ? { "x-antnest-trace-id": "invalid" } : {},
+    });
+    const stream = await f.open(undefined, { requireTrace: false });
+    await stream.wait(() => true);
+    f.write(delta());
+    await stream.wait((view) => view.selectedView?.title === "Renamed");
+    assert.equal(
+      stream.evidence.trace_id,
+      mode === "missing" ? null : "invalid",
+    );
+    assert.equal(f.requests, 1);
+    f.end();
+    assert.equal((await stream.waitClosed(1000)).kind, "remote-end");
+    await stream.closeAndWait();
+    assert.equal(stream.evidence.reader_cleanup.outcome, "cancelled");
+    assert(stream.evidence.joined.at >= stream.closure.at);
+    assert(Number.isSafeInteger(stream.evidence.joined.observed_at_ms));
+  });
+
+for (const headers of [
+  { "content-type": "application/json" },
+  { "set-cookie": "unexpected=renewal" },
+])
+  test(`Workspace auxiliary Trace mode still rejects ${Object.keys(headers)[0]}`, async (t) => {
+    const f = await fixture(t, { headers, omitTrace: true });
+    await assert.rejects(f.open(undefined, { requireTrace: false }));
+  });
+
+test("Workspace auxiliary Trace mode retains scoped event validation", async (t) => {
+  const f = await fixture(t, { omitTrace: true });
+  const stream = await f.open(undefined, { requireTrace: false });
+  await stream.wait(() => true);
+  const event = delta();
+  event.agentId = "other-agent";
+  f.write(event);
+  await assert.rejects(
+    stream.wait(() => false),
+    /Workspace event/u,
+  );
+});
 
 test("Workspace observer binds its dispatch Cookie to a private credential observation ID", async (t) => {
   const f = await fixture(t);

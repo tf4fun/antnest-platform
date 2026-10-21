@@ -274,10 +274,23 @@ include the Gateway.
 The real-stack [Identity end-to-end client](../../tests/e2e/identity-closeout/README.md)
 and ACP session suites exercise browser behavior through the Bridge and owning
 protocol behavior through authenticated private ACP entrypoints. The
-Resolve-cache Docker runner counts 100 actual same-scope Bridge calls within
-eight seconds and at most three actual Resolve calls, including initialization
-and refresh. It also exercises the real five-second Identity outage, output,
-Runtime cancellation and recovery under the active cache policy.
+Resolve-cache Docker runner requires 100 actual same-scope Bridge calls within
+eight seconds. Its policy 5 business receipts independently recheck raw HTTP,
+the five-second Identity outage, Runtime cancellation, stored Run state, six
+HTTP refusals, physical Rebuild, four recovery cases, observer joins and actual
+container cleanup. The load and outage receipts must identify the same owner
+and Agent. Only completed business checks and verified outer cleanup produce
+a successful exit. Both UI stops retain the original process logs and their
+SHA-256, and reject forced drain or business shutdown failure even with exit 0.
+Telemetry-only shutdown warnings remain auxiliary.
+
+Trace collection, Resolve RPC counts, background refresh observations, SDK
+closure spans and strict topology findings are auxiliary diagnostics. Their
+original evidence and warnings remain available, with a bounded diagnostic
+budget and awaited collector cleanup. Missing Trace headers or collection
+failures do not interrupt the remaining business checks. Policy 3/4 reports
+retain their historical validators; current policy 5 reports never use a Trace
+result to waive an HTTP, authorization, persistence, Runtime or cleanup failure.
 
 `make e2e-agent-ui-upload-capacity` runs two real users and Agents with independent
 clients and production Gateway, Agent UI, ACP and Runtime processes. With 64
@@ -288,8 +301,9 @@ overlap. Admission requires accepted cancellation, the original Run's terminal
 state and observed Runtime process-group quiescence within one second. See the
 [Agent UI capacity gate](../agent-ui/README.md) for limits and evidence.
 
-Each consumer retains its own Docker admission; complete integration CI remains
-a separate merge gate. Evidence stays under `artifacts/verification/`, with
+Each consumer retains its own Docker admission; complete merge admission runs
+in remote CI, with local checks limited to focused development and failure
+reproduction. Evidence stays under `artifacts/verification/`, with
 owned-resource cleanup and the original strict diagnostics preserved.
 
 ## Documentation

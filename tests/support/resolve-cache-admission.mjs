@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { assertBridgeOutageCompletion } from "./resolve-cache-bridge-completion.mjs";
+import { assertLoadBusinessReceipt } from "./resolve-cache-business.mjs";
+import { assertOutageBusinessReceipt } from "./resolve-cache-outage-business.mjs";
 import {
   inspectLoadOwnerDrain,
   inspectLoadOwnerRestoration,
@@ -7,6 +9,67 @@ import {
 
 export const resolveCacheSuite = "edge-gateway-resolve-cache";
 export const resolveCacheCISuite = "gateway-resolve-cache";
+
+export function createResolveCacheBusinessReport(load, outage) {
+  const {
+    observability: loadTrace,
+    trace_diagnostics: loadDiagnostics,
+    ...loadBusiness
+  } = load;
+  const {
+    observability: outageTrace,
+    trace_diagnostics: outageDiagnostics,
+    ...outageBusiness
+  } = outage;
+  const diagnostics = [loadDiagnostics, outageDiagnostics];
+  const raw = [loadTrace, outageTrace];
+  return {
+    suite: resolveCacheSuite,
+    policy_revision: 5,
+    status: "business_passed",
+    scenarios: 2,
+    verified: ["100-acp-load", "identity-outage-recovery"],
+    pending: [],
+    business: { load: loadBusiness, outage: outageBusiness },
+    observability: { load: loadTrace, outage: outageTrace },
+    strict_trace: raw.every((r) => r?.strict_trace === "passed")
+      ? "passed"
+      : raw.some((r) => r?.strict_trace === "failed")
+        ? "failed"
+        : "unavailable",
+    trace_diagnostics: {
+      version: 1,
+      role: "auxiliary",
+      status: diagnostics.every((d) => d?.status === "passed")
+        ? "passed"
+        : "warning",
+      checks: diagnostics.flatMap((d) => d?.checks ?? []),
+      scenarios: { load: loadDiagnostics, outage: outageDiagnostics },
+    },
+  };
+}
+
+export function assertBusinessCacheCompletion(record) {
+  assert.equal(record?.suite, resolveCacheSuite);
+  assert.equal(record.policy_revision, 5);
+  assert.equal(record.status, "business_passed");
+  assert.equal(record.cleanup, "verified");
+  assert.equal(record.scenarios, 2);
+  assert.deepEqual(record.verified, [
+    "100-acp-load",
+    "identity-outage-recovery",
+  ]);
+  assert.deepEqual(record.pending, []);
+  const { load, outage } = record.business;
+  assertLoadBusinessReceipt(load);
+  assertOutageBusinessReceipt(outage);
+  const evidence = outage.evidence,
+    principal = evidence.session_deadlines.owner.principal;
+  assert.equal(load.owner_scope.agent_id, evidence.agent_id);
+  assert.equal(load.owner_scope.user_id, principal.user_id);
+  assert.equal(load.owner_scope.organization_id, principal.organization_id);
+  return record;
+}
 export const outageGateNames = [
   "authority",
   "http_rejections",
@@ -421,6 +484,10 @@ export function assertBridgeCacheCompletion(record) {
 
 export function isResolveCacheCompletion(record) {
   try {
+    if (record?.policy_revision === 5) {
+      assertBusinessCacheCompletion(record);
+      return true;
+    }
     if (record?.policy_revision === 4) {
       assertBridgeCacheCompletion(record);
       return true;
@@ -499,7 +566,11 @@ export function isResolveCacheCompletion(record) {
   }
 }
 
-export function hasResolveCacheCompletion(output, strict) {
+export function hasResolveCacheCompletion(
+  output,
+  strict,
+  { policyRevision } = {},
+) {
   let complete = false;
   for (const line of output.split(/\r?\n/u)) {
     let row;
@@ -520,7 +591,11 @@ export function hasResolveCacheCompletion(output, strict) {
     )
       complete = false;
     else if (row.suite === resolveCacheSuite)
-      complete = isResolveCacheCompletion(row) && row.strict_trace === strict;
+      complete =
+        isResolveCacheCompletion(row) &&
+        (row.policy_revision === 5 || row.strict_trace === strict) &&
+        (policyRevision === undefined ||
+          row.policy_revision === policyRevision);
   }
   return complete;
 }
