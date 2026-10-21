@@ -29,7 +29,9 @@ const insert = events.match(
   /`(INSERT INTO session_messages\([\s\S]*?\$8\))`/u,
 )[1];
 const update = query("UPDATE acp_sessions SET last_message_sequence");
-const storedUsage = query("SELECT run_id, payload FROM session_messages");
+const storedUsage = query(
+  "SELECT run_id, session_id, kind, visible, payload, created_at FROM session_messages",
+);
 const previousUsage = query(
   "SELECT payload FROM session_messages WHERE session_id",
 );
@@ -230,7 +232,7 @@ export function costRunTraceFixture({
       readiness.startTime + 10,
     );
   }
-  const reply = ["BEGIN", ...lock, insert, update, "COMMIT"].map(
+  const reply = ["BEGIN", ...lock, storedUsage, insert, update, "COMMIT"].map(
     (text, index) =>
       sql(`reply-${index}`, f.transaction, text, 12100 + index * 100),
   );
@@ -249,7 +251,6 @@ export function costRunTraceFixture({
   usageTransaction.duration = 800;
   const usage = [
     "BEGIN",
-    storedUsage,
     ...lock,
     storedUsage,
     previousUsage,
@@ -283,7 +284,7 @@ export function costRunTraceFixture({
     usageTransaction,
     usage,
     outputQueries: output,
-    insert: reply[4],
+    insert: reply[5],
     outputRead: output[1],
   };
 }

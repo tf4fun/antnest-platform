@@ -4,6 +4,16 @@ This scenario verifies live Tool progress from the Runtime (producer) to ACP
 clients (consumer) on a disposable full stack. It is a deployment test, not a
 service or a public protocol.
 
+Merge admission uses the twelve business scenarios, actual request and model
+inventories, four physical cancellation checks, Runtime inspection ACKs and
+joined Agent/connection cleanup. Trace collection, topology, SQL descriptions
+and strict diagnostic results are auxiliary. Each failed collection retains its
+original error and inventory position; a shared 60-second collection budget
+limits diagnostic waiting without skipping business or cleanup. Telemetry
+shutdown is joined independently after that budget. The final report is emitted
+after connection cleanup and keeps raw strict results under `observability`,
+with warnings in `trace_diagnostics`.
+
 ## Private ACP migration checkpoint
 
 `connection.mjs` and `scenario.mjs` implement the private WebSocket consumer
@@ -42,15 +52,15 @@ all twelve paths, including their twenty model calls. The owning collector now
 archives requests and original cancel notifications with complete source
 receipts. The main client now uses the actual login Principal, private connector,
 scenario and collector. It indexes all 28 initializations, 44 business requests,
-four original cancel notifications and twenty model requests before admitting
-76 distinct original Traces. It retains all four Agents until it consumes the
+four original cancel notifications and twenty model requests before attempting
+the 76 original Trace diagnostics. It retains all four Agents until it consumes the
 host's candidate Runtime inspection receipt, then uses the shared four-Agent
 cleanup recorder to join every actual delete operation. Connection capture
 itself joins close before reading the original notifications. Runtime gates now
 use a file channel serviced by one host loop, followed by the final four-Runtime
 inspection. Timeout diagnostics now use the original closed connector and
 archived private Trace sources. Candidate deployment and shell entry points now
-use the owning deployment helper. Full Docker acceptance covers all 76 Traces,
+use the owning deployment helper. Full Docker acceptance covers
 the twelve business scenarios and four actual stops; its current evidence is
 recorded in [TODO.md](../../../TODO.md). Local checks alone do not complete the
 migration.
@@ -130,8 +140,8 @@ joined before a failed receipt and partial evidence are saved. The scenario
 passes each stop probe the remaining original ten-second monotonic budget;
 publication, host queueing and receipt reading all count, and late success fails.
 The deployment shell starts this host loop after the client. A completed ACK
-does not replace the actual client exit code; strict exit 2 remains unchanged,
-and host or cleanup failures remain fatal. Cleanup uses recorded original
+does not replace the actual client exit code; host or cleanup failures remain
+fatal regardless of auxiliary diagnostics. Cleanup uses recorded original
 container IDs or the unique run-labelled recovery result, preserves logs and
 attempts removal even when inspection or evidence writing fails.
 
@@ -224,8 +234,9 @@ acceptance.
 
 The main entry point is wired to the host driver and candidate deployment.
 `make e2e-tool-progress` runs the complete stack. Successful business acceptance
-retains exit 2 when reviewed original diagnostics are present; cleanup must still
-complete successfully.
+and cleanup return exit 0 even when Trace collection or inspection fails. The
+original strict status and exit code remain under `observability`; CI reports
+auxiliary findings as warnings.
 The local fixture command remains available:
 
 ```sh

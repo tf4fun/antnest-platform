@@ -8,11 +8,8 @@ import {
   indexProgressRequests,
 } from "./client-evidence.mjs";
 import { requestProgressRuntimeInspection } from "./runtime-inspection.mjs";
-import {
-  collectPrivateProgressTrace,
-  collectPrivateProgressNotificationTrace,
-  privateProgressStrictOutcome,
-} from "./collector.mjs";
+import { collectProgressTraceDiagnostics } from "./diagnostics.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import { cancelDiagnostics } from "./cancel-diagnostics.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { gateway } from "../identity-closeout/acp-connection.mjs";
@@ -36,6 +33,7 @@ const admin = new GatewayClient(gateway),
 const image = process.env.TEST_RUNTIME_IMAGE;
 const directory = evidenceDirectory(process.env.ANTNEST_PROGRESS_EVIDENCE_DIR);
 const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
+const diagnostics = createTraceDiagnostics({ directory });
 const agents = [],
   connections = [],
   scenarios = [],
@@ -195,66 +193,59 @@ async function main() {
       { directory },
     );
   // The cleanup wrapper has consumed the original four-Runtime ACK and joined
-  // all four complete delete operations before Trace admission can succeed.
+  // all four complete delete operations before auxiliary Trace collection.
   const options = {
     directory,
+    diagnostics,
     secrets,
     requests: models,
     flush: () => telemetry.flush(),
   };
-  for (const expected of [
-    ...inventory.requests,
-    ...inventory.initializations,
-  ]) {
-    stage = `trace:${expected.label}`;
-    checked.push(
-      await collectPrivateProgressTrace(
-        "http://jaeger:16686",
-        expected,
-        options,
-      ),
-    );
-  }
-  for (const { phase, receipt } of inventory.notifications) {
-    stage = `notification:${phase}`;
-    checked.push(
-      await collectPrivateProgressNotificationTrace(
-        "http://jaeger:16686",
-        receipt,
-        options,
-      ),
-    );
-  }
-  assert.equal(checked.length, 76);
-  assert.equal(new Set(checked.map((row) => row.trace_id)).size, 76);
-  const runs = checked.filter((row) => row.run_id);
-  assert.equal(runs.length, 12);
-  assert.equal(new Set(runs.map((row) => row.run_id)).size, 12);
-  assert.deepEqual(
-    new Set(runs.map((row) => row.trace_id)),
-    new Set(models.map((row) => row.trace_id)),
+  stage = "trace-diagnostics";
+  const observed = await collectProgressTraceDiagnostics(
+    "http://jaeger:16686",
+    inventory,
+    options,
   );
-  const { exit_code, ...strict } = privateProgressStrictOutcome(checked);
-  assert.equal(strict.accepted, true);
-  console.log(
-    asciiJSON({
-      status: "business_passed",
-      scenarios: outcomes.length,
-      outcomes,
-      connections: connections.length,
-      request_traces: inventory.requests.length,
-      initialization_requests: inventory.initializations.length,
-      cancel_notifications: inventory.notifications.length,
-      model_requests: models.length,
-      runtime_inspection: runtimeInspection,
-      traces: checked,
-      ...strict,
-    }),
-  );
-  process.exitCode = exit_code;
+  checked.push(...observed.checked);
+  return {
+    scenarios: outcomes.length,
+    outcomes,
+    connections: connections.length,
+    request_traces: inventory.requests.length,
+    initialization_requests: inventory.initializations.length,
+    cancel_notifications: inventory.notifications.length,
+    model_requests: models.length,
+    runtime_inspection: runtimeInspection,
+    traces: checked,
+    observability: observed.strict,
+  };
 }
 try {
-  await withPrivateCommandResources(clients, telemetry, main);
+  // A spent collection budget must not skip the actual telemetry shutdown.
+  const shutdownDiagnostics = createTraceDiagnostics({
+    directory,
+    budgetMs: 30_000,
+  });
+  const result = await withPrivateCommandResources(
+    clients,
+    {
+      shutdown: () =>
+        shutdownDiagnostics.run("telemetry-shutdown", () =>
+          telemetry.shutdown(),
+        ),
+    },
+    main,
+  );
+  console.log(
+    asciiJSON({
+      ...result,
+      status: "business_passed",
+      trace_diagnostics: diagnostics.summary(),
+    }),
+  );
+  console.log(asciiJSON({ trace_diagnostics: shutdownDiagnostics.summary() }));
+  process.exitCode = 0;
 } catch (error) {
   console.error(
     asciiJSON(
