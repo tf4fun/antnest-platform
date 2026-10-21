@@ -340,8 +340,37 @@ drift observations.
    distinct non-terminal request still owns the Agent mutation slot.
 10. Observation sequence is a sparse cursor. Do not infer loss from a numeric
     jump; consume explicit `observation_gap` records and recover with List.
+    All journal writers serialize sequence allocation through transaction
+    completion, so a visible higher sequence cannot hide a lower sequence that
+    will commit later. Rollback gaps are permanent and safe to advance past.
 11. `observation_cursor_expired` is unrelated to a platform Watch gap. Rebuild
     the consumer projection from Runtime List before using `reset_sequence`.
+
+### Upgrading observation ordering
+
+The commit-order guarantee requires every Runtime Controller writer to use the
+journal transaction lock. There is no schema or wire change, but an older binary
+does not take this lock. Stop admission on the old replicas, drain their in-flight
+operation and observation transactions, and stop all old writers before starting
+the upgraded replicas. Do not claim commit ordering while old and new writers
+overlap. Retain the sequence's migration-defined `CACHE 1`; manually increasing
+its cache permits different connections to allocate out of order even with the
+transaction lock.
+
+The upgrade prevents new skipped facts; it cannot replay facts already skipped
+by an old consumer cursor. Rebuild affected consumer projections from Runtime
+List before resuming observation consumption. Existing retention expiry and
+platform gap recovery rules still apply. Time-based inline pruning and leader
+write fencing are separate work tracked in #39.
+
+For sizing this change, the reference peak is **100 committed observations/s**:
+250 Runtime environments each changing health once per five seconds, plus 50
+lifecycle facts/s. This is a benchmark workload, not an enforced rate limit or
+a claim that every deployment has this load. `TestRepositoryObservationAppendThroughput`
+runs eight writers for 1,000 committed facts and verifies their complete replay.
+Record its elapsed time and throughput when changing journal coordination;
+compare the result with this reference peak on the deployment's database. Run it
+with `make test-runtime-controller-postgres` (which enables the Go race detector).
 
 ## Stage 1C Acceptance
 

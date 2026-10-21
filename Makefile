@@ -338,6 +338,7 @@ test-egress-postgres:
 
 test-runtime-controller-postgres:
 	node tests/support/dependencies.mjs --name runtime-controller-$$(date +%s)-$$$$ -- node tests/support/verification/go-service.mjs runtime-controller
+	node tests/support/dependencies.mjs --name observation-consumer-$$(date +%s)-$$$$ -- node tests/integration/runtime-controller/observation-consumer.mjs
 
 test-agent-acp-postgres:
 	node tests/support/dependencies.mjs --name acp-$$(date +%s)-$$$$ -- npm --prefix services/agent-acp-service run test:postgres

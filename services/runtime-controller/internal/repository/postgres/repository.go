@@ -17,6 +17,8 @@ import (
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
+const observationJournalLockKey int64 = 0x41544e4f42534a4c
+
 var _ repository.Port = (*Repository)(nil)
 
 type Repository struct {
@@ -508,6 +510,11 @@ func (r *Repository) storeObservation(
 	}
 	if err := observation.Validate(); err != nil {
 		return nil, err
+	}
+	// Hold the lock from sequence allocation until commit or rollback across
+	// both long operation-completion and short monitor-append transactions.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, observationJournalLockKey); err != nil {
+		return nil, fmt.Errorf("lock Runtime observation journal: %w", err)
 	}
 	value := *observation
 	if err := insertObservation(ctx, tx, &value); err != nil {

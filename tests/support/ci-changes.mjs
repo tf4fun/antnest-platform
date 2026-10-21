@@ -82,6 +82,12 @@ export const suites = [
     paths: [
       ...service("runtime-controller"),
       "tests/integration/go/runtime-controller/**",
+      "tests/integration/runtime-controller/**",
+      "tests/integration/go/agent-controller/observationfixture/**",
+      "services/agent-controller/internal/runtimeclient/**",
+      "services/agent-controller/internal/ports/runtime_observation.go",
+      "services/agent-controller/go.mod",
+      "services/agent-controller/go.sum",
       ...go,
       ...compose,
     ],
