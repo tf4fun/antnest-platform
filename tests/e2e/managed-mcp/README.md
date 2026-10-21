@@ -55,7 +55,8 @@ Six successful Runs make 16 Provider requests and ten real Tool calls:
    While each response is held, the exact Rebuild remains in drain, ACP's busy
    Session is closed to new work, the durable Run is running and the original
    Runtime stays healthy and unchanged. Another Session gets the precise
-   `-32020 / agent_busy / retryable=false` error without a Run or Provider call.
+   `-32030 / agent_busy / retryable=true / retry_after_ms=1000` error without a
+   Run or Provider call.
    The second hold proves that completed Tools alone do not release the Run.
 5. After the final response, ACP completes settlement and the Rebuild replaces
    the Runtime. `managed-rebuilt` uses the existing connection, and beta's new
@@ -100,11 +101,23 @@ full Skill content. This profile uses the per-request oracle in
 `request-trace.mjs`; `trace.mjs` keeps the connection-wide oracle used by other
 scenarios.
 
-Business and topology diagnostics are reported separately from the strict gate.
-Strict diagnostics remain recorded as `strict_trace: failed`; reviewed SDK
-cleanup and clock warnings require their exact owning evidence. Topology, privacy, unexpected
-errors and missing parent spans remain blocking. Raw evidence stays in the private
+Trace collection, topology, strict inspection and exporter failures are auxiliary
+diagnostics. They keep their original warnings and private raw evidence under one
+shared collection budget; collectors receive cancellation and are actually joined.
+No Trace result changes business admission. Raw evidence stays in the private
 `artifacts/verification/managed-mcp-secrets/v<version>-<tag>/traces/` directory.
+
+The business gate reads the complete administrative Run list and each Run's
+detail and execution-event page before deleting the Agent. It binds six original
+prompt receipts to six completed, quiescent Runs and their captured execution
+snapshots, ten paired Tool lifecycles (six Managed and four builtin, including
+the expected alpha failure), sixteen model requests, and original/replayed
+protocol output. Missing pages, duplicate or foreign records, changed input or
+results, unexpected terminal state and unfinished model responses still fail.
+`business-evidence.private.json` retains complete or partial originals and read
+errors; it contains private input and is not a public report. These Audit DTOs
+do not expose a separate Runtime-stop receipt; the existing drain, operation,
+peer, restart and actual resource-removal checks remain independent gates.
 
 The host client delegates its original member Session and Principal through
 Identity's workspace Resolve, using only the disposable `gateway-identity` and
@@ -119,14 +132,16 @@ Each version retains all 11 business requests and records the three actual
 initializations separately (one per official SDK connection). Full private
 execution-state responses retain the configuration revision and original member
 authority; the two Drain barriers still require the busy Session, running audit,
-original Runtime and exact nonretryable `agent_busy` response. Final close joins
+original Runtime and exact catalog `agent_busy` response. Final close joins
 all requests and archives raw wire frames and immutable receipts. The private
 collector preserves request and upgrade sources and accounts for every diagnostic,
-including the deliberate alpha Tool error. Unknown internal errors fail.
-Reviewed SDK cleanup diagnostics and Jaeger clock warnings retain their original
-strict failure and child exit code 2; only the full business/Trace inventory plus
-joined connection/exporter cleanup can produce `managed-complete.json` and pass
-runner admission. Build, archive and cleanup failures are never warning exits.
+including the deliberate alpha Tool error. Business errors remain fatal.
+Policy 2 writes `managed-complete.json` and emits success only after business
+validation, connection/request joins and actual exporter shutdown. Exporter
+rejection is archived as an auxiliary warning after shutdown settles. The
+receipt uses exit 0 even when Trace is unavailable; old Trace exit 2 alone cannot
+satisfy this policy. Build, business-evidence archive and real cleanup failures
+remain blocking, as do the parent's final container/volume/network inspections.
 
 ## Cleanup
 

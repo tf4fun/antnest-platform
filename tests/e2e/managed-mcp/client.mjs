@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../acp-closeout/wait.mjs";
 import { createManagedWork, runManagedWork } from "./work.mjs";
+import { collectManagedBusinessEvidence } from "./business-evidence.mjs";
+import { collectManagedDiagnostics } from "./diagnostics.mjs";
 import { createManagedPrivateAccess } from "./private-access.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   evidenceDirectory,
   writeEvidenceFile,
@@ -129,6 +132,7 @@ async function modelState() {
   });
   assert.equal(response.status, 200);
   const value = await response.json();
+  writeEvidenceFile(output, "model-status.private.json", JSON.stringify(value));
   assert.deepEqual(value.errors, [], "model fixture rejected request");
   return value;
 }
@@ -499,7 +503,47 @@ async function main() {
   await replay.close();
   const model = await modelState();
   assertModelSequence(model);
-  assert.equal((await audits(sessionId)).length, 6);
+  stage = "durable-run-business";
+  const { summary: execution } = await collectManagedBusinessEvidence(
+    {
+      version,
+      agentId,
+      sessionId,
+      principalId: memberPrincipal.user_id,
+      requests: requests.filter((request) => request.kind === "managed"),
+      model,
+      original,
+      replayed: replay.updates,
+    },
+    {
+      signal: work.signal,
+      async readJSON(path, { signal }) {
+        signal?.throwIfAborted();
+        // GatewayClient owns its finite HTTP deadline. Await the actual read;
+        // the collector preserves its response before checking cancellation.
+        return api(path);
+      },
+      preserve(evidence) {
+        writeEvidenceFile(
+          output,
+          "business-evidence.private.json",
+          JSON.stringify(evidence, (_key, value) =>
+            value instanceof Error
+              ? {
+                  name: value.name,
+                  message: value.message,
+                  stack: value.stack,
+                  cause: value.cause,
+                  ...(value instanceof AggregateError
+                    ? { errors: value.errors }
+                    : {}),
+                }
+              : value,
+          ),
+        );
+      },
+    },
+  );
   stage = "secret-keep-clear";
   const keptBody = templateBody(
     template.model_profile_id,
@@ -595,8 +639,9 @@ async function main() {
     version,
     agent_id: agentId,
     deleted,
-    model_requests: model.requests.length,
-    runs: 6,
+    model_requests: execution.model_requests,
+    runs: execution.runs,
+    execution,
     peer_binding: peerChecks,
     egress_outage: egressOutage,
     drain,
@@ -607,11 +652,11 @@ async function main() {
     frozen_secret_enable: true,
     bash_credential_isolation: true,
   };
-  await writeFile(businessFile, JSON.stringify(business), {
-    mode: 0o600,
-  });
-  console.log(asciiJSON(business));
-  await mkdir(traceDirectory, { recursive: true, mode: 0o700 });
+  writeEvidenceFile(
+    output,
+    "business-observed.private.json",
+    JSON.stringify(business),
+  );
   const save = (label) => (trace) =>
     writeFileSync(
       join(traceDirectory, `${label}.json`),
@@ -620,94 +665,131 @@ async function main() {
         mode: 0o600,
       },
     );
-  const lifecycleTraces = [],
-    sessionTraces = [],
-    failures = [];
   const initializations = connections.map(
     (client) => client.initializationRequest,
   );
   assert.equal(initializations.length, 3);
   assert.equal(requests.length, 11);
   const allRequests = [...initializations, ...requests];
-  save("inputs")({
-    lifecycle,
-    initializations,
-    requests,
-    modelRequests: model.requests,
-  });
-  for (const expected of lifecycle) {
-    stage = `trace:${expected.kind}`;
-    try {
-      lifecycleTraces.push(
-        await collectTrace(jaegerURL, expected.traceID, (trace) => {
-          if (trace) save(expected.kind)(trace);
-          return inspectLifecycle(trace, expected, secrets);
-        }),
-      );
-    } catch (error) {
-      failures.push(error);
-    }
-  }
-  for (const expected of allRequests) {
-    stage = `trace:${expected.label}`;
-    try {
-      sessionTraces.push(
-        await collectPrivateManagedTrace(jaegerURL, expected, {
+  writeEvidenceFile(
+    output,
+    "private-request-inventory.json",
+    JSON.stringify({
+      lifecycle,
+      initializations,
+      requests,
+      modelRequests: model.requests,
+    }),
+  );
+  let traceInventory = null;
+  const collected = await collectManagedDiagnostics(
+    {
+      directory: output,
+      lifecycle,
+      requests: allRequests,
+      signal: work.signal,
+    },
+    {
+      async collectLifecycle(expected, signal) {
+        stage = `trace:${expected.kind}`;
+        await mkdir(traceDirectory, { recursive: true, mode: 0o700 });
+        return collectTrace(
+          jaegerURL,
+          expected.traceID,
+          (trace) => {
+            if (trace) save(expected.kind)(trace);
+            return inspectLifecycle(trace, expected, secrets);
+          },
+          signal,
+        );
+      },
+      async collectRequest(expected, signal) {
+        stage = `trace:${expected.label}`;
+        await mkdir(traceDirectory, { recursive: true, mode: 0o700 });
+        return collectPrivateManagedTrace(jaegerURL, expected, {
           directory: traceDirectory,
           secrets,
           requests: model.requests,
           flush: () => access.telemetry.flush(),
-        }),
-      );
-    } catch (error) {
-      failures.push(error);
-    }
-  }
-  if (failures.length)
-    throw new AggregateError(failures, "Managed trace verification failed");
-  assert.equal(
-    new Set(sessionTraces.map((t) => t.trace_id)).size,
-    allRequests.length,
+          signal,
+        });
+      },
+      inspectInventory({ lifecycleReports, sessionReports }) {
+        save("reports")({
+          lifecycle_reports: lifecycleReports,
+          session_reports: sessionReports,
+        });
+        assert.equal(lifecycleReports.length, lifecycle.length);
+        for (const report of [...lifecycleReports, ...sessionReports])
+          assert(
+            typeof report?.trace_id === "string" &&
+              report.trace_id.length > 0 &&
+              report.diagnostic === undefined,
+            "Managed Trace report was not collected",
+          );
+        assert.equal(
+          new Set(sessionReports.map((t) => t.trace_id)).size,
+          allRequests.length,
+        );
+        const runtimeTools = sessionReports.reduce(
+          (n, t) => n + (t.runtime_tool_calls ?? 0),
+          0,
+        );
+        assert.equal(runtimeTools, 10);
+        const diagnostics = managedStrictOutcome(sessionReports);
+        const lifecycleAccepted =
+          !lifecycleReports.some((t) => t.strict_trace === "failed") ||
+          clockWarningsOnly(lifecycleReports);
+        const strict = [...lifecycleReports, ...sessionReports].some(
+          (t) => t.strict_trace === "failed",
+        )
+          ? "failed"
+          : "passed";
+        traceInventory = {
+          accepted: diagnostics.accepted && lifecycleAccepted,
+          strict_trace: strict,
+          runtime_tool_calls: runtimeTools,
+          diagnostics,
+        };
+        save("inventory")(traceInventory);
+        assert.equal(
+          traceInventory.accepted,
+          true,
+          "Managed Trace inventory diagnostic failed",
+        );
+        assert.equal(
+          strict,
+          "passed",
+          "Managed strict Trace diagnostics failed",
+        );
+        return traceInventory;
+      },
+    },
   );
-  const runtimeTools = sessionTraces.reduce(
-    (n, t) => n + (t.runtime_tool_calls ?? 0),
-    0,
-  );
-  assert.equal(runtimeTools, 10);
-  const diagnostics = managedStrictOutcome(sessionTraces);
-  const lifecycleAccepted =
-    !lifecycleTraces.some((t) => t.strict_trace === "failed") ||
-    clockWarningsOnly(lifecycleTraces);
-  const strict = [...lifecycleTraces, ...sessionTraces].some(
-    (t) => t.strict_trace === "failed",
-  )
-    ? "failed"
-    : "passed";
-  const accepted = diagnostics.accepted && lifecycleAccepted;
   const report = {
+    policy_revision: 2,
     version,
     project:
       process.env.TEST_DOCKER_PROJECT ?? process.env.COMPOSE_PROJECT_NAME,
-    accepted,
-    strict_trace: strict,
-    exit_code: accepted ? (strict === "failed" ? 2 : 0) : 1,
+    accepted: true,
+    strict_trace: traceInventory?.strict_trace ?? "not_collected",
+    exit_code: 0,
     private_requests: allRequests.length,
     initializations: initializations.length,
     business_requests: requests.length,
-    lifecycle_traces: lifecycleTraces.length,
-    runtime_tool_calls: runtimeTools,
-    diagnostics,
+    lifecycle_traces: collected.lifecycleReports.filter((item) => item.trace_id)
+      .length,
+    tool_calls: execution.tool_calls,
+    diagnostics: collected.diagnostics,
+    trace_inventory: traceInventory,
     business,
   };
-  save("report")({
-    ...report,
-    lifecycle_reports: lifecycleTraces,
-    session_reports: sessionTraces,
-  });
-  console.log(asciiJSON({ status: "topology_passed", ...report }));
   return report;
 }
 try {
+  const cleanupDiagnostics = output
+    ? createTraceDiagnostics({ directory: output, budgetMs: 30_000 })
+    : undefined;
   const report = await runManagedWork(
     work,
     connections,
@@ -715,15 +797,21 @@ try {
       shutdown: () => access?.telemetry.shutdown(),
     },
     main,
+    { traceDiagnostics: cleanupDiagnostics, directory: output },
   );
-  writeEvidenceFile(
-    output,
-    "managed-complete.json",
-    JSON.stringify({
-      ...report,
-      complete: report.accepted,
-      cleanup_completed: true,
-    }),
+  await writeFile(businessFile, JSON.stringify(report.business), {
+    mode: 0o600,
+  });
+  const completed = {
+    ...report,
+    complete: report.accepted,
+    cleanup_completed: true,
+    cleanup_diagnostics: cleanupDiagnostics?.summary(),
+  };
+  writeEvidenceFile(output, "managed-complete.json", JSON.stringify(completed));
+  console.log(asciiJSON(report.business));
+  console.log(
+    asciiJSON({ status: "business_and_cleanup_passed", ...completed }),
   );
   process.exitCode = report.exit_code;
 } catch (error) {

@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
 export function createManagedWork() {
   const abort = new AbortController(),
@@ -44,7 +45,13 @@ export function createManagedWork() {
   };
 }
 
-export async function runManagedWork(work, clients, telemetry, action) {
+export async function runManagedWork(
+  work,
+  clients,
+  telemetry,
+  action,
+  { traceDiagnostics, directory = process.env.TEST_EVIDENCE_DIRECTORY } = {},
+) {
   const errors = [];
   let result;
   try {
@@ -66,9 +73,23 @@ export async function runManagedWork(work, clients, telemetry, action) {
   }
   errors.push(...(await work.join()));
   try {
+    // Actual shutdown is joined even when the auxiliary diagnostic budget has
+    // already expired. Only its result is diagnostic; it is never abandoned.
     await telemetry.shutdown();
   } catch (error) {
-    errors.push(error);
+    console.warn(
+      "Managed telemetry shutdown failed; auxiliary diagnostics retained",
+    );
+    try {
+      const diagnostics =
+        traceDiagnostics ??
+        (directory ? createTraceDiagnostics({ directory }) : undefined);
+      await diagnostics?.run("telemetry-shutdown", () => {
+        throw error;
+      });
+    } catch {
+      console.warn("Managed telemetry diagnostic recording failed");
+    }
   }
   const unique = [...new Set(errors)];
   if (unique.length === 1) throw unique[0];

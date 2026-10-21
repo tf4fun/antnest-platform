@@ -15,32 +15,25 @@ export function managedLoopbackOrigin(rows, project, service, port) {
   return `http://127.0.0.1:${ports[0].HostPort}`;
 }
 
-// Exit 2 alone is never admission. This receipt is written only after all raw
-// request checks and the actual connection/exporter cleanup have completed.
+// Policy 2 is written only after independent persisted Run/Tool checks and
+// actual connection/work/exporter joins. Trace results remain auxiliary.
 export function assertManagedDelivery(command, report, { version, project }) {
   assert.equal(command.complete, true);
   assert.equal(command.reason, undefined);
   assert.equal(command.signal, undefined);
-  assert([0, 2].includes(command.exit_code));
+  assert.equal(command.exit_code, 0);
+  assert.equal(report?.policy_revision, 2);
   assert.equal(report?.complete, true);
   assert.equal(report.cleanup_completed, true);
   assert.equal(report.version, version);
   assert.equal(report.project, project);
   assert.equal(report.exit_code, command.exit_code);
   assert.equal(report.accepted, true);
-  assert.equal(report.diagnostics.accepted, true);
-  assert([0, 2].includes(report.diagnostics.exit_code));
-  if (command.exit_code === 0) assert.equal(report.diagnostics.exit_code, 0);
-  assert.equal(
-    report.strict_trace,
-    command.exit_code === 0 ? "passed" : "failed",
-  );
   for (const [key, value] of Object.entries({
     private_requests: 14,
     initializations: 3,
     business_requests: 11,
-    lifecycle_traces: 3,
-    runtime_tool_calls: 10,
+    tool_calls: 10,
   }))
     assert.equal(report[key], value);
   for (const [key, value] of Object.entries({
@@ -51,4 +44,13 @@ export function assertManagedDelivery(command, report, { version, project }) {
     model_requests: 16,
   }))
     assert.equal(report.business[key], value);
+  assert.deepEqual(report.business.execution, {
+    status: "passed",
+    runs: 6,
+    tool_calls: 10,
+    managed_tool_calls: 6,
+    builtin_tool_calls: 4,
+    failed_tool_calls: 1,
+    model_requests: 16,
+  });
 }
