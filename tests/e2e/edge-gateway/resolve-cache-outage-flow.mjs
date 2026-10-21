@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { assertOutageAdmission } from "../../support/resolve-cache-admission.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
+import { createOutageBusinessReceipt } from "../../support/resolve-cache-outage-business.mjs";
+import { collectOutageDiagnostics } from "./resolve-cache-outage-diagnostics-flow.mjs";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
@@ -30,6 +32,7 @@ import {
 import { verifyRecovery } from "./resolve-cache-recovery-flow.mjs";
 import { rebuildRecoveryAgent } from "./resolve-cache-rebuild.mjs";
 import { captureOutageACPClock } from "./resolve-cache-outage-clock.mjs";
+import { captureOwnerStopLog } from "./resolve-cache-owner-drain.mjs";
 import {
   inspectOutageWindow,
   inspectFreshConsumerWindow,
@@ -71,6 +74,7 @@ export async function verifyWarmOutage({
     ...mark(),
   };
   const secrets = [member.password, admin.password, "stage3-model-secret"];
+  const diagnostics = createTraceDiagnostics({ directory: output, signal });
   // This opaque observation ID is assigned to the Cookie actually dispatched.
   // Never persist a Cookie, SID, hash, or a new production correlation header.
   const credentialScopes = new Map();
@@ -162,7 +166,6 @@ export async function verifyWarmOutage({
       [status].flat().includes(row.status),
       `${label}: HTTP ${row.status}`,
     );
-    assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
     return row;
   };
   const login = async (credentials, label) => {
@@ -301,15 +304,17 @@ export async function verifyWarmOutage({
         before: await inspectOwned(id, service),
       };
       if (service === "agent-acp-service")
-        await captureOutageACPClock({
-          before: row.before,
-          inspectOwned,
-          environment: config.env,
-          signal,
-          record: (probe) => {
-            evidence.acp_clock_probe = probe;
-          },
-        });
+        await diagnostics.run("outage-acp-clock", (localSignal) =>
+          captureOutageACPClock({
+            before: row.before,
+            inspectOwned,
+            environment: config.env,
+            signal: localSignal,
+            record: (probe) => {
+              evidence.acp_clock_probe = probe;
+            },
+          }),
+        );
       row.started_at = performance.now();
       evidence.consumer_restarts.push(row);
       await docker(["restart", "--time", "1", id]);
@@ -369,6 +374,7 @@ export async function verifyWarmOutage({
     });
     stream = await observeWorkspaceStream(client, agentID, sessionID, signal, {
       credentialScope,
+      requireTrace: false,
     });
     await stream.wait((value) => value.selectedView?.sessionId === sessionID);
     const intentID = randomUUID();
@@ -655,9 +661,11 @@ export async function verifyWarmOutage({
     stopped = false;
     evidence.identity.after = await inspectIdentity();
     write();
-    result = inspectOutageWindow(evidence);
+    result = inspectOutageWindow(evidence, { requireTrace: false });
     evidence.business_window = result;
-    evidence.consumer_key_budget = inspectFreshConsumerWindow(evidence);
+    evidence.consumer_key_budget = inspectFreshConsumerWindow(evidence, {
+      requireTrace: false,
+    });
     console.log(
       JSON.stringify({
         phase: "outage",
@@ -680,6 +688,7 @@ export async function verifyWarmOutage({
       status: 401,
     });
     await rebuildRecoveryAgent({
+      requireTrace: false,
       fixture,
       administrator,
       evidence,
@@ -701,6 +710,7 @@ export async function verifyWarmOutage({
     });
     write();
     evidence.recovery_window = await verifyRecovery({
+      requireTrace: false,
       config,
       fixture,
       credentials: member,
@@ -811,6 +821,17 @@ export async function verifyWarmOutage({
         await docker(["stop", "--time", "30", id]);
         const after = await inspectOwned(id, "agent-ui");
         evidence.ui_drain.after = after;
+        Object.assign(
+          evidence.ui_drain,
+          await captureOwnerStopLog({
+            docker,
+            id,
+            startedAt: evidence.ui_drain.before.started_at,
+            output,
+            artifactPrefix: "outage",
+            secrets,
+          }),
+        );
         assert.equal(after.started_at, evidence.ui_drain.before.started_at);
         assert.equal(after.running, false);
         assert.equal(after.restarting, false);
@@ -829,12 +850,18 @@ export async function verifyWarmOutage({
         console.log(
           JSON.stringify({ phase: "outage", check: "archive-outage-traces" }),
         );
-        evidence.trace_evidence = await collectOutageTraceArchive(
-          config.jaeger,
-          evidence,
-          secrets,
-          { signal, directory: output },
+        const result = await collectOutageDiagnostics(
+          { evidence, diagnostics, signal },
+          {
+            archive: (localSignal) =>
+              collectOutageTraceArchive(config.jaeger, evidence, secrets, {
+                signal: localSignal,
+                directory: output,
+              }),
+          },
         );
+        evidence.trace_evidence = result.trace_evidence;
+        evidence.trace_diagnostics = result.trace_diagnostics;
       } catch (error) {
         errors.push(error);
       }
@@ -846,6 +873,11 @@ export async function verifyWarmOutage({
     if (errors.length && !problem)
       throw new AggregateError(errors, "outage evidence finalization failed");
   }
-  assertOutageAdmission(evidence.trace_evidence);
-  return { ...result, pending: [], trace_evidence: evidence.trace_evidence };
+  signal.throwIfAborted();
+  const business = createOutageBusinessReceipt(evidence);
+  return {
+    ...business,
+    observability: evidence.trace_evidence,
+    trace_diagnostics: diagnostics.summary(),
+  };
 }

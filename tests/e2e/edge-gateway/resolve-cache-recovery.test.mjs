@@ -10,6 +10,97 @@ import { inspectRecoveryRunTraces } from "./resolve-cache-recovery-trace.mjs";
 import { workspaceChatFixture } from "../workspace-closeout/chat-fixtures.mjs";
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 
+function stripTraceFields(value) {
+  if (!value || typeof value !== "object") return;
+  for (const key of ["trace_id", "traceID", "model_span_id"]) delete value[key];
+  for (const child of Object.values(value)) stripTraceFields(child);
+}
+
+function businessRecoveryFixture() {
+  const value = recoveryFixture();
+  for (const [index, row] of value.http.entries())
+    row.label = `recovery-http-${index}`;
+  return value;
+}
+
+test("recovery business inspection accepts missing Trace fields only explicitly and preserves raw evidence", () => {
+  const value = businessRecoveryFixture();
+  const expected = inspectRecoveryWindow(value);
+  stripTraceFields(value);
+  const before = structuredClone(value);
+  assert.throws(() => inspectRecoveryWindow(value));
+  assert.deepEqual(
+    inspectRecoveryWindow(value, { requireTrace: false }),
+    expected,
+  );
+  assert.deepEqual(value, before);
+});
+
+for (const [name, change] of [
+  [
+    "SSE retirement beyond the business deadline",
+    (value, c) => (c.stream.closure.at = c.trigger.at + 30001),
+  ],
+  [
+    "terminal executor still running",
+    (value, c) => (c.audit_terminal.body.executor_state = "executing"),
+  ],
+  [
+    "foreign old credential",
+    (value, c) => (c.old_session.credential_scope = "foreign-scope"),
+  ],
+  [
+    "new observer traffic before retirement",
+    (value, c) =>
+      value.http.push({
+        label: "unexpected-observer-request",
+        method: "POST",
+        path: "/api/session/activity",
+        credential_scope: c.login.issued_credential_scope,
+        started_at: c.trigger.at + 1,
+        at: c.trigger.at + 2,
+      }),
+  ],
+  [
+    "missing actual mutation HTTP row",
+    (value, c) => value.http.splice(value.http.indexOf(c.mutation), 1),
+  ],
+  [
+    "duplicate actual mutation HTTP row",
+    (value, c) => value.http.push(structuredClone(c.mutation)),
+  ],
+  [
+    "different actual mutation label",
+    (value, c) => {
+      const index = value.http.indexOf(c.mutation);
+      value.http[index] = {
+        ...structuredClone(c.mutation),
+        label: "different-recovery-request",
+      };
+    },
+  ],
+  [
+    "changed actual mutation body at the same observation coordinates",
+    (value, c) => {
+      const index = value.http.indexOf(c.mutation);
+      value.http[index] = {
+        ...structuredClone(c.mutation),
+        body: { unrelated: true },
+      };
+    },
+  ],
+]) {
+  test(`recovery business inspection without Trace still rejects ${name}`, () => {
+    const value = businessRecoveryFixture();
+    stripTraceFields(value);
+    inspectRecoveryWindow(value, { requireTrace: false });
+    change(value, value.recovery.cases[0]);
+    const before = structuredClone(value);
+    assert.throws(() => inspectRecoveryWindow(value, { requireTrace: false }));
+    assert.deepEqual(value, before);
+  });
+}
+
 test("directory mutations preserve Membership-owned profile fields", () => {
   const entry = {
     user: { id: "user" },

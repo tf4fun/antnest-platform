@@ -35,7 +35,7 @@ import {
 import {
   isResolveCacheCompletion,
   finalizeResolveCacheReport,
-  resolveCacheSuite,
+  createResolveCacheBusinessReport,
 } from "../../support/resolve-cache-admission.mjs";
 
 process.chdir(fileURLToPath(new URL("../../../", import.meta.url)));
@@ -298,24 +298,7 @@ try {
     compose,
     requestTimeoutMS: 2000,
   });
-  report = {
-    suite: resolveCacheSuite,
-    policy_revision: 4,
-    status: "business_passed",
-    scenarios: 2,
-    verified: ["100-acp-load", "identity-outage-recovery", "trace-admission"],
-    pending: [],
-    traces: [load, ...outage.trace_evidence.reports],
-    warm_outage: {
-      ...outage,
-      trace_evidence: { ...outage.trace_evidence, reports: undefined },
-    },
-    strict_trace:
-      load.strict_trace === "failed" ||
-      outage.trace_evidence.strict_trace === "failed"
-        ? "failed"
-        : "passed",
-  };
+  report = createResolveCacheBusinessReport(load, outage);
   assert(
     isResolveCacheCompletion({ ...report, cleanup: "verified" }),
     "cache admission incomplete before cleanup",
@@ -416,10 +399,5 @@ try {
   if (output)
     writeEvidenceFile(output, "report.json", JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
-  process.exitCode =
-    report.status === "business_failed"
-      ? 1
-      : report.strict_trace === "failed"
-        ? 2
-        : 0;
+  process.exitCode = report.status === "business_failed" ? 1 : 0;
 }

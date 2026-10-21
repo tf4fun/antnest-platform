@@ -7,6 +7,12 @@ import {
 } from "./resolve-cache-outage.mjs";
 import { view } from "./resolve-cache-stream-fixtures.mjs";
 
+function stripTraceFields(value) {
+  if (!value || typeof value !== "object") return;
+  for (const key of ["trace_id", "traceID", "model_span_id"]) delete value[key];
+  for (const child of Object.values(value)) stripTraceFields(child);
+}
+
 function sample() {
   const selected = view("session-1", "cursor-3");
   selected.selectedView.outputWatermark = 3;
@@ -415,6 +421,83 @@ function consumers() {
   };
   return value;
 }
+
+test("legacy outage business inspection explicitly permits missing Trace fields without changing raw evidence", () => {
+  const value = sample();
+  const expected = inspectOutageWindow(value);
+  stripTraceFields(value);
+  const before = structuredClone(value);
+  assert.throws(() => inspectOutageWindow(value));
+  assert.deepEqual(
+    inspectOutageWindow(value, { requireTrace: false }),
+    expected,
+  );
+  assert.deepEqual(value, before);
+});
+
+test("legacy business model identity requires its receive time without Trace", () => {
+  const evidence = sample();
+  inspectOutageWindow(evidence, { requireTrace: false });
+  for (const observation of [
+    evidence.model_started,
+    evidence.model_held,
+    evidence.model_cancelled,
+  ])
+    delete observation.state.requests[0].received_at_ms;
+  assert.throws(() => inspectOutageWindow(evidence, { requireTrace: false }));
+});
+
+test("legacy outage business inspection without Trace still rejects an executing terminal Run", () => {
+  const value = sample();
+  stripTraceFields(value);
+  inspectOutageWindow(value, { requireTrace: false });
+  value.audit.body.executor_state = "running";
+  assert.throws(() => inspectOutageWindow(value, { requireTrace: false }));
+});
+
+for (const [name, create] of [
+  ["legacy", consumers],
+  ["Bridge", bridgeConsumers],
+]) {
+  test(`${name} consumer business inspection explicitly permits missing Trace fields and preserves raw evidence`, () => {
+    const value = create();
+    const expected = inspectFreshConsumerWindow(value);
+    stripTraceFields(value);
+    const before = structuredClone(value);
+    assert.throws(() => inspectFreshConsumerWindow(value));
+    assert.deepEqual(
+      inspectFreshConsumerWindow(value, { requireTrace: false }),
+      expected,
+    );
+    assert.deepEqual(value, before);
+  });
+}
+
+for (const [name, change] of [
+  [
+    "unchanged actual consumer process",
+    (value) =>
+      (value.consumer_restarts[0].after.started_at =
+        value.consumer_restarts[0].before.started_at),
+  ],
+  [
+    "exhausted actual process budget",
+    (value) => (value.identity.restart_started_at = 30100),
+  ],
+]) {
+  test(`consumer business inspection without Trace still rejects ${name}`, () => {
+    const value = bridgeConsumers();
+    stripTraceFields(value);
+    inspectFreshConsumerWindow(value, { requireTrace: false });
+    change(value);
+    const before = structuredClone(value);
+    assert.throws(() =>
+      inspectFreshConsumerWindow(value, { requireTrace: false }),
+    );
+    assert.deepEqual(value, before);
+  });
+}
+
 test("new Node process starts bound the two successfully admitted consumer key caches conservatively", () => {
   assert.equal(
     inspectFreshConsumerWindow(consumers()).conservative_deadline,

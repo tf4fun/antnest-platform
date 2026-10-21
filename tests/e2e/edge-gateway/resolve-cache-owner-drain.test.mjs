@@ -1,9 +1,73 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
 import * as lifecycle from "./resolve-cache-owner-drain.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
+
+test("auxiliary clock failure cannot skip actual owner stop and restoration", async () => {
+  const f = fixture();
+  const diagnostics = createTraceDiagnostics({ directory: f.directory });
+  f.controls.clockFailure = new Error("clock collector unavailable");
+  try {
+    const owner = await lifecycle.createLoadOwnerLifecycle({
+      ...f.options,
+      diagnostics,
+    });
+    f.measured();
+    let receipt;
+    await owner.collect(f.wire, async (value) => {
+      receipt = value;
+    });
+    assert.equal(receipt.restored, true);
+    assert.equal(receipt.acp_clock, undefined);
+    assert.equal(diagnostics.summary().status, "warning");
+    assert.equal(f.calls.filter((args) => args[0] === "stop").length, 1);
+    assert.equal(f.calls.filter((args) => args[0] === "start").length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("auxiliary clock failure cannot admit incomplete load bodies or forced owner drain", async () => {
+  for (const incomplete of [true, false]) {
+    const f = fixture();
+    const diagnostics = createTraceDiagnostics({ directory: f.directory });
+    f.controls.clockFailure = new Error("clock collector unavailable");
+    try {
+      const owner = await lifecycle.createLoadOwnerLifecycle({
+        ...f.options,
+        diagnostics,
+      });
+      f.measured();
+      if (incomplete) f.wire.requests.at(-1).body_complete = false;
+      else
+        f.controls.stopped = (states) => {
+          states.get("agent-ui").State.ExitCode = 137;
+        };
+      let collected = false;
+      await assert.rejects(
+        owner.collect(f.wire, async () => {
+          collected = true;
+        }),
+      );
+      assert.equal(collected, false);
+      assert.equal(diagnostics.summary().status, "warning");
+      assert.equal(
+        f.calls.filter((args) => args[0] === "stop").length,
+        incomplete ? 0 : 1,
+      );
+      assert.equal(
+        f.calls.filter((args) => args[0] === "start").length,
+        incomplete ? 0 : 1,
+      );
+    } finally {
+      f.cleanup();
+    }
+  }
+});
 
 test("a completed Session can collect after the real owner stop without inventing load responses", async () => {
   assert.equal(typeof lifecycle.createOwnerLifecycle, "function");
@@ -142,7 +206,6 @@ test("owner preparation failure prevents the stop and collector", async () => {
 for (const warning of [
   "Bridge drain did not close cleanly",
   "Bridge shutdown failed",
-  "Bridge telemetry shutdown failed",
   "Bridge authentication client shutdown failed",
 ])
   test(`Session cannot collect after a zero exit with ${warning}`, async () => {
@@ -162,6 +225,71 @@ for (const warning of [
       f.cleanup();
     }
   });
+
+for (const warning of [
+  "Bridge telemetry shutdown failed",
+  "Bridge telemetry shutdown warning",
+])
+  test(`telemetry-only log remains auxiliary: ${warning}`, async () => {
+    const f = fixture();
+    try {
+      f.controls.logs = warning;
+      const owner = await lifecycle.createOwnerLifecycle({
+        ...f.options,
+        artifactPrefix: "session",
+      });
+      await owner.collect((receipt) => {
+        assert.equal(receipt.log_checked, true);
+        assert.equal(receipt.forced_drain, false);
+      });
+    } finally {
+      f.cleanup();
+    }
+  });
+
+test("outage drain captures the stopped process original stdout and stderr before admission", async () => {
+  assert.equal(typeof lifecycle.captureOwnerStopLog, "function");
+  const f = fixture();
+  const raw = "Bridge drain did not close cleanly\n";
+  const calls = [];
+  try {
+    const result = await lifecycle.captureOwnerStopLog({
+      docker: async (...args) => {
+        calls.push(args);
+        return raw;
+      },
+      id: "original-ui",
+      startedAt: "2026-10-14T00:00:00Z",
+      output: f.directory,
+      artifactPrefix: "outage",
+      secrets: [],
+    });
+    assert.deepEqual(calls, [
+      [
+        [
+          "logs",
+          "--timestamps",
+          "--since",
+          "2026-10-14T00:00:00Z",
+          "original-ui",
+        ],
+        false,
+        { captureStderr: true },
+      ],
+    ]);
+    assert.deepEqual(result, {
+      log_checked: true,
+      log_sha256: createHash("sha256").update(raw).digest("hex"),
+      forced_drain: true,
+    });
+    assert.equal(
+      readFileSync(join(f.directory, "outage-owner-stop.private.log"), "utf8"),
+      raw,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
 
 test("cancelled collection still joins restoration with an independent cleanup budget", async () => {
   const f = fixture(),

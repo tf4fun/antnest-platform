@@ -6,6 +6,42 @@ import {
   assertUnchangedAudit,
 } from "../workspace-closeout/current-evidence.mjs";
 import { pollOutageObservation } from "./resolve-cache-runtime-work.mjs";
+import { inspectRebuildPreparationBusiness } from "./resolve-cache-rebuild-business.mjs";
+
+export function inspectRecoveryRebuild(evidence) {
+  const { p } = inspectRebuildPreparationBusiness(evidence, {
+    requireTrace: false,
+  });
+  const original = evidence.runtime,
+    accepted = evidence.audit.body;
+  const text = (value) => assert(typeof value === "string" && value.length > 0);
+  for (const value of [
+    evidence.agent_id,
+    evidence.session_id,
+    evidence.run_id,
+    accepted.principal_id,
+  ])
+    text(value);
+  assert.equal(accepted.run_id, evidence.run_id);
+  assert.equal(evidence.identity.healthy.running, true);
+  assert.equal(evidence.identity.healthy.health, "healthy");
+  assertCancelledRun(
+    accepted,
+    evidence.agent_id,
+    evidence.session_id,
+    original.execution_revision,
+  );
+  assert.equal(evidence.run_storage.after.record.state, "unresolved");
+  assert(original.quiescent?.work.effects);
+  assert(
+    Number.isFinite(p.started_at) &&
+      Number.isFinite(p.at) &&
+      p.at >= p.started_at &&
+      p.at - p.started_at <= 120000,
+    "complete bounded Rebuild observation required",
+  );
+  return p;
+}
 
 // One command, then read-only receipt queries. A Gateway 503 is retained as a
 // failure response; only the same command's completed operation and physical
@@ -18,6 +54,7 @@ export async function rebuildRecoveryAgent({
   http,
   readStoredRun,
   observeRuntime,
+  requireTrace = true,
   poll = pollOutageObservation,
   key = randomUUID(),
   timeoutMS = 120000,
@@ -75,14 +112,20 @@ export async function rebuildRecoveryAgent({
     p.responses.push(row);
     if (label === "command") p.command = row;
     remaining();
-    const actual = evidence.http.filter((r) => r.trace_id === row.trace_id);
+    const actual = evidence.http.filter((r) =>
+      requireTrace
+        ? r.trace_id === row.trace_id
+        : ["label", "method", "path", "started_at", "at"].every(
+            (key) => r[key] === row[key],
+          ),
+    );
     assert.equal(
       actual.length,
       1,
       "actual Rebuild response missing or duplicate",
     );
     assert.deepEqual(actual[0], row);
-    assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
+    if (requireTrace) assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
     assert.equal(row.path, path);
     assert.equal(row.method, options.body ? "POST" : "GET");
     assert(
@@ -295,8 +338,9 @@ export async function rebuildRecoveryAgent({
       "Rebuild changed accepted Run inventory",
     );
     remaining();
-    p.status = "passed";
     p.at = now();
+    inspectRecoveryRebuild(evidence);
+    p.status = "passed";
     return p;
   } catch (error) {
     p.status = "failed";

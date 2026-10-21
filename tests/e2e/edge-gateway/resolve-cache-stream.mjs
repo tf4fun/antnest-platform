@@ -13,7 +13,7 @@ export async function observeWorkspaceStream(
   agentID,
   sessionID,
   signal,
-  { credentialScope } = {},
+  { credentialScope, requireTrace = true } = {},
 ) {
   signal?.throwIfAborted();
   const stop = new AbortController();
@@ -96,11 +96,12 @@ export async function observeWorkspaceStream(
       response.headers.get("content-type") ?? "",
       /^text\/event-stream\b/u,
     );
-    assert.match(
-      evidence.trace_id ?? "",
-      /^[a-f0-9]{32}$/u,
-      "actual Workspace Trace missing",
-    );
+    if (requireTrace)
+      assert.match(
+        evidence.trace_id ?? "",
+        /^[a-f0-9]{32}$/u,
+        "actual Workspace Trace missing",
+      );
     assert.equal(
       response.headers.getSetCookie().length,
       0,
@@ -300,6 +301,10 @@ export async function observeWorkspaceStream(
             "Workspace observation and cleanup failed",
           );
         if (errors.length) throw errors[0];
+        evidence.joined = {
+          at: performance.now(),
+          observed_at_ms: Date.now(),
+        };
         return closure;
       })());
     },

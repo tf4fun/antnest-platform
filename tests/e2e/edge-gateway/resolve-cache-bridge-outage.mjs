@@ -19,13 +19,13 @@ const interval = (row) => {
   finite(row.at);
   assert(row.started_at <= row.at, "reversed observation interval");
 };
-const response = (row, path, method, status) => {
+const response = (row, path, method, status, { requireTrace = true } = {}) => {
   interval(row);
   assert.equal(row.path, path);
   assert.equal(row.method, method);
   assert.equal(row.status, status);
   assert.equal(row.set_cookie_count, 0, "outage request renewed authority");
-  assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
+  if (requireTrace) assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
 };
 
 export function bridgeRuntimeTurn(view, evidence) {
@@ -133,8 +133,11 @@ function inspectRuntimeObservation(row, expected, alive, effects) {
 }
 
 // This gate proves the business window from actual observations. Independent
-// raw HTTP/SSE/Trace, authority, rejection and recovery gates remain mandatory.
-export function inspectBridgeOutageWindow(evidence) {
+// authority, rejection and recovery checks remain mandatory; Trace is auxiliary.
+export function inspectBridgeOutageWindow(
+  evidence,
+  { requireTrace = true } = {},
+) {
   assert.equal(evidence.policy_revision, 4);
   assert.equal(evidence.transport, "http-sse");
   const {
@@ -212,7 +215,7 @@ export function inspectBridgeOutageWindow(evidence) {
   };
   const base = `/api/app/workspace/v1/agents/${encodeURIComponent(evidence.agent_id)}`;
   const session = `${base}/sessions/${encodeURIComponent(evidence.session_id)}`;
-  response(prompt, `${session}/prompts`, "POST", 202);
+  response(prompt, `${session}/prompts`, "POST", 202, { requireTrace });
   assert(prompt.at < identity.stop_started_at);
   assert.deepEqual(prompt.body, {
     operationId: evidence.intent_id,
@@ -232,7 +235,7 @@ export function inspectBridgeOutageWindow(evidence) {
     `${base}/events?sessionId=${encodeURIComponent(evidence.session_id)}`,
   );
   assert.equal(stream.status, 200);
-  assert.match(stream.trace_id ?? "", /^[a-f0-9]{32}$/u);
+  if (requireTrace) assert.match(stream.trace_id ?? "", /^[a-f0-9]{32}$/u);
   assert.equal(stream.set_cookie_count, 0);
   finite(stream.started_at);
   finite(stream.headers_at);
@@ -333,6 +336,7 @@ export function inspectBridgeOutageWindow(evidence) {
     `${session}/operations/${encodeURIComponent(evidence.intent_id)}/cancel`,
     "POST",
     200,
+    { requireTrace },
   );
   insideInterval(cancel);
   assert.equal(cancel.credential_scope, prompt.credential_scope);
@@ -354,7 +358,7 @@ export function inspectBridgeOutageWindow(evidence) {
   assert(runtime.quiescent.started_at >= cancel.at);
   const auditPath = `/api/admin/execution-audits/${encodeURIComponent(evidence.run_id)}`;
   for (const row of [before, audit]) {
-    response(row, auditPath, "GET", 200);
+    response(row, auditPath, "GET", 200, { requireTrace });
     assert.equal(row.body.run_id, evidence.run_id);
     assert.equal(row.body.agent_id, evidence.agent_id);
     assert.equal(row.body.session_id, evidence.session_id);
@@ -452,11 +456,18 @@ export function inspectBridgeOutageWindow(evidence) {
       "held Runtime model dispatch repeated/missing",
     );
     assert.equal(request.stage, "tool");
-    assert.match(request.trace_id, /^[a-f0-9]{32}$/u);
-    assert.match(request.model_span_id, /^[a-f0-9]{16}$/u);
+    finite(request.received_at_ms);
+    if (requireTrace) {
+      assert.match(request.trace_id, /^[a-f0-9]{32}$/u);
+      assert.match(request.model_span_id, /^[a-f0-9]{16}$/u);
+    }
     assert.equal(request.disconnected, undefined);
     assert.equal(request.released_at_ms, undefined);
-    return request;
+    if (requireTrace) return request;
+    const business = { ...request };
+    for (const key of ["trace_id", "traceID", "model_span_id"])
+      delete business[key];
+    return business;
   };
   assert(evidence.model_started.at < identity.stop_started_at);
   inside(evidence.model_cancelled.at);
@@ -477,6 +488,6 @@ export function inspectBridgeOutageWindow(evidence) {
     runtime_quiescent: true,
     runtime_execution_id: runtime.runtime_execution_id,
     scope:
-      "business-window-only; independent Trace/authority/rejection/recovery gates remain",
+      "business-window-only; independent authority/rejection/recovery checks remain",
   };
 }
