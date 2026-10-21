@@ -135,6 +135,15 @@ of an ACP acknowledgement for the current binding. A migration must establish
 current readiness from a matching applied-configuration fact; healthy Runtime
 state or a legacy event alone is insufficient.
 
+The active event contract continues to accept historical `schema_version: 1`
+events without new required fields. The formal contract design must distinguish
+new ACP-acknowledged readiness proofs through a version or payload shape; this
+document does not choose that representation. It must not add required fields to
+historical `agent_ready` events. Compatibility changes for current strict
+readers and the active manifest and schemas must be completed before producers
+emit the new facts. This pending document leaves active control revision 40 and
+the existing schemas unchanged.
+
 During rollout, a legacy response without the new readiness field is unknown,
 not ready. Consumers must not infer readiness from lifecycle completion,
 `runtime_state: "available"`, an old event, or a missing field. Strict readers
