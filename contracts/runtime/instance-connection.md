@@ -133,9 +133,9 @@ reference contains only the existing Runtime revision/execution/endpoint plus
 The [sealed warm-admission amendment](../agent-acp/execution-api.md#sealed-warm-admission)
 permits ACP to retain the private material of its current configuration in
 authenticated encrypted storage, separately from that public projection.
-This is a pending #50 owning-service implementation, not a claim that the
-current ACP producer already restores authority after restart. It adds no RPC
-or snapshot wire fields. Controller still does not persist relayed tokens;
+ACP implements this as a #50 owning-service batch; cross-service restart and
+admission acceptance remains a separate integration batch. It adds no RPC or
+snapshot wire fields. Controller still does not persist relayed tokens;
 `controller_relay.persist_token: false` retains its existing scope and meaning.
 
 The private token is installed in ACP's own volatile, mode-0700 instance
@@ -169,8 +169,8 @@ public-only row must receive authenticated publication before its first warm
 restart; migration cannot synthesize authority. A current closed or empty
 snapshot remains non-executable. Warm recovery cannot observe a Controller
 revocation that has not been published to ACP, but cannot undo any newer
-revocation committed there. ACP producer implementation and cross-service warm
-restart acceptance remain pending.
+revocation committed there. ACP producer acceptance does not establish the
+pending cross-service warm restart acceptance.
 
 ## Runtime admission, status and Host
 
