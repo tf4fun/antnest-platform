@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
-import { acpPromptRequestBytes, type IntentReceipt } from "../adapters/acp-http.ts";
+import { AcpPromptError, acpPromptRequestBytes, type IntentReceipt } from "../adapters/acp-http.ts";
+import type { OperationError } from "../protocol/agent-view-delta.ts";
 
 export type PromptIntent = {
   sessionId: string;
@@ -31,6 +32,7 @@ export type Operation = {
   outputWatermark?: number;
   stopReason?: string | null;
   errorClass?: string | null;
+  error?: OperationError;
 };
 
 type Dependencies = {
@@ -215,15 +217,27 @@ export class OperationCoordinator {
             this.dependencies.changed?.(input.sessionId);
           }
         },
-        () => {
+        (cause: unknown) => {
           entry.inFlight = false;
           entry.retired = true;
           entry.releaseWork();
-          if (entry.operation.acceptance === "bridge") {
+          if (entry.operation.acceptance !== "acp") {
+            // A refusal cannot prove that this intent was never accepted.
+            // Keep querying the original intent; never turn retry guidance
+            // into another Prompt dispatch or a synthetic durable outcome.
+            const classification = cause instanceof AcpPromptError ? cause.classification : undefined;
             this.setOperation(entry, {
               ...entry.operation,
               acceptance: "unknown",
               phase: "uncertain",
+              ...(classification === undefined ? {} : { error: {
+                code: classification.code,
+                message: classification.message,
+                requestId: randomUUID(),
+                operationId: input.intentId,
+                retryable: false,
+                recovery: "query_operation" as const,
+              } }),
             });
             this.dependencies.changed?.(input.sessionId);
           }
@@ -368,7 +382,9 @@ export class OperationCoordinator {
       }
       return operation;
     }
-    if (local?.inFlight === true) return { ...local.operation };
+    // Absence is weaker evidence than an already observed durable receipt.
+    if (local?.inFlight === true || local?.operation.acceptance === "acp")
+      return { ...local.operation };
     if (local !== undefined && local.operation.phase !== "uncertain") {
       this.setOperation(local, {
         operationId: intentId,
@@ -378,6 +394,7 @@ export class OperationCoordinator {
       });
       this.dependencies.changed?.(sessionId);
     }
+    if (local !== undefined) return { ...local.operation };
     return {
       operationId: intentId,
       sessionId,

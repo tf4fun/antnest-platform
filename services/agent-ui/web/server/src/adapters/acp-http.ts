@@ -194,6 +194,17 @@ export class AcpLoadError extends Error {
   }
 }
 
+export class AcpPromptError extends Error {
+  public readonly classification: AcpErrorClassification;
+
+  public constructor(cause: unknown, capability: AcpErrorCapability) {
+    const classification = classifyAcpError(cause, capability);
+    super(classification.message, { cause });
+    this.name = "AcpPromptError";
+    this.classification = classification;
+  }
+}
+
 export function sessionRequestFailure(cause: unknown): SessionNotFoundError | undefined {
   if (!(cause instanceof acp.RequestError) || cause.data === null ||
     typeof cause.data !== "object" || Array.isArray(cause.data)) return undefined;
@@ -416,11 +427,15 @@ export class AcpHttpBridge {
     });
   }
 
-  public prompt(input: PromptInput): Promise<acp.PromptResponse> {
-    return this.connection.agent.request(
-      acp.methods.agent.session.prompt,
-      promptParams(input),
-    );
+  public async prompt(input: PromptInput): Promise<acp.PromptResponse> {
+    try {
+      return await this.connection.agent.request(
+        acp.methods.agent.session.prompt,
+        promptParams(input),
+      );
+    } catch (cause) {
+      throw new AcpPromptError(cause, this.errorCapability);
+    }
   }
 
   public cancel(sessionId: string, expectedRunId: string): Promise<void> {

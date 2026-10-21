@@ -603,3 +603,164 @@ test("a completed bootstrap cannot publish after its browser session binding cha
   expect(result.current.workspace).toBeUndefined();
   expect(result.current.error).toBe("");
 });
+
+const safePromptError = {
+  code: "internal_error", message: "Agent request failed", requestId: "request-1",
+  operationId: "intent-1", retryable: false, recovery: "query_operation",
+} as const;
+
+function uncertainPromptOperation(sessionId = "session-1", operationId = "intent-1") {
+  return { operationId, sessionId, phase: "uncertain", acceptance: "unknown",
+    error: { ...safePromptError, operationId } };
+}
+
+function promptErrorWorkspace(submit?: (intentId: string) => Promise<unknown>) {
+  let selectedSessionId: string | null = "session-1";
+  let operations: unknown[] = [];
+  let changed: (snapshot: unknown) => void = () => {};
+  const snapshot = () => ({ connection: "ready", view: { agentId: "agent-1",
+    bridgeEpoch: "epoch-1", promptCapabilities: {}, availability: "ready",
+    activeSessionId: null, selectedSessionId,
+    selectedView: selectedSessionId === null ? null : { historyState: "ready" } },
+    operations, permissions: [],
+    ...(selectedSessionId === null ? {} : { conversation: { id: selectedSessionId,
+      agentId: "agent-1", title: selectedSessionId, updatedAt: "now", messages: [] } }),
+  });
+  const observe = (next: unknown[]) => { operations = next; changed(snapshot()); };
+  const submitPrompt = vi.fn(async (intentId: string) => {
+    const result = submit ? await submit(intentId) : uncertainPromptOperation("session-1", intentId);
+    observe([result]);
+    return result;
+  });
+  const close = vi.fn();
+  const api = { sessionCurrent: () => true, onSessionCancelled: () => () => {},
+    bootstrap: async () => ({ principal: { organizationSlug: "engineering",
+      organizationName: "Engineering", userId: "user-1", organizationId: "org-1",
+      administrator: false }, agents: [{ agentId: "agent-1", name: "Agent",
+      lifecycle: "created", activation: "enabled", runtime: "available" }],
+      renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1" }),
+    sessions: async () => ({ items: [
+      { sessionId: "session-1", title: "One", updatedAt: "now", activeOperationId: null },
+      { sessionId: "session-2", title: "Two", updatedAt: "now", activeOperationId: null },
+    ], nextCursor: null }),
+  };
+  const options: NonNullable<Parameters<typeof useBridgeWorkspace>[0]> = {
+    api: api as never,
+    makeController: (input) => {
+      changed = input.changed as (snapshot: unknown) => void;
+      return { get snapshot() { return snapshot(); },
+        select: async (sessionId: string | null) => {
+          selectedSessionId = sessionId;
+          changed(snapshot());
+        }, submitPrompt, close } as never;
+    },
+  };
+  return { options, observe, submitPrompt, close };
+}
+
+test("selected Session shows the safe operation error with its original-operation query hint", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
+  const fixture = promptErrorWorkspace();
+  const { result } = renderHook(() => useBridgeWorkspace(fixture.options));
+  await waitFor(() => expect(result.current.conversationReady).toBe(true));
+  act(() => result.current.setDraft("Keep my next unsent message"));
+  act(() => fixture.observe([uncertainPromptOperation()]));
+  expect(result.current.interactionError).toContain(safePromptError.message);
+  expect(result.current.interactionError).toMatch(/original operation/i);
+  expect(result.current.interactionError).not.toContain(safePromptError.code);
+  expect(result.current.interactionError).not.toContain(safePromptError.requestId);
+  expect(result.current.draft).toBe("Keep my next unsent message");
+  await act(async () => { await result.current.submit(); });
+  expect(fixture.submitPrompt).not.toHaveBeenCalled();
+});
+
+for (const phase of ["running", "completed"] as const) {
+  test(`durable ${phase} receipt clears the local uncertain error and query hint`, async () => {
+    window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
+    const fixture = promptErrorWorkspace();
+    const { result } = renderHook(() => useBridgeWorkspace(fixture.options));
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+    act(() => result.current.setDraft("Submit once"));
+    await act(async () => { await result.current.submit(); });
+    expect(fixture.submitPrompt).toHaveBeenCalledOnce();
+    expect(result.current.interactionError).toContain(safePromptError.message);
+    expect(result.current.interactionError).toMatch(/original operation/i);
+    act(() => result.current.setDraft("Keep the following draft"));
+    await act(async () => { await result.current.submit(); });
+    expect(fixture.submitPrompt).toHaveBeenCalledOnce();
+    const intentId = fixture.submitPrompt.mock.calls[0]![0];
+    act(() => fixture.observe([{ operationId: intentId, sessionId: "session-1", phase,
+      acceptance: "acp", runId: "run-1", outputWatermark: 2 }]));
+    expect(result.current.interactionError || "").toBe("");
+    expect(result.current.draft).toBe("Keep the following draft");
+    expect(fixture.submitPrompt).toHaveBeenCalledOnce();
+  });
+}
+
+test("another Session's observed error never becomes the selected Session's input error", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-2");
+  const fixture = promptErrorWorkspace();
+  const { result } = renderHook(() => useBridgeWorkspace(fixture.options));
+  await waitFor(() => expect(result.current.conversationReady).toBe(true));
+  act(() => result.current.setDraft("Session two draft"));
+  act(() => fixture.observe([uncertainPromptOperation()]));
+  expect(result.current.interactionError || "").toBe("");
+  expect(result.current.draft).toBe("Session two draft");
+  act(() => result.current.selectConversation("session-1"));
+  await waitFor(() => expect(result.current.conversationReady).toBe(true));
+  expect(result.current.interactionError).toContain(safePromptError.message);
+  expect(result.current.interactionError).toMatch(/original operation/i);
+  act(() => result.current.selectConversation("session-2"));
+  await waitFor(() => expect(result.current.conversationReady).toBe(true));
+  expect(result.current.interactionError || "").toBe("");
+  expect(result.current.draft).toBe("Session two draft");
+});
+
+test("a late Prompt receipt stays with its original Session and is removed by durable evidence", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
+  let enter!: () => void;
+  let finish!: (value: unknown) => void;
+  let intentId = "";
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const receipt = new Promise<unknown>(resolve => { finish = resolve; });
+  const fixture = promptErrorWorkspace(async (id) => {
+    intentId = id;
+    enter();
+    return receipt;
+  });
+  const { result, unmount } = renderHook(() => useBridgeWorkspace(fixture.options));
+  let pending: Promise<void> | undefined;
+  try {
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+    act(() => result.current.setDraft("Original Session message"));
+    act(() => { pending = result.current.submit(); });
+    await entered;
+    act(() => result.current.selectConversation("session-2"));
+    await waitFor(() => expect(result.current.workspace?.activeConversationId).toBe("session-2"));
+    act(() => result.current.setDraft("New selected Session draft"));
+    await act(async () => {
+      finish(uncertainPromptOperation("session-1", intentId));
+      await pending;
+    });
+    expect(result.current.interactionError || "").toBe("");
+    expect(result.current.draft).toBe("New selected Session draft");
+    act(() => result.current.selectConversation("session-1"));
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+    expect(result.current.interactionError).toContain(safePromptError.message);
+    expect(result.current.interactionError).toMatch(/original operation/i);
+    act(() => result.current.selectConversation("session-2"));
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+    act(() => fixture.observe([{ operationId: intentId, sessionId: "session-1",
+      phase: "completed", acceptance: "acp", runId: "run-1", outputWatermark: 2 }]));
+    expect(result.current.interactionError || "").toBe("");
+    act(() => result.current.selectConversation("session-1"));
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+    expect(result.current.interactionError || "").toBe("");
+    expect(fixture.submitPrompt).toHaveBeenCalledOnce();
+  } finally {
+    finish(uncertainPromptOperation("session-1", intentId || "intent-1"));
+    if (pending) await act(async () => { await pending; });
+    unmount();
+  }
+  expect(fixture.close).toHaveBeenCalledOnce();
+});

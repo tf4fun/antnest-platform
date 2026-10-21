@@ -688,3 +688,297 @@ test(
     }
   },
 );
+
+const promptPrivateCanary = "PRIVATE-PROMPT-ERROR-CANARY";
+const unknownPromptClassification = {
+  kind: "unknown",
+  code: errorCatalog.fallback.data_code,
+  message: errorCatalog.fallback.message,
+  retryable: false,
+  retryDirective: errorCatalog.fallback.recovery,
+  requiresRunQuery: true,
+};
+
+function promptAdmissionCase(code) {
+  const definition = errorCatalog.errors[code];
+  const data = {
+    code,
+    retryable: definition.retryable,
+    ...(definition.retry_after_ms === undefined
+      ? {}
+      : { retry_after_ms: definition.retry_after_ms }),
+  };
+  return {
+    name: code,
+    capability: { version: 1 },
+    receipt: {
+      code: definition.json_rpc_code,
+      message: definition.message,
+      data,
+    },
+    expected: {
+      kind: "admission",
+      code,
+      message: definition.message,
+      retryable: definition.retryable,
+      retryDirective: definition.recovery,
+      ...(definition.retry_after_ms === undefined
+        ? {}
+        : { retryAfterMs: definition.retry_after_ms }),
+      requiresRunQuery: definition.recovery === "query_intent",
+    },
+  };
+}
+
+async function withPromptErrorPeer(t, scenario, check) {
+  const prompts = [];
+  const unexpectedMethods = [];
+  const unexpectedRoutes = [];
+  let initialized = 0;
+  const unexpected = (method) => () => {
+    unexpectedMethods.push(method);
+    throw new acp.RequestError(-32601, "Unexpected fixture method");
+  };
+  const agent = acp
+    .agent({ name: "agent-ui-prompt-errors-fixture" })
+    .onRequest(acp.methods.agent.initialize, () => {
+      initialized++;
+      return {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+            configurationCas: 1,
+          },
+          ...(scenario.capability === undefined
+            ? {}
+            : { "antnest.dev/errors": scenario.capability }),
+        },
+      };
+    })
+    .onRequest(acp.methods.agent.session.prompt, ({ params }) => {
+      prompts.push(structuredClone(params));
+      throw new acp.RequestError(
+        scenario.receipt.code,
+        scenario.receipt.message,
+        scenario.receipt.data,
+      );
+    })
+    .onRequest(acp.methods.agent.session.load, unexpected("session/load"))
+    .onRequest(acp.methods.agent.session.list, unexpected("session/list"))
+    .onRequest(acp.methods.agent.session.new, unexpected("session/new"))
+    .onRequest(acp.methods.agent.session.fork, unexpected("session/fork"));
+  const transport = new AcpServer({ agent });
+  const acpHandler = createNodeHttpHandler(transport);
+  const listener = createServer((request, response) => {
+    if (request.url === "/v1/acp") {
+      acpHandler(request, response);
+      return;
+    }
+    unexpectedRoutes.push({ method: request.method, path: request.url });
+    request.resume();
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ code: "unexpected_test_route" }));
+  });
+  const workload = new ServiceAuthentication(testSecurityEnvironment());
+  const failures = [];
+  let bridge;
+  try {
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    const address = listener.address();
+    assert.ok(address && typeof address !== "string");
+    const baseUrl = new URL(`http://127.0.0.1:${address.port}`);
+    bridge = await AcpHttpBridge.open({
+      baseUrl,
+      scope: testScope({
+        organizationId: "org-1",
+        principalId: "user-1",
+        agentId: "agent-1",
+      }),
+      fetchImpl: workload.fetchFor("agent-acp-service", baseUrl.toString()),
+      signal: t.signal,
+      callbacks: {
+        update: () => {},
+        requestPermission: () => ({ outcome: { outcome: "cancelled" } }),
+      },
+    });
+    await check(bridge);
+    assert.equal(
+      initialized,
+      1,
+      "Prompt failure must not reconnect or initialize again",
+    );
+    assert.deepEqual(
+      unexpectedMethods,
+      [],
+      "Prompt failure must not dispatch recovery methods",
+    );
+    assert.deepEqual(
+      unexpectedRoutes,
+      [],
+      "classification must not perform an implicit state or intent query",
+    );
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    for (const close of [
+      () => bridge?.close(),
+      () => transport.close(),
+      () => workload.close(),
+      async () => {
+        if (!listener.listening) return;
+        listener.closeAllConnections();
+        await new Promise((resolve, reject) =>
+          listener.close((error) => (error ? reject(error) : resolve())),
+        );
+      },
+    ]) {
+      try {
+        await close();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length)
+      throw new AggregateError(
+        failures,
+        "ACP Prompt classification test and cleanup failed",
+      );
+  }
+  return prompts;
+}
+
+const promptErrorCases = [
+  ...[
+    "agent_busy",
+    "access_denied",
+    "session_access_denied",
+    "session_not_found",
+    "runtime_barrier_required",
+    "intent_already_recorded",
+  ].map(promptAdmissionCase),
+  ...["failed", "unresolved"].map((outcome) => {
+    const definition = errorCatalog.terminal_outcomes[outcome];
+    const code =
+      outcome === "failed" ? "provider_request_failed" : "tool_outcome_unknown";
+    return {
+      name: `terminal ${outcome}`,
+      capability: { version: 1 },
+      receipt: {
+        code: definition.json_rpc_code,
+        message: definition.message,
+        data: { code, retryable: false },
+      },
+      expected: {
+        kind: "terminal",
+        code,
+        message: definition.message,
+        retryable: false,
+        retryDirective: "none",
+        requiresRunQuery: true,
+      },
+    };
+  }),
+  ...[
+    {
+      name: "mismatched numeric receipt",
+      receipt: { ...promptAdmissionCase("agent_busy").receipt, code: -32011 },
+    },
+    {
+      name: "private upstream message",
+      receipt: {
+        ...promptAdmissionCase("agent_busy").receipt,
+        message: promptPrivateCanary,
+      },
+    },
+    {
+      name: "malformed private data",
+      receipt: {
+        ...promptAdmissionCase("agent_busy").receipt,
+        data: {
+          code: "agent_busy",
+          retryable: "true",
+          private: promptPrivateCanary,
+        },
+      },
+    },
+  ].map((scenario) => ({
+    ...scenario,
+    capability: { version: 1 },
+    expected: unknownPromptClassification,
+  })),
+  ...[
+    { name: "missing error capability", capability: undefined },
+    { name: "unknown error capability", capability: { version: 2 } },
+  ].map((scenario) => ({
+    ...scenario,
+    receipt: promptAdmissionCase("agent_busy").receipt,
+    expected: unknownPromptClassification,
+  })),
+];
+
+for (const [index, scenario] of promptErrorCases.entries())
+  test(
+    `ACP Prompt classifies ${scenario.name} through the original HTTP/SSE connection without replay`,
+    { timeout: 10_000 },
+    async (t) => {
+      const PromptError = acpHttp.AcpPromptError;
+      assert.equal(
+        typeof PromptError,
+        "function",
+        "AcpPromptError is required",
+      );
+      const input = {
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "the original Prompt input" }],
+        intentId: `prompt-error-intent-${index}`,
+        expectedAppendVersion: 7,
+      };
+      const prompts = await withPromptErrorPeer(t, scenario, async (bridge) => {
+        await assert.rejects(bridge.prompt(input), (error) => {
+          assert.ok(error instanceof PromptError);
+          assert.equal(error.name, "AcpPromptError");
+          assert.deepEqual(error.classification, scenario.expected);
+          assert.equal(error.message, scenario.expected.message);
+          assert.ok(error.cause instanceof acp.RequestError);
+          assert.equal(error.cause.code, scenario.receipt.code);
+          assert.equal(error.cause.message, scenario.receipt.message);
+          assert.deepEqual(error.cause.data, scenario.receipt.data);
+          assert.equal(
+            Object.getOwnPropertyDescriptor(error, "cause")?.enumerable,
+            false,
+          );
+          for (const publicText of [
+            String(error),
+            error.stack,
+            JSON.stringify(error),
+          ])
+            assert(
+              !publicText.includes(promptPrivateCanary),
+              "private Prompt evidence escaped its cause",
+            );
+          return true;
+        });
+      });
+      assert.deepEqual(
+        prompts,
+        [
+          {
+            sessionId: input.sessionId,
+            prompt: input.prompt,
+            _meta: {
+              "antnest.dev/intent": {
+                intentId: input.intentId,
+                expectedAppendVersion: input.expectedAppendVersion,
+              },
+            },
+          },
+        ],
+        "the original intent must reach the actual Prompt peer exactly once",
+      );
+    },
+  );

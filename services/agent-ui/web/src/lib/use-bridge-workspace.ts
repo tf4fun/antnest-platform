@@ -143,6 +143,10 @@ export function useBridgeWorkspace(options: {
   const selected = workspace?.activeConversationId;
   const selectedOperations = bridge.operations.filter((item) => item.sessionId === selected);
   const activeOperation = selectedOperations.find((item) => activePhase(item.phase));
+  const uncertainOperation = selectedOperations.find((item) => item.phase === "uncertain");
+  const observedPromptError = uncertainOperation === undefined ? undefined :
+    `${uncertainOperation.error?.message ? uncertainOperation.error.message + " " : ""}` +
+    "Message status is uncertain. Refresh this conversation to check the original operation.";
   const latestFailedTurn = [...(activeConversation?.messages ?? [])].reverse().find((item) =>
     item.role === "user" && item.turnOutcome === "failed");
   const latestUserTurn = [...(activeConversation?.messages ?? [])].reverse().find((item) =>
@@ -450,11 +454,9 @@ export function useBridgeWorkspace(options: {
         controller.snapshot.view?.selectedSessionId !== sessionId ||
         controller.snapshot.view.selectedView?.historyState !== "ready")
         return;
-      const operation = await controller.submitPrompt(crypto.randomUUID(), blocks);
+      await controller.submitPrompt(crypto.randomUUID(), blocks);
       if (!live()) return;
       presentation.clearSubmitted(sessionId, text, attachments);
-      if (operation.phase === "uncertain")
-        presentation.setErrorFor(sessionId, "Message status is uncertain. Refresh this conversation to check the original operation.");
     } catch (cause) {
       if (!live()) return;
       if (creatingSession && (!(cause instanceof WorkspaceApiError) ||
@@ -626,7 +628,7 @@ export function useBridgeWorkspace(options: {
     draft: presentation.draft, setDraft: presentation.setDraft,
     attachments: presentation.attachments,
     sending, cancelling, loggingOut, connectionError,
-    interactionError: presentation.error || observedFailure,
+    interactionError: presentation.error || observedPromptError || observedFailure,
     permissions: [...bridge.permissions], configuring, creating, refreshing,
     history: { ready: conversationReady,
       error: blockedHistory ? "Latest conversation history could not be loaded. Showing saved messages read-only." : historyError,

@@ -249,3 +249,208 @@ test("a replaced session during recovery never publishes uncertain state", async
   assert.deepEqual(updates, []);
   assert.deepEqual(tracker.snapshot, []);
 });
+
+const publicOperationError = {
+  code: "internal_error",
+  message: "Agent request failed",
+  requestId: "request-1",
+  operationId: "intent-1",
+  retryable: false,
+  recovery: "query_operation",
+} as const;
+
+function uncertainOperation(error: unknown = publicOperationError) {
+  return { operationId: "intent-1", sessionId: "session-1", phase: "uncertain",
+    acceptance: "unknown", error };
+}
+
+function trackedError(operation: ReturnType<BridgeOperationTracker["get"]>): unknown {
+  return operation && "error" in operation ? operation.error : undefined;
+}
+
+test("observed operation retains its safe error and the original intent without retrying", async () => {
+  const calls: string[] = [];
+  const changes: unknown[] = [];
+  const tracker = new BridgeOperationTracker({ agentId: "agent-1", api: {
+    sessionCurrent: () => true,
+    prompt: async () => { calls.push("prompt"); throw new Error("unexpected Prompt"); },
+    operation: async () => { calls.push("operation"); throw new Error("unexpected lookup"); },
+    cancel: async () => { calls.push("cancel"); throw new Error("unexpected cancel"); },
+  }, changed: operation => changes.push(operation) });
+  try {
+    tracker.observe([uncertainOperation()]);
+    assert.deepEqual(tracker.get("session-1", "intent-1"), uncertainOperation());
+    assert.deepEqual(tracker.snapshot, [uncertainOperation()]);
+    assert.deepEqual(changes, [uncertainOperation()]);
+    await assert.rejects(tracker.submit("session-1", admission), /already tracked/u);
+    assert.deepEqual(calls, []);
+  } finally {
+    tracker.close();
+  }
+});
+
+test("lost HTTP admission recovers the original public error without another Prompt", async () => {
+  const calls: unknown[] = [];
+  const changes: unknown[] = [];
+  const tracker = new BridgeOperationTracker({ agentId: "agent-1", api: {
+    sessionCurrent: () => true,
+    prompt: async (...args) => {
+      calls.push(["prompt", ...args]);
+      throw new WorkspaceApiError("Response was lost", undefined,
+        "workspace_network_error", "query_operation", "intent-1");
+    },
+    operation: async (...args) => {
+      calls.push(["operation", ...args]);
+      return uncertainOperation();
+    },
+    cancel: async () => assert.fail("unexpected cancel"),
+  }, changed: operation => changes.push(operation) });
+  try {
+    const result = await tracker.submit("session-1", admission);
+    assert.deepEqual(result, uncertainOperation());
+    assert.deepEqual(tracker.get("session-1", "intent-1"), uncertainOperation());
+    assert.deepEqual(changes, [uncertainOperation()]);
+    await assert.rejects(tracker.submit("session-1", admission), /already tracked/u);
+    assert.deepEqual(calls, [
+      ["prompt", "agent-1", "session-1", admission, undefined],
+      ["operation", "agent-1", "session-1", "intent-1", undefined],
+    ]);
+  } finally {
+    tracker.close();
+  }
+});
+
+const privateErrorCanary = "private-operation-token-canary";
+const invalidPublicErrors = [
+  ["empty code", { ...publicOperationError, code: "" }],
+  ["non-string message", { ...publicOperationError, message: { secret: privateErrorCanary } }],
+  ["missing request identity", { code: publicOperationError.code,
+    message: publicOperationError.message, operationId: "intent-1",
+    retryable: false, recovery: "query_operation" }],
+  ["another operation", { ...publicOperationError, operationId: "intent-other" }],
+  ["retry instruction", { ...publicOperationError, retryable: true }],
+  ["read retry recovery", { ...publicOperationError, recovery: "retry_read" }],
+  ["private details", { ...publicOperationError, details: { token: privateErrorCanary } }],
+  ["private cause", { ...publicOperationError, cause: privateErrorCanary }],
+] as const;
+
+for (const delivery of ["observe", "HTTP recovery"] as const) {
+  for (const [label, error] of invalidPublicErrors) {
+    test(`${delivery} excludes operation errors containing ${label}`, async () => {
+      let submits = 0;
+      let reads = 0;
+      const changes: unknown[] = [];
+      const tracker = new BridgeOperationTracker({ agentId: "agent-1", api: {
+        sessionCurrent: () => true,
+        prompt: async () => {
+          submits++;
+          throw new WorkspaceApiError("Response was lost", undefined,
+            "workspace_network_error", "query_operation", "intent-1");
+        },
+        operation: async () => { reads++; return uncertainOperation(error); },
+        cancel: async () => assert.fail("unexpected cancel"),
+      }, changed: operation => changes.push(operation) });
+      try {
+        if (delivery === "observe") tracker.observe([uncertainOperation(error)]);
+        else await tracker.submit("session-1", admission);
+        assert.equal(trackedError(tracker.get("session-1", "intent-1")), undefined);
+        assert.ok(!JSON.stringify([tracker.snapshot, changes]).includes(privateErrorCanary));
+        assert.equal(submits, delivery === "observe" ? 0 : 1);
+        assert.equal(reads, delivery === "observe" ? 0 : 1);
+      } finally {
+        tracker.close();
+      }
+    });
+  }
+}
+
+for (const phase of ["running", "completed"] as const) {
+  test(`durable ${phase} receipt replaces an uncertain error without resubmission`, async () => {
+    let submits = 0;
+    const tracker = new BridgeOperationTracker({ agentId: "agent-1", api: {
+      sessionCurrent: () => true,
+      prompt: async () => { submits++; throw new Error("unexpected Prompt"); },
+      operation: async () => assert.fail("unexpected lookup"),
+      cancel: async () => assert.fail("unexpected cancel"),
+    } });
+    try {
+      tracker.observe([uncertainOperation()]);
+      assert.deepEqual(trackedError(tracker.get("session-1", "intent-1")), publicOperationError);
+      const receipt = { operationId: "intent-1", sessionId: "session-1", phase,
+        acceptance: "acp", runId: "run-1", outputWatermark: 4 };
+      tracker.observe([receipt]);
+      assert.deepEqual(tracker.get("session-1", "intent-1"), receipt);
+      assert.equal(trackedError(tracker.get("session-1", "intent-1")), undefined);
+      assert.deepEqual(tracker.snapshot, [receipt]);
+      await assert.rejects(tracker.submit("session-1", admission), /already tracked/u);
+      assert.equal(submits, 0);
+    } finally {
+      tracker.close();
+    }
+  });
+}
+
+for (const outcome of ["bridge ACK", "failed recovery", "unknown recovery"] as const) {
+  test(`late ${outcome} preserves an already observed uncertain error for the original intent`, async () => {
+    const acknowledgement = {
+      operationId: "intent-1", acceptance: "bridge", phase: "dispatching",
+    } as const;
+    let complete!: (value: typeof acknowledgement) => void;
+    let fail!: (cause: unknown) => void;
+    let enter!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const response = new Promise<typeof acknowledgement>((resolve, reject) => {
+      complete = resolve;
+      fail = reject;
+    });
+    let submits = 0;
+    let reads = 0;
+    const requests: unknown[] = [];
+    const changes: unknown[] = [];
+    const tracker = new BridgeOperationTracker({ agentId: "agent-1", api: {
+      sessionCurrent: () => true,
+      prompt: async (agentId, sessionId, originalAdmission) => {
+        submits++;
+        requests.push(["prompt", agentId, sessionId, originalAdmission]);
+        enter();
+        return response;
+      },
+      operation: async (agentId, sessionId, intentId) => {
+        reads++;
+        requests.push(["operation", agentId, sessionId, intentId]);
+        if (outcome === "failed recovery")
+          throw new WorkspaceApiError("Original operation is temporarily unavailable", 503,
+            "workspace_unavailable", "retry_read");
+        assert.equal(outcome, "unknown recovery");
+        return null;
+      },
+      cancel: async () => assert.fail("unexpected cancel"),
+    }, changed: operation => changes.push(operation) });
+    const pending = tracker.submit("session-1", admission);
+    try {
+      await entered;
+      tracker.observe([uncertainOperation()]);
+      assert.deepEqual(tracker.get("session-1", "intent-1"), uncertainOperation());
+      if (outcome === "bridge ACK") complete(acknowledgement);
+      else fail(new WorkspaceApiError("Response was lost", undefined,
+        "workspace_network_error", "query_operation", "intent-1"));
+      const result = await pending;
+      assert.deepEqual(result, uncertainOperation());
+      assert.deepEqual(tracker.get("session-1", "intent-1"), uncertainOperation());
+      assert.deepEqual(tracker.snapshot, [uncertainOperation()]);
+      assert.deepEqual(changes, [uncertainOperation()]);
+      await assert.rejects(tracker.submit("session-1", admission), /already tracked/u);
+      assert.equal(submits, 1);
+      assert.equal(reads, outcome === "bridge ACK" ? 0 : 1);
+      assert.deepEqual(requests, [
+        ["prompt", "agent-1", "session-1", admission],
+        ...(outcome === "bridge ACK" ? [] :
+          [["operation", "agent-1", "session-1", "intent-1"]]),
+      ]);
+    } finally {
+      complete(acknowledgement);
+      await Promise.allSettled([pending]);
+      tracker.close();
+    }
+  });
+}
