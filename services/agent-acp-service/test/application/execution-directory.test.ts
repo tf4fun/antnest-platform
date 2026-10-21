@@ -110,7 +110,7 @@ describe("execution directory", () => {
     const other = structuredClone(configuration);
     other.organization_id = "organization-2";
     other.agents[0]!.runtime = runtimeConfiguration(2);
-    delete other.agents[0]!.runtime?.credential;
+    delete other.agents[0]!.runtime.credential;
     await directory.apply(other);
     const operation = {
       organizationId: "organization-1",
