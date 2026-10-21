@@ -44,7 +44,7 @@ for (const stage of ["authorization", "operation"])
       const deniedOperation = () => { operations++; throw new AgentAccessRevokedError(); };
       const handler = createCommandHandler({ tokens, async authorize() {
         if (stage === "authorization") throw new AgentAccessRevokedError();
-        return { condition, operations: { submit: deniedOperation, read: deniedOperation, cancel: deniedOperation },
+        return { condition, operations: { prepare: deniedOperation, submitPrepared: deniedOperation, read: deniedOperation, cancel: deniedOperation },
           release() { releases++; } };
       } });
       const body = action === "read" ? undefined : action === "cancel" ? { expectedRunId: "run-1" } : {

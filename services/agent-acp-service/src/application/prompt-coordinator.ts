@@ -1,7 +1,7 @@
 import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DomainError } from "../domain/errors.js";
 import { normalizePromptResources } from "../domain/embedded-resource.js";
-import { bridgeIntentDigest } from "../domain/bridge-intent.js";
+import { bridgeIntentDigestFromJson, canonicalPromptJson } from "../domain/bridge-intent.js";
 import { matchCommand, type SessionCommand } from "../domain/slash-commands.js";
 import {
   authorizeSession,
@@ -75,9 +75,9 @@ export class PromptCoordinator {
         bridgeIntent.intentId,
       );
       if (existing === null) return;
-      const digest = bridgeIntentDigest(
+      const digest = await bridgeIntentDigestFromJson(
         bridgeIntent.expectedAppendVersion,
-        normalizePromptResources(input.prompt),
+        canonicalPromptJson(normalizePromptResources(input.prompt)),
       );
       if (existing.digest !== digest)
         throw new DomainError("idempotency_conflict", "Intent key belongs to different input");

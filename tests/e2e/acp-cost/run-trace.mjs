@@ -131,7 +131,7 @@ const intentQueries = [
                      $10, $11, $12, $13)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
-                     pending_user_message_id, input_prompt, session_configuration`,
+                     pending_user_message_id, session_configuration`,
   "UPDATE acp_sessions SET append_version = $2 WHERE id = $1",
   "COMMIT",
 ].map(normalize);
@@ -145,11 +145,15 @@ const acceptanceQueries = [
   "SELECT session_id FROM runs WHERE id = $1",
   "SELECT state, last_message_sequence FROM acp_sessions WHERE id = $1 FOR UPDATE",
   `SELECT session_id, client_mcp_revision_id, state,
-                cancel_requested_at, pending_user_message_id, input_prompt
+                cancel_requested_at, pending_user_message_id,
+                jsonb_typeof(input_prompt) = 'array' AS prompt_is_array
            FROM runs WHERE id = $1 FOR UPDATE`,
   `INSERT INTO session_messages(
            id, session_id, run_id, sequence, kind, visible, payload, created_at
-         ) VALUES ($1, $2, $3, $4, 'user_message', true, $5::jsonb, $6)`,
+         ) SELECT pending_user_message_id, session_id, id, $2, 'user_message', true,
+                  jsonb_build_object('kind', 'user_message',
+                    'messageId', pending_user_message_id, 'content', input_prompt), $3
+             FROM runs WHERE id = $1`,
   `UPDATE runs
             SET state = 'running', execution_snapshot = $2::jsonb, deadline_at = $3,
                 pending_user_message_id = NULL, updated_at = $4

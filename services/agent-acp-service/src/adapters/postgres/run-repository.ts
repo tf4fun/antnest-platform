@@ -1,7 +1,12 @@
 import { deriveResourceId } from "../../domain/resource-id.js";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type { PoolClient } from "pg";
 import { sessionConfigurationSchema } from "../../domain/session-configuration.js";
-import { bridgeIntentDigest } from "../../domain/bridge-intent.js";
+import {
+  bridgeIntentDigestFromJson,
+  canonicalPromptJson,
+  promptPreparationChunk,
+} from "../../domain/bridge-intent.js";
 
 import type { EnvironmentChangeFact, SessionRecord } from "../../domain/types.js";
 import { DomainError } from "../../domain/errors.js";
@@ -70,6 +75,21 @@ export class PostgresRunRepository implements RunRepository {
   }
 
   public async createRunIntent(input: CreateRunIntentInput): Promise<RunIntent> {
+    // Capture caller-owned values before yielding. The JSON string is reused by
+    // the digest and INSERT; the detached value replaces the full INSERT return.
+    const request = {
+      ...input,
+      createdAt: new Date(input.createdAt.getTime()),
+      ...(input.bridgeIntent === undefined ? {} : { bridgeIntent: { ...input.bridgeIntent } }),
+    };
+    const promptJson = canonicalPromptJson(request.prompt);
+    if (promptJson.length > promptPreparationChunk) await nextTurn();
+    const prompt = JSON.parse(promptJson) as RunIntent["prompt"];
+    const bridgeIntent = request.bridgeIntent;
+    const digest =
+      bridgeIntent === undefined
+        ? null
+        : await bridgeIntentDigestFromJson(bridgeIntent.expectedAppendVersion, promptJson);
     try {
       return await this.kernel.transaction(async (client) => {
         const session = await client.query<{
@@ -80,22 +100,17 @@ export class PostgresRunRepository implements RunRepository {
         }>(
           `SELECT state, client_mcp_revision_id, configuration, append_version
              FROM acp_sessions WHERE id = $1 FOR UPDATE`,
-          [input.sessionId],
+          [request.sessionId],
         );
         const sessionRow = requireRow(session.rows[0], "Session does not exist");
         if (sessionRow.state !== "active") {
           throw new DomainError("session_not_active", "Session is not active");
         }
-        const bridgeIntent = input.bridgeIntent;
-        const digest =
-          bridgeIntent === undefined
-            ? null
-            : bridgeIntentDigest(bridgeIntent.expectedAppendVersion, input.prompt);
         if (bridgeIntent !== undefined) {
           const existing = await client.query<{ intent_digest: string }>(
             `SELECT intent_digest FROM runs
               WHERE session_id = $1 AND bridge_intent_id = $2`,
-            [input.sessionId, bridgeIntent.intentId],
+            [request.sessionId, bridgeIntent.intentId],
           );
           if (existing.rows[0] !== undefined) {
             if (existing.rows[0].intent_digest !== digest)
@@ -123,7 +138,6 @@ export class PostgresRunRepository implements RunRepository {
           expected_access_revision: string;
           state: RunIntent["state"];
           pending_user_message_id: string;
-          input_prompt: unknown;
           session_configuration: unknown;
         }>(
           `INSERT INTO runs(
@@ -136,16 +150,16 @@ export class PostgresRunRepository implements RunRepository {
                      $10, $11, $12, $13)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
-                     pending_user_message_id, input_prompt, session_configuration`,
+                     pending_user_message_id, session_configuration`,
           [
-            input.runId,
-            input.requestId,
-            input.sessionId,
+            request.runId,
+            request.requestId,
+            request.sessionId,
             sessionRow.client_mcp_revision_id,
-            input.expectedAccessRevision,
-            input.userMessageId,
-            JSON.stringify(input.prompt),
-            input.createdAt,
+            request.expectedAccessRevision,
+            request.userMessageId,
+            promptJson,
+            request.createdAt,
             JSON.stringify(sessionConfigurationSchema.parse(sessionRow.configuration)),
             bridgeIntent?.intentId ?? null,
             digest,
@@ -154,7 +168,7 @@ export class PostgresRunRepository implements RunRepository {
           ],
         );
         await client.query("UPDATE acp_sessions SET append_version = $2 WHERE id = $1", [
-          input.sessionId,
+          request.sessionId,
           nextAppendVersion,
         ]);
         const row = requireRow(result.rows[0], "Run intent was not created");
@@ -166,7 +180,7 @@ export class PostgresRunRepository implements RunRepository {
           expectedAccessRevision: row.expected_access_revision,
           state: row.state,
           userMessageId: row.pending_user_message_id,
-          prompt: row.input_prompt as RunIntent["prompt"],
+          prompt,
           sessionConfiguration: sessionConfigurationSchema.parse(row.session_configuration),
         };
       });
@@ -205,10 +219,11 @@ export class PostgresRunRepository implements RunRepository {
         state: string;
         cancel_requested_at: Date | null;
         pending_user_message_id: string | null;
-        input_prompt: unknown;
+        prompt_is_array: boolean | null;
       }>(
         `SELECT session_id, client_mcp_revision_id, state,
-                cancel_requested_at, pending_user_message_id, input_prompt
+                cancel_requested_at, pending_user_message_id,
+                jsonb_typeof(input_prompt) = 'array' AS prompt_is_array
            FROM runs WHERE id = $1 FOR UPDATE`,
         [input.runId],
       );
@@ -219,7 +234,7 @@ export class PostgresRunRepository implements RunRepository {
       if (runRow.state !== "admitting") {
         throw new Error("Run intent is no longer admitting");
       }
-      if (runRow.pending_user_message_id === null || !Array.isArray(runRow.input_prompt)) {
+      if (runRow.pending_user_message_id === null || runRow.prompt_is_array !== true) {
         throw new Error("Run intent has no recoverable prompt");
       }
       if (runRow.client_mcp_revision_id !== input.snapshot.clientMcpRevisionId) {
@@ -250,23 +265,16 @@ export class PostgresRunRepository implements RunRepository {
         await insertEnvironmentFact(client, input, input.environmentFact, sequence);
       }
       sequence += 1;
-      await client.query(
+      const message = await client.query(
         `INSERT INTO session_messages(
            id, session_id, run_id, sequence, kind, visible, payload, created_at
-         ) VALUES ($1, $2, $3, $4, 'user_message', true, $5::jsonb, $6)`,
-        [
-          runRow.pending_user_message_id,
-          runRow.session_id,
-          input.runId,
-          sequence,
-          JSON.stringify({
-            kind: "user_message",
-            messageId: runRow.pending_user_message_id,
-            content: runRow.input_prompt,
-          }),
-          input.acceptedAt,
-        ],
+         ) SELECT pending_user_message_id, session_id, id, $2, 'user_message', true,
+                  jsonb_build_object('kind', 'user_message',
+                    'messageId', pending_user_message_id, 'content', input_prompt), $3
+             FROM runs WHERE id = $1`,
+        [input.runId, sequence, input.acceptedAt],
       );
+      if (message.rowCount !== 1) throw new Error("Run user message was not created");
       await client.query(
         `UPDATE runs
             SET state = 'running', execution_snapshot = $2::jsonb, deadline_at = $3,

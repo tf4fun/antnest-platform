@@ -3,10 +3,10 @@ import { setImmediate as turn } from "node:timers/promises";
 export const largeInputBytes = 1024 * 1024;
 let tail = Promise.resolve();
 
-// Serialize synchronous input preparations with an I/O turn between them.
-// Callbacks must finish synchronously and must not enqueue nested work. Await
+// Serialize input preparations with an I/O turn between them. Async callbacks
+// may yield directly but must not enqueue nested work on this same queue. Await
 // in each caller so its own authentication/telemetry context stays attached.
-export async function runInputWork<T>(work: () => T, signal?: AbortSignal): Promise<T> {
+export async function runInputWork<T>(work: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
   const previous = tail;
   let release!: () => void;
   tail = new Promise<void>((resolve) => { release = resolve; });
@@ -15,6 +15,6 @@ export async function runInputWork<T>(work: () => T, signal?: AbortSignal): Prom
     signal?.throwIfAborted();
     await turn();
     signal?.throwIfAborted();
-    return work();
+    return await work();
   } finally { release(); }
 }

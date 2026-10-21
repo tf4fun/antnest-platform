@@ -173,7 +173,11 @@ organization. It preserves the configured single Prompt limit. Control requests
 use a separate 16 KiB body ceiling and bypass the upload pool. Capacity rejection
 is `429 upload_capacity_exceeded`; the browser does not replay a Prompt.
 Bodies of at least 1 MiB and Prompt preparation share a FIFO that gives ready
-I/O an event-loop turn between synchronous jobs. Controls bypass that queue.
+I/O an event-loop turn between jobs. Prompt preparation captures a detached
+input, serializes it once, and yields between digest and byte-counting chunks.
+The final cancellation check and intent insertion are synchronous. Controls
+bypass that queue; `/stop` uses live authorization and the durable operation
+target without loading a view, Skill catalogue or transcript.
 Queued requests check cancellation before parsing or submitting; their upload
 reservation and Session lease stay held until the handler finishes.
 With telemetry enabled, the original HTTP span records native upload phases

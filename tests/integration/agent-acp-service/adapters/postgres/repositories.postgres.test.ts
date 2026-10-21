@@ -947,6 +947,195 @@ describe.skipIf(databaseUrl === undefined)(
       });
     });
 
+    it("copies the captured large prompt into the user message without caller aliasing", async () => {
+      const sessionId = randomUUID(),
+        revisionId = randomUUID(),
+        runId = randomUUID(),
+        messageId = randomUUID();
+      await sessions.create({
+        sessionId,
+        binding: {
+          connectionId: "large-prompt",
+          organizationId: "organization-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+        cwd: "/workspace",
+        mcpRevisionId: revisionId,
+        mcpSources: [],
+      });
+      const prompt = [
+        { type: "text", text: 'original 😀\\"' },
+        ...["a", "b", "c"].map((value) => ({
+          type: "image",
+          mimeType: "image/png",
+          data: value.repeat(1024 * 1024),
+        })),
+      ];
+      const expected = structuredClone(prompt);
+      const intent = await runs.createRunIntent({
+        runId,
+        requestId: randomUUID(),
+        sessionId,
+        expectedAccessRevision: "access-1",
+        userMessageId: messageId,
+        prompt,
+        createdAt: new Date(),
+        bridgeIntent: { intentId: randomUUID(), expectedAppendVersion: 0 },
+      });
+      prompt[0]!.type = "changed";
+      prompt.length = 0;
+      expect(intent.prompt).toEqual(expected);
+      await expect(
+        runs.acceptRun({
+          runId,
+          snapshot: snapshot(revisionId),
+          environmentFact: null,
+          acceptedAt: new Date(),
+        }),
+      ).resolves.toBe("accepted");
+      const messages = await pool.query<{ payload: unknown; sequence: string }>(
+        "SELECT payload, sequence FROM session_messages WHERE run_id = $1",
+        [runId],
+      );
+      expect(messages.rows).toEqual([
+        {
+          sequence: "1",
+          payload: { kind: "user_message", messageId, content: expected },
+        },
+      ]);
+    });
+
+    it.each([null, {}, "invalid", 1])(
+      "rejects non-array durable prompt %j before applying cancellation",
+      async (prompt) => {
+        const sessionId = randomUUID(),
+          revisionId = randomUUID(),
+          runId = randomUUID();
+        await sessions.create({
+          sessionId,
+          binding: {
+            connectionId: "invalid-prompt",
+            organizationId: "organization-1",
+            principalId: "principal-1",
+            agentId: "agent-1",
+          },
+          cwd: "/workspace",
+          mcpRevisionId: revisionId,
+          mcpSources: [],
+        });
+        await runs.createRunIntent({
+          runId,
+          requestId: randomUUID(),
+          sessionId,
+          expectedAccessRevision: "access-1",
+          userMessageId: randomUUID(),
+          prompt: [],
+          createdAt: new Date(),
+        });
+        await pool.query(
+          "UPDATE runs SET input_prompt = $2::jsonb, cancel_requested_at = NOW() WHERE id = $1",
+          [runId, JSON.stringify(prompt)],
+        );
+        await expect(
+          runs.acceptRun({
+            runId,
+            snapshot: snapshot(revisionId),
+            environmentFact: null,
+            acceptedAt: new Date(),
+          }),
+        ).rejects.toThrow("Run intent has no recoverable prompt");
+        expect(
+          (await pool.query("SELECT state FROM runs WHERE id = $1", [runId]))
+            .rows,
+        ).toEqual([{ state: "admitting" }]);
+        expect(
+          (
+            await pool.query(
+              "SELECT id FROM session_messages WHERE run_id = $1",
+              [runId],
+            )
+          ).rows,
+        ).toEqual([]);
+      },
+    );
+
+    it("accepts an empty durable array and rolls back a failed message insertion", async () => {
+      for (const conflict of [false, true]) {
+        const sessionId = randomUUID(),
+          revisionId = randomUUID(),
+          runId = randomUUID(),
+          messageId = randomUUID();
+        await sessions.create({
+          sessionId,
+          binding: {
+            connectionId: "empty-prompt",
+            organizationId: "organization-1",
+            principalId: "principal-1",
+            agentId: "agent-1",
+          },
+          cwd: "/workspace",
+          mcpRevisionId: revisionId,
+          mcpSources: [],
+        });
+        await runs.createRunIntent({
+          runId,
+          requestId: randomUUID(),
+          sessionId,
+          expectedAccessRevision: "access-1",
+          userMessageId: messageId,
+          prompt: [],
+          createdAt: new Date(),
+        });
+        if (conflict)
+          await pool.query(
+            "INSERT INTO session_messages(id, session_id, run_id, sequence, kind, visible, payload, created_at) VALUES($1, $2, $3, 99, 'user_message', true, '{}'::jsonb, NOW())",
+            [messageId, sessionId, runId],
+          );
+        const acceptance = runs.acceptRun({
+          runId,
+          snapshot: snapshot(revisionId),
+          environmentFact: {
+            kind: "environment_change",
+            visible: false,
+            content: "change",
+            previousExecutionRevision: "old",
+            currentExecutionRevision: "execution-2",
+          },
+          acceptedAt: new Date(),
+        });
+        if (conflict) {
+          await expect(acceptance).rejects.toMatchObject({ code: "23505" });
+          expect(
+            (await pool.query("SELECT state FROM runs WHERE id = $1", [runId]))
+              .rows,
+          ).toEqual([{ state: "admitting" }]);
+          expect(
+            (
+              await pool.query(
+                "SELECT sequence FROM session_messages WHERE run_id = $1",
+                [runId],
+              )
+            ).rows,
+          ).toEqual([{ sequence: "99" }]);
+          await expect(sessions.get(sessionId)).resolves.toMatchObject({
+            lastMessageSequence: 0,
+            lastExecutionRevision: null,
+          });
+        } else {
+          await expect(acceptance).resolves.toBe("accepted");
+          expect(
+            (
+              await pool.query<{ payload: { content: unknown } }>(
+                "SELECT payload FROM session_messages WHERE id = $1",
+                [messageId],
+              )
+            ).rows[0]!.payload.content,
+          ).toEqual([]);
+        }
+      }
+    });
+
     it("uses Session-before-Run lock ordering during local Run acceptance", async () => {
       const sessionId = randomUUID();
       const revisionId = randomUUID();

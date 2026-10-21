@@ -80,7 +80,7 @@ const intentQueries = [
 ];
 const environmentInsert = actualQuery(
   "run-repository",
-  "INSERT INTO session_messages( id, session_id, run_id, sequence, kind, visible, payload, created_at ) SELECT",
+  "INSERT INTO session_messages( id, session_id, run_id, sequence, kind, visible, payload, created_at ) SELECT $1, session_id, id, $2, 'environment_change'",
 );
 const acceptanceQueries = [
   "BEGIN",
@@ -95,7 +95,7 @@ const acceptanceQueries = [
   ),
   actualQuery(
     "run-repository",
-    "INSERT INTO session_messages( id, session_id, run_id, sequence, kind, visible, payload, created_at ) VALUES",
+    "INSERT INTO session_messages( id, session_id, run_id, sequence, kind, visible, payload, created_at ) SELECT pending_user_message_id, session_id, id, $2, 'user_message'",
   ),
   actualQuery("run-repository", "UPDATE runs SET state = 'running'"),
   actualQuery(

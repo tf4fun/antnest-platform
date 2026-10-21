@@ -6,6 +6,7 @@ import { HistoryTokens } from "../src/bridge/history-token.ts";
 import { createCommandHandler } from "../src/http/command-routes.ts";
 import { ReplayCapacityError } from "../src/bridge/replay-load-gate.ts";
 import { SessionNotFoundError } from "../src/adapters/acp-http.ts";
+import { OperationCoordinator } from "../src/bridge/operations.ts";
 
 const scope = {
   organizationId: "org-1",
@@ -28,8 +29,12 @@ const prompt = {
   prompt: [{ type: "text", text: "hello" }],
 };
 
-function fixture(maxAcpPromptBytes?: number) {
+function fixture(maxAcpPromptBytes?: number, afterPreparation?: () => void) {
   const calls: string[] = [];
+  const coordinator = new OperationCoordinator({
+    async prompt() {}, async readIntent() { return { kind: "unknown" }; },
+    async cancel() {}, retainWork() { return () => {}; },
+  });
   const handler = createCommandHandler({
     tokens,
     ...(maxAcpPromptBytes === undefined ? {} : { maxAcpPromptBytes }),
@@ -42,13 +47,15 @@ function fixture(maxAcpPromptBytes?: number) {
           calls.push("release");
         },
         operations: {
-          submit(input) {
-            calls.push(`submit:${input.intentId}`);
-            return {
-              operationId: input.intentId,
-              acceptance: "bridge" as const,
-              phase: "dispatching" as const,
-            };
+          async prepare(input, signal) {
+            const prepared = await coordinator.prepare(input, signal);
+            afterPreparation?.();
+            return prepared;
+          },
+          submitPrepared(prepared) {
+            const accepted = coordinator.submitPrepared(prepared);
+            calls.push(`submit:${accepted.operationId}`);
+            return accepted;
           },
           async read(_sessionId, intentId) {
             calls.push(`read:${intentId}`);
@@ -298,4 +305,14 @@ test("a ready cancel bypasses pending prompt preparation while its lease stays h
     assert.equal((await pending)?.status, 202);
     assert.deepEqual(calls.slice(-2), ["submit:intent-1", "release"]);
   } finally { await pending; }
+});
+
+test("disconnect after preparation cannot publish Bridge acceptance or dispatch", async () => {
+  const abort = new AbortController();
+  const { handler, calls } = fixture(undefined, () => abort.abort(new Error("disconnect after preparation")));
+  const response = await handler(request("/prompts", "POST", prompt, {
+    "if-match": tokens.issue(condition), "idempotency-key": "intent-1",
+  }, abort.signal));
+  assert.notEqual(response?.status, 202);
+  assert.deepEqual(calls, ["authorize:session-1", "release"]);
 });

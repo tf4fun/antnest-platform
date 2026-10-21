@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
-import type { IntentReceipt } from "../adapters/acp-http.ts";
+import { acpPromptRequestBytes, type IntentReceipt } from "../adapters/acp-http.ts";
 
 export type PromptIntent = {
   sessionId: string;
@@ -8,6 +9,9 @@ export type PromptIntent = {
   expectedAppendVersion: number;
   prompt: ContentBlock[];
 };
+
+export type PreparedPrompt = Readonly<{ requestBytes: number }>;
+type BridgeAcceptance = { operationId: string; acceptance: "bridge"; phase: "dispatching" };
 
 export type Operation = {
   operationId: string;
@@ -73,6 +77,9 @@ export class OperationReconciliationTimeoutError extends Error {
 
 export class OperationCoordinator {
   private readonly local = new Map<string, LocalOperation>();
+  private readonly prepared = new WeakMap<PreparedPrompt, {
+    input: PromptIntent; digest: string; signal: AbortSignal | undefined;
+  }>();
   private readonly dependencies: Dependencies;
   private readonly reconcileTimeoutMs: number;
   private readonly now: () => number;
@@ -104,13 +111,46 @@ export class OperationCoordinator {
     entry.operation = operation;
   }
 
-  public submit(input: PromptIntent): {
-    operationId: string;
-    acceptance: "bridge";
-    phase: "dispatching";
-  } {
+  public async prepare(input: PromptIntent, signal?: AbortSignal): Promise<PreparedPrompt> {
+    signal?.throwIfAborted();
+    // Capture metadata and ordinary JSON values before the first yield. Reuse
+    // one serialization for both the historic digest and exact wire sizing.
+    const captured = { ...input, prompt: canonical(input.prompt) as ContentBlock[] };
+    const json = JSON.stringify(captured.prompt);
+    const hash = createHash("sha256").update(JSON.stringify({
+      expectedAppendVersion: captured.expectedAppendVersion, prompt: [],
+    }).slice(0, -3));
+    let requestBytes = acpPromptRequestBytes({ ...captured, prompt: [] }) - 2;
+    const chunkSize = 64 * 1024;
+    for (let offset = 0; offset < json.length;) {
+      signal?.throwIfAborted();
+      let end = Math.min(offset + chunkSize, json.length);
+      if (end < json.length && json.charCodeAt(end - 1) >= 0xd800 && json.charCodeAt(end - 1) <= 0xdbff &&
+        json.charCodeAt(end) >= 0xdc00 && json.charCodeAt(end) <= 0xdfff) end--;
+      const bytes = Buffer.from(json.slice(offset, end));
+      hash.update(bytes); requestBytes += bytes.length; offset = end;
+      if (offset < json.length) await nextTurn();
+    }
+    signal?.throwIfAborted();
+    const prepared = Object.freeze({ requestBytes });
+    this.prepared.set(prepared, { input: captured, digest: hash.update("}").digest("hex"), signal });
+    return prepared;
+  }
+
+  public submitPrepared(prepared: PreparedPrompt): BridgeAcceptance {
+    const captured = this.prepared.get(prepared);
+    if (captured === undefined) throw new Error("Invalid or consumed prepared Prompt");
+    this.prepared.delete(prepared);
+    captured.signal?.throwIfAborted();
+    return this.commit(captured.input, captured.digest);
+  }
+
+  public submit(input: PromptIntent): BridgeAcceptance {
+    return this.commit(input, promptDigest(input));
+  }
+
+  private commit(input: PromptIntent, digest: string): BridgeAcceptance {
     const key = operationKey(input.sessionId, input.intentId);
-    const digest = promptDigest(input);
     const existing = this.local.get(key);
     if (existing !== undefined) {
       if (existing.digest !== digest) {
