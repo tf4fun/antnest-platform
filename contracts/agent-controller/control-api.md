@@ -36,6 +36,10 @@ terminal errors. Disable intent blocks new Runs before confirmed stopping;
 failed disablement is not a disabled Agent. See
 [state semantics](../../services/agent-controller/docs/agent-state.md).
 
+The [pending readiness contract](readiness.md) defines the future organization
+publication acknowledgement gate for `runtime_bound` and `agent_ready` (#44).
+Its schemas and service consumers are not yet enabled.
+
 Lifecycle and catalog mutations carry a stable `request_id`. Reusing a request ID with a
 different canonical request returns `request_id_conflict`. Cross-service IDs
 are opaque strings and have no database foreign keys.
