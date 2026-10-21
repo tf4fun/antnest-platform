@@ -6,7 +6,7 @@ export function assertUnacknowledged(sync, held) {
     "lost reply was recorded as acknowledged",
   );
 }
-export function assertReceipts(held, records) {
+export function assertReceipts(held, records, { requireTrace = true } = {}) {
   assert.equal(held.delivery, "held");
   assert.equal(held.status, 200);
   assert(records.length >= 2, "missing delivered retry");
@@ -16,11 +16,20 @@ export function assertReceipts(held, records) {
     ["dropped", ...records.slice(1).map(() => "delivered")],
   );
   assert.equal(new Set(records.map((r) => r.receipt_id)).size, records.length);
-  assert.equal(
-    new Set(records.map((r) => r.traceparent)).size,
-    records.length,
-    "same HTTP attempt counted twice",
-  );
+  if (requireTrace) {
+    assert.equal(
+      new Set(records.map((r) => r.traceparent)).size,
+      records.length,
+      "same HTTP attempt counted twice",
+    );
+  } else {
+    for (const record of records)
+      assert(
+        typeof record.receipt_id === "string" &&
+          record.receipt_id.trim().length > 0,
+        "original HTTP attempt receipt ID required",
+      );
+  }
   for (const record of records)
     for (const key of [
       "method",

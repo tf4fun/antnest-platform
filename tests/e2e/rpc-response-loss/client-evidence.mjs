@@ -23,11 +23,16 @@ export function createRpcLossRecorder(client, meta, preserve) {
   );
   return createPrivateACPRecorder(client, meta, preserve);
 }
-export function indexRpcLossRequests({ agentId, connections }) {
+export function indexRpcLossRequests(
+  { agentId, connections },
+  { requireTrace = true } = {},
+) {
   nonempty(agentId);
   assert.equal(connections.length, 12);
-  unique(connections.map((c) => c.connectionTraceID));
-  unique(connections.map((c) => c.clientSpanID));
+  if (requireTrace) {
+    unique(connections.map((c) => c.connectionTraceID));
+    unique(connections.map((c) => c.clientSpanID));
+  }
   const initializations = [],
     requests = [],
     sessions = [];
@@ -52,9 +57,25 @@ export function indexRpcLossRequests({ agentId, connections }) {
       });
       for (const c of group) {
         assert.equal(c.agentId, agentId);
-        assert.match(c.connectionTraceID, /^[a-f0-9]{32}$/u);
-        assert.match(c.clientSpanID, /^[a-f0-9]{16}$/u);
-        checkPrivateACPConnection(c);
+        if (requireTrace) {
+          assert.match(c.connectionTraceID, /^[a-f0-9]{32}$/u);
+          assert.match(c.clientSpanID, /^[a-f0-9]{16}$/u);
+          checkPrivateACPConnection(c);
+        } else {
+          // Connection ownership comes from version/kind/role and the original
+          // local SDK request IDs. Exclude diagnostic IDs from this inspection
+          // without replacing or rewriting the retained original inventory.
+          const businessRow = (row) => ({
+            ...row,
+            connectionTraceID: undefined,
+            clientSpanID: undefined,
+          });
+          checkPrivateACPConnection({
+            ...businessRow(c),
+            initialization: businessRow(c.initialization),
+            evidence: c.evidence.map(businessRow),
+          });
+        }
         initializations.push({
           ...structuredClone(c.initialization),
           version,

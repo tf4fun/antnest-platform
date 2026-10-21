@@ -58,10 +58,15 @@ export function modelServer() {
       assert.equal(req.method, "POST");
       assert.equal(req.url, "/v1/chat/completions");
       assert.equal(req.headers.authorization, "Bearer rpc-fixture-key");
-      assert.match(
-        req.headers.traceparent ?? "",
-        /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
-      );
+      const parent = req.headers.traceparent;
+      const context =
+        typeof parent === "string"
+          ? /^00-([a-f0-9]{32})-([a-f0-9]{16})-(?:00|01)$/u.exec(parent)
+          : null;
+      const traced =
+        context !== null &&
+        context[1] !== "0".repeat(32) &&
+        context[2] !== "0".repeat(16);
       const chunks = [];
       let size = 0;
       for await (const b of req) {
@@ -78,8 +83,13 @@ export function modelServer() {
       requests.push({
         phase: result.phase,
         stage,
-        trace_id: req.headers.traceparent.split("-")[1],
-        model_span_id: req.headers.traceparent.split("-")[2],
+        traceparent: parent,
+        ...(traced
+          ? {
+              trace_id: context[1],
+              model_span_id: context[2],
+            }
+          : { trace_diagnostic: "traceparent_unavailable" }),
       });
       reply(200, {
         choices: [

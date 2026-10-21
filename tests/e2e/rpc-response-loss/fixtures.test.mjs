@@ -128,3 +128,60 @@ test("held publication cannot imply Controller acknowledgement", () => {
   ])
     assert.throws(() => assertUnacknowledged(changed, held));
 });
+
+function businessReceipts(method, sharedDiagnostic) {
+  const held = receipt(method);
+  if (sharedDiagnostic) held.traceparent = "unavailable-diagnostic-context";
+  else delete held.traceparent;
+  return {
+    held,
+    rows: [
+      { ...held, delivery: "dropped" },
+      { ...held, receipt_id: "second", delivery: "delivered" },
+    ],
+  };
+}
+
+test("receipt business proof uses independent receipt IDs when Trace is absent or duplicated, keeping default strict", () => {
+  for (const method of ["apply-execution-snapshot", "settle-agent"])
+    for (const sharedDiagnostic of [false, true]) {
+      const { held, rows } = businessReceipts(method, sharedDiagnostic);
+      const before = structuredClone({ held, rows });
+      assertReceipts(held, rows, { requireTrace: false });
+      assert.deepEqual({ held, rows }, before);
+      assert.throws(
+        () => assertReceipts(held, rows),
+        "default Trace policy was relaxed",
+      );
+    }
+});
+
+test("receipt business proof still rejects duplicate attempts, changed hashes, missing delivery and settlement deadline changes", () => {
+  for (const mutate of [
+    (f) => {
+      f.rows[1].receipt_id = f.rows[0].receipt_id;
+    },
+    (f) => {
+      delete f.rows[1].receipt_id;
+    },
+    (f) => {
+      f.rows[1].request_hash = "c".repeat(64);
+    },
+    (f) => {
+      f.rows[1].response_hash = "d".repeat(64);
+    },
+    (f) => {
+      f.rows[1].delivery = "expired";
+    },
+    (f) => {
+      f.rows[1].deadline_at = "2026-09-17T12:01:00Z";
+    },
+    (f) => f.rows.pop(),
+  ]) {
+    const f = businessReceipts("settle-agent", false);
+    mutate(f);
+    assert.throws(() =>
+      assertReceipts(f.held, f.rows, { requireTrace: false }),
+    );
+  }
+});
