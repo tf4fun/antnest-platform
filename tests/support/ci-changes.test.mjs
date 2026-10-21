@@ -38,6 +38,31 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const ids = (selected) => selected.map((suite) => suite.id);
 const enabled = suites.filter((suite) => !suite.disabled);
 
+test("observation ordering always admits the real Controller consumer", () => {
+  for (const path of [
+    "tests/integration/runtime-controller/observation-consumer.mjs",
+    "tests/integration/go/agent-controller/observationfixture/client.go",
+    "services/agent-controller/internal/runtimeclient/observation.go",
+    "services/agent-controller/internal/ports/runtime_observation.go",
+    "services/agent-controller/go.mod",
+    "services/agent-controller/go.sum",
+  ]) {
+    const suite = selectSuites([path]).find(
+      ({ id }) => id === "runtime-controller-postgres",
+    );
+    assert(suite, `${path} must select the actual observation consumer`);
+    assert.deepEqual(suite.run, ["make test-runtime-controller-postgres"]);
+  }
+  const recipe = readFileSync(resolve(root, "Makefile"), "utf8").match(
+    /^test-runtime-controller-postgres:\n(?<body>(?:\t.*\n)+)/mu,
+  );
+  assert(recipe, "Runtime Controller database admission recipe is required");
+  assert.match(
+    recipe.groups.body,
+    /tests\/integration\/runtime-controller\/observation-consumer\.mjs/u,
+  );
+});
+
 test("ACP Runtime information provenance runs against the candidate production image", () => {
   const command =
     "ANTNEST_ACP_TEST_IMAGE=antnest/agent-acp-service:local node tests/e2e/agent-acp-service/runtime-information-docker.mjs";

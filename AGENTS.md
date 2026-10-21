@@ -16,6 +16,11 @@ coordinator reviews every delegated change and runs all admission checks.
 New behavior is developed test-first. A stage is complete only when its unit,
 contract, component, and applicable Docker E2E evidence passes.
 
+Use remote CI as the complete merge gate. Local verification is for targeted
+failure reproduction and focused development feedback; do not duplicate the
+complete CI suite locally before waiting for the remote checks. Review the
+remote evidence for the exact candidate commit before merging.
+
 Large features must be split into service-owned delivery batches followed by
 an explicit integration batch. Define the shared contract first, then change
 one owning service with its documentation and tests at a time. Record pending

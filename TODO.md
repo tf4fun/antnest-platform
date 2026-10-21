@@ -12,12 +12,36 @@ Issue 状态最后核对于 2026-10-16：136 个 issue，78 个已关闭，58 �
 - 只关注我们内部服务的代码逻辑；确认属于外部 SDK 的问题一律放过，保留诊断但不作为修复或合并阻塞，不追加 SDK 专项调查、证明或绕行实现。此为用户于 2026-10-17 新增的全局规则，取代此前仅暂缓亚毫秒 SDK 调查的范围。
 - Span／Trace 采集与检查只作为辅助诊断，不作为 CI、阶段交付或合并阻塞（用户于 2026-10-21 新增）。保留原始证据和告警；不再因时序、父子关系、缺失 Span、采集器 HTTP 等 Trace 结果延迟交付。业务结果、权限／撤权、持久化、Runtime 执行与取消、容量时延、资源清理仍须独立通过；不能把未执行的业务检查追认为通过。此规则取代历史记录中的严格 Trace 准入要求。
 - 每批遵循共享契约、单个服务的测试/实现/文档、消费方批次、显式集成验收的顺序。新行为先有失败测试。
-- 协调者串行执行适用的 unit、contract、component、Docker E2E；检查资源清理。通过 review 和必需 CI 后才合并。
+- 完整合并门禁只跑远程 CI（用户于 2026-10-21 新增），覆盖适用 unit、contract、component、Docker E2E 与资源清理；本地仅做必要的失败复现和定向开发验证，不重复整套 CI。协调者串行管理本地验证，review 精确候选提交的远程证据和必需检查后合并。
 - 合并后记录 PR、commit、验证证据并更新复选框。生产方完成但消费方或集成待交付时，issue 保持开放。
 - 验证证据保存在忽略的 `artifacts/verification/`；测试源、fixtures 和清单遵循 [AGENTS.md](AGENTS.md)，不存放在 `.cache/`。
 - 开始下一项前读取本文件的当前批次、相关阶段和依赖，并重新核对该 issue 的正文、讨论与当前代码。
 
 ## 当前批次
+
+- #33 真实消费者与本地必要检查完成（2026-10-21）：真实 RC HTTP→真实 Agent Controller client 在100轮竞争中完整消费200条事实，返回 NextSequence 严格推进；同run两项race通过、零跳过。完整RC先前通过346测试／396子场景，4个Docker专用场景未执行；CI选路／overlay、存储、链接、格式均通过，后续完整验收转远程CI，不再本地重复全量。#33待提交PR并验收远程Docker；#53目录/schema/表驱动反例草案与#43跨实例红例独立保留。
+
+- 并发执行安排（2026-10-21，用户要求提速）：Runtime Controller 主线在 .worktrees/observation-commit-order 修 #33，随后 #39；ACP 子线在 .worktrees/acp-error-catalog 提前准备 #53 共享错误目录，#50 恢复设计已审查；Controller 子线在 .worktrees/controller-publication-ownership 提前复现 #43 跨实例发布竞争。不同工作树／明确写集合并行，协调者独占 Git、Docker、串行验证及合并。交付和依赖仍按上述顺序；草案及先行反例不计作 issue 完成。
+- #33 首轮红绿（2026-10-21）：原代码第一轮即读到 sequence 2、sequence 1 仍未提交；三项真实 PostgreSQL 反例失败。统一写入点添加独立事务 advisory lock 后，1,000 轮持事务竞争共 2,000 条事实、100 轮真实 CompleteOperation／health 共 200 条事实、rollback／cancel 检查全部通过（5 项，race，零跳过），8 writer／1,000 append 为 179.88 facts/s，高于文档基准峰值 100/s。审查无当前 blocker；完整 RC 门禁、真实 Controller 消费及 Docker／CI 待完成。#43 新跨 publisher 反例已失败（预期读取 1 次、实际 2 次），无残留进程；#53 草案 71 码尚待 schema／契约和服务消费者。证据：artifacts/verification/reliability-20261021/issue-33/。
+
+- 第 3 步可靠性已启动（2026-10-21，用户指定顺序）：推进 #82，并提前交付 #83 的 #53。执行顺序固定为 **#33 → #39 → #50 → #53 → #44 → #49 → #52 → #51 → #43 → #45 → #46 → #35 → #40 → #41 → #54 → #55 → #56**。本顺序优先于下方历史分组和建议排期；必需的共享契约在所属批次先定义，不扩大成未授权的全量契约重构。
+- 当前执行 #33（Runtime observation 提交顺序）：最新远端 main 为 91e814dd，17 个执行 issue 均开放、无开放 PR。先复现长事务分配低序号后被短事务越过的丢事实路径，再在 Runtime Controller 统一写入点修复；验收包含真实 PostgreSQL 1,000 次 race、完成操作与健康事实并发、消费方完整回放、吞吐记录与适用 Docker E2E。#39 的异步清理／数量上限／epoch fencing 留在下一单服务批次，不能把本项视为 #82 完成。原 issue 正文及讨论：artifacts/verification/reliability-20261021/issues-initial.json。
+
+- main 合并后 CI 跟踪复核（2026-10-21 17:18，北京时间）：远端 main 仍为 91e814dd，9 个 workflow／27 个集成 job／46 项 GitHub 检查全部结束并成功，无排队、执行中或失败任务。本次仅刷新状态，未新增重跑；Managed MCP 首次超时及已完成的一次同 SHA 复验记录继续保留。证据：artifacts/verification/upload-cancellation-fix-20261021/main-ci-followup-20261021T091810Z-review.json。
+
+- Span 辅助规则本批交付及 main 验收完成（2026-10-21）：PR #268 已合并为 91e814dd，共享 CI 与 Cost／Skill 适配生效；合并后 main 最终 9 个 workflow／27 个集成 job／46 项检查全部成功。Managed MCP v1 首次 Docker 超时原件保留；仅在同 SHA／原门槛下复验一次失败 job，新鲜 v1／v2 均完成 6 个 Run、16 次模型请求、重启换绑、最终删除与清理，两个 Docker 库存恢复，493 份制品 SHA 核对通过。两套 Trace strict failed／exit 2 如实保留且未阻塞业务准入；首次业务超时的根因仍未确认，不宣称已修复。294 份本批进程回执均无残留，所有观察进程退出。旧 Span 消费方迁移与 Managed peer helper 独立待办继续保留，不能将本批写成全部旧入口已迁移。证据：artifacts/verification/upload-cancellation-fix-20261021/trace-policy-{main-final-review,managed-main-rerun-review,final-process-audit}.json。
+
+- 合并后 main 独立业务失败调查（2026-10-21）：91e814dd 的 8／9 个 workflow 已成功，integration run 39568545805 中 Managed MCP v1 在 restart-new-peer 阶段触发 Docker 命令超时，未到 Trace 阶段，不能按 Span 辅助项放过。该场景未生成业务完成回执；harness 清理成功，Docker 库存恢复，同分片 v2 通过。原 PR 的同一 tree 已完整通过，当前先复核内部测试／服务逻辑；公共原件没有超时命令名称，暂不归因 Docker 或内部服务，不扩大超时、不追认未执行的删除检查。原件及 SHA 保存在 artifacts/verification/upload-cancellation-fix-20261021/trace-policy-main-failure/；Span 规则本身和 #268 合并结果保持有效。
+
+- Managed peer helper 独立待办（本次未改）：tests/e2e/runtime-egress/live-peer.mjs 的旧地址证明 finally 线性恢复，网络重连失败可能跳过后续恢复并覆盖原始错误；尚不能证明本次命中此路径，外层 harness 已清理成功。后续以注入原始／恢复双错误验证逐项恢复与聚合错误，并记录不含凭据的 Docker 子步骤、verb、预算和起止时间。当前先保留原失败，在 91e814dd／原门槛上仅复验一次失败 job；若复现则补诊断，不循环重跑。GitHub 在 workflow 尚未结束时拒绝了首次请求；整轮结束后已接受唯一一次同 SHA 复验，保留首次失败原件。
+
+- Span 辅助诊断已合并（2026-10-21）：PR #268（https://github.com/tf4fun/antnest-platform/pull/268）最终 f3769e11 的 9 个 workflow／27 个集成 job／47 项 GitHub 检查全部成功，review 无业务 blocker，正常 squash 合并为 91e814ddb8115fbcb69b42d9b7fead2bee36df05。合并 tree 与已验收候选一致，本地 main 已快进，原 TODO 字节及两个未跟踪诊断源完整保留。Cost 新鲜 CI 的辅助诊断为 83 passed／1 unavailable／144 not_collected，原 strict failed 如实保留；其 52 次模型请求、9 个恢复 Session、4 个 Runtime 核验、ACK 后四次删除及全部清理通过，说明实际诊断耗尽未阻断后续验收。Skill 四套业务与清理已独立复核通过。既有上传规则仍排除私有异常文本；辅助结果、原 Trace／HTTP 制品保留。当前仅继续观察合并后 main CI；旧消费方后续队列不变。证据：artifacts/verification/upload-cancellation-fix-20261021/trace-policy-{final-pr-review,cost-ci-review,skill-ci-review,merge-postflight,root-ff-review}.json。
+
+- Span 辅助诊断 CI 复核（2026-10-21）：PR #268 最终候选 f3769e11 的 Skill 四套 Docker 业务已通过，26 个 preset Run 完成、12 个临时 scope 释放、peer 删除与 tombstone 检查通过，四份 cleanup 库存一致。150 份制品 SHA 完整性及独立复审通过；13 份诊断／44 项检查均为 auxiliary passed，本轮实际 CI 未触发采集失败分支，该分支只引用本地真实 HTTP 503 红绿回归。当前集成 24／26 成功、无失败，ACP workspace 与 Agent lifecycle 仍执行中，待 Cost 原始业务证据复核和全部检查通过后按授权合并。证据：artifacts/verification/upload-cancellation-fix-20261021/trace-policy-skill-ci-review.json。
+
+- SDK #265 合并后 main 验收完成（2026-10-21）：85553ccb 的 5 个 workflow、integration run 39560630559 的 26 个 job 全部成功，上传取消修复→SDK rebase／合并链路已完成。Span 辅助规则的独立 PR #268 继续最终 CI；当前无新增业务失败。证据：artifacts/verification/upload-cancellation-fix-20261021/sdk265-main-final-review.json。
+
+- Span 辅助诊断本地收尾（2026-10-21）：PR #268（https://github.com/tf4fun/antnest-platform/pull/268）最终候选 f3769e11。完整仓库 45 批／14,875 项 Node 与 61 项 Python、格式／语法／存储／文档检查通过，零失败／取消／跳过；各验证进程组退出。首次本地与 CI 仅 Stage3 旧未知 Span 告警预期失败，原记录保留，已补正并复验所属及剩余批次，不重跑已过且未变化的前序批次。Cost 历史 40 样本仍全部保留失败、归入辅助 warning，83 份重放输入 SHA 未变，未追认原整套业务。Cost／Skill 与共享 helper 独立 review 通过；最终 head 完整 Docker CI 正在执行，通过后按既有授权合并。证据：artifacts/verification/upload-cancellation-fix-20261021/trace-policy-{local-review,original-cost-aux-review}.json。
 
 - Span 消费方后续批次（本批未迁移）：① ACP Commands／Files／Plan／Permissions／Progress／Multimodal；② Restart／RPC response loss／Managed MCP；③ Workspace 与 Lifecycle foundation；④ Identity／Agent access／Session／OIDC／Expiry；⑤ Gateway Resolve-cache／login admission、Stage3 base 与 Stage2 boundary。其 live Trace 异常仍可能退出 1，须在所属入口分离诊断与真实业务，不能用共享 CI 无条件接受失败退出。用户的 Span 非阻塞决策规则立即生效；后续不再调查或修复 Span 本身，只按需迁移消费方并继续执行业务验收。
 

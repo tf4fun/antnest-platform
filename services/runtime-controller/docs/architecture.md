@@ -470,6 +470,12 @@ Rules:
    intermediate events.
 3. Every stored observation receives one monotonically increasing, potentially
    sparse service sequence. Numeric discontinuity alone is not data loss.
+   Before allocating a sequence, every journal writer takes the same PostgreSQL
+   transaction advisory lock and holds it through commit or rollback. A page
+   cannot expose a later committed fact while a lower sequence can still commit.
+   Both operation completion and monitor appends use this path; aborted inserts
+   leave permanent gaps. This ordering lock is independent of observation
+   leadership and does not fence stale leaders (tracked separately in #39).
 4. A consumer resumes with `ListRuntimeObservations(after_sequence)` before
    reopening Watch.
 5. A cursor older than the retained journal receives

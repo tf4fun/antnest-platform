@@ -315,6 +315,15 @@ ordered page from the bounded Controller journal. The response carries
 `oldest_sequence`, `latest_sequence`, and `next_sequence`. Sequence zero is the
 bootstrap cursor and always starts at the oldest retained observation.
 
+Sequence allocation is serialized with commit: a page never contains sequence
+`S` unless every sequence `< S` that will ever exist is already committed or
+permanently absent. Rolled-back inserts may leave permanent numeric gaps;
+consumers advance by the returned cursor and must not infer missing facts from
+those gaps. This ordering applies to both operation-completion and monitor
+observations. Retention may remove committed history and continues to use the
+expiry behavior below; a platform `observation_gap` describes missing platform
+events, not PostgreSQL sequence gaps.
+
 If a non-zero cursor is older than the retained window, List and Watch return
 HTTP 410 `observation_cursor_expired` with `reset_sequence` set to the latest
 committed sequence visible to that read. The consumer must rebuild its logical
