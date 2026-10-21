@@ -114,7 +114,12 @@ export class ExecutionDirectory {
     revision: number;
   } {
     const configuration = this.configurations.get(operation.organizationId);
-    if (configuration === undefined) {
+    // Lifecycle settlement must not act on a superseded operation while a
+    // publication is pending. Ordinary readers can still use the last view.
+    if (
+      configuration === undefined ||
+      this.pending.get(operation.organizationId)?.publication !== undefined
+    ) {
       throw new DomainError("configuration_not_ready", "Execution configuration is not ready");
     }
     const agent = configuration.agents.find((item) => item.agent_id === operation.agentId);
@@ -161,7 +166,6 @@ export class ExecutionDirectory {
             "Execution configuration revision changed",
           );
       }
-      this.configurations.delete(organizationId);
       try {
         this.dependencies.clients.apply(incoming);
         await this.dependencies.onApplied(structuredClone(next));
