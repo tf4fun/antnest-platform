@@ -24,7 +24,9 @@ used. Set `ANTNEST_E2E_CONTROLLER_IMAGE` to test a Controller image other than
 To exercise delayed Admin Console span export, run
 `ANTNEST_E2E_ADMIN_SPAN_DELAY_MS=30000 make e2e-rpc-response-loss`.
 This fixture setting changes only the Admin SDK batch interval in this disposable
-stack; the default remains 5000 ms. The same business and strict trace gates apply.
+stack; the default remains 5000 ms. Original strict Trace results remain auxiliary
+diagnostics. Business, authorization, Run persistence, Runtime behavior,
+cancellation and actual cleanup remain blocking checks.
 
 ## Scenario
 
