@@ -26,11 +26,15 @@ test("C4 entry retains page, response and business failures while joining browse
   const page = new EventEmitter();
   const frame = {};
   let closed = false;
+  const installed = [];
+  page.exposeBinding = async () => installed.push("binding");
+  page.addInitScript = async () => installed.push("init-script");
   page.mainFrame = () => frame;
   page.url = () => gateway + "/workspace/";
   page.setDefaultTimeout = () => {};
   page.isClosed = () => closed;
   page.goto = async () => {
+    assert.deepEqual(installed, ["binding", "init-script"]);
     page.emit("pageerror", pageError);
     page.emit("websocket", {});
     page.emit("response", {
@@ -112,6 +116,7 @@ test("C4 entry retains page, response and business failures while joining browse
   assert.deepEqual(cleanup, ["context", "browser"]);
   assert.deepEqual(report.model, { requests: [], pending: [], errors: [] });
   assert.deepEqual(report.page_streams, []);
+  assert.deepEqual(report.process_request_cancellations, []);
   assert.equal(detached, true);
   assert.equal(report.page_network_observations.length, 1);
   assert.equal(report.page_network_observations[0].clock_samples.length, 1);
