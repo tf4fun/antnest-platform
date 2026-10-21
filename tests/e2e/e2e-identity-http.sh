@@ -37,6 +37,7 @@ selected_identity_image_id=$(docker_cmd image inspect --format '{{.Id}}' "${ANTN
 containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
 docker_cmd inspect $containers >"$temporary/deployment.json"
 node "$root/tests/e2e/identity-closeout/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME" >"$evidence/deployment.json"
+oidc_host_port=$(node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(String(r.oidcHostPort));' "$evidence/deployment.json")
 node "$root/tests/e2e/identity-closeout/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME" identity-lifecycle "$selected_identity_image_id" 12h >"$evidence/identity-initial.json"
 ANTNEST_E2E_RESOLVE_TTL_MS=$(node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(String(r.resolve_cache_ttl_ms));' "$evidence/deployment.json")
 export ANTNEST_E2E_RESOLVE_TTL_MS
@@ -77,10 +78,10 @@ if [ "$ANTNEST_IDENTITY_SUITE" = core ]; then
     identity_fixture organization-display-seed.mjs \
       >"$temporary/organization-seed.json" 2>"$evidence/organization-seed.stderr"
     run_suite organization-display "$root/tests/e2e/identity-closeout/organization-display-client.mjs" \
-      "$gateway" "$ANTNEST_OIDC_TEST_PORT" "$temporary/tls.crt" "$temporary/organization-seed.json" "$temporary/canaries.json" "$jaeger"
+      "$gateway" "$oidc_host_port" "$temporary/tls.crt" "$temporary/organization-seed.json" "$temporary/canaries.json" "$jaeger"
   else
     run_suite local-scim "$root/tests/e2e/identity-closeout/client.mjs" "$gateway" "$jaeger"
-    run_suite oidc "$root/tests/e2e/identity-closeout/oidc-client.mjs" "$gateway" "$jaeger" "$ANTNEST_OIDC_TEST_PORT" "$temporary/tls.crt" "$temporary/canaries.json"
+    run_suite oidc "$root/tests/e2e/identity-closeout/oidc-client.mjs" "$gateway" "$jaeger" "$oidc_host_port" "$temporary/tls.crt" "$temporary/canaries.json"
   fi
   compose logs --no-color edge-gateway admin-console identity-service agent-ui >"$temporary/service-logs.txt"
   node "$root/tests/e2e/identity-closeout/check-oidc-logs.mjs" "$temporary/canaries.json" "$temporary/service-logs.txt"
