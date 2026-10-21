@@ -329,6 +329,13 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Workspace cancellation stays responsive while another Agent prepares a large
+upload. `/stop` authorizes and checks its durable target without waiting for
+history or Skill discovery. Prompt hashing yields to control I/O, and ACP
+prepares the body before its persistence transaction and copies the accepted
+user message inside PostgreSQL. Existing idempotency, access checks and the
+one-second capacity gate remain unchanged.
+
 Workspace SSE now refreshes durable Run receipts when a complete user input
 is delivered. A prompt whose first status read precedes ACP admission no
 longer stays at Bridge dispatching while the model is held; partial, duplicate

@@ -78,6 +78,21 @@ const mutations = [
   ["admission SQL foreign process", (f) => foreign(f, f.admissionQueries[0])],
   ["missing intent transaction", (f) => remove(f, f.intent.span)],
   ["missing admitting Run insert", (f) => remove(f, f.intent.queries[2])],
+  [
+    "intent returns the full prompt body",
+    (f) => {
+      const sql = tag(f.intent.queries[2], "db.query.text");
+      assert(sql.includes("pending_user_message_id, session_configuration"));
+      f.set(
+        f.intent.queries[2],
+        "db.query.text",
+        sql.replace(
+          "pending_user_message_id, session_configuration",
+          "pending_user_message_id, input_prompt, session_configuration",
+        ),
+      );
+    },
+  ],
   ["missing append version update", (f) => remove(f, f.intent.queries[3])],
   ["unlocked intent", (f) => corrupt(f, f.intent.queries[1], "FOR UPDATE")],
   ["intent moved to RPC", (f) => parent(f, f.intent.span, f.request)],
@@ -94,6 +109,24 @@ const mutations = [
     },
   ],
   ["missing acceptance transaction", (f) => remove(f, f.acceptance.span)],
+  [
+    "acceptance reads the full prompt body",
+    (f) =>
+      f.set(
+        f.acceptance.queries[3],
+        "db.query.text",
+        "SELECT session_id, client_mcp_revision_id, state, cancel_requested_at, pending_user_message_id, input_prompt FROM runs WHERE id = $1 FOR UPDATE",
+      ),
+  ],
+  [
+    "acceptance serializes the user message in the client",
+    (f) =>
+      f.set(
+        f.acceptance.queries.at(-4),
+        "db.query.text",
+        "INSERT INTO session_messages( id, session_id, run_id, sequence, kind, visible, payload, created_at ) VALUES ($1, $2, $3, $4, 'user_message', true, $5::jsonb, $6)",
+      ),
+  ],
   [
     "missing accepted user message",
     (f) => remove(f, f.acceptance.queries.at(-4)),
