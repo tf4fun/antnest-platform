@@ -306,7 +306,7 @@ func TestReadySkillReferenceResolvesOnlyExactActiveMaterialization(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = restartedLockDatabase.Close() })
-	restartedRepository, err := New(restartedDatabase, restartedLockDatabase, time.Hour)
+	restartedRepository, err := New(restartedDatabase, restartedLockDatabase, time.Hour, 1_000_000)
 	if err != nil {
 		t.Fatal(err)
 	}

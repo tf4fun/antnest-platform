@@ -25,7 +25,7 @@ func TestReconciliationFailuresAreCountedWithoutCountingRecovery(t *testing.T) {
 	source := &recoveringSource{listErrors: []error{errors.New("socket unavailable"), errors.New("socket unavailable")}}
 	runner := newRecoveryTestRunner(t, source, &fakeHealth{})
 	for i := 0; i < 3; i++ {
-		err := runner.Reconcile(context.Background(), false)
+		err := runner.Reconcile(context.Background(), 7, false)
 		if (i < 2) != (err != nil) {
 			t.Fatalf("reconciliation %d returned %v", i, err)
 		}

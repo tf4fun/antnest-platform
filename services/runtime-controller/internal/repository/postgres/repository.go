@@ -25,19 +25,24 @@ type Repository struct {
 	database                *sql.DB
 	lockDatabase            *sql.DB
 	retention               time.Duration
+	maxObservationRows      int64
 	mutationProbeInterval   time.Duration
 	leadershipProbeInterval time.Duration
 }
 
-func New(database, lockDatabase *sql.DB, retention time.Duration) (*Repository, error) {
+func New(database, lockDatabase *sql.DB, retention time.Duration, maxRows int64) (*Repository, error) {
 	if database == nil || lockDatabase == nil {
 		return nil, fmt.Errorf("database and dedicated Agent lock database are required")
 	}
 	if retention <= 0 {
 		return nil, fmt.Errorf("observation retention must be positive")
 	}
+	if maxRows <= 0 {
+		return nil, fmt.Errorf("observation maximum rows must be positive")
+	}
 	return &Repository{
 		database: database, lockDatabase: lockDatabase, retention: retention,
+		maxObservationRows:    maxRows,
 		mutationProbeInterval: time.Second, leadershipProbeInterval: time.Second,
 	}, nil
 }
@@ -523,9 +528,6 @@ func (r *Repository) storeObservation(
 	if err := notifyObservation(ctx, tx); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, pruneObservationsSQL, time.Now().UTC().Add(-r.retention)); err != nil {
-		return nil, fmt.Errorf("prune Runtime observations: %w", err)
-	}
 	return &value, nil
 }
 
@@ -564,16 +566,24 @@ func (r *Repository) ListEnvironments(
 }
 
 func (r *Repository) AppendObservation(
-	ctx context.Context, observation deployment.Observation,
+	ctx context.Context, epoch repository.ObservationEpoch, observation deployment.Observation,
 ) (deployment.Observation, error) {
 	if err := observation.Validate(); err != nil {
 		return deployment.Observation{}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, observationTransactionTimeout)
+	defer cancel()
 	tx, err := r.database.BeginTx(ctx, nil)
 	if err != nil {
 		return deployment.Observation{}, fmt.Errorf("begin Runtime observation append: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := boundObservationTransaction(ctx, tx); err != nil {
+		return deployment.Observation{}, err
+	}
+	if err := verifyObservationEpoch(ctx, tx, epoch); err != nil {
+		return deployment.Observation{}, err
+	}
 	stored, err := r.storeObservation(ctx, tx, &observation)
 	if err != nil {
 		return deployment.Observation{}, err
@@ -625,7 +635,7 @@ func (r *Repository) ListObservations(
 	defer func() { _ = tx.Rollback() }()
 	var window deployment.ObservationWindow
 	if err := tx.QueryRowContext(ctx, selectObservationBoundsSQL).Scan(
-		&window.OldestSequence, &window.LatestSequence,
+		&window.OldestSequence, &window.LatestSequence, &window.PrunedThrough,
 	); err != nil {
 		return deployment.ObservationWindow{}, fmt.Errorf("read Runtime observation bounds: %w", err)
 	}
@@ -951,9 +961,6 @@ INSERT INTO runtime_controller.observations (
 )
 VALUES (0, '', '', 0, '', 'reconciled', $1, $2)`
 
-const pruneObservationsSQL = `
-DELETE FROM runtime_controller.observations WHERE recorded_at < $1`
-
 const observationColumns = `sequence, agent_id, runtime_revision, generation, spec_digest,
 platform_resource_id, runtime_execution_id, kind, source, diagnostic_summary, observed_at`
 
@@ -962,5 +969,7 @@ FROM runtime_controller.observations
 WHERE sequence > $1 ORDER BY sequence ASC LIMIT $2`
 
 const selectObservationBoundsSQL = `
-SELECT COALESCE(MIN(sequence), 0), COALESCE(MAX(sequence), 0)
-FROM runtime_controller.observations`
+SELECT COALESCE((SELECT MIN(sequence) FROM runtime_controller.observations), 0),
+       GREATEST(COALESCE((SELECT MAX(sequence) FROM runtime_controller.observations), 0), pruned_through),
+       pruned_through
+FROM runtime_controller.observation_journal WHERE id = 1`

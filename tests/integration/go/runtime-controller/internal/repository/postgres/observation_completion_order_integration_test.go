@@ -37,6 +37,7 @@ func testCompletionObservationConsumer(t *testing.T, reader func(*testing.T, *Re
 	read := reader(t, store)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
+	epoch := observationTestEpoch(t, store, ctx)
 	const gateKey int64 = 0x544553544f425356
 	_, err := database.ExecContext(ctx, fmt.Sprintf(`
 CREATE FUNCTION runtime_controller.hold_completion() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -114,7 +115,7 @@ SELECT 1 FROM pg_locks WHERE NOT granted AND locktype='advisory' AND $1 = ANY(pg
 			health := fact
 			health.Kind, health.Source = deployment.ObservationHealthy, "concurrent_health"
 			health.Generation, health.SpecDigest = started.Generation, started.SpecDigest
-			result, done := startOrderAppend(ctx, healthStore, health)
+			result, done := startOrderAppend(ctx, healthStore, epoch, health)
 			defer func() { release(); <-done }()
 			waitOrderWriter(t, ctx, database, healthPID, done)
 			window, err := read(ctx, after, 2)
@@ -143,6 +144,7 @@ func TestRepositoryObservationAppendThroughput(t *testing.T) {
 	store, _, _ := integrationRepository(t)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
+	epoch := observationTestEpoch(t, store, ctx)
 	const writers, perWriter = 8, 125
 	start := make(chan struct{})
 	done := make(chan error, writers)
@@ -150,7 +152,7 @@ func TestRepositoryObservationAppendThroughput(t *testing.T) {
 		go func() {
 			<-start
 			for item := range perWriter {
-				if _, err := store.AppendObservation(ctx, orderObservation(fmt.Sprintf("throughput-%d-%d", writer, item))); err != nil {
+				if _, err := store.AppendObservation(ctx, epoch, orderObservation(fmt.Sprintf("throughput-%d-%d", writer, item))); err != nil {
 					done <- err
 					return
 				}

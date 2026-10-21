@@ -12,6 +12,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/monitor"
+	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 func TestRepositoryObservationMonitorRetryRecovery(t *testing.T) {
@@ -26,7 +27,7 @@ func TestRepositoryObservationMonitorRetryRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	readyCalls := 0
-	err = runner.RunCoordinated(ctx, repository, func() {
+	err = runner.RunCoordinated(ctx, repository, repository, time.Minute, func() {
 		readyCalls++
 		ready, probeErr := repository.ObservationMonitorReady(ctx)
 		if probeErr != nil || !ready || !health.ready.Load() {
@@ -106,10 +107,12 @@ func (*retryMonitorSink) InspectPlatformRuntime(context.Context, deployment.Key)
 func (*retryMonitorSink) ValidateRuntimeInspection(context.Context, deployment.Inspection) error {
 	return nil
 }
-func (s *retryMonitorSink) RecordPlatformObservation(ctx context.Context, value deployment.Observation) (deployment.Observation, error) {
-	return s.repository.AppendObservation(ctx, value)
+func (s *retryMonitorSink) RecordPlatformObservation(ctx context.Context, epoch repositoryport.ObservationEpoch, value deployment.Observation) (deployment.Observation, error) {
+	return s.repository.AppendObservation(ctx, epoch, value)
 }
-func (*retryMonitorSink) ReconcileExpectedRuntimes(context.Context, []deployment.Inspection) error {
+func (*retryMonitorSink) ReconcileExpectedRuntimes(context.Context, repositoryport.ObservationEpoch, []deployment.Inspection) error {
 	return nil
 }
-func (*retryMonitorSink) ReconcileRetainedStorage(context.Context) error { return nil }
+func (*retryMonitorSink) ReconcileRetainedStorage(context.Context, repositoryport.ObservationEpoch) error {
+	return nil
+}

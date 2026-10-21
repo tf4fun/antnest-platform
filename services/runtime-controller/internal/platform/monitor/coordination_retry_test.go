@@ -35,7 +35,7 @@ func TestCoordinatedLeaderRetriesInitialReconciliationBeforeReady(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	readyCalls := 0
-	err := runner.RunCoordinated(ctx, coordinator, func() { readyCalls++; cancel() })
+	err := runner.RunCoordinated(ctx, coordinator, noopPruner{}, time.Minute, func() { readyCalls++; cancel() })
 	if err != nil || readyCalls != 1 || source.listCalls != 3 {
 		t.Fatalf("initial reconciliation did not recover: ready=%d lists=%d err=%v", readyCalls, source.listCalls, err)
 	}
@@ -62,7 +62,7 @@ func TestCoordinatedLeaderRetriesLeadershipQuery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	readyCalls := 0
-	err := runner.RunCoordinated(ctx, coordinator, func() { readyCalls++; cancel() })
+	err := runner.RunCoordinated(ctx, coordinator, noopPruner{}, time.Minute, func() { readyCalls++; cancel() })
 	if err != nil || readyCalls != 1 || coordinator.acquireCalls != 2 {
 		t.Fatalf("leadership query did not recover: ready=%d attempts=%d err=%v", readyCalls, coordinator.acquireCalls, err)
 	}
@@ -81,7 +81,7 @@ func TestCoordinatedFollowerRetriesReadinessQuery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	readyCalls := 0
-	err := runner.RunCoordinated(ctx, coordinator, func() { readyCalls++; cancel() })
+	err := runner.RunCoordinated(ctx, coordinator, noopPruner{}, time.Minute, func() { readyCalls++; cancel() })
 	if err != nil || readyCalls != 1 || coordinator.readinessCalls != 2 || source.listCalls != 0 {
 		t.Fatalf("follower readiness did not recover: ready=%d probes=%d lists=%d err=%v", readyCalls, coordinator.readinessCalls, source.listCalls, err)
 	}
@@ -109,7 +109,7 @@ func TestCoordinatedPermanentFailuresReleaseLeadershipAndReturn(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			readyCalls := 0
-			err := runner.RunCoordinated(ctx, coordinator, func() { readyCalls++ })
+			err := runner.RunCoordinated(ctx, coordinator, noopPruner{}, time.Minute, func() { readyCalls++ })
 			if !errors.Is(err, permanent) || coordinator.acquireCalls != 1 || readyCalls != 0 || health.healthy {
 				t.Fatalf("permanent failure was retried or hidden: attempts=%d ready=%d healthy=%t err=%v", coordinator.acquireCalls, readyCalls, health.healthy, err)
 			}
@@ -144,7 +144,7 @@ func TestCoordinatedBackoffCapsAndResetsOnlyAfterReady(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	readyCalls := 0
-	if err := runner.RunCoordinated(ctx, coordinator, func() {
+	if err := runner.RunCoordinated(ctx, coordinator, noopPruner{}, time.Minute, func() {
 		readyCalls++
 		if readyCalls == 2 {
 			cancel()
@@ -178,7 +178,9 @@ func TestCoordinatedCancellationInterruptsLongBackoff(t *testing.T) {
 	entered := make(chan struct{})
 	coordinator.beforeAcquire = func() { close(entered) }
 	result := make(chan error, 1)
-	go func() { result <- runner.RunCoordinated(ctx, coordinator, func() { t.Error("unexpected readiness") }) }()
+	go func() {
+		result <- runner.RunCoordinated(ctx, coordinator, noopPruner{}, time.Minute, func() { t.Error("unexpected readiness") })
+	}()
 	select {
 	case <-entered:
 	case <-time.After(time.Second):

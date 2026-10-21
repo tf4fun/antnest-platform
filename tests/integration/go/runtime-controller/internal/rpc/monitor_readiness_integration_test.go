@@ -43,7 +43,7 @@ func TestMonitorReconciliationRetriesChangeHTTPReadinessAndRecover(t *testing.T)
 	ready := make(chan struct{}, 2)
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.RunCoordinated(ctx, httpRetryCoordinator{}, func() { ready <- struct{}{} })
+		done <- runner.RunCoordinated(ctx, httpRetryCoordinator{}, noopPruner{}, time.Minute, func() { ready <- struct{}{} })
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -151,13 +151,21 @@ func (s *httpRetrySource) Watch(ctx context.Context, _ time.Time, ready func(con
 
 type httpRetrySink struct{ monitor.Sink }
 
-func (httpRetrySink) RecordPlatformObservation(_ context.Context, value deployment.Observation) (deployment.Observation, error) {
+func (httpRetrySink) RecordPlatformObservation(_ context.Context, _ repository.ObservationEpoch, value deployment.Observation) (deployment.Observation, error) {
 	return value, nil
 }
-func (httpRetrySink) ReconcileExpectedRuntimes(context.Context, []deployment.Inspection) error {
+func (httpRetrySink) ReconcileExpectedRuntimes(context.Context, repository.ObservationEpoch, []deployment.Inspection) error {
 	return nil
 }
-func (httpRetrySink) ReconcileRetainedStorage(context.Context) error { return nil }
+func (httpRetrySink) ReconcileRetainedStorage(context.Context, repository.ObservationEpoch) error {
+	return nil
+}
+
+type noopPruner struct{}
+
+func (noopPruner) PruneObservationBatch(context.Context, repository.ObservationEpoch) (int64, error) {
+	return 0, nil
+}
 
 type httpRetryCoordinator struct {
 	repository.ObservationCoordinator
@@ -169,6 +177,7 @@ func (httpRetryCoordinator) TryAcquireObservationLeadership(context.Context) (re
 
 type httpRetryLeadership struct{ done chan struct{} }
 
+func (httpRetryLeadership) Epoch() repository.ObservationEpoch           { return 7 }
 func (l httpRetryLeadership) Done() <-chan struct{}                      { return l.done }
 func (httpRetryLeadership) Err() error                                   { return nil }
 func (httpRetryLeadership) MarkObservationReady(context.Context) error   { return nil }

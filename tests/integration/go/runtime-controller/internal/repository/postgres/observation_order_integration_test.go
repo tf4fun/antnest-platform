@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 // Each round holds the lower sequence uncommitted until another real writer
@@ -19,6 +20,7 @@ func TestRepositoryObservationCommitOrder(t *testing.T) {
 	store, database, _ := integrationRepository(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
+	epoch := observationTestEpoch(t, store, ctx)
 	other, pid := observationOrderWriter(t, ctx, store)
 	var after uint64
 	for round := range 1000 {
@@ -33,7 +35,7 @@ func TestRepositoryObservationCommitOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, done := startOrderAppend(ctx, other, orderObservation(fmt.Sprintf("second-%d", round)))
+			result, done := startOrderAppend(ctx, other, epoch, orderObservation(fmt.Sprintf("second-%d", round)))
 			defer func() { _ = tx.Rollback(); <-done }()
 			waitOrderWriter(t, ctx, database, pid, done)
 			window, err := store.ListObservations(ctx, after, 2)
@@ -65,6 +67,7 @@ func TestRepositoryObservationCommitOrder(t *testing.T) {
 
 func TestRepositoryObservationRollbackReleasesOrder(t *testing.T) {
 	store, database, ctx := integrationRepository(t)
+	epoch := observationTestEpoch(t, store, ctx)
 	other, pid := observationOrderWriter(t, ctx, store)
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -76,7 +79,7 @@ func TestRepositoryObservationRollbackReleasesOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, done := startOrderAppend(ctx, other, orderObservation("committed"))
+	result, done := startOrderAppend(ctx, other, epoch, orderObservation("committed"))
 	defer func() { _ = tx.Rollback(); <-done }()
 	waitOrderWriter(t, ctx, database, pid, done)
 	select {
@@ -99,6 +102,7 @@ func TestRepositoryObservationRollbackReleasesOrder(t *testing.T) {
 
 func TestRepositoryObservationOrderWaitCancellation(t *testing.T) {
 	store, database, ctx := integrationRepository(t)
+	epoch := observationTestEpoch(t, store, ctx)
 	other, pid := observationOrderWriter(t, ctx, store)
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -111,7 +115,7 @@ func TestRepositoryObservationOrderWaitCancellation(t *testing.T) {
 	}
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	result, done := startOrderAppend(waitCtx, other, orderObservation("cancelled"))
+	result, done := startOrderAppend(waitCtx, other, epoch, orderObservation("cancelled"))
 	defer func() { cancel(); _ = tx.Rollback(); <-done }()
 	waitOrderWriter(t, ctx, database, pid, done)
 	cancel()
@@ -122,7 +126,7 @@ func TestRepositoryObservationOrderWaitCancellation(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.AppendObservation(ctx, orderObservation("after-cancellation")); err != nil {
+	if _, err := other.AppendObservation(ctx, epoch, orderObservation("after-cancellation")); err != nil {
 		t.Fatal(err)
 	}
 	window, err := store.ListObservations(ctx, 0, 10)
@@ -140,12 +144,12 @@ type orderAppendResult struct {
 	err   error
 }
 
-func startOrderAppend(ctx context.Context, store *Repository, value deployment.Observation) (*orderAppendResult, <-chan struct{}) {
+func startOrderAppend(ctx context.Context, store *Repository, epoch repositoryport.ObservationEpoch, value deployment.Observation) (*orderAppendResult, <-chan struct{}) {
 	result := &orderAppendResult{}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		result.value, result.err = store.AppendObservation(ctx, value)
+		result.value, result.err = store.AppendObservation(ctx, epoch, value)
 	}()
 	return result, done
 }
@@ -168,7 +172,7 @@ func observationOrderWriter(t *testing.T, ctx context.Context, store *Repository
 	if err := database.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	other, err := New(database, store.lockDatabase, store.retention)
+	other, err := New(database, store.lockDatabase, store.retention, 1_000_000)
 	if err != nil {
 		t.Fatal(err)
 	}

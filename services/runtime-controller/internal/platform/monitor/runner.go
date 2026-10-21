@@ -31,9 +31,9 @@ var (
 type Sink interface {
 	InspectPlatformRuntime(context.Context, deployment.Key) (deployment.Inspection, error)
 	ValidateRuntimeInspection(context.Context, deployment.Inspection) error
-	RecordPlatformObservation(context.Context, deployment.Observation) (deployment.Observation, error)
-	ReconcileExpectedRuntimes(context.Context, []deployment.Inspection) error
-	ReconcileRetainedStorage(context.Context) error
+	RecordPlatformObservation(context.Context, repository.ObservationEpoch, deployment.Observation) (deployment.Observation, error)
+	ReconcileExpectedRuntimes(context.Context, repository.ObservationEpoch, []deployment.Inspection) error
+	ReconcileRetainedStorage(context.Context, repository.ObservationEpoch) error
 }
 
 type Health interface {
@@ -80,7 +80,7 @@ func New(
 	}, nil
 }
 
-func (r *Runner) Reconcile(ctx context.Context, afterGap bool) (resultErr error) {
+func (r *Runner) Reconcile(ctx context.Context, epoch repository.ObservationEpoch, afterGap bool) (resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, r.reconcileTimeout)
 	defer cancel()
 	ctx, span := monitorTracer.Start(ctx, "runtime.platform.reconcile")
@@ -99,7 +99,7 @@ func (r *Runner) Reconcile(ctx context.Context, afterGap bool) (resultErr error)
 	}()
 	r.health.MarkMonitor(false)
 	if afterGap {
-		if err := r.record(ctx, deployment.Observation{
+		if err := r.record(ctx, epoch, deployment.Observation{
 			Kind: deployment.ObservationGap, Source: "platform_reconciliation",
 			DiagnosticSummary: "Platform event stream disconnected; current inventory must be reconciled",
 			ObservedAt:        r.now().UTC(),
@@ -120,17 +120,17 @@ func (r *Runner) Reconcile(ctx context.Context, afterGap bool) (resultErr error)
 		if !ok {
 			continue
 		}
-		if err := r.record(ctx, observation); err != nil {
+		if err := r.record(ctx, epoch, observation); err != nil {
 			return err
 		}
 	}
-	if err := r.sink.ReconcileExpectedRuntimes(ctx, inspections); err != nil {
+	if err := r.sink.ReconcileExpectedRuntimes(ctx, epoch, inspections); err != nil {
 		return fmt.Errorf("reconcile expected Runtime inventory: %w", err)
 	}
-	if err := r.sink.ReconcileRetainedStorage(ctx); err != nil {
+	if err := r.sink.ReconcileRetainedStorage(ctx, epoch); err != nil {
 		return fmt.Errorf("reconcile retained Runtime storage: %w", err)
 	}
-	if err := r.record(ctx, deployment.Observation{
+	if err := r.record(ctx, epoch, deployment.Observation{
 		Kind: deployment.ObservationReconciled, Source: "platform_reconciliation",
 		DiagnosticSummary: "Current managed Runtime inventory was reconciled",
 		ObservedAt:        r.now().UTC(),
@@ -142,6 +142,7 @@ func (r *Runner) Reconcile(ctx context.Context, afterGap bool) (resultErr error)
 
 func (r *Runner) Run(
 	ctx context.Context,
+	epoch repository.ObservationEpoch,
 	since time.Time,
 	onReady func(context.Context) error,
 	onUnready func(context.Context) error,
@@ -165,7 +166,7 @@ func (r *Runner) Run(
 				return nil
 			},
 			func(eventCtx context.Context, value deployment.Observation) error {
-				return r.record(eventCtx, value)
+				return r.record(eventCtx, epoch, value)
 			},
 		)
 		if watchReady {
@@ -177,7 +178,7 @@ func (r *Runner) Run(
 		if ctx.Err() != nil {
 			return nil
 		}
-		if isPermanent(watchErr) {
+		if isPermanent(watchErr) || errors.Is(watchErr, repository.ErrLeadershipLost) {
 			r.health.MarkMonitor(false)
 			return watchErr
 		}
@@ -187,10 +188,10 @@ func (r *Runner) Run(
 			"error_class", "platform_watch_disconnected", "error", diagnostics.Message(watchErr))
 		disconnectedAt := r.now().UTC()
 		for {
-			if reconcileErr := r.Reconcile(ctx, true); reconcileErr == nil {
+			if reconcileErr := r.Reconcile(ctx, epoch, true); reconcileErr == nil {
 				break
 			} else {
-				if isPermanent(reconcileErr) {
+				if isPermanent(reconcileErr) || errors.Is(reconcileErr, repository.ErrLeadershipLost) {
 					return reconcileErr
 				}
 				if !r.retry(ctx, backoff, "platform_reconciliation_failed", "platform reconciliation failed", reconcileErr) {
@@ -206,10 +207,11 @@ func (r *Runner) Run(
 }
 
 func (r *Runner) RunCoordinated(
-	ctx context.Context, coordinator repository.ObservationCoordinator, ready func(),
+	ctx context.Context, coordinator repository.ObservationCoordinator,
+	pruner repository.ObservationPruner, pruneInterval time.Duration, ready func(),
 ) error {
-	if coordinator == nil || ready == nil {
-		return &PermanentError{Err: fmt.Errorf("observation coordinator and readiness callback are required")}
+	if coordinator == nil || pruner == nil || pruneInterval <= 0 || ready == nil {
+		return &PermanentError{Err: fmt.Errorf("observation coordinator, pruner, positive prune interval and readiness callback are required")}
 	}
 	backoff := newRetryBackoff(r.retryDelay, r.maxRetryDelay)
 	for {
@@ -262,11 +264,21 @@ func (r *Runner) RunCoordinated(
 			}
 		}()
 		watchSince := r.now().UTC()
-		reconcileErr := r.Reconcile(leaderCtx, true)
+		epoch := leadership.Epoch()
+		pruneDone := make(chan error, 1)
+		go func() {
+			err := r.prune(leaderCtx, pruner, epoch, pruneInterval)
+			if err != nil {
+				cancelLeader()
+			}
+			pruneDone <- err
+		}()
+		reconcileErr := r.Reconcile(leaderCtx, epoch, true)
 		var runErr error
 		if reconcileErr == nil {
 			runErr = r.Run(
 				leaderCtx,
+				epoch,
 				watchSince,
 				func(readyCtx context.Context) error {
 					if err := leadership.MarkObservationReady(readyCtx); err != nil {
@@ -280,15 +292,17 @@ func (r *Runner) RunCoordinated(
 				leadership.MarkObservationUnready,
 			)
 		}
-		leaseLost := leadershipEnded(leadership)
 		cancelLeader()
 		<-leaseWatchDone
+		pruneErr := <-pruneDone
+		leaseLost := leadershipEnded(leadership) ||
+			errors.Is(errors.Join(reconcileErr, runErr, pruneErr), repository.ErrLeadershipLost)
 		releaseErr := releaseLeadership(leadership)
 		r.health.MarkMonitor(false)
 		if ctx.Err() != nil {
 			return nil
 		}
-		resultErr := errors.Join(reconcileErr, runErr, releaseErr)
+		resultErr := errors.Join(reconcileErr, runErr, pruneErr, releaseErr)
 		if isPermanent(resultErr) {
 			return resultErr
 		}
@@ -355,7 +369,7 @@ func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter 
 }
 
 func (r *Runner) record(
-	ctx context.Context, value deployment.Observation,
+	ctx context.Context, epoch repository.ObservationEpoch, value deployment.Observation,
 ) (resultErr error) {
 	ctx, span := monitorTracer.Start(ctx, "runtime.platform.observation.process", trace.WithSpanKind(trace.SpanKindConsumer))
 	span.SetAttributes(
@@ -389,7 +403,7 @@ func (r *Runner) record(
 		}
 	}
 	span.SetAttributes(observationTraceAttributes(value)...)
-	if _, err := r.sink.RecordPlatformObservation(ctx, value); err != nil {
+	if _, err := r.sink.RecordPlatformObservation(ctx, epoch, value); err != nil {
 		return fmt.Errorf("record Runtime platform observation: %w", err)
 	}
 	return nil

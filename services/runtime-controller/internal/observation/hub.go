@@ -2,6 +2,7 @@ package observation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -135,11 +136,13 @@ func (r *Repository) ListEnvironments(ctx context.Context) ([]deployment.Environ
 }
 
 func (r *Repository) AppendObservation(
-	ctx context.Context, value deployment.Observation,
+	ctx context.Context, epoch repository.ObservationEpoch, value deployment.Observation,
 ) (deployment.Observation, error) {
-	stored, err := r.next.AppendObservation(ctx, value)
+	stored, err := r.next.AppendObservation(ctx, epoch, value)
 	if err != nil {
-		r.health.MarkJournal(false)
+		if !errors.Is(err, repository.ErrLeadershipLost) && ctx.Err() == nil {
+			r.health.MarkJournal(false)
+		}
 		return deployment.Observation{}, err
 	}
 	r.health.MarkJournal(true)

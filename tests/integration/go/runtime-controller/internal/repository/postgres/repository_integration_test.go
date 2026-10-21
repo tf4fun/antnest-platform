@@ -258,6 +258,7 @@ func TestRepositoryListExcludesDeletedEnvironmentButDirectReadRetainsTombstone(t
 
 func TestRepositoryObservationWindowReportsBoundsAfterRetentionPruning(t *testing.T) {
 	repository, database, ctx := integrationRepository(t)
+	epoch := observationTestEpoch(t, repository, ctx)
 	old := time.Now().UTC().Add(-2 * time.Hour)
 	if _, err := database.ExecContext(ctx, `
 INSERT INTO runtime_controller.observations (
@@ -265,11 +266,14 @@ INSERT INTO runtime_controller.observations (
 ) VALUES ('', '', 0, '', 'reconciled', 'expired_fixture', $1, $1)`, old); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := repository.AppendObservation(ctx, deployment.Observation{
+	stored, err := repository.AppendObservation(ctx, epoch, deployment.Observation{
 		Kind: deployment.ObservationReconciled, Source: "current_fixture", ObservedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if count, err := repository.PruneObservationBatch(ctx, epoch); err != nil || count != 1 {
+		t.Fatalf("explicit retention prune = %d err=%v", count, err)
 	}
 	window, err := repository.ListObservations(ctx, 0, 10)
 	if err != nil || len(window.Observations) != 1 ||
@@ -377,7 +381,7 @@ func TestRepositoryObservationNotificationAndLeadership(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("notification probe did not reach the listener")
 	}
-	if _, err := repository.AppendObservation(ctx, deployment.Observation{
+	if _, err := repository.AppendObservation(ctx, leadership.Epoch(), deployment.Observation{
 		Kind: deployment.ObservationReconciled, Source: "integration_test", ObservedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -430,7 +434,7 @@ func integrationRepository(t *testing.T) (*Repository, *sql.DB, context.Context)
 	if err := Migrate(ctx, database); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := New(database, lockDatabase, time.Hour)
+	repository, err := New(database, lockDatabase, time.Hour, 1_000_000)
 	if err != nil {
 		t.Fatal(err)
 	}

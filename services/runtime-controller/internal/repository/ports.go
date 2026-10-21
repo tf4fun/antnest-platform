@@ -14,6 +14,7 @@ var (
 	ErrIdempotencyConflict         = errors.New("repository idempotency identity conflict")
 	ErrOperationFinalized          = errors.New("repository operation is finalized")
 	ErrLockLost                    = errors.New("repository coordination lock was lost")
+	ErrLeadershipLost              = errors.New("observation leadership epoch is no longer current")
 	ErrConcurrentMutation          = errors.New("repository Agent mutation is already active")
 	ErrTransitionConflict          = errors.New("repository lifecycle transition conflict")
 	ErrRevisionConflict            = errors.New("repository revision conflict")
@@ -46,7 +47,7 @@ type Store interface {
 	ListEnvironments(context.Context) ([]deployment.Environment, error)
 	GenerationClaim(context.Context, deployment.Key) (GenerationClaim, error)
 	MaxClaimedGeneration(context.Context, string) (uint64, error)
-	AppendObservation(context.Context, deployment.Observation) (deployment.Observation, error)
+	AppendObservation(context.Context, ObservationEpoch, deployment.Observation) (deployment.Observation, error)
 	ListObservations(context.Context, uint64, int) (deployment.ObservationWindow, error)
 	Ready(context.Context) error
 }
@@ -94,7 +95,18 @@ type SkillCleanupStore interface {
 	PostponeSkillCleanup(context.Context, int64, string, time.Time, time.Duration, string) error
 }
 
+// ObservationEpoch is captured once per leadership term. Zero is never a writer
+// capability. The repository checks it while holding a shared row lock until
+// the observation transaction commits or rolls back.
+type ObservationEpoch int64
+
+type ObservationPruner interface {
+	// Each call commits at most 1,000 prefix deletions, outside writer transactions.
+	PruneObservationBatch(context.Context, ObservationEpoch) (int64, error)
+}
+
 type Leadership interface {
+	Epoch() ObservationEpoch
 	Done() <-chan struct{}
 	Err() error
 	MarkObservationReady(context.Context) error

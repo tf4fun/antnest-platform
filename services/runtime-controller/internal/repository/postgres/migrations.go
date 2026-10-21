@@ -335,6 +335,11 @@ var schemaMigrations = []migration{
 		checksum: "3c9c1eccad0e59c22c643aee692dfa31d7851334b9e58e34971b7990797c85ea",
 		sql:      instanceAuthenticationSQL,
 	},
+	{
+		version: 13, name: "fence_and_bound_observation_journal",
+		checksum: "b344ea651d08e30e0ea8f8d7ce84c804691252d9ea352c7597ebba0600e61803",
+		sql:      observationRetentionSQL,
+	},
 }
 
 func Migrate(ctx context.Context, database *sql.DB) error {

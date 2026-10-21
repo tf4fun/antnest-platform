@@ -19,13 +19,15 @@ Issue 状态最后核对于 2026-10-16：136 个 issue，78 个已关闭，58 �
 
 ## 当前批次
 
-- #33 真实消费者与本地必要检查完成（2026-10-21）：真实 RC HTTP→真实 Agent Controller client 在100轮竞争中完整消费200条事实，返回 NextSequence 严格推进；同run两项race通过、零跳过。完整RC先前通过346测试／396子场景，4个Docker专用场景未执行；CI选路／overlay、存储、链接、格式均通过，后续完整验收转远程CI，不再本地重复全量。#33待提交PR并验收远程Docker；#53目录/schema/表驱动反例草案与#43跨实例红例独立保留。
+- #39 实现与定向验证推进中（2026-10-21）：独立工作树 .worktrees/observation-retention-fencing 已实现显式 epoch fencing、独立 READ COMMITTED 分批清理、正数行数上限、schema 13 持久 pruned_through 与 List/Watch 游标边界。热路径 DELETE 原反例已转绿；配置、epoch/floor、pruner 生命周期及取消健康标记回归通过，真实 PG 的升级、fencing、批量/年龄/数量、空 journal/HTTP 场景通过。原 50 append + 50 裸 SERIALIZABLE completion 压力与无裁剪对照均出现 10 次 40001，不能归因清理；原件和源码 SHA 保留，追加的四项 race 定向测试均通过：99+1 有/无裁剪各100次裸写全成功且原始40001为零；50+50生产API全部提交、逐Agent终态与唯一fact一致；裁剪在completion存续期间先提交删除5000行且floor正确。完整准入只跑后续远程 CI，尚未完成交付。证据：artifacts/verification/reliability-20261021/issue-39/。
+
+- #33 已合并并关闭（2026-10-21）：PR #269（https://github.com/tf4fun/antnest-platform/pull/269）候选 999f6d13 经完整远程 integration 39580346269 的 28 个 job 全部通过，54 项 GitHub 检查为 50 成功／4 跳过、零待执行。Draft 跳过业务的旧 run 不计准入。远程 RC PostgreSQL 17 包／346 测试／396 子场景通过，4 项 Docker 专用跳过如实保留；真实 RC HTTP→AC client 的两项 race 测试各100轮／200事实通过、零跳过，Runtime三套Docker及部署业务/清理通过。协调者与独立 review 无 blocker，正常 squash 为 3a7293dd4441ff7711b38f527c31ab1f5e92d8cf；本地 main 已快进、合并 tree 与验收候选一致、原 TODO 和两份诊断源逐字保留。合并后 main CI 待跟踪。证据：artifacts/verification/reliability-20261021/issue-33/{final-pr-review,root-ff-review}.json。
 
 - 并发执行安排（2026-10-21，用户要求提速）：Runtime Controller 主线在 .worktrees/observation-commit-order 修 #33，随后 #39；ACP 子线在 .worktrees/acp-error-catalog 提前准备 #53 共享错误目录，#50 恢复设计已审查；Controller 子线在 .worktrees/controller-publication-ownership 提前复现 #43 跨实例发布竞争。不同工作树／明确写集合并行，协调者独占 Git、Docker、串行验证及合并。交付和依赖仍按上述顺序；草案及先行反例不计作 issue 完成。
 - #33 首轮红绿（2026-10-21）：原代码第一轮即读到 sequence 2、sequence 1 仍未提交；三项真实 PostgreSQL 反例失败。统一写入点添加独立事务 advisory lock 后，1,000 轮持事务竞争共 2,000 条事实、100 轮真实 CompleteOperation／health 共 200 条事实、rollback／cancel 检查全部通过（5 项，race，零跳过），8 writer／1,000 append 为 179.88 facts/s，高于文档基准峰值 100/s。审查无当前 blocker；完整 RC 门禁、真实 Controller 消费及 Docker／CI 待完成。#43 新跨 publisher 反例已失败（预期读取 1 次、实际 2 次），无残留进程；#53 草案 71 码尚待 schema／契约和服务消费者。证据：artifacts/verification/reliability-20261021/issue-33/。
 
 - 第 3 步可靠性已启动（2026-10-21，用户指定顺序）：推进 #82，并提前交付 #83 的 #53。执行顺序固定为 **#33 → #39 → #50 → #53 → #44 → #49 → #52 → #51 → #43 → #45 → #46 → #35 → #40 → #41 → #54 → #55 → #56**。本顺序优先于下方历史分组和建议排期；必需的共享契约在所属批次先定义，不扩大成未授权的全量契约重构。
-- 当前执行 #33（Runtime observation 提交顺序）：最新远端 main 为 91e814dd，17 个执行 issue 均开放、无开放 PR。先复现长事务分配低序号后被短事务越过的丢事实路径，再在 Runtime Controller 统一写入点修复；验收包含真实 PostgreSQL 1,000 次 race、完成操作与健康事实并发、消费方完整回放、吞吐记录与适用 Docker E2E。#39 的异步清理／数量上限／epoch fencing 留在下一单服务批次，不能把本项视为 #82 完成。原 issue 正文及讨论：artifacts/verification/reliability-20261021/issues-initial.json。
+- #33 启动时记录（Runtime observation 提交顺序，历史状态）：最新远端 main 为 91e814dd，17 个执行 issue 均开放、无开放 PR。先复现长事务分配低序号后被短事务越过的丢事实路径，再在 Runtime Controller 统一写入点修复；验收包含真实 PostgreSQL 1,000 次 race、完成操作与健康事实并发、消费方完整回放、吞吐记录与适用 Docker E2E。#39 的异步清理／数量上限／epoch fencing 留在下一单服务批次，不能把本项视为 #82 完成。原 issue 正文及讨论：artifacts/verification/reliability-20261021/issues-initial.json。
 
 - main 合并后 CI 跟踪复核（2026-10-21 17:18，北京时间）：远端 main 仍为 91e814dd，9 个 workflow／27 个集成 job／46 项 GitHub 检查全部结束并成功，无排队、执行中或失败任务。本次仅刷新状态，未新增重跑；Managed MCP 首次超时及已完成的一次同 SHA 复验记录继续保留。证据：artifacts/verification/upload-cancellation-fix-20261021/main-ci-followup-20261021T091810Z-review.json。
 
@@ -472,7 +474,7 @@ Issue 状态最后核对于 2026-10-16：136 个 issue，78 个已关闭，58 �
 - [ ] [#165](https://github.com/tf4fun/antnest-platform/issues/165) test(runtime-controller): cover Skill volume ready, drift and mount faults as component tests
 - [ ] [#246](https://github.com/tf4fun/antnest-platform/issues/246) Runtime Controller helper removal and Skill test cleanup can leave anonymous Docker volumes
 - [ ] [#168](https://github.com/tf4fun/antnest-platform/issues/168) test(runtime): move packet-path egress and health probe checks out of the platform lifecycle suites
-- [ ] [#33](https://github.com/tf4fun/antnest-platform/issues/33) Runtime observation journal can permanently skip facts: BIGSERIAL order is not commit order
+- [x] [#33](https://github.com/tf4fun/antnest-platform/issues/33) Runtime observation journal can permanently skip facts: BIGSERIAL order is not commit order
 - [ ] [#39](https://github.com/tf4fun/antnest-platform/issues/39) RC observation journal: prune runs inside every append transaction, retention docs disagree, and leader writes are not fenced
 - [ ] [#35](https://github.com/tf4fun/antnest-platform/issues/35) Harden Runtime containers: stop grace shorter than shutdown budget, no CPU or disk limits, exec /tmp, writable rootfs
 - [ ] [#15](https://github.com/tf4fun/antnest-platform/issues/15) runtime-egress: out-of-range revisions return retryable 503 and path rejections are inconsistent
