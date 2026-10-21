@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/agent-acp/runtime-barrier-recovery.schema.json",
+  "title": "Pending Controller runtime barrier recovery query",
+  "description": "A scoped recovery fact, not execution admission or proof of settlement. Producer and consumer implementation remain pending.",
+  "$ref": "#/$defs/result",
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^\\S+$"
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "organization_id": { "$ref": "#/$defs/identity" },
+        "agent_id": { "$ref": "#/$defs/identity" },
+        "expected_runtime_revision": { "$ref": "#/$defs/identity" }
+      },
+      "required": ["organization_id", "agent_id", "expected_runtime_revision"],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "organization_id": { "$ref": "#/$defs/identity" },
+        "agent_id": { "$ref": "#/$defs/identity" },
+        "runtime_revision": { "$ref": "#/$defs/identity" },
+        "barrier": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/barrier" }]
+        }
+      },
+      "required": [
+        "organization_id",
+        "agent_id",
+        "runtime_revision",
+        "barrier"
+      ],
+      "additionalProperties": false
+    },
+    "barrier": {
+      "type": "object",
+      "properties": {
+        "barrier_id": { "$ref": "#/$defs/identity" },
+        "reason": { "type": "string", "const": "runtime_barrier_required" },
+        "runtime_execution_id": { "$ref": "#/$defs/identity" }
+      },
+      "required": ["barrier_id", "reason", "runtime_execution_id"],
+      "additionalProperties": false
+    }
+  }
+}

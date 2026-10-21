@@ -490,3 +490,96 @@ Owning-service acceptance does not establish the subsequent cross-service
 restart/admission verification. Controller and UI recovery consumers and that
 integration batch remain pending; this phase does not complete #50 or change
 the existing Controller relay behavior.
+
+## Runtime barrier recovery (#50, pending)
+
+This amendment defines a future control query and its recovery meaning. ACP
+producer implementation, Controller policy/recovery consumption, Agent UI
+consumption and integration acceptance are all pending. The currently
+implemented routes above remain unchanged; this text does not register a route
+or change an enforced caller grant.
+
+The future query is `POST /rpc/agent-acp/get-runtime-barrier` on the control
+listener only. It requires the verified `agent-controller` workload, without a
+user CCT. The [pending control admission rules](service-authentication.md#pending-runtime-barrier-control-admission-50)
+apply independently of workspace state authorization. Controller must not use
+the user `get-agent-execution-state` or `watch-agent-execution-state` routes,
+obtain a user CCT for this purpose, or read ACP database tables directly.
+
+The [wire schema](runtime-barrier-recovery.schema.json) defines the request and
+response. Each request selects one Agent and has exactly these members:
+
+```json
+{
+  "organization_id": "org-1",
+  "agent_id": "agent-1",
+  "expected_runtime_revision": "runtime-1"
+}
+```
+
+A successful response has exactly `organization_id`, `agent_id`,
+`runtime_revision` and `barrier`. The first two preserve the requested scope;
+`runtime_revision` is the matching current Runtime revision.
+
+```json
+{
+  "organization_id": "org-1",
+  "agent_id": "agent-1",
+  "runtime_revision": "runtime-1",
+  "barrier": {
+    "barrier_id": "barrier-1",
+    "reason": "runtime_barrier_required",
+    "runtime_execution_id": "execution-1"
+  }
+}
+```
+
+`barrier` is either `null` or an object with exactly the three members shown;
+its `reason` is the literal `runtime_barrier_required`. Every identifier in the
+request or response is a string of 1–200 characters containing no whitespace.
+Identifiers are not trimmed or normalized. Extra members are rejected. The
+response contains no credentials, endpoints, Run or Tool content, or Run/Tool
+identifiers. This query is a recovery fact, not an execution audit interface.
+
+ACP must match the original organization, Agent and current Runtime revision.
+Its configuration source must be initialized and available before it can decide
+that a scope is absent.
+An organization or Agent absent from the current configuration returns 404
+`not_found`; a different Runtime revision returns 409
+`configuration_conflict`. Cold/uninitialized configuration and storage errors
+fail the query rather than fabricating `barrier: null`. Neither failure nor an
+unavailable source may be treated as a successful absence of protection.
+
+ACP publishes a non-null receipt only after the original local execution and
+all possible future dispatch have stopped, while stopping the protected Runtime
+foreground call or retiring its temporary scope remains unproven. This is
+independent of the historical effect classification, which may already be
+`none` or `settled`. An ordinary Tool call that is still running does not
+create a recovery receipt. `null` means only that this read has no fact from
+which recovery may be started; it does not prove ready, idle, settled, absence
+of active work, or permission to dispatch.
+
+`barrier_id` identifies a durable recovery cycle. Repeated reads, ACP restarts
+and equal-revision publication preserve it. After that protection is genuinely
+cleared, a later barrier cycle receives a different ID, including when the
+Runtime revision is reused. An ID must not be manufactured from a boolean or
+only from the Runtime revision. `runtime_execution_id` comes from the original
+Run snapshot of the protected durable fact, never from the latest health
+observation or current configuration's replacement execution ID.
+A health change, changed endpoint/execution ID
+or elapsed TTL cannot clear protection or prove that the old Runtime command
+stopped. Existing lifecycle isolation must establish that the old environment
+cannot execute before its replacement is published as executable. No Prompt
+or Tool is replayed by this recovery contract.
+
+The [Controller policy contract](../agent-controller/control-api.md#runtime-barrier-recovery-policy-50-pending)
+defines the organization decision and durable deduplication. Delivery proceeds
+in separate batches: ACP receipt/query producer; Controller policy and recovery;
+Agent UI reason and authorized action; then real Docker integration that kills
+ACP during a Tool call in both `auto` and `manual` modes. Integration must prove
+old Runtime isolation, the appropriate automatic or explicit Rebuild, subsequent
+new Run admission, persistence and actual resource cleanup. None is established
+by this document. #50's per-Run persistence containment, warm admission,
+configuration publication without a reader gap, and barrier recovery retain
+their own acceptance requirements; this contract or completion of warm producer
+PR #281 alone cannot close the issue.
