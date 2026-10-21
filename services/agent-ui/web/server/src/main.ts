@@ -2,6 +2,7 @@ import { AcpHttpBridge } from "./adapters/acp-http.ts";
 import { discoverWorkspaceAgents } from "./adapters/controller-workspace.ts";
 import { parseServiceConfig } from "./service-config.ts";
 import { startWorkspaceService } from "./service-lifecycle.ts";
+import { shutdownWorkspaceService } from "./service-shutdown.ts";
 import { createWorkspaceRuntime } from "./workspace-runtime.ts";
 import { loadWorkspaceDocument } from "./ssr-assets.ts";
 import { startBridgeTelemetry } from "./telemetry.ts";
@@ -59,14 +60,11 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     if (stopping) return;
     stopping = true;
     void (async () => {
-      let failed = false;
-      try { await service.close(); }
-      catch (error) { console.error("Bridge shutdown failed", error); failed = true; }
-      try { await telemetry.shutdown(); }
-      catch (error) { console.error("Bridge telemetry shutdown failed", error); failed = true; }
-      try { await config.authentication.workload.close(); }
-      catch { console.error("Bridge authentication client shutdown failed"); failed = true; }
-      process.exit(failed ? 1 : 0);
+      process.exit(await shutdownWorkspaceService({
+        service,
+        telemetry,
+        authentication: config.authentication.workload,
+      }));
     })();
   });
 }
