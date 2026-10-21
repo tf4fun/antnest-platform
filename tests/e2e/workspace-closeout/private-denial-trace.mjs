@@ -11,19 +11,14 @@ import {
 } from "../observability/private-acp-diagnostics.mjs";
 
 const normalize = (text) => text.replace(/\s+/gu, " ").trim();
-// Prompt reads the original Session, its MCP revision and temporary scopes
-// before consulting ExecutionDirectory. Revoked Agent access stops there;
-// it cannot reach the later protection read or acquire a Run.
+// This probe runs after the observer confirms revocation. Prompt reads the
+// original Session and its MCP revision, then the pre-preparation access check
+// rejects it before temporary scopes, protection reads or Run acceptance.
 const reads = [
   `SELECT id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
     client_mcp_revision_id, last_execution_revision, last_message_sequence, created_at, updated_at
     FROM acp_sessions WHERE id = $1`,
   "SELECT encrypted_sources, nonce FROM client_mcp_revisions WHERE id = $1",
-  `SELECT t.run_id,t.organization_id,t.agent_id,t.execution_id,t.mcp_endpoint,
-    r.execution_snapshot->'runtime'->>'revision' AS runtime_revision,
-    r.execution_snapshot->'runtime'->>'connectionId' AS connection_id
-    FROM temporary_skill_scopes t JOIN runs r ON r.id=t.run_id
-    WHERE t.organization_id=$1 AND t.agent_id=$2 AND t.released_at IS NULL ORDER BY t.run_id`,
 ].map(normalize);
 
 export function inspectWorkspaceAccessDeniedTrace(
@@ -111,8 +106,8 @@ export function inspectWorkspaceAccessDeniedTrace(
   const available = children(app);
   assert.equal(
     available.length,
-    3,
-    "Workspace denial requires exactly three admission reads",
+    2,
+    "Workspace denial requires exactly the Session and MCP admission reads",
   );
   const ordered = reads.map((query) => {
     const matches = available.filter(
@@ -150,7 +145,7 @@ export function inspectWorkspaceAccessDeniedTrace(
     before(ordered[index - 1], ordered[index], ordered[index].startTime);
   assert.equal(
     trace.spans.length,
-    5,
+    4,
     "unaccounted work in revoked Workspace Prompt",
   );
   for (const source of [trace, expected.connectionTrace])
@@ -169,7 +164,7 @@ export function inspectWorkspaceAccessDeniedTrace(
   return {
     ...report,
     no_execution: true,
-    sql_spans: 3,
+    sql_spans: 2,
     model_requests: 0,
     runtime_tool_calls: 0,
   };

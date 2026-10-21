@@ -69,7 +69,9 @@ tests:
   parent-cancellation errors. `protocol-business.mjs` keeps the original Run,
   audit, process-group, effects, Rebuild, offboarding and Delete assertions.
 - `private-denial-trace.mjs` checks the original `access_denied` Prompt response
-  and its three admission SELECTs, with no Run, Provider or Tool activity.
+  after confirmed revocation and exactly its Session and MCP revision SELECTs.
+  The preparation access check must stop temporary scope cleanup; extra reads,
+  writes, Run, Provider and Tool activity are rejected.
 - `private-disconnect-trace.mjs` requires the original joined connection receipt
   for each held Prompt. Cancellation proves the unresolved Run and cancelled
   Bash chain; offline completion independently proves successful Bash work and
