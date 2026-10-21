@@ -114,6 +114,14 @@ keep their existing behavior. The
 negotiated through `_meta["antnest.dev/bridge"]`; clients that do not negotiate
 it keep standard ACP wire behavior.
 
+Large prompt persistence captures the input before yielding, prepares its canonical
+JSON before opening the Session transaction, and hashes it in chunks that allow
+other Agent control requests to run. The same JSON supplies the existing Bridge
+digest and the durable input; acceptance copies that input into the user message
+inside PostgreSQL without returning and serializing the full body again. Native
+JSON serialization and parsing still run synchronously. Session and Run locking,
+append-version checks, authorization and cancellation remain unchanged.
+
 ## Configuration
 
 The maintenance signing key ID follows the shared
