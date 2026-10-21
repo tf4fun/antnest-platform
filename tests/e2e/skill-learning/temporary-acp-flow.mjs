@@ -4,6 +4,7 @@ import { composeArgs } from "../lifecycle-closeout/docker.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import { assertCaptureDisabled, tag } from "../observability/trace-tree.mjs";
 import { skillClientArgs } from "./client-container.mjs";
 export async function temporaryAcpFlow({
@@ -19,6 +20,10 @@ export async function temporaryAcpFlow({
 }) {
   const output = `${root}/artifacts/verification/skill-discovery-d4a-20261001`;
   await mkdir(output, { recursive: true, mode: 0o700 });
+  const traceDiagnostics = createTraceDiagnostics({
+    directory: output,
+    signal,
+  });
   const clients = [];
   const memberClient = new GatewayClient(config.gateway);
   await memberClient.request("/api/session/login", { body: member });
@@ -124,95 +129,112 @@ export async function temporaryAcpFlow({
     "-f",
     "/workspace/.antnest/skills/fixture-procedure/SKILL.md",
   ]);
-  const traces = await until(
-    async () => {
-      const found = await searchJaegerTraces(
-        config.jaeger,
-        new URLSearchParams({
-          service: "agent-acp-service",
-          operation: "skill.temporary.install",
-          tags: JSON.stringify({ "antnest.agent_id": targetId }),
-          lookback: "30m",
-          limit: "20",
-        }),
-        { signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]) },
+  const diagnostic = await traceDiagnostics.run(
+    "temporary-install-and-release",
+    async (diagSignal) => {
+      const traces = await until(
+        async () => {
+          const found = await searchJaegerTraces(
+            config.jaeger,
+            new URLSearchParams({
+              service: "agent-acp-service",
+              operation: "skill.temporary.install",
+              tags: JSON.stringify({ "antnest.agent_id": targetId }),
+              lookback: "30m",
+              limit: "20",
+            }),
+            {
+              signal: AbortSignal.any([diagSignal, AbortSignal.timeout(10000)]),
+            },
+          );
+          return found.length === 3 &&
+            found.every((trace) =>
+              trace.spans.some(
+                (span) =>
+                  span.operationName === "runtime.skill.temporary.install",
+              ),
+            )
+            ? found
+            : null;
+        },
+        "exported real temporary install traces",
+        diagSignal,
+        45000,
       );
-      return found.length === 3 &&
-        found.every((trace) =>
+      for (const trace of traces) {
+        assertCaptureDisabled(trace);
+        const install = trace.spans.find(
+          (span) => span.operationName === "skill.temporary.install",
+        );
+        const native = trace.spans.find(
+          (span) => span.operationName === "runtime.skill.temporary.install",
+        );
+        assert.equal(tag(install, "antnest.run_id"), tag(native, "run.id"));
+        assert(
           trace.spans.some(
-            (span) => span.operationName === "runtime.skill.temporary.install",
+            (span) => span.operationName === "skill.discovery.load",
           ),
-        )
-        ? found
-        : null;
-    },
-    "exported real temporary install traces",
-    signal,
-    45000,
-  );
-  for (const trace of traces) {
-    assertCaptureDisabled(trace);
-    const install = trace.spans.find(
-      (span) => span.operationName === "skill.temporary.install",
-    );
-    const native = trace.spans.find(
-      (span) => span.operationName === "runtime.skill.temporary.install",
-    );
-    assert.equal(tag(install, "antnest.run_id"), tag(native, "run.id"));
-    assert(
-      trace.spans.some((span) => span.operationName === "skill.discovery.load"),
-    );
-    assert(!JSON.stringify(trace).includes("Run scripts/check.sh"));
-  }
-  const releases = await until(
-    async () => {
-      const found = await searchJaegerTraces(
-        config.jaeger,
-        new URLSearchParams({
-          service: "agent-acp-service",
-          operation: "skill.temporary.release",
-          tags: JSON.stringify({ "antnest.agent_id": targetId }),
-          lookback: "30m",
-          limit: "30",
-        }),
-        { signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]) },
+        );
+        assert(!JSON.stringify(trace).includes("Run scripts/check.sh"));
+      }
+      const releases = await until(
+        async () => {
+          const found = await searchJaegerTraces(
+            config.jaeger,
+            new URLSearchParams({
+              service: "agent-acp-service",
+              operation: "skill.temporary.release",
+              tags: JSON.stringify({ "antnest.agent_id": targetId }),
+              lookback: "30m",
+              limit: "30",
+            }),
+            {
+              signal: AbortSignal.any([diagSignal, AbortSignal.timeout(10000)]),
+            },
+          );
+          return scopes.every((scope) =>
+            found.some((trace) =>
+              trace.spans.some(
+                (span) =>
+                  span.operationName === "runtime.skill.temporary.release" &&
+                  tag(span, "run.id") === scope.run_id &&
+                  tag(span, "skill.temporary.outcome") === "released",
+              ),
+            ),
+          )
+            ? found
+            : null;
+        },
+        "confirmed temporary release traces including restart recovery",
+        diagSignal,
+        45000,
       );
-      return scopes.every((scope) =>
-        found.some((trace) =>
-          trace.spans.some(
-            (span) =>
-              span.operationName === "runtime.skill.temporary.release" &&
-              tag(span, "run.id") === scope.run_id &&
-              tag(span, "skill.temporary.outcome") === "released",
-          ),
-        ),
-      )
-        ? found
-        : null;
+      for (const trace of releases) {
+        assertCaptureDisabled(trace);
+        assert(!JSON.stringify(trace).includes("Run scripts/check.sh"));
+      }
+      assertTemporaryParentage(traces, "install");
+      assertTemporaryParentage(releases, "release");
+      await writeFile(
+        `${output}/${config.project}-temporary-traces.json`,
+        JSON.stringify({ installs: traces, releases }),
+        { flag: "wx", mode: 0o600 },
+      );
+      return {
+        trace_ids: traces.map((trace) => trace.traceID),
+        cleanup_trace_ids: releases.map((trace) => trace.traceID),
+      };
     },
-    "confirmed temporary release traces including restart recovery",
-    signal,
-    45000,
-  );
-  for (const trace of releases) {
-    assertCaptureDisabled(trace);
-    assert(!JSON.stringify(trace).includes("Run scripts/check.sh"));
-  }
-  assertTemporaryParentage(traces, "install");
-  assertTemporaryParentage(releases, "release");
-  await writeFile(
-    `${output}/${config.project}-temporary-traces.json`,
-    JSON.stringify({ installs: traces, releases }),
-    { flag: "wx", mode: 0o600 },
   );
   const result = {
     source_agent_id: sourceId,
     target_agent_id: targetId,
     clients,
     scopes,
-    trace_ids: traces.map((trace) => trace.traceID),
-    cleanup_trace_ids: releases.map((trace) => trace.traceID),
+    ...(diagnostic.status === "passed" ? diagnostic.value : {}),
+    trace_diagnostics: traceDiagnostics.summary(),
   };
+  console.log(JSON.stringify({ trace_diagnostics: result.trace_diagnostics }));
   await writeFile(
     `${output}/${config.project}-temporary-business.json`,
     JSON.stringify(result),

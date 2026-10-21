@@ -57,7 +57,8 @@ async function fixture(t, failFirst = false, mutation) {
         ? 503
         : 202
       : 200;
-    response.setHeader("x-antnest-trace-id", "b".repeat(32));
+    if (mutation !== "missing Trace")
+      response.setHeader("x-antnest-trace-id", "b".repeat(32));
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader(
@@ -123,6 +124,27 @@ const summary = async (f) =>
   JSON.parse(
     await readFile(join(f.directory, "cleanup-lifecycle.private.json"), "utf8"),
   );
+
+test("missing response Trace metadata is auxiliary after actual Runtime ACK and Agent cleanup", async (t) => {
+  const f = await fixture(t, false, "missing Trace");
+  const host = f.host();
+  await Promise.all([
+    host,
+    f.track(
+      run(
+        agents,
+        f.client,
+        (consumed) =>
+          requestCostRuntimeInspection(agents, { ...f.options, consumed }),
+        { directory: f.directory },
+      ),
+    ),
+  ]);
+  const report = await summary(f);
+  assert.equal(report.status, "verified");
+  assert.equal(report.trace_diagnostics.status, "warning");
+  assert.equal(f.calls.filter((call) => call.method === "POST").length, 4);
+});
 
 test("actual HTTP deletion and completed operations follow the consumed host ACK on one client clock", async (t) => {
   const f = await fixture(t);

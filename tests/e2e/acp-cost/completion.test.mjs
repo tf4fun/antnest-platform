@@ -41,7 +41,7 @@ test("actual completed Cost transport outcomes satisfy the existing CI completio
   assert.equal(classify({ ...report, traces: [] }), "failed");
   assert.equal(
     classify({ ...report, traces: [{ warnings: ["missing parent"] }] }),
-    "failed",
+    "warning",
   );
   assert.equal(
     classify(report, 2, JSON.stringify({ status: "cleanup_failed" })),

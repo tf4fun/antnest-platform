@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { assertCost, assertAttempts } from "./evidence.mjs";
+import * as evidence from "./evidence.mjs";
 import { decide, encodeCompletion, createModelFixture } from "./model.mjs";
 
 test("wire oracle distinguishes unknown, zero and cumulative known cost", () => {
@@ -89,6 +90,42 @@ test("attempt oracle rejects duplicate, missing and detached Provider requests",
   assert.throws(() =>
     assertAttempts([{ ...actual[0], model_span_id: "" }], expected),
   );
+});
+
+test("Provider business attempts do not require Span metadata but retain phase and count", () => {
+  assert.equal(typeof evidence.assertProviderAttempts, "function");
+  const expected = [{ phase: "v1-ws:estimated" }];
+  evidence.assertProviderAttempts([{ phase: "v1-ws:estimated" }], expected);
+  assert.throws(() => evidence.assertProviderAttempts([], expected));
+  assert.throws(() =>
+    evidence.assertProviderAttempts([{ phase: "foreign" }], expected),
+  );
+});
+
+test("missing Trace headers do not reject a valid model request", async () => {
+  const server = createModelFixture();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${base}/v1/chat/completions`, {
+      method: "POST",
+      headers: { authorization: "Bearer cost-model-test" },
+      body: JSON.stringify({
+        stream: true,
+        model: "priced-model",
+        messages: [{ role: "user", content: "v1-ws:reported" }],
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /v1-ws:reported verified/u);
+    const status = await (await fetch(`${base}/status`)).json();
+    assert.equal(status.requests.length, 1);
+    assert.deepEqual(status.errors, []);
+    assert.equal(status.trace_diagnostics.length, 1);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("restart checkpoint is explicit and model errors never echo request bodies", async () => {

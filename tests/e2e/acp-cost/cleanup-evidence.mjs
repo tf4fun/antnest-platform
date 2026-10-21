@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { withAgentCleanup } from "../../support/verification/agent-cleanup.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   evidenceDirectory,
   writeEvidenceFile,
@@ -38,7 +39,6 @@ function inspectCleanup(events, agents) {
     assert(
       row.sequence > start.sequence && row.monotonic_ms >= start.monotonic_ms,
     );
-    assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
     return row;
   };
   const operations = new Set();
@@ -90,7 +90,7 @@ export async function withCostAgentCleanup(
   agents,
   client,
   action,
-  { directory } = {},
+  { directory, diagnostics = createTraceDiagnostics({ directory }) } = {},
 ) {
   const events = [],
     evidenceErrors = [];
@@ -186,6 +186,12 @@ export async function withCostAgentCleanup(
   try {
     result = await withAgentCleanup(agents, api, () => action(consumed));
     inspectCleanup(events, agents);
+    await diagnostics.run("cost-cleanup-trace-metadata", async () => {
+      for (const event of events.filter(
+        (row) => row.kind === "response-complete",
+      ))
+        assert.match(event.trace_id ?? "", /^[a-f0-9]{32}$/u);
+    });
   } catch (error) {
     failures.push(error);
   }
@@ -199,6 +205,7 @@ export async function withCostAgentCleanup(
       agent_ids: [...agents],
       events,
       evidence_error_count: evidenceErrors.length,
+      trace_diagnostics: diagnostics.summary(),
     }),
   );
   failures.push(...evidenceErrors);

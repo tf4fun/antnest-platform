@@ -45,6 +45,7 @@ import {
 } from "../security/stack.mjs";
 import { rotatePlatformKeys } from "../encryption-key-rotation/flow.mjs";
 import { skillClientArgs } from "./client-container.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   captureLearningFailureTraces,
   collectLearningFailureEvidence,
@@ -197,11 +198,16 @@ test(
     let resourceBaseline;
     let developmentSettings;
     let encryptionEvidence;
+    let traceDiagnostics;
     const additionalImages = [];
     const propagationOutput = () =>
       `${root}/artifacts/verification/${callerDiscovery ? "skill-discovery-caller-di3-20261001" : sourceLifecycle ? "skill-source-lifecycle-di2-20261001" : deployment ? "skill-deployment-20261001" : "skill-propagation-di1-20261001"}/${config.project}`;
     try {
       config = await configuration(abort.signal);
+      traceDiagnostics = createTraceDiagnostics({
+        directory: `${root}/artifacts/verification/skill-learning`,
+        signal: abort.signal,
+      });
       if (authenticationIntegration)
         config.env.ANTNEST_E2E_ALLOW_PRIVATE_PROVIDER_ENDPOINTS = "false";
       for (const [service, variable] of [
@@ -1270,15 +1276,21 @@ test(
             ),
           );
           discoveryToolEvidence.attempts = attempts;
-          discoveryToolEvidence.trace = await collectDiscoveryTrace(
-            config,
-            {
-              agent_id: fixture.agentID,
-              sequence: updated.item.skill_ref.sequence,
-              content_digest: updated.item.content_digest,
-            },
-            abort.signal,
+          const discoveryTrace = await traceDiagnostics.run(
+            "skill-discovery",
+            (diagSignal) =>
+              collectDiscoveryTrace(
+                config,
+                {
+                  agent_id: fixture.agentID,
+                  sequence: updated.item.skill_ref.sequence,
+                  content_digest: updated.item.content_digest,
+                },
+                diagSignal,
+              ),
           );
+          if (discoveryTrace.status === "passed")
+            discoveryToolEvidence.trace = discoveryTrace.value;
           if (temporaryTools)
             temporaryToolEvidence = await temporaryAcpFlow({
               config,
@@ -1762,24 +1774,31 @@ test(
         debugRead = await runClient("verify", created);
         assert.equal(debugRead.status, "debug_learned_skill_read");
       }
-      const learningTrace = verifyLearningTrace
-        ? await collectLearningTraces(
-            config,
-            fixture.agentID,
-            [created.created_change_id, result.updated_change_id],
-            abort.signal,
-          )
+      const learningTraceDiagnostic = verifyLearningTrace
+        ? await traceDiagnostics.run("skill-learning", async (diagSignal) => {
+            const learningTrace = await collectLearningTraces(
+              config,
+              fixture.agentID,
+              [created.created_change_id, result.updated_change_id],
+              diagSignal,
+            );
+            if (debugLearning) {
+              assert(
+                learningTrace.summaries.every(
+                  (summary) =>
+                    summary.debug === true &&
+                    summary.modelCalls === 2 &&
+                    summary.rejectionReasons.includes("debug_skip"),
+                ),
+              );
+            }
+            return learningTrace;
+          })
         : undefined;
-      if (debugLearning) {
-        assert(
-          learningTrace.summaries.every(
-            (summary) =>
-              summary.debug === true &&
-              summary.modelCalls === 2 &&
-              summary.rejectionReasons.includes("debug_skip"),
-          ),
-        );
-      }
+      const learningTrace =
+        learningTraceDiagnostic?.status === "passed"
+          ? learningTraceDiagnostic.value
+          : undefined;
       let toolEvidence;
       if (toolUsability) {
         toolEvidence = JSON.parse(
@@ -1807,6 +1826,7 @@ test(
         `${evidence}${config.project}.json`,
         JSON.stringify({
           ...result,
+          trace_diagnostics: traceDiagnostics.summary(),
           ...(encryptionEvidence
             ? { encryptionKeyRotation: encryptionEvidence }
             : {}),
@@ -1836,6 +1856,7 @@ test(
         await propagationFlow?.captureFailure(error);
         const diagnostics = {
           error: { name: error.name, message: error.message },
+          trace_diagnostics: traceDiagnostics?.summary(),
           services: {},
         };
         const readDocker = dockerClient(config.env, undefined, 60000);
@@ -1879,6 +1900,10 @@ test(
       }
       throw error;
     } finally {
+      if (traceDiagnostics)
+        console.log(
+          JSON.stringify({ trace_diagnostics: traceDiagnostics.summary() }),
+        );
       try {
         try {
           await learningBrowser?.close();

@@ -17,12 +17,28 @@ const report = (warnings) =>
     traces: [{ warnings }],
   });
 
-test("an exit 2 passes only for strict suites with reviewed findings", () => {
+test("completed strict suites retain every Trace finding as an auxiliary warning", () => {
   assert.equal(verdict(0, "", false), "passed");
   assert.equal(verdict(1, "", true), "failed");
   assert.equal(verdict(2, report([clock]), false), "failed");
   assert.equal(verdict(2, report([clock]), true), "warning");
-  assert.equal(verdict(2, report([clock, "invalid parent"]), true), "failed");
+  assert.equal(verdict(2, report([clock, "invalid parent"]), true), "warning");
+});
+
+test("auxiliary Trace diagnostics mark successful suites as warning without accepting failed suites", () => {
+  const record = JSON.stringify({
+    trace_diagnostics: {
+      version: 1,
+      role: "auxiliary",
+      status: "warning",
+      checks: [{ name: "trace", status: "failed" }],
+    },
+  });
+  for (const output of [record, `# ${record}`]) {
+    assert.equal(verdict(0, output, false), "warning");
+    for (const code of [1, 2, 130, 143])
+      assert.equal(verdict(code, output, true), "failed");
+  }
 });
 
 test("exit 2 without a complete business report is a failure", () => {
@@ -106,7 +122,7 @@ test("the existing strict runner completion reports remain accepted", () => {
         `${output}\n${JSON.stringify({ traces: [{ warnings: ["missing parent"] }] })}`,
         true,
       ),
-      "failed",
+      "warning",
     );
   }
 });
@@ -152,7 +168,7 @@ test("private multimodal completion counts finished transports and keeps strict 
   assert.equal(classify({ ...completed, traces: [] }), "failed");
   assert.equal(
     classify({ ...completed, traces: [{ warnings: ["missing parent span"] }] }),
-    "failed",
+    "warning",
   );
   assert.equal(
     classify(completed, 2, JSON.stringify({ status: "cleanup_failed" })),

@@ -7,11 +7,8 @@ import { gateway } from "../identity-closeout/acp-connection.mjs";
 import { assertDeniedSessionError } from "../identity-closeout/agent-access-evidence.mjs";
 import { until } from "../acp-closeout/support.mjs";
 import { transcript } from "../acp-commands/evidence.mjs";
-import { collectPrivateCostTrace } from "./collector.mjs";
-import {
-  collectCostPricingTrace,
-  costStrictOutcome,
-} from "./pricing-collector.mjs";
+import { collectCostTraceDiagnostics } from "./diagnostics.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   withPrivateCommandConnection,
   withPrivateCommandResources,
@@ -42,6 +39,7 @@ import {
   assertCost,
   assertObserverIsolation,
   assertAttempts,
+  assertProviderAttempts,
   usageUpdates,
   assertModelSelection,
 } from "./evidence.mjs";
@@ -76,6 +74,14 @@ const secrets = [
 ];
 const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
 const directory = evidenceDirectory(process.env.ANTNEST_COST_EVIDENCE_DIR);
+const diagnostics = createTraceDiagnostics({ directory });
+let attemptDiagnostic = 0;
+async function checkAttempts(actual, expected) {
+  assertProviderAttempts(actual, expected);
+  await diagnostics.run(`provider-attempts-${++attemptDiagnostic}`, async () =>
+    assertAttempts(actual, expected),
+  );
+}
 let modelStatusCount = 0;
 async function connect(profile, agent, browser) {
   const issued = issuedSessions.get(browser);
@@ -315,7 +321,7 @@ async function send(client, profile, sessionId, action, expected) {
           connectionTraceID: client.lastRequest.connectionTraceID,
         }),
   });
-  assertAttempts((await modelStatus()).requests, expectedAttempts);
+  await checkAttempts((await modelStatus()).requests, expectedAttempts);
   assertObserver();
   return usage;
 }
@@ -682,7 +688,7 @@ async function main() {
               saved[index],
               saved[(index + 1) % saved.length].agent,
             );
-          assertAttempts((await modelStatus()).requests, expectedAttempts);
+          await checkAttempts((await modelStatus()).requests, expectedAttempts);
           await observerClient.request("list", {});
           bindCostList(observerClient, [observerSession]);
           assertObserver();
@@ -742,7 +748,7 @@ async function main() {
         observer = undefined;
       }
       const requests = (await modelStatus()).requests;
-      assertAttempts(requests, expectedAttempts);
+      await checkAttempts(requests, expectedAttempts);
       assert.equal(requests.length, 52);
       secrets.push(
         ...requests.map((r) => r.phase),
@@ -828,7 +834,9 @@ async function main() {
         "Cost inventory has no actual SDK request",
       );
       assert.equal(pricingTraces.length, 19);
-      assert.equal(new Set(pricingTraces.map((r) => r.traceID)).size, 19);
+      await diagnostics.run("pricing-trace-identities", async () =>
+        assert.equal(new Set(pricingTraces.map((r) => r.traceID)).size, 19),
+      );
       for (const [name, value] of [
         ["model-requests.private.json", requests],
         ["request-inventory.private.json", traces],
@@ -853,48 +861,27 @@ async function main() {
       });
       return { requests, runtimeInspection, all };
     },
-    { directory },
+    { directory, diagnostics },
   );
-  const checked = [];
   assert.equal(traces.filter((t) => t.kind === "native").length, 52);
-  for (const expected of all) {
-    stage = `trace:${expected.label}`;
-    checked.push(
-      await collectPrivateCostTrace("http://jaeger:16686", expected, {
-        directory,
-        secrets,
-        requests,
-        flush: () => telemetry.flush(),
-      }),
-    );
-  }
-  console.log(
-    asciiJSON({ status: "request_traces_checked", count: checked.length }),
-  );
-  assert.equal(new Set(checked.map((t) => t.trace_id)).size, all.length);
-  assert.equal(new Set(checked.map((t) => t.run_id).filter(Boolean)).size, 52);
-  assert.deepEqual(
-    new Set(checked.filter((t) => t.kind === "native").map((t) => t.trace_id)),
-    new Set(requests.map((r) => r.trace_id)),
-  );
-  const pricing = [];
-  for (const expected of pricingTraces) {
-    stage = "pricing-trace";
-    pricing.push(
-      await collectCostPricingTrace("http://jaeger:16686", expected, {
-        directory,
-        secrets,
-      }),
-    );
-  }
-  const { exit_code: exitCode, ...strict } = costStrictOutcome(
-    checked,
-    pricing,
+  stage = "auxiliary-traces";
+  const { checked, pricing, strict } = await collectCostTraceDiagnostics(
+    "http://jaeger:16686",
+    all,
+    pricingTraces,
+    {
+      directory,
+      diagnostics,
+      secrets,
+      requests,
+      flush: () => telemetry.flush(),
+    },
   );
   console.log(
     asciiJSON({
       status: "business_passed",
-      ...strict,
+      observability: strict,
+      trace_diagnostics: diagnostics.summary(),
       ...costCompletionFields(completedOutcomes),
       model_requests: requests.length,
       cross_agent_rejections: 9,
@@ -911,10 +898,26 @@ async function main() {
       pricing_traces: pricing,
     }),
   );
-  process.exitCode = exitCode;
+  process.exitCode = 0;
 }
 try {
-  await withPrivateCommandResources(clients, telemetry, main);
+  // Shutdown must still run after the collection budget has been exhausted.
+  const shutdownDiagnostics = createTraceDiagnostics({
+    directory,
+    budgetMs: 30_000,
+  });
+  await withPrivateCommandResources(
+    clients,
+    {
+      shutdown: () =>
+        shutdownDiagnostics.run("telemetry-shutdown", () =>
+          telemetry.shutdown(),
+        ),
+    },
+    main,
+  );
+  console.log(asciiJSON({ trace_diagnostics: diagnostics.summary() }));
+  console.log(asciiJSON({ trace_diagnostics: shutdownDiagnostics.summary() }));
 } catch (error) {
   console.error(
     asciiJSON(

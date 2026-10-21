@@ -5,6 +5,22 @@ instrumentation is installed, and how RPC content capture is controlled.
 Clients collect only basic data, single request/response RPC content capture is
 switchable, and message streams never capture content.
 
+Span and Trace observations are auxiliary diagnostics, not CI, delivery, or
+merge gates. Preserve raw collection failures, missing spans, topology findings,
+and timing differences as warnings. Business results, authorization, persisted
+state, Runtime execution and cancellation, capacity deadlines, and resource
+cleanup remain independent requirements. Run those checks even when Trace
+collection or inspection fails. A failed observation must remain identifiable;
+do not replace it with an empty successful result. This delivery policy takes
+precedence over historical strict Trace admission instructions.
+
+E2E consumers use `tests/support/trace-diagnostics.mjs` around observability-only
+work, with a shared collection budget and a signal that collectors must honor.
+The wrapper waits for collection to stop, writes private failure evidence, and
+reports an explicit auxiliary status. Whole-suite interruption and business
+failures remain fatal. Existing diagnostic inspectors and their regression tests
+retain strict assertions so the auxiliary findings stay useful.
+
 ## 1. Responsibilities
 
 Traces verify real call relationships, latency, parameters and results, and the

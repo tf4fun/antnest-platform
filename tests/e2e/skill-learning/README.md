@@ -4,6 +4,14 @@
 `artifacts/verification/skill-learning/`, before deployment cleanup. Files are
 private (`0600`) in a private directory (`0700`).
 
+Discovery, learning, temporary install/release, preset Run and caller Trace
+inspection use the shared auxiliary diagnostics helper. Each flow has a
+60-second active collection budget; missing spans, Jaeger failures and topology
+findings are recorded as warnings without fabricated success fields. The
+collector is joined before continuing. Actual SQL, model results, authorization,
+browser errors, Runtime files, peer deletion and deployment cleanup remain
+blocking checks and still execute after a Trace failure.
+
 The original View request records its HTTP status, allowlisted response code,
 returned Trace ID, Agent/Session and request interval before status admission.
 Response bodies, headers, cookies and free-form exception text are excluded
