@@ -347,20 +347,26 @@ test("C4 pending diagnostics do not poison finite-reader joins, while a second o
   const reader = observeC4Responses(f.page, f.scope, (response) =>
     f.audit.read(f.page, response, "mobile"),
   );
+  f.page.emit("request", f.response.request());
   f.page.emit("response", f.response);
   f.arm();
   f.navigate();
   f.fail();
+  f.page.emit("requestfinished", f.response.request());
   await reader.wait();
   assert(reader.ready());
   assert.deepEqual(f.failures, []);
   const original = new Error("independent body failure");
+  const nextRequest = { ...f.response.request() };
+  f.page.emit("request", nextRequest);
   f.page.emit("response", {
     ...f.response,
+    request: () => nextRequest,
     text: async () => {
       throw original;
     },
   });
+  f.page.emit("requestfinished", nextRequest);
   await assert.rejects(reader.wait(), (e) => e === original);
   assert(f.failures.includes(original));
   for (const observer of f.observers)
