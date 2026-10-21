@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PostgresExecutionConfiguration } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-configuration.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
+import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { ExecutionDirectory } from "../../../../../services/agent-acp-service/src/application/execution-directory.js";
 import { ProviderClients } from "../../../../../services/agent-acp-service/src/application/provider-clients.js";
 import {
@@ -19,8 +20,10 @@ describe.skipIf(databaseUrl === undefined)(
   "private execution configuration storage",
   () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    const authorityKey = randomBytes(32);
     const repository = new PostgresExecutionConfiguration(
       new PostgresKernel(pool),
+      new SecretBox(authorityKey),
     );
     const organizations: string[] = [];
 
@@ -28,7 +31,7 @@ describe.skipIf(databaseUrl === undefined)(
       const input = executionConfiguration();
       input.organization_id = randomUUID();
       organizations.push(input.organization_id);
-      return publicExecutionConfiguration(parseExecutionConfiguration(input));
+      return parseExecutionConfiguration(input);
     }
 
     beforeAll(async () => {
@@ -51,7 +54,9 @@ describe.skipIf(databaseUrl === undefined)(
       const input = configuration();
       expect(await repository.load(input.organization_id)).toBeNull();
       expect(await repository.save(input, null)).toBe(true);
-      expect(await repository.load(input.organization_id)).toEqual(input);
+      expect(await repository.load(input.organization_id)).toEqual(
+        publicExecutionConfiguration(input),
+      );
       const raw = await pool.query<{ configuration: unknown }>(
         "SELECT configuration FROM execution_configurations WHERE organization_id = $1",
         [input.organization_id],
@@ -165,17 +170,26 @@ describe.skipIf(databaseUrl === undefined)(
       const input = { ...configuration(), revision: 2 };
       await repository.save(input, null);
       expect(await repository.save({ ...input, revision: 1 }, 2)).toBe(false);
-      expect(await repository.save({ ...input, agents: [] }, 2)).toBe(false);
-      expect(await repository.load(input.organization_id)).toEqual(input);
+      await expect(
+        repository.save({ ...input, agents: [] }, 2),
+      ).rejects.toMatchObject({
+        code: "configuration_conflict",
+      });
+      expect(await repository.load(input.organization_id)).toEqual(
+        publicExecutionConfiguration(input),
+      );
     });
 
-    it("rejects a secret-bearing value even if a caller bypasses the static port type", async () => {
+    it("rejects a public-only value that cannot restore private authority", async () => {
       const fixture = executionConfiguration();
       fixture.organization_id = randomUUID();
       organizations.push(fixture.organization_id);
-      await expect(repository.save(fixture, null)).rejects.toThrow(
-        "stored execution configuration",
-      );
+      const publicOnly = publicExecutionConfiguration(fixture);
+      await expect(
+        // The private persistence boundary must reject callers bypassing its type.
+        // @ts-expect-error public projections contain no Provider or Runtime authority
+        repository.save(publicOnly, null),
+      ).rejects.toMatchObject({ code: "invalid_execution_configuration" });
       expect(await repository.load(fixture.organization_id)).toBeNull();
     });
 
@@ -192,8 +206,12 @@ describe.skipIf(databaseUrl === undefined)(
         providers: [],
       };
       expect(await repository.save(cleared, 1)).toBe(true);
-      expect(await repository.load(first.organization_id)).toEqual(cleared);
-      expect(await repository.load(second.organization_id)).toEqual(second);
+      expect(await repository.load(first.organization_id)).toEqual(
+        publicExecutionConfiguration(cleared),
+      );
+      expect(await repository.load(second.organization_id)).toEqual(
+        publicExecutionConfiguration(second),
+      );
     });
 
     it("enforces stored snapshot identity and revision consistency in PostgreSQL", async () => {
@@ -258,7 +276,8 @@ describe.skipIf(databaseUrl === undefined)(
           directory.withAccess(identity, ({ configuration }) =>
             Promise.resolve(configuration.revision),
           ),
-        ).resolves.toBe(1);
+        ).rejects.toMatchObject({ code: "configuration_not_ready" });
+        expect(directory.runtimeForCleanup(identity)).toBeNull();
         await expect(
           directory.apply({ ...committed, revision: nextRevision }),
         ).resolves.toHaveProperty("applied_revision", nextRevision);

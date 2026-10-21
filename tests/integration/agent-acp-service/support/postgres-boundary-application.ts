@@ -124,7 +124,10 @@ export async function startBoundaryApplication(
   const acquireClient = vi.spyOn(providers, "acquire");
   const permissions = new PermissionConnections();
   const outputs = new SessionOutputStreams();
-  const configurations = new PostgresExecutionConfiguration(kernel);
+  const configurations = new PostgresExecutionConfiguration(
+    kernel,
+    new SecretBox(encryptionKey),
+  );
   const revoke = (snapshot: ExecutionAccessSnapshot) => {
     supervisor.revokeAccess(snapshot);
     permissions.revokeAccess(snapshot);

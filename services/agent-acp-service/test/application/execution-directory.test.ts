@@ -11,6 +11,7 @@ import {
   parseExecutionConfiguration,
   publicExecutionConfiguration,
   resolveExecutionConfiguration,
+  type ExecutionConfiguration,
   type PublicExecutionConfiguration,
 } from "../../src/domain/execution-configuration.js";
 import type { ExecutionConfigurationRepository } from "../../src/ports/execution-configuration.js";
@@ -23,16 +24,30 @@ import { runtimeConnections } from "../support/runtime-connections.js";
 
 class MemoryConfigurationRepository implements ExecutionConfigurationRepository {
   public readonly records = new Map<string, PublicExecutionConfiguration>();
+  private readonly authorities = new Map<string, ExecutionConfiguration>();
   public readonly save = vi.fn(
-    (configuration: PublicExecutionConfiguration, expectedRevision: number | null) => {
+    (configuration: ExecutionConfiguration, expectedRevision: number | null) => {
       const previous = this.records.get(configuration.organization_id);
       if ((previous?.revision ?? null) !== expectedRevision) return Promise.resolve(false);
-      this.records.set(configuration.organization_id, structuredClone(configuration));
+      this.commit(configuration);
       return Promise.resolve(true);
     },
   );
+  public commit(configuration: ExecutionConfiguration) {
+    this.records.set(
+      configuration.organization_id,
+      structuredClone(publicExecutionConfiguration(configuration)),
+    );
+    this.authorities.set(configuration.organization_id, structuredClone(configuration));
+  }
   public load(organizationId: string) {
     return Promise.resolve(structuredClone(this.records.get(organizationId) ?? null));
+  }
+  public loadAuthority(organizationId: string) {
+    return Promise.resolve(structuredClone(this.authorities.get(organizationId) ?? null));
+  }
+  public listOrganizations() {
+    return Promise.resolve([...this.records.keys()].sort());
   }
 }
 
@@ -332,7 +347,60 @@ describe("execution directory", () => {
     expect(onApplied).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["database", "cas", "lost_receipt"])(
+  it("saves full private authority on an applied equal-revision replay without republishing", async () => {
+    const { directory, repository, onApplied } = setup();
+    const configuration = parseExecutionConfiguration(executionConfiguration());
+    await directory.apply(configuration);
+
+    await expect(directory.apply(structuredClone(configuration))).resolves.toEqual({
+      organization_id: configuration.organization_id,
+      applied_revision: configuration.revision,
+    });
+
+    expect(repository.save).toHaveBeenCalledTimes(2);
+    expect(repository.save).toHaveBeenLastCalledWith(configuration, configuration.revision);
+    expect(await repository.loadAuthority(configuration.organization_id)).toEqual(configuration);
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    await expect(
+      directory.withAccess(executionIdentity(), ({ configuration: current }) =>
+        Promise.resolve(current.revision),
+      ),
+    ).resolves.toBe(configuration.revision);
+  });
+
+  it("backfills private authority before publishing a public-only legacy equal revision", async () => {
+    const repository = new MemoryConfigurationRepository();
+    const configuration = parseExecutionConfiguration(executionConfiguration());
+    repository.records.set(
+      configuration.organization_id,
+      structuredClone(publicExecutionConfiguration(configuration)),
+    );
+    expect(await repository.loadAuthority(configuration.organization_id)).toBeNull();
+    const { directory, onApplied } = setup(repository);
+    onApplied.mockImplementationOnce(async () => {
+      expect(repository.save).toHaveBeenCalledExactlyOnceWith(
+        configuration,
+        configuration.revision,
+      );
+      expect(await repository.loadAuthority(configuration.organization_id)).toEqual(configuration);
+    });
+
+    await expect(directory.apply(configuration)).resolves.toEqual({
+      organization_id: configuration.organization_id,
+      applied_revision: configuration.revision,
+    });
+
+    expect(repository.save).toHaveBeenCalledExactlyOnceWith(configuration, configuration.revision);
+    expect(await repository.loadAuthority(configuration.organization_id)).toEqual(configuration);
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    await expect(
+      directory.withAccess(executionIdentity(), ({ configuration: current }) =>
+        Promise.resolve(current.revision),
+      ),
+    ).resolves.toBe(configuration.revision);
+  });
+
+  it.each(["database", "cas"])(
     "rolls back candidate authority and keeps the original connection after %s failure",
     async (failure) => {
       const { directory, repository, connections } = setup();
@@ -343,24 +411,58 @@ describe("execution directory", () => {
       changed.agents[0]!.runtime = runtimeConfiguration(2);
       const candidate = binding(changed);
       if (failure === "cas") repository.save.mockResolvedValueOnce(false);
-      else
-        repository.save.mockImplementationOnce((configuration) => {
-          if (failure === "lost_receipt")
-            repository.records.set(configuration.organization_id, structuredClone(configuration));
-          return Promise.reject(new Error("storage failed"));
-        });
+      else repository.save.mockRejectedValueOnce(new Error("storage failed"));
       await expect(directory.apply(changed)).rejects.toThrow();
       expect(() => connections.fetchFor(previous)).not.toThrow();
       expect(() => connections.fetchFor(candidate)).toThrow();
       expect(readdirSync(connections.directory)).toEqual([previous.connectionId]);
       expect(directory.inspect(executionIdentity()).configuration.revision).toBe(1);
-      if (failure === "lost_receipt") {
-        await directory.apply(changed);
-        expect(() => connections.fetchFor(candidate)).not.toThrow();
-        expect(() => connections.fetchFor(previous)).toThrow();
-      }
     },
   );
+
+  it("revokes previous Runtime access and cleanup authority after a committed snapshot loses its acknowledgement", async () => {
+    const { directory, repository, connections, onApplied } = setup();
+    const identity = executionIdentity();
+    await directory.apply(executionConfiguration());
+    const previous = binding();
+    expect(directory.runtimeForCleanup(identity)).toEqual(previous);
+    const changed = executionConfiguration();
+    changed.revision = 2;
+    changed.agents[0]!.runtime = runtimeConfiguration(2);
+    const candidate = binding(changed);
+    repository.save.mockImplementationOnce((configuration) => {
+      repository.commit(configuration);
+      return Promise.reject(new Error("commit acknowledgement lost"));
+    });
+
+    await expect(directory.apply(changed)).rejects.toThrow("acknowledgement");
+    expect(repository.records.get(changed.organization_id)?.revision).toBe(2);
+    expect(await repository.loadAuthority(changed.organization_id)).toEqual(
+      parseExecutionConfiguration(changed),
+    );
+    const oldAccess = vi.fn(() => Promise.resolve("old authority"));
+    await expect(directory.withAccess(identity, oldAccess)).rejects.toMatchObject({
+      code: "configuration_not_ready",
+    });
+    expect(oldAccess).not.toHaveBeenCalled();
+    expect(directory.runtimeForCleanup(identity)).toBeNull();
+    expect(() => connections.fetchFor(candidate)).toThrow();
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    await expect(directory.apply(executionConfiguration())).rejects.toThrow("newer");
+    expect(directory.runtimeForCleanup(identity)).toBeNull();
+
+    await expect(directory.apply(changed)).resolves.toHaveProperty("applied_revision", 2);
+    expect(repository.save).toHaveBeenLastCalledWith(parseExecutionConfiguration(changed), 2);
+    await expect(
+      directory.withAccess(identity, ({ configuration }) =>
+        Promise.resolve(configuration.revision),
+      ),
+    ).resolves.toBe(2);
+    expect(directory.runtimeForCleanup(identity)).toEqual(candidate);
+    expect(() => connections.fetchFor(candidate)).not.toThrow();
+    expect(() => connections.fetchFor(previous)).toThrow();
+    expect(onApplied).toHaveBeenCalledTimes(2);
+  });
 
   it("revokes publication authority on failure but preserves an already accepted original Run", async () => {
     const { directory, connections, onApplied } = setup();
@@ -789,15 +891,17 @@ describe("execution directory", () => {
       changed.providers[0]!.credential_revision = "credential-2";
       changed.providers[0]!.credential.secret = "rotated-key";
       repository.save.mockImplementationOnce((configuration) => {
-        repository.records.set(configuration.organization_id, structuredClone(configuration));
+        repository.commit(configuration);
         return Promise.reject(new Error("commit acknowledgement lost"));
       });
       await expect(directory.apply(changed)).rejects.toThrow("acknowledgement");
+      expect(repository.records.get(changed.organization_id)?.revision).toBe(2);
       await expect(
         directory.withAccess(executionIdentity(), ({ configuration }) =>
           Promise.resolve(configuration.revision),
         ),
-      ).resolves.toBe(1);
+      ).rejects.toMatchObject({ code: "configuration_not_ready" });
+      expect(directory.runtimeForCleanup(executionIdentity())).toBeNull();
       await expect(directory.apply(executionConfiguration())).rejects.toThrow("newer");
       expect(onApplied).toHaveBeenCalledTimes(1);
       await expect(directory.apply({ ...changed, revision })).resolves.toHaveProperty(
