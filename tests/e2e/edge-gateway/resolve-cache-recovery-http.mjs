@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { inspectRecoveryWindow } from "./resolve-cache-recovery.mjs";
 import { inspectRebuildPreparation } from "./resolve-cache-rebuild-trace.mjs";
+import { recoveredRuntimeCompletions } from "./resolve-cache-runtime-completion.mjs";
 import { hasDiagnosticError, hasError } from "../acp-plan/requests.mjs";
 import {
   tag,
@@ -609,7 +610,20 @@ export function inspectRecoveryHTTP(evidence, collection, secrets = []) {
       ])
         successful(s, source);
     }
-    trace.spans.forEach((s) => successful(s, trace, action === "deactivate"));
+    const recovered = new Set(
+      action === "deactivate"
+        ? recoveredRuntimeCompletions(trace, tree, server)
+        : [],
+    );
+    for (const span of trace.spans) {
+      if (recovered.has(span))
+        owned.push({
+          trace_id: trace.traceID,
+          span_id: span.spanID,
+          reason: "runtime-completion-serialization-recovered",
+        });
+      else successful(span, trace, action === "deactivate");
+    }
     const db = databaseChildrenTopology(trace, server),
       { transaction } = committedTransaction(trace, tree, server, db),
       groups = Object.fromEntries(

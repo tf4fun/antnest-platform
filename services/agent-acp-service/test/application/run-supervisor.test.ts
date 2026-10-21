@@ -34,6 +34,94 @@ function acceptedRun(sessionId = "session-1"): AcceptedAcpRun {
 }
 
 describe("RunSupervisor ownership", () => {
+  it.each([
+    [false, true, true],
+    [true, true, true],
+    [false, false, true],
+    [true, false, true],
+    [false, true, false],
+    [true, true, false],
+    [false, false, false],
+    [true, false, false],
+  ])(
+    "retains preparation revocation (regrant: %s, cleanup throws: %s, cancel first: %s)",
+    async (regrant, throws, cancelFirst) => {
+      const entered = Promise.withResolvers<void>();
+      const released = Promise.withResolvers<void>();
+      const execute = vi.fn<RunExecutionPort["execute"]>();
+      const accept = vi.fn(() => Promise.resolve(acceptedRun()));
+      let originalSignal: AbortSignal | undefined;
+      const supervisor = new RunSupervisor({ execute }, async (_binding, signal) => {
+        originalSignal = signal;
+        entered.resolve();
+        await released.promise;
+        if (throws) signal.throwIfAborted();
+      });
+      const submission = supervisor.submit(input(), accept).catch((error: unknown) => error);
+      await entered.promise;
+      const settled = vi.fn();
+      const revoke = () =>
+        supervisor.revokeAccess({ organization_id: "organization-1", agents: [] });
+      if (!cancelFirst) revoke();
+      const settlement = supervisor
+        .quiesceAgent(input().binding, "cancel", new AbortController().signal)
+        .then(settled);
+      if (cancelFirst) revoke();
+      if (regrant)
+        supervisor.revokeAccess({
+          organization_id: "organization-1",
+          agents: [{ agent_id: "agent-1", principal_ids: [binding().principalId] }],
+        });
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      released.resolve();
+      const error = await submission;
+      await settlement;
+      expect(error).toMatchObject({ code: "access_denied" });
+      if (cancelFirst) {
+        expect((error as Error).cause).toBe(originalSignal!.reason);
+        expect(originalSignal!.reason).not.toBe(error);
+      } else expect(error).toBe(originalSignal!.reason);
+      expect(settled).toHaveBeenCalledWith(true);
+      expect(accept).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(supervisor.occupancy(input().binding).busy).toBe(false);
+    },
+  );
+
+  it.each(["storage", "shutdown", "acceptance"])(
+    "does not replace an unrelated %s failure with preparation revocation",
+    async (kind) => {
+      const entered = Promise.withResolvers<void>();
+      const released = Promise.withResolvers<void>();
+      const original = new Error("storage failure");
+      let originalSignal: AbortSignal | undefined;
+      const supervisor = new RunSupervisor({ execute: vi.fn() }, async (_binding, signal) => {
+        originalSignal = signal;
+        if (kind === "acceptance") return;
+        entered.resolve();
+        await released.promise;
+        if (kind === "storage") throw original;
+        signal.throwIfAborted();
+      });
+      const submission = supervisor
+        .submit(input(), async () => {
+          entered.resolve();
+          await released.promise;
+          throw original;
+        })
+        .catch((error: unknown) => error);
+      await entered.promise;
+      const stopping = kind === "shutdown" ? supervisor.shutdown() : undefined;
+      supervisor.revokeAccess({ organization_id: "organization-1", agents: [] });
+      released.resolve();
+      const error = await submission;
+      await stopping;
+      expect(error).toBe(kind === "shutdown" ? originalSignal!.reason : original);
+      expect(supervisor.occupancy(input().binding).busy).toBe(false);
+    },
+  );
+
   it("does not abort a replacement Run when a target cancellation arrives late", async () => {
     const firstFinish = Promise.withResolvers<ExecuteRunResult>();
     const secondFinish = Promise.withResolvers<ExecuteRunResult>();

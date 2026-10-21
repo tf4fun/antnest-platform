@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { durablePath } from "../../support/storage.mjs";
 import { exerciseExternalIdentities } from "./oidc-linking-browser.mjs";
+import { assertConsoleSessionPost } from "./session-request-fixture.mjs";
 import {
   assertNoOverflow,
   prepareConsoleSession,
@@ -68,6 +69,7 @@ async function exercise(browser, origin, viewport, label) {
   let hint = "synthetic-console-session",
     idleEnforced = false,
     lastActivity = Date.now();
+  const issuedHints = new Set([hint]);
   const issuedAt = new Date(lastActivity).toISOString();
   const absoluteExpiry = new Date(lastActivity + 43200000).toISOString();
   const metadata = () => ({
@@ -132,12 +134,23 @@ async function exercise(browser, origin, viewport, label) {
         request.method() === "GET"
       )
         return reply({ bindings: [], notices: [] });
-      if (request.method() === "POST")
-        assert.equal(request.headers()["x-antnest-csrf-token"], hint);
+      const headers =
+        request.method() === "POST" ? await request.allHeaders() : null;
+      const currentDelivery =
+        headers &&
+        assertConsoleSessionPost(headers, {
+          path,
+          currentHint: hint,
+          issuedHints,
+        });
       if (path === "/api/session/activity") {
         assert.deepEqual(request.postDataJSON(), {});
-        lastActivity = Date.now();
-        activity.push(lastActivity);
+        // An old in-flight activity may finish after Cookie replacement. It
+        // must not renew the replacement session's idle budget.
+        if (currentDelivery) {
+          lastActivity = Date.now();
+          activity.push(lastActivity);
+        }
         return reply(metadata());
       }
       if (path === "/api/session/sessions") {
@@ -198,6 +211,7 @@ async function exercise(browser, origin, viewport, label) {
           );
         assert.equal(body.current_password, "current-password-canary");
         hint = "synthetic-console-rotated";
+        issuedHints.add(hint);
         return reply({ principal, ...metadata() }, 200, {
           "set-cookie": `antnest_csrf=${hint}; Path=/; SameSite=Strict`,
         });
@@ -299,6 +313,7 @@ async function exercise(browser, origin, viewport, label) {
       beforeRevoke = revocations.length;
     await dialog.getByRole("button", { name: "Confirm revocation" }).focus();
     hint = "synthetic-console-other-tab";
+    issuedHints.add(hint);
     await context.addCookies([
       { name: "antnest_csrf", value: hint, url: origin, sameSite: "Strict" },
     ]);

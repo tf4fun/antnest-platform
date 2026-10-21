@@ -433,10 +433,11 @@ export function buildComponents(
   });
   const supervisor: RunSupervisor = new RunSupervisor(
     new InstrumentedRunExecutor(executor, telemetry),
-    async (scope, signal) => {
-      await learningGate.preempt(scope, signal);
+    async (binding, signal) => {
+      await access.assert(binding);
+      await learningGate.preempt(binding, signal);
       try {
-        await temporarySkills.releaseAgent(scope, signal);
+        await temporarySkills.releaseAgent(binding, signal);
       } catch {
         signal.throwIfAborted();
         throw new DomainError("runtime_barrier_required", "Temporary Skill cleanup is pending");

@@ -69,7 +69,9 @@ tests:
   parent-cancellation errors. `protocol-business.mjs` keeps the original Run,
   audit, process-group, effects, Rebuild, offboarding and Delete assertions.
 - `private-denial-trace.mjs` checks the original `access_denied` Prompt response
-  and its three admission SELECTs, with no Run, Provider or Tool activity.
+  after confirmed revocation and exactly its Session and MCP revision SELECTs.
+  The preparation access check must stop temporary scope cleanup; extra reads,
+  writes, Run, Provider and Tool activity are rejected.
 - `private-disconnect-trace.mjs` requires the original joined connection receipt
   for each held Prompt. Cancellation proves the unresolved Run and cancelled
   Bash chain; offline completion independently proves successful Bash work and
@@ -333,14 +335,30 @@ context closure. This group excludes SSE and future bootstrap waiters, which
 still belong to the browser scope. Failed reads retain their original errors
 and response URL/last completed check and block admission. Failure and
 cancellation cleanup still closes resources before joining blocked readers.
-The sole body-audit exclusion is a same-Gateway, main-frame, unredirected
+One body-audit exclusion is a same-Gateway, main-frame, unredirected
 `GET /api/app/workspace/v1/bootstrap` returning 401 without query parameters.
 The page consumes that denial and navigates to login itself; the browser SDK
 cannot retain its body reliably across that navigation. The observer records
 the original URL, status, Trace ID and last completed check, explicitly marks
 the body unobserved, and does not count it as a scanned payload. Successful
-bootstrap responses, other denials and every other body-read error retain the
-normal audit. Remote SSE closure, the original authenticated Prompt refusal,
+bootstrap responses and other denials normally retain the body audit.
+For the original revocation page, a finite read may instead report the browser
+SDK's exact `Network.getResponseBody` resource-unavailable/navigation error.
+The observer freezes the original GET URL, status (200, 401 or 403), Trace ID,
+main frame and redirect identity before reading. Only bootstrap without query
+parameters or the current Agent's view with one exact Session parameter can
+qualify. That read must be pending when revocation starts or begin during it,
+and cross the same document's automatic navigation to the same Gateway login.
+An optional, unique `return_to` must name that Agent/Session document route;
+explicit harness navigation, other documents, statuses and errors remain failures.
+
+Such a diagnostic stays pending until the full browser, execution and collected
+Trace owning gates pass. Its original error and response metadata remain private;
+the body is `not_observed`, contributes zero scanned payloads, and is included in
+`browser_bodies_unobserved`. `browser_payloads_checked` counts only bodies actually
+read, with `browser_payload_coverage=observed_bodies_only`. No retry or SDK change
+is made, and historical errors without their original status cannot be admitted
+using this rule. Remote SSE closure, the original authenticated Prompt refusal,
 login recovery, cleared UI and no-new-execution checks remain required.
 
 Two real browser connections observe the same Session. Its activity time must

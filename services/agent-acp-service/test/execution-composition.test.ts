@@ -26,7 +26,122 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("production execution configuration composition", () => {
+  it("rejects published revocation before foreground cleanup or Run acceptance", async () => {
+    const listing = vi.spyOn(PostgresTemporarySkills.prototype, "forAgent");
+    vi.spyOn(PostgresExecutionConfiguration.prototype, "load").mockResolvedValue(null);
+    vi.spyOn(PostgresExecutionConfiguration.prototype, "save").mockResolvedValue(true);
+    const pool = new Pool();
+    const execute = vi.spyOn(RunExecutor.prototype, "execute");
+    const components = buildComponents(
+      pool,
+      loadConfig({
+        ...testSecurityEnvironment(),
+        ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+        ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString(
+          "base64",
+        ),
+      }),
+      NOOP_TELEMETRY,
+      vi.fn(),
+      new AbortController().signal,
+      runtimeConnections(),
+    );
+    const configuration = executionConfiguration();
+    configuration.agents[0]!.principal_ids = [];
+    const accept = vi.fn().mockRejectedValue(new Error("unexpected acceptance"));
+    const preempt = vi.spyOn(components.learningGate, "preempt");
+    try {
+      await components.directory.apply(configuration);
+      await expect(
+        components.supervisor.submit(
+          { binding: binding(), sessionId: "session-1", outputChanged: vi.fn() },
+          accept,
+        ),
+      ).rejects.toMatchObject({ code: "access_denied" });
+      expect(preempt).not.toHaveBeenCalled();
+      expect(listing).not.toHaveBeenCalled();
+      expect(accept).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(components.supervisor.occupancy(binding()).busy).toBe(false);
+    } finally {
+      await components.supervisor.shutdown();
+      await pool.end();
+    }
+  });
+
+  it("joins preparation before reporting revocation when lifecycle cancellation arrives first", async () => {
+    const stored = new Map<string, PublicExecutionConfiguration>();
+    vi.spyOn(PostgresExecutionConfiguration.prototype, "load").mockImplementation((id) =>
+      Promise.resolve(stored.get(id) ?? null),
+    );
+    vi.spyOn(PostgresExecutionConfiguration.prototype, "save").mockImplementation((value) => {
+      stored.set(value.organization_id, value);
+      return Promise.resolve(true);
+    });
+    const entered = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    let originalSignal: AbortSignal | undefined;
+    vi.spyOn(PostgresTemporarySkills.prototype, "forAgent").mockImplementation(
+      async (_scope, signal) => {
+        originalSignal = signal;
+        entered.resolve();
+        await released.promise;
+        return [];
+      },
+    );
+    const pool = new Pool();
+    const execute = vi.spyOn(RunExecutor.prototype, "execute");
+    const components = buildComponents(
+      pool,
+      loadConfig({
+        ...testSecurityEnvironment(),
+        ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
+        ANTNEST_ACP_CLIENT_MCP_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString(
+          "base64",
+        ),
+      }),
+      NOOP_TELEMETRY,
+      vi.fn(),
+      new AbortController().signal,
+      runtimeConnections(),
+    );
+    const accept = vi.fn().mockRejectedValue(new Error("unexpected acceptance"));
+    const configuration = executionConfiguration();
+    try {
+      await components.directory.apply(configuration);
+      const submission = components.supervisor
+        .submit({ binding: binding(), sessionId: "session-1", outputChanged: vi.fn() }, accept)
+        .catch((error: unknown) => error);
+      await entered.promise;
+      const settled = vi.fn();
+      const settlement = components.supervisor
+        .quiesceAgent(binding(), "cancel", new AbortController().signal)
+        .then(settled);
+      const revoked = structuredClone(configuration);
+      revoked.revision++;
+      revoked.agents[0]!.principal_ids = [];
+      await components.directory.apply(revoked);
+      await components.directory.apply({ ...configuration, revision: revoked.revision + 1 });
+      expect(settled).not.toHaveBeenCalled();
+      released.resolve();
+      const error = await submission;
+      await settlement;
+      expect(error).toMatchObject({ code: "access_denied" });
+      expect((error as Error).cause).toBe(originalSignal!.reason);
+      expect(settled).toHaveBeenCalledWith(true);
+      expect(accept).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(components.supervisor.occupancy(binding()).busy).toBe(false);
+    } finally {
+      released.resolve();
+      await components.supervisor.shutdown();
+      await pool.end();
+    }
+  });
+
   it("keeps temporary cleanup and its foreground admission guard even with discovery disabled", async () => {
+    vi.spyOn(PostgresExecutionConfiguration.prototype, "load").mockResolvedValue(null);
+    vi.spyOn(PostgresExecutionConfiguration.prototype, "save").mockResolvedValue(true);
     const pool = new Pool();
     const scope = {
       revision: `rtv_${"a".repeat(32)}`,
@@ -59,6 +174,7 @@ describe("production execution configuration composition", () => {
     );
     const accept = vi.fn();
     try {
+      await components.directory.apply(executionConfiguration());
       expect(components.temporarySkillCleanupWorker).toBeInstanceOf(TemporarySkillCleanupWorker);
       await expect(
         components.supervisor.submit(

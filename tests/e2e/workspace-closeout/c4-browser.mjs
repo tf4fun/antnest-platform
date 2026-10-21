@@ -16,6 +16,7 @@ import {
 } from "./c4-responses.mjs";
 import { captureC4Login } from "./c4-login.mjs";
 import { captureC4PromptReceipt } from "./c4-prompt-receipt.mjs";
+import { createC4BodyAudit } from "./c4-body-audit.mjs";
 import { observeC4PageStreams } from "./c4-stream-observer.mjs";
 import {
   snapshotC4Execution,
@@ -74,16 +75,23 @@ async function runBrowserInContext(
   const errors = (report.browser_observer_errors = []);
   const prompts = (report.prompt_receipts = []);
   const bootstrapDenials = (report.bootstrap_denials = []);
+  const bodyDiagnostics = (report.browser_body_diagnostics = []);
+  const bodyAudit = createC4BodyAudit({
+    gateway: config.gateway,
+    agentId: fixture.agentID,
+    diagnostics: bodyDiagnostics,
+  });
   let originalLogin;
   let lastCompletedCheck = null;
   const paths = [];
   const streams = new Map();
   const responses = new Map();
   const beforePageChange = (target, change) =>
-    responses.get(target).before(change);
+    responses.get(target).before(() => bodyAudit.beforeChange(target, change));
   const beforeContextChange = (change) =>
     beforeC4Responses([...responses.values()], change);
   const track = async (page) => {
+    bodyAudit.track(page, scope);
     const observer = observeC4PageStreams(page, {
       gateway: config.gateway,
       agentId: fixture.agentID,
@@ -149,7 +157,10 @@ async function runBrowserInContext(
               previousCheck,
             );
             if (denial) bootstrapDenials.push(denial);
-            else frames.push(await response.text());
+            else {
+              const body = await bodyAudit.read(page, response, previousCheck);
+              if (body !== null) frames.push(body);
+            }
           }
         } catch (error) {
           errors.push({
@@ -721,6 +732,10 @@ async function runBrowserInContext(
       checkpoint: beforeRevocation,
       cause,
     });
+    bodyAudit.arm(page, {
+      sessionId: revocationSession,
+      startedMono: cause.startedMono,
+    });
     const revoked = await fixture.request(cause.path, {
       body: { active: false },
       onResponse: (response) =>
@@ -761,8 +776,16 @@ async function runBrowserInContext(
     // The failed authenticated bootstrap must return the open page to login.
     await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/");
-    assert.equal(await input().count(), 0);
-    assert.equal(await page.locator(".message-content").count(), 0);
+    const loginVisible = {
+      signInVisible: await page
+        .getByRole("button", { name: "Sign in", exact: true })
+        .isVisible(),
+      composerCount: await input().count(),
+      messageCount: await page.locator(".message-content").count(),
+    };
+    assert.equal(loginVisible.signInVisible, true);
+    assert.equal(loginVisible.composerCount, 0);
+    assert.equal(loginVisible.messageCount, 0);
     await until(
       async () => {
         const agent = await fixture.json(
@@ -797,6 +820,7 @@ async function runBrowserInContext(
     // cancellation still close resources first in the enclosing scope.
     await beforeContextChange(() => scope.closeContext());
     await scope.joinTasks();
+    revocation.bodyObservation = bodyAudit.confirm(page, loginVisible);
     assert.deepEqual(errors, []);
     assert(paths.length > 0 && frames.length > 0);
     for (const body of frames)
@@ -814,6 +838,9 @@ async function runBrowserInContext(
     report.model = status;
     report.browser_errors = errors.length;
     report.browser_payloads_checked = frames.length;
+    report.browser_bodies_unobserved =
+      bootstrapDenials.length + bodyDiagnostics.length;
+    report.browser_payload_coverage = "observed_bodies_only";
     await check("private_runtime_and_provider_data_absent");
   } catch (error) {
     scope.recordFailure(error);

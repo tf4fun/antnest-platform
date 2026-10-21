@@ -22,7 +22,7 @@ function inspector() {
   return implementation.inspectWorkspaceAccessDeniedTrace;
 }
 
-function fixture() {
+function fixture({ preparationRead = false } = {}) {
   const f = privatePlanRequestFixture({
     version: 1,
     method: "session/prompt",
@@ -36,7 +36,9 @@ function fixture() {
   Object.assign(f.request, { startTime: 2000, duration: 14000 });
   Object.assign(f.application, { startTime: 3000, duration: 12000 });
   f.application.logs[0].timestamp = 14000;
-  f.queries = structuredClone(barrierTraceFixture().queries.slice(0, 3));
+  f.queries = structuredClone(
+    barrierTraceFixture().queries.slice(0, preparationRead ? 3 : 2),
+  );
   for (const span of f.queries) {
     span.processID = f.application.processID;
     span.traceID = f.trace.traceID;
@@ -52,13 +54,13 @@ function fixture() {
   return f;
 }
 
-test("revoked Workspace Prompt retains the three authorization reads and exact original access denial", () => {
+test("revoked Workspace Prompt stops after Session and MCP reads with the original access denial", () => {
   const inspect = inspector();
   const f = fixture(),
     before = structuredClone({ trace: f.trace, expected: f.expected });
   const report = inspect(f.trace, f.expected, [], []);
   assert.equal(report.no_execution, true);
-  assert.equal(report.sql_spans, 3);
+  assert.equal(report.sql_spans, 2);
   assert.equal(report.runtime_tool_calls, 0);
   assert.equal(report.owned_error_spans.length, 2);
   const inventory = privateACPDiagnosticInventory(
@@ -70,28 +72,37 @@ test("revoked Workspace Prompt retains the three authorization reads and exact o
   assert.deepEqual({ trace: f.trace, expected: f.expected }, before);
 });
 
+test("already revoked Workspace Prompt cannot enter temporary scope preparation", () => {
+  const f = fixture({ preparationRead: true });
+  assert.throws(() => inspector()(f.trace, f.expected, [], []));
+});
+
 for (const [name, change] of Object.entries({
   missing_session: (f) =>
     f.trace.spans.splice(f.trace.spans.indexOf(f.queries[0]), 1),
   missing_mcp_revision: (f) =>
     f.trace.spans.splice(f.trace.spans.indexOf(f.queries[1]), 1),
-  missing_temporary_scope: (f) =>
-    f.trace.spans.splice(f.trace.spans.indexOf(f.queries[2]), 1),
+  duplicate_session_read: (f) =>
+    f.field(
+      f.queries[1],
+      "db.query.text",
+      f.queries[0].tags.find((tag) => tag.key === "db.query.text").value,
+    ),
   extra_protection_read: (f) =>
     f.trace.spans.push(barrierTraceFixture().queries[4]),
   second_session_read: (f) =>
     f.trace.spans.push(barrierTraceFixture().queries[3]),
   write_before_denial: (f) =>
-    f.field(f.queries[2], "db.query.text", "UPDATE runs SET state='running'"),
+    f.field(f.queries[1], "db.query.text", "UPDATE runs SET state='running'"),
   foreign_database: (f) =>
     f.field(f.queries[0], "db.namespace", "antnest_identity"),
   failed_query: (f) => f.field(f.queries[0], "error", true),
   foreign_query_parent: (f) =>
     (f.queries[0].references[0].spanID = f.request.spanID),
-  wrong_query_order: (f) => (f.queries[2].startTime = 3500),
+  wrong_query_order: (f) => (f.queries[1].startTime = 3500),
   overlapping_query: (f) => (f.queries[0].duration = 8000),
-  query_ends_after_denial: (f) => (f.queries[2].duration = 8000),
-  query_after_denial: (f) => (f.queries[2].startTime = 14500),
+  query_ends_after_denial: (f) => (f.queries[1].duration = 9000),
+  query_after_denial: (f) => (f.queries[1].startTime = 14500),
   payload_capture: (f) =>
     f.field(f.queries[0], "db.query.parameters", "secret"),
   foreign_agent_alias: (f) => f.field(f.application, "agent.id", "other"),

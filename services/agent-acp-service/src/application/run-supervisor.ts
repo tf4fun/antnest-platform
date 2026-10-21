@@ -16,11 +16,18 @@ type RunSlot = {
   runId: string | null;
   pendingTargetCancels: Set<string>;
   controller: AbortController;
+  accessDenied: DomainError | null;
   finished: PromiseWithResolvers<void>;
   waiters: Set<() => void>;
 };
 
 type AgentScope = Pick<ConnectionBinding, "organizationId" | "agentId">;
+
+class LifecycleCancellation extends Error {
+  public constructor() {
+    super("Agent lifecycle requested execution cancellation");
+  }
+}
 
 export type RunSubmission = {
   binding: ConnectionBinding;
@@ -44,8 +51,10 @@ export class RunSupervisor implements RunLifecyclePort {
 
   public constructor(
     private readonly delegate: RunExecutionPort,
-    private readonly beforeAccept: (scope: AgentScope, signal: AbortSignal) => Promise<void> = () =>
-      Promise.resolve(),
+    private readonly beforeAccept: (
+      binding: ConnectionBinding,
+      signal: AbortSignal,
+    ) => Promise<void> = () => Promise.resolve(),
   ) {}
 
   public get stopSignal(): AbortSignal {
@@ -81,13 +90,35 @@ export class RunSupervisor implements RunLifecyclePort {
       runId: null,
       pendingTargetCancels: new Set(),
       controller: new AbortController(),
+      accessDenied: null,
       finished: Promise.withResolvers<void>(),
       waiters: new Set(),
     };
     this.active.set(key, slot);
     this.changes.invalidate(key);
     try {
-      await this.beforeAccept(input.binding, slot.controller.signal);
+      try {
+        await this.beforeAccept(input.binding, slot.controller.signal);
+        // A completed cleanup can resume after publication without having
+        // thrown the abort. Do not start durable acceptance for that lifetime.
+        if (
+          slot.accessDenied !== null &&
+          (slot.controller.signal.reason === slot.accessDenied ||
+            slot.controller.signal.reason instanceof LifecycleCancellation)
+        )
+          slot.controller.signal.throwIfAborted();
+      } catch (error) {
+        // Publication can revoke a preparing request after lifecycle cancellation
+        // has already fixed the signal's first reason. Preserve that signal and
+        // join, but report the retained authorization denial for this lifetime.
+        if (
+          error instanceof LifecycleCancellation &&
+          error === slot.controller.signal.reason &&
+          slot.accessDenied !== null
+        )
+          throw Object.assign(slot.accessDenied, { cause: error });
+        throw error;
+      }
       const accepted = await accept(slot.controller.signal);
       slot.runId = accepted.runId;
       if (slot.pendingTargetCancels.has(accepted.runId))
@@ -146,15 +177,16 @@ export class RunSupervisor implements RunLifecyclePort {
     if (stopWaiting.aborted) return Promise.resolve(false);
     const slot = this.active.get(agentKey(scope));
     if (slot === undefined) return Promise.resolve(true);
-    if (mode === "cancel")
-      slot.controller.abort(new Error("Agent lifecycle requested execution cancellation"));
+    if (mode === "cancel") slot.controller.abort(new LifecycleCancellation());
     return waitForSlot(slot, stopWaiting);
   }
 
   public revokeAccess(snapshot: ExecutionAccessSnapshot): void {
     for (const slot of this.active.values()) {
-      if (isExecutionAccessRevoked(snapshot, slot.binding))
-        slot.controller.abort(new DomainError("access_denied", "Agent access was revoked"));
+      if (isExecutionAccessRevoked(snapshot, slot.binding)) {
+        slot.accessDenied ??= new DomainError("access_denied", "Agent access was revoked");
+        slot.controller.abort(slot.accessDenied);
+      }
     }
   }
 

@@ -105,6 +105,11 @@ Agent's cancellation checks or terminal reads. Organization configuration
 publication remains exclusive: it waits for all earlier Agent commits, and
 later access waits for the published revision before authorization. Failed
 commits release their queue position without changing the original error. The
+prompt preparation gate checks access before Skill cleanup, and durable
+acceptance checks it again. Revocation during preparation retains `access_denied`
+even when lifecycle cancellation arrived first; cleanup still joins and the
+original signal is retained. Accepted Run cancellation and persistence failures
+keep their existing behavior. The
 [workspace Bridge extension](../../contracts/agent-acp/workspace-bridge.md) is
 negotiated through `_meta["antnest.dev/bridge"]`; clients that do not negotiate
 it keep standard ACP wire behavior.

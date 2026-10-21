@@ -177,6 +177,15 @@ harness accepts isolated RC/Identity candidates through
 Gateway candidate through `ANTNEST_C4_EDGE_GATEWAY_IMAGE`; deploy the new RC
 reader before using the new Runtime status producer.
 
+The synthetic Console session browser fixture validates each POST's CSRF header
+against that same request's original Cookie and the fixture's issued values.
+A request already dispatched before Cookie replacement can retain its old pair;
+an old activity report cannot renew the replacement session's idle budget.
+Password and revocation mutations still require current delivery, and the old
+confirmation must produce no mutation after replacement. Deterministic request
+pairing regressions run in `make test-repo`; the built browser scenarios run in
+the Tier A browser shard. Real Gateway/Identity HTTPS acceptance stays separate.
+
 The Stage 3a profile runners start their client detached and read its result
 with `docker logs`. Docker splits output lines longer than 16 KiB, and the
 json-file log driver replaces a multi-byte character cut by that split with
@@ -734,7 +743,18 @@ complete outage/recovery admission. Authority, cancellation and HTTP rejection
 have separate owning results. Recovery Run, original-authority gates, mutation
 HTTP receipts, stream retirement diagnostics and stopped-feed errors each retain
 their separate owning results.
-Complete integration CI remains a separate admission gate. Successful
+Complete integration CI remains a separate admission gate.
+
+Membership deactivation may include a recovered Runtime completion transaction:
+the HTTP inspector requires the same completed `disable_runtime` operation,
+process and Identity ancestry, exact completion SQL, serializable BEGIN,
+40001 observation-retention DELETE, ROLLBACK, and subsequent successful replay
+through COMMIT. At most ten attempts are admitted. Other errors remain blocking;
+the original SQL error and strict failure remain in the archive with the owning
+`runtime-completion-serialization-recovered` claim. This local rule does not
+apply to other mutations or replace fresh Docker acceptance.
+
+Successful
 Run telemetry uses `outcome=ok` with `terminal_class=completed`. Explicit
 principal-revocation cancellation permits the observed `DomainError` /
 `access_denied` Provider rejection with its exact event and ModelError origin;
