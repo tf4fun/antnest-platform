@@ -80,7 +80,14 @@ function ownedDiagnostics(report, expected) {
   );
 }
 
-function businessProof(work, agentID, sessions, prompts, reports) {
+function businessProof(
+  work,
+  agentID,
+  sessions,
+  prompts,
+  reports,
+  { requireTrace = true } = {},
+) {
   const { cancel, offline, rebuilt, revocation, deleted } = work.business;
   equal(Object.keys(work.business).sort(), [
     "cancel",
@@ -166,27 +173,66 @@ function businessProof(work, agentID, sessions, prompts, reports) {
   assert.equal(rebuilt.reply.stopReason, "end_turn");
   const providers = work.final_model.requests;
   equal(work.final_model.errors, []);
+  if (requireTrace) {
+    equal(
+      providers.map((row) => [row.phase, row.stage, row.trace_id]),
+      [
+        [phases[0], "tool", reports[0].trace_id],
+        [phases[1], "tool", reports[1].trace_id],
+        [phases[1], "reply", reports[1].trace_id],
+        [phases[2], "tool", reports[2].trace_id],
+        [phases[2], "reply", reports[2].trace_id],
+      ],
+    );
+    for (const row of providers)
+      assert.match(row.model_span_id, /^[a-f0-9]{16}$/u);
+    unique(providers.map((row) => row.model_span_id));
+  } else {
+    equal(
+      providers.map((row) => [row.phase, row.stage]),
+      [
+        [phases[0], "tool"],
+        [phases[1], "tool"],
+        [phases[1], "reply"],
+        [phases[2], "tool"],
+        [phases[2], "reply"],
+      ],
+    );
+    for (const row of providers) assert(Number.isFinite(row.received_at_ms));
+  }
+  const modelInventory = (rows) =>
+    requireTrace
+      ? rows
+      : rows.map((row) =>
+          Object.fromEntries(
+            Object.entries(row).filter(
+              ([key]) => !["trace_id", "model_span_id"].includes(key),
+            ),
+          ),
+        );
   equal(
-    providers.map((row) => [row.phase, row.stage, row.trace_id]),
-    [
-      [phases[0], "tool", reports[0].trace_id],
-      [phases[1], "tool", reports[1].trace_id],
-      [phases[1], "reply", reports[1].trace_id],
-      [phases[2], "tool", reports[2].trace_id],
-      [phases[2], "reply", reports[2].trace_id],
-    ],
+    modelInventory(cancel.model_before),
+    modelInventory(providers.slice(0, 1)),
   );
-  for (const row of providers)
-    assert.match(row.model_span_id, /^[a-f0-9]{16}$/u);
-  unique(providers.map((row) => row.model_span_id));
-  equal(cancel.model_before, providers.slice(0, 1));
-  equal(cancel.model_after_busy, cancel.model_before);
-  equal(cancel.model_after_barrier, cancel.model_before);
-  equal(offline.model_before, providers.slice(0, 3));
-  equal(offline.model_after, offline.model_before);
-  equal(rebuilt.model, providers);
-  equal(revocation.model_before, providers);
-  equal(revocation.model_after, providers);
+  equal(
+    modelInventory(cancel.model_after_busy),
+    modelInventory(cancel.model_before),
+  );
+  equal(
+    modelInventory(cancel.model_after_barrier),
+    modelInventory(cancel.model_before),
+  );
+  equal(
+    modelInventory(offline.model_before),
+    modelInventory(providers.slice(0, 3)),
+  );
+  equal(
+    modelInventory(offline.model_after),
+    modelInventory(offline.model_before),
+  );
+  equal(modelInventory(rebuilt.model), modelInventory(providers));
+  equal(modelInventory(revocation.model_before), modelInventory(providers));
+  equal(modelInventory(revocation.model_after), modelInventory(providers));
   assertAgentDisabled(revocation.disabled_agent);
   assert.equal(revocation.disabled_agent.agent_id, agentID);
   equal(
@@ -203,6 +249,14 @@ function businessProof(work, agentID, sessions, prompts, reports) {
 }
 
 export function workspacePrivateAdmission(result) {
+  return workspaceAdmission(result, { requireTrace: true });
+}
+
+export function inspectWorkspaceBusiness(result) {
+  return workspaceAdmission(result, { requireTrace: false });
+}
+
+function workspaceAdmission(result, { requireTrace }) {
   assert.equal(result.profile, "workspace-protocol");
   for (const key of [
     "cross_connection_cancel",
@@ -218,14 +272,14 @@ export function workspacePrivateAdmission(result) {
   assert.equal(result.completed_prompts, 2);
   assert.equal(result.model_requests, 5);
   assert.equal(result.cancel_recovery, "explicit_rebuild");
-  equal(result.private_collection_errors, []);
+  if (requireTrace) equal(result.private_collection_errors, []);
   if (result.workspaceErrors) equal(result.workspaceErrors, []);
   const work = result.private_workspace,
     connections = result.private_connections;
   assert.equal(work.logins.length, 1);
   const login = work.logins[0];
   assert.equal(login.status, 200);
-  assert.match(login.trace_id, /^[a-f0-9]{32}$/u);
+  if (requireTrace) assert.match(login.trace_id, /^[a-f0-9]{32}$/u);
   assert.match(login.session_digest, /^[a-f0-9]{64}$/u);
   assertRestoreOwner(
     login.principal,
@@ -297,11 +351,13 @@ export function workspacePrivateAdmission(result) {
     ["access_denied"],
   );
   assert.equal(rows.at(-1).probe, true);
-  const requests = result.request_traces;
-  assert.equal(requests.length, rows.length);
+  const requests = requireTrace ? result.request_traces : [];
+  if (requireTrace) assert.equal(requests.length, rows.length);
   const prompts = [],
     promptReports = [];
   for (const [index, row] of rows.entries()) {
+    if (row.phase) prompts.push(row);
+    if (!requireTrace) continue;
     const report = requests[index];
     assert.notEqual(report.topology, "failed");
     equal(
@@ -332,7 +388,6 @@ export function workspacePrivateAdmission(result) {
       assert.equal(report.runtime_tool_calls, 1);
       if (row.phase !== "c4-rebuilt")
         assert.equal(report.disconnect_verified, true);
-      prompts.push(row);
       promptReports.push(report);
     } else if (row.rejection === "runtime_barrier_required") {
       assert.equal(report.barrier_rejection, true);
@@ -346,7 +401,16 @@ export function workspacePrivateAdmission(result) {
         assert.equal(report.runtime_tool_calls, 0);
     }
   }
-  businessProof(work, result.agent_id, [first, second], prompts, promptReports);
+  businessProof(
+    work,
+    result.agent_id,
+    [first, second],
+    prompts,
+    promptReports,
+    {
+      requireTrace,
+    },
+  );
   const disconnects = result.private_disconnects;
   assert.equal(disconnects.length, 2);
   equal(
@@ -413,32 +477,34 @@ export function workspacePrivateAdmission(result) {
   assert.equal(notification.status, "write_completed");
   assert.equal(notification.wireObserved, true);
   assert.equal(notification.writeOutcome, "completed");
-  assert.equal(result.notification_traces.length, 1);
-  const cancel = result.notification_traces[0];
-  assert.notEqual(cancel.topology, "failed");
-  equal(
-    [
-      cancel.kind,
-      cancel.method,
-      cancel.session_id,
-      cancel.connection_trace_id,
-      cancel.request_id,
-    ],
-    [
-      "notification",
-      notification.method,
-      first,
+  if (requireTrace) {
+    assert.equal(result.notification_traces.length, 1);
+    const cancel = result.notification_traces[0];
+    assert.notEqual(cancel.topology, "failed");
+    equal(
+      [
+        cancel.kind,
+        cancel.method,
+        cancel.session_id,
+        cancel.connection_trace_id,
+        cancel.request_id,
+      ],
+      [
+        "notification",
+        notification.method,
+        first,
+        notification.connectionTraceID,
+        undefined,
+      ],
+    );
+    assert.equal(cancel.cancellation_requested, true);
+    assert.equal(cancel.model_requests, 0);
+    ownedDiagnostics(cancel, []);
+    completeSource(cancel, "websocket", [
+      cancel.trace_id,
       notification.connectionTraceID,
-      undefined,
-    ],
-  );
-  assert.equal(cancel.cancellation_requested, true);
-  assert.equal(cancel.model_requests, 0);
-  ownedDiagnostics(cancel, []);
-  completeSource(cancel, "websocket", [
-    cancel.trace_id,
-    notification.connectionTraceID,
-  ]);
+    ]);
+  }
 
   const identity = (receipt) => ({
     agentID: result.agent_id,
@@ -450,10 +516,10 @@ export function workspacePrivateAdmission(result) {
   const states = result.private_state_receipts,
     watches = result.private_state_watches;
   assert(states.length > 0);
-  assert.equal(result.state_traces.length, states.length);
+  if (requireTrace) assert.equal(result.state_traces.length, states.length);
   assert.equal(watches.length, 2);
   assert.equal(work.watch_windows.length, 2);
-  assert.equal(result.watch_traces.length, 2);
+  if (requireTrace) assert.equal(result.watch_traces.length, 2);
   const httpReport = (report, receipt, kind) => {
     equal(
       [
@@ -469,34 +535,42 @@ export function workspacePrivateAdmission(result) {
     completeSource(report, "http", [receipt.traceID]);
   };
   for (const [index, receipt] of states.entries()) {
-    assertWorkspaceStateReceipt(receipt, identity(receipt));
-    httpReport(result.state_traces[index], receipt, "private_state");
-    ownedDiagnostics(result.state_traces[index], []);
+    assertWorkspaceStateReceipt(receipt, identity(receipt), { requireTrace });
+    if (requireTrace) {
+      httpReport(result.state_traces[index], receipt, "private_state");
+      ownedDiagnostics(result.state_traces[index], []);
+    }
   }
   const events = watches.map((receipt, index) => {
     const window = work.watch_windows[index];
-    assert.equal(window.traceID, receipt.traceID);
+    if (requireTrace) assert.equal(window.traceID, receipt.traceID);
     assert.equal(window.mode, index ? "revocation" : "local-close");
-    const observed = assertWorkspaceWatchReceipt(receipt, {
-      ...identity(receipt),
-      ...window,
-    });
-    const report = result.watch_traces[index];
-    httpReport(report, receipt, "private_state_watch");
-    equal(report.closure, receipt.closure);
-    assert.equal(report.remote_closure_verified, index === 1);
-    ownedDiagnostics(
-      report,
-      index
-        ? []
-        : [
-            {
-              trace_id: report.trace_id,
-              span_id: report.server_span_id,
-              reason: "workspace-private-watch-local-close",
-            },
-          ],
+    const observed = assertWorkspaceWatchReceipt(
+      receipt,
+      {
+        ...identity(receipt),
+        ...window,
+      },
+      { requireTrace },
     );
+    if (requireTrace) {
+      const report = result.watch_traces[index];
+      httpReport(report, receipt, "private_state_watch");
+      equal(report.closure, receipt.closure);
+      assert.equal(report.remote_closure_verified, index === 1);
+      ownedDiagnostics(
+        report,
+        index
+          ? []
+          : [
+              {
+                trace_id: report.trace_id,
+                span_id: report.server_span_id,
+                reason: "workspace-private-watch-local-close",
+              },
+            ],
+      );
+    }
     return observed;
   });
   let cursor = 0;
@@ -543,7 +617,16 @@ export function workspacePrivateAdmission(result) {
     scopes.length,
     connections.length + watches.length + states.length + 1,
   );
-  assert.equal(result.authority_traces.length, scopes.length);
+  if (requireTrace) assert.equal(result.authority_traces.length, scopes.length);
+  else
+    equal(result.private_resource_cleanup, {
+      version: 1,
+      status: "joined",
+      connections: connections.length,
+      watches: watches.length,
+      state_receipts: states.length,
+      authority_receipts: scopes.length,
+    });
   equal(
     scopes.map((scope) => scope.operation_id),
     scopes.map((_, index) => index + 1),
@@ -581,34 +664,40 @@ export function workspacePrivateAdmission(result) {
       equal(resource.authority, scope.receipts);
       assert.equal(receipt.status, 200);
     }
-    assertWorkspaceAuthorityReceipt(receipt, {
-      ...identity(receipt),
-      kind: "workspace_identity",
-      scope: selected,
-      ...(denied ? { after: work.denied_connections[0].after } : {}),
-    });
-    const report = result.authority_traces[index];
-    httpReport(report, receipt, "workspace_identity");
-    equal(report.authority_scope, selected);
-    assert.equal(report.status, receipt.status);
-    assert.equal(report.original_session_verified, true);
-    ownedDiagnostics(
-      report,
-      denied
-        ? [
-            {
-              trace_id: report.trace_id,
-              span_id: report.client_span_id,
-              reason: "workspace-identity-denied-client",
-            },
-            {
-              trace_id: report.trace_id,
-              span_id: report.server_span_id,
-              reason: "workspace-identity-denied-server",
-            },
-          ]
-        : [],
+    assertWorkspaceAuthorityReceipt(
+      receipt,
+      {
+        ...identity(receipt),
+        kind: "workspace_identity",
+        scope: selected,
+        ...(denied ? { after: work.denied_connections[0].after } : {}),
+      },
+      { requireTrace },
     );
+    if (requireTrace) {
+      const report = result.authority_traces[index];
+      httpReport(report, receipt, "workspace_identity");
+      equal(report.authority_scope, selected);
+      assert.equal(report.status, receipt.status);
+      assert.equal(report.original_session_verified, true);
+      ownedDiagnostics(
+        report,
+        denied
+          ? [
+              {
+                trace_id: report.trace_id,
+                span_id: report.client_span_id,
+                reason: "workspace-identity-denied-client",
+              },
+              {
+                trace_id: report.trace_id,
+                span_id: report.server_span_id,
+                reason: "workspace-identity-denied-server",
+              },
+            ]
+          : [],
+      );
+    }
   }
   assert.equal(
     scopes.filter((row) => row.kind === "denied-connection").length,
@@ -618,7 +707,7 @@ export function workspacePrivateAdmission(result) {
   assert.equal(result.operations, 4);
   const lifecycle = work.lifecycle_admissions;
   assert.equal(lifecycle.length, 4);
-  assert.equal(result.traces.length, 4);
+  if (requireTrace) assert.equal(result.traces.length, 4);
   equal(
     lifecycle.map((row) => row.kind),
     ["create", "rebuild", "rebuild", "delete"],
@@ -639,6 +728,15 @@ export function workspacePrivateAdmission(result) {
   unique(lifecycle.map((row) => row.requestID));
   for (const [index, row] of lifecycle.entries()) {
     assert.equal(row.agentID, result.agent_id);
+    if (!requireTrace) {
+      nonempty(row.requestID);
+      assert.equal(row.terminal?.request_id, row.requestID);
+      assert.equal(row.terminal.kind, row.kind);
+      assert.equal(row.terminal.state, "completed");
+      if (row.terminal.agent_id !== undefined)
+        assert.equal(row.terminal.agent_id, result.agent_id);
+      continue;
+    }
     const report = result.traces[index];
     equal(
       [
@@ -652,9 +750,9 @@ export function workspacePrivateAdmission(result) {
     );
   }
   assert.equal(work.offboarding.length, 1);
-  assert.equal(result.offboarding_traces.length, 1);
+  if (requireTrace) assert.equal(result.offboarding_traces.length, 1);
   const offboarding = work.offboarding[0],
-    offboard = result.offboarding_traces[0],
+    offboard = requireTrace ? result.offboarding_traces[0] : undefined,
     revoked = work.business.revocation;
   assert.equal(offboarding.agentID, result.agent_id);
   equal(revoked.request, {
@@ -662,13 +760,15 @@ export function workspacePrivateAdmission(result) {
     body: { active: false },
   });
   assert.equal(revoked.response.status, 200);
-  assert.equal(
-    revoked.response.headers["x-antnest-trace-id"],
-    revoked.response.traceID,
-  );
-  assert.equal(offboarding.sourceID, revoked.response.traceID);
-  assert.equal(offboarding.traceID, offboarding.sourceID);
-  assert.equal(offboarding.sourceID, work.watch_windows[1].revocationTraceID);
+  if (requireTrace) {
+    assert.equal(
+      revoked.response.headers["x-antnest-trace-id"],
+      revoked.response.traceID,
+    );
+    assert.equal(offboarding.sourceID, revoked.response.traceID);
+    assert.equal(offboarding.traceID, offboarding.sourceID);
+    assert.equal(offboarding.sourceID, work.watch_windows[1].revocationTraceID);
+  }
   assert.equal(offboarding.settlementOutcome, "settled");
   assert(!lifecycle.some((row) => row.requestID === offboarding.requestID));
   assert(
@@ -695,6 +795,31 @@ export function workspacePrivateAdmission(result) {
   );
   assert.equal(offboarding.ownerRevocation.reason, "user_deactivated");
   assert.equal(offboarding.ownerRevocation.organizationID, "");
+  const inventory = {
+    connections: 5,
+    initializations: 5,
+    business_requests: 12,
+    original_business_requests: 11,
+    revocation_probes: 1,
+    sessions: 2,
+    login_sessions: 1,
+    runs: 3,
+    provider_requests: 5,
+    ...(requireTrace ? { runtime_tool_calls: 3 } : {}),
+    notifications: 1,
+    deliberate_disconnects: 2,
+    private_state_watches: 2,
+    private_state_reads: states.length,
+    identity_resolves: scopes.length,
+    lifecycle_admissions: 4,
+    offboarding_operations: 1,
+  };
+  if (!requireTrace) {
+    nonempty(offboarding.requestID);
+    assert.equal(offboarding.ownerRevocation.event.agent_id, result.agent_id);
+    assert.equal(offboarding.disabledEvent.agent_id, result.agent_id);
+    return { status: "business_passed", inventory };
+  }
   assert.notEqual(offboard.topology, "failed");
   equal(
     [
@@ -734,24 +859,6 @@ export function workspacePrivateAdmission(result) {
         ? 0
         : 1,
     private_diagnostics: diagnostics,
-    inventory: {
-      connections: 5,
-      initializations: 5,
-      business_requests: 12,
-      original_business_requests: 11,
-      revocation_probes: 1,
-      sessions: 2,
-      login_sessions: 1,
-      runs: 3,
-      provider_requests: 5,
-      runtime_tool_calls: 3,
-      notifications: 1,
-      deliberate_disconnects: 2,
-      private_state_watches: 2,
-      private_state_reads: states.length,
-      identity_resolves: scopes.length,
-      lifecycle_admissions: 4,
-      offboarding_operations: 1,
-    },
+    inventory,
   };
 }

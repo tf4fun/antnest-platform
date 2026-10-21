@@ -6,6 +6,19 @@ import {
 } from "../stage3-base/trace.mjs";
 import { reviewedLifecycleErrors } from "../stage3-base/resolve-trace.mjs";
 
+export function assertLifecycleCommandReceipt(
+  response,
+  { requireTrace = true } = {},
+) {
+  const operation = response.body.operation ?? response.body;
+  assert(
+    typeof operation.request_id === "string" && operation.request_id.length > 0,
+    "original lifecycle request identity required",
+  );
+  if (requireTrace) assert.match(response.traceID, /^[a-f0-9]{32}$/u);
+  return operation;
+}
+
 export function foundationLifecycleExpectation(kind, expectation = {}) {
   return {
     ...expectation,

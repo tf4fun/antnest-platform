@@ -448,7 +448,7 @@ test("Workspace keeps a handled state failure for final resource admission and s
   assert.deepEqual(f.states.at(-1).snapshot, row);
 });
 
-test("Workspace close joins an already-running independent collector and retains its original failure", async (t) => {
+test("Workspace close joins an already-running collector whose original diagnostic failure stays auxiliary", async (t) => {
   const entered = Promise.withResolvers(),
     release = Promise.withResolvers();
   const original = new Error("original Workspace collector failure");
@@ -470,7 +470,32 @@ test("Workspace close joins an already-running independent collector and retains
   void closing.catch(() => {});
   release.resolve();
   await assert.rejects(collected, (error) => error === original);
-  await assert.rejects(closing, (error) => error === original);
+  await closing;
+});
+
+test("Workspace exporter failure stays auxiliary after its shutdown actually joins", async (t) => {
+  const order = [];
+  const f = await fixture(t, {
+    factories: {
+      telemetry(endpoint) {
+        const base = createPrivateACPTelemetry(endpoint);
+        return {
+          ...base,
+          async shutdown() {
+            await base.shutdown();
+            order.push("shutdown-joined");
+            throw new Error("original exporter shutdown failure");
+          },
+        };
+      },
+    },
+  });
+  await f.access.closeAndWait();
+  assert.deepEqual(order, ["shutdown-joined"]);
+  const diagnostic = f.access.traceDiagnostics();
+  assert.equal(diagnostic.role, "auxiliary");
+  assert.equal(diagnostic.status, "warning");
+  assert.equal(diagnostic.checks[0].status, "failed");
 });
 
 test("Workspace closes watched resources before waiting for collectors that need their finished spans", async (t) => {

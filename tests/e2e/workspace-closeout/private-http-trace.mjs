@@ -51,11 +51,16 @@ const same = (
   message = "Workspace original HTTP fields disagree",
 ) => assert(isDeepStrictEqual(actual, expected), message);
 
-export function assertWorkspaceStateReceipt(receipt, expected) {
+export function assertWorkspaceStateReceipt(
+  receipt,
+  expected,
+  { requireTrace = true } = {},
+) {
   for (const [key, value] of Object.entries({
     agentId: expected.agentID,
-    traceID: expected.traceID,
-    clientSpanID: expected.clientSpanID,
+    ...(requireTrace
+      ? { traceID: expected.traceID, clientSpanID: expected.clientSpanID }
+      : {}),
     session_digest: expected.session_digest,
     method: "POST",
     path: "/rpc/agent-acp/get-agent-execution-state",
@@ -67,15 +72,17 @@ export function assertWorkspaceStateReceipt(receipt, expected) {
   same(receipt.principal, expected.principal);
   same(receipt.request_body, {});
   same(receipt.errors, []);
-  assert.match(receipt.traceID, /^[a-f0-9]{32}$/u);
-  assert.match(receipt.clientSpanID, /^[a-f0-9]{16}$/u);
+  if (requireTrace) {
+    assert.match(receipt.traceID, /^[a-f0-9]{32}$/u);
+    assert.match(receipt.clientSpanID, /^[a-f0-9]{16}$/u);
+  }
   assert.match(receipt.session_digest, /^[a-f0-9]{64}$/u);
   for (const field of ["organization_id", "user_id"])
     assert(
       typeof expected.principal[field] === "string" &&
         expected.principal[field],
     );
-  if (receipt.response_trace_id != null)
+  if (requireTrace && receipt.response_trace_id != null)
     assert(
       receipt.response_trace_id === receipt.traceID,
       "Workspace response Trace changed",

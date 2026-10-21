@@ -5,6 +5,7 @@ import { registerHooks } from "node:module";
 import { createHash } from "node:crypto";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   createWorkspaceAuthority,
   assertWorkspaceResolveDenied,
@@ -141,6 +142,10 @@ export async function createWorkspacePrivateAccess(
     },
   });
   const telemetry = (factories.telemetry ?? createPrivateACPTelemetry)(otlp);
+  const shutdownDiagnostics = createTraceDiagnostics({
+    directory: config.evidence,
+    budgetMs: 30_000,
+  });
   const open = factories.connection ?? openWorkspaceConnection,
     watch = factories.watch ?? openWorkspacePrivateWatch,
     state = factories.state ?? readWorkspacePrivateState;
@@ -181,7 +186,7 @@ export async function createWorkspacePrivateAccess(
     void task.then(
       () => group.delete(task),
       (error) => {
-        operationErrors.push(error);
+        if (group === pending) operationErrors.push(error);
         group.delete(task);
       },
     );
@@ -232,6 +237,7 @@ export async function createWorkspacePrivateAccess(
     return resource;
   }
   return {
+    traceDiagnostics: () => shutdownDiagnostics.summary(),
     snapshots: () =>
       entries
         .filter((entry) => entry.resource && entry.kind !== "watch")
@@ -337,7 +343,7 @@ export async function createWorkspacePrivateAccess(
       admitted();
       return track(() => telemetry.flush(), collecting);
     },
-    collect(expected, requests) {
+    collect(expected, requests, options = {}) {
       admitted();
       assert.equal(
         typeof collectTrace,
@@ -350,7 +356,7 @@ export async function createWorkspacePrivateAccess(
             directory: config.evidence + "/traces",
             secrets,
             requests,
-            signal,
+            signal: options.signal ?? signal,
             flush: () => telemetry.flush(),
           }),
         collecting,
@@ -390,7 +396,11 @@ export async function createWorkspacePrivateAccess(
           // A collector can require the finished Span from a just-closed watch
           // or connection. Keep its exporter alive until that collection joins.
           while (collecting.size) await Promise.allSettled([...collecting]);
-          await attempt(() => telemetry.shutdown());
+          await attempt(() =>
+            shutdownDiagnostics.run("telemetry-shutdown", () =>
+              telemetry.shutdown(),
+            ),
+          );
           if (signal?.aborted) errors.push(signal.reason);
           fail([...errors, ...operationErrors, ...archiveErrors]);
         });

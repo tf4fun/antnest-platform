@@ -97,6 +97,7 @@ export function workspaceBusinessFixture() {
     state.providers.push({
       phase,
       stage,
+      received_at_ms: now(),
       trace_id: (100 + state.providers.length).toString(16).padStart(32, "0"),
       model_span_id: (100 + state.providers.length)
         .toString(16)
