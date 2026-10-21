@@ -188,9 +188,13 @@ describe.skipIf(databaseUrl === undefined)(
 
     for (const version of [1, 2] as const)
       for (const phase of ["intent", "accept", "finish"] as const) {
-        it(`v${version} ${phase}: stops admission, recovers committed state and never replays effects`, async () => {
+        const recovery =
+          phase === "finish"
+            ? "recovers the committed finish in the same instance"
+            : "stops admission and recovers committed state";
+        it(`v${version} ${phase}: ${recovery} and never replays effects`, async () => {
           // Only the outbound Runtime/model boundaries are fake. Composition,
-          // repositories, worker ownership, fail-stop and startup recovery are real.
+          // repositories, worker ownership and admission/recovery paths are real.
           const tool = vi.fn<McpConnection["callTool"]>().mockResolvedValue({
             content: [{ type: "text", text: "component tool result" }],
             isError: false,
@@ -264,8 +268,9 @@ describe.skipIf(databaseUrl === undefined)(
               };
             });
           await start();
+          const originalService = service!;
           let failure: Error | undefined;
-          void service!.failure.then((error) => {
+          void originalService.failure.then((error) => {
             failure = error;
           });
           const client = await connect(version);
@@ -388,24 +393,97 @@ describe.skipIf(databaseUrl === undefined)(
           expect(await state.json()).toMatchObject({ availability: "busy" });
           await control("/drop", { receipt_id: "foreign" }, 409);
           await control("/drop", { receipt_id: held!.receipt_id });
-          await expect
-            .poll(() => failure, { timeout: 5000 })
-            .toBeInstanceOf(Error);
-          expect(failure!.cause).toBeInstanceOf(Error);
-          const unavailable = await fetch(origin() + "/status");
-          expect(unavailable.status).toBe(503);
-          await unavailable.text();
-          const outcome = await pending;
-          // A valid connection opened before fail-stop must also lose admission.
-          // v2 completion faults close their own connection, so use a separate
-          // connection that was admitted before the fault.
-          const refused = await observer.request("session/prompt", {
-            sessionId,
-            prompt: [{ type: "text", text: "must-not-admit" }],
-          });
-          expect(refused.error).toMatchObject({
-            data: { code: "service_stopping", retryable: false },
-          });
+          if (phase === "finish") {
+            const outcome = await pending;
+            expect(outcome).not.toHaveProperty("error");
+            expect(outcome).not.toHaveProperty("frame.error");
+            if (version === 1) {
+              expect(outcome).toHaveProperty("frame.result", {
+                stopReason: "end_turn",
+              });
+            } else {
+              await expect
+                .poll(
+                  () =>
+                    client.frames
+                      .filter(
+                        (frame) =>
+                          frame.method === "session/update" &&
+                          frame.params?.sessionId === sessionId,
+                      )
+                      .map((frame) => frame.params?.update)
+                      .filter(
+                        (update) =>
+                          update?.sessionUpdate === "state_update" &&
+                          update.state === "idle",
+                      ),
+                  { timeout: 5000 },
+                )
+                .toEqual([
+                  expect.objectContaining({
+                    sessionUpdate: "state_update",
+                    state: "idle",
+                    stopReason: "end_turn",
+                  }),
+                ]);
+            }
+            // Durable output can expose idle before the held write returns.
+            // Ready admission additionally proves that the original executor joined.
+            await expect
+              .poll(
+                async () => {
+                  const ready = await fetch(
+                    origin() + "/rpc/agent-acp/get-agent-execution-state",
+                    {
+                      method: "POST",
+                      headers: {
+                        ...testHeaders({ "X-Antnest-Agent-ID": "agent-1" }),
+                        "content-type": "application/json",
+                      },
+                      body: "{}",
+                      signal: AbortSignal.timeout(5000),
+                    },
+                  );
+                  const body: unknown = await ready.json();
+                  expect(ready.status).toBe(200);
+                  return body;
+                },
+                { timeout: 5000 },
+              )
+              .toMatchObject({
+                availability: "ready",
+                active_session_id: null,
+                unavailable_reason: null,
+              });
+            const healthy = await fetch(origin() + "/status", {
+              signal: AbortSignal.timeout(5000),
+            });
+            await healthy.text();
+            expect(healthy.status).toBe(200);
+            expect(service).toBe(originalService);
+            expect(failure).toBeUndefined();
+          } else {
+            await expect
+              .poll(() => failure, { timeout: 5000 })
+              .toBeInstanceOf(Error);
+            expect(failure!.cause).toBeInstanceOf(Error);
+            const unavailable = await fetch(origin() + "/status");
+            expect(unavailable.status).toBe(503);
+            await unavailable.text();
+            const outcome = await pending;
+            // A valid connection opened before fail-stop must also lose admission.
+            const refused = await observer.request("session/prompt", {
+              sessionId,
+              prompt: [{ type: "text", text: "must-not-admit" }],
+            });
+            expect(refused.error).toMatchObject({
+              data: { code: "service_stopping", retryable: false },
+            });
+            expect(outcome).toHaveProperty(
+              "frame.error.data.code",
+              "database_error",
+            );
+          }
           expect(
             (
               await pool.query("SELECT id FROM runs WHERE session_id = $1", [
@@ -415,17 +493,13 @@ describe.skipIf(databaseUrl === undefined)(
           ).toEqual([{ id: held!.run_id }]);
           expect(modelRequests).toBe(callsBeforeReplay);
           expect(tool).toHaveBeenCalledTimes(toolsBeforeReplay);
-          if (!(version === 2 && phase === "finish")) {
-            expect(outcome).toHaveProperty(
-              "frame.error.data.code",
-              "database_error",
-            );
+          if (phase !== "finish") {
+            await client.close();
+            await observer.close();
+            await service!.shutdown();
+            service = undefined;
+            await start();
           }
-          await client.close();
-          await observer.close();
-          await service!.shutdown();
-          service = undefined;
-          await start();
           const after = await saved(held!.run_id);
           assertRecovered(before, after, phase);
           expect(modelRequests).toBe(callsBeforeReplay);
@@ -452,7 +526,7 @@ describe.skipIf(databaseUrl === undefined)(
           }
           expect(modelRequests).toBe(callsBeforeReplay);
           expect(tool).toHaveBeenCalledTimes(toolsBeforeReplay);
-          const reader = await connect(version);
+          const reader = phase === "finish" ? observer : await connect(version);
           const loaded = await reader.request(
             version === 1 ? "session/load" : "session/resume",
             { sessionId, cwd: "/workspace", mcpServers: [] },
@@ -484,6 +558,10 @@ describe.skipIf(databaseUrl === undefined)(
           expect((await control()).errors).toEqual([]);
           expect(ownershipLost).not.toHaveBeenCalled();
           expect(connections.size).toBe(0);
+          if (phase === "finish") {
+            expect(service).toBe(originalService);
+            expect(failure).toBeUndefined();
+          }
         });
       }
   },

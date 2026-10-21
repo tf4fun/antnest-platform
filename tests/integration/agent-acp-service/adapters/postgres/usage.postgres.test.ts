@@ -212,8 +212,15 @@ describe.skipIf(databaseUrl === undefined)(
         };
         const sequence = Number(locked.rows[0]?.last_message_sequence) + 1;
         await writer.query(
-          "INSERT INTO session_messages (id, session_id, run_id, sequence, kind, visible, payload, created_at) VALUES ($1, $2, $3, $4, 'usage', true, $5::jsonb, now())",
-          [input.id, source.id, runId, sequence, JSON.stringify(saved)],
+          "INSERT INTO session_messages (id, session_id, run_id, sequence, kind, visible, payload, created_at) VALUES ($1, $2, $3, $4, 'usage', true, $5::jsonb, $6)",
+          [
+            input.id,
+            source.id,
+            runId,
+            sequence,
+            JSON.stringify(saved),
+            input.createdAt,
+          ],
         );
         await writer.query(
           "UPDATE acp_sessions SET last_message_sequence = $2 WHERE id = $1",

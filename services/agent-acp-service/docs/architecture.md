@@ -353,6 +353,14 @@ never queries Controller's tables or endpoints.
 
 ## Recovery
 
+Run-event repositories confirm an already committed request before checking
+whether the Run or Tool is still running. Confirmation checks the original
+Run, event identity, timestamp, visibility, payload and applicable Tool facts;
+it does not append another event, charge usage again or reverse later cleanup.
+Plan updates require both original receipts. A changed request or an incomplete
+receipt is rejected. This persistence contract does not authorize replaying a
+model request, Tool dispatch or accepted prompt.
+
 - `admitting` Run: fail it with `service_restarted_before_execution`, or
   preserve an already requested cancellation. Do not call Controller or execute
   its prompt.
@@ -363,12 +371,25 @@ never queries Controller's tables or endpoints.
   quiescent. Results are persisted locally without Controller notification.
 - `completed/cancelled/failed/unresolved`: excluded from startup cleanup and
   left unchanged, even when a legacy admission receipt is absent.
-- A failed local acceptance transaction, durable Run-event write or terminal
-  transaction requests process replacement when persistence is uncertain.
-  It is not flattened into a normal Run failure: startup must close retained
-  but undispatched or ambiguous Tool calls without leaving partial context.
-  Startup records interruption, never retries the prompt.
-- A failure handed to startup recovery does not emit a speculative ACP
+- Durable Run-event and terminal writes retry at most three times with one
+  fixed request identity, payload and timestamp. They never retry a model,
+  Tool dispatch or prompt. If acknowledgement remains uncertain, the executor
+  retains its Agent slot and original Runtime authority while reconciling only
+  that Run. Other Agents remain available; this path never scans live Runs.
+- Event failure reaches reconciliation only after model output, Tool progress,
+  MCP connection close and temporary Skill cleanup have joined. A point read
+  returns an existing terminal outcome unchanged. Otherwise recovery closes
+  retained but undispatched calls and preserves unknown dispatched effects,
+  then records `persistence_interrupted` as failed or unresolved. Failed
+  temporary cleanup retains an unknown Runtime effect and authority pin.
+  Read failures or a missing accepted Run keep that Agent isolated, with
+  bounded backoff until persistence recovers or worker ownership ends.
+- A terminal-write retry preserves the original outcome and finish time;
+  reading its committed outcome confirms completion without repeating work.
+- A failed local acceptance transaction still requests process replacement
+  when persistence is uncertain. Admission isolation is a separate delivery
+  batch. Startup records interruption, never retries the prompt.
+- An admission failure handed to startup recovery does not emit a speculative ACP
   `idle/_failed` projection. The failing v2 connection is closed; reconnect/replay
   exposes the recovered terminal result after service replacement.
 - Connection loss: does not delete Session state. In-flight work may continue;
@@ -431,7 +452,7 @@ The emitted classifications include:
   `provider_endpoint_forbidden`, `provider_endpoint_unavailable`.
 - Execution/budget: `run_deadline_exceeded`, `run_failed`, `run_setup_failed`,
   `context_budget_exhausted`.
-- Tool/recovery: `tool_outcome_unknown`, `cancelled_tool_outcome_unknown`,
+- Tool/recovery: `tool_outcome_unknown`, `cancelled_tool_outcome_unknown`, `persistence_interrupted`,
   `service_restarted_during_run`, `service_restarted_during_tool`,
   `invalid_tool_schema`, `duplicate_tool_call_id`.
 - Skill cleanup and normalization: `temporary_skill_cleanup_pending`,

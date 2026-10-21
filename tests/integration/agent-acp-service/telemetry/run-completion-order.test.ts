@@ -254,7 +254,7 @@ function setup() {
         contextBuilder: { build: vi.fn() },
         tools: { list: vi.fn(), call: vi.fn() },
         ownershipSignal: new AbortController().signal,
-        recoveryRequired: vi.fn(),
+        recovery: { recoverRun: vi.fn() },
         now: () => new Date("2026-08-30T00:00:00Z"),
         id: () => "answer-1",
       }),

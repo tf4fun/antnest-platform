@@ -10,6 +10,7 @@ const now = new Date("2026-09-14T00:00:00Z");
 
 function setup(work: RecoveryWork[]) {
   const executions = {
+    getRecoveryState: vi.fn(() => Promise.resolve(null)),
     listRecoveryWork: vi.fn(() => Promise.resolve(work)),
     finish: vi.fn<ExecutionRepository["finish"]>(() => Promise.resolve()),
   };

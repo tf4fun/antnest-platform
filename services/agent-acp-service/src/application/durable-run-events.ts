@@ -9,6 +9,8 @@ import type { ModelToolCall } from "../ports/model.js";
 import type { RunEventPort, ToolCompletionDetails } from "../ports/run-events.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
 import { planResult, planTool, type PlanEntry } from "../domain/plan.js";
+import { retryRunWrite } from "./run-write-retry.js";
+import { assertWorkerOwnership } from "./worker-ownership.js";
 
 const MAX_RESULT_SUMMARY_CHARACTERS = 4_096;
 
@@ -18,6 +20,7 @@ export type DurableRunEventsDependencies = {
   id: ResourceIdGenerator;
   now: () => Date;
   contextSize: number;
+  ownershipSignal: AbortSignal;
   runtimeWorkspace?: string;
 };
 
@@ -50,15 +53,16 @@ export class DurableRunEvents implements RunEventPort {
         content: planResult,
       },
     ];
+    const input = structuredClone({
+      id: digest([runId, call.id, "plan"]),
+      runId,
+      events,
+      createdAt: this.dependencies.now(),
+    });
     const applied = await this.persist("plan", () =>
-      this.dependencies.repository.appendPlan({
-        id: digest([runId, call.id, "plan"]),
-        runId,
-        events,
-        createdAt: this.dependencies.now(),
-      }),
+      this.dependencies.repository.appendPlan(input),
     );
-    if (applied) for (const event of events) await this.publish(event);
+    if (applied) for (const event of input.events) await this.publish(event);
     return applied;
   }
 
@@ -67,14 +71,15 @@ export class DurableRunEvents implements RunEventPort {
     toolCallId: string,
     content: ContentBlock[],
   ): Promise<void> {
+    const input = structuredClone({
+      id: this.dependencies.id("message"),
+      runId,
+      toolCallId,
+      content,
+      createdAt: this.dependencies.now(),
+    });
     const event = await this.persist("Tool progress", () =>
-      this.dependencies.repository.appendToolProgress({
-        id: this.dependencies.id("message"),
-        runId,
-        toolCallId,
-        content,
-        createdAt: this.dependencies.now(),
-      }),
+      this.dependencies.repository.appendToolProgress(input),
     );
     await this.publish(event);
   }
@@ -85,30 +90,32 @@ export class DurableRunEvents implements RunEventPort {
     tool: ModelToolDefinition,
     arguments_: { [key: string]: unknown },
   ): Promise<void> {
+    const input = structuredClone({
+      id: this.dependencies.id("message"),
+      runId,
+      toolCallId,
+      tool,
+      presentation: describeTool(tool, arguments_, this.dependencies.runtimeWorkspace),
+      arguments: arguments_,
+      requestDigest: digest(arguments_),
+      createdAt: this.dependencies.now(),
+    });
     const event = await this.persist("tool start", () =>
-      this.dependencies.repository.startToolAttempt({
-        id: this.dependencies.id("message"),
-        runId,
-        toolCallId,
-        tool,
-        presentation: describeTool(tool, arguments_, this.dependencies.runtimeWorkspace),
-        arguments: arguments_,
-        requestDigest: digest(arguments_),
-        createdAt: this.dependencies.now(),
-      }),
+      this.dependencies.repository.startToolAttempt(input),
     );
     await this.publish(event);
   }
 
   public async toolRejected(runId: string, call: ModelToolCall, message: string): Promise<void> {
+    const input = structuredClone({
+      id: this.dependencies.id("message"),
+      runId,
+      call,
+      message,
+      createdAt: this.dependencies.now(),
+    });
     const event = await this.persist("Tool rejection", () =>
-      this.dependencies.repository.appendRejectedToolCall({
-        id: this.dependencies.id("message"),
-        runId,
-        call,
-        message,
-        createdAt: this.dependencies.now(),
-      }),
+      this.dependencies.repository.appendRejectedToolCall(input),
     );
     await this.publish(event);
   }
@@ -121,18 +128,19 @@ export class DurableRunEvents implements RunEventPort {
     toolEffectState: ToolEffectState,
     details?: ToolCompletionDetails,
   ): Promise<void> {
+    const input = structuredClone({
+      id: this.dependencies.id("message"),
+      runId,
+      toolCallId,
+      status,
+      content,
+      resultSummary: summarize(content),
+      toolEffectState,
+      ...details,
+      createdAt: this.dependencies.now(),
+    });
     const event = await this.persist("Tool finish", () =>
-      this.dependencies.repository.finishToolAttempt({
-        id: this.dependencies.id("message"),
-        runId,
-        toolCallId,
-        status,
-        content,
-        resultSummary: summarize(content),
-        toolEffectState,
-        ...details,
-        createdAt: this.dependencies.now(),
-      }),
+      this.dependencies.repository.finishToolAttempt(input),
     );
     await this.publish(event);
   }
@@ -143,17 +151,18 @@ export class DurableRunEvents implements RunEventPort {
     toolCalls?: ModelToolCall[],
     responseId?: string,
   ): Promise<void> {
+    const input = structuredClone({
+      id: this.dependencies.id("message"),
+      runId,
+      content,
+      ...(toolCalls === undefined ? {} : { toolCalls }),
+      ...(responseId === undefined ? {} : { responseId }),
+      createdAt: this.dependencies.now(),
+    });
     const event = await this.persist("agent message", () =>
-      this.dependencies.repository.appendAgentMessage({
-        id: this.dependencies.id("message"),
-        runId,
-        content,
-        ...(toolCalls === undefined ? {} : { toolCalls }),
-        ...(responseId === undefined ? {} : { responseId }),
-        createdAt: this.dependencies.now(),
-      }),
+      this.dependencies.repository.appendAgentMessage(input),
     );
-    if (content.length > 0) {
+    if (input.content.length > 0) {
       await this.publish(event);
     }
   }
@@ -163,27 +172,29 @@ export class DurableRunEvents implements RunEventPort {
     content: ContentBlock[],
     responseId?: string,
   ): Promise<void> {
+    const input = structuredClone({
+      id: this.dependencies.id("message"),
+      runId,
+      content,
+      ...(responseId === undefined ? {} : { responseId }),
+      createdAt: this.dependencies.now(),
+    });
     const event = await this.persist("agent thought", () =>
-      this.dependencies.repository.appendAgentThought({
-        id: this.dependencies.id("message"),
-        runId,
-        content,
-        ...(responseId === undefined ? {} : { responseId }),
-        createdAt: this.dependencies.now(),
-      }),
+      this.dependencies.repository.appendAgentThought(input),
     );
     await this.publish(event);
   }
 
   public async usage(runId: string, usage: ModelUsage): Promise<void> {
+    const input = structuredClone({
+      id: this.dependencies.id("message"),
+      runId,
+      usage,
+      contextSize: this.dependencies.contextSize,
+      createdAt: this.dependencies.now(),
+    });
     const event = await this.persist("usage", () =>
-      this.dependencies.repository.appendUsage({
-        id: this.dependencies.id("message"),
-        runId,
-        usage,
-        contextSize: this.dependencies.contextSize,
-        createdAt: this.dependencies.now(),
-      }),
+      this.dependencies.repository.appendUsage(input),
     );
     await this.publish(event);
   }
@@ -204,8 +215,9 @@ export class DurableRunEvents implements RunEventPort {
     persist: () => Promise<Result>,
   ): Promise<Result> {
     try {
-      return await persist();
+      return await retryRunWrite(this.dependencies.ownershipSignal, persist);
     } catch (error) {
+      assertWorkerOwnership(this.dependencies.ownershipSignal);
       throw new RunEventPersistenceError(operation, error);
     }
   }

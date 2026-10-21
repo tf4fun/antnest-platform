@@ -3,11 +3,7 @@ import { DurableRunEvents, RunEventPersistenceError } from "./durable-run-events
 import { TurnRunner } from "./turn-runner.js";
 import type { ContextBuilder } from "./context-builder.js";
 import { commandReply, type SessionCommand } from "../domain/slash-commands.js";
-import {
-  RunRecoveryRequiredError,
-  type RunExecutionInput,
-  type ExecuteRunResult,
-} from "../ports/acp-application.js";
+import { type RunExecutionInput, type ExecuteRunResult } from "../ports/acp-application.js";
 import type { ProviderClients, ProviderClientHandle } from "./provider-clients.js";
 import type { ExecutionRepository } from "../ports/execution-repository.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
@@ -15,6 +11,8 @@ import type { ToolCatalogPort } from "../ports/tools.js";
 import { assertWorkerOwnership, withWorkerOwnership } from "./worker-ownership.js";
 import type { ToolPermissionPort } from "../ports/tool-permissions.js";
 import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
+import type { RunRecovery } from "./run-recovery.js";
+import { retryRunWrite } from "./run-write-retry.js";
 
 export type RunExecutorDependencies = {
   runtimeConnections: Pick<RuntimeConnectionAuthority, "releaseRun">;
@@ -25,7 +23,7 @@ export type RunExecutorDependencies = {
   tools: ToolCatalogPort;
   events: RunEventRepository;
   ownershipSignal: AbortSignal;
-  recoveryRequired: (error: Error) => void;
+  recovery: Pick<RunRecovery, "recoverRun">;
   id: ResourceIdGenerator;
   now: () => Date;
   temporarySkills?: { releaseRun(runId: string, signal: AbortSignal): Promise<void> };
@@ -40,12 +38,21 @@ export class RunExecutor implements RunExecutionPort {
 
   public async execute(input: RunExecutionInput): Promise<ExecuteRunResult> {
     assertWorkerOwnership(this.dependencies.ownershipSignal);
-    let result = await this.runWithinDeadline({
-      ...input,
-      signal: AbortSignal.any([input.signal, this.dependencies.ownershipSignal]),
-    });
+    let result: ExecuteRunResult | undefined;
+    try {
+      result = await this.runWithinDeadline({
+        ...input,
+        signal: AbortSignal.any([input.signal, this.dependencies.ownershipSignal]),
+      });
+    } catch (error) {
+      assertWorkerOwnership(this.dependencies.ownershipSignal);
+      if (!(error instanceof RunEventPersistenceError)) throw error;
+      // The runner has joined its model output, Tool progress and MCP close.
+      // Keep the Agent slot while cleanup and scoped persistence recovery run.
+    }
     assertWorkerOwnership(this.dependencies.ownershipSignal);
 
+    let cleanupPending = false;
     try {
       await this.dependencies.temporarySkills?.releaseRun(
         input.accepted.runId,
@@ -53,36 +60,50 @@ export class RunExecutor implements RunExecutionPort {
       );
     } catch {
       assertWorkerOwnership(this.dependencies.ownershipSignal);
-      result = {
-        terminalClass: "unresolved",
-        executorState: "quiescent",
-        toolEffectState: "unknown",
-        unknownEffectSource:
-          result.terminalClass === "unresolved" && result.unknownEffectSource !== "runtime_mcp"
-            ? "unclassified"
-            : "runtime_mcp",
-        errorClass: "temporary_skill_cleanup_pending",
-      };
+      cleanupPending = true;
+      if (result !== undefined)
+        result = {
+          terminalClass: "unresolved",
+          executorState: "quiescent",
+          toolEffectState: "unknown",
+          unknownEffectSource:
+            result.terminalClass === "unresolved" && result.unknownEffectSource !== "runtime_mcp"
+              ? "unclassified"
+              : "runtime_mcp",
+          errorClass: "temporary_skill_cleanup_pending",
+        };
     }
     assertWorkerOwnership(this.dependencies.ownershipSignal);
 
-    try {
-      await withWorkerOwnership(this.dependencies.ownershipSignal, () =>
-        this.dependencies.executions.finish({
+    if (result === undefined) {
+      result = await this.dependencies.recovery.recoverRun(
+        {
           runId: input.accepted.runId,
-          ...result,
-          finishedAt: this.dependencies.now(),
-        }),
+          kind: "events",
+          ...(cleanupPending ? { cleanupPending: true } : {}),
+        },
+        this.dependencies.ownershipSignal,
       );
-    } catch (error) {
-      assertWorkerOwnership(this.dependencies.ownershipSignal);
-      this.dependencies.recoveryRequired(
-        new Error("Run terminal state could not be persisted", { cause: error }),
-      );
-      throw new RunRecoveryRequiredError("Run terminal state requires recovery", error);
+    } else {
+      const terminal = structuredClone({
+        runId: input.accepted.runId,
+        ...result,
+        finishedAt: this.dependencies.now(),
+      });
+      try {
+        await retryRunWrite(this.dependencies.ownershipSignal, () =>
+          this.dependencies.executions.finish(terminal),
+        );
+      } catch {
+        assertWorkerOwnership(this.dependencies.ownershipSignal);
+        result = await this.dependencies.recovery.recoverRun(
+          { runId: input.accepted.runId, kind: "terminal", terminal },
+          this.dependencies.ownershipSignal,
+        );
+      }
     }
     assertWorkerOwnership(this.dependencies.ownershipSignal);
-    if (result.terminalClass !== "unresolved")
+    if (!cleanupPending && result.terminalClass !== "unresolved")
       this.dependencies.runtimeConnections.releaseRun(input.accepted.runId);
     return result;
   }
@@ -105,10 +126,7 @@ export class RunExecutor implements RunExecutionPort {
         : result;
     } catch (error) {
       if (error instanceof RunEventPersistenceError) {
-        this.dependencies.recoveryRequired(
-          new Error("Run event persistence requires startup recovery", { cause: error }),
-        );
-        throw new RunRecoveryRequiredError("Run event persistence requires recovery", error);
+        throw error;
       }
       if (input.signal.aborted) {
         return {
@@ -167,6 +185,7 @@ export class RunExecutor implements RunExecutionPort {
     );
     const events = new DurableRunEvents({
       repository: this.dependencies.events,
+      ownershipSignal: this.dependencies.ownershipSignal,
       publish: input.publish,
       id: this.dependencies.id,
       now: this.dependencies.now,
@@ -200,6 +219,7 @@ export class RunExecutor implements RunExecutionPort {
   ): Promise<ExecuteRunResult> {
     const events = new DurableRunEvents({
       repository: this.dependencies.events,
+      ownershipSignal: this.dependencies.ownershipSignal,
       publish: input.publish,
       id: this.dependencies.id,
       now: this.dependencies.now,

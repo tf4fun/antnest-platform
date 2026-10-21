@@ -98,6 +98,14 @@ describe.skipIf(databaseUrl === undefined)(
          'unresolved', now() + interval '1 hour', '{}'::jsonb, 'unresolved', 'quiescent', 'unknown',
          NULL, 'tool_effect_unknown', now(), now(), '[{"type":"text","text":"unresolved trigger"}]'::jsonb)
     `);
+      await pool.query(`
+        INSERT INTO tool_attempts(
+          id, run_id, tool_call_id, source, source_id, tool_name, request_digest,
+          state, tool_effect_state, result_summary, started_at, finished_at, created_at, updated_at
+        ) VALUES ('legacy-attempt', 'run-completed', 'legacy-call', 'runtime', 'runtime',
+                  'bash', 'legacy-digest', 'completed', 'settled', '[]'::jsonb,
+                  now(), now(), now(), now())
+      `);
 
       await expect(migrate(pool)).resolves.toBeUndefined();
       const applied = await pool.query<{ version: string }>(
@@ -124,7 +132,15 @@ describe.skipIf(databaseUrl === undefined)(
         "0018_temporary_skill_scopes.sql",
         "0019_runtime_maintenance_connections.sql",
         "0020_skill_learning_idle_install.sql",
+        "0021_tool_finish_receipts.sql",
       ]);
+      expect(
+        (
+          await pool.query(
+            "SELECT finish_runtime_call_stopped FROM tool_attempts WHERE id = 'legacy-attempt'",
+          )
+        ).rows,
+      ).toEqual([{ finish_runtime_call_stopped: null }]);
       const appendVersions = await pool.query<{
         id: string;
         append_version: string;

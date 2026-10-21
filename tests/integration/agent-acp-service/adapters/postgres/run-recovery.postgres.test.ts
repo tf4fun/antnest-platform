@@ -49,13 +49,13 @@ describe.skipIf(databaseUrl === undefined)(
       await pool.end();
     });
 
-    async function intent(accepted = false) {
+    async function intent(accepted = false, agentId = binding().agentId) {
       const sessionId = randomUUID(),
         runId = randomUUID(),
         revisionId = randomUUID();
       await sessions.create({
         sessionId,
-        binding: binding(),
+        binding: { ...binding(), agentId },
         cwd: "/workspace",
         mcpRevisionId: revisionId,
         mcpSources: [],
@@ -81,6 +81,178 @@ describe.skipIf(databaseUrl === undefined)(
       }
       return { runId, sessionId };
     }
+
+    it("point-reads recovery state without changing either pending Run", async () => {
+      const pending = await intent();
+      const running = await intent(true);
+      const ids = [pending.runId, running.runId];
+      const rows = () =>
+        pool.query(
+          "SELECT to_jsonb(runs) AS record FROM runs WHERE id = ANY($1::text[]) ORDER BY id",
+          [ids],
+        );
+      const before = await rows();
+      try {
+        expect(await executions.getRecoveryState(pending.runId)).toEqual({
+          kind: "admitting",
+        });
+        expect(await executions.getRecoveryState(running.runId)).toEqual({
+          kind: "running",
+        });
+        expect(await executions.getRecoveryState(randomUUID())).toBeNull();
+        expect((await rows()).rows).toEqual(before.rows);
+      } finally {
+        await runs.rejectRun(pending.runId, "point_read_cleanup", recoveredAt);
+        await executions.finish({
+          runId: running.runId,
+          terminalClass: "cancelled",
+          executorState: "quiescent",
+          toolEffectState: "none",
+          finishedAt: recoveredAt,
+        });
+      }
+    });
+
+    it.each(["normal", "lost_receipt"] as const)(
+      "recovers only the failed Run and records persistence interruption without claiming a restart (%s)",
+      async (receipt) => {
+        const a = await intent(true, `scoped-recovery-a-${receipt}`);
+        const b = await intent(true, `scoped-recovery-b-${receipt}`);
+        const beforeB = await pool.query(
+          "SELECT to_jsonb(runs) AS record FROM runs WHERE id = $1",
+          [b.runId],
+        );
+        await events.appendAgentMessage({
+          id: randomUUID(),
+          runId: a.runId,
+          content: [],
+          createdAt: recoveredAt,
+          toolCalls: [
+            { id: "started", name: "runtime_write", arguments: {} },
+            { id: "unstarted", name: "runtime_write", arguments: {} },
+          ],
+        });
+        await events.startToolAttempt({
+          id: randomUUID(),
+          runId: a.runId,
+          toolCallId: "started",
+          tool: {
+            source: "runtime",
+            sourceId: "runtime",
+            name: "write",
+            modelName: "runtime_write",
+            description: "Write",
+          },
+          arguments: {},
+          requestDigest: "c".repeat(64),
+          createdAt: recoveredAt,
+        });
+        const sessionSnapshot = async () => ({
+          history: await sessions.replay(a.sessionId),
+          sequence: (
+            await pool.query<{ last_message_sequence: string }>(
+              "SELECT last_message_sequence FROM acp_sessions WHERE id = $1",
+              [a.sessionId],
+            )
+          ).rows,
+        });
+        let firstInterruptSnapshot:
+          Awaited<ReturnType<typeof sessionSnapshot>> | undefined;
+        let interruptCalls = 0;
+        const recovery = new RunRecovery({
+          runs,
+          executions,
+          events: {
+            async interruptToolAttempts(
+              ...input: Parameters<
+                PostgresRunEventRepository["interruptToolAttempts"]
+              >
+            ) {
+              interruptCalls++;
+              const effects = await events.interruptToolAttempts(...input);
+              if (interruptCalls === 1) {
+                firstInterruptSnapshot = await sessionSnapshot();
+                // Simulate only the repository return being lost after its real commit.
+                if (receipt === "lost_receipt")
+                  throw new Error(
+                    "Interrupt committed but repository return was lost",
+                  );
+              }
+              return effects;
+            },
+          },
+          telemetry: NOOP_TELEMETRY,
+          now: () => recoveredAt,
+        });
+        try {
+          expect(
+            await recovery.recoverRun(
+              { runId: a.runId, kind: "events" },
+              new AbortController().signal,
+            ),
+          ).toEqual({
+            terminalClass: "unresolved",
+            executorState: "quiescent",
+            toolEffectState: "unknown",
+            unknownEffectSource: "runtime_mcp",
+            errorClass: "persistence_interrupted",
+          });
+          expect(interruptCalls).toBe(receipt === "lost_receipt" ? 2 : 1);
+          expect(firstInterruptSnapshot).toBeDefined();
+          expect(await sessionSnapshot()).toEqual(firstInterruptSnapshot);
+          const output = await sessions.replay(a.sessionId);
+          const failures = output.filter(
+            (event) => event.kind === "tool_call" && event.status === "failed",
+          );
+          expect(failures).toHaveLength(2);
+          expect(failures).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                toolCallId: "started",
+                content: [
+                  {
+                    type: "text",
+                    text: "Tool outcome is unknown after Run persistence was interrupted.",
+                  },
+                ],
+              }),
+              expect.objectContaining({
+                toolCallId: "unstarted",
+                content: [
+                  {
+                    type: "text",
+                    text: "Tool was not executed because Run persistence was interrupted before dispatch.",
+                  },
+                ],
+              }),
+            ]),
+          );
+          expect(
+            (
+              await pool.query(
+                "SELECT to_jsonb(runs) AS record FROM runs WHERE id = $1",
+                [b.runId],
+              )
+            ).rows,
+          ).toEqual(beforeB.rows);
+          await recovery.recoverRun(
+            { runId: a.runId, kind: "events" },
+            new AbortController().signal,
+          );
+          expect(await sessions.replay(a.sessionId)).toEqual(output);
+          expect(await sessionSnapshot()).toEqual(firstInterruptSnapshot);
+          expect(interruptCalls).toBe(receipt === "lost_receipt" ? 2 : 1);
+        } finally {
+          await executions.finish({
+            runId: b.runId,
+            terminalClass: "cancelled",
+            executorState: "quiescent",
+            toolEffectState: "none",
+            finishedAt: recoveredAt,
+          });
+        }
+      },
+    );
 
     it("terminates pending intents without executing their prompts and respects cancellation", async () => {
       const pending = await intent();
@@ -160,6 +332,24 @@ describe.skipIf(databaseUrl === undefined)(
         errorClass: "tool_outcome_unknown",
       },
     ];
+    it.each(outcomes)(
+      "point-reads the complete original $terminalClass outcome",
+      async (outcome) => {
+        const { runId } = await intent(true);
+        await executions.finish({ runId, ...outcome, finishedAt: recoveredAt });
+        const rows = () =>
+          pool.query(
+            "SELECT to_jsonb(runs) AS record FROM runs WHERE id = $1",
+            [runId],
+          );
+        const before = await rows();
+        expect(await executions.getRecoveryState(runId)).toEqual({
+          kind: "terminal",
+          outcome,
+        });
+        expect((await rows()).rows).toEqual(before.rows);
+      },
+    );
     it.each(outcomes)(
       "leaves $terminalClass audit rows unchanged without a Controller completion receipt",
       async (outcome) => {
