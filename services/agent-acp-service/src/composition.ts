@@ -190,6 +190,8 @@ export async function startAgentAcpService(
         await built.permissionRepository.cancelAbandoned();
         ownership.signal.throwIfAborted();
         await built.recovery.recover(ownership.signal);
+        ownership.signal.throwIfAborted();
+        await built.directory.restore(ownership.signal);
       })(),
       failure.promise,
     );
@@ -343,10 +345,14 @@ export function buildComponents(
     outputs.revokeAccess(snapshot);
   };
   const directory = new ExecutionDirectory({
-    repository: new PostgresExecutionConfiguration(kernel),
+    repository: new PostgresExecutionConfiguration(kernel, new SecretBox(config.clientMcpKey)),
     clients: providers,
     runtimeConnections,
     onPublished: (organizationId) => outputs.invalidateOrganization(organizationId),
+    onInvalidAuthority: (organizationId) =>
+      telemetry.log("warn", "execution_authority_unavailable", {
+        organization_id: organizationId,
+      }),
     onApplied: (snapshot) => {
       revokeAccess(snapshot);
       learningGate.syncOrganization(snapshot.organization_id, snapshot.agents);

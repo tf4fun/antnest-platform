@@ -52,12 +52,37 @@ accessing Runtime. The system prompt contains no bulk Skill body; each Run reads
 Runtime Skill summaries and fetches a selected body through the existing Runtime
 path when needed.
 
-`execution_configurations` stores only the non-secret current configuration and
-revision in ACP's database. Provider credentials remain inside volatile logical
-Provider clients. Runtime credentials are also excluded from this stored projection.
-A stored revision is not current-process readiness. Equal-revision
-publication after restart restores credentials; older input cannot initialize
-the service or reverse a newer revocation.
+`execution_configurations` stores the current non-secret projection and revision
+alongside sealed private authority. The private payload contains the complete
+validated configuration, including Provider authentication and accepting Agents'
+ACP-only Runtime credentials. Public configuration, Run snapshots and audit
+remain credential-free. The public projection, private envelope and revision
+commit atomically in one transaction under the organization revision CAS.
+
+The envelope uses AES-256-GCM with a fresh random nonce and the existing stable
+`clientMcpKey`, configured by `ANTNEST_ACP_CLIENT_MCP_KEY`. Its authenticated
+associated data is the UTF-8 JSON tuple
+`["agent-acp-service/execution-authority", 1, organization_id, revision]`.
+The operator must preserve this key across restart; the key is not stored in the
+database. There is no alternative-key fallback or automatic key rotation.
+Decryption must validate the complete private configuration and require its
+derived public projection to equal the public snapshot from the same row.
+
+The encrypted envelope also retains an append-only identity fingerprint ledger.
+Provider connection routing and each credential revision's secret digest survive
+disable/removal. Runtime connection IDs retain their original Agent, Runtime
+revision and token digest through closure/removal. Reusing an identity with
+different authentication is rejected after restart as well as in the current
+process. Historical fingerprints are not executable credentials or permission
+to restore an older configuration.
+
+Every publication calls `save` with the full private configuration, including an
+already applied equal revision. An exact sealed replay confirms the original
+identity without repeating `onApplied`. An authenticated equal-revision
+publication can backfill a legacy public-only row only when its public projection
+is identical; it cannot replace an existing sealed identity. A public-only row
+cannot restore credentials on restart, and migration does not manufacture them.
+Older input cannot initialize the service or reverse a newer revocation.
 
 Publication failure after storage leaves the affected organization closed until
 same/newer configuration completes publication. Connection routing is immutable;
@@ -66,7 +91,12 @@ a Run. Disabling or removing a Provider immediately revokes its clients, abortin
 current requests and rejecting later use of existing handles.
 
 Every synchronization reads the stored current revision before CAS. Losing a
-commit acknowledgement must not trap retries behind an older cached revision.
+commit acknowledgement must not trap retries behind an older cached revision or
+be treated as proof of rollback. On a failed save, ACP reads current private
+authority and retains the old live view only when that view is still confirmed
+current. A newer commit, missing/invalid authority or an unavailable read closes
+the organization until a valid publication succeeds. Validation and identity
+failures before the save do not replace the confirmed old view.
 The in-memory directory contains only successfully published configurations;
 non-exclusive readers retain the last published view while the next publication
 is pending, and switch to the new view only after it succeeds. A failed live
@@ -96,8 +126,9 @@ unrelated user/service/CCT authority and preserves separate maintenance tickets.
 The native receiver currently supports only explicitly opted-in HTTP token mode.
 
 Production publication stages and validates sender files before the database CAS,
-then publishes only the credential-free projection. Equal-revision replay also
-checks the installed file and immutable token identity. Failure rolls back an
+persists the sealed authority and public projection together, then exposes only
+the credential-free projection. Equal-revision replay also checks the installed
+file, immutable token identity and durable private receipt. Failure rolls back an
 uncommitted candidate or closes the affected organization after persistence;
 accepted references remain available for their original cleanup.
 
@@ -119,14 +150,14 @@ and cleanup cannot substitute a different endpoint or connection. A native
 authentication rejection proves only that HTTP attempt was not dispatched; it
 never clears an earlier unknown effect or cleanup barrier.
 
-Startup owns a fresh private directory; cold public metadata cannot restore a
-bearer. Normal shutdown, failed startup and worker ownership loss close the owned
-dispatcher and remove sender files. The ACP owning-service gates pass on this
-feature branch: 1616 unit tests, 201 component tests, 330 PostgreSQL tests, and
-isolated production-image acceptance including 18 Runtime checks and 56
-authenticated official-MCP requests. The Docker dependencies are ACP-owned
-protocol peers; these checks do not claim coordinated deployment or cross-service
-business/security acceptance, which remain the final integration batch.
+Startup owns a fresh private directory. Only validated current sealed authority
+can rebuild its sender files; cold public metadata and closed Runtime fences
+cannot restore a bearer. A failed restoration rolls back prepared sender files
+and removes its partial Provider clients. Normal shutdown, failed startup and
+worker ownership loss close the owned dispatcher and remove sender files.
+Owning-service checks do not establish coordinated deployment or cross-service
+business/security acceptance. The warm-restoration delivery still requires its
+applicable remote CI and subsequent integration evidence.
 
 ## Local Identity And Session Configuration
 
@@ -330,11 +361,34 @@ model calls or replay Controller admission.
 4. Leave already-terminal Runs unchanged even if an obsolete Controller finish
    receipt was never recorded. No reverse completion notification is sent.
 
-Startup failure or worker-owner loss stops further writes. Cleanup and current
-configuration application are both required before new work; neither proves an
-uncertain old Runtime command stopped. Prompt admission reads durable protection
-before creating a new intent. Agent-level settlement reports whether the current
-binding requires replacement, independently of startup cleanup.
+After interruption cleanup, startup calls `ExecutionDirectory.restore` under the
+existing worker ownership and before opening either listener. `loadAuthority`
+reads and validates each organization's latest committed private/public row;
+restoration does not call `save` or require Controller to publish again. It uses
+the normal local publication boundary, prepares fresh Runtime senders and
+installs Provider clients. After `onApplied`, it rereads the full current private
+authority before committing sender publication, and checks the ownership signal
+again before commit. A newer revision or closure wins over the initially read
+snapshot; stale restoration cannot revive it. Ownership cancellation cannot
+publish authority after an outstanding read or callback completes.
+
+A legacy public-only row, invalid sealed record or preparation-stage
+configuration identity conflict leaves only that organization closed. Other
+healthy organizations can restore. Database errors, Runtime sender dependency
+failures and worker-ownership failures remain global startup failures; startup
+removes partial clients and sender publication while unwinding. Failure
+diagnostics contain safe organization identities, not decrypted contents,
+credentials or arbitrary cryptographic/parser error causes.
+
+Once interruption cleanup and current authority restoration complete, a known
+organization can admit a new Run before a new Controller publication. Empty or
+closed configuration remains non-executable, and each request still checks the
+current organization, Agent and Principal grant. Restoring authority does not
+replay a Run, model request or Tool effect, or clear a stopping/unknown-effect
+barrier. Prompt admission reads durable protection before creating a new intent.
+Agent-level settlement reports whether the current binding requires replacement,
+independently of startup cleanup. Controller-side changes not yet committed to
+ACP cannot be inferred by warm restoration.
 
 ## Test Boundaries
 
@@ -365,8 +419,11 @@ a valid attachment unsupported by the selected model records a failed execution
 without an outgoing Provider request. Access revision changes preserve a still-
 authorized connection; actual revocation cancels execution and suppresses output.
 Session organization ownership and the local `deadline_at` are explicit in SQL
-fixtures, including lock-wait/expiry tests. Application recreation uses current
-synthetic configuration to rehydrate volatile credentials, never a Run snapshot.
+fixtures, including lock-wait/expiry tests. Publication fixtures use complete
+synthetic private configuration. Warm-restart coverage restores the latest
+sealed repository authority without Controller replay and checks organization
+isolation, publication rechecks, cancellation and sender cleanup. Neither path
+uses a Run snapshot to reconstruct credentials or execution.
 
 The [Controller/ACP integration scenarios](execution-boundary-e2e.md) define
 Controller-driven close, settlement and confirmed replacement, workspace state

@@ -7,10 +7,9 @@ read execution audit history. This is an internal control API, not an ACP
 extension. External ACP versions and payloads are unchanged.
 
 The sealed warm-admission requirements below define the #50 shared contract.
-ACP persistence and startup restoration remain a pending owning-service batch,
-followed by integration acceptance. This contract does not claim that the
-current producer already implements warm admission. It adds no RPC or snapshot
-wire fields.
+ACP implements persistence and startup restoration in its owning-service batch;
+cross-service restart and admission acceptance remains a separate integration
+batch. This amendment adds no RPC or snapshot wire fields.
 
 ## Transport And Identity
 
@@ -486,7 +485,8 @@ Contract and single-service PostgreSQL tests do not by themselves establish
 cross-service readiness; the root integration and Docker E2E suites cover the
 combined path.
 
-The sealed warm-admission amendment is contract-only. ACP producer storage,
-startup restoration, migration and owning-service acceptance remain pending,
-as does the subsequent cross-service restart/admission verification. This phase
-does not complete #50 or change the existing Controller relay behavior.
+The ACP producer implements sealed storage, startup restoration and migration.
+Owning-service acceptance does not establish the subsequent cross-service
+restart/admission verification. Controller and UI recovery consumers and that
+integration batch remain pending; this phase does not complete #50 or change
+the existing Controller relay behavior.

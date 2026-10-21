@@ -10,8 +10,14 @@ import {
   type ExecutionIdentity,
   type PublicExecutionConfiguration,
 } from "../domain/execution-configuration.js";
-import type { ExecutionConfigurationRepository } from "../ports/execution-configuration.js";
-import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
+import {
+  InvalidExecutionAuthorityError,
+  type ExecutionConfigurationRepository,
+} from "../ports/execution-configuration.js";
+import type {
+  PreparedRuntimeConnections,
+  RuntimeConnectionAuthority,
+} from "../ports/runtime-connections.js";
 import type { RuntimeBinding } from "../domain/types.js";
 import type { ProviderClients } from "./provider-clients.js";
 import { InvalidationListeners } from "./invalidation-listeners.js";
@@ -23,6 +29,7 @@ export type ExecutionDirectoryDependencies = {
   onApplied: (configuration: PublicExecutionConfiguration) => Promise<void>;
   onUnavailable: (organizationId: string) => void;
   onPublished?: (organizationId: string) => void;
+  onInvalidAuthority?: (organizationId: string) => void;
 };
 
 export type ClosedAgentOperation = {
@@ -31,6 +38,8 @@ export type ClosedAgentOperation = {
   minimumRevision: number;
   operationId: string;
 };
+
+class SupersededRestoration extends Error {}
 
 export class ExecutionDirectory {
   private readonly configurations = new Map<string, PublicExecutionConfiguration>();
@@ -41,6 +50,78 @@ export class ExecutionDirectory {
   private readonly changes = new InvalidationListeners();
 
   public constructor(private readonly dependencies: ExecutionDirectoryDependencies) {}
+
+  /** Startup only: restore owned authority before either listener is opened. */
+  public async restore(signal: AbortSignal): Promise<void> {
+    const restored: ExecutionConfiguration[] = [];
+    const discard = (configuration: ExecutionConfiguration): void => {
+      this.dependencies.clients.apply({ ...configuration, providers: [] });
+      this.withdraw(configuration.organization_id);
+    };
+    try {
+      signal.throwIfAborted();
+      const organizations = await this.dependencies.repository.listOrganizations();
+      signal.throwIfAborted();
+      for (const organizationId of organizations) {
+        await this.authorized(organizationId, undefined, async () => {
+          let incoming: ExecutionConfiguration | null = null;
+          try {
+            signal.throwIfAborted();
+            incoming = await this.dependencies.repository.loadAuthority(organizationId);
+            signal.throwIfAborted();
+            if (incoming === null) throw new InvalidExecutionAuthorityError();
+            if (incoming.organization_id !== organizationId)
+              throw new InvalidExecutionAuthorityError();
+            let connections: PreparedRuntimeConnections;
+            try {
+              this.dependencies.clients.validate(incoming);
+              connections = this.dependencies.runtimeConnections.prepare(incoming);
+            } catch (error) {
+              if (error instanceof DomainError && error.code === "configuration_conflict")
+                throw new InvalidExecutionAuthorityError();
+              throw error;
+            }
+            const expected = incoming;
+            try {
+              await this.publish(
+                incoming,
+                connections,
+                async () => {
+                  // A publication that committed during restoration always wins.
+                  // Re-read the authenticated private payload, not public metadata.
+                  const current = await this.dependencies.repository.loadAuthority(organizationId);
+                  signal.throwIfAborted();
+                  if (!isDeepStrictEqual(current, expected)) throw new SupersededRestoration();
+                },
+                signal,
+              );
+              restored.push(incoming);
+            } finally {
+              connections.rollback();
+            }
+          } catch (error) {
+            if (incoming !== null) discard(incoming);
+            else this.withdraw(organizationId);
+            signal.throwIfAborted();
+            if (
+              error instanceof InvalidExecutionAuthorityError ||
+              error instanceof SupersededRestoration
+            ) {
+              this.dependencies.onInvalidAuthority?.(organizationId);
+              return;
+            }
+            throw error;
+          }
+        });
+      }
+      signal.throwIfAborted();
+    } catch (error) {
+      // A global dependency or ownership failure cannot leave partial clients
+      // or sender files behind while startup is unwinding.
+      for (const configuration of restored) discard(configuration);
+      throw error;
+    }
+  }
 
   public async apply(
     input: unknown,
@@ -153,40 +234,76 @@ export class ExecutionDirectory {
     this.dependencies.clients.validate(incoming);
     const connections = this.dependencies.runtimeConnections.prepare(incoming);
     try {
-      // Equal-revision replay still verifies private identity and sender files.
-      if (applied?.revision === next.revision) {
-        connections.commit();
-        return { organization_id: organizationId, applied_revision: next.revision };
-      }
-      if (current?.revision !== next.revision) {
-        const saved = await this.dependencies.repository.save(next, current?.revision ?? null);
+      try {
+        // Replay must validate the durable private identity, or fill an exact
+        // legacy projection, before acknowledging an in-memory publication.
+        const saved = await this.dependencies.repository.save(incoming, current?.revision ?? null);
         if (!saved)
           throw new DomainError(
             "configuration_conflict",
             "Execution configuration revision changed",
           );
-      }
-      try {
-        this.dependencies.clients.apply(incoming);
-        await this.dependencies.onApplied(structuredClone(next));
-        connections.commit();
-        this.configurations.set(organizationId, next);
-        this.changes.invalidate(organizationId);
-        this.dependencies.onPublished?.(organizationId);
       } catch (error) {
-        this.configurations.delete(organizationId);
-        this.dependencies.runtimeConnections.revokePublication(organizationId);
+        // A failed receipt does not prove that the transaction rolled back.
+        // Retain the old view only after confirming it is still authoritative.
+        let confirmed: ExecutionConfiguration | null = null;
         try {
-          this.dependencies.onUnavailable(organizationId);
-        } finally {
-          this.changes.invalidate(organizationId);
+          confirmed = await this.dependencies.repository.loadAuthority(organizationId);
+        } catch {
+          // Unknown durable authority closes admission until a valid replay.
         }
+        if (
+          applied === undefined ||
+          confirmed === null ||
+          !isDeepStrictEqual(publicExecutionConfiguration(confirmed), applied)
+        )
+          this.withdraw(organizationId);
         throw error;
       }
+      // Equal-revision replay still verifies private identity and sender files.
+      if (applied?.revision === next.revision) {
+        connections.commit();
+        return { organization_id: organizationId, applied_revision: next.revision };
+      }
+      await this.publish(incoming, connections);
     } finally {
       connections.rollback();
     }
     return { organization_id: organizationId, applied_revision: next.revision };
+  }
+
+  private async publish(
+    incoming: ExecutionConfiguration,
+    connections: PreparedRuntimeConnections,
+    beforeCommit?: () => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const next = publicExecutionConfiguration(incoming);
+    const organizationId = incoming.organization_id;
+    try {
+      this.dependencies.clients.apply(incoming);
+      await this.dependencies.onApplied(structuredClone(next));
+      signal?.throwIfAborted();
+      await beforeCommit?.();
+      signal?.throwIfAborted();
+      connections.commit();
+      this.configurations.set(organizationId, next);
+      this.changes.invalidate(organizationId);
+      this.dependencies.onPublished?.(organizationId);
+    } catch (error) {
+      this.withdraw(organizationId);
+      throw error;
+    }
+  }
+
+  private withdraw(organizationId: string): void {
+    this.configurations.delete(organizationId);
+    this.dependencies.runtimeConnections.revokePublication(organizationId);
+    try {
+      this.dependencies.onUnavailable(organizationId);
+    } finally {
+      this.changes.invalidate(organizationId);
+    }
   }
 
   private requireConsistentRevision(

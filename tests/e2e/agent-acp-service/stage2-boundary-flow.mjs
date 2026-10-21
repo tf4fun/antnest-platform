@@ -527,6 +527,13 @@ try {
       assert.equal(before.items.length, 1);
       assert.equal(before.items[0].state, "running");
       const publication = await synchronized();
+      const stateBeforeRestart = await state();
+      assert.equal(stateBeforeRestart.agent_id, agentId);
+      assert.equal(stateBeforeRestart.access_allowed, true);
+      assert.match(
+        stateBeforeRestart.configuration_revision,
+        /^[a-f0-9]{64}$/u,
+      );
       await stage2Step(
         async () => {
           compose("stop", "agent-controller");
@@ -540,17 +547,14 @@ try {
           });
           assert.equal(terminal.state, "failed");
           assert.equal(terminal.error_class, "service_restarted_during_run");
-          const cold = await state();
-          assert.equal(cold.code, "execution_state_unavailable");
-          const coldClient = await privateClient();
-          await stage2Step(
-            () =>
-              assert.rejects(
-                coldClient.newSession(),
-                (error) => error?.data?.code === "configuration_not_ready",
-              ),
-            () => coldClient.close(),
-          );
+          assert.deepEqual(await state(), {
+            agent_id: agentId,
+            access_allowed: true,
+            availability: "ready",
+            active_session_id: null,
+            unavailable_reason: null,
+            configuration_revision: stateBeforeRestart.configuration_revision,
+          });
           await control({ release: true });
           await delay(1000);
           assert.equal(
@@ -566,6 +570,16 @@ try {
             error_class: terminal.error_class,
             trace_complete: false,
           };
+          // Controller remains stopped: only the committed local authority can
+          // admit this one explicit new Run after recovery of the interrupted Run.
+          client = await privateClient();
+          const next = await client.newSession();
+          await client.prompt(next.sessionId);
+          assert.equal(
+            (await modelState()).attempts.length,
+            held.attempts.length + 2,
+            "only the explicit new Run may execute after restart",
+          );
         },
         () => compose("up", "-d", "--no-deps", "--wait", "agent-controller"),
       );
@@ -577,16 +591,8 @@ try {
       );
       assert.equal(
         (await modelState()).attempts.length,
-        held.attempts.length,
-        "configuration replay restarted old Run",
-      );
-      client = await privateClient();
-      const next = await client.newSession();
-      await client.prompt(next.sessionId);
-      assert.equal(
-        (await modelState()).attempts.length,
         held.attempts.length + 2,
-        "only the explicit new Run may execute after restart",
+        "configuration replay restarted old Run",
       );
       const interrupted = await rpc("get-execution-audit", {
         run_id: evidence.interrupted.run_id,
