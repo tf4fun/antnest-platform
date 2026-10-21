@@ -8,7 +8,7 @@ import { runInNewContext } from "node:vm";
 import { RequestError } from "@agentclientprotocol/sdk";
 import { testScope } from "./support/auth-fixture.ts";
 import * as acpHttp from "../src/adapters/acp-http.ts";
-import { classifyAcpError } from "../src/adapters/acp-errors.ts";
+import { classifyAcpError, readAcpErrorCapability } from "../src/adapters/acp-errors.ts";
 import {
   bridgeFetch,
   bridgeHeaders,
@@ -294,3 +294,95 @@ for (const [name, original, capability] of [
     assert(!error.message.includes("PRIVATE-LOAD-FAILURE-CANARY"));
   });
 }
+
+function wrappedPromptError(cause: unknown, capability: 1 | null) {
+  const constructor = (acpHttp as unknown as {
+    AcpPromptError?: new (cause: unknown, capability: 1 | null) => Error & {
+      classification: ReturnType<typeof classifyAcpError>;
+    };
+  }).AcpPromptError;
+  assert.equal(typeof constructor, "function", "AcpPromptError is required");
+  return new constructor!(cause, capability);
+}
+
+test("typed Prompt rejection retains the catalog classification and original receipt without asserting acceptance", () => {
+  for (const code of [
+    "agent_busy", "access_denied", "runtime_barrier_required",
+    "database_error", "intent_already_recorded",
+  ]) {
+    const entry = errorCatalog.errors[code]!;
+    const original = new RequestError(entry.json_rpc_code, entry.message, {
+      code,
+      retryable: entry.retryable,
+      ...(entry.retry_after_ms === undefined ? {} : { retry_after_ms: entry.retry_after_ms }),
+    });
+    const before = structuredClone(original.toErrorResponse());
+    const error = wrappedPromptError(original, 1);
+    assert.equal(error.name, "AcpPromptError");
+    assert.equal(error.cause, original, code);
+    assert.equal(error.message, entry.message, code);
+    assert.deepEqual(error.classification, classifyAcpError(original, 1), code);
+    assert.equal(error.classification.kind, "admission", code);
+    assert.equal(error.classification.code, code);
+    assert.equal(error.classification.retryable, entry.retryable, code);
+    assert.equal(error.classification.requiresRunQuery,
+      ["database_error", "intent_already_recorded"].includes(code), code);
+    if (code === "agent_busy") {
+      assert.equal(error.classification.retryDirective, "backoff");
+      assert.equal(error.classification.retryAfterMs, entry.retry_after_ms);
+    } else if (code === "runtime_barrier_required") {
+      assert.equal(error.classification.retryDirective, "wait_rebuild");
+      assert.equal(Object.hasOwn(error.classification, "retryAfterMs"), false);
+    } else if (code === "access_denied") {
+      assert.equal(error.classification.retryDirective, "none");
+    } else assert.equal(error.classification.retryDirective, "query_intent");
+    for (const key of ["acceptance", "phase", "runId", "operationId"])
+      assert.equal(Object.hasOwn(error.classification, key), false, "classification invented execution state");
+    assert.deepEqual(original.toErrorResponse(), before, "Prompt wrapping changed the original receipt");
+  }
+});
+
+test("typed Prompt terminal failures retain their original outcome classification and require the original Run query", () => {
+  for (const terminal of Object.values(errorCatalog.terminal_outcomes)) {
+    const original = new RequestError(terminal.json_rpc_code, terminal.message, {
+      code: "model_unsupported_content", retryable: false,
+    });
+    const error = wrappedPromptError(original, 1);
+    assert.equal(error.cause, original);
+    assert.equal(error.message, terminal.message);
+    assert.deepEqual(error.classification, classifyAcpError(original, 1));
+    assert.equal(error.classification.kind, "terminal");
+    assert.equal(error.classification.code, "model_unsupported_content");
+    assert.equal(error.classification.retryable, false);
+    assert.equal(error.classification.requiresRunQuery, true);
+    assert.equal(Object.hasOwn(error.classification, "retryAfterMs"), false);
+  }
+});
+
+test("typed Prompt unsupported capabilities malformed receipts and local errors expose only the safe nonretryable fallback", () => {
+  const canary = "PRIVATE-PROMPT-FAILURE-CANARY", busy = errorCatalog.errors.agent_busy!;
+  const data = { code: "agent_busy", retryable: true, retry_after_ms: busy.retry_after_ms };
+  const busyReceipt = () => new RequestError(busy.json_rpc_code, busy.message, { ...data });
+  const fallback = classifyAcpError(new Error(canary), null);
+  const cases = [
+    ["missing capability", busyReceipt(), readAcpErrorCapability(undefined)],
+    ["unknown capability", busyReceipt(), readAcpErrorCapability({ "antnest.dev/errors": { version: 2 } })],
+    ["raw private message", new RequestError(busy.json_rpc_code, canary, { ...data }), 1],
+    ["contradictory retryability", new RequestError(busy.json_rpc_code, busy.message, { ...data, retryable: false }), 1],
+    ["private details", new RequestError(busy.json_rpc_code, busy.message, { ...data, details: { cause: canary } }), 1],
+    ["ordinary local error", Object.assign(new Error(canary), { code: busy.json_rpc_code, data: { ...data } }), 1],
+  ] as const;
+  for (const [label, original, capability] of cases) {
+    const error = wrappedPromptError(original, capability);
+    assert.equal(error.cause, original, label);
+    assert.deepEqual(error.classification, classifyAcpError(original, capability), label);
+    assert.deepEqual(error.classification, fallback, label);
+    assert.equal(error.message, fallback.message, label);
+    assert.equal(error.classification.kind, "unknown", label);
+    assert.equal(error.classification.retryable, false, label);
+    assert.equal(error.classification.requiresRunQuery, true, label);
+    assert.equal(Object.hasOwn(error.classification, "retryAfterMs"), false, label);
+    assert(!JSON.stringify({ message: error.message, classification: error.classification }).includes(canary),
+      "Prompt public classification exposed a private cause");
+  }
+});

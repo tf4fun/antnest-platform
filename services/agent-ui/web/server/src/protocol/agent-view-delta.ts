@@ -9,6 +9,11 @@ const cursor = z.string().min(1).max(4096);
 const content = z.object({ type: z.string().min(1) }).passthrough();
 const error = z.strictObject({ code: z.string().min(1), message: z.string().min(1), requestId: id, operationId: id.optional(),
   retryable: z.boolean(), recovery: z.enum(["none", "login", "refresh", "retry_read", "query_operation"]) });
+export type OperationError = z.infer<typeof error>;
+export function parseOperationError(value: unknown): OperationError | undefined {
+  const parsed = error.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
 const operation = z.strictObject({ operationId: id, sessionId: id,
   phase: z.enum(["dispatching", "accepted", "running", "awaiting_permission", "cancelling", "completed", "failed", "cancelled", "uncertain"]),
   acceptance: z.enum(["bridge", "acp", "unknown"]), runId: id.optional(),

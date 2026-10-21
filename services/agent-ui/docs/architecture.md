@@ -336,6 +336,18 @@ Retiring the owner aborts backoff, closes the transport, and waits for its
 authorization workflows to settle. Exhausted recovery preserves an earlier
 sealed transcript. This Load policy does not resubmit Prompt or intent work.
 
+Prompt failures use the same negotiated error catalog for safe messages, while
+the operation keeps its original intent ID and remains `uncertain` until a
+durable receipt is available. Even a busy or denied response cannot prove that
+an intent was never accepted. The Bridge attaches only the classified public
+code and message, a stable local error correlation ID, and `query_operation`
+guidance with `retryable: false`; it never automatically resubmits Prompt.
+Original causes stay private. A known durable receipt takes precedence over a
+late error or an unknown observation, and a later receipt clears the local
+error. The browser validates the existing error envelope, shows the message
+and original-operation query hint only in its owning Session, and removes that
+hint when the durable operation replaces the uncertain state.
+
 Prompt admission checks the full serialized ACP request against the ACP POST
 body limit before returning `202`. The default is 16 MiB; Compose passes
 `ANTNEST_ACP_MAX_PROMPT_BYTES` to ACP and the same value to Node as

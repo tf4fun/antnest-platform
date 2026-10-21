@@ -3,6 +3,7 @@ import {
   type BridgeHttpClient,
   type PromptAdmission,
 } from "./workspace-api-client.ts";
+import { parseOperationError, type OperationError } from "../../server/src/protocol/agent-view-delta.ts";
 
 export type BridgeOperation = {
   operationId: string;
@@ -14,6 +15,7 @@ export type BridgeOperation = {
   outputWatermark?: number;
   stopReason?: string | null;
   errorClass?: string | null;
+  error?: OperationError;
 };
 
 type OperationApi = Pick<BridgeHttpClient, "prompt" | "operation" | "cancel" | "sessionCurrent">;
@@ -146,9 +148,13 @@ export class BridgeOperationTracker {
       (current.runId !== undefined && next.runId !== undefined && current.runId !== next.runId) ||
       (isTerminal(current.phase) && !isTerminal(next.phase)) ||
       (current.acceptance === "acp" && next.acceptance !== "acp") ||
+      (current.phase === "uncertain" && next.acceptance === "bridge" && next.phase === "dispatching") ||
       (current.outputWatermark !== undefined && next.outputWatermark !== undefined &&
         next.outputWatermark < current.outputWatermark)
     )) return { ...current };
+    if (current?.error !== undefined && next.phase === "uncertain" &&
+      next.acceptance === "unknown" && next.error === undefined)
+      next = { ...next, error: current.error };
     if (current !== undefined && JSON.stringify(current) === JSON.stringify(next))
       return { ...current };
     this.operations.set(item, { ...next });
@@ -181,6 +187,10 @@ function operationFromWire(raw: unknown): BridgeOperation | null {
     (typeof raw.runId !== "string" || !raw.runId ||
       !Number.isSafeInteger(raw.outputWatermark) || (raw.outputWatermark as number) < 0))
     return null;
+  const error = parseOperationError(raw.error);
+  const promptError = raw.phase === "uncertain" && raw.acceptance === "unknown" &&
+    error?.operationId === raw.operationId && error.retryable === false &&
+    error.recovery === "query_operation" ? error : undefined;
   return {
     operationId: raw.operationId,
     sessionId: raw.sessionId,
@@ -192,6 +202,7 @@ function operationFromWire(raw: unknown): BridgeOperation | null {
       ? { stopReason: raw.stopReason } : {}),
     ...(typeof raw.errorClass === "string" && raw.errorClass.length <= 128 || raw.errorClass === null
       ? { errorClass: raw.errorClass as string | null } : {}),
+    ...(promptError === undefined ? {} : { error: promptError }),
   };
 }
 

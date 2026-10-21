@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { RequestError } from "@agentclientprotocol/sdk";
+import { AcpPromptError, type IntentReceipt } from "../src/adapters/acp-http.ts";
 import {
   OperationCoordinator,
   OperationConflictError,
@@ -422,3 +425,229 @@ test("reconciliation deadline also bounds a non-cooperative receipt adapter", as
     OperationReconciliationTimeoutError,
   );
 });
+
+const promptErrorCatalog = JSON.parse(readFileSync(
+  new URL("../../../../../contracts/agent-acp/errors.json", import.meta.url), "utf8",
+)) as {
+  errors: Record<string, { json_rpc_code: number; message: string; retryable: boolean; retry_after_ms?: number }>;
+  terminal_outcomes: Record<string, { json_rpc_code: number; message: string }>;
+  fallback: { data_code: string; message: string };
+};
+const privatePromptCause = "PRIVATE-PROMPT-OPERATION-CAUSE";
+type PromptPublicError = {
+  code: string;
+  message: string;
+  requestId: string;
+  operationId: string;
+  retryable: false;
+  recovery: "query_operation";
+};
+
+function promptFailure(code = "agent_busy"): AcpPromptError {
+  const entry = promptErrorCatalog.errors[code]!;
+  const cause = Object.assign(new RequestError(entry.json_rpc_code, entry.message, {
+    code,
+    retryable: entry.retryable,
+    ...(entry.retry_after_ms === undefined ? {} : { retry_after_ms: entry.retry_after_ms }),
+  }), { privateDiagnostic: privatePromptCause });
+  return new AcpPromptError(cause, 1);
+}
+
+function promptPublicError(value: unknown): PromptPublicError {
+  const error = (value as { error?: PromptPublicError }).error;
+  assert.ok(error, "Prompt rejection must expose a safe operation error");
+  assert.equal(typeof error.requestId, "string");
+  assert(error.requestId.length > 0 && error.requestId.length <= 200);
+  assert.notEqual(error.requestId, intent.intentId, "Bridge error correlation reused the intent identity");
+  return error;
+}
+
+const promptFailureCases = [
+  ...["agent_busy", "access_denied", "runtime_barrier_required", "database_error",
+    "idempotency_conflict", "intent_already_recorded"].map((code) => ({
+    name: code, failure: promptFailure(code), code, message: promptErrorCatalog.errors[code]!.message,
+  })),
+  ...Object.entries(promptErrorCatalog.terminal_outcomes).map(([name, terminal]) => ({
+    name: "terminal " + name,
+    failure: new AcpPromptError(Object.assign(new RequestError(terminal.json_rpc_code, terminal.message, {
+      code: "model_unsupported_content", retryable: false,
+    }), { privateDiagnostic: privatePromptCause }), 1),
+    code: "model_unsupported_content", message: terminal.message,
+  })),
+  {
+    name: "unknown private transport failure",
+    failure: new AcpPromptError(new Error(privatePromptCause), 1),
+    code: promptErrorCatalog.fallback.data_code, message: promptErrorCatalog.fallback.message,
+  },
+  {
+    name: "missing producer error capability",
+    failure: new AcpPromptError(promptFailure().cause, null),
+    code: promptErrorCatalog.fallback.data_code, message: promptErrorCatalog.fallback.message,
+  },
+];
+
+for (const { name, failure, code, message } of promptFailureCases)
+  test(`Prompt ${name} remains one original uncertain intent with a stable safe error across unknown reads`, async () => {
+    const dispatched: unknown[] = [], queried: string[][] = [];
+    let work = 0, releases = 0;
+    const operations = new OperationCoordinator({
+      prompt: (input) => {
+        dispatched.push(structuredClone(input));
+        return Promise.reject(failure);
+      },
+      readIntent: (sessionId, intentId) => {
+        queried.push([sessionId, intentId]);
+        return Promise.resolve({ kind: "unknown" });
+      },
+      cancel: () => Promise.resolve(),
+      retainWork: () => {
+        work++;
+        return () => { work--; releases++; };
+      },
+    });
+    operations.submit(intent);
+    await operations.settled(intent.sessionId, intent.intentId);
+    const snapshot = operations.snapshot(intent.sessionId, [])[0];
+    const error = promptPublicError(snapshot);
+    const expected = {
+      operationId: intent.intentId, sessionId: intent.sessionId,
+      acceptance: "unknown", phase: "uncertain",
+      error: {
+        code, message, requestId: error.requestId, operationId: intent.intentId,
+        retryable: false, recovery: "query_operation",
+      },
+    };
+    assert.deepEqual(snapshot, expected);
+    for (let read = 0; read < 3; read++) {
+      const actual = await operations.read(intent.sessionId, intent.intentId);
+      assert.deepEqual(actual, expected, "an unknown receipt changed the original error or invented a Run");
+      assert.equal(promptPublicError(actual).requestId, error.requestId);
+    }
+    assert.deepEqual(queried, Array.from({ length: 3 }, () => [intent.sessionId, intent.intentId]));
+    operations.submit({ ...intent, prompt: structuredClone(prompt) });
+    await operations.settled(intent.sessionId, intent.intentId);
+    assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+    assert.deepEqual(dispatched, [intent], "Prompt classification or same-intent reuse replayed execution");
+    assert.equal(work, 0);
+    assert.equal(releases, 1);
+    assert(!JSON.stringify({ snapshot, operations: operations.snapshot(intent.sessionId, []) }).includes(privatePromptCause),
+      "private Prompt cause entered the public operation JSON");
+  });
+
+function recoveredPromptReceipt(phase: "running" | "completed"): IntentReceipt {
+  return {
+    intentId: intent.intentId, sessionId: intent.sessionId, runId: "run-1", phase,
+    appendVersion: intent.expectedAppendVersion + 1,
+    outputWatermark: phase === "completed" ? 8 : 1,
+    stopReason: phase === "completed" ? "end_turn" : null,
+    errorClass: null,
+  };
+}
+
+function recoveredPromptOperation(receipt: IntentReceipt) {
+  return {
+    operationId: receipt.intentId, sessionId: receipt.sessionId,
+    acceptance: "acp", phase: receipt.phase, runId: receipt.runId,
+    outputWatermark: receipt.outputWatermark, stopReason: receipt.stopReason, errorClass: receipt.errorClass,
+  };
+}
+
+for (const phase of ["running", "completed"] as const)
+  test(`a durable ${phase} receipt wins over a late classified Prompt rejection`, async () => {
+    const entered = Promise.withResolvers<void>(), completion = Promise.withResolvers<unknown>();
+    const receipt = recoveredPromptReceipt(phase), expected = recoveredPromptOperation(receipt);
+    let dispatches = 0, releases = 0;
+    const operations = new OperationCoordinator({
+      prompt: () => { dispatches++; entered.resolve(); return completion.promise; },
+      readIntent: () => Promise.resolve({ kind: "receipt", receipt }),
+      cancel: () => Promise.resolve(),
+      retainWork: () => () => { releases++; },
+    });
+    operations.submit(intent);
+    try {
+      await entered.promise;
+      if (phase === "running") operations.observeReceipts(intent.sessionId, [receipt]);
+      else assert.deepEqual(await operations.read(intent.sessionId, intent.intentId), expected);
+      assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+    } finally {
+      completion.reject(promptFailure("database_error"));
+      await operations.settled(intent.sessionId, intent.intentId);
+    }
+    assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+    assert.equal(Object.hasOwn(operations.snapshot(intent.sessionId, [])[0]!, "error"), false);
+    assert.deepEqual(await operations.read(intent.sessionId, intent.intentId), expected);
+    assert.equal(dispatches, 1);
+    assert.equal(releases, 1);
+  });
+
+for (const phase of ["running", "completed"] as const)
+  test(`a later durable ${phase} receipt clears the original classified Prompt error without replay`, async () => {
+    const receipt = recoveredPromptReceipt(phase), expected = recoveredPromptOperation(receipt);
+    let durable: IntentReceipt | undefined, dispatches = 0, releases = 0;
+    const queried: string[][] = [];
+    const operations = new OperationCoordinator({
+      prompt: () => { dispatches++; return Promise.reject(promptFailure()); },
+      readIntent: (sessionId, intentId) => {
+        queried.push([sessionId, intentId]);
+        return Promise.resolve(durable === undefined ? { kind: "unknown" } : { kind: "receipt", receipt: durable });
+      },
+      cancel: () => Promise.resolve(),
+      retainWork: () => () => { releases++; },
+    });
+    operations.submit(intent);
+    await operations.settled(intent.sessionId, intent.intentId);
+    const first = await operations.read(intent.sessionId, intent.intentId);
+    promptPublicError(first);
+    assert.equal(first.acceptance, "unknown");
+    assert.equal(first.phase, "uncertain");
+    if (phase === "running") {
+      operations.observeReceipts(intent.sessionId, [receipt]);
+      assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+    }
+    durable = receipt;
+    assert.deepEqual(await operations.read(intent.sessionId, intent.intentId), expected);
+    assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+    assert.equal(Object.hasOwn(operations.snapshot(intent.sessionId, [])[0]!, "error"), false);
+    assert.deepEqual(queried, [[intent.sessionId, intent.intentId], [intent.sessionId, intent.intentId]]);
+    operations.submit(structuredClone(intent));
+    await operations.settled(intent.sessionId, intent.intentId);
+    assert.equal(dispatches, 1);
+    assert.equal(releases, 1);
+    assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+  });
+
+for (const phase of ["running", "completed"] as const)
+  test(`an unknown intent read after a late Prompt rejection cannot erase a proven durable ${phase} Run`, async () => {
+    const entered = Promise.withResolvers<void>(), completion = Promise.withResolvers<unknown>();
+    const receipt = recoveredPromptReceipt(phase), expected = recoveredPromptOperation(receipt);
+    const queried: string[][] = [];
+    let dispatches = 0, releases = 0;
+    const operations = new OperationCoordinator({
+      prompt: () => { dispatches++; entered.resolve(); return completion.promise; },
+      readIntent: (sessionId, intentId) => {
+        queried.push([sessionId, intentId]);
+        return Promise.resolve({ kind: "unknown" });
+      },
+      cancel: () => Promise.resolve(),
+      retainWork: () => () => { releases++; },
+    });
+    operations.submit(intent);
+    try {
+      await entered.promise;
+      operations.observeReceipts(intent.sessionId, [receipt]);
+      assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+    } finally {
+      completion.reject(promptFailure("database_error"));
+      await operations.settled(intent.sessionId, intent.intentId);
+    }
+    assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+    for (let read = 0; read < 2; read++) {
+      const result = await operations.read(intent.sessionId, intent.intentId);
+      assert.deepEqual(result, expected, "an unknown read erased an already proven Run receipt");
+      assert.equal(Object.hasOwn(result, "error"), false);
+    }
+    assert.deepEqual(operations.snapshot(intent.sessionId, []), [expected]);
+    assert.deepEqual(queried, [[intent.sessionId, intent.intentId], [intent.sessionId, intent.intentId]]);
+    assert.equal(dispatches, 1);
+    assert.equal(releases, 1);
+  });
