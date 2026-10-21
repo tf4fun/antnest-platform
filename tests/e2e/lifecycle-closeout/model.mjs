@@ -77,6 +77,7 @@ export function createLifecycleModel(decision = decide) {
   const requests = [],
     errors = [];
   return createServer(async (request, response) => {
+    const receivedAt = Date.now();
     const reply = (status, body) => {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(body));
@@ -88,7 +89,9 @@ export function createLifecycleModel(decision = decide) {
       assert.equal(request.url, "/v1/chat/completions");
       assert.equal(request.headers.authorization, "Bearer stage3-model-secret");
       const parent = request.headers.traceparent ?? "";
-      assert.match(parent, /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
+      const traced =
+        typeof parent === "string" &&
+        /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/.test(parent);
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -105,8 +108,13 @@ export function createLifecycleModel(decision = decide) {
       requests.push({
         phase: result.phase,
         stage,
-        trace_id: parent.split("-")[1],
-        model_span_id: parent.split("-")[2],
+        received_at_ms: receivedAt,
+        ...(traced
+          ? {
+              trace_id: parent.split("-")[1],
+              model_span_id: parent.split("-")[2],
+            }
+          : { trace_diagnostic: "missing_or_invalid_traceparent" }),
         ...(result.report ? { report: result.report } : {}),
       });
       reply(200, {
