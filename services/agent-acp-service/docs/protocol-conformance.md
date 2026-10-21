@@ -54,6 +54,18 @@ retains `database_error` / `-32603`; terminal `-32022` and `-32023` remain
 separate from admission. These producer checks do not establish client retry
 behavior or the cross-service workflow.
 
+HTTP routes project their selected public code through the same catalog. Fixed
+messages replace exception text; dependency failures retain their route-specific
+503 classification. Authentication failures remain 401, while authenticated
+business access denial is 403. Session and learning reads retain their existing
+non-enumerating 404 classifications. Skill-source errors retain the strict
+`{error:{code,message}}` envelope required by Skill Registry. SSE error frames
+use the same safe projection and still wait for the response to finish.
+
+Real HTTP regressions cover these boundaries and preserve request cancellation,
+stream delivery deadlines and transport cleanup. Client retry behavior and
+live E2E consumer migration remain separate acceptance work.
+
 ## Coverage States
 
 | State                 | Meaning                                                                                                                          |

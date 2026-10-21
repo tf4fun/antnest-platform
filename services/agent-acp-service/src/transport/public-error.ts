@@ -36,3 +36,18 @@ export function publicError(error: unknown, surface: ErrorSurface): PublicError 
     data,
   });
 }
+
+// The route selects its existing public classification before projection. This
+// keeps dependency defaults and non-enumerating resource errors route-specific.
+export function httpFailure(code: string) {
+  const definition = resolveErrorDefinition(code, "http");
+  return {
+    status: definition.httpStatus,
+    body: {
+      code: definition.code,
+      message: definition.message,
+      retryable: definition.retryable,
+      ...(definition.retryAfterMs === undefined ? {} : { retry_after_ms: definition.retryAfterMs }),
+    },
+  };
+}

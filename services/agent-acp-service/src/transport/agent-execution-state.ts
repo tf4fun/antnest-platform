@@ -5,6 +5,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import { DEFAULT_STATE_DELIVERY_TIMEOUT_MS } from "../config.js";
 import { isShutdownReason } from "../shutdown.js";
 import { agentExecutionStateRequestSchema } from "../domain/agent-execution-state.js";
+import { DomainError } from "../domain/errors.js";
 import type {
   AgentExecutionStatePort,
   ExecutionStateSink,
@@ -12,6 +13,7 @@ import type {
 import { activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError, rpcContent } from "../telemetry/diagnostics.js";
 import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
+import { httpFailure } from "./public-error.js";
 import { trustedIdentity } from "./trusted-identity.js";
 
 export const AGENT_EXECUTION_STATE_PATH = "/rpc/agent-acp/get-agent-execution-state";
@@ -39,7 +41,7 @@ export async function serveAgentExecutionState(
   try {
     const identity = trustedIdentity(request.headers);
     if (identity === null)
-      throw new RpcRequestError(401, "access_denied", "Trusted caller identity is required");
+      throw new RpcRequestError(403, "access_denied", "Trusted caller identity is required");
     const input = agentExecutionStateRequestSchema.safeParse(
       await readRpcRequest(request, maxBytes),
     );
@@ -165,17 +167,8 @@ function frame(event: string, data: unknown): string {
 }
 
 function stateError(error: unknown) {
-  if (error instanceof RpcRequestError)
-    return {
-      status: error.status,
-      body: { code: error.code, message: error.message, retryable: false },
-    };
-  return {
-    status: 503,
-    body: {
-      code: "execution_state_unavailable",
-      message: "Agent execution state is unavailable",
-      retryable: true,
-    },
-  };
+  if (error instanceof RpcRequestError) return httpFailure(error.code);
+  if (error instanceof DomainError && error.code === "access_denied")
+    return httpFailure(error.code);
+  return httpFailure("execution_state_unavailable");
 }

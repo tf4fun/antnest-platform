@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SkillSources } from "../application/skill-sources.js";
+import { resolveErrorDefinition } from "../domain/error-catalog.js";
 import {
   SkillSourceError,
   skillSourceArtifactSchema,
@@ -29,16 +30,16 @@ export async function serveSkillSource(
   ready: () => Promise<boolean>,
 ): Promise<void> {
   if (options === undefined || authenticatedCaller(request) !== "skill-registry") {
-    json(response, 401, "unauthorized", "Source reader authorization required");
+    json(response, "unauthorized");
     return;
   }
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
-    json(response, 405, "method_not_allowed", "Use POST");
+    json(response, "method_not_allowed");
     return;
   }
   if (route === "invalid") {
-    json(response, 400, "invalid_request", "Invalid source request");
+    json(response, "invalid_request");
     return;
   }
   const disconnected = new AbortController();
@@ -56,7 +57,7 @@ export async function serveSkillSource(
         ? skillSourceInspectSchema.safeParse(parsed)
         : skillSourceArtifactSchema.safeParse(parsed);
     if (!checked.success) {
-      json(response, 400, "invalid_request", "Invalid source fields");
+      json(response, "invalid_request");
       return;
     }
     if (!(await ready())) throw new SkillSourceError("source_unavailable");
@@ -80,24 +81,22 @@ export async function serveSkillSource(
     }
   } catch (error) {
     if (error instanceof RpcRequestError) {
-      json(response, error.status, error.code, error.message);
+      json(response, error.code);
       return;
     }
     const failure =
       error instanceof SkillSourceError ? error : new SkillSourceError("source_unavailable");
-    json(
-      response,
-      failure.code === "not_found" ? 404 : failure.code === "content_changed" ? 409 : 503,
-      failure.code,
-      failure.message,
-    );
+    json(response, failure.code);
   } finally {
     response.off("close", close);
   }
 }
 
-function json(response: ServerResponse, status: number, code: string, message: string): void {
-  jsonBody(response, status, { error: { code, message } });
+function json(response: ServerResponse, code: string): void {
+  const definition = resolveErrorDefinition(code, "skill_source");
+  jsonBody(response, definition.httpStatus, {
+    error: { code: definition.code, message: definition.message },
+  });
 }
 function jsonBody(response: ServerResponse, status: number, value: unknown): void {
   if (response.destroyed || response.writableEnded) return;
