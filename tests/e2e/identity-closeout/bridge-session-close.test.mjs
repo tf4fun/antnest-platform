@@ -157,7 +157,6 @@ test("wrong stream, Session, renewed authority and pre-trigger closure are rejec
     (f) => (f.stream.records[0].view.selectedView.sessionId = "foreign"),
     (f) => (f.stream.evidence.set_cookie_count = 1),
     (f) => (f.stream.evidence.credential_scope = ""),
-    (f) => (f.stream.evidence.trace_id = ""),
     (f) => (f.stream.closure = { kind: "remote-end" }),
   ]) {
     const f = fixture();
@@ -172,7 +171,6 @@ test("closure must match the original stream identity and both observation clock
     { at: 31001 },
     { observed_at_ms: 19999 },
     { observed_at_ms: 50001 },
-    { trace_id: "b".repeat(32) },
   ]) {
     const f = fixture(),
       point = checkpoint(f);
@@ -185,6 +183,28 @@ test("closure must match the original stream identity and both observation clock
     };
     await assert.rejects(() => finish(f, point));
   }
+});
+
+test("a different diagnostic Trace ID cannot reject the original observed stream closure", async () => {
+  const f = fixture(),
+    point = checkpoint(f);
+  f.stream.closure = {
+    kind: "remote-end",
+    at: 1200,
+    observed_at_ms: 20200,
+    trace_id: "b".repeat(32),
+  };
+  const result = await finish(f, point);
+  assert.equal(result.localClose, false);
+  assert.equal(result.traceDiagnostic, "trace_id_mismatch");
+  assert.equal(result.closure.trace_id, "b".repeat(32));
+});
+
+test("matching Trace metadata cannot substitute a different stream object", async () => {
+  const f = fixture(),
+    point = checkpoint(f);
+  f.stream = { ...f.stream };
+  await assert.rejects(() => finish(f, point));
 });
 
 test("the observer retains original deadlines for the raw gate without comparing Identity and client clocks", async () => {
@@ -258,3 +278,62 @@ test("an open stream with an expired checkpoint never dispatches a probe", async
   assert.equal(f.browser.requests, 0);
   assert.equal(f.client.requests.length, 1);
 });
+
+const invalidTraceCanary = "PRIVATE-INVALID-TRACE-CANARY";
+for (const [label, traceID] of [
+  ["missing", undefined],
+  ["invalid", invalidTraceCanary],
+])
+  test(`${label} Trace ID retains the original scoped remote closure without exposing its input`, async () => {
+    const f = fixture();
+    f.stream.evidence.trace_id = traceID;
+    const point = checkpoint(f);
+    assert.equal(point.stream.trace_id, undefined);
+    assert.equal(point.stream.traceDiagnostic, "missing_or_invalid_trace_id");
+    f.stream.closure = {
+      kind: "remote-end",
+      at: 1200,
+      observed_at_ms: 20200,
+      trace_id: traceID,
+    };
+    const result = await finish(f, point);
+    assert.equal(result.traceID, undefined);
+    assert.equal(result.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.equal(result.closure.trace_id, undefined);
+    assert.equal(result.transport, "http-sse");
+    assert.equal(result.agentId, "agent-1");
+    assert.equal(result.sessionId, "session-1");
+    assert.equal(result.credentialScope, "original-cookie-observation");
+    assert.equal(result.localClose, false);
+    assert.equal(result.silent, true);
+    assert.equal(result.authorizationCauseVerified, false);
+    assert.equal(result.closedAt, 20200);
+    assert.deepEqual(result.sdkRequests, point.sdkRequests);
+    assert.equal(f.browser.requests, 0);
+    assert.equal(f.client.requests.length, 1);
+    assert(!JSON.stringify({ point, result }).includes(invalidTraceCanary));
+  });
+
+for (const [label, mutate] of [
+  ["local cancellation", (f) => (f.stream.closure.kind = "local-close")],
+  [
+    "foreign credential scope",
+    (f) => (f.stream.evidence.credential_scope = "foreign"),
+  ],
+  ["late remote closure", (f) => (f.stream.closure.at = 31001)],
+])
+  test(`a missing Trace ID cannot excuse ${label}`, async () => {
+    const f = fixture();
+    f.stream.evidence.trace_id = undefined;
+    const point = checkpoint(f);
+    f.stream.closure = {
+      kind: "remote-end",
+      at: 1200,
+      observed_at_ms: 20200,
+      trace_id: undefined,
+    };
+    mutate(f);
+    await assert.rejects(() => finish(f, point));
+    assert.equal(f.browser.requests, 0);
+    assert.equal(f.client.requests.length, 1);
+  });

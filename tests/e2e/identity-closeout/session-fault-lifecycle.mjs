@@ -10,28 +10,50 @@ import { durablePath } from "../../support/storage.mjs";
 const mark = () => ({ at: performance.now(), observed_at_ms: Date.now() });
 const traceID = /^[a-f0-9]{32}$/u;
 
+function traceFields(value) {
+  return typeof value === "string" && traceID.test(value)
+    ? { traceID: value }
+    : { traceID: undefined, traceDiagnostic: "missing_or_invalid_trace_id" };
+}
+
 export async function closeSessionFaultResources({
   clients,
   observers,
   pool,
   telemetry,
+  traceDiagnostics,
 }) {
   const settled = await Promise.allSettled(
     [...clients, ...observers].map((resource) =>
       Promise.resolve().then(() => resource.closeAndWait()),
     ),
   );
-  // Transport and database spans must finish before the exporter shuts down.
-  // Join every resource even when an earlier closer throws synchronously.
-  for (const close of [() => pool.end(), () => telemetry.shutdown()])
-    settled.push(
-      ...(await Promise.allSettled([Promise.resolve().then(close)])),
-    );
+  // Join every transport and database resource even when an earlier closer
+  // throws synchronously, then await the actual exporter shutdown separately.
+  settled.push(
+    ...(await Promise.allSettled([Promise.resolve().then(() => pool.end())])),
+  );
+  const telemetryResult = { role: "auxiliary", status: "passed" };
+  try {
+    // Diagnostic budgets must never skip or release this resource shutdown.
+    await telemetry.shutdown();
+  } catch (error) {
+    telemetryResult.status = "warning";
+    console.warn("Session telemetry shutdown warning");
+    try {
+      await traceDiagnostics?.run("session-telemetry-shutdown", () => {
+        throw error;
+      });
+    } catch {
+      // An unavailable diagnostic archive cannot hide business cleanup errors.
+    }
+  }
   const errors = settled
     .filter((result) => result.status === "rejected")
     .map((result) => result.reason);
   if (errors.length)
     throw new AggregateError(errors, "Session resource cleanup failed");
+  return { telemetry: telemetryResult };
 }
 
 export async function logoutSession(browser, observer, checkpoint, principal) {
@@ -50,7 +72,6 @@ export async function logoutSession(browser, observer, checkpoint, principal) {
   const completed = mark();
   try {
     assert.equal(response.status, 204);
-    assert.match(response.traceID ?? "", traceID);
     assertNoStore(response.headers);
     assertClearedSessionCookies(response.headers);
     assert.equal(browser.cookie, "");
@@ -62,7 +83,7 @@ export async function logoutSession(browser, observer, checkpoint, principal) {
     path: "/api/session",
     method: "DELETE",
     status: 204,
-    traceID: response.traceID,
+    ...traceFields(response.traceID),
     credentialScope: checkpoint.stream.credential_scope,
     principal: structuredClone(principal),
     startedAt: started.observed_at_ms,
@@ -146,13 +167,13 @@ export async function finishSessionFault({
     }
     const denial = await observer.rejectPrompt();
     assert.equal(denial.credentialScope, closed.credentialScope);
-    assert.match(denial.traceID ?? "", traceID);
     result = {
       ...closed,
+      ...traceFields(closed.traceID),
       protocolVersion: client.version,
       principal: structuredClone(observer.principal),
       cause,
-      denial,
+      denial: { ...denial, ...traceFields(denial.traceID) },
       protocolClientClosedLocally: true,
     };
   } catch (error) {

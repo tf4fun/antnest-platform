@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -375,7 +376,9 @@ function candidateInventory() {
   return { rows, record, runtime };
 }
 
-function ownerInventory() {
+function ownerInventory(t) {
+  const directory = mkdtempSync(join(tmpdir(), "antnest-session-owner-clock-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const f = candidateInventory();
   const start = "2026-10-15T10:00:00.000000001Z";
   const jaeger = {
@@ -446,7 +449,7 @@ function ownerInventory() {
     initial: f.rows,
     identity: f.identity,
     request: f.request,
-    output: "/fixture/evidence",
+    output: directory,
     now: () => f.time,
     async clockProbe(options) {
       f.probe = options;
@@ -479,9 +482,9 @@ function ownerInventory() {
   return f;
 }
 
-test("Session owner drain binds independent candidates and original peers after the allowed Identity replacement", async () => {
+test("Session owner drain binds independent candidates and original peers after the allowed Identity replacement", async (t) => {
   assert.equal(typeof deployment.createSessionOwnerLifecycle, "function");
-  const f = ownerInventory();
+  const f = ownerInventory(t);
   const owner = await deployment.createSessionOwnerLifecycle(f.options);
   assert.equal(owner.baseline, f.baseline);
   assert.equal(f.actual.artifactPrefix, "session");
@@ -494,8 +497,8 @@ test("Session owner drain binds independent candidates and original peers after 
   assert(args.includes("label=com.docker.compose.service=agent-ui"));
 });
 
-test("Session owner drain archives its ACP clock before stopping and carries the same receipt into collection", async () => {
-  const f = ownerInventory();
+test("Session owner drain archives its ACP clock before stopping and carries the same receipt into collection", async (t) => {
+  const f = ownerInventory(t);
   const owner = await deployment.createSessionOwnerLifecycle(f.options);
   assert.equal(f.probe?.container, f.baseline["agent-acp-service"].id);
   assert.equal(f.probe?.environment, env);
@@ -518,6 +521,7 @@ test("Session owner drain archives its ACP clock before stopping and carries the
     return "original-collection";
   });
   assert.equal(collected, "original-collection");
+  assert.equal(owner.traceDiagnostics.summary().status, "passed");
 });
 
 for (const [name, change] of [
@@ -536,66 +540,79 @@ for (const [name, change] of [
     (f) => (f.sample.error = env.ANTNEST_AGENT_ACP_POSTGRES_PASSWORD),
   ],
 ])
-  test(`Session refuses ${name} before any owner stop`, async () => {
-    const f = ownerInventory();
+  test(`Session records ${name} as an auxiliary warning and still collects`, async (t) => {
+    const f = ownerInventory(t);
     change(f);
-    await assert.rejects(() =>
-      deployment.createSessionOwnerLifecycle(f.options),
-    );
-    assert.equal(f.drained, undefined);
+    const owner = await deployment.createSessionOwnerLifecycle(f.options);
+    const result = await owner.collect(async () => {
+      assert.equal(f.drained, true);
+      return "original-collection";
+    });
+    assert.equal(result, "original-collection");
+    assert.equal(owner.traceDiagnostics.summary().status, "warning");
     assert.equal(f.writes.length, 0);
   });
 
-test("Session cannot stop after its clock receipt fails to archive", async () => {
-  const f = ownerInventory();
+test("Session still collects after its diagnostic clock receipt fails to archive", async (t) => {
+  const f = ownerInventory(t);
   const failure = new Error("clock archive unavailable");
   f.options.writeClock = () => {
     throw failure;
   };
-  await assert.rejects(
-    () => deployment.createSessionOwnerLifecycle(f.options),
-    (error) => error === failure,
-  );
-  assert.equal(f.drained, undefined);
+  const owner = await deployment.createSessionOwnerLifecycle(f.options);
+  const result = await owner.collect(async () => {
+    assert.equal(f.drained, true);
+    return "original-collection";
+  });
+  assert.equal(result, "original-collection");
+  assert.equal(owner.traceDiagnostics.summary().status, "warning");
 });
 
-test("Session clock failure propagates before any owner stop", async () => {
-  const f = ownerInventory();
+test("Session still collects after a diagnostic clock probe failure", async (t) => {
+  const f = ownerInventory(t);
   const failure = new Error("clock probe unavailable");
   f.options.clockProbe = async () => {
     throw failure;
   };
-  await assert.rejects(
-    () => deployment.createSessionOwnerLifecycle(f.options),
-    (error) => error === failure,
-  );
-  assert.equal(f.drained, undefined);
+  const owner = await deployment.createSessionOwnerLifecycle(f.options);
+  const result = await owner.collect(async () => {
+    assert.equal(f.drained, true);
+    return "original-collection";
+  });
+  assert.equal(result, "original-collection");
+  assert.equal(owner.traceDiagnostics.summary().status, "warning");
   assert.equal(f.writes.length, 0);
 });
 
-test("Session cancellation prevents calibration and later owner stop", async () => {
-  const f = ownerInventory();
+test("Session cancellation propagates through the derived clock signal and prevents later owner stop", async (t) => {
+  const f = ownerInventory(t);
   const abort = new AbortController();
   f.options.signal = abort.signal;
   const owner = await deployment.createSessionOwnerLifecycle(f.options);
-  assert.equal(f.probe?.signal, abort.signal);
-  abort.abort(new Error("cancelled before owner drain"));
+  assert(f.probe?.signal instanceof AbortSignal);
+  assert.notStrictEqual(f.probe.signal, abort.signal);
+  assert.equal(f.probe.signal.aborted, false);
+  const reason = new Error("cancelled before owner drain");
+  abort.abort(reason);
+  assert.equal(f.probe.signal.aborted, true);
+  assert.strictEqual(f.probe.signal.reason, reason);
   await assert.rejects(
     () => owner.collect(() => assert.fail("cancelled collection")),
-    /cancelled before owner drain/u,
+    (error) => error === reason,
   );
   assert.equal(f.drained, undefined);
 });
 
-test("Session rejects a regressed host clock before owner stop", async () => {
-  const f = ownerInventory();
+test("Session records a regressed diagnostic host clock and still collects", async (t) => {
+  const f = ownerInventory(t);
   const owner = await deployment.createSessionOwnerLifecycle(f.options);
   f.time = 150;
-  await assert.rejects(
-    () => owner.collect(() => assert.fail("regressed host clock admitted")),
-    /clock/u,
-  );
-  assert.equal(f.drained, undefined);
+  const result = await owner.collect(async () => {
+    assert.equal(f.drained, true);
+    return "original-collection";
+  });
+  assert.equal(result, "original-collection");
+  assert.equal(owner.traceDiagnostics.summary().status, "warning");
 });
 
 for (const [name, change] of [
@@ -643,9 +660,9 @@ for (const [name, change] of [
     },
   ],
 ])
-  test(`Session owner drain rejects ${name} before stopping UI`, async () => {
+  test(`Session owner drain rejects ${name} before stopping UI`, async (t) => {
     assert.equal(typeof deployment.createSessionOwnerLifecycle, "function");
-    const f = ownerInventory();
+    const f = ownerInventory(t);
     change(f);
     await assert.rejects(() =>
       deployment.createSessionOwnerLifecycle(f.options),

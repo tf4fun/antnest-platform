@@ -188,6 +188,123 @@ test("Session collects only inside an acknowledged real owner stop and joins res
   assert.equal(ack.lifecycle.restored, true);
 });
 
+for (const metadata of ["missing", "duplicate"])
+  test(`Session owner stop and restoration complete with ${metadata} original Trace IDs`, async (t) => {
+    assert.equal(typeof implementation.withSessionOwnerDrain, "function");
+    assert.equal(typeof implementation.serveSessionOwnerDrain, "function");
+    const f = await fixture(t),
+      value = input(),
+      controller = new AbortController();
+    if (metadata === "missing")
+      for (const closure of value.closures) delete closure.traceID;
+    else
+      for (const closure of value.closures)
+        closure.traceID = value.closures[0].traceID;
+    const originalClosures = structuredClone(value.closures);
+    const host = f.serve({ signal: controller.signal });
+    const client = implementation
+      .withSessionOwnerDrain(
+        value,
+        async (receipt) => {
+          assert.deepEqual(f.events, ["baseline", "stopped"]);
+          assert.equal(receipt.after["agent-ui"].running, false);
+          f.events.push("collection-entered");
+          return "collected-after-real-stop";
+        },
+        f.options,
+      )
+      .catch((error) => {
+        // A preflight failure cannot leave the host polling for an unpublished
+        // request. Once stop begins, the normal restoration handshake must join.
+        if (!f.events.includes("stopped")) controller.abort(error);
+        throw error;
+      });
+    const results = await Promise.allSettled([host, client]);
+    assert.equal(results[0].status, "fulfilled", String(results[0].reason));
+    assert.equal(results[1].status, "fulfilled", String(results[1].reason));
+    assert.equal(results[1].value, "collected-after-real-stop");
+    assert.deepEqual(f.events, [
+      "baseline",
+      "stopped",
+      "collection-entered",
+      "restored",
+    ]);
+    assert.equal(value.closures.length, 8);
+    assert.deepEqual(value.closures, originalClosures);
+    const request = JSON.parse(
+      await readFile(join(f.directory, "request-owner-drain"), "utf8"),
+    );
+    assert.equal(request.agent_id, value.agentId);
+    assert.equal(request.identity_container_id, "3".repeat(64));
+    const ack = JSON.parse(
+      await readFile(join(f.directory, "owner-restored"), "utf8"),
+    );
+    assert.deepEqual(ack.request, request);
+    assert.equal(ack.status, "restored");
+    assert.equal(ack.lifecycle.restored, true);
+  });
+
+for (const fault of ["forced-drain", "foreign-restoration"])
+  test(`missing Trace IDs cannot excuse ${fault} after an actual owner stop`, async (t) => {
+    const f = await fixture(t),
+      value = input(),
+      controller = new AbortController();
+    for (const closure of value.closures) delete closure.traceID;
+    let collected = false;
+    const host = f.serve({
+      signal: controller.signal,
+      async createLifecycle(request) {
+        f.events.push("baseline");
+        return {
+          baseline: f.receipt.baseline,
+          async collect(callback) {
+            f.events.push("stopped");
+            if (fault === "forced-drain") f.receipt.forced_drain = true;
+            try {
+              return await callback(f.receipt);
+            } finally {
+              restore(f.receipt);
+              f.events.push("restored");
+              if (fault === "foreign-restoration")
+                request.nonce = "00000000-0000-4000-8000-000000000000";
+            }
+          },
+        };
+      },
+    });
+    const client = implementation
+      .withSessionOwnerDrain(
+        value,
+        async () => {
+          collected = true;
+          return "collected";
+        },
+        f.options,
+      )
+      .catch((error) => {
+        if (!f.events.includes("stopped")) controller.abort(error);
+        throw error;
+      });
+    const results = await Promise.allSettled([host, client]);
+    assert.equal(results[1].status, "rejected");
+    assert.deepEqual(f.events, ["baseline", "stopped", "restored"]);
+    assert.equal(f.receipt.restored, true);
+    if (fault === "forced-drain") {
+      assert.equal(results[0].status, "rejected");
+      assert.equal(collected, false);
+    } else {
+      assert.equal(results[0].status, "fulfilled");
+      assert.equal(collected, true);
+      const request = JSON.parse(
+        await readFile(join(f.directory, "request-owner-drain"), "utf8"),
+      );
+      const ack = JSON.parse(
+        await readFile(join(f.directory, "owner-restored"), "utf8"),
+      );
+      assert.notEqual(ack.request.nonce, request.nonce);
+    }
+  });
+
 for (const [name, change] of [
   ["unfinished protocol client", (value) => value.clients.add({})],
   ["unfinished browser observer", (value) => value.observers.add({})],
@@ -201,12 +318,6 @@ for (const [name, change] of [
     "unjoined protocol client",
     (value) => {
       value.closures[0].protocolClientClosedLocally = false;
-    },
-  ],
-  [
-    "duplicate original trace",
-    (value) => {
-      value.closures[0].traceID = value.closures[1].traceID;
     },
   ],
   ["missing scenario", (value) => value.closures.pop()],

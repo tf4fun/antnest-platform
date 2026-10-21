@@ -25,6 +25,17 @@ import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertStoredSessionEffects } from "./acp-session-effects.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 import { withSessionOwnerDrain } from "./session-owner-drain.mjs";
+import { collectSessionDiagnostics } from "./session-trace-policy.mjs";
+import {
+  joinSessionFaults,
+  runSessionBusiness,
+} from "./session-business-closeout.mjs";
+import { assertSecretFree } from "./evidence.mjs";
+import {
+  evidenceDirectory,
+  writeEvidenceFile,
+} from "../../support/storage.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
 const credentials = {
   organization_slug: "stage3",
@@ -40,11 +51,17 @@ const clients = new Set(),
   denied = [],
   execution = [],
   restored = [],
+  snapshots = [],
+  modelObservations = [],
+  finalLogouts = [],
   secrets = [
     credentials.password,
     "stage3-admin-password",
     "acp-session-private-key",
   ];
+const directory = evidenceDirectory(process.env.ANTNEST_IDENTITY_EVIDENCE_DIR);
+assert(directory, "Session business evidence directory required");
+const cleanupDiagnostics = createTraceDiagnostics({ directory });
 const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
 const pool = new Pool({
   connectionString: process.env.TEST_ACP_DATABASE_URL,
@@ -55,6 +72,28 @@ const pool = new Pool({
 });
 let agent,
   step = "setup";
+
+function archiveBusiness(status, details = {}) {
+  const raw =
+    JSON.stringify(
+      {
+        version: 1,
+        status,
+        agent_id: agent,
+        identity_transitions: identityTransitions,
+        closures: denied,
+        snapshots,
+        model_observations: modelObservations,
+        requests: [...restored, ...execution],
+        final_logouts: finalLogouts,
+        ...details,
+      },
+      null,
+      2,
+    ) + "\n";
+  assertSecretFree(raw, secrets);
+  writeEvidenceFile(directory, "session-business.private.json", raw);
+}
 
 async function until(probe, label, timeout = 45000) {
   const deadline = Date.now() + timeout;
@@ -187,7 +226,13 @@ async function snapshot(session) {
       [session],
     )
   ).rows;
-  return { sessions, runs, messages, tools };
+  const snapshot = { sessions, runs, messages, tools };
+  snapshots.push({
+    session_id: session,
+    observed_at_ms: Date.now(),
+    snapshot: structuredClone(snapshot),
+  });
+  return snapshot;
 }
 function unchanged(before, after) {
   assert(
@@ -221,6 +266,10 @@ async function modelState() {
   });
   assert.equal(response.status, 200);
   const state = await response.json();
+  modelObservations.push({
+    observed_at_ms: Date.now(),
+    state: structuredClone(state),
+  });
   assert.equal(
     state.errors.length,
     0,
@@ -344,16 +393,17 @@ async function outageAndExpiry() {
   }
   const stopped = await checkpoint(1);
   // Observe both remote closures without sending a message to trigger admission.
-  await Promise.all(
-    connected.map((item) =>
-      rejectedPrompt(
-        item.client,
-        item.observer,
-        item.sessionId,
-        item.beforeClose,
-        { kind: "identity-outage", transition: stopped },
-        item.beforeState,
-      ),
+  await joinSessionFaults(
+    connected.map(
+      (item) => () =>
+        rejectedPrompt(
+          item.client,
+          item.observer,
+          item.sessionId,
+          item.beforeClose,
+          { kind: "identity-outage", transition: stopped },
+          item.beforeState,
+        ),
     ),
   );
   // Gateway's dependency connect bound must report the outage within the default.
@@ -513,98 +563,124 @@ async function admittedRun(version) {
 }
 
 try {
-  await setup();
-  await logoutIdle();
-  await outageAndExpiry();
-  for (const version of [1, 2]) await admittedRun(version);
-  step = "owner_drain";
-  const state = await modelState();
-  assert.equal(state.requests.length, 8, "model request count mismatch");
-  const {
-    traces,
-    executionTraces,
-    ownerLifecycle,
-    ownerClose,
-    traceDiagnostics,
-  } = await withSessionOwnerDrain(
-    {
-      agentId: agent,
-      clients,
-      observers,
-      closures: denied,
-      identityTransitions,
-      modelRequests: state.requests.length,
-    },
-    async (ownerLifecycle) => {
-      step = "trace_acceptance";
-      const {
-        traces,
-        ownerClose,
-        diagnostics: traceDiagnostics,
-      } = await collectBridgeSessionOwnerEvidence(
-        "http://jaeger:16686",
+  await runSessionBusiness({
+    run: async () => {
+      await setup();
+      await logoutIdle();
+      await outageAndExpiry();
+      for (const version of [1, 2]) await admittedRun(version);
+      step = "owner_drain";
+      const state = await modelState();
+      assert.equal(state.requests.length, 8, "model request count mismatch");
+      archiveBusiness("observed", { model_requests: state.requests.length });
+      const collected = await withSessionOwnerDrain(
         {
           agentId: agent,
-          ownerLifecycle,
-          closures: denied.map((expected) => ({
-            ...expected,
-            identityTransitions,
-            ownerLifecycle,
-            deployment: {
-              project: process.env.COMPOSE_PROJECT_NAME,
-              runID: process.env.ANTNEST_E2E_RUN_ID,
-            },
-          })),
+          clients,
+          observers,
+          closures: denied,
+          identityTransitions,
+          modelRequests: state.requests.length,
         },
-        secrets,
-      );
-      const executionTraces = [];
-      for (const expected of [...restored, ...execution])
-        executionTraces.push(
-          await collectPrivateACPTrace("http://jaeger:16686", expected, {
-            directory: process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
-            flush: () => telemetry.flush(),
-            secrets,
-            inspect: (trace, bound, canaries) =>
-              inspectCommandTraceFromRequests(
-                trace,
-                bound,
-                canaries,
-                state.requests,
+        async (ownerLifecycle) => {
+          step = "trace_diagnostics";
+          const result = await collectSessionDiagnostics({
+            directory,
+            owner: (signal) =>
+              collectBridgeSessionOwnerEvidence(
+                "http://jaeger:16686",
+                {
+                  agentId: agent,
+                  ownerLifecycle,
+                  closures: denied.map((expected) => ({
+                    ...expected,
+                    identityTransitions,
+                    ownerLifecycle,
+                    deployment: {
+                      project: process.env.COMPOSE_PROJECT_NAME,
+                      runID: process.env.ANTNEST_E2E_RUN_ID,
+                    },
+                  })),
+                },
+                secrets,
+                { directory, signal },
               ),
-          }),
-        );
+            requests: [...restored, ...execution],
+            request: (expected, signal) =>
+              collectPrivateACPTrace("http://jaeger:16686", expected, {
+                directory,
+                signal,
+                flush: () => telemetry.flush(),
+                secrets,
+                inspect: (trace, bound, canaries) =>
+                  inspectCommandTraceFromRequests(
+                    trace,
+                    bound,
+                    canaries,
+                    state.requests,
+                  ),
+              }),
+            strict: (traces) =>
+              assert.equal(identityEvidenceExitCode(traces), 0),
+          });
+          return { ...result, ownerLifecycle };
+        },
+      );
+      step = "final_logout";
+      for (const target of [browser, admin]) {
+        const response = await target.request("/api/session", {
+          method: "DELETE",
+          status: 204,
+        });
+        finalLogouts.push({
+          path: "/api/session",
+          method: "DELETE",
+          status: response.status,
+          observed_at_ms: Date.now(),
+        });
+      }
       return {
-        traces,
-        executionTraces,
-        ownerLifecycle,
-        ownerClose,
-        traceDiagnostics,
+        status: "business_passed",
+        agent_id: agent,
+        versions: [1, 2],
+        silent_closures: denied.length,
+        post_close_requests_blocked: denied.length,
+        empty_logout_recoveries: 2,
+        continued_runs: 2,
+        recovered_runs: 2,
+        model_requests: state.requests.length,
+        identity_transitions: identityTransitions,
+        owner_lifecycle: collected.ownerLifecycle,
+        owner_close: collected.ownerClose,
+        owner_trace_diagnostics: collected.ownerDiagnostics,
+        trace_diagnostics: collected.diagnostics,
+        traces: collected.traces,
+        execution_traces: collected.executionTraces,
       };
     },
-  );
-  process.exitCode = identityEvidenceExitCode([...traces, ...executionTraces]);
-  await browser.request("/api/session", { method: "DELETE", status: 204 });
-  await admin.request("/api/session", { method: "DELETE", status: 204 });
-  process.stdout.write(
-    asciiJSON({
-      status: "business_passed",
-      agent_id: agent,
-      versions: [1, 2],
-      silent_closures: denied.length,
-      post_close_requests_blocked: denied.length,
-      empty_logout_recoveries: 2,
-      continued_runs: 2,
-      recovered_runs: 2,
-      model_requests: state.requests.length,
-      identity_transitions: identityTransitions,
-      owner_lifecycle: ownerLifecycle,
-      owner_close: ownerClose,
-      trace_diagnostics: traceDiagnostics,
-      traces,
-      execution_traces: executionTraces,
-    }) + "\n",
-  );
+    cleanup: async () => {
+      step = "resource_cleanup";
+      return closeSessionFaultResources({
+        clients,
+        observers,
+        pool,
+        telemetry,
+        traceDiagnostics: cleanupDiagnostics,
+      });
+    },
+    publish: (business, cleanup) => {
+      step = "business_archive";
+      archiveBusiness("completed", { report: business, cleanup });
+      process.stdout.write(
+        asciiJSON({
+          ...business,
+          business_artifact: "session-business.private.json",
+          cleanup,
+          cleanup_diagnostics: cleanupDiagnostics.summary(),
+        }) + "\n",
+      );
+    },
+  });
 } catch (error) {
   console.error(
     asciiJSON({
@@ -614,11 +690,4 @@ try {
     }),
   );
   process.exitCode = 1;
-} finally {
-  try {
-    await closeSessionFaultResources({ clients, observers, pool, telemetry });
-  } catch {
-    console.error(asciiJSON({ event: "acp_session_cleanup_failed" }));
-    process.exitCode = 1;
-  }
 }

@@ -56,14 +56,17 @@ test("Session cleanup drains transports, then database and telemetry", async () 
   assert.equal(calls.at(-1), "telemetry");
 });
 
-test("Session cleanup joins every resource despite synchronous, transport, database and telemetry failures", async () => {
+test("Session cleanup joins every resource and excludes auxiliary telemetry failure from business errors", async () => {
   assert.equal(typeof implementation.closeSessionFaultResources, "function");
   const clientDone = Promise.withResolvers(),
-    telemetryDone = Promise.withResolvers();
+    telemetryDone = Promise.withResolvers(),
+    observerEntered = Promise.withResolvers(),
+    telemetryEntered = Promise.withResolvers();
   const failures = ["client", "observer", "pool", "telemetry"].map(
     (name) => new Error(name),
   );
   const calls = [];
+  const diagnosticErrors = [];
   let settled = false;
   const result = implementation
     .closeSessionFaultResources({
@@ -86,6 +89,7 @@ test("Session cleanup joins every resource despite synchronous, transport, datab
         {
           async closeAndWait() {
             calls.push("observer-failed");
+            observerEntered.resolve();
             throw failures[1];
           },
         },
@@ -101,9 +105,22 @@ test("Session cleanup joins every resource despite synchronous, transport, datab
         async shutdown() {
           assert(calls.includes("pool-failed"));
           calls.push("telemetry-start");
+          telemetryEntered.resolve();
           await telemetryDone.promise;
           calls.push("telemetry-end");
           throw failures[3];
+        },
+      },
+      traceDiagnostics: {
+        async run(name, collect) {
+          assert.equal(typeof name, "string");
+          try {
+            await collect();
+            return { status: "passed" };
+          } catch (error) {
+            diagnosticErrors.push(error);
+            return { status: "failed" };
+          }
         },
       },
     })
@@ -117,20 +134,119 @@ test("Session cleanup joins every resource despite synchronous, transport, datab
         return error;
       },
     );
-  await delay(1);
-  assert(calls.includes("client-failed") && calls.includes("observer-failed"));
-  assert(!calls.includes("pool-failed"));
-  assert.equal(settled, false);
-  clientDone.resolve();
-  await delay(1);
-  assert(calls.includes("telemetry-start"));
-  assert.equal(settled, false);
-  telemetryDone.resolve();
-  const error = await result;
-  assert(error instanceof AggregateError);
-  assert.deepEqual(new Set(error.errors), new Set(failures));
-  assert.equal(calls.at(-1), "telemetry-end");
+  try {
+    await observerEntered.promise;
+    assert(
+      calls.includes("client-failed") && calls.includes("observer-failed"),
+    );
+    assert(!calls.includes("pool-failed"));
+    assert.equal(settled, false);
+    clientDone.resolve();
+    await Promise.race([
+      telemetryEntered.promise,
+      result.then(() =>
+        assert.fail("cleanup settled before telemetry shutdown"),
+      ),
+    ]);
+    await Promise.resolve();
+    assert.equal(settled, false);
+    telemetryDone.resolve();
+    const error = await result;
+    assert(error instanceof AggregateError);
+    assert.deepEqual(new Set(error.errors), new Set(failures.slice(0, 3)));
+    assert.deepEqual(diagnosticErrors, [failures[3]]);
+    assert.equal(calls.at(-1), "telemetry-end");
+  } finally {
+    clientDone.resolve();
+    telemetryDone.resolve();
+    await result;
+  }
 });
+
+for (const diagnostics of ["absent", "not-collected"])
+  test(`telemetry-only shutdown failure is auxiliary with ${diagnostics} diagnostics and is still joined`, async () => {
+    assert.equal(typeof implementation.closeSessionFaultResources, "function");
+    const entered = Promise.withResolvers(),
+      release = Promise.withResolvers();
+    const calls = [];
+    const failure = new Error("telemetry exporter failed");
+    let settled = false;
+    const result = implementation
+      .closeSessionFaultResources({
+        clients: [
+          {
+            async closeAndWait() {
+              calls.push("client");
+            },
+          },
+        ],
+        observers: [
+          {
+            async closeAndWait() {
+              calls.push("observer");
+            },
+          },
+        ],
+        pool: {
+          async end() {
+            calls.push("pool");
+          },
+        },
+        telemetry: {
+          async shutdown() {
+            assert(calls.includes("client") && calls.includes("observer"));
+            assert.equal(calls.at(-1), "pool");
+            entered.resolve();
+            await release.promise;
+            calls.push("telemetry-exited");
+            throw failure;
+          },
+        },
+        ...(diagnostics === "absent"
+          ? {}
+          : {
+              traceDiagnostics: {
+                async run() {
+                  calls.push("diagnostic-not-collected");
+                  return { status: "not_collected" };
+                },
+              },
+            }),
+      })
+      .then(
+        (value) => {
+          settled = true;
+          return { status: "fulfilled", value };
+        },
+        (error) => {
+          settled = true;
+          return { status: "rejected", error };
+        },
+      );
+    try {
+      await Promise.race([
+        entered.promise,
+        result.then(() =>
+          assert.fail("shutdown was skipped or released before joining"),
+        ),
+      ]);
+      await Promise.resolve();
+      assert.equal(settled, false);
+      release.resolve();
+      const completed = await result;
+      assert.equal(completed.status, "fulfilled");
+      assert.deepEqual(completed.value.telemetry, {
+        role: "auxiliary",
+        status: "warning",
+      });
+      assert(calls.includes("telemetry-exited"));
+      if (diagnostics === "not-collected")
+        assert(calls.includes("diagnostic-not-collected"));
+    } finally {
+      release.resolve();
+      await result;
+    }
+  });
 
 async function respond(directory, step, expected, change = () => {}) {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -251,6 +367,35 @@ for (const reason of ["revoked", "unavailable", "expired"])
     assert.equal(result.cause, f.cause);
     assert.equal(result.denial.traceID, "b".repeat(32));
     assert.deepEqual(result.principal, principal);
+  });
+
+for (const [name, value] of [
+  ["missing", undefined],
+  ["invalid", "PRIVATE-SESSION-TRACE-CANARY"],
+])
+  test(`Session fault completion treats ${name} closure and denial Trace IDs as auxiliary`, async () => {
+    const f = fault();
+    f.closure.traceID = value;
+    f.observer.rejectPrompt = async () => {
+      f.calls.push("http-denial");
+      return { traceID: value, credentialScope: scope };
+    };
+    const result = await implementation.finishSessionFault(f);
+    assert.equal(result.traceID, undefined);
+    assert.equal(result.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.equal(result.denial.traceID, undefined);
+    assert.equal(result.denial.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.equal(result.credentialScope, scope);
+    assert.equal(result.denial.credentialScope, scope);
+    assert.equal(result.protocolClientClosedLocally, true);
+    assert.equal(result.localClose, false);
+    assert.deepEqual(f.calls, [
+      "remote-close",
+      "http-denial",
+      "sdk-joined",
+      "observer-joined",
+    ]);
+    assert(!inspect(result).includes("PRIVATE-SESSION-TRACE-CANARY"));
   });
 
 test("an already elapsed absolute deadline needs no further expiry wait", async () => {
@@ -446,7 +591,39 @@ test("logout records the actual HTTP trace and original authority without retain
   assert(result.completedAt >= result.startedAt);
 });
 
-for (const mode of ["trace", "cookie"])
+for (const [name, traceID] of [
+  ["missing", undefined],
+  ["invalid", "PRIVATE-LOGOUT-TRACE-CANARY"],
+])
+  test(`logout completes with ${name} Trace ID without echoing invalid metadata`, async () => {
+    const f = fault();
+    const browser = {
+      cookie: "original",
+      async request() {
+        this.cookie = "";
+        const headers = new Headers({ "cache-control": "no-store" });
+        headers.append("set-cookie", "antnest_session=; Max-Age=0; Path=/");
+        headers.append("set-cookie", "antnest_csrf=; Max-Age=0; Path=/");
+        return { status: 204, traceID, headers };
+      },
+    };
+    f.observer.browser = { cookie: "original" };
+    const result = await implementation.logoutSession(
+      browser,
+      f.observer,
+      f.checkpoint,
+      principal,
+    );
+    assert.equal(result.status, 204);
+    assert.equal(result.traceID, undefined);
+    assert.equal(result.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.equal(result.credentialScope, scope);
+    assert.deepEqual(result.principal, principal);
+    assert(!inspect(result).includes("PRIVATE-LOGOUT-TRACE-CANARY"));
+    assert(result.completedAt >= result.startedAt);
+  });
+
+for (const mode of ["cookie", "cookie-clearance", "no-store", "http"])
   test(`logout ${mode} contract failure cannot disclose a credential canary`, async () => {
     const canary = "PRIVATE-LOGOUT-CREDENTIAL-CANARY";
     const f = fault();
@@ -454,12 +631,15 @@ for (const mode of ["trace", "cookie"])
       cookie: "original",
       async request() {
         this.cookie = mode === "cookie" ? canary : "";
-        const headers = new Headers({ "cache-control": "no-store" });
+        const headers = new Headers({
+          "cache-control": mode === "no-store" ? "public" : "no-store",
+        });
         headers.append("set-cookie", "antnest_session=; Max-Age=0; Path=/");
-        headers.append("set-cookie", "antnest_csrf=; Max-Age=0; Path=/");
+        if (mode !== "cookie-clearance")
+          headers.append("set-cookie", "antnest_csrf=; Max-Age=0; Path=/");
         return {
-          status: 204,
-          traceID: mode === "trace" ? canary : "c".repeat(32),
+          status: mode === "http" ? 200 : 204,
+          traceID: "c".repeat(32),
           headers,
         };
       },
