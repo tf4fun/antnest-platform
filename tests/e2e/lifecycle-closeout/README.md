@@ -83,7 +83,7 @@ traces and do not acquire Controller admissions.
 
 The legacy diagnostic inspectors check topology and convergence across three
 samples. They retain failures, warnings and strict exit codes in the evidence.
-Default Foundation treats these results as auxiliary under one shared 60-second
+Default Foundation and Runtime Loss treat these results as auxiliary under one shared 60-second
 collection budget; its business and cleanup admission is described below.
 Supplied passwords, model keys and session
 cookies must not appear in any span; RPC content capture is disabled. A span
@@ -418,6 +418,14 @@ unknown internal diagnostics still fail admission.
 
 ## Unplanned Runtime Loss
 
+The current Loss admission uses complete original Admin Run/detail/event pages,
+SDK replies and replay/denial checkpoints independently of Trace. Four completed
+Runs and durable Tools, eight model requests, private offline state, six completed
+lifecycle operations, physical Runtime removal/replacement and workspace checks
+remain required. Request, lifecycle and strict Trace collectors share one
+60-second auxiliary budget. Original findings and unavailable collections are
+retained; actual seven-service stops and resource joins remain hard requirements.
+
 Two Agents each complete a real Bash append before their idle Runtime is
 stopped and removed without force.
 
@@ -436,7 +444,7 @@ nine application images.
 
 Loss events have an `event_<32 lowercase hex>` identity; see the
 [resource ID contract](../../../contracts/resource-identifiers.md). ACP state
-becomes offline and prompts fail with `-32020/agent_unavailable` without
+becomes offline and prompts fail with the negotiated `agent_unavailable` error without
 notifications, model calls or new Runs. An explicit rebuild with the same
 Template revision restores the Agent with new compute and Runtime identity and
 the same configuration and workspace. A real `read` returns the original bytes,

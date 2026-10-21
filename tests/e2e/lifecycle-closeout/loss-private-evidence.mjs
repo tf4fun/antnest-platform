@@ -24,6 +24,7 @@ const unique = (values) => {
 export function lossPublicResult(result) {
   const {
     private_loss,
+    private_business,
     private_connections,
     private_state_receipts,
     private_collection_errors,

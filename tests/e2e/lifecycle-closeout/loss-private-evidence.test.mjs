@@ -39,6 +39,13 @@ test("Loss admits complete real private wire, original state and four same-Sessi
   );
   assert.equal(typeof implementation.lossPublicResult, "function");
   const publicResult = implementation.lossPublicResult(result);
+  assert.equal(
+    implementation.lossPublicResult({
+      ...result,
+      private_business: { original: "private" },
+    }).private_business,
+    undefined,
+  );
   assert.deepEqual(publicResult.cases, result.cases);
   for (const field of [
     "private_loss",

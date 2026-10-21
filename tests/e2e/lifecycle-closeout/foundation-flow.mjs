@@ -337,6 +337,7 @@ export async function runFoundationFlow(
       resources,
       ready,
       traceSecrets,
+      traceDiagnostics,
     });
     if (result.profile === "workspace-protocol")
       return collectWorkspaceLifecycles(
@@ -395,11 +396,17 @@ export async function runFoundationFlow(
       const errors = [];
       const traces = await collectLossTraces(
         admitted,
-        (operation) =>
-          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, localSignal = signal) =>
+          collectFoundationLifecycle(
+            config,
+            operation,
+            traceSecrets,
+            localSignal,
+          ),
         (operation, error) => saveFoundationFailure(config, operation, error),
         signal,
         errors,
+        traceDiagnostics,
       );
       recordLossFailures(result, errors);
       return recordLossFailures(

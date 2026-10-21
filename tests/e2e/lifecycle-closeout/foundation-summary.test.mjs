@@ -95,7 +95,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   assert(
     lossFailureIndex > archiveIndex &&
       lossFailureIndex <
-        source.indexOf("admission = lossPrivateAdmission(result)"),
+        source.indexOf("admission = await admitLossBusiness(result, {"),
     "Loss must archive original business evidence before propagating collection/cleanup failures",
   );
   assert(
