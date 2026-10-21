@@ -23,13 +23,11 @@ for (const retries of [1, 2, 9])
       result.owned_error_spans.filter(
         (r) => r.reason === "runtime-completion-serialization-recovered",
       ),
-      f.attempts
-        .slice(0, -1)
-        .map(({ sql }) => ({
-          trace_id: f.p.trace.traceID,
-          span_id: sql[8].spanID,
-          reason: "runtime-completion-serialization-recovered",
-        })),
+      f.attempts.slice(0, -1).map(({ sql }) => ({
+        trace_id: f.p.trace.traceID,
+        span_id: sql[8].spanID,
+        reason: "runtime-completion-serialization-recovered",
+      })),
     );
     assert.equal(JSON.stringify([...f.traces.values()]), before);
   });
