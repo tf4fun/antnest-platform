@@ -881,6 +881,35 @@ try {
   // Restore current metadata through the production process boundary. Merely
   // recreating a protocol connection must not change the stored activity time.
   const requestsBeforeRestart = modelRequests.length;
+  const stateClaims = {
+    org: "organization-1",
+    sub: "principal-1",
+    agt: "agent-1",
+  };
+  async function executionState() {
+    const response = await fetch(
+      `${origin}/rpc/agent-acp/get-agent-execution-state`,
+      {
+        method: "POST",
+        headers: {
+          ...authenticatedHeaders(authentication, "agent-ui", stateClaims),
+          "content-type": "application/json",
+        },
+        body: "{}",
+        signal: stop.signal,
+      },
+    );
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    return body;
+  }
+  const stateBeforeRestart = await executionState();
+  assert.equal(stateBeforeRestart.agent_id, "agent-1");
+  assert.equal(stateBeforeRestart.access_allowed, true);
+  assert.equal(stateBeforeRestart.availability, "ready");
+  assert.equal(stateBeforeRestart.active_session_id, null);
+  assert.equal(stateBeforeRestart.unavailable_reason, null);
+  assert.match(stateBeforeRestart.configuration_revision, /^[a-f0-9]{64}$/u);
   await client.close();
   await observer.close();
   await docker(["restart", service]);
@@ -894,27 +923,13 @@ try {
       return false;
     }
   });
-  // Credentials are republished by Controller after a cold ACP start. The
-  // same revision must restore readiness without changing Session activity.
-  const coldPrivateRoot = verifyPrivateFiles(await privateFiles(), false);
-  assert.notEqual(coldPrivateRoot, originalPrivateRoot);
-  const unavailable = await fetch(
-    `${origin}/rpc/agent-acp/get-agent-execution-state`,
-    {
-      method: "POST",
-      headers: {
-        ...authenticatedHeaders(authentication, "agent-ui", { agt: "agent-1" }),
-        "content-type": "application/json",
-      },
-      body: "{}",
-      signal: stop.signal,
-    },
-  );
-  assert.equal(unavailable.status, 503);
-  assert.equal((await unavailable.json()).code, "execution_state_unavailable");
+  // Sealed authority restores before listening. No Controller publication may
+  // precede the original caller's state read or actual SDK Session recovery.
+  const restoredPrivateFiles = await privateFiles();
+  const warmPrivateRoot = verifyPrivateFiles(restoredPrivateFiles, true);
+  assert.notEqual(warmPrivateRoot, originalPrivateRoot);
+  assert.deepEqual(await executionState(), stateBeforeRestart);
   runtimeChecks++;
-  await publish();
-  verifyPrivateFiles(await privateFiles(), true);
   client = connect();
   observer = connect();
   for (const current of [client, observer])
@@ -926,6 +941,16 @@ try {
   await observer.request("session/load", { ...setup, sessionId });
   assert.deepEqual(await metadata(sessionId), savedInfo);
   assert.equal(modelRequests.length, requestsBeforeRestart);
+  // Reapplying the already restored revision is idempotent, including private
+  // sender files, the complete public state and existing Session activity.
+  await publish();
+  const afterPublicationFiles = await privateFiles();
+  verifyPrivateFiles(afterPublicationFiles, true);
+  assert.deepEqual(afterPublicationFiles, restoredPrivateFiles);
+  assert.deepEqual(await executionState(), stateBeforeRestart);
+  assert.deepEqual(await metadata(sessionId), savedInfo);
+  assert.equal(modelRequests.length, requestsBeforeRestart);
+  await assertPublicStorage();
   const fork = await client.request("session/fork", { ...setup, sessionId });
   assert.equal(
     (await metadata(fork.sessionId, [client])).title,
@@ -1149,7 +1174,7 @@ try {
     }
   });
   assert.notEqual(
-    verifyPrivateFiles(await privateFiles(), false),
+    verifyPrivateFiles(await privateFiles(), true),
     beforeShutdown,
   );
   runtimeChecks++;
@@ -1158,6 +1183,7 @@ try {
     image,
     scenarios: [
       "session-metadata-observers-list-fork-and-process-restart",
+      "warm-authority-state-and-session-recovery-before-republication",
       "refusal-context-with-retained-transcript",
       "close-all-observers-and-reload",
       "cancel-unknown-tool-with-runtime-protection",
