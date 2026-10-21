@@ -19,6 +19,14 @@ and draft v2 are separate adapters over one application core. The unversioned
 not construct Agents or Runtimes; Agent Controller publishes the current
 execution configuration into it.
 
+Both protocol versions declare `_meta["antnest.dev/errors"] = {version: 1}`
+in `initialize`. Admission failures use the shared
+[error catalog](../../contracts/agent-acp/errors.md) for numeric codes, fixed
+safe messages and retry hints. This changes registered admission errors from
+the former generic `-32020` code to their catalog classifications; `data.code`
+continues to identify the specific reason. Unknown errors remain a fixed,
+non-retryable fallback. A retry hint never authorizes replay of an accepted Run.
+
 Normal process shutdown sends WebSocket close code `1001` on both protocol
 endpoints and joins the peer close before retiring the listeners. New upgrades
 are rejected once shutdown begins. A peer that does not acknowledge within five
