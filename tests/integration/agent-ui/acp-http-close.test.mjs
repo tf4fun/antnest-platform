@@ -5,6 +5,7 @@ import test from "node:test";
 import { AcpHttpBridge } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
 import { startBridgeTelemetry } from "../../../services/agent-ui/web/server/dist/telemetry.js";
 import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
+import { shutdownWorkspaceService } from "../../../services/agent-ui/web/server/dist/service-shutdown.js";
 import { verifiedRequestContext } from "../../../services/agent-ui/web/server/dist/http/trusted-identity.js";
 import { testScope, TestRequest } from "./auth-fixture.mjs";
 
@@ -330,6 +331,79 @@ async function fixture(mode = "hold", options = {}) {
     await close();
     throw error;
   }
+}
+
+for (const mode of ["hold", "rejected"]) {
+  test(`service shutdown retains real ACP ${mode} DELETE admission when telemetry fails`, async () => {
+    const f = await fixture(mode);
+    const calls = [],
+      warnings = [],
+      errors = [];
+    const diagnostic = new Error("telemetry export unavailable");
+    let pending,
+      settled = false;
+    try {
+      await bounded(f.connected);
+      pending = shutdownWorkspaceService({
+        service: {
+          async close() {
+            calls.push("service:start");
+            try {
+              await f.bridge.close();
+            } finally {
+              calls.push("service:settled");
+            }
+          },
+        },
+        telemetry: {
+          async shutdown() {
+            calls.push("telemetry");
+            throw diagnostic;
+          },
+        },
+        authentication: {
+          async close() {
+            calls.push("authentication");
+          },
+        },
+        reportError: (...values) => errors.push(values),
+        reportWarning: (...values) => warnings.push(values),
+      }).finally(() => {
+        settled = true;
+      });
+      await bounded(f.deleted);
+      if (mode === "hold") {
+        assert.equal(
+          settled,
+          false,
+          "must join the actual DELETE response body",
+        );
+        assert.deepEqual(calls, ["service:start"]);
+        f.release();
+      }
+      assert.equal(await bounded(pending), mode === "hold" ? 0 : 1);
+      assert.deepEqual(calls, [
+        "service:start",
+        "service:settled",
+        "telemetry",
+        "authentication",
+      ]);
+      assert.deepEqual(warnings, [
+        ["Bridge telemetry shutdown warning", diagnostic],
+      ]);
+      assert.equal(errors.length, mode === "hold" ? 0 : 1);
+      if (mode === "rejected") {
+        assert.equal(errors[0][0], "Bridge shutdown failed");
+        assert.match(errors[0][1].message, /cleanup failed/);
+      }
+      assert.equal(f.requests.length, 1, "one actual DELETE required");
+      await bounded(Promise.all(f.streamClosures));
+    } finally {
+      f.release();
+      await f.close();
+      await pending;
+    }
+  });
 }
 
 test("ACP cancelled initialization waits for a late connection ID and its DELETE body", async () => {

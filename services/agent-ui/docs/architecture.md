@@ -210,6 +210,10 @@ still joins their termination before reporting failure. An initializing ACP
 connection also has a 10-second deadline; cancellation joins any late-created
 connection's cleanup before initialization fails. Repeated close calls share
 the same completion and retain the same failure.
+Signal shutdown awaits service close, telemetry SDK shutdown, and authentication
+client close in that order, attempting every step even after a failure.
+Telemetry shutdown failures produce a warning and do not change the exit status;
+service or authentication cleanup failures still produce a nonzero exit status.
 The forced-drain warning covers either accepted work left for ACP to continue
 or unsuccessful resource cleanup. Exit status alone therefore does not prove
 clean connection retirement. Single-replica deployment is the current model. Multi-replica
