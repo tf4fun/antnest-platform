@@ -5,7 +5,7 @@ import {
 } from "../e2e/edge-gateway/resolve-cache-outage.mjs";
 import { inspectRecoveryWindow } from "../e2e/edge-gateway/resolve-cache-recovery.mjs";
 import { inspectOutageRejectionBusiness } from "../e2e/edge-gateway/resolve-cache-rejection-business.mjs";
-import { inspectRecoveryRebuild } from "../e2e/edge-gateway/resolve-cache-rebuild.mjs";
+import { inspectRecoveryRebuild } from "../e2e/edge-gateway/resolve-cache-rebuild-business.mjs";
 import { inspectOutageBusinessResources } from "../e2e/edge-gateway/resolve-cache-resource-business.mjs";
 
 const schema = "resolve-cache-outage-business/v1";
