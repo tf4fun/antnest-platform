@@ -158,20 +158,19 @@ reconnect, and checks the terminal v2 state and stop reason. Smart judge text
 must stay out of the chat.
 
 The deterministic model must receive exactly 52 requests, including four hidden
-Smart judgments, on the expected Model for every phase. Each prompt Trace
-correlates the model HTTP CLIENT spans to ACP-owned Runs, committed persistence,
-fresh Runtime preparation and the permission outcome. Every approval wait must
-precede its permitted dispatch; rejected, cancelled and Chat Runs must have no
-Tool effect. Runtime SERVER and Tool ancestry and Run IDs are required for every
-effect. Two reconnect request Traces prove that load and resume do not execute a
-second Run, and two foreign-user denials require the specific ACP access error
-with no private updates or execution. The v1 reconnect prompt closes its socket
-before the answer, so only that ACP prompt span may record the failed response
-dispatch.
+Smart judgments, on the expected Model for every phase. Original SDK receipts,
+complete Admin Run lists and execution/permission pages independently verify
+26 Runs, sixteen executed Tools, sixteen persisted permission waits and eighteen
+approval deliveries. Each Run binds to its original ready Agent and Runtime.
+Rejection, cancellation, replay and reconnect must retain their original outcomes
+and must not introduce model calls or execution. Real Runtime acknowledgement,
+Agent deletion and final operation completion remain hard gates.
 
-Topology and secret-boundary results are reported separately from strict Jaeger
-timing. Timing warnings alone exit 2; any other failure exits 1. The fixture
-does not synchronize clocks, rewrite timestamps or waive unrelated diagnostics.
+Trace collection, topology, timing and exporter failures are auxiliary under one
+shared 60-second budget. Missing or malformed diagnostic identities do not waive
+business checks or fabricate evidence. Raw diagnostic failures and unexecuted
+collections are recorded explicitly. The client reports business success only
+after its resource wrapper has finished the actual shutdown and connection joins.
 
 ## Optional modes
 

@@ -11,6 +11,7 @@ import {
   capturePermissionConnection,
   indexPermissionRequests,
 } from "./client-evidence.mjs";
+import { inspectPermissionRunBusiness } from "./run-business.mjs";
 import {
   collectPrivatePermissionTrace,
   collectPrivatePermissionNotificationTrace,
@@ -32,6 +33,7 @@ import { seedPermissions } from "./setup.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -54,6 +56,7 @@ const telemetry = createPrivateACPTelemetry("http://jaeger:4318/v1/traces");
 const directory = evidenceDirectory(
   process.env.ANTNEST_PERMISSION_EVIDENCE_DIR,
 );
+const diagnostics = createTraceDiagnostics({ directory, budgetMs: 60_000 });
 const email = `permission-owner-${suffix}@example.com`;
 assert.match(suffix ?? "", /^[0-9a-f-]{36}$/);
 const setup = { cwd: "/workspace", mcpServers: [] };
@@ -320,6 +323,110 @@ async function exercise(version, agent, modelID) {
     outcomes.push(`v${version}-reconnect`);
   });
 }
+async function collectRunBusiness(inventory, modelStatus, readyAgents) {
+  const evidence = {
+    agent_ids: [...agents],
+    principal_id: issuedSessions.get(member)?.principal.user_id,
+    connections,
+    inventory,
+    model_requests: modelStatus.requests,
+    model_names: {
+      default: `permission-model-${suffix}`,
+      alternate: `alternate-model-${suffix}`,
+    },
+    agents: agents.map((agent_id) => ({
+      agent_id,
+      ready: structuredClone(readyAgents.get(agent_id)),
+      page: null,
+      all: [],
+    })),
+  };
+  let responseCount = 0,
+    failure;
+  const read = async (path) => {
+    const file = `run-audit-response-${String(++responseCount).padStart(3, "0")}.private.json`;
+    let captured = false,
+      archiveFailure,
+      result;
+    try {
+      result = await admin.request(path, {
+        onResponse: (response) => {
+          captured = true;
+          try {
+            writeEvidenceFile(
+              directory,
+              file,
+              JSON.stringify({
+                method: "GET",
+                path,
+                ...response,
+              }) + "\n",
+            );
+          } catch (error) {
+            archiveFailure = error;
+          }
+        },
+      });
+    } catch (error) {
+      if (archiveFailure)
+        throw new AggregateError(
+          [error, archiveFailure],
+          "Permissions audit request and archive failed",
+        );
+      throw error;
+    }
+    if (archiveFailure) throw archiveFailure;
+    assert(captured, "actual Permissions audit response was not observed");
+    return result.body;
+  };
+  try {
+    for (const agent of evidence.agents) {
+      assert(agent.ready, "original Permissions ready Agent required");
+      agent.page = await read(
+        `/api/admin/execution-audits?agent_id=${encodeURIComponent(agent.agent_id)}&limit=100`,
+      );
+      assert(Array.isArray(agent.page?.items), "Permissions Run list required");
+      assert.equal(
+        agent.page.next_cursor,
+        null,
+        "complete Permissions Run list required",
+      );
+      for (const row of agent.page.items) {
+        assert(
+          typeof row.run_id === "string" && row.run_id.length > 0,
+          "listed Permissions Run identity required",
+        );
+        const path = `/api/admin/execution-audits/${encodeURIComponent(row.run_id)}`;
+        const detail = { run: null, events: null, permissions: null };
+        agent.all.push(detail);
+        detail.run = await read(path);
+        detail.events = await read(`${path}/events?stream=execution&limit=100`);
+        detail.permissions = await read(
+          `${path}/events?stream=permissions&limit=100`,
+        );
+      }
+    }
+    return inspectPermissionRunBusiness(evidence);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    try {
+      writeEvidenceFile(
+        directory,
+        "run-business.private.json",
+        JSON.stringify(evidence) + "\n",
+      );
+    } catch (error) {
+      if (failure)
+        throw new AggregateError(
+          [failure, error],
+          "Permissions business audit and archive failed",
+        );
+      throw error;
+    }
+  }
+}
 async function main() {
   assert(directory, "Permissions private evidence directory required");
   shellStoragePreflight(directory);
@@ -348,7 +455,8 @@ async function main() {
     process.env.TEST_RUNTIME_IMAGE,
     suffix,
   );
-  const { inventory, modelStatus, runtimeInspection } =
+  const readyAgents = new Map();
+  const { inventory, modelStatus, runtimeInspection, runBusiness } =
     await withPermissionAgentCleanup(
       agents,
       admin,
@@ -367,7 +475,10 @@ async function main() {
           agents.push(created.agent.agent_id);
           await operation(created.operation.request_id);
           const agent = agents.at(-1);
-          await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
+          readyAgents.set(
+            agent,
+            await waitForAgentReady(() => api(`/api/admin/agents/${agent}`)),
+          );
           const denied = await connect(version, agent, stranger, "foreign");
           await use(denied, () => assertAgentDenied(denied));
           await exercise(version, agent, alternateModelID);
@@ -389,15 +500,18 @@ async function main() {
           0,
           "Permissions connections were not joined",
         );
-        const inventory = indexPermissionRequests({
-          agents,
-          connections,
-          outcomes,
-          models: modelStatus.requests,
-          alternateModelID,
-          defaultModel: `permission-model-${suffix}`,
-          alternateModel: `alternate-model-${suffix}`,
-        });
+        const inventory = indexPermissionRequests(
+          {
+            agents,
+            connections,
+            outcomes,
+            models: modelStatus.requests,
+            alternateModelID,
+            defaultModel: `permission-model-${suffix}`,
+            alternateModel: `alternate-model-${suffix}`,
+          },
+          { requireTrace: false },
+        );
         for (const [file, value] of [
           ["connection-inventory.private.json", connections],
           ["request-inventory.private.json", inventory.requests],
@@ -406,6 +520,12 @@ async function main() {
           ["permission-inventory.private.json", inventory.permissions],
         ])
           writeEvidenceFile(directory, file, JSON.stringify(value) + "\n");
+        stage = "run-business";
+        const runBusiness = await collectRunBusiness(
+          inventory,
+          modelStatus,
+          readyAgents,
+        );
         if (process.env.TEST_BROWSER === "true") {
           stage = "browser-validation";
           console.log(
@@ -430,13 +550,13 @@ async function main() {
           agents,
           { consumed },
         );
-        return { inventory, modelStatus, runtimeInspection };
+        return { inventory, modelStatus, runtimeInspection, runBusiness };
       },
-      { directory },
+      { directory, requireTrace: false },
     );
   // The original two-Runtime ACK and both completed delete operations are
-  // recorded before shutdown-flushed Trace evidence is admitted.
-  stage = "trace-validation";
+  // recorded before auxiliary shutdown-flushed Trace collection begins.
+  stage = "trace-diagnostics";
   secrets.push(...outcomes);
   const options = {
     directory,
@@ -444,69 +564,100 @@ async function main() {
     requests: modelStatus.requests,
     flush: () => telemetry.flush(),
   };
-  for (const expected of [
+  for (const [index, expected] of [
     ...inventory.requests,
     ...inventory.initializations,
-  ]) {
+  ].entries()) {
     stage = `trace-${expected.label}`;
+    const diagnostic = await diagnostics.run(
+      `permissions-request-${index}`,
+      (signal) =>
+        collectPrivatePermissionTrace("http://jaeger:16686", expected, {
+          ...options,
+          signal,
+        }),
+    );
     checked.push(
-      await collectPrivatePermissionTrace(
-        "http://jaeger:16686",
-        expected,
-        options,
-      ),
+      diagnostic.status === "passed"
+        ? diagnostic.value
+        : { label: expected.label, diagnostic },
     );
   }
-  for (const { phase, receipt } of inventory.notifications) {
+  for (const [index, { phase, receipt }] of inventory.notifications.entries()) {
     stage = `cancel-trace-${phase}`;
+    const diagnostic = await diagnostics.run(
+      `permissions-notification-${index}`,
+      (signal) =>
+        collectPrivatePermissionNotificationTrace(
+          "http://jaeger:16686",
+          receipt,
+          { ...options, signal },
+        ),
+    );
     checked.push(
-      await collectPrivatePermissionNotificationTrace(
-        "http://jaeger:16686",
-        receipt,
-        options,
-      ),
+      diagnostic.status === "passed"
+        ? diagnostic.value
+        : { label: phase, diagnostic },
     );
   }
-  assert.equal(checked.length, 64);
-  assert.equal(new Set(checked.map((row) => row.trace_id)).size, 64);
-  const traces = checked.filter((row) => row.run_id);
-  assert.equal(traces.length, 26);
-  assert.equal(new Set(traces.map((row) => row.run_id)).size, 26);
-  assert.deepEqual(
-    new Set(traces.map((row) => row.trace_id)),
-    new Set(modelStatus.requests.map((row) => row.trace_id)),
-  );
-  assert.equal(
-    traces.reduce((sum, row) => sum + row.runtime_tool_calls, 0),
-    16,
-  );
-  assert.equal(
-    traces.reduce((sum, row) => sum + row.permission_waits, 0),
-    16,
-  );
-  const { exit_code, ...strict } = privatePermissionStrictOutcome(checked);
-  assert.equal(strict.accepted, true);
-  console.log(
-    asciiJSON({
-      status: "business_passed",
-      scenarios: outcomes.length,
-      model_requests: modelStatus.requests.length,
-      outcomes,
-      connections: connections.length,
-      request_traces: inventory.requests.length,
-      initialization_requests: inventory.initializations.length,
-      cancel_notifications: inventory.notifications.length,
-      permission_deliveries: inventory.permissions.length,
-      traces: checked,
-      cross_user_rejections: 2,
-      runtime_containers_verified: runtimeInspection.runtimes.length,
-      ...strict,
-    }),
-  );
-  process.exitCode = exit_code;
+  await diagnostics.run("permissions-trace-inventory", () => {
+    assert.equal(checked.length, 64);
+    assert(checked.every((row) => row.trace_id));
+    assert.equal(new Set(checked.map((row) => row.trace_id)).size, 64);
+    const traces = checked.filter((row) => row.run_id);
+    assert.equal(traces.length, 26);
+    assert.equal(new Set(traces.map((row) => row.run_id)).size, 26);
+    assert.deepEqual(
+      new Set(traces.map((row) => row.trace_id)),
+      new Set(modelStatus.requests.map((row) => row.trace_id)),
+    );
+    assert.equal(
+      traces.reduce((sum, row) => sum + row.runtime_tool_calls, 0),
+      16,
+    );
+    assert.equal(
+      traces.reduce((sum, row) => sum + row.permission_waits, 0),
+      16,
+    );
+  });
+  const strict = privatePermissionStrictOutcome(checked);
+  await diagnostics.run("permissions-strict-trace-result", () => {
+    assert.equal(
+      strict.exit_code,
+      0,
+      "original strict Trace findings retained as auxiliary diagnostics",
+    );
+  });
+  return {
+    scenarios: outcomes.length,
+    model_requests: modelStatus.requests.length,
+    outcomes,
+    connections: connections.length,
+    business_requests: inventory.requests.length,
+    initialization_requests: inventory.initializations.length,
+    cancel_notifications: inventory.notifications.length,
+    permission_deliveries: inventory.permissions.length,
+    traces: checked,
+    cross_user_rejections: 2,
+    runtime_containers_verified: runtimeInspection.runtimes.length,
+    run_business: runBusiness,
+    run_business_receipt: "run-business.private.json",
+    observability: strict,
+  };
 }
 try {
-  await withPrivateCommandResources(clients, telemetry, main);
+  const result = await withPrivateCommandResources(clients, telemetry, main, {
+    traceDiagnostics: diagnostics,
+    directory,
+  });
+  console.log(
+    asciiJSON({
+      ...result,
+      status: "business_passed",
+      trace_diagnostics: diagnostics.summary(),
+    }),
+  );
+  process.exitCode = 0;
 } catch (error) {
   console.error(
     asciiJSON(

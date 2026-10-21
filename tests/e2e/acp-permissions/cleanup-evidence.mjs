@@ -14,7 +14,7 @@ const one = (rows, label) => {
   return rows[0];
 };
 
-function inspectCleanup(events, agents) {
+function inspectCleanup(events, agents, requireTrace) {
   const ack = one(
     events.filter((row) => row.kind === "runtime-ack-consumed"),
     "consumed Runtime ACK",
@@ -38,7 +38,7 @@ function inspectCleanup(events, agents) {
     assert(
       row.sequence > start.sequence && row.monotonic_ms >= start.monotonic_ms,
     );
-    assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
+    if (requireTrace) assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
     return row;
   };
   const operations = new Set();
@@ -90,7 +90,7 @@ export async function withPermissionAgentCleanup(
   agents,
   client,
   action,
-  { directory } = {},
+  { directory, requireTrace = true } = {},
 ) {
   const events = [],
     evidenceErrors = [];
@@ -185,7 +185,7 @@ export async function withPermissionAgentCleanup(
   const failures = [];
   try {
     result = await withAgentCleanup(agents, api, () => action(consumed));
-    inspectCleanup(events, agents);
+    inspectCleanup(events, agents, requireTrace);
   } catch (error) {
     failures.push(error);
   }

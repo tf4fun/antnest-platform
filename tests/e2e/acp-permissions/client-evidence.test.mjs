@@ -160,6 +160,79 @@ for (const [name, mutate] of Object.entries(negative))
     assert.throws(() => index(fixture));
   });
 
+function changeDiagnosticMetadata(value, variant) {
+  if (!value || typeof value !== "object") return;
+  for (const key of Object.keys(value)) {
+    if (/trace|span/iu.test(key)) {
+      if (variant === "missing") delete value[key];
+      else value[key] = /span/iu.test(key) ? "b".repeat(16) : "a".repeat(32);
+    } else changeDiagnosticMetadata(value[key], variant);
+  }
+}
+
+const businessIndex = (fixture) => {
+  assert.equal(typeof implementation.indexPermissionRequests, "function");
+  return implementation.indexPermissionRequests(fixture, {
+    requireTrace: false,
+  });
+};
+
+for (const variant of ["missing", "duplicate"])
+  test(`Permissions business inventory accepts ${variant} diagnostic identities while default admission stays strict`, () => {
+    const fixture = permissionClientFixture();
+    changeDiagnosticMetadata(fixture, variant);
+    const before = structuredClone(fixture);
+    assert.throws(
+      () => index(fixture),
+      "legacy admission lost its Trace check",
+    );
+    const result = businessIndex(fixture);
+    assert.deepEqual(
+      [
+        result.initializations.length,
+        result.requests.length,
+        result.notifications.length,
+        result.permissions.length,
+        result.requests.filter((row) => row.kind === "execution").length,
+      ],
+      [6, 56, 2, 18, 26],
+    );
+    if (variant === "missing")
+      assert(
+        result.requests.every((row) => row.traceID === undefined),
+        "business indexing synthesized a Run Trace",
+      );
+    for (const version of [1, 2])
+      assert.strictEqual(
+        result.notifications[version - 1].receipt,
+        fixture.connections.find(
+          (c) => c.version === version && c.role === "owner",
+        ).notifications[0],
+      );
+    assert.deepEqual(
+      fixture,
+      before,
+      "business indexing changed original receipts",
+    );
+  });
+
+test("Permissions business inventory still requires original connection requests and the actual Model inventory without Trace", () => {
+  for (const name of [
+    "foreign Agent",
+    "stale request ID",
+    "changed original receipt",
+    "cancel write failed",
+    "missing model stage",
+    "foreign model",
+  ]) {
+    const fixture = permissionClientFixture();
+    changeDiagnosticMetadata(fixture, "missing");
+    businessIndex(fixture);
+    negative[name](fixture);
+    assert.throws(() => businessIndex(fixture), undefined, name);
+  }
+});
+
 test("capturing closes and joins before reading evidence, retaining original cancel receipts", async () => {
   assert.equal(typeof implementation.capturePermissionConnection, "function");
   const c = permissionClientFixture().connections[1];

@@ -54,28 +54,33 @@ export async function capturePermissionConnection({ client, ...meta }) {
 // Inventory the actual scripted calls, including denied and unanswered calls.
 // The client separately establishes terminal output; collectors establish the
 // service work. Counts here cannot stand in for either business or Trace gates.
-export function indexPermissionRequests({
-  agents,
-  connections,
-  outcomes,
-  models,
-  alternateModelID,
-  defaultModel,
-  alternateModel,
-}) {
+export function indexPermissionRequests(
+  {
+    agents,
+    connections,
+    outcomes,
+    models,
+    alternateModelID,
+    defaultModel,
+    alternateModel,
+  },
+  { requireTrace = true } = {},
+) {
   assert.equal(agents.length, 2);
   agents.forEach(nonempty);
   unique(agents, "Agent");
   nonempty(alternateModelID);
   assert.equal(connections.length, 6);
-  unique(
-    connections.map((c) => c.connectionTraceID),
-    "upgrade Trace",
-  );
-  unique(
-    connections.map((c) => c.clientSpanID),
-    "upgrade CLIENT",
-  );
+  if (requireTrace) {
+    unique(
+      connections.map((c) => c.connectionTraceID),
+      "upgrade Trace",
+    );
+    unique(
+      connections.map((c) => c.clientSpanID),
+      "upgrade CLIENT",
+    );
+  }
   verifyModelRequests(models, defaultModel, alternateModel);
   const phases = [1, 2].flatMap((v) =>
     groups.flatMap(([, names]) => names.map((name) => `v${v}-${name}`)),
@@ -96,8 +101,10 @@ export function indexPermissionRequests({
     const [foreign, owner, replay] = peers;
     for (const c of peers) {
       assert.equal(c.agentId, agents[version - 1]);
-      assert.match(c.connectionTraceID, /^[a-f0-9]{32}$/u);
-      assert.match(c.clientSpanID, /^[a-f0-9]{16}$/u);
+      if (requireTrace) {
+        assert.match(c.connectionTraceID, /^[a-f0-9]{32}$/u);
+        assert.match(c.clientSpanID, /^[a-f0-9]{16}$/u);
+      }
       const rows = [c.initialization, ...c.evidence];
       assert.equal(rows[0]?.method, "initialize");
       assert.equal(rows[0].outcome, "succeeded");
@@ -128,8 +135,12 @@ export function indexPermissionRequests({
           transport: "websocket",
           protocolVersion: version,
           agentId: c.agentId,
-          connectionTraceID: c.connectionTraceID,
-          clientSpanID: c.clientSpanID,
+          ...(requireTrace
+            ? {
+                connectionTraceID: c.connectionTraceID,
+                clientSpanID: c.clientSpanID,
+              }
+            : {}),
         }))
           assert.equal(row[key], value, `foreign Permissions ${key}`);
       }
@@ -290,15 +301,17 @@ export function indexPermissionRequests({
           }
         }
         const calls = models.filter((row) => row.phase === phase);
-        for (const call of calls) {
-          assert.match(call.trace_id ?? "", /^[a-f0-9]{32}$/u);
-          assert.match(call.model_span_id ?? "", /^[a-f0-9]{16}$/u);
+        if (requireTrace) {
+          for (const call of calls) {
+            assert.match(call.trace_id ?? "", /^[a-f0-9]{32}$/u);
+            assert.match(call.model_span_id ?? "", /^[a-f0-9]{16}$/u);
+          }
+          unique(
+            calls.map((call) => call.model_span_id),
+            "model CLIENT",
+          );
+          assert.equal(new Set(calls.map((call) => call.trace_id)).size, 1);
         }
-        unique(
-          calls.map((call) => call.model_span_id),
-          "model CLIENT",
-        );
-        assert.equal(new Set(calls.map((call) => call.trace_id)).size, 1);
         expected.traceID = calls[0].trace_id;
         runTraces.push(expected.traceID);
         if (Object.hasOwn(choices, entry))
@@ -326,8 +339,12 @@ export function indexPermissionRequests({
       version,
       agentId: owner.agentId,
       sessionId: cancelSession,
-      connectionTraceID: owner.connectionTraceID,
-      clientSpanID: owner.clientSpanID,
+      ...(requireTrace
+        ? {
+            connectionTraceID: owner.connectionTraceID,
+            clientSpanID: owner.clientSpanID,
+          }
+        : {}),
       method: "session/cancel",
       index: 0,
       status: "write_completed",
@@ -392,7 +409,7 @@ export function indexPermissionRequests({
   assert.equal(sessions.length, 12);
   unique(sessions, "Session");
   assert.equal(runTraces.length, 26);
-  unique(runTraces, "Run Trace");
+  if (requireTrace) unique(runTraces, "Run Trace");
   assert.equal(requests.length, 56);
   return { requests, initializations, notifications, permissions };
 }

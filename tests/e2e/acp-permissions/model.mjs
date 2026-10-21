@@ -83,11 +83,11 @@ export function decide(payload) {
   };
 }
 
-function start() {
+export function modelServer() {
   const requests = [],
     errors = [];
   let browserReleased = false;
-  createServer(async (req, res) => {
+  return createServer(async (req, res) => {
     const json = (code, body) => {
       res.writeHead(code, { "content-type": "application/json" });
       res.end(JSON.stringify(body));
@@ -99,6 +99,7 @@ function start() {
       return json(200, { released: true });
     }
     try {
+      assert.equal(req.method, "POST");
       assert.equal(req.url, "/v1/chat/completions");
       assert.equal(req.headers.authorization, "Bearer permission-model-test");
       const chunks = [];
@@ -111,13 +112,31 @@ function start() {
       const payload = JSON.parse(Buffer.concat(chunks).toString());
       assert.equal(payload.stream, true);
       const result = decide(payload);
-      const trace = req.headers.traceparent?.split("-");
-      assert.equal(trace?.[1]?.length, 32);
+      assert(
+        !requests.some(
+          (row) => row.phase === result.phase && row.stage === result.stage,
+        ),
+        "duplicate permission model request",
+      );
+      const parent = req.headers.traceparent;
+      const trace =
+        typeof parent === "string"
+          ? /^00-([a-f0-9]{32})-([a-f0-9]{16})-(?:00|01)$/u.exec(parent)
+          : null;
+      const traced =
+        trace !== null &&
+        trace[1] !== "0".repeat(32) &&
+        trace[2] !== "0".repeat(16);
       requests.push({
         phase: result.phase,
         stage: result.stage,
-        trace_id: trace[1],
-        model_span_id: trace[2],
+        traceparent: parent,
+        ...(traced
+          ? {
+              trace_id: trace[1],
+              model_span_id: trace[2],
+            }
+          : { trace_diagnostic: "traceparent_unavailable" }),
         model: payload.model,
       });
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -126,7 +145,7 @@ function start() {
       errors.push("permission fixture validation failed");
       json(400, { error: "permission fixture validation failed" });
     }
-  }).listen(8080, "0.0.0.0");
+  });
 }
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url)
-  start();
+  modelServer().listen(8080, "0.0.0.0");

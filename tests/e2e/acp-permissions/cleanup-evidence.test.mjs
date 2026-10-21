@@ -60,7 +60,12 @@ const proof = () => ({
     started_at: "2026-10-16T00:00:00.123456789Z",
   })),
 });
-async function fixture(t, failFirst = false, mutation) {
+async function fixture(
+  t,
+  failFirst = false,
+  mutation,
+  traceID = "b".repeat(32),
+) {
   assert.equal(typeof implementation.withPermissionAgentCleanup, "function");
   const directory = await mkdtemp(
     join(tmpdir(), "antnest-permission-cleanup-"),
@@ -78,7 +83,9 @@ async function fixture(t, failFirst = false, mutation) {
         ? 503
         : 202
       : 200;
-    response.setHeader("x-antnest-trace-id", "b".repeat(32));
+    if (deletion && mutation === "wrong delete status")
+      response.statusCode = 200;
+    if (traceID !== null) response.setHeader("x-antnest-trace-id", traceID);
     response.setHeader("content-type", "application/json; charset=utf-8");
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader(
@@ -100,7 +107,7 @@ async function fixture(t, failFirst = false, mutation) {
           request_id: operation,
           agent_id: agent,
           kind: "delete",
-          state: "completed",
+          state: mutation === "failed terminal" ? "failed" : "completed",
         };
     if (!deletion && mutation === "foreign operation")
       body.request_id = "foreign";
@@ -335,3 +342,283 @@ test("business and deletion failures both survive after the second Agent is clea
   assert.equal(f.calls.at(-1).path, "/api/admin/operations/operation-two");
   assert.equal((await summary(f)).status, "failed");
 });
+
+for (const [label, traceID] of [
+  ["missing", null],
+  ["malformed", "unavailable-cleanup-trace"],
+])
+  test(`cleanup business admission retains real ACK deletion and response bytes with ${label} Trace while default remains strict`, async (t) => {
+    const f = await fixture(t, false, undefined, traceID);
+    const host = f.host();
+    const result = await f.track(
+      run(
+        agents,
+        f.client,
+        (consumed) =>
+          requestPermissionRuntimeInspection(agents, {
+            ...f.options,
+            consumed,
+          }),
+        { directory: f.directory, requireTrace: false },
+      ),
+    );
+    await host;
+    assert.equal(result.runtimes.length, 2);
+    const report = await summary(f);
+    assert.equal(report.status, "verified");
+    assert.equal(report.evidence_error_count, 0);
+    const ack = report.events.find(
+      (row) => row.kind === "runtime-ack-consumed",
+    );
+    assert(ack);
+    assert.deepEqual(ack.request.agent_ids, agents);
+    const ackBytes = await readFile(join(f.directory, ack.file));
+    assert.equal(hash(ackBytes), ack.sha256);
+    assert.deepEqual(
+      ackBytes,
+      await readFile(join(f.directory, "runtime-receipt.json")),
+    );
+    const starts = report.events.filter((row) => row.kind === "request-start");
+    assert.deepEqual(
+      starts.map(({ method, path }) => ({ method, path })),
+      f.calls,
+    );
+    assert.equal(starts.length, 4);
+    for (const [index, start] of starts.entries()) {
+      assert(
+        start.sequence > ack.sequence && start.monotonic_ms >= ack.monotonic_ms,
+      );
+      const response = report.events.find(
+        (row) =>
+          row.kind === "response-complete" &&
+          row.request_sequence === start.sequence,
+      );
+      assert(
+        response &&
+          response.sequence > start.sequence &&
+          response.monotonic_ms >= start.monotonic_ms,
+      );
+      assert.equal(response.status, start.method === "POST" ? 202 : 200);
+      assert.equal(response.trace_id, traceID);
+      const bytes = await readFile(join(f.directory, response.file));
+      assert.equal(bytes.toString("utf8"), f.bodies[index]);
+      assert.equal(hash(bytes), response.sha256);
+      assert.deepEqual(JSON.parse(bytes.toString("utf8")), response.body);
+      assert.equal(response.body.kind, "delete");
+      assert(agents.includes(response.body.agent_id));
+      if (start.method === "GET")
+        assert.equal(response.body.state, "completed");
+    }
+    const strict = await fixture(t, false, undefined, traceID);
+    const strictHost = strict.host();
+    await assert.rejects(
+      strict.track(
+        run(
+          agents,
+          strict.client,
+          (consumed) =>
+            requestPermissionRuntimeInspection(agents, {
+              ...strict.options,
+              consumed,
+            }),
+          { directory: strict.directory },
+        ),
+      ),
+      (error) => error.operator === "match",
+    );
+    await strictHost;
+    assert.equal(strict.calls.filter((row) => row.method === "POST").length, 2);
+    assert.equal((await summary(strict)).status, "failed");
+  });
+
+test("cleanup business admission rejects foreign or incomplete operation facts without Trace after joining both deletions", async (t) => {
+  for (const mutation of [
+    "duplicate operation",
+    "foreign operation",
+    "foreign Agent",
+    "wrong operation kind",
+    "wrong delete status",
+    "failed terminal",
+  ]) {
+    const f = await fixture(t, false, mutation, null);
+    const host = f.host();
+    await assert.rejects(
+      f.track(
+        run(
+          agents,
+          f.client,
+          (consumed) =>
+            requestPermissionRuntimeInspection(agents, {
+              ...f.options,
+              consumed,
+            }),
+          { directory: f.directory, requireTrace: false },
+        ),
+      ),
+      undefined,
+      mutation,
+    );
+    await host;
+    assert.deepEqual(
+      f.calls.filter((row) => row.method === "POST").map((row) => row.path),
+      agents.map((agent) => `/api/admin/agents/${agent}/delete`),
+    );
+    const report = await summary(f);
+    assert.equal(report.status, "failed", mutation);
+    assert.equal(
+      report.evidence_error_count,
+      0,
+      "operation rejection was replaced by an archive failure",
+    );
+  }
+});
+
+test("cleanup business admission still requires an ACK for exactly the original Agents without Trace", async (t) => {
+  for (const mutation of ["missing ACK", "foreign ACK Agent"]) {
+    const f = await fixture(t, false, undefined, null);
+    let host;
+    await assert.rejects(
+      f.track(
+        run(
+          agents,
+          f.client,
+          async (consumed) => {
+            if (mutation === "missing ACK") return "business-complete";
+            host = f.host();
+            return requestPermissionRuntimeInspection(agents, {
+              ...f.options,
+              consumed: (_bytes, receipt) => {
+                const changed = structuredClone(receipt);
+                changed.request.agent_ids = [agents[0], "foreign-Agent"];
+                consumed(Buffer.from(JSON.stringify(changed)), changed);
+              },
+            });
+          },
+          { directory: f.directory, requireTrace: false },
+        ),
+      ),
+      undefined,
+      mutation,
+    );
+    if (host) await host;
+    assert.deepEqual(
+      f.calls.filter((row) => row.method === "POST").map((row) => row.path),
+      agents.map((agent) => `/api/admin/agents/${agent}/delete`),
+    );
+    assert.equal(f.calls.at(-1).path, "/api/admin/operations/operation-two");
+    assert.equal((await summary(f)).status, "failed");
+  }
+});
+
+test("cleanup business admission rejects an actual Runtime ACK consumed only after deletion started", async (t) => {
+  const f = await fixture(t, false, undefined, null),
+    request = f.client.request.bind(f.client);
+  let deliver;
+  f.client.request = (path, options) => {
+    if (deliver && path.endsWith("/delete")) {
+      const consume = deliver;
+      deliver = undefined;
+      consume();
+    }
+    return request(path, options);
+  };
+  const host = f.host();
+  await assert.rejects(
+    f.track(
+      run(
+        agents,
+        f.client,
+        (consumed) =>
+          requestPermissionRuntimeInspection(agents, {
+            ...f.options,
+            consumed: (bytes, receipt) => {
+              deliver = () => consumed(bytes, receipt);
+            },
+          }),
+        { directory: f.directory, requireTrace: false },
+      ),
+    ),
+    /Agent deleted before consuming Runtime ACK/u,
+  );
+  await host;
+  const report = await summary(f),
+    ack = report.events.find((row) => row.kind === "runtime-ack-consumed");
+  const first = report.events.find((row) => row.kind === "request-start");
+  assert(ack && first && first.sequence < ack.sequence);
+  assert.equal(report.status, "failed");
+  assert.equal(f.calls.filter((row) => row.method === "POST").length, 2);
+  assert.equal(f.calls.at(-1).path, "/api/admin/operations/operation-two");
+});
+
+for (const mode of ["first delete failure", "raw response archive failure"])
+  test(`cleanup business admission joins the held second terminal response after ${mode} without Trace`, async (t) => {
+    const f = await fixture(
+      t,
+      mode === "first delete failure",
+      undefined,
+      null,
+    );
+    if (mode === "raw response archive failure")
+      await mkdir(join(f.directory, "cleanup-response-0002.raw"));
+    const entered = Promise.withResolvers(),
+      release = Promise.withResolvers();
+    const request = f.client.request.bind(f.client);
+    f.client.request = async (path, options) => {
+      if (path === "/api/admin/operations/operation-two") {
+        entered.resolve();
+        await release.promise;
+      }
+      return request(path, options);
+    };
+    const host = f.host();
+    let settled = false,
+      result;
+    const pending = f.track(
+      run(
+        agents,
+        f.client,
+        (consumed) =>
+          requestPermissionRuntimeInspection(agents, {
+            ...f.options,
+            consumed,
+          }),
+        { directory: f.directory, requireTrace: false },
+      ).then(
+        (value) => {
+          settled = true;
+          return { value };
+        },
+        (error) => {
+          settled = true;
+          return { error };
+        },
+      ),
+    );
+    try {
+      await Promise.race([
+        entered.promise,
+        pending.then(() =>
+          assert.fail("cleanup settled before the second terminal response"),
+        ),
+      ]);
+      assert.equal(
+        settled,
+        false,
+        "cleanup did not join the second Agent operation",
+      );
+    } finally {
+      release.resolve();
+      result = await pending;
+      await host;
+    }
+    assert(
+      result.error,
+      "real cleanup or original archive failure was swallowed",
+    );
+    assert.equal(f.calls.filter((row) => row.method === "POST").length, 2);
+    assert.equal(f.calls.at(-1).path, "/api/admin/operations/operation-two");
+    const report = await summary(f);
+    assert.equal(report.status, "failed");
+    if (mode === "raw response archive failure")
+      assert(report.evidence_error_count > 0);
+  });
