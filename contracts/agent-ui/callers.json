@@ -222,7 +222,7 @@
       "routes": ["GET /api/app/workspace/v1/bootstrap"]
     },
     "services/agent-ui/web/server/src/http/command-routes.ts": {
-      "sha256": "ef6b62eb7b24b689b4eba3791e2b47c3ae96c62d2efce252db328a768139de8d",
+      "sha256": "39700a50847702496084aa034045af92b3106daddc3f1d70741ee66e4dd9d953",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
