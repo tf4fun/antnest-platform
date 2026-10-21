@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { parseControlCommand, controlCatalogue } from "../src/protocol/workspace-commands.ts";
 import { executeControlCommand, type ControlPort } from "../src/commands/execute.ts";
 import { AgentAccessRevokedError, SessionNotFoundError } from "../src/adapters/acp-http.ts";
+import { OperationConflictError } from "../src/bridge/operations.ts";
 
 const view = (busy = false): any => ({
   agentId: "agent", availability: busy ? "busy" : "ready", activeSessionId: busy ? "session" : null,
@@ -20,7 +21,13 @@ function port(current = view()) {
       selectedView: sessionId === null ? null : { ...current.selectedView, sessionId } }; },
     async sessions(cursor) { calls.push(["sessions", cursor]); return { sessions: [{ sessionId: "session", title: "Work" }], nextCursor: "next" }; },
     async configure(...args) { calls.push(["configure", ...args]); },
-    async cancel(...args) { calls.push(["cancel", ...args]); },
+    async cancel(...args) {
+      const operation = current.operations.find((item: any) => item.sessionId === args[0] &&
+        item.operationId === args[1] && item.runId === args[2] &&
+        !["completed", "failed", "cancelled"].includes(item.phase));
+      if (!operation) throw new OperationConflictError("The observed operation is no longer available.");
+      calls.push(["cancel", ...args]);
+    },
     async fork(sessionId) { calls.push(["fork", sessionId]); return { sessionId: "fork" }; },
     forkSupported: true,
   };
@@ -75,6 +82,15 @@ test("stop preserves the caller's observed Run target and never chooses another 
   await executeControlCommand({ text: "/stop", sessionId: "session", operationId: "intent", expectedRunId: "run" }, target);
   assert.deepEqual(calls.at(-1), ["cancel", "session", "intent", "run"]);
   await assert.rejects(executeControlCommand({ text: "/stop", sessionId: "other", operationId: "intent", expectedRunId: "run" }, target));
+});
+
+test("stop uses targeted authorization without preparing a workspace view", async () => {
+  const { calls, target } = port(view(true));
+  target.view = async () => { throw new Error("History and Skill projection are unavailable"); };
+  assert.deepEqual(await executeControlCommand({ text: "/stop", sessionId: "session",
+    operationId: "intent", expectedRunId: "run" }, target),
+  { command: "stop", text: "Stop requested. Waiting for the operation to finish." });
+  assert.deepEqual(calls, [["cancel", "session", "intent", "run"]]);
 });
 
 test("usage keeps missing measurements unknown and lists do not imply a complete directory", async () => {
@@ -139,6 +155,7 @@ test("every command checks current access before reading data or dispatching a m
     "/model default", "/mode auto", "/thinking high", "/stop"]) {
     const { target, calls } = port();
     target.view = async () => { throw new AgentAccessRevokedError(); };
+    target.cancel = async () => { throw new AgentAccessRevokedError(); };
     await assert.rejects(executeControlCommand({ text, sessionId: "session", expectedConfigurationToken: "token",
       expectedRunId: "run", operationId: "intent" }, target), AgentAccessRevokedError, text);
     assert.deepEqual(calls, [], text);
@@ -154,7 +171,7 @@ test("draft and unavailable history cannot dispatch session mutations", async ()
   for (const text of ["/usage", "/fork", "/stop", "/model default", "/mode auto", "/thinking high"]) {
     const { target, calls } = port();
     await assert.rejects(executeControlCommand({ text, sessionId: null }, target), /conversation/);
-    assert.deepEqual(calls, [["view", null]]);
+    assert.deepEqual(calls, text === "/stop" ? [] : [["view", null]]);
   }
   const blocked = view(); blocked.selectedView.historyState = "blocked";
   const { target, calls } = port(blocked);
@@ -172,7 +189,7 @@ test("stop refuses terminal and superseded targets without cancelling successor 
     current.operations.push({ operationId: "successor-intent", sessionId: "session", runId: "successor-run", phase: "running" });
     const { target, calls } = port(current);
     await assert.rejects(executeControlCommand({ text: "/stop", sessionId: "session", operationId: "intent", expectedRunId: "run" }, target), /no longer available/);
-    assert.deepEqual(calls, [["view", "session"]]);
+    assert.deepEqual(calls, []);
   }
 });
 

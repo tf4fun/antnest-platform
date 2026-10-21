@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { recordPromptInputPrepared } from "../telemetry.ts";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import { z } from "zod";
-import { acpPromptRequestBytes, AgentAccessRevokedError, SessionNotFoundError } from "../adapters/acp-http.ts";
+import { AgentAccessRevokedError, SessionNotFoundError } from "../adapters/acp-http.ts";
 import type {
   HistoryCondition,
   HistoryTokens,
@@ -12,6 +12,7 @@ import {
   OperationReconciliationTimeoutError,
   type Operation,
   type PromptIntent,
+  type PreparedPrompt,
 } from "../bridge/operations.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
@@ -63,7 +64,8 @@ const bodyLimit = 67_108_864;
 const defaultAcpPromptBytes = 16 * 1024 * 1024;
 
 type Operations = {
-  submit(input: PromptIntent): {
+  prepare(input: PromptIntent, signal?: AbortSignal): Promise<PreparedPrompt>;
+  submitPrepared(prepared: PreparedPrompt): {
     operationId: string;
     acceptance: "bridge";
     phase: "dispatching";
@@ -195,12 +197,14 @@ export function createCommandHandler(dependencies: {
           expectedAppendVersion: body.expectedAppendVersion,
           prompt: body.prompt as ContentBlock[],
         };
-        // Wire sizing, fingerprinting and intent insertion stay one synchronous
-        // operation. Other ready requests can run between queued preparations.
-        const accepted = await runInputWork(() => {
-          if (acpPromptRequestBytes(input) > maxAcpPromptBytes)
+        // Keep preparations serialized while chunked hashing admits control I/O.
+        // The final abort check and intent insertion remain one atomic step.
+        const accepted = await runInputWork(async () => {
+          const prepared = await authorized.operations.prepare(input, request.signal);
+          if (prepared.requestBytes > maxAcpPromptBytes)
             throw new BodyTooLargeError();
-          const accepted = authorized.operations.submit(input);
+          request.signal.throwIfAborted();
+          const accepted = authorized.operations.submitPrepared(prepared);
           recordPromptInputPrepared();
           return accepted;
         }, request.signal);

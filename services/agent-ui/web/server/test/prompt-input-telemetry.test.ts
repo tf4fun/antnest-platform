@@ -8,7 +8,7 @@ import * as observation from "../src/telemetry.ts";
 import { validateJsonRequest } from "../src/http/json-request.ts";
 import { createCommandHandler } from "../src/http/command-routes.ts";
 import { HistoryTokens } from "../src/bridge/history-token.ts";
-import { OperationConflictError } from "../src/bridge/operations.ts";
+import { OperationCoordinator, OperationConflictError, type PreparedPrompt } from "../src/bridge/operations.ts";
 import { createTestWorkspaceHttpServer, testHeaders } from "./support/auth-fixture.ts";
 
 const phaseNames = ["receive-started", "body-eof", "body-parsed", "input-prepared"];
@@ -59,12 +59,18 @@ test("native Prompt input phases remain exact, private and request-owned through
   // This instance must not add input diagnostics even with the recording provider above.
   const disabled = await observation.startBridgeTelemetry({ disabled: true, serviceName: "agent-ui-input-disabled-test" });
   let promptLimit = 16 * 1024 * 1024;
+  const coordinator = new OperationCoordinator({ async prompt() {}, async readIntent() { return { kind: "unknown" }; },
+    async cancel() {}, retainWork() { return () => {}; } });
+  const preparedIntents = new WeakMap<PreparedPrompt, string>();
   const handler = createCommandHandler({ tokens, get maxAcpPromptBytes() { return promptLimit; }, async authorize(requestScope) {
     assert.deepEqual(requestScope, scope);
     return { condition, release() {}, operations: {
-      submit(input) {
-        if (input.intentId === "conflict") throw new OperationConflictError("fixture conflict");
-        return { operationId: input.intentId, acceptance: "bridge" as const, phase: "dispatching" as const }; },
+      async prepare(input, signal) {
+        const prepared = await coordinator.prepare(input, signal); preparedIntents.set(prepared, input.intentId); return prepared;
+      },
+      submitPrepared(prepared) {
+        if (preparedIntents.get(prepared) === "conflict") throw new OperationConflictError("fixture conflict");
+        return coordinator.submitPrepared(prepared); },
       async read() { throw new Error("unexpected read"); },
       async cancel(_session, intentId, runId) {
         return { operationId: intentId, sessionId: condition.sessionId, phase: "cancelling" as const,

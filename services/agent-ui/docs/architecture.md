@@ -403,15 +403,20 @@ local output and metadata updates do not trigger ACP observation GETs.
   strictly. Payload strings use native boundary scanning, and routes retain
   their Zod validation, byte limits and same-intent content digest comparison.
   Body copying and strict parsing at or above 1 MiB use a process-local FIFO.
-  Prompt wire sizing, content digest comparison and intent insertion use the
-  same FIFO as one synchronous job, with an event-loop turn before each job so
-  ready I/O can proceed between preparations. Each job keeps its caller's
-  async context and checks cancellation before execution. Small control paths
+  Prompt preparation uses the same FIFO, capturing a detached input and reusing
+  one canonical serialization for wire sizing and the existing content digest.
+  Hashing and byte counting yield between chunks so ready control I/O can proceed
+  during preparation. A private token binds the prepared input to its owner;
+  the final cancellation check, current idempotency/capacity checks and intent
+  insertion remain synchronous. Each job keeps its caller's async context and
+  releases the queue only after its asynchronous work finishes. Small control paths
   bypass the queue; queue failures do not block later requests, and dispatch
   still owns upload reservations and Session leases until its work settles.
-  This does not preempt an individual synchronous job or establish a general
-  end-to-end latency bound; the fixed cancellation workloads below retain
-  their one-second gate.
+  `/stop` repeats live authorization and validates the exact durable target
+  without waiting for view projection, Skill discovery or history loading.
+  Canonical copying, native JSON serialization and strict parsing retain
+  synchronous sections. The fixed cancellation workloads below retain their
+  one-second gate; this does not establish a general end-to-end latency bound.
 - With telemetry enabled, each original HTTP SERVER span has
   `antnest.ui.http.started_monotonic_ns`, a decimal string from the current
   process's monotonic clock sampled before request handling. Calibrate it with

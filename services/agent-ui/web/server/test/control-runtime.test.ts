@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import { createWorkspaceRuntime } from "../src/workspace-runtime.ts";
-import { AgentAccessRevokedError } from "../src/adapters/acp-http.ts";
+import { AgentAccessRevokedError, SessionNotFoundError } from "../src/adapters/acp-http.ts";
 
 const requireAcp = createRequire(new URL("../../../../agent-acp-service/package.json", import.meta.url));
 const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
@@ -76,3 +76,59 @@ test("command runtime shares config CAS and targeted cancel while keeping contro
     assert.equal(mutations.length, 3);
   } finally { abort.abort(); await reader?.cancel(); await runtime.drain(1000); }
 });
+
+for (const condition of ["blocked-agent-view", "blocked-learning", "blocked-history", "revoked",
+  "missing", "unknown", "wrong-run", "terminal", "revoked-at-intent", "foreign-receipt"] as const) {
+  test(`targeted stop bypasses projection while preserving ${condition}`, async () => {
+    const gate = Promise.withResolvers<void>();
+    const milestone = Promise.withResolvers<string>();
+    const calls: string[] = [];
+    const cancellations: string[][] = [];
+    let active = true;
+    const receipt = () => ({ intentId: "intent", sessionId: condition === "foreign-receipt" ? "foreign" : "session",
+      runId: "run", phase: condition === "terminal" ? "completed" as const : active ? "running" as const : "cancelled" as const,
+      appendVersion: 1, outputWatermark: 0, stopReason: null, errorClass: null });
+    const projection = async (name: string) => {
+      calls.push(name);
+      if (condition === `blocked-${name}`) { milestone.resolve(name); await gate.promise; }
+    };
+    const runtime = createWorkspaceRuntime({ connect: async () => ({
+      async readAgentExecutionState() { await projection("agent-view");
+        return { availability: active ? "busy" as const : "ready" as const, activeSessionId: active ? "session" : null }; },
+      async readLearningChanges() { await projection("learning");
+        return { items: [], nextCursor: "sealed", sealedCursor: "sealed", olderCursor: null }; },
+      async load() { await projection("history"); return { cut: { appendVersion: 1, sealedWatermark: 0 } }; },
+      async readExecution(sessionId) {
+        calls.push("execution");
+        if (condition === "revoked") throw new AgentAccessRevokedError();
+        if (condition === "missing") throw new SessionNotFoundError();
+        return { sessionId, appendVersion: 1, outputWatermark: 0, activeRunId: active ? "run" : null,
+          recentReceipts: [], configurationRevision: null };
+      },
+      async readIntent(sessionId, intentId) {
+        calls.push("intent"); assert.equal(sessionId, "session"); assert.equal(intentId, "intent");
+        if (condition === "revoked-at-intent") throw new AgentAccessRevokedError();
+        return condition === "unknown" ? { kind: "unknown" as const } : { kind: "receipt" as const, receipt: receipt() };
+      },
+      async cancel(sessionId, runId) { calls.push("cancel"); cancellations.push([sessionId, runId]); active = false; milestone.resolve("cancel"); },
+      async prompt() { assert.fail("A control must not dispatch a Prompt"); },
+      close() {},
+    }) });
+    const pending = runtime.handle(new Request(`${base}/commands`, { method: "POST", headers,
+      body: JSON.stringify({ text: "/stop", sessionId: "session", operationId: "intent",
+        expectedRunId: condition === "wrong-run" ? "wrong" : "run" }) }));
+    try {
+      const first = await Promise.race([milestone.promise, pending.then(() => "response")]);
+      if (condition.startsWith("blocked-")) assert.equal(first, "cancel");
+      const response = await pending;
+      const expected = condition.startsWith("blocked-") ? 200 : condition.startsWith("revoked") ? 403 : condition === "missing" ? 404 : 409;
+      assert.equal(response?.status, expected);
+      assert.deepEqual(cancellations, expected === 200 ? [["session", "run"]] : []);
+      assert.ok(calls.every((name) => ["execution", "intent", "cancel"].includes(name)), JSON.stringify(calls));
+      assert.equal(calls.filter((name) => name === "intent").length, expected === 200 ? 2 : ["revoked", "missing"].includes(condition) ? 0 : 1);
+    } finally {
+      gate.resolve(); await Promise.allSettled([pending]); active = false; await runtime.sweep();
+      assert.equal((await runtime.drain(1000)).forced, false);
+    }
+  });
+}

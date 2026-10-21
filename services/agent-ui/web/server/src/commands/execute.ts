@@ -24,6 +24,16 @@ export async function executeControlCommand(input: ControlRequest, port: Control
   if (/[\r\n]/u.test(argument)) throw new ControlError("invalid_command", "Commands accept a single line of arguments.");
   if (argument && ["new", "status", "usage", "fork", "stop"].includes(name))
     throw new ControlError("invalid_command", `/${name} does not accept arguments.`);
+  if (name === "stop") {
+    if (!input.sessionId)
+      throw new ControlError("session_required", "Open a conversation before using this command.");
+    if (!input.operationId || !input.expectedRunId)
+      throw new ControlError("operation_conflict", "The observed operation is no longer available. Refresh before stopping.", 409);
+    // The cancel port authorizes current access and checks the durable target.
+    // A view projection can wait on unrelated history or Skill discovery.
+    await port.cancel(input.sessionId, input.operationId, input.expectedRunId);
+    return { command: name, text: "Stop requested. Waiting for the operation to finish." };
+  }
   const view = await port.view(input.sessionId);
   const selected = view.selectedView;
   const catalogue = controlCatalogue(view, port.forkSupported);
@@ -64,15 +74,6 @@ export async function executeControlCommand(input: ControlRequest, port: Control
       finite(usage?.used) && finite(usage?.size) ? `Context: ${usage!.used} / ${usage!.size} tokens` : "Context: Not reported",
       finite(cost?.amount) && typeof cost?.currency === "string" && /^[A-Z]{3}$/u.test(cost.currency)
         ? `Cost: ${cost.currency} ${cost.amount}` : "Cost: Not reported"].join("\n"));
-  }
-  if (name === "stop") {
-    const operation = view.operations.find((item) => item.sessionId === input.sessionId &&
-      item.operationId === input.operationId && item.runId === input.expectedRunId &&
-      !["completed", "failed", "cancelled"].includes(item.phase));
-    if (!operation || !input.operationId || !input.expectedRunId)
-      throw new ControlError("operation_conflict", "The observed operation is no longer available. Refresh before stopping.", 409);
-    await port.cancel(input.sessionId, input.operationId, input.expectedRunId);
-    return result("Stop requested. Waiting for the operation to finish.");
   }
   if (name === "fork") {
     if (!port.forkSupported || selected.historyState !== "ready")

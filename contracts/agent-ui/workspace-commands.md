@@ -39,6 +39,11 @@ configuration and targeted cancellation preconditions are preserved; read-only
 commands can operate during a Run. This route is private Workspace HTTP, not a
 new ACP standard method.
 
+`/stop` checks current access and the durable operation receipt directly. It
+requires the selected Session ID, operation ID and expected Run ID; an unknown,
+terminal or superseded target is rejected. It does not require a workspace view,
+Skill catalogue or transcript to finish loading before requesting cancellation.
+
 ## Initial commands
 
 | Name | Aliases | Scope and behavior |
