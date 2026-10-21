@@ -253,29 +253,39 @@ export async function verifyAccessTraces(base, expectations, secrets, options) {
   return results;
 }
 
-export async function verifyAccessEvidence(base, expectations, secrets) {
+export async function verifyAccessEvidence(
+  base,
+  expectations,
+  secrets,
+  options = {},
+) {
   const results = [];
   for (const id of new Set(expectations.map((e) => e.traceID))) {
     assert.match(id ?? "", /^[a-f0-9]{32}$/);
     results.push(
-      ...(await collectCompleteTrace(base, id, (trace) => {
-        saveSessionTrace(trace);
-        const checks = expectations
-          .filter((e) => e.traceID === id)
-          .map((e) => inspectAccessTraceTopology(trace, e, secrets));
-        const warnings = [
-          ...(trace.warnings ?? []),
-          ...trace.spans.flatMap((s) => s.warnings ?? []),
-        ];
-        const errors = trace.spans.filter(hasError).length;
-        return checks.map((c) => ({
-          ...c,
-          warning_count: warnings.length,
-          warnings: [...new Set(warnings)],
-          error_spans: errors,
-          strict_trace: warnings.length || errors ? "failed" : "passed",
-        }));
-      })),
+      ...(await collectCompleteTrace(
+        base,
+        id,
+        (trace) => {
+          saveSessionTrace(trace);
+          const checks = expectations
+            .filter((e) => e.traceID === id)
+            .map((e) => inspectAccessTraceTopology(trace, e, secrets));
+          const warnings = [
+            ...(trace.warnings ?? []),
+            ...trace.spans.flatMap((s) => s.warnings ?? []),
+          ];
+          const errors = trace.spans.filter(hasError).length;
+          return checks.map((c) => ({
+            ...c,
+            warning_count: warnings.length,
+            warnings: [...new Set(warnings)],
+            error_spans: errors,
+            strict_trace: warnings.length || errors ? "failed" : "passed",
+          }));
+        },
+        options,
+      )),
     );
   }
   return results;

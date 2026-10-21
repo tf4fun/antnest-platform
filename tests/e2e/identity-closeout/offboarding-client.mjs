@@ -7,6 +7,8 @@ import {
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { assertUnchanged } from "./agent-access-evidence.mjs";
+import { inspectOffboardingBusiness } from "./offboarding-business.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
 import {
   assertDisabled,
   verifyOffboardingTrace,
@@ -151,11 +153,9 @@ export async function waitOffboarding(
     async () => (await agentDetail(item)).activation_state === "disabled",
     "automatic owner Disable",
   );
-  assertDisabled(
-    await agentDetail(item),
-    await inspectRuntime(item),
-    item.agent,
-  );
+  const agent = await agentDetail(item),
+    runtime = await inspectRuntime(item);
+  assertDisabled(agent, runtime, item.agent);
   const events = await agentEvents(item);
   const added = events.filter(
     (event) => !before.some((old) => old.event_id === event.event_id),
@@ -186,11 +186,12 @@ export async function waitOffboarding(
     reason === "user_deactivated" ? "" : item.organization,
     "wrong revocation scope",
   );
-  assert.equal(
-    revoked[0].trace_id,
-    response.traceID,
-    "revocation lost Gateway source trace",
-  );
+  if (!item.traceDiagnostics)
+    assert.equal(
+      revoked[0].trace_id,
+      response.traceID,
+      "revocation lost Gateway source trace",
+    );
   assert.equal(disabled.length, 1, "missing or duplicate automatic Disable");
   const operation = await waitOperation(item, disabled[0].operation_request_id);
   assert.equal(operation.kind, "disable");
@@ -200,26 +201,62 @@ export async function waitOffboarding(
       before.some((old) => old.event_id === event.event_id),
     ),
   );
-  return verifyOffboardingTrace(
-    "http://jaeger:16686",
-    {
-      sourceID: response.traceID,
-      agentID: item.agent,
-      requestID: operation.request_id,
-      ...(ownerUserID
-        ? {
-            ownerRevocation: {
-              event: structuredClone(cause),
-              ownerUserID,
-              organizationID:
-                reason === "user_deactivated" ? "" : item.organization,
-              reason,
-            },
-          }
-        : {}),
-    },
-    secrets,
+  const expected = {
+    sourceID: response.traceID,
+    agentID: item.agent,
+    requestID: operation.request_id,
+    ...(ownerUserID
+      ? {
+          ownerRevocation: {
+            event: structuredClone(cause),
+            ownerUserID,
+            organizationID:
+              reason === "user_deactivated" ? "" : item.organization,
+            reason,
+          },
+        }
+      : {}),
+  };
+  if (!item.traceDiagnostics)
+    return verifyOffboardingTrace("http://jaeger:16686", expected, secrets);
+  const original = {
+    agentID: item.agent,
+    organizationID: item.organization,
+    ownerUserID: ownerUserID ?? agent.owner_user_id,
+    reason,
+    agent,
+    runtime,
+    before,
+    events,
+    privateEvents: raw,
+    operation,
+  };
+  writeEvidenceFile(
+    item.evidenceDirectory,
+    `offboarding-${operation.request_id}.private.json`,
+    JSON.stringify(original),
   );
+  const business = inspectOffboardingBusiness(original);
+  const diagnostic = await item.traceDiagnostics.run(
+    `offboarding-${operation.request_id}`,
+    (signal) => {
+      assert.equal(
+        revoked[0].trace_id,
+        response.traceID,
+        "revocation lost Gateway source trace",
+      );
+      return verifyOffboardingTrace("http://jaeger:16686", expected, secrets, {
+        signal,
+      });
+    },
+  );
+  return {
+    ...business,
+    source_trace_id: response.traceID,
+    trace_id: response.traceID,
+    owner_revocation: structuredClone(cause),
+    diagnostic,
+  };
 }
 
 export async function remainsDisabled(item) {

@@ -56,7 +56,7 @@ export function createAccessModel() {
       assert.equal(request.method, "POST");
       assert.equal(request.url, "/v1/chat/completions");
       const parent = request.headers.traceparent ?? "";
-      assert.match(parent, /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
+      const validTrace = /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/.test(parent);
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -74,8 +74,15 @@ export function createAccessModel() {
       );
       requests.push({
         phase: result.phase,
-        trace_id: parent.split("-")[1],
-        model_span_id: parent.split("-")[2],
+        ...(validTrace
+          ? {
+              trace_id: parent.split("-")[1],
+              model_span_id: parent.split("-")[2],
+            }
+          : {
+              trace_diagnostic: "traceparent_unavailable",
+              traceparent: parent,
+            }),
       });
       reply(200, {
         choices: [

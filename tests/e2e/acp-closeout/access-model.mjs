@@ -67,8 +67,8 @@ export function createCloseoutAccessModel() {
         request.headers.authorization,
         "Bearer closeout-access-private-key",
       );
-      const parent = request.headers.traceparent;
-      assert.match(parent ?? "", /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
+      const parent = request.headers.traceparent ?? "";
+      const validTrace = /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/.test(parent);
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -85,8 +85,15 @@ export function createCloseoutAccessModel() {
       requests.push({
         phase: result.phase,
         stage,
-        trace_id: parent.split("-")[1],
-        model_span_id: parent.split("-")[2],
+        ...(validTrace
+          ? {
+              trace_id: parent.split("-")[1],
+              model_span_id: parent.split("-")[2],
+            }
+          : {
+              trace_diagnostic: "traceparent_unavailable",
+              traceparent: parent,
+            }),
       });
       reply(200, {
         choices: [

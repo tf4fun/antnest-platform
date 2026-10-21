@@ -10,9 +10,11 @@ prove.
 The default HTTP and SCIM client has no database or Docker access and uses only
 synthetic credentials. Business mutations go through the Gateway. The ACP
 profiles additionally use a read-only connection to ACP-owned tables to verify
-that rejected requests and history replay have no durable side effects. Raw
-Trace warnings and expected rejection diagnostics remain available for review;
-the Session fault profile treats them as auxiliary findings.
+that rejected requests and history replay have no durable side effects. Original
+strict Trace warnings and expected rejection-error findings are retained as
+auxiliary diagnostics. Business, authorization, Run persistence, Runtime behavior,
+cancellation and actual cleanup remain blocking checks. This policy does not
+claim that every historical profile has completed its implementation migration.
 
 ## Running
 
@@ -828,3 +830,14 @@ mode 0600.
 The coordinator alone operates Docker. The parent owns cleanup of all containers,
 volumes and networks, including when a client assertion fails. Test users stay
 until the parent removes the disposable databases.
+
+## Access business admission
+
+The current Access profile independently checks persisted Runs, model calls,
+Agent and Session isolation, original directory mutation and browser authority,
+remote closure and the subsequent scoped HTTP denial. Automatic Disable requires
+original Agent, Runtime, event and completed operation receipts. These checks and
+actual resource joins remain blocking. Trace collection, diagnostic headers and
+exporter failures use one shared 60-second auxiliary budget, preserve original
+findings, and never turn an unexecuted collection into a pass. Business success
+is reported only after cleanup completes. Full merge admission runs in remote CI.

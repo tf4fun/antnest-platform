@@ -20,6 +20,11 @@ const implementation = await import(url).catch((error) => {
 async function fixture(t, override = {}) {
   const requests = [];
   const denialPending = Promise.withResolvers();
+  const issuedBody = {
+    principal: { organization_id: "org", user_id: "user" },
+    expires_at: new Date(Date.now() + 120000).toISOString(),
+    idle_expires_at: new Date(Date.now() + 120000).toISOString(),
+  };
   let stream, observer, releaseDenial;
   const release = () => {
     const send = releaseDenial;
@@ -42,8 +47,15 @@ async function fixture(t, override = {}) {
           : null,
       };
       requests.push(row);
-      const traceID =
-        request.method === "GET" && Object.hasOwn(override, "streamTraceID")
+      const boundary =
+        request.url === "/api/session/login"
+          ? "login"
+          : request.method === "GET"
+            ? "stream"
+            : "denial";
+      const traceID = Object.hasOwn(override.traces ?? {}, boundary)
+        ? override.traces[boundary]
+        : request.method === "GET" && Object.hasOwn(override, "streamTraceID")
           ? override.streamTraceID
           : request.method === "POST" &&
               Object.hasOwn(override, "denialTraceID")
@@ -52,7 +64,10 @@ async function fixture(t, override = {}) {
       if (traceID !== undefined && traceID !== null)
         response.setHeader("x-antnest-trace-id", traceID);
       response.setHeader("cache-control", "no-store");
-      if (
+      if (request.method === "POST" && request.url === "/api/session/login") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(issuedBody));
+      } else if (
         request.method === "GET" &&
         request.url.endsWith("/events?sessionId=session-1")
       ) {
@@ -127,16 +142,26 @@ async function fixture(t, override = {}) {
       { requestId: "1", method: "session/new", sessionId: "session-1" },
     ],
   };
-  const issued = {
-    principal: { organization_id: "org", user_id: "user" },
+  let issued = {
+    ...issuedBody,
     observation: {
       startedMono: performance.now() - 10,
       completedMono: performance.now(),
       traceID: "c".repeat(32),
     },
-    expires_at: new Date(Date.now() + 120000).toISOString(),
-    idle_expires_at: new Date(Date.now() + 120000).toISOString(),
   };
+  if (override.actualLogin) {
+    const startedMono = performance.now();
+    const response = await browser.request("/api/session/login", { body: {} });
+    issued = {
+      ...response.body,
+      observation: {
+        startedMono,
+        completedMono: performance.now(),
+        traceID: response.traceID,
+      },
+    };
+  }
   return {
     browser,
     client,
@@ -569,3 +594,207 @@ for (const [label, override] of [
     assert.equal(f.client.requests.length, 1);
     await observer.closeAndWait();
   });
+
+for (const [mode, trace] of [
+  ["missing", null],
+  ["malformed", invalidTraceCanary],
+])
+  for (const status of [401, 403])
+    test(`business observation retains ${mode} login, SSE and denial Trace through actual HTTP ${status} and resource join`, async (t) => {
+      const f = await fixture(t, {
+        actualLogin: true,
+        traces: { login: trace, stream: trace, denial: trace },
+        status,
+        ...(status === 403 ? { body: accessDenied } : {}),
+      });
+      const observer = await f.open({
+        ...(status === 403
+          ? { membershipRevocation: true }
+          : { userRevocation: true }),
+      });
+      const point = observer.checkpoint("revoked");
+      assert.equal(f.issued.observation.traceID, trace);
+      assert.deepEqual(point.issuance, {
+        ...f.issued.observation,
+        traceID: undefined,
+        traceDiagnostic: "missing_or_invalid_trace_id",
+      });
+      assert.equal(point.stream.trace_id, undefined);
+      assert.equal(point.stream.traceDiagnostic, "missing_or_invalid_trace_id");
+      assert.equal(observer.stream.evidence.trace_id, trace);
+      assert.equal(point.stream.status, 200);
+      assert.equal(
+        point.stream.path,
+        "/api/app/workspace/v1/agents/agent-1/events?sessionId=session-1",
+      );
+      assert.equal(point.stream.set_cookie_count, 0);
+      await f.browser.request("/api/session", {
+        method: "DELETE",
+        status: 204,
+      });
+      const closed = await observer.waitForClose(point);
+      assert.equal(closed.closure.kind, "remote-end");
+      assert.equal(closed.traceID, undefined);
+      assert.equal(closed.traceDiagnostic, "missing_or_invalid_trace_id");
+      assert.equal(closed.closure.trace_id, undefined);
+      assert.equal(
+        closed.closure.traceDiagnostic,
+        "missing_or_invalid_trace_id",
+      );
+      assert.equal(observer.stream.closure.trace_id, trace);
+      assert.equal(closed.localClose, false);
+      assert.equal(closed.silent, true);
+      assert.equal(closed.authorizationCauseVerified, false);
+      assert.equal(closed.credentialScope, point.stream.credential_scope);
+      for (const key of ["at", "observed_at_ms"])
+        assert(
+          closed.closure[key] >= point[key] &&
+            closed.closure[key] <= point[key] + 30000,
+        );
+      assert.equal(observer.browser.requests, 0);
+      assert.deepEqual(f.client.requests, point.sdkRequests);
+      const denial = await observer.rejectPrompt();
+      assert.equal(denial.status, status);
+      assert.equal(
+        denial.code,
+        status === 403 ? "access_denied" : "unauthenticated",
+      );
+      assert.equal(denial.traceID, undefined);
+      assert.equal(denial.traceDiagnostic, "missing_or_invalid_trace_id");
+      assert(
+        !JSON.stringify({ point, closed, denial }).includes(invalidTraceCanary),
+      );
+      assert.equal(denial.credentialScope, point.stream.credential_scope);
+      assert.equal(denial.noStore, true);
+      assert.equal(denial.setCookieCount, 0);
+      assert(denial.startedMono >= closed.closure.at);
+      assert.equal(
+        denial.path,
+        "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts",
+      );
+      if (status === 403) assert.deepEqual(denial.body, accessDenied);
+      assert.equal(observer.browser.cookie, f.cookie);
+      assert.equal(observer.browser.requests, 1);
+      assert(f.requests.every((row) => row.cookie === f.cookie));
+      assert.deepEqual(
+        f.requests.map((row) => row.path),
+        [
+          "/api/session/login",
+          "/api/app/workspace/v1/agents/agent-1/events?sessionId=session-1",
+          "/api/session",
+          "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts",
+        ],
+      );
+      assert.deepEqual(f.client.requests, point.sdkRequests);
+      await observer.closeAndWait();
+      assert(observer.stream.evidence.joined.at >= closed.closure.at);
+      assert(
+        observer.stream.evidence.joined.observed_at_ms >=
+          closed.closure.observed_at_ms,
+      );
+      assert(
+        Number.isSafeInteger(observer.stream.evidence.joined.observed_at_ms),
+      );
+      assert.equal(
+        observer.stream.evidence.reader_cleanup.outcome,
+        "cancelled",
+      );
+    });
+
+test("business observation keeps the actual denial status, body, cache and Cookie checks hard", async (t) => {
+  for (const override of [
+    { status: 503, code: "identity_unavailable" },
+    { status: 403, body: { ...accessDenied, retryable: true } },
+    { status: 403, body: { ...accessDenied, recovery: "retry" } },
+    { status: 403, body: { ...accessDenied, requestId: undefined } },
+    { status: 403, body: accessDenied, cookie: true },
+    { status: 403, body: accessDenied, cache: "private, max-age=60" },
+  ]) {
+    const f = await fixture(t, override);
+    const observer = await f.open({
+      membershipRevocation: true,
+    });
+    const point = observer.checkpoint("revoked");
+    f.endStream();
+    await observer.waitForClose(point);
+    await assert.rejects(() => observer.rejectPrompt());
+    assert.equal(f.requests.filter((row) => row.method === "POST").length, 1);
+    assert.deepEqual(f.client.requests, point.sdkRequests);
+    await observer.closeAndWait();
+  }
+});
+
+test("business observation rejects changed private authority and local closure without dispatching a denial", async (t) => {
+  const f = await fixture(t);
+  const observer = await f.open({ userRevocation: true });
+  const point = observer.checkpoint("revoked");
+  await observer.closeAndWait();
+  assert.equal(observer.stream.closure.kind, "local-close");
+  await assert.rejects(() => observer.waitForClose(point));
+  await assert.rejects(() => observer.rejectPrompt());
+  assert.equal(f.requests.length, 1);
+  assert.equal(observer.browser.requests, 0);
+
+  const other = await fixture(t);
+  const remote = await other.open({
+    userRevocation: true,
+  });
+  const checkpoint = remote.checkpoint("revoked");
+  other.endStream();
+  await remote.waitForClose(checkpoint);
+  remote.browser.cookies.set("antnest_session", "MUTATED-PRIVATE-CANARY");
+  await assert.rejects(
+    () => remote.rejectPrompt(),
+    (error) => {
+      assert(
+        !inspect(error, { depth: null }).includes("MUTATED-PRIVATE-CANARY"),
+      );
+      assert(!inspect(error, { depth: null }).includes("original-session"));
+      return true;
+    },
+  );
+  assert.equal(other.requests.length, 1);
+  await remote.closeAndWait();
+});
+
+test(
+  "business observation cancellation joins the held denial and preserves its original abort",
+  { timeout: 20000 },
+  async (t) => {
+    const controller = new AbortController();
+    const f = await fixture(t, { holdDenial: true });
+    const observer = await f.open({
+      signal: controller.signal,
+    });
+    const point = observer.checkpoint("revoked");
+    f.endStream();
+    await observer.waitForClose(point);
+    const pending = observer.rejectPrompt();
+    let settled = false;
+    const joined = pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    try {
+      await f.denialPending;
+      const reason = new Error("business observation cancelled");
+      controller.abort(reason);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(settled, false);
+      f.releaseDenial();
+      await assert.rejects(pending, (error) => {
+        assert.equal(error, reason);
+        return true;
+      });
+      assert.equal(f.requests.filter((row) => row.method === "POST").length, 1);
+    } finally {
+      f.releaseDenial();
+      await joined;
+      await observer.closeAndWait();
+    }
+  },
+);

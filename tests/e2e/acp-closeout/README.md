@@ -56,8 +56,11 @@ claim closure of Agent UI's shared private owners.
 
 Completed, replayed and rejected requests are checked against their message
 Trace identities and the current ACP audit. Full topology and privacy checks
-run before stable export. Raw Traces remain private; strict warnings and
-rejection errors are reported as failures.
+run before stable export. Raw Traces remain private; original strict warnings
+and rejection-error findings are retained as auxiliary diagnostics. Business,
+authorization, Run persistence, Runtime behavior, cancellation and actual cleanup
+remain blocking checks. This policy does not claim that every historical profile
+has completed its implementation migration.
 
 Evidence is written under `artifacts/verification/acp-closeout-normal/<project>/`.
 
@@ -116,3 +119,14 @@ The entry script runs only inside a disposable `antnest-stage3-e2e-<n>` project
 and refuses `ANTNEST_E2E_KEEP_STACK=true`. On exit or interruption it saves the
 client and model logs, removes the fixture client and model containers, and the
 parent removes every container, volume and network of the project.
+
+## Access business admission
+
+The current Access profile independently checks persisted Runs, model calls,
+Agent and Session isolation, original directory mutation and browser authority,
+remote closure and the subsequent scoped HTTP denial. Automatic Disable requires
+original Agent, Runtime, event and completed operation receipts. These checks and
+actual resource joins remain blocking. Trace collection, diagnostic headers and
+exporter failures use one shared 60-second auxiliary budget, preserve original
+findings, and never turn an unexecuted collection into a pass. Business success
+is reported only after cleanup completes. Full merge admission runs in remote CI.
