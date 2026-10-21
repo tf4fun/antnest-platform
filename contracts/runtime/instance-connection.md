@@ -121,18 +121,56 @@ publication cannot manufacture or rehydrate authority after ACP restart, clear
 protection, or silently retarget a Run. An unavailable cleanup connection retains
 the existing barrier outcome. On re-opening, Controller must resolve the current
 verified private connection again. These closed semantics are deliberate
-lifecycle behavior, not an anonymous fallback for executable Agents.
+lifecycle behavior, not an anonymous fallback for executable Agents. Sealed
+warm admission must use the latest committed configuration and cannot recover
+an older executable grant through a newer closed or empty configuration.
 
 ACP separates the private credential from the public configuration before
-persistence, audit or Run snapshot construction. The public reference contains
-only the existing Runtime revision/execution/endpoint plus `connection_id`.
+persistence of that projection, audit or Run snapshot construction. The public
+reference contains only the existing Runtime revision/execution/endpoint plus
+`connection_id`.
+
+The [sealed warm-admission amendment](../agent-acp/execution-api.md#sealed-warm-admission)
+permits ACP to retain the private material of its current configuration in
+authenticated encrypted storage, separately from that public projection.
+This is a pending #50 owning-service implementation, not a claim that the
+current ACP producer already restores authority after restart. It adds no RPC
+or snapshot wire fields. Controller still does not persist relayed tokens;
+`controller_relay.persist_token: false` retains its existing scope and meaning.
+
 The private token is installed in ACP's own volatile, mode-0700 instance
 directory as a mode-0600 `antnest-runtime` file. RC installs its own sender file
 in its private volatile directory. Each request reads the trusted instance's
-file; no process-wide Runtime token, cached fallback, shared browser mount or
-user-controlled filename is allowed. A same-ID/same-binding publication cannot
-replace token bytes. ACP restart requires fresh authenticated publication before
-Runtime calls; public persisted metadata alone cannot reconstruct authority.
+file; no process-wide Runtime token, older-revision credential fallback, shared
+browser mount or user-controlled filename is allowed. A same-ID/same-binding
+publication cannot replace token bytes, including equal-revision publication
+when sealed private material already exists. Public persisted metadata alone
+cannot reconstruct authority.
+
+ACP's public configuration and sealed private material commit in one transaction
+under the same organization revision compare-and-set. Recovery uses the latest
+committed revision, even if its publication failed or its acknowledgement was
+lost. Sealing uses a stable ACP bootstrap key, AES-256-GCM and a fresh random
+nonce, with the UTF-8 JSON associated-data tuple
+`["agent-acp-service/execution-authority", 1, organization_id, revision]`.
+After decryption, full validation and equality of the derived and stored public
+projections are required. Missing authority, a missing or damaged seal, a wrong
+key or loss of worker ownership must leave admission closed, never fall back to
+an older version or infer permission from public metadata. Secrets remain
+excluded from Run snapshots, public audit, logs, traces and Temporal history.
+
+Restoration runs within existing ACP worker ownership before listeners open.
+It prepares and verifies new process-owned 0700 directories and 0600 sender
+files, and publishes usable authority only after complete successful recovery.
+Failure or ownership loss closes partial clients and removes partial files;
+normal shutdown still removes the volatile sender storage. Startup recovery and
+existing Runtime protection must also complete before admission. A historical
+public-only row must receive authenticated publication before its first warm
+restart; migration cannot synthesize authority. A current closed or empty
+snapshot remains non-executable. Warm recovery cannot observe a Controller
+revocation that has not been published to ACP, but cannot undo any newer
+revocation committed there. ACP producer implementation and cross-service warm
+restart acceptance remain pending.
 
 ## Runtime admission, status and Host
 
