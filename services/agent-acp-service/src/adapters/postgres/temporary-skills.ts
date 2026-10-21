@@ -6,6 +6,7 @@ import type {
   TemporarySkillStore,
 } from "../../ports/temporary-skills.js";
 import type { PostgresKernel } from "./kernel.js";
+import { lockRuntimeBarrierOrganization, retireClearedRuntimeBarriers } from "./runtime-barrier.js";
 import {
   runtimeConnectionIdSchema,
   runtimeRevisionSchema,
@@ -54,8 +55,11 @@ export class PostgresTemporarySkills implements TemporarySkillStore {
       !runtimeMcpEndpointSchema.safeParse(input.snapshot.runtime.mcpEndpoint).success
     )
       throw new DomainError("access_denied", "Temporary Skill scope is unavailable");
-    const result = await this.kernel.query<Row>(
-      `INSERT INTO temporary_skill_scopes(${columns})
+    return this.kernel.transaction(async (client) => {
+      await lockRuntimeBarrierOrganization(client, input.snapshot.organizationId);
+      input.signal.throwIfAborted();
+      const result = await client.query<Row>(
+        `INSERT INTO temporary_skill_scopes(${columns})
    SELECT r.id,s.organization_id,s.agent_id,r.execution_snapshot->'runtime'->>'executionId',r.execution_snapshot->'runtime'->>'mcpEndpoint'
    FROM runs r JOIN acp_sessions s ON s.id=r.session_id
    WHERE r.id=$1 AND r.state='running' AND s.state <> 'deleted' AND s.organization_id=$2
@@ -69,19 +73,20 @@ export class PostgresTemporarySkills implements TemporarySkillStore {
     AND temporary_skill_scopes.execution_id=EXCLUDED.execution_id
     AND temporary_skill_scopes.mcp_endpoint=EXCLUDED.mcp_endpoint
    RETURNING ${columns},$6::text AS runtime_revision,$7::text AS connection_id`,
-      [
-        input.runId,
-        input.snapshot.organizationId,
-        input.snapshot.runtime.executionId,
-        input.snapshot.executionRevision,
-        input.snapshot.runtime.mcpEndpoint,
-        input.snapshot.runtime.revision,
-        input.snapshot.runtime.connectionId,
-      ],
-    );
-    if (!result.rows[0])
-      throw new DomainError("access_denied", "Temporary Skill scope is unavailable");
-    return scope(result.rows[0]);
+        [
+          input.runId,
+          input.snapshot.organizationId,
+          input.snapshot.runtime.executionId,
+          input.snapshot.executionRevision,
+          input.snapshot.runtime.mcpEndpoint,
+          input.snapshot.runtime.revision,
+          input.snapshot.runtime.connectionId,
+        ],
+      );
+      if (!result.rows[0])
+        throw new DomainError("access_denied", "Temporary Skill scope is unavailable");
+      return scope(result.rows[0]);
+    });
   }
   public async forRun(runId: string, signal: AbortSignal) {
     const result = await this.kernel.read<Row>(
@@ -112,6 +117,7 @@ export class PostgresTemporarySkills implements TemporarySkillStore {
   }
   public async released(record: TemporarySkillScope): Promise<void> {
     await this.kernel.transaction(async (client) => {
+      await lockRuntimeBarrierOrganization(client, record.organizationId);
       const updated = await client.query<Row>(
         `UPDATE temporary_skill_scopes t SET released_at=COALESCE(released_at,now())
     WHERE run_id=$1 AND organization_id=$2 AND agent_id=$3 AND execution_id=$4 AND mcp_endpoint=$5
@@ -137,6 +143,11 @@ export class PostgresTemporarySkills implements TemporarySkillStore {
     AND source='agent' AND source_id='skill_registry' AND tool_name='load_skill'`,
         [record.runId],
       );
+      await retireClearedRuntimeBarriers(client, {
+        organizationId: record.organizationId,
+        agentId: record.agentId,
+        runtimeRevision: record.revision,
+      });
     });
   }
 }

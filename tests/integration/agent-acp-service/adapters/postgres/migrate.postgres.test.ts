@@ -134,6 +134,7 @@ describe.skipIf(databaseUrl === undefined)(
         "0020_skill_learning_idle_install.sql",
         "0021_tool_finish_receipts.sql",
         "0022_execution_authority.sql",
+        "0023_runtime_barrier_cycles.sql",
       ]);
       expect(
         (

@@ -15,6 +15,10 @@ import {
 } from "../../ports/execution-configuration.js";
 import type { PostgresKernel } from "./kernel.js";
 import type { SecretBox } from "./secret-box.js";
+import {
+  lockRuntimeBarrierOrganization,
+  retireReplacedRuntimeBarriers,
+} from "./runtime-barrier.js";
 
 type StoredAuthority = {
   organization_id: string;
@@ -219,6 +223,7 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
     const incoming = parseExecutionConfiguration(input);
     const projection = publicExecutionConfiguration(incoming);
     return this.kernel.transaction(async (client) => {
+      await lockRuntimeBarrierOrganization(client, incoming.organization_id);
       const selected = await client.query<StoredAuthority>(
         `SELECT ${authorityColumns} FROM execution_configurations WHERE organization_id = $1 FOR UPDATE`,
         [incoming.organization_id],
@@ -294,7 +299,9 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
              AND (revision < $2 OR (revision = $2 AND authority_version IS NULL))`,
               [...values, expectedRevision],
             );
-      return saved.rowCount === 1;
+      if (saved.rowCount !== 1) return false;
+      await retireReplacedRuntimeBarriers(client, projection);
+      return true;
     });
   }
 }

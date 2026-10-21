@@ -390,6 +390,40 @@ Agent-level settlement reports whether the current binding requires replacement,
 independently of startup cleanup. Controller-side changes not yet committed to
 ACP cannot be inferred by warm restoration.
 
+## Durable Runtime Recovery Cycles
+
+The PostgreSQL recovery projection records one active cycle for each organization,
+Agent and original Runtime revision. The first terminal, locally quiescent Run
+with an unstopped Runtime call or unreleased temporary Skill scope creates the
+cycle in the same transaction as its terminal outcome. The cycle retains its
+original Runtime execution ID; historical Tool effect classification does not
+prove physical stopping. A repeated terminal receipt cannot recreate a retired
+cycle.
+
+Run finish, temporary scope reservation/release and committed configuration
+publication share an organization transaction lock before their existing row
+locks. This prevents a late reservation from committing protection after finish
+has already decided that the binding is clear. Cleanup retires a cycle only when
+all protected Runs in that binding are clear. A successfully committed executable
+publication for a different Runtime revision also retires the old cycle, relying
+on the Controller's existing isolation-before-replacement obligation. Closing an
+Agent, changing health/endpoint/execution ID within the same revision, or replaying
+an equal publication does not retire it. A later protected Run after actual
+clearance receives a new cycle ID.
+
+`RuntimeBarrierReader` reads the committed current binding, active cycle and Run
+facts in one database snapshot. A nonterminal Run cannot be reported as ready
+for recovery. Missing or conflicting configuration, malformed persisted identity,
+storage failure, and eligible protection missing its atomic cycle are errors,
+not successful absence. Reads do not repair history or create cycles. Migration
+backfills recognizable legacy terminal bindings without changing Run, Tool or
+scope history; older snapshots without a Runtime identity remain historical facts.
+
+This batch provides storage and owning transaction integration. The authenticated
+Controller-only control endpoint, Controller recovery policy, UI consumers and
+cross-service recovery acceptance are separate pending batches. No automatic
+Rebuild or Prompt replay is introduced by this projection.
+
 ## Test Boundaries
 
 Tests follow the ownership boundary: model transport tests verify authentication
