@@ -70,9 +70,17 @@ function rows() {
               "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "48002" }],
               "16686/tcp": [{ HostIp: "127.0.0.1", HostPort: "48003" }],
             }
-          : ["edge-gateway", "oidc-fixture"].includes(name)
+          : name === "edge-gateway"
             ? { "8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "48001" }] }
-            : {},
+            : name === "oidc-fixture"
+              ? { "8443/tcp": [{ HostIp: "127.0.0.1", HostPort: "" }] }
+              : {},
+    },
+    NetworkSettings: {
+      Ports:
+        name === "oidc-fixture"
+          ? { "8443/tcp": [{ HostIp: "127.0.0.1", HostPort: "54864" }] }
+          : {},
     },
     Mounts:
       name === "identity-service"
@@ -99,11 +107,140 @@ test("Identity deployment requires actual HTTPS trust and isolated ingress", () 
       ).HostConfig.PortBindings = {
         "7233/tcp": [{ HostIp: "127.0.0.1", HostPort: "7233" }],
       }),
-    (r) => (r.at(-1).HostConfig.PortBindings["8080/tcp"][0].HostIp = "0.0.0.0"),
+    (r) => (r.at(-1).HostConfig.PortBindings["8443/tcp"][0].HostIp = "0.0.0.0"),
     (r) => (r.at(-1).State.Health.Status = "unhealthy"),
   ]) {
     const value = rows();
     mutate(value);
+    assert.throws(() => inspectIdentityDeployment(value, "fixture"));
+  }
+});
+
+test("Identity deployment reports the actual Docker OIDC host port instead of the requested port", () => {
+  for (const requested of ["", "0", "44864"]) {
+    const value = rows();
+    const fixture = value.at(-1);
+    fixture.HostConfig.PortBindings["8443/tcp"][0].HostPort = requested;
+    fixture.Config.Env.push("ANTNEST_OIDC_TEST_PORT=44864");
+    const original = structuredClone(value);
+    const result = inspectIdentityDeployment(value, "fixture");
+    assert.equal(result.oidcHostPort, 54864);
+    assert.equal(typeof result.oidcHostPort, "number");
+    assert.deepEqual(
+      value,
+      original,
+      "inspection must preserve the Docker original",
+    );
+  }
+});
+
+test("Identity deployment reads a changed actual OIDC mapping without reusing a previous receipt", () => {
+  const value = rows();
+  const fixture = value.at(-1);
+  assert.equal(inspectIdentityDeployment(value, "fixture").oidcHostPort, 54864);
+  fixture.NetworkSettings.Ports["8443/tcp"][0].HostPort = "54865";
+  assert.equal(inspectIdentityDeployment(value, "fixture").oidcHostPort, 54865);
+});
+
+for (const [name, mutate] of [
+  ["missing NetworkSettings", (fixture) => delete fixture.NetworkSettings],
+  ["missing Ports", (fixture) => delete fixture.NetworkSettings.Ports],
+  [
+    "missing actual HTTPS mapping",
+    (fixture) => {
+      fixture.NetworkSettings.Ports = {};
+    },
+  ],
+  [
+    "unbound actual HTTPS mapping",
+    (fixture) => {
+      fixture.NetworkSettings.Ports["8443/tcp"] = null;
+    },
+  ],
+  [
+    "empty actual HTTPS mapping",
+    (fixture) => {
+      fixture.NetworkSettings.Ports["8443/tcp"] = [];
+    },
+  ],
+  [
+    "wrong actual target",
+    (fixture) => {
+      fixture.NetworkSettings.Ports = {
+        "8080/tcp": fixture.NetworkSettings.Ports["8443/tcp"],
+      };
+    },
+  ],
+  [
+    "non-loopback actual binding",
+    (fixture) => {
+      fixture.NetworkSettings.Ports["8443/tcp"][0].HostIp = "0.0.0.0";
+    },
+  ],
+  [
+    "duplicate actual HTTPS bindings",
+    (fixture) => {
+      fixture.NetworkSettings.Ports["8443/tcp"].push(
+        structuredClone(fixture.NetworkSettings.Ports["8443/tcp"][0]),
+      );
+    },
+  ],
+  [
+    "additional actual published target",
+    (fixture) => {
+      fixture.NetworkSettings.Ports["8080/tcp"] = [
+        { HostIp: "127.0.0.1", HostPort: "54865" },
+      ];
+    },
+  ],
+])
+  test("Identity deployment rejects " + name, () => {
+    const value = rows();
+    mutate(value.at(-1));
+    assert.throws(() => inspectIdentityDeployment(value, "fixture"));
+  });
+
+test("Identity deployment rejects invalid actual OIDC host ports", () => {
+  for (const port of [
+    undefined,
+    "",
+    "0",
+    "-1",
+    "65536",
+    "54864.5",
+    "not-a-port",
+    "54864trailing",
+    " 54864",
+    "54864\n",
+    "54864\r\n",
+    54864,
+  ]) {
+    const value = rows();
+    value.at(-1).NetworkSettings.Ports["8443/tcp"][0].HostPort = port;
+    assert.throws(
+      () => inspectIdentityDeployment(value, "fixture"),
+      `actual Docker port ${JSON.stringify(port)} must be rejected`,
+    );
+  }
+});
+
+test("actual OIDC mapping does not replace fixture project, service and health checks", () => {
+  for (const mutate of [
+    (fixture) => {
+      fixture.Config.Labels["com.docker.compose.project"] = "foreign";
+    },
+    (fixture) => {
+      fixture.Config.Labels["com.docker.compose.service"] = "foreign";
+    },
+    (fixture) => {
+      fixture.State.Running = false;
+    },
+    (fixture) => {
+      fixture.State.Health.Status = "unhealthy";
+    },
+  ]) {
+    const value = rows();
+    mutate(value.at(-1));
     assert.throws(() => inspectIdentityDeployment(value, "fixture"));
   }
 });

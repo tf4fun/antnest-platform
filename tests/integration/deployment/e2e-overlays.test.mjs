@@ -135,7 +135,7 @@ function verify(
     ["diagnostic-relay", "127.0.0.1", "43111", 16686, "tcp"],
   ];
   if (identity)
-    expected.push(["oidc-fixture", "127.0.0.1", "43112", 8443, "tcp"]);
+    expected.push(["oidc-fixture", "127.0.0.1", undefined, 8443, "tcp"]);
   if (model) expected.push(["stage3-model", "127.0.0.1", "43113", 8080, "tcp"]);
   assert.deepEqual(
     actual.sort(),
@@ -161,6 +161,31 @@ function verify(
     );
   }
 }
+
+test("Identity OIDC publication lets Docker allocate the loopback port even with a legacy port environment", () => {
+  const selected = dispatch({ tool_profile: "identity-http" }, "config");
+  for (const legacyPort of ["44864", undefined]) {
+    const overrides = { ...environment, ...selected.ranges };
+    if (legacyPort === undefined) delete overrides.ANTNEST_OIDC_TEST_PORT;
+    else overrides.ANTNEST_OIDC_TEST_PORT = legacyPort;
+    const config = composeConfig(selected.files, overrides);
+    const fixture = config.services["oidc-fixture"];
+    assert.equal(fixture.ports.length, 1);
+    const [binding] = fixture.ports;
+    assert.equal(binding.host_ip, "127.0.0.1");
+    assert.equal(binding.target, 8443);
+    assert.equal(binding.protocol, "tcp");
+    assert.equal(Object.hasOwn(binding, "published"), false);
+    assert.equal(
+      fixture.environment.OIDC_TEST_CALLBACK,
+      `${environment.ANTNEST_EDGE_PUBLIC_BASE_URL}/protocol/oidc/callback`,
+    );
+    assert.equal(
+      config.services["identity-service"].environment.SSL_CERT_FILE,
+      "/test-ca/tls.crt",
+    );
+  }
+});
 
 for (const [name, selection] of cases) {
   test(`Stage 3a ${name} keeps diagnostics and dynamic allocation isolated`, () => {

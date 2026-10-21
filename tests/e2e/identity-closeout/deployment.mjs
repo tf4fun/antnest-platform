@@ -24,6 +24,24 @@ export function inspectIdentityDeployment(
   const bindings = Object.values(fixture.HostConfig.PortBindings ?? {}).flat();
   assert.equal(bindings.length, 1);
   assert.equal(bindings[0].HostIp, "127.0.0.1");
+  // HostConfig describes the request, including an empty ephemeral port.
+  // Only the running container's actual mapping identifies our HTTPS ingress.
+  const ports = fixture.NetworkSettings?.Ports;
+  assert(ports && typeof ports === "object");
+  assert.deepEqual(
+    Object.entries(ports)
+      .filter(([, values]) => values !== null)
+      .map(([target]) => target),
+    ["8443/tcp"],
+    "OIDC fixture must publish only its HTTPS target",
+  );
+  const oidcBindings = ports["8443/tcp"];
+  assert(Array.isArray(oidcBindings) && oidcBindings.length === 1);
+  assert.equal(oidcBindings[0].HostIp, "127.0.0.1");
+  assert.equal(typeof oidcBindings[0].HostPort, "string");
+  assert.match(oidcBindings[0].HostPort, /^[1-9][0-9]{0,4}$/u);
+  const oidcHostPort = Number(oidcBindings[0].HostPort);
+  assert(oidcHostPort <= 65535);
   const identity = rows.find((row) => service(row) === "identity-service");
   const gateway = rows.find((row) => service(row) === "edge-gateway");
   const ttlKey = "ANTNEST_EDGE_RESOLVE_CACHE_TTL";
@@ -53,6 +71,7 @@ export function inspectIdentityDeployment(
   return {
     ...result,
     services: rows.length,
+    oidcHostPort,
     oidc_verified_tls: true,
     resolve_cache_ttl_ms: resolveTTLMS,
     controller_identity_revocation_poll_interval: actual[0].slice(
