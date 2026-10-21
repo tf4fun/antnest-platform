@@ -68,8 +68,14 @@ current requests and rejecting later use of existing handles.
 Every synchronization reads the stored current revision before CAS. Losing a
 commit acknowledgement must not trap retries behind an older cached revision.
 The in-memory directory contains only successfully published configurations;
-stored state and volatile client material are separate facts. Revoked handles
+non-exclusive readers retain the last published view while the next publication
+is pending, and switch to the new view only after it succeeds. A failed live
+publication removes the old view and closes local access. Admission and access
+commits remain serialized with publication. Stored state and volatile client
+material are separate facts. Revoked handles
 remain unusable after re-enabling a Provider; re-enabling creates a fresh client.
+Lifecycle settlement rejects a pending publication without waiting, so an old
+closure cannot authorize settlement while its replacement is being applied.
 
 ### Runtime instance authentication: #30 owning-service admission
 

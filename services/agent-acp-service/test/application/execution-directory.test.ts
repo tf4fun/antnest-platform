@@ -54,6 +54,44 @@ function setup(repository = new MemoryConfigurationRepository()) {
 }
 
 describe("execution directory", () => {
+  it("keeps the last confirmed snapshot visible during 1000 successful applies", async () => {
+    const { directory, onApplied, onUnavailable } = setup();
+    const initial = executionConfiguration();
+    const identity = executionIdentity();
+    await directory.apply(initial);
+    const cleanup = directory.runtimeForCleanup(identity);
+    expect(cleanup).not.toBeNull();
+
+    for (let revision = 2; revision <= 1001; revision++) {
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      onApplied.mockImplementationOnce(async () => {
+        entered.resolve();
+        await release.promise;
+      });
+      const next = structuredClone(initial);
+      next.revision = revision;
+      const publishing = directory.apply(next);
+      try {
+        await Promise.race([
+          entered.promise,
+          publishing.then(() => {
+            throw new Error("Publication completed before its held callback");
+          }),
+        ]);
+        await nextTurn();
+        expect(directory.inspect(identity).configuration.revision).toBe(revision - 1);
+        expect(directory.runtimeForCleanup(identity)).toEqual(cleanup);
+      } finally {
+        release.resolve();
+        await publishing;
+      }
+      expect(directory.inspect(identity).configuration.revision).toBe(revision);
+    }
+    expect(onApplied).toHaveBeenCalledTimes(1001);
+    expect(onUnavailable).not.toHaveBeenCalled();
+  }, 15_000);
+
   function binding(configuration = executionConfiguration()) {
     return resolveExecutionConfiguration(
       publicExecutionConfiguration(parseExecutionConfiguration(configuration)),
@@ -61,6 +99,186 @@ describe("execution directory", () => {
       {},
     ).runtime;
   }
+
+  it("rejects lifecycle closure while publication is queued without blocking another organization", async () => {
+    const { directory, repository, onApplied } = setup();
+    const configuration = executionConfiguration();
+    configuration.agents[0]!.accepting_runs = false;
+    delete configuration.agents[0]!.runtime?.credential;
+    configuration.agents[0]!.operation_id = "rebuild-1";
+    await directory.apply(configuration);
+    const other = structuredClone(configuration);
+    other.organization_id = "organization-2";
+    other.agents[0]!.runtime = runtimeConfiguration(2);
+    delete other.agents[0]!.runtime?.credential;
+    await directory.apply(other);
+    const operation = {
+      organizationId: "organization-1",
+      agentId: "agent-1",
+      minimumRevision: 1,
+      operationId: "rebuild-1",
+    };
+    const otherOperation = { ...operation, organizationId: "organization-2" };
+    const replacement = structuredClone(configuration);
+    replacement.revision = 2;
+    replacement.agents[0]!.operation_id = "rebuild-2";
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const active = directory.withAccess(executionIdentity(), async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    const activeResult = active.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const publicationResult = directory.apply(replacement).then(
+      (acknowledgement) => acknowledgement,
+      (error: unknown) => error,
+    );
+    const independentAction = vi.fn(() => Promise.resolve(directory.closedAgent(otherOperation)));
+    const independentResult = directory
+      .withAccess({ ...executionIdentity(), organizationId: "organization-2" }, independentAction)
+      .then(
+        (closed) => closed,
+        (error: unknown) => error,
+      );
+    try {
+      await Promise.race([
+        entered.promise,
+        activeResult.then(() => {
+          throw new Error("Agent commit completed before its held callback");
+        }),
+      ]);
+      await nextTurn();
+      expect(onApplied).toHaveBeenCalledTimes(2);
+      expect(repository.records.get("organization-1")?.revision).toBe(1);
+      expect(() => directory.closedAgent(operation)).toThrow(
+        expect.objectContaining({ code: "configuration_not_ready" }),
+      );
+      expect(directory.closedAgent(otherOperation).revision).toBe(1);
+      expect(independentAction).toHaveBeenCalledTimes(1);
+    } finally {
+      release.resolve();
+      await Promise.all([activeResult, publicationResult, independentResult]);
+    }
+    expect(await activeResult).toBeNull();
+    expect(await publicationResult).toEqual({
+      organization_id: "organization-1",
+      applied_revision: 2,
+    });
+    expect(await independentResult).toMatchObject({ revision: 1 });
+    expect(() => directory.closedAgent(operation)).toThrow(
+      expect.objectContaining({ code: "agent_operation_conflict" }),
+    );
+    expect(directory.closedAgent({ ...operation, operationId: "rebuild-2" }).revision).toBe(2);
+  });
+
+  it.each(["success", "failure"] as const)(
+    "keeps the confirmed Runtime and principal view until held publication ends with %s",
+    async (outcome) => {
+      const { directory, connections, onApplied, onUnavailable } = setup();
+      const initial = executionConfiguration();
+      const identity = executionIdentity();
+      await directory.apply(initial);
+      const previous = binding(initial);
+      const changed = executionConfiguration();
+      changed.revision = 2;
+      changed.agents[0]!.runtime = runtimeConfiguration(2);
+      const candidate = binding(changed);
+      changed.agents[0]!.principal_ids = ["principal-2"];
+      changed.agents[0]!.access_revision = "access-2";
+      const replacementIdentity = { ...identity, principalId: "principal-2" };
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const failure = new Error("held publication failed");
+      onApplied.mockImplementationOnce(async () => {
+        entered.resolve();
+        await release.promise;
+        if (outcome === "failure") throw failure;
+      });
+      const publicationResult = directory.apply(changed).then(
+        (acknowledgement) => acknowledgement,
+        (error: unknown) => error,
+      );
+      const previousAction = vi.fn(() => Promise.resolve("old access"));
+      const candidateAction = vi.fn(() => Promise.resolve("new access"));
+      const previousAccessResult = directory.withAccess(identity, previousAction).then(
+        (result) => result,
+        (error: unknown) => error,
+      );
+      const candidateAccessResult = directory.withAccess(replacementIdentity, candidateAction).then(
+        (result) => result,
+        (error: unknown) => error,
+      );
+      try {
+        await Promise.race([
+          entered.promise,
+          publicationResult.then(() => {
+            throw new Error("Publication completed before its held callback");
+          }),
+        ]);
+        await nextTurn();
+        const inspected = directory.inspect(identity);
+        expect(inspected.configuration.revision).toBe(1);
+        expect(inspected.agent.principal_ids).toEqual(["principal-1"]);
+        expect(inspected.agent.access_revision).toBe("access-1");
+        expect(inspected.agent.runtime).toEqual({
+          runtime_revision: previous.revision,
+          runtime_execution_id: previous.executionId,
+          mcp_endpoint: previous.mcpEndpoint,
+          connection_id: previous.connectionId,
+        });
+        expect(directory.runtimeForCleanup(identity)).toEqual(previous);
+        expect(() => directory.inspect(replacementIdentity)).toThrow(
+          expect.objectContaining({ code: "access_denied" }),
+        );
+        expect(() => connections.fetchFor(previous)).not.toThrow();
+        expect(() => connections.fetchFor(candidate)).toThrow();
+        expect(previousAction).not.toHaveBeenCalled();
+        expect(candidateAction).not.toHaveBeenCalled();
+      } finally {
+        release.resolve();
+        await Promise.all([publicationResult, previousAccessResult, candidateAccessResult]);
+      }
+      expect(onApplied).toHaveBeenCalledTimes(2);
+      expect(previousAction).not.toHaveBeenCalled();
+      expect(() => connections.fetchFor(previous)).toThrow();
+      if (outcome === "success") {
+        expect(await publicationResult).toEqual({
+          organization_id: "organization-1",
+          applied_revision: 2,
+        });
+        expect(await previousAccessResult).toMatchObject({ code: "access_denied" });
+        expect(await candidateAccessResult).toBe("new access");
+        expect(candidateAction).toHaveBeenCalledTimes(1);
+        expect(() => directory.inspect(identity)).toThrow(
+          expect.objectContaining({ code: "access_denied" }),
+        );
+        const inspected = directory.inspect(replacementIdentity);
+        expect(inspected.configuration.revision).toBe(2);
+        expect(inspected.agent.principal_ids).toEqual(["principal-2"]);
+        expect(inspected.agent.access_revision).toBe("access-2");
+        expect(directory.runtimeForCleanup(identity)).toEqual(candidate);
+        expect(() => connections.fetchFor(candidate)).not.toThrow();
+        expect(onUnavailable).not.toHaveBeenCalled();
+      } else {
+        expect(await publicationResult).toBe(failure);
+        expect(await previousAccessResult).toMatchObject({ code: "configuration_not_ready" });
+        expect(await candidateAccessResult).toMatchObject({ code: "configuration_not_ready" });
+        expect(candidateAction).not.toHaveBeenCalled();
+        expect(() => directory.inspect(identity)).toThrow(
+          expect.objectContaining({ code: "configuration_not_ready" }),
+        );
+        expect(() => directory.inspect(replacementIdentity)).toThrow(
+          expect.objectContaining({ code: "configuration_not_ready" }),
+        );
+        expect(directory.runtimeForCleanup(identity)).toBeNull();
+        expect(() => connections.fetchFor(candidate)).toThrow();
+        expect(onUnavailable).toHaveBeenCalledExactlyOnceWith("organization-1");
+      }
+    },
+  );
 
   it("publishes usable private Runtime authority while storing and exposing only its public reference", async () => {
     const { directory, repository, connections, onApplied } = setup();
