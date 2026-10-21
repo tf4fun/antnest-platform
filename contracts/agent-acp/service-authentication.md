@@ -116,3 +116,27 @@ Only exact operator configuration can opt into private endpoints; snapshots,
 Templates and caller context cannot. Existing Run receipt classifications add
 `provider_endpoint_forbidden` and `provider_endpoint_unavailable` within their
 existing string contract; ACP messages and browser DTOs do not change.
+
+## Pending Runtime barrier control admission (#50)
+
+The future `POST /rpc/agent-acp/get-runtime-barrier` query is defined by the
+[pending recovery contract](execution-api.md#runtime-barrier-recovery-50-pending).
+Its ACP producer, Controller consumer and integration admission are pending.
+It is not included in the implemented route list above or in current enforced
+caller grants by this documentation change.
+
+When implemented, this route belongs only to `ANTNEST_ACP_CONTROL_LISTEN` and
+requires the verified `agent-controller` workload. The workspace listener must
+return 404 before reading the body or authenticating, including method/query
+variants. On the correct listener, missing or invalid workload credentials
+return 401 `service_unauthenticated` with the token challenge; a verified wrong
+workload returns 403 `caller_not_allowed`. No user CCT, user state route or
+body-selected caller grants authority. This amendment grants no Gateway or
+Agent UI access to the control query.
+
+The request is one strict JSON object selecting exactly one organization,
+Agent and expected Runtime revision. It follows the existing control JSON,
+body-validation and workload rules. Only the scoped, non-secret recovery
+receipt may be returned: never credentials, endpoints, Run/Tool identifiers or
+their contents. Scope/revision failures and unavailable configuration/storage
+remain errors under the execution API contract, not successful null receipts.

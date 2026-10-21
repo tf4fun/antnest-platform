@@ -561,3 +561,69 @@ resolver does not bind to a specific Agent/operation: authenticated RC can resol
 any organization's frozen revision under its Docker/host-root trust. Requests
 containing secret value writes store an envelope-keyed HMAC receipt; replays use
 the original revision key, unchanged by master-key re-wrapping.
+
+## Runtime barrier recovery policy (#50, pending)
+
+This amendment freezes future policy and recovery behavior. It does not add a
+management route, change the current control contract revision or route catalog,
+or claim an implemented Controller consumer. The ACP producer, Controller
+policy/recovery, Agent UI consumption and real integration remain pending
+separate delivery batches.
+
+Controller will query the future workload-only
+[`POST /rpc/agent-acp/get-runtime-barrier`](../agent-acp/execution-api.md#runtime-barrier-recovery-50-pending)
+from its own paged Agent inventory, with bounded page sizes, concurrency and
+request lifetimes. It supplies the Agent's original organization and expected
+Runtime revision. It must not subscribe to user execution-state routes, obtain
+a user CCT for recovery, or inspect ACP database tables. The receipt contains
+only the matching organization/Agent/Runtime and an optional durable barrier
+identity; `null`, failed reads and ordinary running Tools do not authorize a
+Rebuild or prove that execution is settled.
+
+The organization policy has one mode: `auto`, `notify` or `manual`. `manual` is
+the selected historical/default migration policy for this amendment; it is not
+an assertion that issue #50 specified a default. Existing organizations must
+not be silently opted into automatic Rebuild.
+
+- `auto` reuses the existing Rebuild lifecycle and records the fixed
+  `rebuild_reason: "runtime_barrier_required"`.
+- `notify` creates one durable management notification per barrier and does
+  not start Rebuild automatically.
+- `manual` preserves the barrier reason and provides an explicit Rebuild
+  action subject to the existing authorization requirements; observation alone
+  does not start it.
+
+Policy is persisted per organization with a revision compare-and-set. Changes
+require an administrator authorized in that same organization. The exact HTTP
+management request/response shape, routes, schemas and grants are a later
+Controller contract/service batch; no policy administration API is provided by
+this amendment.
+
+Controller also persists recovery cooldown per Agent. Its default is 300000 ms;
+the configured value is an integer from 60000 through 86400000 ms, inclusive.
+Cooldown begins at the recovery operation's accepted time. Retries or replay
+retain that time and never renew the window. A barrier corresponds to at most
+one durable lifecycle operation: its stable Rebuild request ID is derived from
+the original `(organization_id, agent_id, barrier_id)` tuple and is durably
+deduplicated. Failure or an uncertain response must not create a fresh operation
+for the same barrier or start a loop of new Rebuild requests. Notification
+deduplication uses that same barrier identity and survives restart.
+
+Before atomic recovery admission, Controller rereads and checks the policy
+revision, original organization and Agent, the old Runtime identity, current
+owner/revocation state, Disable/Delete intent and any active lifecycle operation.
+Stale or superseded observations cannot bypass these checks, cooldown or durable
+deduplication. The existing lifecycle must isolate the old environment before
+publishing a new executable Runtime. A changed execution ID, healthy observation
+or expiry is not isolation evidence and cannot clear ACP protection. Recovery
+does not replay the original Prompt or Tool and introduces no Controller Run
+admission or Run management interface.
+
+Delivery order is ACP's durable receipt/query producer, Controller's policy and
+recovery consumer, then Agent UI's explanation and authorized action, followed
+by real kill-mid-tool Docker acceptance for `auto` and `manual`. Automatic
+recovery must reach a genuinely replaced Runtime and admit a new Run; manual
+mode must retain the reason and require the authorized action. Both preserve
+history and actual cleanup. Until those owning-service and integration gates
+pass, this contract and the separate warm-admission producer PR #281 do not
+complete #50 or its four original failure-handling requirements.
