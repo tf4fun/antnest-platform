@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { verifyBrowserStreamRenewal } from "./browser-session-stream.mjs";
+import { verifyBrowserPromptBusy } from "./browser-prompt-busy.mjs";
 import {
   parseIntentObservation,
   parseExecutionObservation,
@@ -57,7 +59,7 @@ const validExecution = validator.compile({
 const ownerLabel = "io.antnest.verification.project";
 
 test(
-  "Gateway failed Run receipts survive reload and a silent Run survives browser delegation renewal",
+  "Gateway preserves failed receipts, typed busy rejection and silent Runs across browser renewal",
   {
     timeout: 900_000,
     skip: process.env.ANTNEST_UI_RECEIPT_E2E !== "1",
@@ -204,18 +206,15 @@ test(
       assert(accessToken, "Gateway login did not set a session cookie");
       // Secrets reach the exec only through the Docker client environment,
       // never through command-line arguments.
-      const wireDocker = dockerClient(
-        {
-          ...config.env,
-          RECEIPT_ACCESS_TOKEN: accessToken,
-          RECEIPT_GATEWAY_IDENTITY_TOKEN: readFileSync(
-            `${config.credentials}/edge-gateway/tokens/identity-service`,
-            "utf8",
-          ).trim(),
-        },
-        signal,
-        120_000,
-      );
+      const wireEnvironment = {
+        ...config.env,
+        RECEIPT_ACCESS_TOKEN: accessToken,
+        RECEIPT_GATEWAY_IDENTITY_TOKEN: readFileSync(
+          `${config.credentials}/edge-gateway/tokens/identity-service`,
+          "utf8",
+        ).trim(),
+      };
+      const wireDocker = dockerClient(wireEnvironment, signal, 120_000);
       const readWire = async (path) =>
         JSON.parse(
           await wireDocker([
@@ -319,6 +318,50 @@ test(
         false,
         "Unsupported content must fail before inference",
       );
+      const gateAddress = (
+        await docker(compose(["port", "acp-prompt-gate", "8080"]))
+      ).trim();
+      assert.match(gateAddress, /^127\.0\.0\.1:\d+$/u);
+      // The peer owns an internal deadline. Keep its original Docker exec alive
+      // through parent cancellation so the scenario can release and join it.
+      const peerDocker = dockerClient(wireEnvironment, undefined, 150_000);
+      const promptBusy = await verifyBrowserPromptBusy({
+        page,
+        client,
+        config,
+        fixture,
+        gateBase: `http://${gateAddress}`,
+        signal,
+        execPeer: (script) =>
+          peerDocker([
+            "exec",
+            "--env",
+            "RECEIPT_ACCESS_TOKEN",
+            "--env",
+            "RECEIPT_GATEWAY_IDENTITY_TOKEN",
+            containerId,
+            "node",
+            "--input-type=module",
+            "-e",
+            script,
+          ]),
+        preserve: async (value, error) => {
+          const output =
+            process.env.ANTNEST_UI_RECEIPT_E2E_OUTPUT ??
+            `artifacts/verification/${config.project}-bridge-receipt`;
+          writeEvidenceFile(
+            output,
+            "browser-prompt-busy.private.json",
+            JSON.stringify(value, null, 2),
+          );
+          if (error)
+            writeEvidenceFile(
+              output,
+              "browser-prompt-busy-failure.private.txt",
+              inspect(error, { depth: 8 }),
+            );
+        },
+      });
       const browserSessionStream = await verifyBrowserStreamRenewal({
         page,
         config,
@@ -329,6 +372,7 @@ test(
       const evidence = {
         receipt,
         execution,
+        promptBusy,
         browserSessionStream,
         checks: [
           "gateway-failed-run",
@@ -337,6 +381,8 @@ test(
           "node-parsers",
           "workspace-failure-and-reload",
           "unsupported-content-no-model-inference",
+          "typed-busy-rejection-without-original-prompt-replay",
+          "explicit-new-conversation-after-peer-completion",
           "silent-run-after-browser-delegation-renewal",
           "genuine-input-activity-without-prompt-replay",
         ],
