@@ -321,7 +321,10 @@ describe.skipIf(databaseUrl === undefined)(
             );
             expect(runs.rows).toHaveLength(1);
             const runId = runs.rows[0]!.id;
-            const transaction = PostgresKernel.prototype.transaction;
+            const transaction = Object.getOwnPropertyDescriptor(
+              PostgresKernel.prototype,
+              "transaction",
+            )?.value as PostgresKernel["transaction"];
             vi.spyOn(
               PostgresKernel.prototype,
               "transaction",
@@ -331,34 +334,44 @@ describe.skipIf(databaseUrl === undefined)(
             ): Promise<T> {
               const transact = transaction.bind(this);
               return transact(async (client) => {
-                const query = client.query;
-                const tap = vi.spyOn(client, "query").mockImplementation(
-                  new Proxy(query, {
-                    apply(target, receiver, args: unknown[]) {
-                      // Keep the real driver call and its returned Promise intact.
-                      const result: unknown = Reflect.apply(
-                        target,
-                        receiver,
-                        args,
-                      );
-                      const [text, values] = args;
-                      if (
-                        typeof text === "string" &&
-                        /^\s*WITH\s+finished\s+AS\s+\(UPDATE\s+runs\b/u.test(
-                          text,
-                        ) &&
-                        Array.isArray(values) &&
-                        values[0] === runId
-                      )
-                        finishQueries.push(Promise.resolve(result));
-                      return result;
-                    },
-                  }),
+                const queryDescriptor = Object.getOwnPropertyDescriptor(
+                  client,
+                  "query",
                 );
+                const query = client.query.bind(client);
+                const tap = new Proxy(query, {
+                  apply(target, receiver, args: unknown[]) {
+                    // Keep the real driver call and its returned Promise intact.
+                    const result: unknown = Reflect.apply(
+                      target,
+                      receiver,
+                      args,
+                    );
+                    const [text, values] = args;
+                    if (
+                      typeof text === "string" &&
+                      /^\s*WITH\s+finished\s+AS\s+\(UPDATE\s+runs\b/u.test(
+                        text,
+                      ) &&
+                      Array.isArray(values) &&
+                      values[0] === runId
+                    )
+                      finishQueries.push(Promise.resolve(result));
+                    return result;
+                  },
+                });
+                Object.defineProperty(client, "query", {
+                  configurable: true,
+                  enumerable: queryDescriptor?.enumerable ?? true,
+                  writable: true,
+                  value: tap,
+                });
                 try {
                   return await operation(client);
                 } finally {
-                  tap.mockRestore();
+                  if (queryDescriptor === undefined)
+                    Reflect.deleteProperty(client, "query");
+                  else Object.defineProperty(client, "query", queryDescriptor);
                 }
               });
             });
@@ -612,7 +625,7 @@ describe.skipIf(databaseUrl === undefined)(
                   { ...held, delivery: "dropped" },
                   {
                     ...held,
-                    receipt_id: expect.any(String),
+                    receipt_id: status.records[1]?.receipt_id,
                     command_tag: "COMMIT",
                     delivery: "delivered",
                   },
@@ -620,6 +633,7 @@ describe.skipIf(databaseUrl === undefined)(
               : [{ ...held, delivery: "dropped" }],
           );
           if (phase === "finish") {
+            expect(typeof status.records[1]!.receipt_id).toBe("string");
             expect(status.records[1]!.receipt_id).not.toBe(held!.receipt_id);
             expect(await Promise.all(finishQueries)).toEqual([
               expect.objectContaining({
