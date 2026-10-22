@@ -78,3 +78,20 @@ Managed MCP bootstrap is a separate workload operation: only Runtime Controller
 may POST `/internal/managed-mcp-secrets/resolve` without an end-user CCT. It resolves
 an exact immutable Template source, never its current head. No Console, ACP,
 Gateway or Agent UI route delegates this capability.
+
+## Pending Runtime barrier policy and recovery (#50)
+
+The [pending Controller recovery contract](control-api.md#pending-controller-management-wire)
+reserves policy GET/PUT for `admin-console` with the existing administrator CCT,
+matching signed Organization and actor. It does not activate routes or grants in
+`callers.json`. The owning Controller batch must add the implementation and
+active catalogs together. Replays still require current authentication and scope.
+
+The optional recovery extension uses the existing Rebuild administrator grant;
+Agent UI and ordinary Agent owners gain no new mutation authority. Policy
+management does not accept Agent-scoped credentials as a replacement for an
+Organization administrator. ACP barrier reads remain workload-only Controller
+control queries; recovery does not use a user CCT or execution-state subscription.
+Runtime recovery projections and notification data exclude execution IDs, private
+endpoints, credentials and Run/Tool content. Notification List/Watch keeps its
+existing visibility and does not introduce a new notification service.

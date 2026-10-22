@@ -1,0 +1,321 @@
+{
+  "version": 1,
+  "purpose": "Synthetic pending wire conformance only; authentication, CAS, durable deduplication, notification delivery and actual recovery require later owning-service tests.",
+  "schema_vectors": [
+    {
+      "name": "historical-default",
+      "definition": "policy",
+      "valid": true,
+      "value": {
+        "organization_id": "org-1",
+        "revision": 0,
+        "mode": "manual",
+        "cooldown_ms": 300000
+      }
+    },
+    {
+      "name": "policy-query",
+      "definition": "policy_query",
+      "valid": true,
+      "value": {
+        "organization_id": "org-1"
+      }
+    },
+    {
+      "name": "first-policy-update",
+      "definition": "policy_update_request",
+      "valid": true,
+      "value": {
+        "request_id": "policy-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": 0,
+        "mode": "auto",
+        "cooldown_ms": 300000
+      }
+    },
+    {
+      "name": "notify-policy",
+      "definition": "policy",
+      "valid": true,
+      "value": {
+        "organization_id": "org-1",
+        "revision": 1,
+        "mode": "notify",
+        "cooldown_ms": 300000
+      }
+    },
+    {
+      "name": "minimum-cooldown",
+      "definition": "policy_update_request",
+      "valid": true,
+      "value": {
+        "request_id": "policy-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": 0,
+        "mode": "auto",
+        "cooldown_ms": 60000
+      }
+    },
+    {
+      "name": "maximum-cooldown",
+      "definition": "policy_update_request",
+      "valid": true,
+      "value": {
+        "request_id": "policy-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": 0,
+        "mode": "auto",
+        "cooldown_ms": 86400000
+      }
+    },
+    {
+      "name": "too-short-cooldown",
+      "definition": "policy_update_request",
+      "valid": false,
+      "value": {
+        "request_id": "policy-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": 0,
+        "mode": "auto",
+        "cooldown_ms": 59999
+      }
+    },
+    {
+      "name": "fractional-cooldown",
+      "definition": "policy_update_request",
+      "valid": false,
+      "value": {
+        "request_id": "policy-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": 0,
+        "mode": "auto",
+        "cooldown_ms": 60000.5
+      }
+    },
+    {
+      "name": "unsafe-policy-revision",
+      "definition": "policy",
+      "valid": false,
+      "value": {
+        "organization_id": "org-1",
+        "revision": 9007199254740992,
+        "mode": "manual",
+        "cooldown_ms": 300000
+      }
+    },
+    {
+      "name": "unsupported-policy-mode",
+      "definition": "policy_update_request",
+      "valid": false,
+      "value": {
+        "request_id": "policy-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": 0,
+        "mode": "automatic",
+        "cooldown_ms": 300000
+      }
+    },
+    {
+      "name": "policy-write-rejects-agent-scope",
+      "definition": "policy_update_request",
+      "valid": false,
+      "value": {
+        "request_id": "policy-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": 0,
+        "mode": "auto",
+        "cooldown_ms": 300000,
+        "agent_id": "agent-1"
+      }
+    },
+    {
+      "name": "legacy-rebuild",
+      "definition": "rebuild_agent_request",
+      "valid": true,
+      "value": {
+        "request_id": "rebuild-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "template_id": "template-1",
+        "template_revision": 1
+      }
+    },
+    {
+      "name": "barrier-rebuild",
+      "definition": "rebuild_agent_request",
+      "valid": true,
+      "value": {
+        "request_id": "rebuild-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "template_id": "template-1",
+        "template_revision": 1,
+        "recovery": {
+          "barrier_id": "barrier-1",
+          "expected_runtime_revision": "runtime-1"
+        }
+      }
+    },
+    {
+      "name": "partial-recovery-rejected",
+      "definition": "rebuild_agent_request",
+      "valid": false,
+      "value": {
+        "request_id": "rebuild-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "template_id": "template-1",
+        "template_revision": 1,
+        "recovery": {
+          "barrier_id": "barrier-1"
+        }
+      }
+    },
+    {
+      "name": "client-reason-rejected",
+      "definition": "rebuild_agent_request",
+      "valid": false,
+      "value": {
+        "request_id": "rebuild-request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "template_id": "template-1",
+        "template_revision": 1,
+        "recovery": {
+          "barrier_id": "barrier-1",
+          "expected_runtime_revision": "runtime-1"
+        },
+        "reason": "runtime_barrier_required"
+      }
+    },
+    {
+      "name": "recovery-opaque-barrier",
+      "definition": "recovery_request",
+      "valid": true,
+      "value": {
+        "barrier_id": "屏障:原执行/1",
+        "expected_runtime_revision": "runtime-1"
+      }
+    },
+    {
+      "name": "recovery-whitespace-barrier",
+      "definition": "recovery_request",
+      "valid": false,
+      "value": {
+        "barrier_id": "barrier 1",
+        "expected_runtime_revision": "runtime-1"
+      }
+    },
+    {
+      "name": "manual-projection",
+      "definition": "runtime_recovery",
+      "valid": true,
+      "value": {
+        "barrier_id": "barrier-1",
+        "reason": "runtime_barrier_required",
+        "runtime_revision": "runtime-1",
+        "policy_revision": 0,
+        "mode": "manual",
+        "cooldown_ms": 300000,
+        "rebuild_request_id": "rebuild-request-1",
+        "notification_id": "notification-1",
+        "cooldown_until": null
+      }
+    },
+    {
+      "name": "frozen-cooldown-projection",
+      "definition": "runtime_recovery",
+      "valid": true,
+      "value": {
+        "barrier_id": "barrier-1",
+        "reason": "runtime_barrier_required",
+        "runtime_revision": "runtime-1",
+        "policy_revision": 0,
+        "mode": "manual",
+        "cooldown_ms": 300000,
+        "rebuild_request_id": "rebuild-request-1",
+        "notification_id": "notification-1",
+        "cooldown_until": "2026-10-22T01:05:00Z"
+      }
+    },
+    {
+      "name": "private-execution-rejected",
+      "definition": "runtime_recovery",
+      "valid": false,
+      "value": {
+        "barrier_id": "barrier-1",
+        "reason": "runtime_barrier_required",
+        "runtime_revision": "runtime-1",
+        "policy_revision": 0,
+        "mode": "manual",
+        "cooldown_ms": 300000,
+        "rebuild_request_id": "rebuild-request-1",
+        "notification_id": "notification-1",
+        "cooldown_until": null,
+        "runtime_execution_id": "execution-1"
+      }
+    },
+    {
+      "name": "non-utc-cooldown-rejected",
+      "definition": "runtime_recovery",
+      "valid": false,
+      "value": {
+        "barrier_id": "barrier-1",
+        "reason": "runtime_barrier_required",
+        "runtime_revision": "runtime-1",
+        "policy_revision": 0,
+        "mode": "manual",
+        "cooldown_ms": 300000,
+        "rebuild_request_id": "rebuild-request-1",
+        "notification_id": "notification-1",
+        "cooldown_until": "2026-10-22T09:05:00+08:00"
+      }
+    },
+    {
+      "name": "barrier-notification",
+      "definition": "notification_data",
+      "valid": true,
+      "value": {
+        "organization_id": "org-1",
+        "barrier_id": "barrier-1",
+        "runtime_revision": "runtime-1",
+        "reason": "runtime_barrier_required",
+        "policy_revision": 1
+      }
+    },
+    {
+      "name": "notification-unknown-reason",
+      "definition": "notification_data",
+      "valid": false,
+      "value": {
+        "organization_id": "org-1",
+        "barrier_id": "barrier-1",
+        "runtime_revision": "runtime-1",
+        "reason": "runtime_unhealthy",
+        "policy_revision": 1
+      }
+    },
+    {
+      "name": "notification-private-tool",
+      "definition": "notification_data",
+      "valid": false,
+      "value": {
+        "organization_id": "org-1",
+        "barrier_id": "barrier-1",
+        "runtime_revision": "runtime-1",
+        "reason": "runtime_barrier_required",
+        "policy_revision": 1,
+        "tool": {
+          "arguments": "private-canary"
+        }
+      }
+    }
+  ]
+}

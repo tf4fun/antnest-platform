@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json",
+  "title": "Pending Controller runtime barrier recovery management wire",
+  "description": "Wire conformance only. Routes, projections and notifications are not active; authorization, atomicity and recovery require owning-service implementation.",
+  "$ref": "#/$defs/policy",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "barrier_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^\\S+$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "cooldown_ms": {
+      "type": "integer",
+      "minimum": 60000,
+      "maximum": 86400000
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["auto", "notify", "manual"]
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization_id", "revision", "mode", "cooldown_ms"],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "cooldown_ms": {
+          "$ref": "#/$defs/cooldown_ms"
+        }
+      }
+    },
+    "policy_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization_id"],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "policy_update_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "organization_id",
+        "actor_principal_id",
+        "expected_revision",
+        "mode",
+        "cooldown_ms"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "actor_principal_id": {
+          "$ref": "#/$defs/id"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "cooldown_ms": {
+          "$ref": "#/$defs/cooldown_ms"
+        }
+      }
+    },
+    "recovery_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["barrier_id", "expected_runtime_revision"],
+      "properties": {
+        "barrier_id": {
+          "$ref": "#/$defs/barrier_id"
+        },
+        "expected_runtime_revision": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "rebuild_agent_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "organization_id",
+        "actor_principal_id",
+        "template_id",
+        "template_revision"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "actor_principal_id": {
+          "$ref": "#/$defs/id"
+        },
+        "template_id": {
+          "$ref": "#/$defs/id"
+        },
+        "template_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recovery": {
+          "$ref": "#/$defs/recovery_request"
+        }
+      }
+    },
+    "runtime_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "barrier_id",
+        "reason",
+        "runtime_revision",
+        "policy_revision",
+        "mode",
+        "cooldown_ms",
+        "rebuild_request_id",
+        "notification_id",
+        "cooldown_until"
+      ],
+      "properties": {
+        "barrier_id": {
+          "$ref": "#/$defs/barrier_id"
+        },
+        "reason": {
+          "type": "string",
+          "const": "runtime_barrier_required"
+        },
+        "runtime_revision": {
+          "$ref": "#/$defs/id"
+        },
+        "policy_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "cooldown_ms": {
+          "$ref": "#/$defs/cooldown_ms"
+        },
+        "rebuild_request_id": {
+          "$ref": "#/$defs/id"
+        },
+        "notification_id": {
+          "$ref": "#/$defs/id"
+        },
+        "cooldown_until": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+            }
+          ]
+        }
+      }
+    },
+    "notification_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "barrier_id",
+        "runtime_revision",
+        "reason",
+        "policy_revision"
+      ],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "barrier_id": {
+          "$ref": "#/$defs/barrier_id"
+        },
+        "runtime_revision": {
+          "$ref": "#/$defs/id"
+        },
+        "reason": {
+          "type": "string",
+          "const": "runtime_barrier_required"
+        },
+        "policy_revision": {
+          "$ref": "#/$defs/revision"
+        }
+      }
+    }
+  }
+}

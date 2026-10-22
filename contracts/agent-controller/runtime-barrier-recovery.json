@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "status": "pending",
+  "owner": "agent-controller",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/internal/runtime-barrier-recovery-policy",
+      "request": "policy_query",
+      "response": "policy",
+      "success": 200
+    },
+    {
+      "method": "PUT",
+      "path": "/internal/runtime-barrier-recovery-policy",
+      "request": "policy_update_request",
+      "response": "policy",
+      "success": 200
+    }
+  ],
+  "authentication": {
+    "caller": "admin-console",
+    "cct": "required",
+    "audience": "agent-controller",
+    "role": "system_or_organization_administrator",
+    "organization": "signed_org",
+    "actor": "signed_sub"
+  },
+  "policy": {
+    "default_mode": "manual",
+    "default_revision": 0,
+    "default_cooldown_ms": 300000,
+    "first_persisted_revision": 1,
+    "replay_before_cas": true,
+    "receipt_atomic_with_policy": true,
+    "replay_returns_original": true
+  },
+  "recovery": {
+    "deduplication": ["organization_id", "agent_id", "barrier_id"],
+    "cooldown_origin": "operation_accepted_at",
+    "cooldown_frozen_at_acceptance": true,
+    "notification_deduplication_independent": true,
+    "replay_original_prompt": false,
+    "replay_original_tool": false,
+    "read_failure_clears_reason": false
+  },
+  "manual": {
+    "route": "POST /internal/agents/{agent_id}/rebuild",
+    "extension": "recovery_request",
+    "reuse_existing_grant": true,
+    "target": "current_configured_template_revision"
+  },
+  "notification": {
+    "event_type": "agent_runtime_barrier_required",
+    "schema_version": 1,
+    "data": "notification_data",
+    "transport": "existing_agent_event_list_watch",
+    "starts_rebuild": false
+  },
+  "activation": "owning_controller_service_batch"
+}
