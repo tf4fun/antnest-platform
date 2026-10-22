@@ -6,8 +6,9 @@ mTLS and signed CCT profiles. This owning-service contract adds listener placeme
 `ANTNEST_ACP_LISTEN` (default `:8080`) serves ACP, signed workspace observation,
 Console audit and Registry source reads. `ANTNEST_ACP_CONTROL_LISTEN` (default
 `:8081`) serves only `POST /rpc/agent-acp/apply-execution-snapshot`,
-`POST /rpc/agent-acp/settle-agent` and minimal `GET /status`. The workspace
-listener returns 404 for the two Controller paths, including unsupported methods
+`POST /rpc/agent-acp/settle-agent`, `POST /rpc/agent-acp/get-runtime-barrier` and
+minimal `GET /status`. The workspace listener returns 404 for these Controller
+paths, including unsupported methods
 and query variants, before reading their bodies. The control listener returns
 404 for every other path and denies WebSocket upgrades. State get/watch remain
 on the workspace listener for Agent UI.
@@ -117,15 +118,14 @@ Templates and caller context cannot. Existing Run receipt classifications add
 `provider_endpoint_forbidden` and `provider_endpoint_unavailable` within their
 existing string contract; ACP messages and browser DTOs do not change.
 
-## Pending Runtime barrier control admission (#50)
+## Runtime barrier control admission (#50)
 
-The future `POST /rpc/agent-acp/get-runtime-barrier` query is defined by the
+The implemented `POST /rpc/agent-acp/get-runtime-barrier` query is defined by the
 [pending recovery contract](execution-api.md#runtime-barrier-recovery-50-pending).
-Its ACP producer, Controller consumer and integration admission are pending.
-It is not included in the implemented route list above or in current enforced
-caller grants by this documentation change.
+Its Controller consumer, UI recovery and cross-service integration admission
+remain pending. The ACP caller catalog grants this route only to Controller.
 
-When implemented, this route belongs only to `ANTNEST_ACP_CONTROL_LISTEN` and
+This route belongs only to `ANTNEST_ACP_CONTROL_LISTEN` and
 requires the verified `agent-controller` workload. The workspace listener must
 return 404 before reading the body or authenticating, including method/query
 variants. On the correct listener, missing or invalid workload credentials

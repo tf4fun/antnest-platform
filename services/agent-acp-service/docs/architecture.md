@@ -353,6 +353,22 @@ never queries Controller's tables or endpoints.
 
 ## Recovery
 
+The control listener exposes `POST /rpc/agent-acp/get-runtime-barrier` only to
+the verified Controller workload, without a user caller context. Serving begins
+after startup recovery and configuration restoration; readiness also requires
+current worker ownership and database availability. The query checks readiness
+before its single scoped PostgreSQL read. A successful read distinguishes an
+absent organization or Agent (`not_found`) from a conflicting Runtime revision;
+failed or unavailable reads never produce a clear `barrier: null` result.
+
+The response projects only the requested organization/Agent, matching Runtime
+revision and the durable barrier ID, reason and original Runtime execution ID.
+It never copies Run/Tool identifiers, content, endpoints or authority. Reading
+does not mutate protection or dispatch work. Repeated reads, publication of the
+same binding and ACP restart retain the stored cycle identity. A null receipt
+does not prove readiness, idleness or permission to dispatch. Controller policy,
+automatic Rebuild, UI recovery and their integration remain separate batches.
+
 Run-event repositories confirm an already committed request before checking
 whether the Run or Tool is still running. Confirmation checks the original
 Run, event identity, timestamp, visibility, payload and applicable Tool facts;

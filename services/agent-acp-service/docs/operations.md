@@ -288,6 +288,15 @@ Collector retention. This service adds no retention service.
 - A confirmed Runtime-managed MCP error is returned to the model as a Tool
   result; an unknown transport effect still terminates the Run as unresolved.
 - PostgreSQL unavailable: readiness fails and no prompt is accepted.
+- Controller can read a scoped recovery fact through
+  `POST /rpc/agent-acp/get-runtime-barrier` on the control listener. It requires
+  the Controller workload credential and no user CCT. An initialized source
+  returns the same fixed `404 not_found` for absent organizations and Agents;
+  a Runtime revision mismatch is `409 configuration_conflict`. Readiness or
+  storage failure is an error, never a successful null barrier. A non-null
+  receipt retains its original Runtime execution identity across ACP restart.
+  The query neither clears protection nor triggers Rebuild. Automatic policy,
+  UI recovery actions and full crash/recovery integration remain pending.
 - An unconfirmed Run admission write stops new Run admission and
   requires service recovery. An unacknowledged prompt returns JSON-RPC `-32603`
   with `code: database_error` and `retryable: false`; its public message contains

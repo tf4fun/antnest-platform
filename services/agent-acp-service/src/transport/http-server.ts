@@ -31,6 +31,7 @@ import type { ExecutionConfigurationPort } from "../ports/execution-configuratio
 import type { AgentSettlementPort } from "../ports/agent-settlement.js";
 import type { AgentExecutionStatePort } from "../ports/agent-execution-state.js";
 import type { ExecutionAuditPort } from "../ports/execution-audit.js";
+import type { RuntimeBarrierReader } from "../ports/runtime-barrier.js";
 import type { BridgeObservationService } from "../application/bridge-observation.js";
 import type { LearningChangeReader } from "../application/learning-change-reader.js";
 import type { LearningNoticePublisher } from "../application/learning-notice-publisher.js";
@@ -43,6 +44,7 @@ import {
   serveAgentExecutionState,
 } from "./agent-execution-state.js";
 import { AGENT_SETTLEMENT_PATH, settleAgent } from "./agent-settlement.js";
+import { RUNTIME_BARRIER_QUERY_PATH, serveRuntimeBarrierQuery } from "./runtime-barrier-query.js";
 import {
   applyExecutionConfiguration,
   EXECUTION_CONFIGURATION_PATH,
@@ -56,6 +58,7 @@ export type AgentAcpHttpServerOptions = {
   settlement?: AgentSettlementPort;
   executionState?: AgentExecutionStatePort;
   executionAudits?: ExecutionAuditPort;
+  runtimeBarriers?: RuntimeBarrierReader;
   bridgeObservation?: Pick<BridgeObservationService, "readIntent" | "readSession">;
   learningStatus?: Pick<LearningStatusReader, "read">;
   learningChanges?: Pick<LearningChangeReader, "list">;
@@ -235,7 +238,10 @@ export class AgentAcpHttpServer {
     listener: "workspace" | "control",
   ): Promise<void> {
     const path = (request.url ?? "").split("?", 1)[0];
-    const control = path === AGENT_SETTLEMENT_PATH || path === EXECUTION_CONFIGURATION_PATH;
+    const control =
+      path === AGENT_SETTLEMENT_PATH ||
+      path === EXECUTION_CONFIGURATION_PATH ||
+      path === RUNTIME_BARRIER_QUERY_PATH;
     if (
       (listener === "workspace" && control) ||
       (listener === "control" &&
@@ -319,6 +325,16 @@ export class AgentAcpHttpServer {
         this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
         this.options.ready,
         this.options.stateDeliveryTimeoutMs,
+      );
+      return;
+    }
+    if (request.url === RUNTIME_BARRIER_QUERY_PATH) {
+      await serveRuntimeBarrierQuery(
+        request,
+        response,
+        this.options.runtimeBarriers,
+        this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
+        this.options.ready,
       );
       return;
     }

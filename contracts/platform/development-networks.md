@@ -91,7 +91,8 @@ Every workload destination uses a canonical receiver name mapped through
 `extra_hosts` to that receiver's **listener purpose address**. Docker DNS for a
 multihomed peer must not select its observation, database or outbound interface.
 ACP uses the already declared `agent-acp-workspace` and `agent-acp-control`
-aliases. Only `apply-execution-snapshot` and `settle-agent` use the control alias.
+aliases. `apply-execution-snapshot`, `settle-agent` and `get-runtime-barrier` use
+the control alias.
 The contract tests derive all 23 current caller/receiver pairs from the owning
 catalogs, and verify both network membership and destination selection.
 Version 2 adds RC at suffix 24 so its authenticated secret resolver reaches

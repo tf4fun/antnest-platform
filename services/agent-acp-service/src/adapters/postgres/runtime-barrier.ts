@@ -173,7 +173,9 @@ export class PostgresRuntimeBarrierReader implements RuntimeBarrierReader {
     );
     const current = result.rows[0];
     if (current === undefined) {
-      throw new DomainError("configuration_not_ready", "Execution configuration is not ready");
+      // The control query checks initialized, available service ownership before
+      // reading. A successful snapshot with no row is absence, not a cold source.
+      throw new DomainError("not_found", "Runtime barrier scope was not found");
     }
     const configuration = parsePublicExecutionConfiguration(current.configuration);
     if (configuration.organization_id !== scope.organizationId) {

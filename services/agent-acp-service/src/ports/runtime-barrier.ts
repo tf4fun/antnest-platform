@@ -15,6 +15,8 @@ export type RuntimeBarrierState = {
 };
 
 export interface RuntimeBarrierReader {
+  // Call only after the configuration source is initialized and available.
+  // An absent organization or Agent is not_found; failed reads remain errors.
   readCurrentBarrier(
     scope: RuntimeBarrierScope,
     signal?: AbortSignal,

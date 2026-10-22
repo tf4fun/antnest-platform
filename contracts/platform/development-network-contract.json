@@ -283,6 +283,7 @@
   "control_routes": {
     "agent-acp-service": [
       "POST /rpc/agent-acp/apply-execution-snapshot",
+      "POST /rpc/agent-acp/get-runtime-barrier",
       "POST /rpc/agent-acp/settle-agent"
     ]
   },

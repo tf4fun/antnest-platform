@@ -493,15 +493,14 @@ the existing Controller relay behavior.
 
 ## Runtime barrier recovery (#50, pending)
 
-This amendment defines a future control query and its recovery meaning. ACP
-producer implementation, Controller policy/recovery consumption, Agent UI
-consumption and integration acceptance are all pending. The currently
-implemented routes above remain unchanged; this text does not register a route
-or change an enforced caller grant.
+ACP implements the durable recovery fact and its control query. Controller
+policy/recovery consumption, Agent UI consumption and cross-service integration
+acceptance remain pending; the query alone does not enable automatic recovery.
+Its enforced workload grant is recorded in [the caller catalog](callers.json).
 
-The future query is `POST /rpc/agent-acp/get-runtime-barrier` on the control
+The query is `POST /rpc/agent-acp/get-runtime-barrier` on the control
 listener only. It requires the verified `agent-controller` workload, without a
-user CCT. The [pending control admission rules](service-authentication.md#pending-runtime-barrier-control-admission-50)
+user CCT. The [control admission rules](service-authentication.md#runtime-barrier-control-admission-50)
 apply independently of workspace state authorization. Controller must not use
 the user `get-agent-execution-state` or `watch-agent-execution-state` routes,
 obtain a user CCT for this purpose, or read ACP database tables directly.
