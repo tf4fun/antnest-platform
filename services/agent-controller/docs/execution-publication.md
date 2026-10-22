@@ -154,6 +154,37 @@ parent. Logs contain only safe failure classification. These callbacks are
 not a persistent queue: a crash loses hints and traces, not configuration.
 No new table, listener connection or per-organization background task is used.
 
+## Runtime Barrier Query Adapter
+
+The ACP client implements `RuntimeBarrierReader.GetRuntimeBarrier` against the
+[frozen recovery query](../../../contracts/agent-acp/execution-api.md#runtime-barrier-recovery-50-pending)
+through the dedicated Controller control origin and its existing workload
+transport. The request selects the original organization, Agent and expected
+Runtime revision. It does not obtain or forward a user caller-context token.
+
+The adapter makes one POST without retries or redirects. It retains the existing
+request timeout, cancellation, one MiB response limit and actual response-body
+close. Only a complete, strictly decoded result with exactly the requested scope
+and Runtime revision is accepted. Missing `barrier`, duplicate decoded keys,
+case aliases, extra fields, invalid UTF-8, unpaired surrogate escapes and extra
+JSON documents fail the read. Valid surrogate pairs and literal replacement
+characters remain unchanged; malformed escapes never collapse distinct IDs.
+Identifiers preserve their original Unicode codepoints and use the frozen
+1–200 character, ECMAScript non-whitespace rule; they are not normalized into
+Controller identifier syntax. A barrier retains its original execution identity.
+
+An explicit `barrier: null` is only absence of a recovery fact, not proof of
+readiness, settlement or permission to dispatch. Dependency, configuration and
+storage errors return no result. The error mapping preserves known HTTP/code
+pairs and safe cancellation causes without returning remote messages, endpoint
+addresses or credentials. A cancellation that arrives during response cleanup
+cannot turn into a successful read after cleanup finishes.
+
+This batch supplies the outbound adapter only. Recovery polling, atomic policy
+and barrier admission, durable workflow start/replay, notifications and UI
+consumers remain separate delivery batches. Main does not yet call this reader;
+activation requires the ACP producer and the explicit recovery integration gate.
+
 ## Lifecycle Settlement
 
 The lifecycle application, not PostgreSQL, decides whether drain may advance.
