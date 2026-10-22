@@ -79,15 +79,22 @@ may POST `/internal/managed-mcp-secrets/resolve` without an end-user CCT. It res
 an exact immutable Template source, never its current head. No Console, ACP,
 Gateway or Agent UI route delegates this capability.
 
-## Pending Runtime barrier policy and recovery (#50)
+## Runtime barrier policy management and pending recovery (#50)
 
-The [pending Controller recovery contract](control-api.md#pending-controller-management-wire)
-reserves policy GET/PUT for `admin-console` with the existing administrator CCT,
-matching signed Organization and actor. It does not activate routes or grants in
-`callers.json`. The owning Controller batch must add the implementation and
-active catalogs together. Replays still require current authentication and scope.
+Revision 42 activates only the
+[Controller policy GET/PUT](control-api.md#controller-policy-management-wire)
+at `/internal/runtime-barrier-recovery-policy`. Both require the `admin-console`
+workload and the existing system/Organization administrator CCT for
+`agent-controller`, with the requested Organization matching signed `org` and
+the PUT actor matching signed `sub`. Their exact grants are in `callers.json`.
+GET accepts only one Organization query field and no body; PUT accepts strict
+JSON and no query fields. Replays still require current authentication and scope
+before reading a durable receipt. Policy configuration and persistence do not
+start a recovery worker, Rebuild or notification delivery.
 
-The optional recovery extension uses the existing Rebuild administrator grant;
+The recovery worker, Agent projection, notification persistence/delivery and
+manual Rebuild extension remain pending. The optional recovery extension will
+use the existing Rebuild administrator grant;
 Agent UI and ordinary Agent owners gain no new mutation authority. Policy
 management does not accept Agent-scoped credentials as a replacement for an
 Organization administrator. ACP barrier reads remain workload-only Controller

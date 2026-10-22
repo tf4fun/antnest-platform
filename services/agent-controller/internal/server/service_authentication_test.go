@@ -135,6 +135,10 @@ func TestControllerEveryCatalogRouteDeniesForeignWorkloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.raw, err = WithRuntimeBarrierRecoveryPolicyRoutes(f.raw, &runtimeBarrierRecoveryPolicyServiceStub{}, f.security)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for pattern, policy := range catalog.Routes {
 		if policy.Authentication != "workload" {
 			continue
