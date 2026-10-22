@@ -279,7 +279,7 @@ history token but keeps the original immutable append version and identical
 content. ACP resolves a duplicate receipt before considering new admission;
 otherwise its append CAS decides whether that old intent may be admitted.
 The concrete query action and its implementation boundary are defined in the
-[pending explicit original Prompt retry amendment](#pending-explicit-original-prompt-retry-53).
+[explicit original Prompt retry contract](#explicit-original-prompt-retry-53).
 
 `POST .../operations/O/cancel` carries `expectedRunId`; O remains the intent
 ID. Cancellation must target that Run through ACP's durable state and in-memory
@@ -331,7 +331,9 @@ remain admitted; the budget does not replace their cancellation deadline test.
 A new scope denied because every Bridge owner slot is busy receives
 `bridge_capacity_exceeded`; a cold owner may be retired to admit it.
 A missing/expired durable
-receipt stays unknown. `retryable` never authorizes automatic prompt replay.
+receipt stays unknown. `retryable` alone never authorizes automatic Prompt replay;
+the pending admission-backoff exception below additionally requires a settled
+canonical refusal and a current authorized intent-unknown lookup.
 When the producer confirms that a selected Session is absent or invisible, its
 Agent/Session View, event stream, history, operation and configuration routes
 return `404 session_not_found` with
@@ -425,15 +427,16 @@ service clocks. The receipt identifies the original stream's delegation budget;
 it does not prove the cause of a remote close or replace the actual Identity
 fault, revocation and Resolve evidence.
 
-## Pending explicit original Prompt retry (#53)
+## Explicit original Prompt retry (#53)
 
-This amendment is pending. Its schema, manifest and fixtures define the next
-Agent UI service batch; they do not enable retry in Node or the browser, prove
-query/dispatch serialization, or complete the UI and Docker acceptance for #53.
+Node and browser explicit retry are implemented. The schema and fixtures
+define their wire contract; fixtures alone are not execution evidence. The
+separate automatic-backoff and real original-Prompt Docker criteria for #53
+remain pending.
 Ordinary Prompt submission, its existing route, body and Bridge ACK remain
 unchanged.
 
-The future explicit action is `POST .../prompts?action=retry`. The decoded
+The explicit action is `POST .../prompts?action=retry`. The decoded
 query must retain all entries, including repeated keys. `promptQueryEntries`
 accepts only `[]` for ordinary submit or `[["action", "retry"]]` for explicit
 retry. Empty, unknown, duplicate, differently cased or additional entries are
@@ -492,13 +495,80 @@ their existing ownership. This action must not use the 16 KiB control-body
 path or bypass upload accounting. The existing cancel paths retain their small
 body limits and independent admission.
 
-The original #53 automatic retry with backoff goal for busy/not-ready errors
-remains a separate pending delivery; this explicit-action amendment neither
-implements nor removes it. `retryable`, busy/not-ready classification and an
-unknown receipt do not authorize automatic Prompt replay. Any future automatic
-policy needs its own trustworthy non-admission evidence and contract, producer,
-consumer and integration acceptance. Success of a different new intent does
-not prove that the original Prompt was retried successfully.
+## Pending bounded Prompt admission backoff (#53)
+
+`prompt_admission_backoff` defines the next Agent UI service batch. It does
+not enable automatic retries in the current consumer. Workspace API v1, ACP
+methods, Prompt bodies, intent metadata, error capability v1 and Bridge
+`intentReceipt: 1` remain unchanged. The manifest's
+`antnest.dev/bridge.intentReceipt` denotes that existing nested capability;
+it is not a new capability name on the wire.
+
+Node may automatically retry only `agent_busy` and
+`configuration_not_ready` admission refusals when all of these hold:
+
+1. The actual preceding ACP Prompt call has settled. An HTTP Bridge ACK,
+   browser deadline, disconnect or lost response is insufficient.
+2. That call returned a canonical version-1 error classification negotiated
+   with `antnest.dev/errors: 1`: the numeric code, data code, retryability,
+   backoff guidance and valid `retry_after_ms` match the catalog. A generic
+   transport error or an unclassified busy-looking message is insufficient.
+3. A fresh lookup of the same original intent under current authorization
+   returns the typed `404 intent_unknown`, with no durable receipt observed
+   before the next dispatch. A receipt with phase unknown is still a receipt.
+
+These conditions jointly authorize an admission retry; an error code or a
+missing receipt alone does not. Unknown delivery permanently disables the
+automatic path for that retained original intent. Any durable receipt is
+adopted without dispatch, even if it arrives during a query or wait. Query
+failure, expired receipt, malformed/missing metadata, `access_denied`, access
+revocation or owner shutdown stops automatic dispatch. Recheck cancellation,
+current scope, receipt state and limits immediately before every actual call.
+ACP's existing atomic duplicate lookup, digest equality and append CAS remain
+the final protection for a receipt racing that decision.
+
+One retained `(organization, principal, agent, session, intent, digest)` owns
+one budget: at most **four actual Prompt dispatches, including the first and
+any explicit retries**, and **30,000 ms of cumulative waiting**. The first
+retry waits `max(retry_after_ms, 1000 ms)`, followed by exponential floors of
+2000 and 4000 ms. Charge actual elapsed waiting using a monotonic clock. If
+the required delay exceeds the remaining wait budget, stop without shortening
+the wire delay. The wire permits delays up to 60,000 ms; such a delay cannot
+fit this automatic budget. The 30-second waiting bound does not claim that a
+network call or cleanup has finished within that time.
+
+Explicit and automatic retries share the same single-flight decision and
+retained entry. An explicit action cannot reset the count, wait budget or
+retry index, and a concurrent click cannot enqueue another cycle. Once the
+four-dispatch limit is exhausted, explicit actions can only query/adopt the
+original operation. This limit is a new requirement for the pending consumer;
+it is not a claim about the already implemented explicit-only behavior.
+Do not evict an entry while its decision, wait or actual call is owned.
+
+Preserve the original scope, intent ID, append condition and every ordered
+content block including attachment bytes. Do not create a new Session/intent,
+change the original CAS, rebuild from the current draft or introduce a browser
+timer. Reload without the retained original body remains query-only. A new
+Session/intent succeeding does not prove the rejected original Prompt retried.
+
+The Node owner must retain bounded ownership of the complete body throughout
+its automatic chain, using the same global/principal byte and count budgets
+as `prompt_upload_admission`. It must explicitly retain or transfer the
+original upload reservation until the chain's query, delay and actual calls
+have joined; retaining only an owner slot does not account for body bytes.
+Returning the existing `202` ACK must not release that retained reservation
+or cancel Node-owned work through the original HTTP response-close signal.
+The control/cancel routes keep their independent admission and small bodies.
+Cancelling or draining stops new work and aborts/join actual queries, timers
+and ACP calls; a timer firing or an abort signal alone is not cleanup evidence.
+Release reservations and work pins exactly once after their last owner joins.
+
+Consumer unit/component tests must prove bounded original-input retry,
+unknown/receipt/denied stopping, concurrent explicit actions, exhausted limits,
+reservation retention and actual cancellation join. Final Docker acceptance
+must use real ACP: a second original Prompt is busy-rejected while the first
+runs, then that same Prompt succeeds after the first finishes through Agent UI.
+Controlled fixtures and success of another intent do not satisfy this gate.
 
 ## Related contracts
 

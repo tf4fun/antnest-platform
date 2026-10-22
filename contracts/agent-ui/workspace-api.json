@@ -138,7 +138,7 @@
     "control_requests_bypass_upload_budget": true
   },
   "prompt_retry": {
-    "status": "pending",
+    "status": "implemented",
     "query_schema": "promptQueryEntries",
     "query_action": "retry",
     "invalid_query_status": 422,
@@ -168,5 +168,42 @@
   "sse_delegation_deadline": "original_verified_cct_expiry",
   "sse_session_stale_max_ms": 30000,
   "sse_subscriber_queue_max_bytes": 1048576,
-  "process_page_max_bytes": 262144
+  "process_page_max_bytes": 262144,
+  "prompt_admission_backoff": {
+    "status": "pending",
+    "owner": "agent-ui-node",
+    "codes": ["agent_busy", "configuration_not_ready"],
+    "required_capabilities": {
+      "antnest.dev/errors": 1,
+      "antnest.dev/bridge.intentReceipt": 1
+    },
+    "evidence": [
+      "settled_original_call",
+      "canonical_admission_rejection",
+      "authorized_intent_unknown"
+    ],
+    "budget_scope": "retained_original_operation",
+    "maximum_dispatches": 4,
+    "total_wait_budget_ms": 30000,
+    "initial_delay_ms": 1000,
+    "backoff_multiplier": 2,
+    "delay_rule": "max(wire_delay, exponential_backoff)",
+    "excess_delay": "stop_without_shortening",
+    "single_flight_key": [
+      "organization",
+      "principal",
+      "agent",
+      "session",
+      "intent"
+    ],
+    "preserve": ["intentId", "expectedAppendVersion", "prompt"],
+    "upload_admission": "prompt_upload_admission",
+    "retained_body_budget": "retain_until_automatic_chain_joined",
+    "durable_receipt": "adopt_without_dispatch",
+    "unknown_delivery": "disable_for_original_intent",
+    "query_failure": "no_dispatch",
+    "access_denied": "stop",
+    "cancellation": "abort_and_join_actual_work",
+    "explicit_retry_resets_budget": false
+  }
 }

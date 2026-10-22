@@ -52,7 +52,7 @@
       "additionalProperties": false
     },
     "promptQueryEntries": {
-      "description": "Pending explicit Prompt retry query. Preserve the ordered decoded query entries, including duplicates; ordinary submit has no entries and explicit retry has exactly one action=retry entry.",
+      "description": "Explicit Prompt retry query. Preserve the ordered decoded query entries, including duplicates; ordinary submit has no entries and explicit retry has exactly one action=retry entry.",
       "type": "array",
       "enum": [[], [["action", "retry"]]]
     },
