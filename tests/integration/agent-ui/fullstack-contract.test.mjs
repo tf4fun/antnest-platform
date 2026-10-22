@@ -120,7 +120,11 @@ test("Agent view unavailable reason is optional, nullable and limited to safe cl
   const valid = definition(ui, "agentView");
   const legacy = unavailableReasonAgentView();
   assert.equal(valid(legacy), true, "legacy Agent View may omit the reason");
-  for (const unavailableReason of [null, "agent_unavailable", "runtime_barrier_required"]) {
+  for (const unavailableReason of [
+    null,
+    "agent_unavailable",
+    "runtime_barrier_required",
+  ]) {
     assert.equal(
       valid({ ...legacy, unavailableReason }),
       true,
@@ -129,7 +133,10 @@ test("Agent view unavailable reason is optional, nullable and limited to safe cl
   }
   for (const unavailableReason of [
     "unknown_dependency_failure",
-    { reason: "runtime_barrier_required", barrier_id: "private-\u0000-barrier" },
+    {
+      reason: "runtime_barrier_required",
+      barrier_id: "private-\u0000-barrier",
+    },
   ]) {
     assert.equal(
       valid({ ...legacy, unavailableReason }),
@@ -184,7 +191,11 @@ test("Agent deltas can add, update and clear the unavailable reason without a se
   };
   for (const patch of [
     { op: "add", path: "/unavailableReason", value: "agent_unavailable" },
-    { op: "replace", path: "/unavailableReason", value: "runtime_barrier_required" },
+    {
+      op: "replace",
+      path: "/unavailableReason",
+      value: "runtime_barrier_required",
+    },
     { op: "replace", path: "/unavailableReason", value: null },
     { op: "remove", path: "/unavailableReason" },
   ]) {

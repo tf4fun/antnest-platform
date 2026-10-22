@@ -422,6 +422,7 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
     assert.deepEqual(await bridge.readAgentExecutionState(), {
       availability: "busy",
       activeSessionId: "session-2",
+      unavailableReason: null,
     });
     assert.deepEqual(
       (await bridge.readLearningChanges()).items.map((item) => item.changeId),
@@ -445,8 +446,12 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
       states.push(state);
     }, new AbortController().signal);
     assert.deepEqual(states, [
-      { availability: "ready", activeSessionId: null },
-      { availability: "busy", activeSessionId: "session-2" },
+      { availability: "ready", activeSessionId: null, unavailableReason: null },
+      {
+        availability: "busy",
+        activeSessionId: "session-2",
+        unavailableReason: null,
+      },
     ]);
     assert.ok(observedHeaders.length >= 5);
     assert.ok(
