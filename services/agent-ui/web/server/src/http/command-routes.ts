@@ -13,6 +13,7 @@ import {
   type Operation,
   type PromptIntent,
   type PreparedPrompt,
+  type RetryTicket,
 } from "../bridge/operations.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
@@ -65,6 +66,12 @@ const defaultAcpPromptBytes = 16 * 1024 * 1024;
 
 type Operations = {
   prepare(input: PromptIntent, signal?: AbortSignal): Promise<PreparedPrompt>;
+  beginRetry(sessionId: string, intentId: string): RetryTicket;
+  retryPrepared(prepared: PreparedPrompt, ticket: RetryTicket): Promise<{
+    operationId: string;
+    acceptance: "bridge";
+    phase: "dispatching";
+  }>;
   submitPrepared(prepared: PreparedPrompt): {
     operationId: string;
     acceptance: "bridge";
@@ -94,7 +101,8 @@ export function createCommandHandler(dependencies: {
   ): Promise<AuthorizedSession>;
 }): (request: Request) => Promise<Response | null> {
   return async (request) => {
-    const parts = routeParts(new URL(request.url).pathname);
+    const url = new URL(request.url);
+    const parts = routeParts(url.pathname);
     if (parts === null)
       return error(
         404,
@@ -167,6 +175,10 @@ export function createCommandHandler(dependencies: {
       if (!sameCondition(authorized.condition, { ...scope, sessionId }))
         return error(403, "access_denied", "Session access denied", "none");
       if (resource === "prompts") {
+        const query = [...url.searchParams.entries()];
+        const retry = query.length === 1 && query[0]![0] === "action" && query[0]![1] === "retry";
+        if (query.length !== 0 && !retry)
+          return error(422, "invalid_request", "Prompt query is invalid", "none");
         const maxAcpPromptBytes = dependencies.maxAcpPromptBytes ?? defaultAcpPromptBytes;
         const body = promptSchema.parse(await readBody(request, Math.min(bodyLimit, maxAcpPromptBytes)));
         if (request.headers.get("idempotency-key") !== body.intentId)
@@ -197,18 +209,26 @@ export function createCommandHandler(dependencies: {
           expectedAppendVersion: body.expectedAppendVersion,
           prompt: body.prompt as ContentBlock[],
         };
-        // Keep preparations serialized while chunked hashing admits control I/O.
-        // The final abort check and intent insertion remain one atomic step.
-        const accepted = await runInputWork(async () => {
-          const prepared = await authorized.operations.prepare(input, request.signal);
-          if (prepared.requestBytes > maxAcpPromptBytes)
-            throw new BodyTooLargeError();
-          request.signal.throwIfAborted();
-          const accepted = authorized.operations.submitPrepared(prepared);
-          recordPromptInputPrepared();
-          return accepted;
-        }, request.signal);
-        return json(accepted, 202);
+        // Capture retry admission before serialized preparation can yield. All
+        // requests already in this attempt share its decision, even if their
+        // preparation finishes after the first retry has settled.
+        const ticket = retry ? authorized.operations.beginRetry(sessionId, body.intentId) : undefined;
+        try {
+          const outcome = await runInputWork(async () => {
+            const prepared = await authorized.operations.prepare(input, request.signal);
+            if (prepared.requestBytes > maxAcpPromptBytes)
+              throw new BodyTooLargeError();
+            request.signal.throwIfAborted();
+            // Ordinary insertion remains atomic with its final abort check.
+            const outcome = retry ? { prepared } : { accepted: authorized.operations.submitPrepared(prepared) };
+            recordPromptInputPrepared();
+            return outcome;
+          }, request.signal);
+          // A held durable query must not occupy the global input work queue.
+          const accepted = outcome.prepared !== undefined
+            ? await authorized.operations.retryPrepared(outcome.prepared, ticket!) : outcome.accepted;
+          return json(accepted, 202);
+        } finally { ticket?.release(); }
       }
       if (action === "cancel") {
         const body = cancelSchema.parse(await readBody(request));

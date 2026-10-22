@@ -9,7 +9,7 @@ import { applyAgentDelta } from "../../../services/agent-ui/web/server/dist/prot
 import { test } from "node:test";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { get } from "node:http";
+import { get, request as httpRequest } from "node:http";
 import { createRequire } from "node:module";
 import { HistoryTokens } from "../../../services/agent-ui/web/server/dist/bridge/history-token.js";
 import { createWorkspaceRuntime } from "../../../services/agent-ui/web/server/dist/workspace-runtime.js";
@@ -1103,3 +1103,708 @@ test("Node HTTP SSE flushes headers, delivers a live delta and releases a discon
     await once(server, "close");
   }
 });
+
+test(
+  "Node HTTP explicitly retries the settled original Prompt after an unknown query",
+  { timeout: 10_000 },
+  async () => {
+    const { AcpPromptError } =
+      await import("../../../services/agent-ui/web/server/dist/adapters/acp-http.js");
+    const busy = JSON.parse(
+      readFileSync(
+        new URL("../../../contracts/agent-acp/errors.json", import.meta.url),
+        "utf8",
+      ),
+    ).errors.agent_busy;
+    const rejection = new AcpPromptError(
+      new RequestError(busy.json_rpc_code, busy.message, {
+        code: "agent_busy",
+        retryable: busy.retryable,
+        retry_after_ms: busy.retry_after_ms,
+      }),
+      1,
+    );
+    const original = {
+      intentId: "intent-original-retry",
+      expectedAppendVersion: 7,
+      prompt: [
+        { type: "text", text: "Retry this original Prompt" },
+        {
+          type: "resource",
+          resource: {
+            uri: "file:///original.txt",
+            mimeType: "text/plain",
+            text: "Original attachment",
+          },
+        },
+      ],
+    };
+    const sessionId = "session-1";
+    const expectedInput = { sessionId, ...structuredClone(original) };
+    const expectedReceipt = {
+      sessionId,
+      intentId: original.intentId,
+      runId: "run-original-retry",
+      phase: "completed",
+      appendVersion: 8,
+      outputWatermark: 0,
+      stopReason: "end_turn",
+      errorClass: null,
+    };
+    const releaseOriginal = Promise.withResolvers();
+    const dispatches = [];
+    const promptTasks = [];
+    const events = [];
+    let receipt = null;
+    let closes = 0;
+    const runtime = createWorkspaceRuntime({
+      connect: async () => ({
+        async load() {
+          return {
+            cut: {
+              sealedWatermark: 0,
+              appendVersion: receipt?.appendVersion ?? 7,
+            },
+          };
+        },
+        async readExecution(selectedSessionId) {
+          return {
+            sessionId: selectedSessionId,
+            appendVersion: receipt?.appendVersion ?? 7,
+            outputWatermark: 0,
+            activeRunId: null,
+            recentReceipts: receipt ? [receipt] : [],
+            configurationRevision: null,
+          };
+        },
+        async readIntent(selectedSessionId, intentId) {
+          events.push({
+            kind: receipt ? "receipt" : "unknown",
+            sessionId: selectedSessionId,
+            intentId,
+          });
+          return receipt ? { kind: "receipt", receipt } : { kind: "unknown" };
+        },
+        prompt(input) {
+          dispatches.push(structuredClone(input));
+          events.push({ kind: "prompt", attempt: dispatches.length });
+          const task =
+            dispatches.length === 1
+              ? releaseOriginal.promise.then(() => {
+                  throw rejection;
+                })
+              : Promise.resolve().then(() => {
+                  receipt = { ...expectedReceipt };
+                  return { stopReason: "end_turn" };
+                });
+          promptTasks.push(task);
+          void task.catch(() => {});
+          return task;
+        },
+        async cancel() {},
+        async close() {
+          releaseOriginal.resolve();
+          await Promise.allSettled(promptTasks);
+          closes++;
+        },
+      }),
+    });
+    const handlers = new Set();
+    const server = createWorkspaceHttpServer({
+      handle(request) {
+        const task = runtime.handle(request);
+        handlers.add(task);
+        void task.then(
+          () => handlers.delete(task),
+          () => handlers.delete(task),
+        );
+        return task;
+      },
+    });
+    const headers = {
+      "x-antnest-organization-id": "org-1",
+      "x-antnest-principal-id": "user-1",
+      "x-antnest-agent-id": "agent-1",
+    };
+    let retryStart = -1;
+    let recovered;
+    let drained;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const address = server.address();
+      assert.ok(address && typeof address !== "string");
+      const base = `http://127.0.0.1:${address.port}/api/app/workspace/v1/agents/agent-1/sessions/${sessionId}`;
+      const read = async (path) => {
+        const response = await fetch(`${base}${path}`, {
+          headers,
+          signal: AbortSignal.timeout(2_000),
+        });
+        assert.equal(response.status, 200);
+        return response.json();
+      };
+      const submit = async (query, historyToken) => {
+        const response = await fetch(`${base}/prompts${query}`, {
+          method: "POST",
+          headers: {
+            ...headers,
+            "content-type": "application/json",
+            "idempotency-key": original.intentId,
+            "if-match": historyToken,
+          },
+          body: JSON.stringify(original),
+          signal: AbortSignal.timeout(2_000),
+        });
+        assert.equal(response.status, 202);
+        assert.deepEqual(await response.json(), {
+          operationId: original.intentId,
+          acceptance: "bridge",
+          phase: "dispatching",
+        });
+      };
+      const firstView = await read("/view");
+      await submit("", firstView.historyToken);
+      assert.equal(dispatches.length, 1);
+      assert.equal(promptTasks.length, 1);
+      releaseOriginal.resolve();
+      // Join the actual ACP call, rather than treating the HTTP 202 as settlement.
+      const [firstOutcome] = await Promise.allSettled([promptTasks[0]]);
+      assert.equal(firstOutcome.status, "rejected");
+      assert.equal(firstOutcome.reason, rejection);
+      const unknown = await read(`/operations/${original.intentId}`);
+      assert.equal(unknown.operationId, original.intentId);
+      assert.equal(unknown.acceptance, "unknown");
+      assert.equal(unknown.phase, "uncertain");
+      assert.equal(unknown.error?.code, "agent_busy");
+      assert.equal(unknown.error?.message, busy.message);
+      assert.equal(unknown.error?.retryable, false);
+      assert.equal(unknown.error?.recovery, "query_operation");
+      await submit("", firstView.historyToken);
+      assert.equal(
+        dispatches.length,
+        1,
+        "An ordinary duplicate must not replay the Prompt",
+      );
+      const currentView = await read("/view");
+      assert.equal(currentView.appendVersion, original.expectedAppendVersion);
+      retryStart = events.length;
+      await submit("?action=retry", currentView.historyToken);
+      recovered = await read(`/operations/${original.intentId}`);
+    } finally {
+      releaseOriginal.resolve();
+      await Promise.allSettled(promptTasks);
+      server.closeAllConnections();
+      try {
+        if (server.listening)
+          await new Promise((resolve, reject) =>
+            server.close((error) => (error ? reject(error) : resolve())),
+          );
+      } finally {
+        await Promise.allSettled([...handlers]);
+        await Promise.allSettled(promptTasks);
+        drained = await runtime.drain(1_000);
+      }
+    }
+    assert.equal(server.listening, false);
+    assert.deepEqual(drained, { forced: false });
+    assert.equal(closes, 1);
+    assert.equal(
+      dispatches.length,
+      2,
+      "Explicit retry must dispatch the same settled original Prompt a second time",
+    );
+    assert.deepEqual(dispatches, [expectedInput, expectedInput]);
+    const retryEvents = events.slice(retryStart);
+    const secondDispatch = retryEvents.findIndex(
+      (event) => event.kind === "prompt" && event.attempt === 2,
+    );
+    assert.ok(secondDispatch >= 0);
+    assert.ok(
+      retryEvents
+        .slice(0, secondDispatch)
+        .some(
+          (event) =>
+            event.kind === "unknown" &&
+            event.sessionId === sessionId &&
+            event.intentId === original.intentId,
+        ),
+      "The Node owner must query the original intent before its retry dispatch",
+    );
+    assert.deepEqual(recovered, {
+      operationId: original.intentId,
+      sessionId,
+      acceptance: "acp",
+      phase: "completed",
+      runId: expectedReceipt.runId,
+      outputWatermark: 0,
+      stopReason: "end_turn",
+      errorClass: null,
+    });
+  },
+);
+
+async function waitForRetryLifecycle(pending, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), 3_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function retryLifecycleHttp(url, headers, body, chunked = false) {
+  const response = Promise.withResolvers();
+  let responding = false;
+  const outgoing = httpRequest(
+    url,
+    {
+      method: body === undefined ? "GET" : "POST",
+      agent: false,
+      headers: testHeaders(
+        {
+          ...headers,
+          ...(body === undefined
+            ? {}
+            : {
+                "content-type": "application/json",
+                ...(chunked
+                  ? { "transfer-encoding": "chunked" }
+                  : {
+                      "content-length": Buffer.byteLength(body),
+                    }),
+              }),
+        },
+        "edge-gateway",
+        url,
+      ),
+    },
+    async (incoming) => {
+      responding = true;
+      try {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of incoming) {
+          size += chunk.length;
+          if (size > 64 * 1024)
+            throw new Error("Retry lifecycle response exceeded its bound");
+          chunks.push(chunk);
+        }
+        response.resolve({
+          status: incoming.statusCode,
+          headers: incoming.headers,
+          body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+        });
+      } catch (cause) {
+        response.reject(cause);
+      }
+    },
+  );
+  outgoing.on("error", response.reject);
+  const closed = new Promise((resolve) =>
+    outgoing.once("close", () => {
+      if (!responding)
+        response.reject(new Error("Retry lifecycle client disconnected"));
+      resolve();
+    }),
+  );
+  const outcome = response.promise.then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason) => ({ status: "rejected", reason }),
+  );
+  // A write before end, with no Content-Length, sends the complete small body
+  // using chunked transfer and exercises the real unknown-length reservation.
+  if (chunked) {
+    outgoing.write(body);
+    outgoing.end();
+  } else outgoing.end(body);
+  return {
+    response: response.promise,
+    outcome,
+    closed,
+    cancel: () => outgoing.destroy(),
+  };
+}
+
+test(
+  "native HTTP retains a retry upload until its actual held query and handler settle",
+  { timeout: 20_000 },
+  async (t) => {
+    for (const termination of ["deadline", "client-abort"]) {
+      await t.test(termination, { timeout: 9_000 }, async () => {
+        const { AcpPromptError } =
+          await import("../../../services/agent-ui/web/server/dist/adapters/acp-http.js");
+        const busy = JSON.parse(
+          readFileSync(
+            new URL(
+              "../../../contracts/agent-acp/errors.json",
+              import.meta.url,
+            ),
+            "utf8",
+          ),
+        ).errors.agent_busy;
+        const rejection = new AcpPromptError(
+          new RequestError(busy.json_rpc_code, busy.message, {
+            code: "agent_busy",
+            retryable: busy.retryable,
+            retry_after_ms: busy.retry_after_ms,
+          }),
+          1,
+        );
+        const sessionId = "session-retry-lifecycle";
+        const original = {
+          intentId: `intent-retry-lifecycle-${termination}`,
+          expectedAppendVersion: 7,
+          prompt: [
+            { type: "text", text: "Keep this original Prompt unchanged" },
+          ],
+        };
+        const serialized = JSON.stringify(original);
+        const releaseOriginal = Promise.withResolvers();
+        const releaseQuery = Promise.withResolvers();
+        const queryStarted = Promise.withResolvers();
+        const queryAborted = Promise.withResolvers();
+        const promptTasks = [];
+        const queries = [];
+        const handlers = [];
+        const clients = [];
+        const sockets = new Set();
+        const socketClosures = [];
+        const dispatches = [];
+        const retryReads = [];
+        let armed = false;
+        let retryHandler;
+        let heldQuery;
+        let removeQueryAbort;
+        let closes = 0;
+        let drained;
+        let failure;
+        const cleanupFailures = [];
+        const observations = {};
+        const runtime = createWorkspaceRuntime({
+          connect: async () => ({
+            async load() {
+              return { cut: { sealedWatermark: 0, appendVersion: 7 } };
+            },
+            async readExecution(selectedSessionId) {
+              return {
+                sessionId: selectedSessionId,
+                appendVersion: 7,
+                outputWatermark: 0,
+                activeRunId: null,
+                recentReceipts: [],
+                configurationRevision: null,
+              };
+            },
+            readIntent(selectedSessionId, intentId, signal) {
+              const row = {
+                sessionId: selectedSessionId,
+                intentId,
+                signal,
+                settled: false,
+              };
+              if (armed) retryReads.push(row);
+              // With one original intent and one retry HTTP request, the first
+              // read is authorizeSession -> reconcileMissing. Only the second
+              // read belongs to the retry decision, whose signal follows HTTP.
+              const held = armed && retryReads.length === 2;
+              row.task = (
+                held
+                  ? releaseQuery.promise
+                  : Promise.resolve({ kind: "unknown" })
+              ).then(
+                (result) => {
+                  row.settled = true;
+                  return result;
+                },
+                (cause) => {
+                  row.settled = true;
+                  throw cause;
+                },
+              );
+              void row.task.catch(() => {});
+              queries.push(row);
+              if (held) {
+                heldQuery = row;
+                const aborted = () => queryAborted.resolve();
+                signal?.addEventListener("abort", aborted, { once: true });
+                removeQueryAbort = () =>
+                  signal?.removeEventListener("abort", aborted);
+                if (signal?.aborted) aborted();
+                queryStarted.resolve(row);
+              }
+              return row.task;
+            },
+            prompt(input) {
+              dispatches.push(structuredClone(input));
+              const task = releaseOriginal.promise.then(() => {
+                throw rejection;
+              });
+              promptTasks.push(task);
+              void task.catch(() => {});
+              return task;
+            },
+            async cancel() {},
+            close() {
+              closes++;
+            },
+          }),
+        });
+        const server = createWorkspaceHttpServer(
+          {
+            handle(request) {
+              const row = { signal: request.signal, settled: false };
+              row.task = runtime.handle(request);
+              void row.task.then(
+                () => {
+                  row.settled = true;
+                },
+                () => {
+                  row.settled = true;
+                },
+              );
+              handlers.push(row);
+              if (new URL(request.url).searchParams.get("action") === "retry")
+                retryHandler = row;
+              return row.task;
+            },
+          },
+          { requestDeadlineMs: termination === "deadline" ? 500 : 5_000 },
+        );
+        server.on("connection", (socket) => {
+          sockets.add(socket);
+          socketClosures.push(
+            new Promise((resolve) =>
+              socket.once("close", () => {
+                sockets.delete(socket);
+                resolve();
+              }),
+            ),
+          );
+        });
+        const headers = {
+          "x-antnest-organization-id": "org-1",
+          "x-antnest-principal-id": "user-1",
+          "x-antnest-agent-id": "agent-1",
+        };
+        try {
+          server.listen(0, "127.0.0.1");
+          await once(server, "listening");
+          const base = `http://127.0.0.1:${server.address().port}/api/app/workspace/v1/agents/agent-1/sessions/${sessionId}`;
+          const send = (path, body, extra = {}, chunked = false) => {
+            const client = retryLifecycleHttp(
+              `${base}${path}`,
+              { ...headers, ...extra },
+              body,
+              chunked,
+            );
+            clients.push(client);
+            return client;
+          };
+          const read = async (path) => {
+            const result = await waitForRetryLifecycle(
+              send(path).response,
+              "Retry lifecycle read did not finish",
+            );
+            assert.equal(result.status, 200);
+            return result.body;
+          };
+          const initialView = await read("/view");
+          const first = await waitForRetryLifecycle(
+            send("/prompts", serialized, {
+              "if-match": initialView.historyToken,
+              "idempotency-key": original.intentId,
+            }).response,
+            "Original Prompt HTTP admission did not finish",
+          );
+          assert.equal(first.status, 202);
+          assert.equal(promptTasks.length, 1);
+          releaseOriginal.resolve();
+          // HTTP 202 is not settlement: join the exact ACP Promise that rejected.
+          const [originalOutcome] = await Promise.allSettled([promptTasks[0]]);
+          assert.equal(originalOutcome.status, "rejected");
+          assert.equal(originalOutcome.reason, rejection);
+          const current = await read("/view");
+          const promptHeaders = {
+            "if-match": current.historyToken,
+            "idempotency-key": original.intentId,
+          };
+          armed = true;
+          const retry = send(
+            "/prompts?action=retry",
+            serialized,
+            promptHeaders,
+            true,
+          );
+          await waitForRetryLifecycle(
+            Promise.race([
+              queryStarted.promise,
+              retry.outcome.then(() => {
+                throw new Error(
+                  "Retry HTTP ended before its actual decision query started",
+                );
+              }),
+            ]),
+            "Actual retry decision query did not start",
+          );
+          observations.retryReads = retryReads.slice();
+          if (termination === "client-abort") retry.cancel();
+          observations.http = await waitForRetryLifecycle(
+            retry.outcome,
+            "Retry HTTP did not terminate",
+          );
+          await waitForRetryLifecycle(
+            queryAborted.promise,
+            "Actual retry query did not observe HTTP cancellation",
+          );
+          await waitForRetryLifecycle(
+            retry.closed,
+            "Retry HTTP client did not close",
+          );
+          observations.handlerSettledAtHttpEnd = retryHandler?.settled;
+          observations.querySettledAtHttpEnd = heldQuery.settled;
+          observations.handlerAborted = retryHandler?.signal.aborted;
+          observations.querySignalAborted = heldQuery.signal?.aborted;
+          observations.authorizationSignalAborted =
+            retryReads[0]?.signal?.aborted;
+          observations.blocked = await waitForRetryLifecycle(
+            send("/prompts", serialized, promptHeaders).response,
+            "Capacity refusal did not finish while the actual retry query was held",
+          );
+          observations.dispatchesWhileHeld = dispatches.length;
+          releaseQuery.resolve({ kind: "unknown" });
+          await waitForRetryLifecycle(
+            heldQuery.task,
+            "Actual retry query did not settle after release",
+          );
+          await waitForRetryLifecycle(
+            retryHandler.task,
+            "Actual retry handler did not join its query",
+          );
+          // The native dispatch wrapper releases its reservation after the actual
+          // runtime.handle Promise, rather than after the earlier HTTP response.
+          await new Promise((resolve) => setImmediate(resolve));
+          observations.available = await waitForRetryLifecycle(
+            send("/prompts", serialized, promptHeaders).response,
+            "Upload admission did not recover after the actual handler joined",
+          );
+        } catch (cause) {
+          failure = cause;
+        } finally {
+          releaseOriginal.resolve();
+          releaseQuery.resolve({ kind: "unknown" });
+          for (const client of clients) client.cancel();
+          await Promise.allSettled(
+            clients.flatMap((client) => [client.outcome, client.closed]),
+          );
+          await Promise.allSettled(handlers.map((row) => row.task));
+          await Promise.allSettled([
+            ...promptTasks,
+            ...queries.map((row) => row.task),
+          ]);
+          removeQueryAbort?.();
+          try {
+            if (server.listening) {
+              const closed = new Promise((resolve, reject) =>
+                server.close((error) => (error ? reject(error) : resolve())),
+              );
+              server.closeAllConnections();
+              await closed;
+            }
+          } catch (cause) {
+            cleanupFailures.push(cause);
+          }
+          await Promise.all(socketClosures);
+          try {
+            drained = await runtime.drain(1_000);
+          } catch (cause) {
+            cleanupFailures.push(cause);
+          }
+        }
+        if (failure !== undefined || cleanupFailures.length)
+          throw new AggregateError(
+            [...(failure === undefined ? [] : [failure]), ...cleanupFailures],
+            "Retry lifecycle test or cleanup failed",
+          );
+        assert.equal(
+          observations.handlerSettledAtHttpEnd,
+          false,
+          "Ending the HTTP wait must not settle the actual retry handler",
+        );
+        assert.equal(observations.querySettledAtHttpEnd, false);
+        assert.equal(observations.handlerAborted, true);
+        assert.equal(observations.querySignalAborted, true);
+        assert.equal(
+          observations.authorizationSignalAborted,
+          false,
+          "The held query must belong to retry, not authorization reconciliation",
+        );
+        assert.equal(observations.retryReads.length, 2);
+        assert.ok(
+          observations.retryReads.every(
+            (row) =>
+              row.sessionId === sessionId && row.intentId === original.intentId,
+          ),
+        );
+        assert.notEqual(
+          observations.retryReads[0].signal,
+          observations.retryReads[1].signal,
+        );
+        if (termination === "deadline") {
+          assert.equal(observations.http.status, "fulfilled");
+          assert.equal(observations.http.value.status, 504);
+          assert.equal(
+            observations.http.value.body.code,
+            "workspace_deadline_exceeded",
+          );
+          assert.equal(
+            observations.http.value.body.recovery,
+            "query_operation",
+          );
+        } else assert.equal(observations.http.status, "rejected");
+        assert.equal(
+          observations.blocked.status,
+          429,
+          "A chunked retry must retain its unknown-length 64MiB reservation after HTTP ends",
+        );
+        assert.equal(
+          observations.blocked.body.code,
+          "upload_capacity_exceeded",
+        );
+        assert.equal(observations.blocked.headers["cache-control"], "no-store");
+        assert.equal(observations.blocked.headers["retry-after"], "1");
+        assert.equal(observations.dispatchesWhileHeld, 1);
+        assert.equal(observations.available.status, 202);
+        assert.deepEqual(observations.available.body, {
+          operationId: original.intentId,
+          acceptance: "bridge",
+          phase: "dispatching",
+        });
+        assert.deepEqual(dispatches, [{ sessionId, ...original }]);
+        assert.ok(heldQuery.settled && handlers.every((row) => row.settled));
+        assert.equal(server.listening, false);
+        assert.equal(sockets.size, 0);
+        assert.equal(closes, 1);
+        assert.deepEqual(drained, { forced: false });
+        const metrics = runtime.metrics();
+        for (const key of [
+          "owners",
+          "observerLeases",
+          "heldWork",
+          "activeReplays",
+          "queuedReplays",
+          "streamSubscribers",
+        ])
+          assert.equal(
+            metrics[key],
+            0,
+            `Retry lifecycle cleanup retained ${key}`,
+          );
+      });
+    }
+  },
+);

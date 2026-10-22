@@ -2012,3 +2012,183 @@ test("Agent sweeps never poll learning diagnostics, even with an open stream", a
     assert.equal(reads, 1);
   } finally { owner.close(); }
 });
+
+test("owner drain rejects an operations Prompt before the actual ACP call", { timeout: 5_000 }, async () => {
+  const f = fixture();
+  const owner = await AgentBridgeOwner.open({
+    scope, connect: f.connect, retainWork: f.retainWork,
+  });
+  const input = {
+    sessionId: "session-owner-drain",
+    intentId: "intent-owner-drain",
+    expectedAppendVersion: 3,
+    prompt: [{ type: "text" as const, text: "Original owner drain input" }],
+  };
+  let pending: Promise<unknown> | undefined;
+  let result: Awaited<ReturnType<typeof outcome>> | undefined;
+  try {
+    await owner.beginDrain();
+    pending = outcome(Promise.resolve().then(async () => {
+      const accepted = owner.operations.submit(input);
+      await owner.operations.settled(input.sessionId, input.intentId);
+      return accepted;
+    }));
+    result = await pending as Awaited<ReturnType<typeof outcome>>;
+  } finally {
+    await Promise.allSettled([...(pending ? [pending] : []), owner.close()]);
+  }
+  assert.equal(
+    f.calls.filter((call) => call.startsWith("prompt:")).length,
+    0,
+    "beginDrain must reject the actual Prompt dependency before reaching ACP",
+  );
+  assert.equal(f.calls.filter((call) => call === "close").length, 1);
+  assert.equal(f.work(), 0);
+  if (result?.status === "fulfilled") {
+    // Bridge acceptance does not prove ACP admission. A dependency refusal
+    // may settle as an uncertain local operation rather than a thrown submit.
+    const operation = owner.operations.snapshot(input.sessionId, [])[0];
+    assert.equal(operation?.acceptance, "unknown");
+    assert.equal(operation?.phase, "uncertain");
+    assert.equal(operation?.runId, undefined);
+  } else assert.equal(result?.status, "rejected");
+});
+
+async function ownerRetryQueryStarted(started: Promise<void>, pending: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      started,
+      pending.then(() => { throw new Error("Retry settled before its actual readIntent started"); }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Actual owner retry query did not start")), 2_000);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+test("owner retirement joins the actual held retry query before completing", { timeout: 10_000 }, async (t) => {
+  for (const answer of ["unknown", "receipt"] as const) await t.test(answer, async (t) => {
+    const f = fixture();
+    const parent = new AbortController();
+    const started = Promise.withResolvers<void>();
+    type QueryResult = Awaited<ReturnType<AcpBridgePort["readIntent"]>>;
+    const releaseQuery = Promise.withResolvers<QueryResult>();
+    const input = {
+      sessionId: "session-owner-retry",
+      intentId: "intent-owner-retry",
+      expectedAppendVersion: 3,
+      prompt: [{ type: "text" as const, text: "Original owner retry input" }],
+    };
+    const receipt = {
+      sessionId: input.sessionId,
+      intentId: input.intentId,
+      runId: "run-owner-retry",
+      phase: "completed" as const,
+      appendVersion: 4,
+      outputWatermark: 0,
+      stopReason: "end_turn",
+      errorClass: null,
+    };
+    const queryResult: QueryResult = answer === "receipt"
+      ? { kind: "receipt", receipt } : { kind: "unknown" };
+    const busy = new acpHttp.AcpPromptError(loadReceipt("agent_busy"), 1);
+    const promptInputs: Parameters<AcpBridgePort["prompt"]>[0][] = [];
+    const promptTasks: Promise<unknown>[] = [];
+    const queryTasks: Promise<QueryResult>[] = [];
+    const queries: { sessionId: string; intentId: string; signal?: AbortSignal }[] = [];
+    let originalJoined = false, originalJoinedBeforeRetry = false;
+    let originalRejected = false, queryJoined = false, closeSettled = false;
+    let closedBeforeQuerySettled = false, joinedAtClose = false;
+    let queryAbortedAtClose = false;
+    let closeStatus: "fulfilled" | "rejected" | undefined;
+    const owner = await AgentBridgeOwner.open({
+      scope, retainWork: f.retainWork,
+      connect: async (identity, callbacks) => ({
+        ...await f.connect(identity, callbacks),
+        prompt(value) {
+          promptInputs.push(structuredClone(value));
+          const task = promptInputs.length === 1
+            ? Promise.resolve().then(() => { throw busy; }).finally(() => { originalJoined = true; })
+            : Promise.resolve({ stopReason: "end_turn" });
+          promptTasks.push(task);
+          void task.catch(() => {});
+          return task;
+        },
+        readIntent(sessionId, intentId, signal) {
+          queries.push({ sessionId, intentId, ...(signal ? { signal } : {}) });
+          const task = (async () => {
+            started.resolve();
+            // Deliberately ignore abort: owner.close must join this original
+            // Promise, not just cancel its waiter or close the ACP transport.
+            try { return await releaseQuery.promise; }
+            finally { queryJoined = true; }
+          })();
+          queryTasks.push(task);
+          void task.catch(() => {});
+          return task;
+        },
+      }),
+    });
+    let retry: Promise<unknown> | undefined;
+    let closing: Promise<unknown> | undefined;
+    let ticket: ReturnType<typeof owner.operations.beginRetry> | undefined;
+    const emergency = () => { parent.abort(); releaseQuery.resolve(queryResult); };
+    t.signal.addEventListener("abort", emergency, { once: true });
+    try {
+      owner.operations.submit(input);
+      await owner.operations.settled(input.sessionId, input.intentId);
+      const original = promptTasks[0];
+      if (original === undefined) throw new Error("The original ACP Prompt did not start");
+      const first = await outcome(original);
+      originalRejected = first.status === "rejected" && first.reason === busy;
+      originalJoinedBeforeRetry = originalJoined;
+      ticket = owner.operations.beginRetry(input.sessionId, input.intentId);
+      const prepared = await owner.operations.prepare(input, parent.signal);
+      retry = outcome(owner.operations.retryPrepared(prepared, ticket));
+      await ownerRetryQueryStarted(started.promise, retry);
+      closing = outcome(Promise.resolve().then(() => owner.close())).then((result) => {
+        closeSettled = true;
+        joinedAtClose = queryJoined;
+        closeStatus = result.status;
+        return result;
+      });
+      await nextEventTurn();
+      closedBeforeQuerySettled = closeSettled;
+      queryAbortedAtClose = queries[0]?.signal?.aborted === true;
+      releaseQuery.resolve(queryResult);
+      await Promise.all([retry, closing]);
+    } finally {
+      emergency();
+      await Promise.allSettled([...promptTasks, ...queryTasks, ...(retry ? [retry] : [])]);
+      ticket?.release();
+      await Promise.allSettled([...(closing ? [closing] : []), owner.close()]);
+      t.signal.removeEventListener("abort", emergency);
+    }
+    assert.equal(
+      closedBeforeQuerySettled, false,
+      "owner.close returned before the original held readIntent Promise settled",
+    );
+    assert.equal(joinedAtClose, true, "actual query settlement must precede owner close completion");
+    assert.equal(queryAbortedAtClose, true, "owner retirement must cancel its retry decision");
+    assert.equal(originalRejected, true);
+    assert.equal(originalJoinedBeforeRetry, true, "the real original ACP call must settle before retry");
+    assert.equal(queryJoined, true);
+    assert.equal(closeSettled, true);
+    assert.equal(closeStatus, "fulfilled", "joined query failure belongs to its caller, not clean owner close");
+    assert.equal(queries.length, 1);
+    assert.equal(queries[0]?.sessionId, input.sessionId);
+    assert.equal(queries[0]?.intentId, input.intentId);
+    assert.deepEqual(promptInputs, [input], "a retiring owner must never dispatch the retry");
+    assert.equal(f.calls.filter((call) => call === "close").length, 1);
+    assert.equal(f.work(), 0);
+    if (answer === "receipt") {
+      const operation = owner.operations.snapshot(input.sessionId, [])[0];
+      assert.deepEqual(operation, {
+        operationId: input.intentId, sessionId: input.sessionId,
+        acceptance: "acp", phase: "completed", runId: receipt.runId,
+        outputWatermark: 0, stopReason: "end_turn", errorClass: null,
+      }, "a valid late receipt remains stronger than retirement or cancellation");
+    }
+  });
+});
