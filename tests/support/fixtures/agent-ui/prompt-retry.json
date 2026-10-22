@@ -1,0 +1,272 @@
+{
+  "version": 1,
+  "implementation_status": "pending",
+  "automatic_backoff_status": "pending_separate_delivery",
+  "purpose": "Shared wire examples and future production-test inputs; scenario expectations are not implementation evidence.",
+  "validQueries": [
+    { "name": "ordinary_submit", "entries": [] },
+    { "name": "explicit_retry", "entries": [["action", "retry"]] }
+  ],
+  "invalidQueries": [
+    { "name": "unknown_action", "entries": [["action", "submit"]] },
+    { "name": "empty_action", "entries": [["action", ""]] },
+    { "name": "uppercase_action_name", "entries": [["Action", "retry"]] },
+    { "name": "uppercase_action_value", "entries": [["action", "RETRY"]] },
+    {
+      "name": "duplicate_retry",
+      "entries": [
+        ["action", "retry"],
+        ["action", "retry"]
+      ]
+    },
+    {
+      "name": "conflicting_duplicate",
+      "entries": [
+        ["action", "retry"],
+        ["action", "submit"]
+      ]
+    },
+    { "name": "unrelated_parameter", "entries": [["cursor", "next"]] },
+    {
+      "name": "extra_parameter",
+      "entries": [
+        ["action", "retry"],
+        ["cursor", "next"]
+      ]
+    },
+    { "name": "missing_pair_value", "entries": [["action"]] },
+    { "name": "extra_pair_member", "entries": [["action", "retry", "extra"]] },
+    { "name": "non_string_pair_value", "entries": [["action", true]] },
+    { "name": "flat_pair", "entries": ["action", "retry"] },
+    { "name": "object_loses_duplicates", "entries": { "action": "retry" } },
+    { "name": "null_query", "entries": null }
+  ],
+  "original": {
+    "scope": {
+      "organization": "organization-1",
+      "principal": "principal-1",
+      "agent": "agent-1",
+      "session": "session-1",
+      "intent": "intent-A"
+    },
+    "path": "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts",
+    "queryEntries": [],
+    "headers": {
+      "Idempotency-Key": "intent-A",
+      "If-Match": "original-history-token"
+    },
+    "body": {
+      "intentId": "intent-A",
+      "expectedAppendVersion": 7,
+      "prompt": [{ "type": "text", "text": "Original A message" }]
+    }
+  },
+  "retry": {
+    "path": "/api/app/workspace/v1/agents/agent-1/sessions/session-1/prompts",
+    "queryEntries": [["action", "retry"]],
+    "headers": {
+      "Idempotency-Key": "intent-A",
+      "If-Match": "current-history-token"
+    },
+    "body": {
+      "intentId": "intent-A",
+      "expectedAppendVersion": 7,
+      "prompt": [{ "type": "text", "text": "Original A message" }]
+    }
+  },
+  "bridgeAck": {
+    "operationId": "intent-A",
+    "acceptance": "bridge",
+    "phase": "dispatching"
+  },
+  "uncertainOperation": {
+    "operationId": "intent-A",
+    "sessionId": "session-1",
+    "phase": "uncertain",
+    "acceptance": "unknown"
+  },
+  "scenarios": [
+    {
+      "name": "ordinary_duplicate",
+      "explicitUserAction": false,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "unknown" },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "queuedReplay": false,
+        "operation": "uncertain"
+      }
+    },
+    {
+      "name": "explicit_busy",
+      "errorCode": "agent_busy",
+      "explicitUserAction": true,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "unknown" },
+      "expected": {
+        "queryBeforeDispatch": true,
+        "additionalPromptDispatches": 1,
+        "reuseOriginalInput": true,
+        "operationUntilReceipt": "uncertain"
+      }
+    },
+    {
+      "name": "explicit_not_ready",
+      "errorCode": "configuration_not_ready",
+      "explicitUserAction": true,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "unknown" },
+      "expected": {
+        "queryBeforeDispatch": true,
+        "additionalPromptDispatches": 1,
+        "reuseOriginalInput": true,
+        "operationUntilReceipt": "uncertain"
+      }
+    },
+    {
+      "name": "durable_receipt",
+      "explicitUserAction": true,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": {
+        "kind": "receipt",
+        "receipt": {
+          "intentId": "intent-A",
+          "sessionId": "session-1",
+          "runId": "run-A",
+          "phase": "completed",
+          "appendVersion": 8,
+          "outputWatermark": 4,
+          "stopReason": "end_turn",
+          "errorClass": null
+        }
+      },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "operation": "durable_receipt"
+      }
+    },
+    {
+      "name": "query_failure",
+      "explicitUserAction": true,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "failure", "code": "upstream_unavailable" },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "queuedReplay": false,
+        "operation": "uncertain"
+      }
+    },
+    {
+      "name": "access_denied",
+      "explicitUserAction": true,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "failure", "code": "access_denied" },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "queuedReplay": false,
+        "stop": true
+      }
+    },
+    {
+      "name": "in_flight_original",
+      "explicitUserAction": true,
+      "originalSettled": false,
+      "originalBodyAvailable": true,
+      "query": { "kind": "unknown" },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "queuedReplay": false,
+        "operation": "unchanged"
+      }
+    },
+    {
+      "name": "double_click",
+      "explicitUserAction": true,
+      "concurrentActions": 2,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "unknown" },
+      "expected": {
+        "queryBeforeDispatch": true,
+        "additionalPromptDispatches": 1,
+        "reuseOriginalInput": true,
+        "singleFlightIncludesQuery": true
+      }
+    },
+    {
+      "name": "late_receipt_during_query",
+      "explicitUserAction": true,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "unknown" },
+      "lateReceipt": {
+        "intentId": "intent-A",
+        "sessionId": "session-1",
+        "runId": "run-A",
+        "phase": "completed",
+        "appendVersion": 8,
+        "outputWatermark": 4,
+        "stopReason": "end_turn",
+        "errorClass": null
+      },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "operation": "durable_receipt",
+        "ignoreStaleUnknown": true
+      }
+    },
+    {
+      "name": "changed_cas",
+      "explicitUserAction": true,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "unknown" },
+      "requestedBody": {
+        "intentId": "intent-A",
+        "expectedAppendVersion": 8,
+        "prompt": [{ "type": "text", "text": "Original A message" }]
+      },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "rejection": "input_conflict"
+      }
+    },
+    {
+      "name": "changed_content",
+      "explicitUserAction": true,
+      "originalSettled": true,
+      "originalBodyAvailable": true,
+      "query": { "kind": "unknown" },
+      "requestedBody": {
+        "intentId": "intent-A",
+        "expectedAppendVersion": 7,
+        "prompt": [
+          { "type": "text", "text": "Changed message must not replace A" }
+        ]
+      },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "rejection": "input_conflict"
+      }
+    },
+    {
+      "name": "reload_without_original_body",
+      "explicitUserAction": false,
+      "originalSettled": true,
+      "originalBodyAvailable": false,
+      "query": { "kind": "unknown" },
+      "expected": {
+        "additionalPromptDispatches": 0,
+        "queryOnly": true,
+        "offerRetry": false,
+        "operation": "uncertain"
+      }
+    }
+  ]
+}

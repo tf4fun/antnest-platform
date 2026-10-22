@@ -172,6 +172,32 @@ count. A duplicate standard ACP prompt request may receive
 Bridge reads the original receipt by intent ID. Neither response authorizes
 a new ID or automatic resubmission.
 
+The Agent UI's [pending explicit original Prompt retry amendment](../agent-ui/workspace-api.md#pending-explicit-original-prompt-retry-53)
+uses `POST .../prompts?action=retry` only at the Bridge HTTP boundary. It adds
+no ACP method, capability, receipt field or semantic admission parameter. The
+original scoped intent, canonical content digest, expected append version and
+complete ordered content, including attachments, remain unchanged; only the
+Bridge history token is refreshed. The query action must not be forwarded into
+the ACP body or digest.
+
+That pending consumer flow serializes query plus retry for the original
+organization/principal/Agent/Session/intent and requires the original ACP call
+to have settled. It adopts any durable receipt or Run without redispatch,
+including a receipt in the unknown phase. A successful lookup with no receipt
+still means uncertain. Only an explicit user decision may then retry the same
+key and digest subject to ACP's existing atomic duplicate lookup and CAS.
+Query failure or an in-flight original call does not queue later replay. A
+receipt arriving during recovery wins over a stale unknown read or late error;
+it cannot be replaced with a synthetic unaccepted outcome. Reload without the
+original body remains query-only. Browser navigation or identity replacement
+releases retained input instead of transferring it to another scope.
+
+These are pending Agent UI consumer requirements, not newly implemented ACP
+behavior. The original #53 automatic backoff requirement remains separately
+pending; neither error retry guidance nor missing/expired receipt state is
+trustworthy non-admission proof. This explicit flow does not remove that goal
+or count another intent's success as success of the original Prompt.
+
 The principal-scoped internal `GET` observation routes are
 `/rpc/agent-acp/workspace/sessions/{sessionId}/execution` and
 `/rpc/agent-acp/workspace/sessions/{sessionId}/intents/{intentId}`. Other
