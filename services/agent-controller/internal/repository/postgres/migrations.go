@@ -51,6 +51,7 @@ var (
 		{version: 25, name: "encryption_key_rotation", sql: mustMigration("migrations/0025_encryption_key_rotation.sql")},
 		{version: 26, name: "managed_mcp_secrets", sql: mustMigration("migrations/0026_managed_mcp_secrets.sql")},
 		{version: 27, name: "runtime_barrier_recovery_policy", sql: mustMigration("migrations/0027_runtime_barrier_recovery_policy.sql")},
+		{version: 28, name: "runtime_barrier_recovery_admission", sql: mustMigration("migrations/0028_runtime_barrier_recovery_admission.sql")},
 	}
 )
 

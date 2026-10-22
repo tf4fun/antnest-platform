@@ -180,10 +180,52 @@ pairs and safe cancellation causes without returning remote messages, endpoint
 addresses or credentials. A cancellation that arrives during response cleanup
 cannot turn into a successful read after cleanup finishes.
 
-This batch supplies the outbound adapter only. Recovery polling, atomic policy
-and barrier admission, durable workflow start/replay, notifications and UI
-consumers remain separate delivery batches. Main does not yet call this reader;
-activation requires the ACP producer and the explicit recovery integration gate.
+The adapter and the storage boundary below do not activate recovery polling.
+Workflow start/replay, notifications and UI consumers remain separate delivery
+batches. Activation requires the ACP producer and the explicit recovery
+integration gate.
+
+## Atomic Runtime Barrier Admission
+
+Migration 0028 adds immutable recovery receipts, one cooldown per Agent and
+pending workflow starts. Recovery supplies optional metadata to the existing
+`BeginAgentRebuild` transaction. The original organization/Agent/barrier tuple
+derives one stable Rebuild request ID; the command retains the existing six-field
+Rebuild fingerprint. Opaque barrier and original execution IDs use `BYTEA` so
+Unicode and NUL identities survive PostgreSQL and restart without normalization.
+
+An existing tuple returns its original receipt before current policy, Template,
+cooldown or lifecycle checks. A regular lifecycle operation without a matching
+recovery receipt cannot be converted into a recovery. A new admission requires
+the observed policy revision in `auto` mode, the same configured Runtime/source
+and Template revision, unchanged owner authorization and revocation watermarks,
+and an active owner binding. It retains the existing lifecycle CAS and does not
+require execution readiness or equate the barrier's original execution ID with
+a later health observation. The absent policy defaults to `manual`; neither
+`manual` nor `notify` admits automatic recovery.
+
+Lock order is lifecycle request, policy organization, Identity admission,
+execution organization, Agent, owner binding/cooldown and event journal. After
+these locks, one PostgreSQL clock value defines acceptance, lifecycle/spec/event
+and Agent timestamps, and the cooldown deadline. The drain deadline preserves
+its configured duration from that acceptance point. Earlier Skill preparation
+timestamps are unchanged. A new barrier remains blocked before the saved
+cooldown deadline even after the previous Rebuild fails; at or after the
+deadline it may admit a new request. Original receipt replay never extends it.
+
+The spec, lifecycle operation, Agent CAS, event, synchronization revision,
+receipt, cooldown and original pending command commit together. Any failure
+rolls back all these effects. Pending commands can be enumerated after process
+restart without consulting current ACP or policy state. Confirmation requires
+the exact immutable request ID and fingerprint and is monotonic: repeating it
+changes nothing and cannot acknowledge another Agent's pending command.
+
+This storage API does not start or confirm a Temporal workflow on its own. The
+orchestration batch must prove that the engine accepted the original command
+before confirming it; timeout, cancellation or an unknown response must leave
+the command pending. The bounded observation worker, durable ensure-start,
+manual/notify presentation and actual ACP mid-tool-crash recovery acceptance
+remain required before the complete recovery workflow is delivered.
 
 ## Lifecycle Settlement
 
