@@ -65,6 +65,13 @@ type responseFailure struct {
 }
 
 var methodFailures = map[string][]responseFailure{
+	"get-runtime-barrier": {
+		{400, "invalid_request", false},
+		{404, "not_found", false},
+		{409, "configuration_conflict", false},
+		{503, "configuration_not_ready", true},
+		{503, "execution_state_unavailable", true},
+	},
 	"apply-execution-snapshot": {
 		{400, "invalid_execution_configuration", false},
 		{409, "configuration_conflict", false},
@@ -86,6 +93,9 @@ func decodeFailure(method string, status int, body []byte) error {
 		for _, expected := range methodFailures[method] {
 			if status == expected.status && response.Code == expected.code {
 				return failure(expected.code, expected.retryable, nil)
+			}
+			if method == "get-runtime-barrier" && response.Code == expected.code {
+				return failure("invalid_response", true, nil)
 			}
 		}
 	}

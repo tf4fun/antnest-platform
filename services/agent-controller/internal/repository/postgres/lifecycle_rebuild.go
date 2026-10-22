@@ -87,6 +87,9 @@ func (repository *Repository) ReplayAgentRebuild(
 func (repository *Repository) BeginAgentRebuild(
 	ctx context.Context, input ports.BeginAgentRebuild,
 ) (ports.AgentRebuildState, bool, error) {
+	if err := validateRuntimeBarrierRecovery(input); err != nil {
+		return ports.AgentRebuildState{}, false, err
+	}
 	transaction, err := repository.pool.Begin(ctx)
 	if err != nil {
 		return ports.AgentRebuildState{}, false, fmt.Errorf("begin Agent rebuild transaction: %w", err)
@@ -95,10 +98,34 @@ func (repository *Repository) BeginAgentRebuild(
 	if err := lockLifecycleRequest(ctx, transaction, input.Operation.RequestID); err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
+	if input.Recovery != nil {
+		fact := input.Recovery.Fact
+		receipt, found, err := readRuntimeBarrierRecovery(ctx, transaction, fact.OrganizationID, fact.AgentID, fact.Barrier.BarrierID)
+		if err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
+		if found {
+			// Replay the committed original before inspecting current policy,
+			// owner, Template, cooldown or lifecycle state.
+			if receipt.Command != input.Recovery.Command || receipt.RequestFingerprint != input.Operation.RequestFingerprint {
+				return ports.AgentRebuildState{}, false, ports.ErrRequestConflict
+			}
+			operation, err := loadLifecycleOperation(ctx, transaction, receipt.Command.RequestID, "")
+			if err != nil {
+				return ports.AgentRebuildState{}, false, err
+			}
+			if operation.Kind != domain.OperationRebuild || operation.AgentID != receipt.Command.AgentID || operation.RequestFingerprint != receipt.RequestFingerprint {
+				return ports.AgentRebuildState{}, false, ports.ErrRequestConflict
+			}
+			state, err := loadAgentRebuildState(ctx, transaction, operation)
+			return state, err == nil, err
+		}
+	}
 	existing, err := loadLifecycleOperation(ctx, transaction, input.Operation.RequestID, "")
 	switch {
 	case err == nil:
-		if existing.Kind != domain.OperationRebuild ||
+		// An ordinary operation cannot be retrofitted into a recovery receipt.
+		if input.Recovery != nil || existing.Kind != domain.OperationRebuild ||
 			existing.RequestFingerprint != input.Operation.RequestFingerprint {
 			return ports.AgentRebuildState{}, false, ports.ErrRequestConflict
 		}
@@ -109,6 +136,17 @@ func (repository *Repository) BeginAgentRebuild(
 		return state, true, nil
 	case !errors.Is(err, ports.ErrNotFound):
 		return ports.AgentRebuildState{}, false, err
+	}
+	var recoveryPolicy domain.RuntimeBarrierRecoveryPolicy
+	if input.Recovery != nil {
+		recoveryPolicy, err = lockRuntimeBarrierRecoveryPolicy(ctx, transaction, input.Recovery)
+		if err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
+		// Revocation also locks Identity before the execution organization.
+		if err := lockIdentityAdmission(ctx, transaction); err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
 	}
 	if err := lockAgentExecutionConfiguration(ctx, transaction, input.AgentID); err != nil {
 		return ports.AgentRebuildState{}, false, err
@@ -133,6 +171,11 @@ func (repository *Repository) BeginAgentRebuild(
 	if !(ports.AgentRuntimeSource{Spec: sourceSpec, Execution: sourceExecution}).MatchesAgent(agent) {
 		return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
 	}
+	if input.Recovery != nil {
+		if err := guardRuntimeBarrierRecovery(ctx, transaction, input, agent, sourceSpec); err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
+	}
 	nextSpec, _, err := loadNextLifecycleRevisions(ctx, transaction, input.AgentID)
 	if err != nil {
 		return ports.AgentRebuildState{}, false, err
@@ -148,10 +191,21 @@ func (repository *Repository) BeginAgentRebuild(
 	if err := requireEnabledTemplateSpec(ctx, transaction, agent.OrganizationID, input.TargetSpec.Snapshot); err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
+	var recoveryReceipt ports.RuntimeBarrierRecoveryReceipt
+	if input.Recovery != nil {
+		recoveryReceipt, err = freezeRuntimeBarrierRecoveryTime(ctx, transaction, &input, recoveryPolicy)
+		if err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
+	}
 	if err := insertAgentSpec(ctx, transaction, input.TargetSpec); err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
-	if err := insertLifecycleOperation(ctx, transaction, input.Operation); err != nil {
+	var acceptedAt *time.Time
+	if input.Recovery != nil {
+		acceptedAt = &recoveryReceipt.AcceptedAt
+	}
+	if err := insertLifecycleOperationAt(ctx, transaction, input.Operation, acceptedAt); err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
 	result, err := transaction.Exec(ctx, `
@@ -185,6 +239,11 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 	}
 	if err := repository.advanceExecutionRevision(ctx, transaction, agent.OrganizationID); err != nil {
 		return ports.AgentRebuildState{}, false, err
+	}
+	if input.Recovery != nil {
+		if err := insertRuntimeBarrierRecovery(ctx, transaction, recoveryReceipt); err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, false, fmt.Errorf("commit Agent rebuild transaction: %w", err)

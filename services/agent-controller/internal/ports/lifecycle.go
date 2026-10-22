@@ -347,6 +347,7 @@ type FailAgentCreate struct {
 }
 
 type BeginAgentRebuild struct {
+	Recovery                    *RuntimeBarrierRecoveryIntent
 	AgentID                     string
 	ExpectedAggregateSequence   int64
 	ExpectedSpecRevisionID      string

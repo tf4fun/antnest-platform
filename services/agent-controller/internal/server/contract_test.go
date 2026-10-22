@@ -82,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 41 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 42 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -98,14 +98,11 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
-	boundary, ok := endpoint.(*businessFixture).raw.(*authenticatedMux)
-	if !ok {
-		t.Fatalf("handler type = %T, want authenticated native mux", endpoint)
-	}
-	mux := boundary.mux
+	fixture := composeControlPolicyFixture(t, endpoint)
 
 	expected := make(map[string]struct{})
-	for _, route := range (&handler{}).routes() {
+	routes := append((&handler{}).routes(), (&runtimeBarrierRecoveryPolicyHandler{}).policyRoutes()...)
+	for _, route := range routes {
 		if strings.Contains(route.pattern, " /internal/") || strings.HasPrefix(route.pattern, "POST /rpc/agent-controller/") {
 			expected[route.pattern] = struct{}{}
 		}
@@ -130,7 +127,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 				}
 			}
 			request := httptest.NewRequest(route.Method, concreteControlPath(route.Path), nil)
-			_, pattern := mux.Handler(request)
+			pattern := composedControlPattern(t, fixture.raw, request)
 			if pattern != key {
 				t.Fatalf("route %s is registered as %q", key, pattern)
 			}
@@ -153,7 +150,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	}
 	statusKey := contract.Status.Method + " " + contract.Status.Path
 	statusRequest := httptest.NewRequest(contract.Status.Method, contract.Status.Path, nil)
-	_, statusPattern := mux.Handler(statusRequest)
+	statusPattern := composedControlPattern(t, fixture.raw, statusRequest)
 	if statusPattern != statusKey {
 		t.Fatalf("status route %s is registered as %q", statusKey, statusPattern)
 	}
@@ -225,24 +222,26 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 	}
 
 	values := map[string]any{
-		"model_parameters":                       model.Parameters(),
-		"provider_credential_input":              application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
-		"provider_model_input":                   application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
-		"set_agent_authorization_request":        application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
-		"set_agent_authorization_response":       map[string]int64{"authorization_revision": 2},
-		"list_workspace_agents_request":          listWorkspaceAgentsRequest{RequestID: "list", OrganizationID: "org", PrincipalID: "owner"},
-		"list_workspace_agents_response":         workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}}, NextCursor: nil},
-		"discover_provider_models_request":       discoverProviderModelsRequest{OrganizationID: "org-1"},
-		"discover_draft_provider_models_request": application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
-		"provider_discovery_result":              sampleProviderDiscovery(),
-		"discovered_model":                       sampleProviderDiscovery().Models[0],
-		"discovered_pricing":                     ports.DiscoveredPricing{Currency: "USD"},
-		"create_provider_connection_request":     sampleCreateProviderRequest(),
-		"rotate_provider_credential_request":     sampleRotateProviderRequest(),
-		"provider_connection":                    sampleProviderConnection(),
-		"provider_connection_list":               application.ProviderConnectionPage{Items: []application.ProviderConnectionView{sampleProviderConnection()}},
-		"model_input":                            model,
-		"runtime_input":                          runtimeInput,
+		"model_parameters":                            model.Parameters(),
+		"provider_credential_input":                   application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
+		"runtime_barrier_recovery_policy":             domain.DefaultRuntimeBarrierRecoveryPolicy("org-1"),
+		"set_runtime_barrier_recovery_policy_request": sampleRuntimeBarrierRecoveryPolicyInput(),
+		"provider_model_input":                        application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
+		"set_agent_authorization_request":             application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
+		"set_agent_authorization_response":            map[string]int64{"authorization_revision": 2},
+		"list_workspace_agents_request":               listWorkspaceAgentsRequest{RequestID: "list", OrganizationID: "org", PrincipalID: "owner"},
+		"list_workspace_agents_response":              workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}}, NextCursor: nil},
+		"discover_provider_models_request":            discoverProviderModelsRequest{OrganizationID: "org-1"},
+		"discover_draft_provider_models_request":      application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
+		"provider_discovery_result":                   sampleProviderDiscovery(),
+		"discovered_model":                            sampleProviderDiscovery().Models[0],
+		"discovered_pricing":                          ports.DiscoveredPricing{Currency: "USD"},
+		"create_provider_connection_request":          sampleCreateProviderRequest(),
+		"rotate_provider_credential_request":          sampleRotateProviderRequest(),
+		"provider_connection":                         sampleProviderConnection(),
+		"provider_connection_list":                    application.ProviderConnectionPage{Items: []application.ProviderConnectionView{sampleProviderConnection()}},
+		"model_input":                                 model,
+		"runtime_input":                               runtimeInput,
 		"create_model_profile_request": createModelProfileRequest{ProviderConnectionID: "provider-1",
 			RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "example",
 			DisplayName: "Example", Model: model.Parameters(),
@@ -387,8 +386,10 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new control boundary: %v", err)
 	}
+	composeControlPolicyFixture(t, boundary)
 	runtimeInput := sampleTemplateView().Runtime
 	requestBodies := map[string]any{
+		"PUT /internal/runtime-barrier-recovery-policy":                       sampleRuntimeBarrierRecoveryPolicyInput(),
 		"POST /internal/managed-mcp-secrets/resolve":                          ports.MCPTemplateSource{OrganizationID: "org-1", TemplateID: "template-1", Revision: 1},
 		"POST /internal/provider-connections/{connection_id}/discover-models": discoverProviderModelsRequest{OrganizationID: "org-1"},
 		"POST /internal/provider-discovery/draft":                             application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
@@ -877,6 +878,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	if err := compiler.AddResource("https://antnest.local/runtime-controller/api/control-api.schema.json", runtimeControllerContract); err != nil {
 		t.Fatalf("load Runtime Controller contract: %v", err)
 	}
+	var recoveryPolicyContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/runtime-barrier-recovery.schema.json"), &recoveryPolicyContract)
+	if err := compiler.AddResource("https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json", recoveryPolicyContract); err != nil {
+		t.Fatalf("load Runtime barrier recovery contract: %v", err)
+	}
 	if err := compiler.AddResource(controlSchemaID, document); err != nil {
 		t.Fatalf("load control schema: %v", err)
 	}
@@ -1012,4 +1018,49 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		slices.Sort(missing)
 		t.Fatalf("control error contract has no executable behavior evidence: %v", missing)
 	}
+}
+
+func sampleRuntimeBarrierRecoveryPolicyInput() application.SetRuntimeBarrierRecoveryPolicyInput {
+	revision := int64(0)
+	return application.SetRuntimeBarrierRecoveryPolicyInput{RequestID: "policy-1", OrganizationID: "org-1", ActorPrincipalID: "admin-1", ExpectedRevision: &revision, Mode: "manual", CooldownMS: 300000}
+}
+
+// Compose the same wrappers as main, including the separately contracted Skill
+// routes, so the manifest is checked against the handler actually served.
+func composeControlPolicyFixture(t *testing.T, endpoint http.Handler) *businessFixture {
+	t.Helper()
+	fixture, ok := endpoint.(*businessFixture)
+	if !ok {
+		t.Fatalf("unexpected control fixture %T", endpoint)
+	}
+	var err error
+	fixture.raw, err = WithSkillLearningPolicyRoutes(fixture.raw, &learningPolicyServiceStub{}, fixture.security)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.raw, err = WithRuntimeBarrierRecoveryPolicyRoutes(fixture.raw,
+		&runtimeBarrierRecoveryPolicyServiceStub{policy: domain.RuntimeBarrierRecoveryPolicy{OrganizationID: "org-1", Revision: 1, Mode: "manual", CooldownMS: 300000}}, fixture.security)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fixture
+}
+
+func composedControlPattern(t *testing.T, endpoint http.Handler, request *http.Request) string {
+	t.Helper()
+	for range 8 {
+		boundary, ok := endpoint.(interface {
+			Handler(*http.Request) (http.Handler, string)
+		})
+		if !ok {
+			t.Fatalf("unresolved control routing through %T", endpoint)
+		}
+		next, pattern := boundary.Handler(request)
+		if pattern != "/" {
+			return pattern
+		}
+		endpoint = next
+	}
+	t.Fatal("control routing exceeded composition depth")
+	return ""
 }

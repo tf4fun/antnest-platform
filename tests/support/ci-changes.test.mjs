@@ -40,6 +40,26 @@ const enabled = suites.filter((suite) => !suite.disabled);
 const runtimeControllerAnonymousVolumeCommand =
   "ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock ANTNEST_RUNTIME_CONTROLLER_TEST_ANONYMOUS_VOLUME_IMAGE=postgres:17.11-bookworm node tests/integration/go/run.mjs runtime-controller --profile integration --package internal/platform/docker -- -race -timeout=3m -run ^TestRemoveContainerDeletesAnonymousVolumesAndPreservesNamedResources$";
 
+test("Controller recovery changes require both real automatic and original manual ACP restart admission", () => {
+  for (const path of [
+    "services/agent-controller/cmd/agent-controller/runtime_barrier_recovery.go",
+    "services/agent-acp-service/src/adapters/postgres/runtime-barrier.ts",
+    "tests/e2e/acp-restart/automatic-recovery-capture.mjs",
+  ]) {
+    const selected = selectSuites([path]);
+    for (const name of ["acp-restart", "acp-restart-auto"]) {
+      const suite = selected.find(({ id }) => id === `c-${name}`);
+      assert(suite && !suite.disabled, `${path} must select ${name}`);
+      assert.deepEqual(suite.run, [`make e2e-${name}`]);
+      assert(
+        shards
+          .find(({ id }) => id === "c-acp-recovery")
+          .suites.includes(suite.id),
+      );
+    }
+  }
+});
+
 test("observation ordering always admits the real Controller consumer", () => {
   for (const path of [
     "tests/integration/runtime-controller/observation-consumer.mjs",
@@ -579,7 +599,7 @@ test("ACP authentication runs in the required auth shard with its CI-built image
 
 test("tier C platform scenarios get every local image and no rebuilding target", () => {
   const tierC = suites.filter((suite) => suite.tier === "c");
-  assert.equal(tierC.length, 46);
+  assert.equal(tierC.length, 47);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   const primary = Object.keys(images).filter(
     (name) => typeof images[name] === "string",

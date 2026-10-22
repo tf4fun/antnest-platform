@@ -262,6 +262,11 @@ if [ "$tool_permissions" = true ]; then
 fi
 acp_restart=${ANTNEST_E2E_ACP_RESTART:-false}
 case "$acp_restart" in true|false) ;; *) echo 'Invalid restart profile' >&2; exit 1 ;; esac
+case "${ANTNEST_RESTART_RECOVERY_MODE:-manual}" in
+  manual) ;;
+  auto) [ "$acp_restart" = true ] || { echo 'Auto recovery requires the restart profile' >&2; exit 1; } ;;
+  *) echo 'Invalid restart recovery mode' >&2; exit 1 ;;
+esac
 if [ "$acp_restart" = true ]; then
   for incompatible in "$tool_permissions" "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$rpc_response_loss" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
     [ "$incompatible" = false ] || { echo 'Restart requires a separate disposable profile' >&2; exit 1; }
@@ -619,6 +624,8 @@ cleanup() {
   if [ -n "$tool_profile" ] && [ "$status" -eq 0 ]; then
     if [ "$tool_profile" = managed-mcp ]; then
       echo "ACP v${ANTNEST_E2E_MANAGED_MCP_VERSION:-1} deployed $tool_profile E2E passed; owned resources removed"
+    elif [ "$tool_profile" = acp-restart ] && [ "${ANTNEST_RESTART_RECOVERY_MODE:-manual}" = auto ]; then
+      echo "ACP v2 deployed automatic recovery E2E passed; owned resources removed"
     else
       echo "ACP v1/v2 deployed $tool_profile E2E passed; owned resources removed"
     fi

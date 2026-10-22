@@ -3,6 +3,12 @@
   "$id": "https://antnest.local/agent-controller/control-api.schema.json",
   "title": "Antnest Agent Controller lifecycle messages",
   "$defs": {
+    "runtime_barrier_recovery_policy": {
+      "$ref": "runtime-barrier-recovery.schema.json#/$defs/policy"
+    },
+    "set_runtime_barrier_recovery_policy_request": {
+      "$ref": "runtime-barrier-recovery.schema.json#/$defs/policy_update_request"
+    },
     "managed_mcp_secret_request": {
       "$ref": "../runtime/managed-mcp.schema.json#/$defs/template_source"
     },

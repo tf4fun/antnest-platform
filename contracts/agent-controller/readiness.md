@@ -169,9 +169,9 @@ state or a legacy event alone is insufficient.
 The event contract continues to accept all 20 historical `schema_version: 1`
 event types and their existing object payloads without new required fields.
 In particular, historical `agent_ready` does not acquire ACK proof fields.
-Version 1 cannot claim the new `runtime_bound` event. The manifest and schemas
-declare revision 41 together; strict readers must be updated before producers
-emit the new facts.
+Version 1 cannot claim the new `runtime_bound` event. The readiness manifest and schemas were introduced together in control contract
+revision 41 and remain unchanged in revision 42. Strict readers must be updated
+before producers emit the new facts.
 
 During rollout, a legacy response without the new readiness field is unknown,
 not ready. Consumers must not infer readiness from lifecycle completion,

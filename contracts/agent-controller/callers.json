@@ -163,6 +163,14 @@
       },
       "request_body": "none"
     },
+    "GET /internal/runtime-barrier-recovery-policy": {
+      "callers": ["admin-console"],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "none"
+    },
     "POST /internal/provider-connections/{connection_id}/discover-models": {
       "callers": ["admin-console"],
       "authentication": "workload",
@@ -338,6 +346,14 @@
       "request_body": "json"
     },
     "PUT /internal/provider-connections/{connection_id}/availability": {
+      "callers": ["admin-console"],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "PUT /internal/runtime-barrier-recovery-policy": {
       "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {

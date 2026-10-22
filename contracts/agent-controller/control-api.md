@@ -1,7 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 This contract is owned by Agent Controller and transported as authenticated internal
-JSON over HTTP. This document describes control contract revision 41, the
+JSON over HTTP. This document describes control contract revision 42, the
 `revision` value in [`control-contract.json`](control-contract.json).
 
 This contract manages ModelProfiles, Templates, Agents, lifecycle operations,
@@ -568,13 +568,14 @@ any organization's frozen revision under its Docker/host-root trust. Requests
 containing secret value writes store an envelope-keyed HMAC receipt; replays use
 the original revision key, unchanged by master-key re-wrapping.
 
-## Runtime barrier recovery policy (#50, pending)
+## Runtime barrier recovery policy (#50)
 
-This amendment freezes future policy and recovery behavior. It does not add a
-management route, change the current control contract revision or route catalog,
-or claim an implemented Controller consumer. The ACP producer, Controller
-policy/recovery, Agent UI consumption and real integration remain pending
-separate delivery batches.
+Revision 42 activates organization policy configuration and persistence through
+the policy GET/PUT routes below. It stores the selected mode, cooldown and durable
+CAS/replay receipts. Selecting `auto` or `notify` does not start a recovery worker,
+Rebuild or notification delivery. The recovery worker, Agent projection,
+notification persistence/delivery, manual Rebuild extension, Console/Agent UI
+consumers and real recovery integration remain pending separate delivery batches.
 
 Controller will query the future workload-only
 [`POST /rpc/agent-acp/get-runtime-barrier`](../agent-acp/execution-api.md#runtime-barrier-recovery-50-pending)
@@ -589,7 +590,8 @@ Rebuild or prove that execution is settled.
 The organization policy has one mode: `auto`, `notify` or `manual`. `manual` is
 the selected historical/default migration policy for this amendment; it is not
 an assertion that issue #50 specified a default. Existing organizations must
-not be silently opted into automatic Rebuild.
+not be silently opted into automatic Rebuild. The pending recovery consumer will
+apply the stored mode as follows:
 
 - `auto` reuses the existing Rebuild lifecycle and records the fixed
   `rebuild_reason: "runtime_barrier_required"`.
@@ -600,13 +602,14 @@ not be silently opted into automatic Rebuild.
   does not start it.
 
 Policy is persisted per organization with a revision compare-and-set. Changes
-require an administrator authorized in that same organization. The pending
-management wire below freezes the request/response shape and existing authority;
-the owning Controller service batch must activate it. This amendment does not
-provide a running policy administration API.
+require an administrator authorized in that same organization. The active
+management wire below retains the frozen request/response shape and existing
+authority. Policy reads and writes do not query ACP, start Rebuild, emit recovery
+notifications or clear an Agent's barrier reason.
 
-Controller also persists recovery cooldown per Agent. Its default is 300000 ms;
-the configured value is an integer from 60000 through 86400000 ms, inclusive.
+The pending recovery consumer will also persist cooldown per Agent. Its default
+is 300000 ms; the configured value is an integer from 60000 through 86400000 ms,
+inclusive.
 Cooldown begins at the recovery operation's accepted time. Retries or replay
 retain that time and never renew the window. A barrier corresponds to at most
 one durable lifecycle operation: its stable Rebuild request ID is derived from
@@ -615,8 +618,8 @@ deduplicated. Failure or an uncertain response must not create a fresh operation
 for the same barrier or start a loop of new Rebuild requests. Notification
 deduplication uses that same barrier identity and survives restart.
 
-Before atomic recovery admission, Controller rereads and checks the policy
-revision, original organization and Agent, the old Runtime identity, current
+Before atomic recovery admission, the pending Controller consumer must check the
+policy revision, original organization and Agent, the old Runtime identity, current
 owner/revocation state, Disable/Delete intent and any active lifecycle operation.
 Stale or superseded observations cannot bypass these checks, cooldown or durable
 deduplication. The existing lifecycle must isolate the old environment before
@@ -634,17 +637,20 @@ history and actual cleanup. Until those owning-service and integration gates
 pass, this contract and the separate warm-admission producer PR #281 do not
 complete #50 or its four original failure-handling requirements.
 
-### Pending Controller management wire
+### Controller policy management wire
 
-The [pending manifest](runtime-barrier-recovery.json),
+The [recovery proposal](runtime-barrier-recovery.json),
 [wire schema](runtime-barrier-recovery.schema.json) and
-[synthetic vectors](runtime-barrier-recovery-fixtures.json) describe the next
-Controller batch. They are deliberately separate from the active route/caller
-catalog and control schema. The service implementation must activate its routes,
-grants, projections and schema together with HTTP/PostgreSQL evidence. Schema
-conformance is not evidence of transactional or recovery behavior.
+[synthetic vectors](runtime-barrier-recovery-fixtures.json) retain the frozen
+recovery wire. The proposal remains pending overall. Revision 42 activates only
+the two policy routes and their exact administrator grants in the active
+route/caller catalogs. The control schema aliases `runtime_barrier_recovery_policy`
+and `set_runtime_barrier_recovery_policy_request` reference the proposal's
+`policy` and `policy_update_request` definitions. Recovery projections, actions
+and events remain inactive. Schema conformance is not evidence of transactional
+or recovery behavior.
 
-| Future operation | Request definition | Successful response |
+| Operation | Request definition | Successful response |
 | --- | --- | --- |
 | `GET /internal/runtime-barrier-recovery-policy` | `policy_query`, exactly one `organization_id` query value | `200 policy` |
 | `PUT /internal/runtime-barrier-recovery-policy` | `policy_update_request`, a complete JSON replacement | `200 policy` |
@@ -659,8 +665,11 @@ Rebuild authority.
 
 PUT requires `request_id`, `organization_id`, `actor_principal_id`,
 `expected_revision`, `mode` and `cooldown_ms`. GET and PUT return the four-field
-policy snapshot. An organization with no persisted policy reads as revision 0,
-`manual`, 300000 ms; GET does not create a record. The first successful CAS uses
+policy snapshot (`organization_id`, `revision`, `mode`, `cooldown_ms`) with
+`Cache-Control: no-store`. Every input field is required; missing or null
+`expected_revision` is invalid, while explicit 0 is accepted. An organization
+with no persisted policy reads as revision 0, `manual`, 300000 ms; GET does not
+create a record. The first successful CAS uses
 expected revision 0 and stores revision 1. Policy revisions are nonnegative safe
 integers up to 9007199254740991; no overflow, silent rebase or wrap is permitted.
 The default is an explicit service rule, never schema insertion into a missing
@@ -672,8 +681,9 @@ requests return the original snapshot even after later updates, with no write
 or revision increment. Reusing that ID with a different canonical request
 returns `409 request_id_conflict`. A new request with a stale expected revision
 returns `409 resource_version_conflict`. Policy mutation and its durable replay
-receipt commit in the same transaction; this is new storage work, not an assumed
-property of the current network-policy implementation.
+receipt commit in the same transaction.
+
+### Pending recovery projections and actions
 
 The future Agent detail may add an optional `runtime_recovery` projection.
 Absence preserves old Agent responses and does not prove the Runtime is safe.
@@ -687,7 +697,7 @@ Run/Tool content are excluded. A failed ACP read retains the last known reason;
 the projection is diagnostic and cannot authorize recovery. Existing scoped read
 permissions still apply when consumers adopt it.
 
-Manual recovery extends the existing
+The pending manual recovery request extends the existing
 `POST /internal/agents/{agent_id}/rebuild` request with an optional, closed
 `recovery` object containing `barrier_id` and `expected_runtime_revision`.
 The original five required Rebuild fields and its administrator grant remain.
@@ -720,8 +730,10 @@ operation deduplication: notification alone neither starts Rebuild nor consumes
 the tuple's one recovery operation. The projected IDs do not prove that an event
 or operation has already been created. Readiness/v2 events are unchanged.
 
-Controller HTTP/PG tests must prove scope rejection, original receipt replay,
-atomic CAS, cross-restart deduplication, frozen cooldown and current lifecycle
-checks. Controller recovery, Console/Agent UI consumption and real auto/manual
-kill-mid-tool Docker acceptance remain separate delivery batches. Neither the
-wire vectors nor these pending management shapes complete issue #50.
+Policy management admission requires HTTP/PG scope rejection, original receipt
+replay and atomic CAS evidence. Pending recovery admission must additionally
+prove cross-restart operation/notification deduplication, frozen cooldown and
+current lifecycle checks. Controller recovery, Console/Agent UI consumption and
+real auto/manual kill-mid-tool Docker acceptance remain separate delivery batches.
+Policy configuration/persistence and the frozen wire vectors do not complete
+issue #50.

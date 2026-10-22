@@ -623,3 +623,165 @@ test("terminal capture includes late frames and updates after joining transport 
   );
   assert.deepEqual(snapshot.updates, [{ sessionId: "late" }]);
 });
+
+async function completeAutoInventory({
+  version = 2,
+  extraReplay2,
+  extraConnection = false,
+} = {}) {
+  const connections = [],
+    kind = "inflight",
+    label = `v${version}-${kind}`,
+    current = recorder(
+      controlledClient(version, {
+        fail: (name) => name === "prompt" && version === 1,
+      }),
+      { ...meta, version, kind },
+    );
+  let sessionId, other;
+  try {
+    ({ sessionId } = await current.request("new", setup));
+    other = await current.request("new", setup);
+    try {
+      await current.request("prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: `v${version}-tool-inflight` }],
+      });
+    } catch (error) {
+      assert.strictEqual(error, originalFailure);
+    }
+  } finally {
+    connections.push(await current.closeAndWait());
+  }
+  for (const role of [
+    "replay-1",
+    "replay-2",
+    "rebuild",
+    ...(extraConnection ? ["replay-1"] : []),
+  ]) {
+    const reader = recorder(controlledClient(version), {
+      ...meta,
+      version,
+      kind,
+      role,
+    });
+    try {
+      const spec = replayRequest(version, sessionId);
+      await reader.request(spec.method, spec.params);
+      if (role === "replay-2" && extraReplay2 === "denied")
+        await assert.rejects(
+          reader.request("prompt", {
+            sessionId: other.sessionId,
+            prompt: [{ type: "text", text: "unresolved-denied" }],
+          }),
+          (error) => error.data.code === "runtime_barrier_required",
+        );
+      else if (
+        role === "rebuild" ||
+        (role === "replay-2" && extraReplay2 === "prompt")
+      )
+        await reader.request("prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: label + "-post" }],
+        });
+    } finally {
+      connections.push(await reader.closeAndWait());
+    }
+  }
+  return { agentId: "agent", connections, recoveryMode: "auto" };
+}
+
+test("auto recovery binds one v2 in-flight case to four joined connections and seven complete requests", async () => {
+  const f = await completeAutoInventory(),
+    before = structuredClone(f);
+  const result = index(f);
+  assert.equal(result.initializations.length, 4);
+  assert.equal(result.requests.length, 7);
+  assert.deepEqual(
+    result.requests.map((row) => row.method),
+    [
+      "session/new",
+      "session/new",
+      "session/prompt",
+      "session/resume",
+      "session/resume",
+      "session/resume",
+      "session/prompt",
+    ],
+  );
+  assert.deepEqual(
+    result.requests.map((row) => row.label),
+    [
+      "v2-inflight-new",
+      "v2-inflight-other-new",
+      "v2-tool-inflight",
+      "v2-inflight-replay-1",
+      "v2-inflight-replay-2",
+      "v2-inflight-rebuild-replay",
+      "v2-inflight-post",
+    ],
+  );
+  const captured = f.connections.flatMap((connection) => connection.evidence);
+  for (const [position, row] of result.requests.entries()) {
+    const original = captured[position];
+    for (const field of [
+      "connectionTraceID",
+      "requestId",
+      "requestParams",
+      "requestResult",
+      "inputSessionID",
+      "sessionId",
+      "outcome",
+    ])
+      assert.deepEqual(row[field], original[field], `changed auto ${field}`);
+    assert.equal(row.version, 2);
+  }
+  assert.equal(
+    result.requests.filter((row) => row.kind === "interruption").length,
+    1,
+  );
+  assert.equal(
+    result.requests.filter((row) => row.kind === "ordinary").length,
+    1,
+  );
+  assert.equal(
+    result.requests.filter((row) => row.outcome === "failed").length,
+    0,
+  );
+  assert.equal(result.requests.filter((row) => row.rejection).length, 0);
+  assert.equal(
+    new Set(
+      [...result.initializations, ...result.requests].map((row) => row.label),
+    ).size,
+    11,
+  );
+  assert.deepEqual(f, before);
+});
+
+for (const [name, options] of [
+  ["the manual barrier-denial request", { extraReplay2: "denied" }],
+  ["an extra successful replay-2 Prompt", { extraReplay2: "prompt" }],
+  ["an internally consistent v1 profile", { version: 1 }],
+  ["an extra independently recorded connection", { extraConnection: true }],
+])
+  test(`auto inventory rejects ${name}`, async () => {
+    const f = await completeAutoInventory(options),
+      before = structuredClone(f);
+    assert.throws(() => index(f));
+    assert.deepEqual(f, before);
+  });
+
+test("auto inventory rejects a connection without its joined-close receipt", async () => {
+  const f = await completeAutoInventory();
+  delete f.connections[2].closed;
+  const before = structuredClone(f);
+  assert.throws(() => index(f));
+  assert.deepEqual(f, before);
+});
+
+test("inventory rejects an unknown recovery mode instead of silently accepting the default manual inventory", async () => {
+  const f = { ...(await completeInventory()), recoveryMode: "automatic" },
+    before = structuredClone(f);
+  assert.throws(() => index(f));
+  assert.deepEqual(f, before);
+});

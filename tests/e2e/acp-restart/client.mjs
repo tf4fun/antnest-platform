@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { assertAutomaticRecoveryEvidence } from "./automatic-recovery-evidence.mjs";
 import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 import { mkdir, writeFile, access, readFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
@@ -50,6 +52,10 @@ import { seed } from "./setup.mjs";
 import { archiveCompleted } from "./archive.mjs";
 import { collectInterruptedTrace } from "./collection.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+const recoveryMode = process.env.ANTNEST_RESTART_RECOVERY_MODE ?? "manual";
+assert(["manual", "auto"].includes(recoveryMode), "unknown recovery profile");
+const automatic = recoveryMode === "auto";
+let recoveryPolicy;
 const archive = new Map(),
   runtimeBindings = new Map();
 const diagnostics = createTraceDiagnostics({
@@ -277,7 +283,7 @@ async function saved(sessionId, runId) {
   assert.equal(events.next_cursor, null);
   return { run, events };
 }
-async function checkpoint(name) {
+async function checkpoint(name, timeout = 90000) {
   await until(
     async () => {
       try {
@@ -289,7 +295,7 @@ async function checkpoint(name) {
       }
     },
     name,
-    90000,
+    timeout,
   );
 }
 async function preserve(version, kind, sessionId, before, label) {
@@ -405,6 +411,26 @@ async function exercise(version, kind, template) {
   else if (version === 1)
     assert.equal(resolved, false, "interrupted v1 prompt already finished");
   else assertStillRunning(version, c.updates, sessionId);
+  let expectedRecovery;
+  if (automatic) {
+    assert.equal(version, 2);
+    assert.equal(kind, "inflight");
+    const { mcp_endpoint: _endpoint, ...binding } = source;
+    expectedRecovery = {
+      organization_id: organizationId,
+      agent_id: agentId,
+      source: binding,
+      policy: recoveryPolicy,
+    };
+    assert.equal(
+      before.run.execution_snapshot.executionRevision,
+      source.execution_revision,
+    );
+    await publishCheckpoint(
+      `/checkpoints/recovery-expected-${restarts + 1}.json`,
+      expectedRecovery,
+    );
+  }
   const proof = await restart(
     kind === "inflight"
       ? { kind: "tool-inflight", agent_id: agentId, version }
@@ -417,19 +443,33 @@ async function exercise(version, kind, template) {
     else assertV2PromptAcknowledged(result.value, c.updates, sessionId);
   }
   await close(c);
+  let automaticReceipt;
+  if (automatic) {
+    await checkpoint(`recovery-${restarts}.json`, 120000);
+    const evidence = JSON.parse(
+      await readFile(`/checkpoints/recovery-${restarts}.json`, "utf8"),
+    );
+    automaticReceipt = assertAutomaticRecoveryEvidence(
+      evidence,
+      expectedRecovery,
+    );
+    await operation(automaticReceipt.request_id, "rebuild");
+    await ready();
+  }
   if (kind === "inflight") {
     assert.equal(proof.marker, `v${version}-tool-inflight\n`);
     assert(proof.tool_pid > 0);
-    await until(
-      () =>
-        stateReady(
-          state,
-          (s) =>
-            s.availability === "offline" &&
-            s.unavailable_reason === "runtime_barrier_required",
-        ),
-      "durable Runtime protection",
-    );
+    if (!automatic)
+      await until(
+        () =>
+          stateReady(
+            state,
+            (s) =>
+              s.availability === "offline" &&
+              s.unavailable_reason === "runtime_barrier_required",
+          ),
+        "durable Runtime protection",
+      );
   } else await ready();
   const after = await saved(sessionId, before.run.run_id);
   assertInterrupted(before, after, kind);
@@ -441,49 +481,58 @@ async function exercise(version, kind, template) {
   let reader = await preserve(version, kind, sessionId, after, label),
     replacement;
   if (kind === "inflight") {
-    const beforeOther = await audits(other.sessionId),
-      offset = reader.updates.length;
-    await assert.rejects(
-      send(
-        reader,
-        "prompt",
+    let rebuildRequestId, rebuildTraceID;
+    if (automatic) {
+      await close(reader);
+      rebuildRequestId = automaticReceipt.request_id;
+    } else {
+      const beforeOther = await audits(other.sessionId),
+        offset = reader.updates.length;
+      await assert.rejects(
+        send(
+          reader,
+          "prompt",
+          {
+            sessionId: other.sessionId,
+            prompt: [{ type: "text", text: "unresolved-denied" }],
+          },
+          {
+            kind: "request",
+            label: label + "-denied",
+            rejection: "runtime_barrier_required",
+          },
+        ),
+        assertBarrierRejection,
+      );
+      assert.equal(reader.updates.length, offset);
+      assert.deepEqual(await audits(other.sessionId), beforeOther);
+      assert.deepEqual(await saved(sessionId, after.run.run_id), after);
+      assert.deepEqual((await modelState()).requests, calls);
+      await close(reader);
+      const rebuilt = await admin.request(
+        `/api/admin/agents/${agentId}/rebuild`,
         {
-          sessionId: other.sessionId,
-          prompt: [{ type: "text", text: "unresolved-denied" }],
+          body: {
+            template_id: template.template_id,
+            template_revision: template.revision,
+          },
+          status: 202,
         },
-        {
-          kind: "request",
-          label: label + "-denied",
-          rejection: "runtime_barrier_required",
-        },
-      ),
-      assertBarrierRejection,
-    );
-    assert.equal(reader.updates.length, offset);
-    assert.deepEqual(await audits(other.sessionId), beforeOther);
-    assert.deepEqual(await saved(sessionId, after.run.run_id), after);
-    assert.deepEqual((await modelState()).requests, calls);
-    await close(reader);
-    const rebuilt = await admin.request(
-      `/api/admin/agents/${agentId}/rebuild`,
-      {
-        body: {
-          template_id: template.template_id,
-          template_revision: template.revision,
-        },
-        status: 202,
-      },
-    );
+      );
+      rebuildRequestId = rebuilt.body.request_id;
+      rebuildTraceID = rebuilt.traceID;
+    }
     lifecycle.push({
       kind: "rebuild",
       agentId,
-      requestId: rebuilt.body.request_id,
-      traceID: rebuilt.traceID,
+      requestId: rebuildRequestId,
+      traceID: rebuildTraceID,
       label: label + "-rebuild",
       settlementOutcome: "runtime_barrier_required",
       skillPreparation: true,
+      ...(automatic ? { automatic: true } : {}),
     });
-    await operation(rebuilt.body.request_id, "rebuild");
+    if (!automatic) await operation(rebuildRequestId, "rebuild");
     await ready();
     replacement = captureRuntime(await agent(), await runtime());
     assertReplacement(source, replacement);
@@ -533,6 +582,7 @@ async function exercise(version, kind, template) {
     proof,
     source,
     replacement,
+    ...(automatic ? { automaticReceipt } : {}),
     replays: kind === "inflight" ? 3 : 2,
   });
   console.log(
@@ -576,6 +626,40 @@ async function main() {
   assert.equal(memberPrincipal.organization_id, organizationId);
   assert.equal(memberPrincipal.user_id, owner.user.id);
   secrets.push(...admin.cookies.values(), ...member.cookies.values());
+  if (automatic) {
+    const { context, principal } = await services.callerContext({
+      organization_slug: "stage3",
+      email: "stage3-admin@example.com",
+      password: "stage3-admin-password",
+    });
+    assert.equal(principal.organization_id, organizationId);
+    const endpoint =
+      "http://agent-controller:8080/internal/runtime-barrier-recovery-policy";
+    const previous = await services.json(
+      `${endpoint}?organization_id=${encodeURIComponent(organizationId)}`,
+      "console-controller",
+      { method: "GET", context },
+    );
+    assert.equal(previous.organization_id, organizationId);
+    recoveryPolicy = await services.json(endpoint, "console-controller", {
+      method: "PUT",
+      context,
+      body: {
+        request_id: randomUUID(),
+        organization_id: organizationId,
+        actor_principal_id: principal.user_id,
+        expected_revision: previous.revision,
+        mode: "auto",
+        cooldown_ms: 60000,
+      },
+    });
+    assert.deepEqual(recoveryPolicy, {
+      organization_id: organizationId,
+      revision: previous.revision + 1,
+      mode: "auto",
+      cooldown_ms: 60000,
+    });
+  }
   const { template } = await seed(api, process.env.TEST_RUNTIME_IMAGE);
   const created = await admin.request("/api/admin/agents", {
     status: 202,
@@ -595,14 +679,17 @@ async function main() {
     skillPreparation: true,
   });
   await operation(created.body.operation.request_id, "create");
-  for (const version of [1, 2])
-    for (const kind of ["completed", "model-held", "tool-held", "inflight"])
+  for (const version of automatic ? [2] : [1, 2])
+    for (const kind of automatic
+      ? ["inflight"]
+      : ["completed", "model-held", "tool-held", "inflight"])
       await exercise(version, kind, template);
   const modelResult = await modelState();
-  assert.equal(modelResult.requests.length, 28);
+  assert.equal(modelResult.requests.length, automatic ? 3 : 28);
   const inventory = indexRestartRequests({
     agentId,
     connections: [...connections.values()],
+    recoveryMode,
   });
   assert.deepEqual(requests, inventory.requests);
   assert.deepEqual(
@@ -631,29 +718,30 @@ async function main() {
 
   const business = {
     status: "business_passed",
-    versions: [1, 2],
+    versions: automatic ? [2] : [1, 2],
+    recovery_mode: recoveryMode,
     agent_id: agentId,
     deleted,
     cases: faults.length,
-    runs: 16,
-    completed_runs: 10,
-    failed_runs: 4,
-    unresolved_runs: 2,
-    tool_attempts: 14,
-    successful_tools: 12,
+    runs: automatic ? 2 : 16,
+    completed_runs: automatic ? 1 : 10,
+    failed_runs: automatic ? 0 : 4,
+    unresolved_runs: automatic ? 1 : 2,
+    tool_attempts: automatic ? 2 : 14,
+    successful_tools: automatic ? 1 : 12,
     model_requests: modelResult.requests.length,
     restarts,
-    replays: 18,
+    replays: automatic ? 3 : 18,
     connections: connections.size,
     initializations: inventory.initializations.length,
     business_requests: inventory.requests.length,
-    rejections: 2,
-    rebuilds: 2,
+    rejections: automatic ? 0 : 2,
+    rebuilds: automatic ? 1 : 2,
     history_preserved: true,
     runtime_operations: journals,
   };
-  assert.equal(restarts, 8);
-  assert.equal(faults.length, 8);
+  assert.equal(restarts, automatic ? 1 : 8);
+  assert.equal(faults.length, automatic ? 1 : 8);
 
   await mkdir("/tmp/restart-traces", { mode: 0o700, recursive: true });
   const save = (label) => (trace) =>

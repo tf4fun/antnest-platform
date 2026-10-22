@@ -419,6 +419,14 @@ INSERT INTO agent_controller.agent_access_bindings (
 func insertLifecycleOperation(
 	ctx context.Context, transaction *databaseTransaction, record ports.LifecycleOperationRecord,
 ) error {
+	return insertLifecycleOperationAt(ctx, transaction, record, nil)
+}
+
+// Recovery has already frozen its database acceptance time after acquiring all
+// admission locks. Ordinary lifecycle requests retain their insertion clock.
+func insertLifecycleOperationAt(
+	ctx context.Context, transaction *databaseTransaction, record ports.LifecycleOperationRecord, acceptedAt *time.Time,
+) error {
 	var inspectionPayload, absenceProofPayload []byte
 	var err error
 	if record.SourceRuntimeInspection != nil {
@@ -443,7 +451,8 @@ func insertLifecycleOperation(
     created_at, updated_at, owner_revocation_sequence, drain_deadline_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, clock_timestamp(), clock_timestamp(), $16, $17
+    $11, $12, $13, $14, $15,
+    COALESCE($18::timestamptz, clock_timestamp()), COALESCE($18::timestamptz, clock_timestamp()), $16, $17
 )`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
 		record.Phase, record.State, record.SourceSpecRevisionID,
@@ -453,6 +462,7 @@ func insertLifecycleOperation(
 		record.NetworkReleaseOutcome,
 		record.OwnerRevocationSequence,
 		record.DrainDeadlineAt,
+		acceptedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent lifecycle operation: %w", err)

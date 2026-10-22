@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log/slog"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/acpclient"
@@ -32,13 +31,4 @@ func configureExecutionPublication(repository *postgres.Repository, cfg config.C
 	postgres.WithExecutionCapacityGuard(capacity)(repository)
 	postgres.WithExecutionChangeObserver(worker.Notify)(repository)
 	return publisher, worker, nil
-}
-
-func waitForExecutionPublication(ctx context.Context, stopped <-chan struct{}) error {
-	select {
-	case <-stopped:
-		return nil
-	case <-ctx.Done():
-		return classifyFailure("execution_publication_shutdown", ctx.Err())
-	}
 }

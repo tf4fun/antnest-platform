@@ -15,6 +15,7 @@ Identity deactivation and foreign-Agent access are covered by
 npm --prefix services/agent-acp-service ci
 make test-acp-restart-fixtures
 make e2e-acp-restart
+make e2e-acp-restart-auto
 ```
 
 `make test-acp-restart-fixtures` runs serial local contract and HTTP component
@@ -25,7 +26,7 @@ run this profile against an existing development deployment.
 
 ## Scenario
 
-Four cases run per SDK version: a completed Run, a Run held at a model
+The default manual profile runs four cases per SDK version: a completed Run, a Run held at a model
 response, a Run held after a completed Tool, and a Tool in flight. The profile
 must preserve completed history, classify known interrupted Runs and keep
 unresolved Runtime effects honest. Before killing an in-flight executor, the
@@ -54,10 +55,39 @@ the host's SIGKILL proof. Connection, request and initialization inventories are
 private; failure output uses a safe summary while full errors and partial
 inventory remain private. Cleanup errors cannot hide the original failure.
 
-The host mounts the three required workload grants and the state/identity/control
+The host mounts the four required workload grants and the state/identity/control
 contracts read-only, and joins their private networks. The model and client use
 the deployed ACP image ID; the Runtime uses the configured deployment image.
 The client has no Docker socket, database credential or production collector.
+
+## Automatic recovery
+
+`make e2e-acp-restart-auto` runs a separate disposable v2 in-flight case. Before
+creating the Agent, an authenticated administrator configures the Organization's
+`auto` policy through Controller's real policy API. After the physical Bash
+marker/PID barrier, the host kills and restarts ACP. The client never sends a
+Rebuild request. Controller must admit and finish the unique original recovery.
+
+The host reads only binding and recovery metadata from the owned PostgreSQL
+container with each service's database role and read-only transactions. It keeps
+all historical ACP cycles and Controller recovery/Rebuild rows for this Agent;
+it does not filter out retired cycles or unexpected request IDs. The original
+cycle, frozen policy and configured Template, command fingerprint, cooldown,
+start confirmation, requested event and completed operation must agree. Raw
+observations are private. This avoids requiring a transient offline state that
+may already have ended when the client reconnects.
+
+The client independently checks the public operation and Runtime journal, changed
+Runtime/execution identities, unchanged old Run/events, three history replays
+without inference, and a new successful Run. The host proves the old Runtime is
+physically gone and verifies deletion/cleanup. The fixed profile requires four
+joined connections, seven original ACP requests, two Runs (one unresolved and
+one completed), three model requests and one automatic Rebuild. The original
+eight manual cases retain their explicit barrier/refusal checks.
+
+The new suite is part of the remote `c-acp-recovery` gate. These requirements do
+not establish that the suite has passed, or complete the pending notify/manual
+UI delivery for issue #50.
 
 ## Trace rules
 

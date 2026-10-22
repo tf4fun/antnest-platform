@@ -142,9 +142,15 @@ function activeValidators() {
     read("runtime/managed-mcp.schema.json"),
     new URL("../runtime/managed-mcp.schema.json", schema.$id).href,
   );
+  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
   ajv.addSchema(schema);
   return Object.fromEntries(
-    ["agent", "rebuild_agent_request"].map((name) => [
+    [
+      "agent",
+      "rebuild_agent_request",
+      "runtime_barrier_recovery_policy",
+      "set_runtime_barrier_recovery_policy_request",
+    ].map((name) => [
       name,
       ajv.compile({ $ref: `${schema.$id}#/$defs/${name}` }),
     ]),
@@ -158,7 +164,7 @@ function check(validators, definition, value, valid, label) {
     assert.equal(validators.root(value), valid, label + " at the schema root");
 }
 
-test("pending recovery declares only future policy routes with administrator authority", () => {
+test("the pending recovery proposal retains its frozen policy routes and administrator authority", () => {
   const manifest = read("agent-controller/runtime-barrier-recovery.json");
   assert.deepEqual(Object.keys(manifest).sort(), [
     "activation",
@@ -242,28 +248,153 @@ test("pending manual recovery and notifications reuse existing lifecycle and eve
   });
 });
 
-test("pending policy endpoints stay out of active catalogs and Rebuild retains its caller", () => {
+test("revision 42 activates only policy GET and PUT with their exact administrator grants", () => {
   const active = read("agent-controller/control-contract.json");
   const callers = read("agent-controller/callers.json");
-  for (const operations of Object.values(active.resources))
-    for (const route of Object.values(operations))
-      assert.notEqual(
-        route.path,
-        policyPath,
-        "pending policy is not activated",
-      );
-  for (const route of Object.keys(callers.routes))
-    assert.notEqual(
-      route.slice(route.indexOf(" ") + 1),
-      policyPath,
-      "pending policy has no active caller grant",
-    );
+  assert.equal(active.revision, 42);
+  const expected = {
+    get: {
+      method: "GET",
+      path: policyPath,
+      query: ["organization_id"],
+      success_status: 200,
+      response:
+        "control-api.schema.json#/$defs/runtime_barrier_recovery_policy",
+    },
+    set: {
+      method: "PUT",
+      path: policyPath,
+      success_status: 200,
+      request:
+        "control-api.schema.json#/$defs/set_runtime_barrier_recovery_policy_request",
+      response:
+        "control-api.schema.json#/$defs/runtime_barrier_recovery_policy",
+    },
+  };
+  assert.deepEqual(active.resources.runtime_barrier_recovery_policy, expected);
+  const routes = Object.values(active.resources)
+    .flatMap(Object.values)
+    .filter((route) => route.path.startsWith(policyPath))
+    .sort((a, b) => a.method.localeCompare(b.method));
+  assert.deepEqual(routes, [expected.get, expected.set]);
+  const grants = Object.fromEntries(
+    Object.entries(callers.routes).filter(([route]) =>
+      route.slice(route.indexOf(" ") + 1).startsWith(policyPath),
+    ),
+  );
+  assert.deepEqual(grants, {
+    [`GET ${policyPath}`]: {
+      callers: ["admin-console"],
+      authentication: "workload",
+      caller_context: { "admin-console": "required" },
+      request_body: "none",
+    },
+    [`PUT ${policyPath}`]: {
+      callers: ["admin-console"],
+      authentication: "workload",
+      caller_context: { "admin-console": "required" },
+      request_body: "json",
+    },
+  });
   assert.deepEqual(callers.routes[rebuildRoute], {
     callers: ["admin-console"],
     authentication: "workload",
     caller_context: { "admin-console": "required" },
     request_body: "json",
   });
+});
+
+test("active policy aliases preserve the frozen wire vectors without inserting defaults", () => {
+  const schema = read("agent-controller/control-api.schema.json");
+  const aliases = {
+    policy: "runtime_barrier_recovery_policy",
+    policy_update_request: "set_runtime_barrier_recovery_policy_request",
+  };
+  const active = activeValidators();
+  const frozen = pendingValidators();
+  for (const [definition, alias] of Object.entries(aliases))
+    assert.deepEqual(schema.$defs[alias], {
+      $ref: `runtime-barrier-recovery.schema.json#/$defs/${definition}`,
+    });
+  const fixtures = read(
+    "agent-controller/runtime-barrier-recovery-fixtures.json",
+  );
+  const seen = new Set();
+  for (const row of fixtures.schema_vectors) {
+    const alias = aliases[row.definition];
+    if (!alias) continue;
+    seen.add(row.definition);
+    const value = structuredClone(row.value);
+    assert.equal(active[alias](value), row.valid, row.name + " active wire");
+    assert.equal(
+      frozen[row.definition](structuredClone(row.value)),
+      row.valid,
+      row.name + " frozen wire",
+    );
+    assert.deepEqual(
+      value,
+      row.value,
+      "active validation cannot mutate a vector",
+    );
+  }
+  assert.deepEqual([...seen].sort(), Object.keys(aliases).sort());
+  for (const [definition, alias] of Object.entries(aliases))
+    for (const field of Object.keys(samples[definition]())) {
+      const missing = samples[definition]();
+      delete missing[field];
+      const before = structuredClone(missing);
+      assert.equal(active[alias](missing), false, alias + " requires " + field);
+      assert.deepEqual(
+        missing,
+        before,
+        "active schema must not insert " + field,
+      );
+      assert.equal(
+        active[alias]({ ...samples[definition](), [field]: null }),
+        false,
+        alias + " rejects null " + field,
+      );
+    }
+});
+
+test("policy activation leaves recovery projections, notifications and the Rebuild extension pending", () => {
+  const schema = read("agent-controller/control-api.schema.json");
+  const manifest = read("agent-controller/control-contract.json");
+  for (const name of [
+    "runtime_recovery",
+    "recovery_request",
+    "notification_data",
+  ])
+    assert.equal(
+      Object.hasOwn(schema.$defs, name),
+      false,
+      name + " is not active",
+    );
+  assert.equal(
+    Object.hasOwn(schema.$defs.agent.properties, "runtime_recovery"),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(schema.$defs.rebuild_agent_request.properties, "recovery"),
+    false,
+  );
+  assert.equal(
+    manifest.enums.event_type.includes("agent_runtime_barrier_required"),
+    false,
+  );
+  const active = activeValidators();
+  const agent = read("agent-controller/readiness-fixtures.json").legacy_agent;
+  assert.equal(
+    active.agent({ ...agent, runtime_recovery: samples.runtime_recovery() }),
+    false,
+  );
+  assert.equal(
+    active.rebuild_agent_request({
+      ...samples.rebuild_agent_request(),
+      recovery: samples.recovery_request(),
+    }),
+    false,
+  );
 });
 
 test("pending wire has exactly its closed field sets and a policy root", () => {

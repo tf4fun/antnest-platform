@@ -51,25 +51,39 @@ func (service *LifecycleService) rebuildAgent(
 		return rebuildAgentResult(state), nil
 	}
 
+	begin, err := service.prepareAgentRebuild(ctx, input, fingerprint)
+	if err != nil {
+		return RebuildAgentResult{}, err
+	}
+	state, _, err = service.store.BeginAgentRebuild(ctx, begin)
+	if err != nil {
+		return RebuildAgentResult{}, fmt.Errorf("begin Agent rebuild: %w", err)
+	}
+	return rebuildAgentResult(state), nil
+}
+
+func (service *LifecycleService) prepareAgentRebuild(
+	ctx context.Context, input RebuildAgentInput, fingerprint string,
+) (ports.BeginAgentRebuild, error) {
 	base, err := service.store.GetAgentLifecycleBase(ctx, input.AgentID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
-			return RebuildAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+			return ports.BeginAgentRebuild{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
 		}
-		return RebuildAgentResult{}, fmt.Errorf("load Agent rebuild source: %w", err)
+		return ports.BeginAgentRebuild{}, fmt.Errorf("load Agent rebuild source: %w", err)
 	}
 	if !lifecycleScopeMatches(base.Agent.OrganizationID, input.OrganizationID) {
-		return RebuildAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+		return ports.BeginAgentRebuild{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
 	}
 	source, err := resolveRebuildSource(base)
 	if err != nil {
-		return RebuildAgentResult{}, err
+		return ports.BeginAgentRebuild{}, err
 	}
 	var targetSnapshot domain.AgentSpecSnapshot
 	var digest string
 	intent, existingIntent, err := service.existingSkillPreparation(ctx, input.RequestID, fingerprint, domain.OperationRebuild, input.AgentID, base.Agent.OrganizationID)
 	if err != nil {
-		return RebuildAgentResult{}, err
+		return ports.BeginAgentRebuild{}, err
 	}
 	if existingIntent {
 		targetSnapshot, digest = intent.TargetSpec, intent.TargetSpecDigest
@@ -81,7 +95,7 @@ func (service *LifecycleService) rebuildAgent(
 			digest, err = targetSpec.Digest()
 		}
 		if err != nil {
-			return RebuildAgentResult{}, fmt.Errorf("resolve rebuilt Agent spec: %w", err)
+			return ports.BeginAgentRebuild{}, fmt.Errorf("resolve rebuilt Agent spec: %w", err)
 		}
 	}
 	now := service.clock.Now()
@@ -94,7 +108,7 @@ func (service *LifecycleService) rebuildAgent(
 		ExpectedRuntimeRevision: base.Agent.RuntimeRevision, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
-		return RebuildAgentResult{}, err
+		return ports.BeginAgentRebuild{}, err
 	}
 	targetSnapshot, digest = prepared.TargetSpec, prepared.TargetSpecDigest
 	targetSpecID := domain.DeriveResourceID("agentspec", "agentspec-rebuild", input.RequestID)
@@ -108,7 +122,7 @@ func (service *LifecycleService) rebuildAgent(
 		Now:                     now,
 	})
 	if err != nil {
-		return RebuildAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return ports.BeginAgentRebuild{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	begin := ports.BeginAgentRebuild{
 		AgentID:                     input.AgentID,
@@ -149,11 +163,7 @@ func (service *LifecycleService) rebuildAgent(
 		},
 		Now: now,
 	}
-	state, _, err = service.store.BeginAgentRebuild(ctx, begin)
-	if err != nil {
-		return RebuildAgentResult{}, fmt.Errorf("begin Agent rebuild: %w", err)
-	}
-	return rebuildAgentResult(state), nil
+	return begin, nil
 }
 
 func (service *LifecycleService) stepAgentRebuild(

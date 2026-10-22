@@ -14,6 +14,7 @@ type Config struct {
 	Authentication                 *serviceauth.Clients
 	DevelopmentSecretWarnings      []string
 	Execution                      ExecutionConfiguration
+	RuntimeBarrierRecovery         RuntimeBarrierRecoveryConfiguration
 	ListenAddress                  string
 	TemporalAddress                string
 	DatabaseURL                    string
@@ -50,6 +51,10 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("ANTNEST_AGENT_ACP_SERVICE_URL is not a Controller control endpoint; use ANTNEST_AGENT_ACP_CONTROL_URL")
 	}
 	execution, err := loadExecutionConfiguration(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	recovery, err := loadRuntimeBarrierRecoveryConfiguration(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -94,6 +99,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	}
 	config := Config{
 		Execution:                      execution,
+		RuntimeBarrierRecovery:         recovery,
 		TemporalAddress:                strings.TrimSpace(lookup("ANTNEST_TEMPORAL_ADDRESS")),
 		ListenAddress:                  strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")),
 		DatabaseURL:                    strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),

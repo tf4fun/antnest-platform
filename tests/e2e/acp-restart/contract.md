@@ -83,6 +83,31 @@ post-Rebuild public Run ID and observed execution revision are correlated with
 the actual Model Trace context, whose Runtime revision and execution ID must
 match the replacement.
 
+### Automatic profile
+
+The separate `auto` profile uses the same physical v2 in-flight fault. Its real
+Organization policy is enabled before the fault; the test must never initiate
+Rebuild itself. The default manual profile remains unchanged. Automatic recovery
+may finish before the browser reconnects, so admission uses the original durable
+ACP cycle (including retired rows) and all Controller recovery/Rebuild rows for
+the disposable Agent, rather than requiring a transient offline response.
+
+Exactly one cycle, recovery receipt, Rebuild operation and corresponding cooldown
+and start confirmation must match the original Organization, Agent, Runtime,
+configured Template and frozen policy. The requested event must retain the
+barrier reason and original acceptance time. The public operation and actual RC
+journal must complete; database confirmation alone does not establish completion.
+No Prompt or Tool is replayed. The original unresolved audit remains immutable,
+three history replays cause no inference, and the new Run uses the replacement
+execution revision. Physical old-container absence and final resource cleanup
+remain mandatory. This profile has four connections and seven original ACP
+requests, with zero test-issued Rebuild requests and zero barrier-refusal probes.
+
+Host collection is bounded by both the original suite deadline and 110 seconds;
+the client waits at most 120 seconds for that checkpoint. Database reads use
+owned-container checks, read-only roles and statement deadlines. Each raw
+observation is preserved privately before it can count toward acceptance.
+
 ### Trace rules
 
 Trace collection and strict inspection are auxiliary for every request and
