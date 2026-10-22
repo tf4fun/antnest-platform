@@ -1,13 +1,14 @@
-# Agent Readiness Contract (#44, Pending)
+# Agent Readiness Contract (#44)
 
-This document defines the pending shared semantics for
-[#44](https://github.com/tf4fun/antnest-platform/issues/44). Controller production,
-ACP consumption, UI and Console consumption, and cross-service integration are
-all pending. It does not change an active JSON contract, schema, contract
-revision, route, or enforced caller. Formal schemas, shared fixtures, and the
-consumer rollout must be frozen before an owning-service batch enables the new
-behavior. The existing [Controller contract](control-api.md) and
-[ACP execution API](../agent-acp/execution-api.md) remain the active interfaces.
+Control contract revision 41 defines the shared wire representation for
+[#44](https://github.com/tf4fun/antnest-platform/issues/44) in the
+[Controller schema](control-api.schema.json) and
+[shared fixtures](readiness-fixtures.json). Controller production, strict-reader
+updates, ACP preparing admission, UI and Console consumption, and cross-service
+integration remain pending. This contract batch does not enable new producer
+behavior, routes, or caller permissions. Consumers must accept the new wire
+representation before a later owning-service batch emits it. The
+[ACP execution API](../agent-acp/execution-api.md) retains its existing envelope.
 
 ## Binding and Applied Readiness
 
@@ -62,8 +63,38 @@ Successful Create, Enable, or Rebuild provisioning does not itself mean ready.
 Runtime health alone does not mean ready either. This projection is not ACP Run
 occupancy: an active Run can make ACP busy without invalidating its binding.
 Storage or state-read failures remain errors and cannot fabricate a ready
-projection. Exact field placement and schema requirements remain pending formal
-schema freeze.
+projection. The Controller `agent` schema places `readiness` at the top level
+as an optional field, with no default. Legacy Agents without the field remain
+valid and have unknown readiness. The field is not inferred from other state.
+
+## Versioned Readiness Proofs
+
+The event envelope retains its existing `agent_id`. A new `runtime_bound` event
+uses `schema_version: 2`; an ACP-acknowledged `agent_ready` also uses version 2.
+Version 2 permits only these two event types. Other existing event types continue
+to use version 1. Both version-2 payloads require:
+
+| Data field               | Wire constraint                         |
+| ------------------------ | --------------------------------------- |
+| `organization_id`        | Existing Controller ID schema           |
+| `agent_spec_revision_id` | Existing Controller ID schema           |
+| `execution_revision_id`  | Existing Controller ID schema           |
+| `runtime_revision`       | Existing Controller ID schema           |
+| `ready_after_revision`   | Integer from 1 through 9007199254740991 |
+
+Version-2 `agent_ready` additionally requires `applied_revision`, with the same
+positive safe-integer bounds. Its payload has exactly these six fields;
+`runtime_bound` has exactly the first five. Unknown fields, private Runtime
+execution IDs, endpoints, and credentials are not admitted in either payload.
+The existing ID schema restricts values to 1–200 ASCII ID characters, beginning
+with an alphanumeric character. Unknown schema versions and event types remain
+invalid.
+
+Schema validation proves shape and bounds only. The owning Controller transaction
+must prove `ready_after_revision <= applied_revision <= committed revision`,
+organization identity, current binding identity, and continuing eligibility.
+The ACK request remains `{organization_id, applied_revision}` and the
+execution-synchronization envelope does not change in this batch.
 
 ## Publication Must Not Wait for Its Own Acknowledgement
 
@@ -135,37 +166,37 @@ of an ACP acknowledgement for the current binding. A migration must establish
 current readiness from a matching applied-configuration fact; healthy Runtime
 state or a legacy event alone is insufficient.
 
-The active event contract continues to accept historical `schema_version: 1`
-events without new required fields. The formal contract design must distinguish
-new ACP-acknowledged readiness proofs through a version or payload shape; this
-document does not choose that representation. It must not add required fields to
-historical `agent_ready` events. Compatibility changes for current strict
-readers and the active manifest and schemas must be completed before producers
-emit the new facts. This pending document leaves active control revision 40 and
-the existing schemas unchanged.
+The event contract continues to accept all 20 historical `schema_version: 1`
+event types and their existing object payloads without new required fields.
+In particular, historical `agent_ready` does not acquire ACK proof fields.
+Version 1 cannot claim the new `runtime_bound` event. The manifest and schemas
+declare revision 41 together; strict readers must be updated before producers
+emit the new facts.
 
 During rollout, a legacy response without the new readiness field is unknown,
 not ready. Consumers must not infer readiness from lifecycle completion,
 `runtime_state: "available"`, an old event, or a missing field. Strict readers
 must accept the new event type and projection before producers enable them.
-Schema compatibility for historical events must remain explicit rather than
-requiring new fields on immutable old records. This document does not increment
-the active control revision; the formal contract batch must synchronize that
-revision and schemas before enabling the service behavior.
+Schema compatibility for historical events remains explicit, without requiring
+new fields on immutable old records. The shared fixtures cover legacy Agent
+responses, historical events, complete version-2 proofs and invalid wire values.
 
 Delivery remains split into owning-service batches:
 
-1. Freeze the formal shared schemas, fixtures, compatibility and consumer rollout.
-2. Implement Controller binding facts, organization revision thresholds,
+1. Deliver the formal shared schemas, fixtures and historical compatibility.
+2. Update strict Controller event and Agent readers in their owning services.
+   Missing readiness remains unknown; accepting a new field or event does not
+   enable preparing admission or certify readiness.
+3. Implement Controller binding facts, organization revision thresholds,
    transactional ACK gating, idempotent ready events and management projection.
-3. Implement ACP preparing admission and get/watch state consumption, preserving
+4. Implement ACP preparing admission and get/watch state consumption, preserving
    unknown-Agent privacy and existing authorization and execution barriers.
-4. Implement UI preparing presentation and state observation, and Console use of
+5. Implement UI preparing presentation and state observation, and Console use of
    the new meaningful ready fact. Accepted or uncertain Prompts are not replayed.
-5. Run explicit cross-service integration after the owning-service gates pass.
+6. Run explicit cross-service integration after the owning-service gates pass.
 
-None of these implementation or integration stages is completed by this
-document. Controller component evidence must cover interleavings of binding,
+The formal wire contract does not complete the pending implementation or
+integration stages. Controller component evidence must cover interleavings of binding,
 publication and acknowledgement, including stale, duplicate and cross-organization
 acknowledgements and concurrent revocation or lifecycle closure. ACP evidence
 must distinguish listed preparing Agents from denied or unlisted Agents.

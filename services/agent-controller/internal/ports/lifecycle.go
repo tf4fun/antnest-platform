@@ -20,6 +20,7 @@ const (
 	NetworkReleaseAuthoritativeNone = "authoritative_absent"
 
 	EventAgentCreateRequested         = "agent_create_requested"
+	EventRuntimeBound                 = "runtime_bound"
 	EventAgentReady                   = "agent_ready"
 	EventAgentCreated                 = "agent_created"
 	EventAgentBuildFailed             = "agent_build_failed"
