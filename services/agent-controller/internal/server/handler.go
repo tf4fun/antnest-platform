@@ -350,29 +350,30 @@ type agentConfigurationResponse struct {
 }
 
 type agentResponse struct {
-	ActivationState                 domain.ActivationState      `json:"activation_state,omitempty"`
-	RuntimeState                    domain.RuntimeState         `json:"runtime_state"`
-	RuntimeReason                   string                      `json:"runtime_reason,omitempty"`
-	RuntimeDetail                   string                      `json:"runtime_detail,omitempty"`
-	RuntimeObservedAt               *time.Time                  `json:"runtime_observed_at,omitempty"`
-	AgentID                         string                      `json:"agent_id"`
-	OrganizationID                  string                      `json:"organization_id"`
-	OwnerUserID                     string                      `json:"owner_user_id"`
-	Name                            string                      `json:"name"`
-	DesiredState                    domain.DesiredState         `json:"desired_state"`
-	LifecycleState                  domain.AgentState           `json:"lifecycle_state"`
-	AccessRevision                  string                      `json:"access_revision"`
-	AgentSpecRevision               string                      `json:"agent_spec_revision,omitempty"`
-	ExecutableExecutionRevision     string                      `json:"executable_execution_revision,omitempty"`
-	LastSuccessfulExecutionRevision string                      `json:"last_successful_execution_revision,omitempty"`
-	Runtime                         *runtimeBindingResponse     `json:"runtime,omitempty"`
-	ActiveOperationRequestID        string                      `json:"active_operation_request_id,omitempty"`
-	FailureStage                    string                      `json:"failure_stage,omitempty"`
-	FailureCode                     string                      `json:"failure_code,omitempty"`
-	Configuration                   *agentConfigurationResponse `json:"configuration,omitempty"`
-	AggregateSequence               int64                       `json:"aggregate_sequence"`
-	CreatedAt                       time.Time                   `json:"created_at"`
-	UpdatedAt                       time.Time                   `json:"updated_at"`
+	RuntimeRecovery                 *ports.RuntimeBarrierRecoveryProjection `json:"runtime_recovery,omitempty"`
+	ActivationState                 domain.ActivationState                  `json:"activation_state,omitempty"`
+	RuntimeState                    domain.RuntimeState                     `json:"runtime_state"`
+	RuntimeReason                   string                                  `json:"runtime_reason,omitempty"`
+	RuntimeDetail                   string                                  `json:"runtime_detail,omitempty"`
+	RuntimeObservedAt               *time.Time                              `json:"runtime_observed_at,omitempty"`
+	AgentID                         string                                  `json:"agent_id"`
+	OrganizationID                  string                                  `json:"organization_id"`
+	OwnerUserID                     string                                  `json:"owner_user_id"`
+	Name                            string                                  `json:"name"`
+	DesiredState                    domain.DesiredState                     `json:"desired_state"`
+	LifecycleState                  domain.AgentState                       `json:"lifecycle_state"`
+	AccessRevision                  string                                  `json:"access_revision"`
+	AgentSpecRevision               string                                  `json:"agent_spec_revision,omitempty"`
+	ExecutableExecutionRevision     string                                  `json:"executable_execution_revision,omitempty"`
+	LastSuccessfulExecutionRevision string                                  `json:"last_successful_execution_revision,omitempty"`
+	Runtime                         *runtimeBindingResponse                 `json:"runtime,omitempty"`
+	ActiveOperationRequestID        string                                  `json:"active_operation_request_id,omitempty"`
+	FailureStage                    string                                  `json:"failure_stage,omitempty"`
+	FailureCode                     string                                  `json:"failure_code,omitempty"`
+	Configuration                   *agentConfigurationResponse             `json:"configuration,omitempty"`
+	AggregateSequence               int64                                   `json:"aggregate_sequence"`
+	CreatedAt                       time.Time                               `json:"created_at"`
+	UpdatedAt                       time.Time                               `json:"updated_at"`
 }
 
 type agentListResponse struct {
@@ -1193,6 +1194,14 @@ func agentPayload(agent application.AgentView) agentResponse {
 		FailureStage:                    agent.FailureStage, FailureCode: agent.FailureCode,
 		AggregateSequence: agent.AggregateSequence,
 		CreatedAt:         agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
+	}
+	if agent.RuntimeRecovery != nil {
+		projection := *agent.RuntimeRecovery
+		if projection.CooldownUntil != nil {
+			deadline := *projection.CooldownUntil
+			projection.CooldownUntil = &deadline
+		}
+		response.RuntimeRecovery = &projection
 	}
 	if agent.RuntimeRevision != "" {
 		response.Runtime = &runtimeBindingResponse{

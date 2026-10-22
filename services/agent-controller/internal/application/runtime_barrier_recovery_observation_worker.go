@@ -14,6 +14,7 @@ import (
 // Observation selects candidates only. The admission transaction remains the
 // authority for current binding, policy, lifecycle and revocation checks.
 type RuntimeBarrierRecoveryObservationStore interface {
+	ports.RuntimeBarrierObservationStore
 	ListAgents(context.Context, ports.AgentQuery) ([]ports.AgentRecord, error)
 	GetAgentLifecycleBase(context.Context, string) (ports.AgentLifecycleBase, error)
 	GetRuntimeBarrierRecoveryPolicy(context.Context, string) (domain.RuntimeBarrierRecoveryPolicy, error)
@@ -145,15 +146,19 @@ func (worker *RuntimeBarrierRecoveryObservationWorker) observe(ctx context.Conte
 	if query.Validate() != nil {
 		return fmt.Errorf("%w: invalid Runtime barrier query scope", ErrQueryContract)
 	}
+	revision, err := worker.store.GetRuntimeBarrierObservationRevision(ctx, agent.OrganizationID, agent.AgentID)
+	if err := runtimeBarrierObservationCallError(ctx, err, "read Runtime barrier observation version"); err != nil {
+		return err
+	}
+	if revision < 0 {
+		return fmt.Errorf("%w: invalid Runtime barrier observation version", ErrQueryContract)
+	}
 	fact, err := worker.reader.GetRuntimeBarrier(ctx, query)
 	if err := runtimeBarrierObservationCallError(ctx, err, "read original Runtime barrier"); err != nil {
 		return err
 	}
 	if !fact.Matches(query) {
 		return fmt.Errorf("%w: mismatched Runtime barrier fact", ErrQueryContract)
-	}
-	if fact.Barrier == nil {
-		return nil
 	}
 	policy, err := worker.store.GetRuntimeBarrierRecoveryPolicy(ctx, agent.OrganizationID)
 	if err := runtimeBarrierObservationCallError(ctx, err, "read Runtime barrier recovery policy"); err != nil {
@@ -162,7 +167,14 @@ func (worker *RuntimeBarrierRecoveryObservationWorker) observe(ctx context.Conte
 	if policy.OrganizationID != agent.OrganizationID || policy.Validate() != nil {
 		return fmt.Errorf("%w: invalid Runtime barrier recovery policy", ErrQueryContract)
 	}
-	if policy.Mode != "auto" {
+	err = worker.store.RecordRuntimeBarrierObservation(ctx, ports.RecordRuntimeBarrierObservation{
+		Fact: fact, ExpectedAgent: agent, ExpectedPolicyRevision: policy.Revision,
+		ExpectedObservationRevision: revision,
+	})
+	if err := runtimeBarrierObservationCallError(ctx, err, "persist Runtime barrier observation"); err != nil {
+		return err
+	}
+	if fact.Barrier == nil || policy.Mode != "auto" {
 		return nil
 	}
 	requestID, err := ports.RuntimeBarrierRecoveryRequestID(agent.OrganizationID, agent.AgentID, fact.Barrier.BarrierID)

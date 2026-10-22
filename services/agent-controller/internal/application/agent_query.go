@@ -137,6 +137,23 @@ func (service *AgentQueryService) agentProjection(
 		SystemSkills:   snapshot.SystemSkills,
 		SkillSetDigest: snapshot.SkillSetDigest,
 	}
+	if store, ok := service.store.(ports.RuntimeBarrierProjectionStore); ok {
+		projection, err := store.GetRuntimeBarrierRecoveryProjection(ctx, record)
+		if err := runtimeBarrierObservationCallError(ctx, err, "read Agent recovery projection"); err != nil {
+			return AgentView{}, err
+		}
+		if projection != nil {
+			if projection.RuntimeRevision != record.RuntimeRevision || projection.Validate(record.OrganizationID, record.AgentID) != nil {
+				return AgentView{}, fmt.Errorf("%w: invalid Agent recovery projection", ErrQueryContract)
+			}
+			copy := *projection
+			if projection.CooldownUntil != nil {
+				deadline := *projection.CooldownUntil
+				copy.CooldownUntil = &deadline
+			}
+			view.RuntimeRecovery = &copy
+		}
+	}
 	return view, nil
 }
 

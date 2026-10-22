@@ -313,7 +313,11 @@ func TestRuntimeBarrierRecoveryObservationFactAndPolicyFailClosed(t *testing.T) 
 			}
 			s := f.calls.snapshot()
 			require.Len(t, s.queries, 1)
-			require.Empty(t, s.policies, "a missing, invalid or failed fact cannot select policy")
+			if name == "no barrier" {
+				require.Equal(t, []string{f.agents[0].OrganizationID}, s.policies, "a successful null read persists a policy-fenced clear")
+			} else {
+				require.Empty(t, s.policies, "an invalid or failed fact cannot select policy")
+			}
 			require.Empty(t, s.intents)
 		})
 	}
@@ -753,6 +757,14 @@ type barrierObservationStore struct {
 	list    func(context.Context, ports.AgentQuery) ([]ports.AgentRecord, error)
 	base    func(context.Context, string) (ports.AgentLifecycleBase, error)
 	policy  func(context.Context, string) (domain.RuntimeBarrierRecoveryPolicy, error)
+}
+
+func (store *barrierObservationStore) GetRuntimeBarrierObservationRevision(context.Context, string, string) (int64, error) {
+	return 0, nil
+}
+
+func (store *barrierObservationStore) RecordRuntimeBarrierObservation(context.Context, ports.RecordRuntimeBarrierObservation) error {
+	return nil
 }
 
 func (store *barrierObservationStore) ListAgents(ctx context.Context, query ports.AgentQuery) ([]ports.AgentRecord, error) {

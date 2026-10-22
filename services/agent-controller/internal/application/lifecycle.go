@@ -100,6 +100,7 @@ type CreateAgentInput struct {
 }
 
 type AgentView struct {
+	RuntimeRecovery                   *ports.RuntimeBarrierRecoveryProjection
 	ActivationState                   domain.ActivationState
 	RuntimeState                      domain.RuntimeState
 	RuntimeReason                     string
