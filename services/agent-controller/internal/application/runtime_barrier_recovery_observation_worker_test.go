@@ -303,11 +303,12 @@ func TestRuntimeBarrierRecoveryObservationFactAndPolicyFailClosed(t *testing.T) 
 				return fact, nil
 			}
 			err := newBarrierObservationWorker(t, f, barrierObservationSchedule(2)).RunOnce(context.Background())
-			if name == "no barrier" {
+			switch name {
+			case "no barrier":
 				require.NoError(t, err)
-			} else if name == "ACP error" {
+			case "ACP error":
 				require.ErrorIs(t, err, failure)
-			} else {
+			default:
 				require.ErrorIs(t, err, ErrQueryContract)
 			}
 			s := f.calls.snapshot()
