@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 55,
+  "version": 56,
   "scim_lifecycle_policy": "../identity/scim-lifecycle-policy.json",
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
@@ -275,7 +275,9 @@
     },
     "rebuild_agent": {
       "method": "POST",
-      "path": "/agents/{agent_id}/rebuild"
+      "path": "/agents/{agent_id}/rebuild",
+      "recovery_request_schema": "runtime-recovery.schema.json#/$defs/rebuild_request",
+      "recovery_idempotency_key": "projected_rebuild_request_id_forwarded_unchanged"
     },
     "disable_agent": {
       "method": "POST",
@@ -463,6 +465,16 @@
       "query": "reject_all",
       "missing_record": null,
       "meaning": "historical_configuration_acknowledgement_not_live_health_or_execution_state",
+      "cache_control": "no-store"
+    },
+    "runtime_barrier_recovery": {
+      "authorization": "verified_organization_scoped_administrator",
+      "projection": "runtime-recovery.schema.json#/$defs/runtime_recovery",
+      "authority": "agent_controller_validates_original_tuple_receipt_target_and_cooldown",
+      "target": "current_configured_template_revision",
+      "ordinary_rebuild": "unchanged_lifecycle_key_hash_and_template_selection",
+      "unknown_response": "query_original_request_before_explicit_same_tuple_retry",
+      "progress": "existing_operation_reads_and_event_subscription_no_automatic_mutation",
       "cache_control": "no-store"
     },
     "runtime_recovery": {

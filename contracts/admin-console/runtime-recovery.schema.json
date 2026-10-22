@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/admin-console/runtime-recovery.schema.json",
+  "$defs": {
+    "runtime_recovery": {
+      "$ref": "https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json#/$defs/runtime_recovery"
+    },
+    "rebuild_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template_id", "template_revision", "recovery"],
+      "properties": {
+        "template_id": {
+          "$ref": "https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json#/$defs/id"
+        },
+        "template_revision": { "type": "integer", "minimum": 1 },
+        "recovery": {
+          "$ref": "https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json#/$defs/recovery_request"
+        }
+      }
+    }
+  }
+}
