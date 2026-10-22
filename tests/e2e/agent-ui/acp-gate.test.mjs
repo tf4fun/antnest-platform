@@ -576,3 +576,579 @@ test(
     );
   },
 );
+
+const gateControl = async (options) => {
+  const { createGateControl } = await import("./acp-gate-control.mjs");
+  return createGateControl(options);
+};
+const controlReceipt = (rawBody, status = 200) =>
+  JSON.stringify({ ok: true, status, rawBody });
+const controlTurn = () => new Promise((resolve) => setImmediate(resolve));
+async function controlStarted(started, outcome, message) {
+  let timer;
+  try {
+    await Promise.race([
+      started,
+      outcome.then(() => {
+        throw new Error(message);
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), 2_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test("gate control preserves the full original JSON inventory and HTTP status", async () => {
+  const inventory = {
+    armedIntent: null,
+    heldIntent: null,
+    heldRequests: 0,
+    forwardedPrompts: 96,
+    forwardedByIntent: Object.fromEntries(
+      Array.from({ length: 96 }, (_, index) => [`intent-${index}`, 1]),
+    ),
+    records: Array.from({ length: 96 }, (_, index) => ({
+      method: "POST",
+      path: "/rpc/agent-acp/v1",
+      forwarded: true,
+      body: `${index}:原始 inventory:${"x".repeat(2_048)}`,
+      response: {
+        chunks: [Buffer.from(`original-${index}`).toString("base64")],
+        complete: true,
+        closed: true,
+      },
+    })),
+    captureErrors: [],
+  };
+  const rawBody = ` \n${JSON.stringify(inventory)}\r\n`;
+  const scripts = [];
+  const control = await gateControl({
+    async exec(script) {
+      scripts.push(script);
+      return controlReceipt(rawBody, 409);
+    },
+    signal: new AbortController().signal,
+  });
+  let result;
+  try {
+    result = await control.request("state");
+  } finally {
+    await control.join();
+  }
+  assert.equal(scripts.length, 1);
+  assert.equal(typeof scripts[0], "string");
+  assert(scripts[0].length > 0);
+  assert.deepEqual(result, { status: 409, rawBody, body: inventory });
+  assert.equal(result.body.records.length, 96);
+  assert.equal(result.body.records.at(-1).body, inventory.records.at(-1).body);
+});
+
+test("gate control rejects unknown actions and invalid control bodies before exec", async () => {
+  let executions = 0;
+  const control = await gateControl({
+    async exec() {
+      executions++;
+      return controlReceipt("{}");
+    },
+    signal: new AbortController().signal,
+  });
+  try {
+    for (const action of [
+      undefined,
+      null,
+      {},
+      "",
+      "disarm",
+      "STATE",
+      "/state",
+      "../state",
+      "state?next=arm",
+      "//other.invalid/state",
+      "http://other.invalid/__fault/state",
+      "http://127.0.0.1:8080/__fault/state",
+    ])
+      await assert.rejects(async () => control.request(action));
+    for (const body of [
+      null,
+      {},
+      [],
+      "intent",
+      { intentId: "" },
+      { intentId: 7 },
+      { intentId: "intent", extra: true },
+    ]) {
+      for (const action of ["arm", "release"])
+        await assert.rejects(async () => control.request(action, { body }));
+    }
+    for (const action of ["arm", "release"])
+      await assert.rejects(async () => control.request(action));
+    for (const body of [null, {}, [], { intentId: "intent" }])
+      await assert.rejects(async () => control.request("state", { body }));
+  } finally {
+    await control.join();
+  }
+  assert.equal(
+    executions,
+    0,
+    "Invalid controls must not start Node or Docker exec",
+  );
+});
+
+test("gate control pre-cancellation starts no normal exec while cleanup release and state remain available", async () => {
+  const parent = new AbortController();
+  parent.abort(new Error("fixture owner cancelled"));
+  const scripts = [];
+  const control = await gateControl({
+    async exec(script) {
+      scripts.push(script);
+      return controlReceipt('{"released":1}');
+    },
+    signal: parent.signal,
+  });
+  let release, state;
+  try {
+    for (const [action, options] of [
+      ["state", undefined],
+      ["arm", { body: { intentId: "original" } }],
+      ["release", { body: { intentId: "original" } }],
+    ])
+      await assert.rejects(async () => control.request(action, options));
+    assert.equal(scripts.length, 0);
+    release = await control.request("release", {
+      body: { intentId: "original" },
+      cleanup: true,
+    });
+    state = await control.request("state", { cleanup: true });
+  } finally {
+    await control.join();
+  }
+  assert.equal(scripts.length, 2);
+  assert.deepEqual(release.body, { released: 1 });
+  assert.deepEqual(state.body, { released: 1 });
+});
+
+for (const completion of ["success", "failure"]) {
+  test(
+    `gate control cancellation joins the original ${completion} exec before rejecting`,
+    { timeout: 5_000 },
+    async () => {
+      const parent = new AbortController();
+      const started = Promise.withResolvers();
+      const execution = Promise.withResolvers();
+      const control = await gateControl({
+        exec() {
+          started.resolve();
+          return execution.promise;
+        },
+        signal: parent.signal,
+      });
+      let requestFinished = false,
+        joinFinished = false;
+      const pending = Promise.resolve().then(() => control.request("state"));
+      const outcome = pending.then(
+        (value) => {
+          requestFinished = true;
+          return { status: "fulfilled", value };
+        },
+        (reason) => {
+          requestFinished = true;
+          return { status: "rejected", reason };
+        },
+      );
+      let joined, cancelledEarly, joinedEarly, result;
+      try {
+        await controlStarted(
+          started.promise,
+          outcome,
+          "Control request settled before its exec started",
+        );
+        parent.abort(new Error("fixture cancellation during exec"));
+        joined = Promise.resolve()
+          .then(() => control.join())
+          .then(
+            () => {
+              joinFinished = true;
+            },
+            () => {
+              joinFinished = true;
+            },
+          );
+        await controlTurn();
+        cancelledEarly = requestFinished;
+        joinedEarly = joinFinished;
+        if (completion === "success") execution.resolve(controlReceipt("{}"));
+        else
+          execution.reject(new Error("fixture exec failed after cancellation"));
+        result = await outcome;
+        await joined;
+      } finally {
+        execution.resolve(controlReceipt("{}"));
+        await outcome;
+        await Promise.allSettled([
+          joined,
+          Promise.resolve().then(() => control.join()),
+        ]);
+      }
+      assert.equal(
+        cancelledEarly,
+        false,
+        "Parent cancellation must not abandon a running exec",
+      );
+      assert.equal(
+        joinedEarly,
+        false,
+        "join must wait for the original exec to settle",
+      );
+      assert.equal(result.status, "rejected");
+      assert.equal(requestFinished, true);
+      assert.equal(joinFinished, true);
+    },
+  );
+}
+
+test(
+  "gate control join waits for every independently owned in-flight exec",
+  { timeout: 5_000 },
+  async () => {
+    const started = Promise.withResolvers();
+    const executions = Array.from({ length: 3 }, () => Promise.withResolvers());
+    let calls = 0,
+      joinFinished = false;
+    const control = await gateControl({
+      exec() {
+        const pending = executions[calls++].promise;
+        if (calls === 3) started.resolve();
+        return pending;
+      },
+      signal: new AbortController().signal,
+    });
+    const requests = [
+      Promise.resolve().then(() => control.request("state")),
+      Promise.resolve().then(() =>
+        control.request("arm", { body: { intentId: "original" } }),
+      ),
+      Promise.resolve().then(() =>
+        control.request("release", {
+          body: { intentId: "original" },
+          cleanup: true,
+        }),
+      ),
+    ];
+    const outcomes = Promise.allSettled(requests);
+    let joined, afterOne, afterTwo, results;
+    try {
+      await controlStarted(
+        started.promise,
+        outcomes,
+        "Controls did not start their independently owned execs",
+      );
+      joined = Promise.resolve()
+        .then(() => control.join())
+        .then(() => {
+          joinFinished = true;
+        });
+      executions[0].resolve(controlReceipt("{}"));
+      await controlTurn();
+      afterOne = joinFinished;
+      executions[1].resolve(controlReceipt("{}"));
+      await controlTurn();
+      afterTwo = joinFinished;
+      executions[2].resolve(controlReceipt("{}"));
+      results = await outcomes;
+      await joined;
+    } finally {
+      for (const execution of executions)
+        execution.resolve(controlReceipt("{}"));
+      await outcomes;
+      await Promise.allSettled([
+        joined,
+        Promise.resolve().then(() => control.join()),
+      ]);
+    }
+    assert.equal(calls, 3);
+    assert.equal(afterOne, false);
+    assert.equal(afterTwo, false);
+    assert.equal(joinFinished, true);
+    assert(results.every((result) => result.status === "fulfilled"));
+  },
+);
+
+test("gate control rejects failed or malformed exec receipts without extracting a JSON substring", async (t) => {
+  const good = { ok: true, status: 200, rawBody: "{}" };
+  const malformed = [
+    ["empty stdout", ""],
+    ["non JSON", "not-json"],
+    ["null receipt", "null"],
+    ["array receipt", "[]"],
+    ["JSON log prefix", `log line\n${JSON.stringify(good)}`],
+    ["JSON log suffix", `${JSON.stringify(good)}\nlog line`],
+    ["two receipts", `${JSON.stringify(good)}\n${JSON.stringify(good)}`],
+    ["missing ok", JSON.stringify({ status: 200, rawBody: "{}" })],
+    ["missing status", JSON.stringify({ ok: true, rawBody: "{}" })],
+    ["missing raw body", JSON.stringify({ ok: true, status: 200 })],
+    ["non boolean ok", JSON.stringify({ ...good, ok: "true" })],
+    ["string status", JSON.stringify({ ...good, status: "200" })],
+    ["low status", JSON.stringify({ ...good, status: 99 })],
+    ["high status", JSON.stringify({ ...good, status: 600 })],
+    ["fractional status", JSON.stringify({ ...good, status: 200.5 })],
+    ["non string raw body", JSON.stringify({ ...good, rawBody: {} })],
+    [
+      "incomplete raw JSON",
+      JSON.stringify({ ...good, rawBody: '{"records":[' }),
+    ],
+    ["raw body log prefix", JSON.stringify({ ...good, rawBody: "log\n{}" })],
+    ["extra receipt member", JSON.stringify({ ...good, extra: true })],
+    ["failed request", JSON.stringify({ ok: false, error: "request_failed" })],
+    ["malformed failure", JSON.stringify({ ok: false, error: {} })],
+  ];
+  for (const [name, stdout] of malformed)
+    await t.test(name, async () => {
+      let calls = 0;
+      const control = await gateControl({
+        async exec() {
+          calls++;
+          return stdout;
+        },
+        signal: new AbortController().signal,
+      });
+      try {
+        await assert.rejects(async () => control.request("state"));
+      } finally {
+        await Promise.allSettled([
+          Promise.resolve().then(() => control.join()),
+        ]);
+      }
+      assert.equal(calls, 1);
+    });
+});
+
+test(
+  "gate control Node scripts keep the fixed loopback URL and time out held HTTP bodies after five seconds",
+  { timeout: 30_000 },
+  async (t) => {
+    const { spawn } = await import("node:child_process");
+    const parent = new AbortController();
+    const releaseBody = Promise.withResolvers();
+    const received = [],
+      handlers = [],
+      responseClosures = [],
+      jobs = [];
+    const rawInventory = ` \n${JSON.stringify({
+      records: Array.from({ length: 80 }, (_, index) => ({
+        index,
+        body: "original".repeat(512),
+      })),
+      forwardedByIntent: { original: 1 },
+      captureErrors: [],
+    })}\r\n`;
+    let holdBody = false,
+      headersAt = null,
+      control;
+    const server = createServer((request, response) => {
+      responseClosures.push(
+        new Promise((resolve) => response.once("close", resolve)),
+      );
+      const work = (async () => {
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        received.push({
+          method: request.method,
+          path: request.url,
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        if (holdBody && request.url === "/__fault/state") {
+          response.write('{"records":[');
+          response.flushHeaders();
+          headersAt = performance.now();
+          await releaseBody.promise;
+          if (!response.destroyed) response.end("]}");
+        } else
+          response.end(
+            request.url === "/__fault/state" ? rawInventory : '{"released":1}',
+          );
+      })();
+      handlers.push(work);
+      void work.catch((error) => response.destroy(error));
+    });
+    const emergency = () => {
+      releaseBody.resolve();
+      for (const job of jobs)
+        if (job.child.exitCode === null && job.child.signalCode === null)
+          job.child.kill("SIGKILL");
+    };
+    t.signal.addEventListener("abort", emergency, { once: true });
+    let state, armed, released, timeoutOutcome, cleanupResults;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const address = server.address();
+      const mappedOrigin = `http://127.0.0.1:${address.port}`;
+      control = await gateControl({
+        signal: parent.signal,
+        exec(script) {
+          const wrapper = `{
+          const originalFetch = globalThis.fetch;
+          globalThis.fetch = (input, init) => {
+            const originalUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            const parsed = new URL(originalUrl);
+            if (parsed.origin !== "http://127.0.0.1:8080" || parsed.search || parsed.hash ||
+              !["/__fault/state", "/__fault/arm", "/__fault/release"].includes(parsed.pathname))
+              throw new Error("Unexpected gate control URL");
+            process.stderr.write(JSON.stringify({ originalUrl }) + "\\n");
+            const mapped = new URL(parsed.pathname, ${JSON.stringify(mappedOrigin)});
+            return originalFetch(input instanceof Request ? new Request(mapped, input) : mapped, init);
+          };
+        }
+        `;
+          const child = spawn(
+            process.execPath,
+            ["--input-type=module", "-e", wrapper + script],
+            {
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+          const stdout = [],
+            stderr = [];
+          let spawnFailure;
+          child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+          child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+          child.once("error", (error) => {
+            spawnFailure = error;
+          });
+          const job = { child, watchdogFired: false };
+          jobs.push(job);
+          const watchdog = setTimeout(() => {
+            job.watchdogFired = true;
+            child.kill("SIGKILL");
+          }, 9_000);
+          watchdog.unref();
+          job.closed = new Promise((resolve) =>
+            child.once("close", (code, signal) => {
+              clearTimeout(watchdog);
+              Object.assign(job, {
+                code,
+                signal,
+                spawnFailure,
+                closedAt: performance.now(),
+                stdout: Buffer.concat(stdout).toString("utf8"),
+                stderr: Buffer.concat(stderr).toString("utf8"),
+              });
+              resolve(job);
+            }),
+          );
+          return job.closed.then((result) => {
+            if (result.spawnFailure || result.code !== 0 || result.signal)
+              throw new Error(
+                "Gate control fixture Node exec did not exit successfully",
+              );
+            return result.stdout;
+          });
+        },
+      });
+      state = await control.request("state");
+      armed = await control.request("arm", {
+        body: { intentId: "original-原件" },
+      });
+      released = await control.request("release", {
+        body: { intentId: "original-原件" },
+        cleanup: true,
+      });
+      holdBody = true;
+      [timeoutOutcome] = await Promise.allSettled([control.request("state")]);
+    } finally {
+      parent.abort();
+      releaseBody.resolve();
+      try {
+        if (control)
+          await Promise.allSettled([
+            Promise.resolve().then(() => control.join()),
+          ]);
+      } finally {
+        emergency();
+        await Promise.allSettled(jobs.map((job) => job.closed));
+        server.closeAllConnections();
+        const closed = server.listening
+          ? new Promise((resolve, reject) =>
+              server.close((error) => (error ? reject(error) : resolve())),
+            )
+          : Promise.resolve();
+        cleanupResults = await Promise.allSettled([
+          closed,
+          ...handlers,
+          ...responseClosures,
+        ]);
+        t.signal.removeEventListener("abort", emergency);
+      }
+    }
+    assert.equal(server.listening, false);
+    assert(
+      cleanupResults.every((result) => result.status === "fulfilled"),
+      "Real HTTP handlers and connections must finish cleanly",
+    );
+    assert.equal(jobs.length, 4);
+    for (const job of jobs) {
+      assert.equal(
+        job.watchdogFired,
+        false,
+        "The emergency watchdog is not timeout evidence",
+      );
+      assert.equal(job.code, 0);
+      assert.equal(job.signal, null);
+      assert.equal(
+        job.child.exitCode,
+        0,
+        "exec must settle only after the real Node child exits",
+      );
+    }
+    assert.deepEqual(state, {
+      status: 200,
+      rawBody: rawInventory,
+      body: JSON.parse(rawInventory),
+    });
+    assert.equal(state.body.records.length, 80);
+    assert.deepEqual(armed.body, { released: 1 });
+    assert.deepEqual(released.body, { released: 1 });
+    assert.deepEqual(received, [
+      { method: "GET", path: "/__fault/state", body: "" },
+      {
+        method: "POST",
+        path: "/__fault/arm",
+        body: JSON.stringify({ intentId: "original-原件" }),
+      },
+      {
+        method: "POST",
+        path: "/__fault/release",
+        body: JSON.stringify({ intentId: "original-原件" }),
+      },
+      { method: "GET", path: "/__fault/state", body: "" },
+    ]);
+    assert.deepEqual(
+      jobs.map((job) => JSON.parse(job.stderr.trim())),
+      [
+        { originalUrl: "http://127.0.0.1:8080/__fault/state" },
+        { originalUrl: "http://127.0.0.1:8080/__fault/arm" },
+        { originalUrl: "http://127.0.0.1:8080/__fault/release" },
+        { originalUrl: "http://127.0.0.1:8080/__fault/state" },
+      ],
+    );
+    assert.equal(timeoutOutcome.status, "rejected");
+    const timeoutReceipt = JSON.parse(jobs.at(-1).stdout);
+    assert.deepEqual(Object.keys(timeoutReceipt).sort(), ["error", "ok"]);
+    assert.equal(timeoutReceipt.ok, false);
+    assert.match(timeoutReceipt.error, /^[a-z][a-z0-9_]{0,63}$/u);
+    assert.equal(
+      typeof headersAt,
+      "number",
+      "The real HTTP response headers must arrive before the timeout",
+    );
+    const heldBodyMs = jobs.at(-1).closedAt - headersAt;
+    assert(
+      heldBodyMs >= 4_000 && heldBodyMs < 8_500,
+      `Held response body must hit the five-second budget, observed ${heldBodyMs}ms`,
+    );
+  },
+);

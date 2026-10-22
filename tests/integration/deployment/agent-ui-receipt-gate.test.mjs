@@ -105,14 +105,13 @@ test("receipt gate joins only the existing private workspace network at an unuse
   }
 });
 
-test("receipt gate publishes one dynamic loopback control port without opening other listeners", () => {
+test("receipt gate does not publish host ports on the isolated edge network", () => {
   const value = gate();
-  assert.equal(value.ports.length, 1);
-  const [binding] = value.ports;
-  assert.equal(binding.host_ip, "127.0.0.1");
-  assert.equal(binding.target, 8080);
-  assert.equal(binding.protocol, "tcp");
-  assert.equal(Object.hasOwn(binding, "published"), false);
+  assert(
+    value.ports === undefined ||
+      (Array.isArray(value.ports) && value.ports.length === 0),
+    "receipt gate must not publish host ports on the isolated edge network",
+  );
   assert.equal(value.network_mode, undefined);
 });
 

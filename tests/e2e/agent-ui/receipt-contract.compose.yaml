@@ -21,10 +21,6 @@ services:
         condition: service_healthy
     volumes:
       - ./tests:/tests:ro
-    ports:
-      - target: 8080
-        host_ip: 127.0.0.1
-        protocol: tcp
     networks:
       edge:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.8

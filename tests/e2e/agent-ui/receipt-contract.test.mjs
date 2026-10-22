@@ -7,6 +7,7 @@ import { inspect } from "node:util";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { verifyBrowserStreamRenewal } from "./browser-session-stream.mjs";
 import { verifyBrowserPromptBusy } from "./browser-prompt-busy.mjs";
+import { createGateControl } from "./acp-gate-control.mjs";
 import {
   parseIntentObservation,
   parseExecutionObservation,
@@ -70,7 +71,7 @@ test(
     const signal = AbortSignal.any([abort.signal, t.signal]);
     const interrupt = () => abort.abort(new Error("Receipt E2E interrupted"));
     for (const event of ["SIGINT", "SIGTERM"]) process.once(event, interrupt);
-    let before, config, browser, failure;
+    let before, config, browser, failure, gateControl;
     const candidates = [];
     const problems = [];
     try {
@@ -318,10 +319,35 @@ test(
         false,
         "Unsupported content must fail before inference",
       );
-      const gateAddress = (
-        await docker(compose(["port", "acp-prompt-gate", "8080"]))
+      // The edge network is isolated, so published host ports cannot reach it.
+      // Control the gate inside its owned container without widening the network.
+      const gateId = (
+        await docker(compose(["ps", "-q", "acp-prompt-gate"]))
       ).trim();
-      assert.match(gateAddress, /^127\.0\.0\.1:\d+$/u);
+      assert.match(gateId, /^[a-f0-9]{64}$/u);
+      const gateRows = JSON.parse(await docker(["inspect", gateId]));
+      assert.equal(gateRows.length, 1);
+      const gateRow = gateRows[0];
+      assert.equal(gateRow.Id, gateId);
+      assert.equal(gateRow.State.Running, true);
+      assert.equal(
+        gateRow.Config.Labels["com.docker.compose.project"],
+        config.project,
+      );
+      assert.equal(
+        gateRow.Config.Labels["com.docker.compose.service"],
+        "acp-prompt-gate",
+      );
+      const gateDocker = dockerClient(config.env, undefined, 900_000);
+      gateControl = createGateControl({
+        signal,
+        exec: (script) =>
+          gateDocker(
+            ["exec", gateId, "node", "--input-type=module", "-e", script],
+            false,
+            { timeoutMS: 15_000 },
+          ),
+      });
       // The peer owns an internal deadline. Keep its original Docker exec alive
       // through parent cancellation so the scenario can release and join it.
       const peerDocker = dockerClient(wireEnvironment, undefined, 150_000);
@@ -330,7 +356,7 @@ test(
         client,
         config,
         fixture,
-        gateBase: `http://${gateAddress}`,
+        gateControl: gateControl.request,
         signal,
         execPeer: (script) =>
           peerDocker([
@@ -413,6 +439,7 @@ test(
           errors.push(error);
         }
       };
+      await attempt(async () => gateControl?.join());
       await attempt(async () => browser?.close());
       if (config) {
         await attempt(() => cleanup(config));

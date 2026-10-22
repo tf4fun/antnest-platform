@@ -333,13 +333,14 @@ export async function verifyBrowserPromptBusy({
   client,
   config,
   fixture,
-  gateBase,
+  gateControl,
   execPeer,
   signal,
   preserve,
 }) {
   check(
     typeof execPeer === "function" &&
+      typeof gateControl === "function" &&
       typeof preserve === "function" &&
       typeof fixture.request === "function",
     "Busy integration requires owned peer execution and private preservation",
@@ -390,8 +391,7 @@ export async function verifyBrowserPromptBusy({
     const rawBody = await response.text();
     return { status: response.status, rawBody, body: JSON.parse(rawBody) };
   };
-  const fault = (path, options) =>
-    requestJson(new URL("/__fault/" + path, gateBase), options);
+  const fault = (path, options) => gateControl(path, options);
   const gateState = async (cleanup = false) => {
     const response = await fault("state", { cleanup });
     check(response.status === 200, "Gate state read failed");
