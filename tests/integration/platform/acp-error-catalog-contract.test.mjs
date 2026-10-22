@@ -30,6 +30,22 @@ test("the shared ACP error catalog satisfies its complete schema", () => {
   );
 });
 
+test("not_found is a generic HTTP and Skill-source resource error without admission semantics", () => {
+  const definition = catalog.errors.not_found;
+  assert.deepEqual(
+    { ...definition, surfaces: [...definition.surfaces].sort() },
+    {
+      class: "resource",
+      json_rpc_code: null,
+      http_status: 404,
+      retryable: false,
+      recovery: "refresh",
+      message: "Resource was not found",
+      surfaces: ["http", "skill_source"],
+    },
+  );
+});
+
 const invalidCatalogTransformations = [
   {
     name: "availability cannot use the access numeric range",

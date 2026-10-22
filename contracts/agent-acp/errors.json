@@ -636,8 +636,8 @@
       "http_status": 404,
       "retryable": false,
       "recovery": "refresh",
-      "message": "Skill source was not found",
-      "surfaces": ["skill_source"]
+      "message": "Resource was not found",
+      "surfaces": ["http", "skill_source"]
     },
     "content_changed": {
       "class": "conflict",

@@ -58,6 +58,13 @@ the specific reason. A `null` JSON-RPC code means that the entry applies to an
 HTTP or Skill-source surface without assigning a JSON-RPC admission code.
 Every entry with the `admission` surface requires a numeric code.
 
+`not_found` applies to HTTP control queries and Skill-source reads. Both use
+HTTP 404, the fixed message `Resource was not found`, and non-retryable
+`refresh` guidance. It does not identify whether the missing resource is an
+organization, Agent or Skill source, and never grants JSON-RPC admission or
+automatic Prompt replay. Skill-source consumers must retain the string code
+and recovery policy instead of relying on the earlier source-specific message.
+
 Generic `-32020` belongs only to the fallback below. `-32022` and `-32023`
 belong only to terminal outcomes. None of those codes is available to catalog
 admission entries.
