@@ -8,9 +8,12 @@ import { fileURLToPath } from "node:url";
 import {
   configuration,
   dockerClient,
-  composeArgs,
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
+import {
+  skillComposeArgs as composeArgs,
+  startSkillObservability,
+} from "./observability-setup.mjs";
 import {
   setup,
   member as fixtureMember,
@@ -164,6 +167,13 @@ test(
         });
         await docker(build, true, { env: candidateEnvironment(config.env) });
       }
+      await startSkillObservability({
+        docker,
+        project: config.project,
+        overlay,
+        directory: `${root}/artifacts/verification/skill-learning`,
+        signal: abort.signal,
+      });
       await docker(
         composeArgs(config.project, [
           ...overlay,

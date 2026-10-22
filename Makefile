@@ -135,6 +135,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/e2e/service-authentication/acp/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/tool-usability-model.test.mjs tests/e2e/skill-learning/maintenance-kid.test.mjs tests/e2e/skill-learning/service-calls.test.mjs tests/e2e/skill-learning/client-container.test.mjs tests/e2e/skill-learning/private-client.test.mjs tests/e2e/skill-learning/source-projection-check.test.mjs tests/e2e/skill-learning/maintenance-response-gate.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/key-removal-probe.test.mjs
+	node --test --test-concurrency=1 tests/e2e/skill-learning/observability-setup.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/discovery-tools-client.test.mjs
 	node --test --test-concurrency=1 tests/e2e/skill-learning/response-diagnostic.test.mjs tests/e2e/skill-learning/automatic-failure.test.mjs tests/e2e/skill-learning/caller-diagnostics.test.mjs
 	node --test --test-concurrency=1 tests/e2e/security/*.test.mjs tests/e2e/skill-registry/release-surface.test.mjs
@@ -367,6 +368,7 @@ e2e-runtime-tool-usability:
 	ANTNEST_E2E_SKILL_LEARNING_DEBUG=true ANTNEST_E2E_TOOL_USABILITY=true node --test --test-concurrency=1 tests/e2e/skill-learning/automatic-flow.test.mjs
 
 e2e-skill-learning-cleanup:
+	node --test --test-concurrency=1 tests/integration/skill-learning/observability-profile.test.mjs
 	ANTNEST_E2E_SKILL_CLEANUP=true node --test tests/e2e/skill-learning/automatic-flow.test.mjs
 
 .PHONY: e2e-skill-learning-cleanup
