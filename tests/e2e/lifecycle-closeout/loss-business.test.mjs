@@ -26,6 +26,13 @@ function rejects(mutate) {
   mutate(evidence);
   assert.throws(() => inspect(evidence));
 }
+function mutateSnapshot(evidence, mode, moment, mutate) {
+  for (const run of [
+    saved(evidence, mode, moment).run,
+    agent(evidence, mode)[moment + "_run"],
+  ])
+    mutate(run.execution_snapshot);
+}
 
 test("Loss admits four durable Tool Runs, eight model calls and original v1 replay/denial receipts without Trace", () => {
   requireAPI();
@@ -35,6 +42,38 @@ test("Loss admits four durable Tool Runs, eight model calls and original v1 repl
   assert.deepEqual(evidence, original);
   assert.equal(Object.hasOwn(summary, "runtime_tool_calls"), false);
   assert.equal(Object.hasOwn(summary, "cleanup_completed"), false);
+});
+
+test("Loss admits the public Admin Agent and Run projections without private scope or Runtime fields", () => {
+  requireAPI();
+  const evidence = fixture();
+  for (const row of evidence.agents) {
+    for (const state of [row.initial, row.replacement]) {
+      for (const field of ["organization_id", "access_revision"])
+        assert.equal(Object.hasOwn(state.agent, field), false);
+      assert.deepEqual(Object.keys(state.agent.runtime), ["runtime_revision"]);
+      assert.equal(
+        state.container.Config.Labels["io.antnest.agent-id"],
+        row.id,
+      );
+    }
+    for (const run of [
+      row.before_run,
+      row.after_run,
+      ...row.audit.all.map((saved) => saved.run),
+    ])
+      assert.deepEqual(Object.keys(run.execution_snapshot).sort(), [
+        "agentExecutionSpecDigest",
+        "agentSpecRevision",
+        "configurationRevision",
+        "deadlineAt",
+        "executionRevision",
+        "executionSpec",
+        "modelProfileId",
+        "providerConnectionId",
+      ]);
+  }
+  assert.deepEqual(inspect(evidence), summary);
 });
 
 test("Loss returns only safe counts, including when private initialization metadata has additional fields", () => {
@@ -143,28 +182,116 @@ test("Loss binds durable input and Principal to the original owner and SDK promp
   });
 });
 
-test("Loss rejects stale or foreign execution/Runtime snapshots for both phases", () => {
+test("Loss binds the public ready Agent to the original login owner and creation organization", () => {
+  requireAPI();
+  rejects((e) => {
+    e.principal.organization_id = "foreign-organization";
+  });
+  rejects((e) => {
+    e.creation_principal = encodeURIComponent(
+      JSON.stringify(["foreign-organization", "loss-administrator"]),
+    );
+  });
+  rejects((e) => {
+    e.creation_principal = encodeURIComponent(
+      JSON.stringify([e.principal.organization_id, ""]),
+    );
+  });
+  for (const mode of ["live", "cold"])
+    for (const phase of ["initial", "replacement"]) {
+      rejects((e) => {
+        agent(e, mode)[phase].agent.agent_id = "foreign-agent";
+      });
+      rejects((e) => {
+        agent(e, mode)[phase].agent.owner_user_id = "foreign-owner";
+      });
+    }
+});
+
+test("Loss rejects stale or foreign public spec and execution revisions for both phases", () => {
   requireAPI();
   for (const mode of ["live", "cold"]) {
+    for (const moment of ["before", "after"]) {
+      rejects((e) => {
+        mutateSnapshot(e, mode, moment, (snapshot) => {
+          snapshot.agentSpecRevision = "foreign-agent-spec";
+        });
+      });
+      rejects((e) => {
+        mutateSnapshot(e, mode, moment, (snapshot) => {
+          snapshot.executionRevision = "foreign-execution-revision";
+        });
+      });
+      rejects((e) => {
+        mutateSnapshot(e, mode, moment, (snapshot) => {
+          snapshot.configurationRevision = 0;
+        });
+      });
+    }
     rejects((e) => {
-      saved(e, mode, "after").run.execution_snapshot.executionRevision = agent(
-        e,
-        mode,
-      ).initial.agent.executable_execution_revision;
+      mutateSnapshot(e, mode, "after", (snapshot) => {
+        snapshot.executionRevision = agent(
+          e,
+          mode,
+        ).initial.agent.executable_execution_revision;
+      });
     });
     rejects((e) => {
-      saved(e, mode, "after").run.execution_snapshot.runtime.revision = agent(
-        e,
-        mode,
-      ).initial.agent.runtime.runtime_revision;
+      mutateSnapshot(e, mode, "after", (snapshot) => {
+        snapshot.agentSpecRevision = agent(
+          e,
+          mode,
+        ).initial.agent.agent_spec_revision;
+      });
+    });
+  }
+});
+
+test("Loss binds Runtime lineage to the original inspected container and replacement", () => {
+  requireAPI();
+  for (const mode of ["live", "cold"]) {
+    for (const phase of ["initial", "replacement"]) {
+      rejects((e) => {
+        agent(e, mode)[phase].agent.runtime.runtime_revision = "";
+      });
+      rejects((e) => {
+        agent(e, mode)[phase].container.Id = "";
+      });
+      rejects((e) => {
+        agent(e, mode)[phase].container.Config.Labels["io.antnest.agent-id"] =
+          "foreign-agent";
+      });
+      rejects((e) => {
+        delete agent(e, mode)[phase].container.Config.Labels[
+          "io.antnest.runtime-controller-scope"
+        ];
+      });
+    }
+    rejects((e) => {
+      const row = agent(e, mode);
+      row.replacement.agent.runtime.runtime_revision =
+        row.initial.agent.runtime.runtime_revision;
     });
     rejects((e) => {
-      saved(e, mode).run.execution_snapshot.runtime.executionId =
-        "foreign-runtime-execution";
+      const row = agent(e, mode);
+      row.replacement.container.Id = row.initial.container.Id;
     });
     rejects((e) => {
-      saved(e, mode).run.execution_snapshot.runtime.mcpEndpoint =
-        "http://foreign-runtime/mcp";
+      agent(e, mode).replacement.container.Config.Labels[
+        "io.antnest.runtime-controller-scope"
+      ] = "antnest-lifecycle-ff123456";
+    });
+    rejects((e) => {
+      agent(e, mode).replacement.volume = "foreign-workspace";
+    });
+    rejects((e) => {
+      agent(e, mode).replacement.agent.configuration.template.template_id =
+        "foreign-template";
+    });
+    rejects((e) => {
+      const row = agent(e, mode);
+      row.replacement.agent.aggregate_sequence =
+        row.initial.agent.aggregate_sequence;
     });
   }
 });

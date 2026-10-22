@@ -426,6 +426,12 @@ remain required. Request, lifecycle and strict Trace collectors share one
 60-second auxiliary budget. Original findings and unavailable collections are
 retained; actual seven-service stops and resource joins remain hard requirements.
 
+Organization scope comes from the original login, creation principal and
+authenticated requests. Public Agent and Run projections bind the owner, Agent,
+Session, spec and execution revision. Captured container IDs, scope/Agent labels,
+public Runtime revisions and workspace volumes establish replacement lineage;
+the real flow separately verifies physical Runtime and SQL observations.
+
 Two Agents each complete a real Bash append before their idle Runtime is
 stopped and removed without force.
 

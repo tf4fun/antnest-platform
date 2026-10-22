@@ -137,15 +137,18 @@ function inspectOwner(evidence) {
 function inspectAgent(agent, principal) {
   nonempty(agent.id, "original Loss Agent required");
   nonempty(agent.session_id, "original Loss Session required");
+  const scopeLabel = "io.antnest.runtime-controller-scope";
+  const scope = agent.initial?.container?.Config?.Labels?.[scopeLabel];
+  requireFact(
+    typeof scope === "string" && /^antnest-lifecycle-[a-f0-9]{8}$/u.test(scope),
+    "original Loss Runtime scope required",
+  );
   for (const state of [agent.initial, agent.replacement]) {
     requireFact(object(state?.agent), "original Loss ready Agent required");
     const row = state.agent;
     same(row.agent_id, agent.id, "foreign Loss ready Agent");
-    same(
-      row.organization_id,
-      principal.organization_id,
-      "foreign Loss ready organization",
-    );
+    // The public Agent DTO carries owner identity; the original login and
+    // creation principal establish organization scope in inspectOwner.
     same(row.owner_user_id, principal.user_id, "foreign Loss ready owner");
     for (const [field, expected] of Object.entries({
       desired_state: "enabled",
@@ -159,7 +162,6 @@ function inspectAgent(agent, principal) {
         "Loss Agent was not ready for its original prompt",
       );
     for (const field of [
-      "access_revision",
       "agent_spec_revision",
       "executable_execution_revision",
     ])
@@ -170,15 +172,21 @@ function inspectAgent(agent, principal) {
       "Loss Agent executable revision differs from successful revision",
     );
     requireFact(object(row.runtime), "original Loss Runtime binding required");
-    for (const field of [
-      "runtime_revision",
-      "runtime_execution_id",
-      "mcp_endpoint",
-    ])
-      nonempty(
-        row.runtime[field],
-        "original Loss Runtime binding field required",
-      );
+    nonempty(
+      row.runtime.runtime_revision,
+      "original Loss Runtime revision required",
+    );
+    nonempty(state.container?.Id, "original Loss Runtime container required");
+    const labels = state.container?.Config?.Labels;
+    requireFact(object(labels), "original Loss Runtime labels required");
+    same(labels[scopeLabel], scope, "foreign Loss Runtime scope");
+    same(labels["io.antnest.agent-id"], agent.id, "foreign Loss Runtime Agent");
+    nonempty(state.volume, "original Loss workspace volume required");
+    requireFact(
+      Number.isSafeInteger(row.aggregate_sequence) &&
+        row.aggregate_sequence > 0,
+      "original Loss Agent sequence required",
+    );
   }
   const before = agent.initial.agent,
     after = agent.replacement.agent;
@@ -194,9 +202,17 @@ function inspectAgent(agent, principal) {
   );
   requireFact(
     after.runtime.runtime_revision !== before.runtime.runtime_revision &&
-      after.runtime.runtime_execution_id !==
-        before.runtime.runtime_execution_id,
+      agent.replacement.container.Id !== agent.initial.container.Id,
     "Loss Rebuild retained the old Runtime identity",
+  );
+  requireFact(
+    after.aggregate_sequence > before.aggregate_sequence,
+    "Loss Rebuild did not advance the original Agent sequence",
+  );
+  same(
+    agent.replacement.volume,
+    agent.initial.volume,
+    "Loss Rebuild changed the original workspace",
   );
 }
 
@@ -372,29 +388,16 @@ function inspectConnections(evidence, agent) {
   };
 }
 
-function inspectSnapshot(run, state, principal) {
+function inspectSnapshot(run, state) {
   const snapshot = run.execution_snapshot,
     agent = state.agent;
-  requireFact(
-    object(snapshot) && object(snapshot.runtime),
-    "original Loss execution snapshot required",
-  );
-  same(
-    snapshot.organizationId,
-    principal.organization_id,
-    "Loss Run snapshot changed organization",
-  );
+  requireFact(object(snapshot), "original Loss execution snapshot required");
   for (const field of ["providerConnectionId", "modelProfileId"])
     nonempty(snapshot[field], "Loss Run snapshot lost its model identity");
   requireFact(
     Number.isSafeInteger(snapshot.configurationRevision) &&
       snapshot.configurationRevision > 0,
     "Loss Run snapshot lost configuration revision",
-  );
-  same(
-    snapshot.accessRevision,
-    agent.access_revision,
-    "Loss Run snapshot changed access revision",
   );
   same(
     snapshot.agentSpecRevision,
@@ -406,21 +409,9 @@ function inspectSnapshot(run, state, principal) {
     agent.executable_execution_revision,
     "Loss Run snapshot changed executable revision",
   );
-  for (const [stored, current] of [
-    ["revision", "runtime_revision"],
-    ["executionId", "runtime_execution_id"],
-    ["mcpEndpoint", "mcp_endpoint"],
-  ])
-    same(
-      snapshot.runtime[stored],
-      agent.runtime[current],
-      "Loss Run snapshot changed original Runtime binding",
-    );
-  // The public Controller Agent DTO does not expose connection_id.
-  nonempty(
-    snapshot.runtime.connectionId,
-    "Loss Run snapshot lost its private Runtime connection identity",
-  );
+  // Public Run snapshots omit organization/access and private Runtime bindings.
+  // Run owner/Agent/Session and public revisions are checked against original
+  // receipts; inspectAgent binds the captured Runtime container lineage.
 }
 function inspectEvents(page, run, agent, identities, sequences) {
   completePage(page, "Loss execution event page");
@@ -592,7 +583,7 @@ function inspectExecution(
       run.unknown_effect_source === null,
     "Loss Run retains unknown Tool effects",
   );
-  inspectSnapshot(run, after ? agent.replacement : agent.initial, principal);
+  inspectSnapshot(run, after ? agent.replacement : agent.initial);
   same(
     run,
     after ? agent.after_run : agent.before_run,

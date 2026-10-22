@@ -5,6 +5,7 @@ import { runSummary } from "./foundation-business-fixtures.mjs";
 const organization = "loss-organization";
 const owner = "loss-owner";
 const timestamp = "2026-10-22T00:00:00.000000Z";
+const scope = "antnest-lifecycle-ab123456";
 const usage = { inputTokens: 100, outputTokens: 20 };
 const setup = { cwd: "/workspace", mcpServers: [] };
 
@@ -29,38 +30,61 @@ function ready(mode, generation) {
   return {
     agent: {
       agent_id: "loss-" + mode,
-      organization_id: organization,
       owner_user_id: owner,
       name: mode + " loss Agent",
       desired_state: "enabled",
       lifecycle_state: "created",
       activation_state: "enabled",
       runtime_state: "available",
-      access_revision: mode + "-access",
       aggregate_sequence: generation * 3,
-      agent_spec_revision: mode + "-spec",
+      agent_spec_revision: mode + "-spec-" + generation,
       executable_execution_revision: revision,
       last_successful_execution_revision: revision,
       runtime: {
         runtime_revision: mode + "-runtime-" + generation,
-        runtime_execution_id: mode + "-execution-" + generation,
-        mcp_endpoint:
-          "http://runtime-controller:8080/instances/" +
-          mode +
-          "-" +
-          generation +
-          "/mcp",
       },
       configuration: {
-        template: { template_id: "loss-template", revision: 1 },
+        template: {
+          template_id: "loss-template",
+          revision: 1,
+          name: "Loss template",
+        },
+        model_profile: {
+          model_profile_id: "loss-model-profile",
+          revision_id: "loss-model-profile-revision",
+          revision: 1,
+          name: "Loss model profile",
+          model: {
+            base_url: "http://model:8080/v1",
+            model: "loss-model",
+            context_window: 8192,
+            max_output_tokens: 1024,
+            supports_images: false,
+          },
+        },
+        max_model_requests: 4,
+        context_policy_version: "context-v1",
+        runtime: {
+          image_ref: "loss-runtime:fixture",
+          resources: {
+            memory_bytes: 268435456,
+            pids_limit: 128,
+            tmpfs_bytes: 67108864,
+          },
+        },
       },
+      runtime_observed_at: timestamp,
       created_at: timestamp,
       updated_at: timestamp,
     },
     container: {
       Id: mode + "-container-" + generation,
       Config: {
-        Labels: { "io.antnest.runtime-generation": String(generation) },
+        Labels: {
+          "io.antnest.agent-id": "loss-" + mode,
+          "io.antnest.runtime-controller-scope": scope,
+          "io.antnest.runtime-generation": String(generation),
+        },
       },
       State: { Running: true, Health: { Status: "healthy" } },
     },
@@ -70,10 +94,10 @@ function ready(mode, generation) {
   };
 }
 
-// Same parsed Admin Run/detail/event DTOs that lossCase() can read. The
-// snake_case Agent.runtime and camelCase stored RunSnapshot.runtime fields are
-// deliberately distinct; no public Agent connection_id or Tool-attempt API is
-// invented. Physical Runtime/SQL/cleanup acceptance stays in the real flow.
+// Same parsed public Admin Agent/Run/detail/event DTOs that lossCase() reads.
+// Private organization/access/Runtime bindings are absent from these projections;
+// the ready Runtime revision and inspected container retain physical lineage.
+// Physical Runtime/SQL/cleanup acceptance stays in the real flow.
 function execution(mode, moment, state) {
   const after = moment === "after";
   const phase = "c5-" + mode + "-" + moment;
@@ -109,21 +133,30 @@ function execution(mode, moment, state) {
     updated_at: timestamp,
     input,
     execution_snapshot: {
-      organizationId: organization,
       providerConnectionId: "loss-provider",
-      modelProfileId: "loss-model",
+      modelProfileId: "loss-model-profile",
       configurationRevision: after ? 2 : 1,
-      accessRevision: agent.access_revision,
       agentSpecRevision: agent.agent_spec_revision,
       executionRevision: agent.executable_execution_revision,
-      runtime: {
-        revision: agent.runtime.runtime_revision,
-        executionId: agent.runtime.runtime_execution_id,
-        mcpEndpoint: agent.runtime.mcp_endpoint,
-        connectionId:
-          "rci_" +
-          (mode === "live" ? "a" : "b").repeat(31) +
-          (after ? "2" : "1"),
+      deadlineAt: "2026-10-22T00:02:00.000Z",
+      agentExecutionSpecDigest: "e".repeat(64),
+      executionSpec: {
+        systemPrompt: "Complete the original Loss business prompt.",
+        contextPolicyVersion: agent.configuration.context_policy_version,
+        maxModelRequests: agent.configuration.max_model_requests,
+        model: {
+          model: agent.configuration.model_profile.model.model,
+          contextWindow: agent.configuration.model_profile.model.context_window,
+          maxOutputTokens:
+            agent.configuration.model_profile.model.max_output_tokens,
+          supportsImages:
+            agent.configuration.model_profile.model.supports_images,
+        },
+        configuration: {
+          modelProfileId: "loss-model-profile",
+          authorizationRevision: 1,
+          authorization: { mode: "auto", toolRules: [] },
+        },
       },
     },
     terminal_class: "completed",
