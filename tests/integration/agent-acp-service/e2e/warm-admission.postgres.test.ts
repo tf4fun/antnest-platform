@@ -51,7 +51,7 @@ describe.skipIf(databaseUrl === undefined)(
   "production ACP warm admission",
   () => {
     it.each([1, 2] as const)(
-      "v%s admits a persisted new Run after restart without another configuration publication",
+      "v%s admits a persisted new Run before republication and uses a newer revision in the same restarted instance",
       async (version) => {
         expect(new URL(databaseUrl!).pathname).toMatch(/_test$/u);
         const pool = new Pool({
@@ -195,7 +195,14 @@ describe.skipIf(databaseUrl === undefined)(
           ).rows;
         }
 
-        async function exercise(service: RunningAgentAcpService) {
+        async function exercise(
+          service: RunningAgentAcpService,
+          expected = {
+            configurationRevision: 1,
+            model: "test-model",
+            modelRequestCount: 1,
+          },
+        ) {
           const connected = track(
             AcpWireClient.connect(
               serviceOrigin(service).replace("http:", "ws:") +
@@ -252,7 +259,7 @@ describe.skipIf(databaseUrl === undefined)(
             agent_id: "agent-1",
             principal_id: "principal-1",
             execution_snapshot: {
-              configurationRevision: 1,
+              configurationRevision: expected.configurationRevision,
               providerConnectionId: "provider-1",
               runtime: { executionId: runtimeExecutionId, connectionId },
             },
@@ -269,12 +276,13 @@ describe.skipIf(databaseUrl === undefined)(
           const models = modelRequests.filter(
             (request) => request.boot === boot,
           );
-          expect(models).toHaveLength(1);
-          expect(models[0]).toMatchObject({
+          expect(models).toHaveLength(expected.modelRequestCount);
+          const latestModel = models.at(-1)!;
+          expect(latestModel).toMatchObject({
             authorized: true,
-            model: "test-model",
+            model: expected.model,
           });
-          expect(JSON.stringify(models[0]!.messages)).toContain(text);
+          expect(JSON.stringify(latestModel.messages)).toContain(text);
           const runtimes = runtimeRequests.filter(
             (request) => request.boot === boot,
           );
@@ -490,6 +498,65 @@ describe.skipIf(databaseUrl === undefined)(
           expect(secondDirectory).toBeDefined();
           if (secondDirectory === undefined)
             throw new Error("Missing restored sender directory");
+          assertSender(secondDirectory);
+          expect(existsSync(firstDirectory)).toBe(false);
+          expect(ownershipLost).not.toHaveBeenCalled();
+
+          // This same warm instance must accept the next real control
+          // publication and use it for new work, without replaying either Run.
+          expect(modelRequests).toHaveLength(2);
+          const replacement = structuredClone(configuration);
+          replacement.revision = configuration.revision + 1;
+          const replacementModel = "test-model-after-warm-publication";
+          replacement.models[0]!.model = replacementModel;
+          publicationCount++;
+          expect(
+            await http(
+              second,
+              "/rpc/agent-acp/apply-execution-snapshot",
+              {
+                method: "POST",
+                headers: {
+                  ...workloadHeaders("agent-controller"),
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify(replacement),
+              },
+              true,
+            ),
+          ).toEqual({
+            status: 200,
+            body: {
+              organization_id: configuration.organization_id,
+              applied_revision: replacement.revision,
+            },
+          });
+          expect(modelRequests).toHaveLength(2);
+          expect(await stored(before.sessionId)).toEqual(before.rows);
+          expect(await stored(after.sessionId)).toEqual(after.rows);
+
+          const republished = await exercise(second, {
+            configurationRevision: replacement.revision,
+            model: replacementModel,
+            modelRequestCount: 2,
+          });
+          expect([before.sessionId, after.sessionId]).not.toContain(
+            republished.sessionId,
+          );
+          expect([before.rows[0]!.id, after.rows[0]!.id]).not.toContain(
+            republished.rows[0]!.id,
+          );
+          expect(modelRequests.map((request) => request.model)).toEqual([
+            "test-model",
+            "test-model",
+            replacementModel,
+          ]);
+          expect(await stored(before.sessionId)).toEqual(before.rows);
+          expect(await stored(after.sessionId)).toEqual(after.rows);
+          expect(publicationCount).toBe(2);
+          expect(services).toHaveLength(2);
+          expect(services[0]).toBe(first);
+          expect(services[1]).toBe(second);
           assertSender(secondDirectory);
           expect(existsSync(firstDirectory)).toBe(false);
           expect(ownershipLost).not.toHaveBeenCalled();
