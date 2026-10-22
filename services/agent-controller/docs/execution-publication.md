@@ -196,13 +196,29 @@ Unicode and NUL identities survive PostgreSQL and restart without normalization.
 
 An existing tuple returns its original receipt before current policy, Template,
 cooldown or lifecycle checks. A regular lifecycle operation without a matching
-recovery receipt cannot be converted into a recovery. A new admission requires
-the observed policy revision in `auto` mode, the same configured Runtime/source
+recovery receipt cannot be converted into a recovery. A new automatic admission
+requires the observed policy revision in `auto` mode, the same configured Runtime/source
 and Template revision, unchanged owner authorization and revocation watermarks,
 and an active owner binding. It retains the existing lifecycle CAS and does not
 require execution readiness or equate the barrier's original execution ID with
 a later health observation. The absent policy defaults to `manual`; neither
 `manual` nor `notify` admits automatic recovery.
+
+Migration 0029 adds an explicit `manual` origin flag, defaulting existing
+receipts to automatic. An internal manual intent retains the authenticated
+administrator's actor and can use any valid current policy mode; it still
+requires the exact policy revision and every source, lifecycle, authorization
+watermark and cooldown check. The flag is never part of the public request or
+the existing six-field lifecycle fingerprint. Receipt readers and Temporal
+startup use the saved origin, actor and policy. Automatic receipts still require
+the `agent-controller` actor and an accepted `auto` policy. Cross-origin replay
+follows the original operation and never renews its cooldown.
+
+The internal flag is not authorization. The manual HTTP entry must verify the
+existing administrator workload/CCT scope before both admission and replay.
+That HTTP entry, persistent notifications, the Agent detail projection and UI
+consumers remain pending in this batch; these storage and application changes
+alone do not expose a user recovery action.
 
 Lock order is lifecycle request, policy organization, Identity admission,
 execution organization, Agent, owner binding/cooldown and event journal. After

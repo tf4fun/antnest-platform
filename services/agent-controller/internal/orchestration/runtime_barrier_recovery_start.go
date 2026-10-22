@@ -142,8 +142,8 @@ func runtimeBarrierRecoveryWorkflowCommand(receipt ports.RuntimeBarrierRecoveryR
 	}) || !domain.ValidRuntimeBarrierPolicyIdentifier(fact.OrganizationID) ||
 		!domain.ValidRuntimeBarrierPolicyIdentifier(fact.AgentID) ||
 		command.OrganizationID != fact.OrganizationID || command.AgentID != fact.AgentID ||
-		command.ActorPrincipalID != "agent-controller" || !domain.ValidRuntimeBarrierPolicyIdentifier(command.TemplateID) || command.TemplateRevision < 1 ||
-		receipt.Policy.OrganizationID != fact.OrganizationID || receipt.Policy.Validate() != nil || receipt.Policy.Mode != "auto" ||
+		!ports.ValidRuntimeBarrierRecoveryActor(command.ActorPrincipalID, receipt.Manual) || !domain.ValidRuntimeBarrierPolicyIdentifier(command.TemplateID) || command.TemplateRevision < 1 ||
+		receipt.Policy.OrganizationID != fact.OrganizationID || receipt.Policy.Validate() != nil || (!receipt.Manual && receipt.Policy.Mode != "auto") ||
 		receipt.AcceptedAt.IsZero() || !receipt.CooldownUntil.Equal(receipt.AcceptedAt.Add(time.Duration(receipt.Policy.CooldownMS)*time.Millisecond)) {
 		return application.LifecycleCommand{}, ports.ErrInvalidRuntimeBarrierRecovery
 	}

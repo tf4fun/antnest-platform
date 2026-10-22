@@ -23,6 +23,9 @@ type RuntimeBarrierRebuildCommand struct {
 }
 
 type RuntimeBarrierRecoveryIntent struct {
+	// Manual is supplied only by the authenticated recovery application path.
+	// It is not a client field and never changes the lifecycle fingerprint.
+	Manual                             bool
 	Fact                               RuntimeBarrierResult
 	ExpectedPolicyRevision             int64
 	ExpectedOwnerUserID                string
@@ -34,6 +37,7 @@ type RuntimeBarrierRecoveryIntent struct {
 // RuntimeBarrierRecoveryReceipt is immutable after the admission transaction.
 // Starting the original workflow changes only its separate pending-start row.
 type RuntimeBarrierRecoveryReceipt struct {
+	Manual             bool
 	Fact               RuntimeBarrierResult
 	Policy             domain.RuntimeBarrierRecoveryPolicy
 	Command            RuntimeBarrierRebuildCommand
@@ -46,6 +50,12 @@ type RuntimeBarrierRecoveryStore interface {
 	ReplayRuntimeBarrierRecovery(context.Context, string, string, string) (RuntimeBarrierRecoveryReceipt, bool, error)
 	ListPendingRuntimeBarrierRecoveryStarts(context.Context, string, int) ([]RuntimeBarrierRecoveryReceipt, error)
 	ConfirmRuntimeBarrierRecoveryStarted(context.Context, string, string) error
+}
+
+// ValidRuntimeBarrierRecoveryActor validates persisted origin, not authority.
+// The HTTP boundary must authenticate and authorize every manual request first.
+func ValidRuntimeBarrierRecoveryActor(actor string, manual bool) bool {
+	return domain.ValidRuntimeBarrierPolicyIdentifier(actor) && (manual || actor == "agent-controller")
 }
 
 func RuntimeBarrierRecoveryRequestID(organizationID, agentID, barrierID string) (string, error) {
