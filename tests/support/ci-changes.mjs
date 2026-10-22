@@ -599,10 +599,9 @@ function tierC() {
   const families = {
     "Stage 3a": [
       ["e2e-stage3-local", "base", stage3aProfile()],
-      ...["acp-restart", "rpc-response-loss"].map((name) => [
-        `e2e-${name}`,
-        name,
-      ]),
+      ...["acp-restart", "acp-restart-auto", "rpc-response-loss"].map(
+        (name) => [`e2e-${name}`, name],
+      ),
       ...[
         ["stage3-skill-delivery", "ANTNEST_E2E_SKILL_DELIVERY=true"],
         [
@@ -1174,7 +1173,7 @@ export const shards = [
   {
     id: "c-acp-recovery",
     name: "ACP restart and response loss",
-    suites: ["c-acp-restart", "c-rpc-response-loss"],
+    suites: ["c-acp-restart", "c-acp-restart-auto", "c-rpc-response-loss"],
   },
   {
     id: "c-skill-delivery",

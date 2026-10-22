@@ -640,12 +640,15 @@ e2e-managed-mcp-v1:
 e2e-managed-mcp-v2:
 	node tests/e2e/managed-mcp/secrets-docker.mjs 2
 
-.PHONY: test-acp-restart-fixtures e2e-acp-restart
+.PHONY: test-acp-restart-fixtures e2e-acp-restart e2e-acp-restart-auto
 test-acp-restart-fixtures:
 	node --test --test-concurrency=1 tests/e2e/acp-restart/*.test.mjs
 
 e2e-acp-restart:
 	ANTNEST_E2E_ACP_RESTART=true sh tests/e2e/e2e-stage3a.sh
+
+e2e-acp-restart-auto:
+	ANTNEST_E2E_ACP_RESTART=true ANTNEST_RESTART_RECOVERY_MODE=auto sh tests/e2e/e2e-stage3a.sh
 
 # Explicit abnormal-exit diagnostic; excluded from stable lifecycle targets.
 .PHONY: e2e-lifecycle-crash
