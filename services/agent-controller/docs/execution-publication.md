@@ -227,6 +227,30 @@ the command pending. The bounded observation worker, durable ensure-start,
 manual/notify presentation and actual ACP mid-tool-crash recovery acceptance
 remain required before the complete recovery workflow is delivered.
 
+### Application Admission
+
+`RuntimeBarrierRecoveryAdmissionService` checks the scoped original receipt
+before loading current Agent, Template or Skill preparation data. A committed
+receipt replays its original six-field Rebuild command even after policy,
+owner or Template observations change. Receipt and operation scope,
+fingerprint, configured source Runtime and target Template must agree;
+missing or inconsistent persisted state is a contract error.
+
+New recovery admission shares ordinary Rebuild preparation, including its
+stable target ID, Skill intent and drain duration. It passes recovery metadata
+to the atomic repository transaction and then reads the persisted receipt;
+the application never invents acceptance or cooldown timestamps. A normal
+lifecycle operation alone cannot substitute for a recovery receipt. If
+preparation or Begin fails after a concurrent or unknown commit, a valid
+original recovery receipt takes precedence; otherwise the original error is
+preserved.
+
+Cancellation stops subsequent dependency calls at admission boundaries. A
+cancelled preparation does not begin a new lifecycle; cancellation after a
+commit leaves its original command pending. This application service never
+starts a workflow or acknowledges a pending start. Its observation worker
+and Temporal ensure-start integration remain separate delivery batches.
+
 ## Lifecycle Settlement
 
 The lifecycle application, not PostgreSQL, decides whether drain may advance.
