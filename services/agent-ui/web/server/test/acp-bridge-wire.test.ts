@@ -91,7 +91,17 @@ test("Agent state watch parses split SSE frames and fails closed on revocation",
     active_session_id: "session-2",
     unavailable_reason: null,
   };
-  const wire = `event: workspace_state\ndata: ${JSON.stringify(state)}\n\n`;
+  const states = [
+    state,
+    { ...state, availability: "offline", active_session_id: null,
+      unavailable_reason: "runtime_barrier_required" },
+    { ...state, availability: "offline", active_session_id: null,
+      unavailable_reason: "agent_unavailable" },
+    { ...state, availability: "ready", active_session_id: null,
+      unavailable_reason: null },
+  ];
+  const wire = states.map((value) =>
+    `event: workspace_state\ndata: ${JSON.stringify(value)}\n\n`).join("");
   const encoder = new TextEncoder();
   const response = new Response(new ReadableStream({
     start(controller) {
@@ -104,7 +114,12 @@ test("Agent state watch parses split SSE frames and fails closed on revocation",
   await consumeAgentExecutionStateStream(response, "agent:1", (value) => {
     observed.push(value);
   }, new AbortController().signal);
-  assert.deepEqual(observed, [{ availability: "busy", activeSessionId: "session-2" }]);
+  assert.deepEqual(observed, [
+    { availability: "busy", activeSessionId: "session-2", unavailableReason: null },
+    { availability: "offline", activeSessionId: null, unavailableReason: "runtime_barrier_required" },
+    { availability: "offline", activeSessionId: null, unavailableReason: "agent_unavailable" },
+    { availability: "ready", activeSessionId: null, unavailableReason: null },
+  ]);
   const revoked = { ...state, access_allowed: false, availability: "offline",
     active_session_id: null, configuration_revision: null,
     unavailable_reason: "access_denied" };
@@ -114,6 +129,15 @@ test("Agent state watch parses split SSE frames and fails closed on revocation",
       { headers: { "content-type": "text/event-stream" } },
     ), "agent:1", () => {}, new AbortController().signal),
     AgentAccessRevokedError,
+  );
+  await assert.rejects(
+    consumeAgentExecutionStateStream(new Response(
+      `event: workspace_state\ndata: ${JSON.stringify({ ...state,
+        availability: "offline", active_session_id: null,
+        unavailable_reason: "unknown_reason" })}\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    ), "agent:1", () => {}, new AbortController().signal),
+    BridgeCapabilityError,
   );
 });
 
@@ -128,8 +152,17 @@ test("Agent execution state rejects denied or mismatched scopes", async () => {
   };
   assert.deepEqual(
     await parseAgentExecutionState(new Response(JSON.stringify(state)), "agent:1"),
-    { availability: "busy", activeSessionId: "session-2" },
+    { availability: "busy", activeSessionId: "session-2", unavailableReason: null },
   );
+  for (const unavailableReason of ["runtime_barrier_required", "agent_unavailable", null]) {
+    const availability = unavailableReason === null ? "ready" : "offline";
+    assert.deepEqual(
+      await parseAgentExecutionState(new Response(JSON.stringify({
+        ...state, availability, active_session_id: null, unavailable_reason: unavailableReason,
+      })), "agent:1"),
+      { availability, activeSessionId: null, unavailableReason },
+    );
+  }
   await assert.rejects(
     parseAgentExecutionState(new Response(JSON.stringify(state)), "agent:2"),
     BridgeCapabilityError,
@@ -138,6 +171,13 @@ test("Agent execution state rejects denied or mismatched scopes", async () => {
     parseAgentExecutionState(new Response(JSON.stringify({
       ...state,
       access_allowed: false,
+    })), "agent:1"),
+    BridgeCapabilityError,
+  );
+  await assert.rejects(
+    parseAgentExecutionState(new Response(JSON.stringify({
+      ...state, availability: "offline", active_session_id: null,
+      unavailable_reason: "unknown_reason",
     })), "agent:1"),
     BridgeCapabilityError,
   );

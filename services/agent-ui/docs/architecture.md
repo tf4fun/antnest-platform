@@ -103,6 +103,19 @@ it is outside the Agent UI browser path.
 
 ## Boundaries and failure behavior
 
+Authorized ACP Agent execution-state reads and watches supply the optional
+`AgentView.unavailableReason`. Node preserves only the public classification;
+snapshots and SSE deltas never include barrier IDs or recovery request details.
+The browser clears prior guidance on a null or absent replacement reason,
+Agent/identity changes, loss of a current view and access revocation. A healthy
+management Runtime does not hide an execution barrier. With no Session selected,
+the workspace still explains that an interrupted tool call requires recovery.
+Verified administrators receive a same-origin link to that Agent's existing
+Console recovery action; other members are directed to an administrator. Agent
+UI sends no Rebuild command and does not expand lifecycle permissions. Console
+authorizes the action and requires confirmation of the current recovery identity.
+This service projection is separate from real manual fault-recovery acceptance.
+
 The browser never receives the ACP access subject, provider credentials,
 internal service addresses or Runtime endpoints. Gateway owns browser identity
 and CSRF; Node scopes its owners and private caches to that identity. Access

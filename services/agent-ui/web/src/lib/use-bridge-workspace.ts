@@ -138,7 +138,8 @@ export function useBridgeWorkspace(options: {
       bridge.view?.agentId === listed.id &&
       (bridge.view.availability === "ready" || bridge.view.availability === "busy" ||
         bridge.view.availability === "offline") ? bridge.view.availability : "unknown";
-    return { ...listed, status };
+    return { ...listed, status,
+      unavailableReason: status === "unknown" ? null : bridge.view?.unavailableReason ?? null };
   }, [workspace?.agents, workspace?.activeAgentId, bridge.connection, bridge.view]);
   const activeConversation = workspace?.conversations.find((item) =>
     item.agentId === workspace.activeAgentId && item.id === workspace.activeConversationId);

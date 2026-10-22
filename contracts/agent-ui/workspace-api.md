@@ -101,6 +101,19 @@ requests. An older operation not discoverable in that set remains available
 through its direct operation URL; the arrays are not an archive of every
 Session. Entries retain their `sessionId`, and the Bridge must not hide a
 running operation merely because a different Session was selected.
+
+The optional nullable `unavailableReason` carries only ACP's authorized
+`agent_unavailable` or `runtime_barrier_required` classification, through both
+the read and watch projection. It contains no barrier, recovery-request or
+Runtime identifiers. Null, omission in a replacement snapshot, scope replacement
+and access revocation clear prior guidance. An available management Runtime does
+not override this execution fact. The browser explains a Runtime barrier even
+without a selected Session. A verified administrator receives a same-origin
+`/#agents/{encodedAgentId}` link to the existing Console recovery action;
+ordinary members receive contact-administrator guidance. Agent UI performs no
+Rebuild mutation and grants no new lifecycle authority. The Console still
+authorizes and confirms recovery using the current original recovery identity.
+
 The [Skill learning contract](../skill-learning/learning-api.md) defines the
 optional `systemNotices` Agent View field and corresponding delta path. Node
 populates it from SDK `notice` updates plus bounded learning-record recovery. The
@@ -349,7 +362,7 @@ Session's `viewRevision`. A `delta` carries `sessionId`, `incarnation`,
 Agent-only selection. The browser requires the same selection/incarnation and
 the exact preceding Session revision before applying the event atomically.
 Its `patch` contains 1–128 JSON Patch operations (`add`, `replace`, `remove`)
-against the retained **Agent View**, limited to availability, active Session,
+against the retained **Agent View**, limited to availability, unavailable reason, active Session,
 prompt capabilities, operations, permissions and mutable selected-view fields.
 Identity, selection, epoch and incarnation cannot be patched. Prototype paths
 are forbidden. Add/replace require a value; remove has no value. Array indexes

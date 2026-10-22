@@ -160,6 +160,7 @@ export type ExecutionObservation = z.infer<typeof observationSchema>;
 export type AgentExecutionState = {
   availability: "ready" | "busy" | "offline";
   activeSessionId: string | null;
+  unavailableReason?: "agent_unavailable" | "runtime_barrier_required" | null;
 };
 
 export class BridgeCapabilityError extends Error {
@@ -607,6 +608,7 @@ function parseAuthorizedAgentState(
   return {
     availability: state.data.availability,
     activeSessionId: state.data.active_session_id,
+    unavailableReason: state.data.unavailable_reason,
   };
 }
 
