@@ -37,9 +37,12 @@ export function indexRestartRequests({
   recoveryMode = "manual",
 }) {
   nonempty(agentId);
-  assert(["manual", "auto"].includes(recoveryMode), "unknown recovery profile");
-  const automatic = recoveryMode === "auto";
-  assert.equal(connections.length, automatic ? 4 : 26);
+  assert(
+    ["manual", "auto", "manual-ui", "notify-ui"].includes(recoveryMode),
+    "unknown recovery profile",
+  );
+  const singleRecovery = recoveryMode !== "manual";
+  assert.equal(connections.length, singleRecovery ? 4 : 26);
   unique(
     connections.map((row) => row.connectionTraceID),
     "connection Trace",
@@ -51,8 +54,8 @@ export function indexRestartRequests({
   const requests = [],
     initializations = [],
     sessions = [];
-  for (const version of automatic ? [2] : [1, 2])
-    for (const kind of automatic ? ["inflight"] : kinds) {
+  for (const version of singleRecovery ? [2] : [1, 2])
+    for (const kind of singleRecovery ? ["inflight"] : kinds) {
       const label = `v${version}-${kind}`;
       const phase =
         kind === "inflight" ? `v${version}-tool-inflight` : label + "-fault";
@@ -112,7 +115,7 @@ export function indexRestartRequests({
                   sessionId,
                 ],
                 ...(c.role === "replay-1" ||
-                (automatic && c.role === "replay-2")
+                (singleRecovery && c.role === "replay-2")
                   ? []
                   : kind === "inflight" && c.role === "replay-2"
                     ? [
@@ -196,7 +199,7 @@ export function indexRestartRequests({
       }
     }
   unique(sessions, "Session");
-  assert.equal(requests.length, automatic ? 7 : 46);
-  assert.equal(initializations.length, automatic ? 4 : 26);
+  assert.equal(requests.length, singleRecovery ? 7 : 46);
+  assert.equal(initializations.length, singleRecovery ? 4 : 26);
   return { requests, initializations };
 }

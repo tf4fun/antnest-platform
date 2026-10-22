@@ -28,6 +28,13 @@ const goJSON = (value) =>
 // Rebuild for this disposable Agent. Filtering by the expected request/barrier
 // before admission could hide duplicate or manually initiated recovery.
 export function assertAutomaticRecoveryEvidence(data, expected) {
+  return assertRecoveryEvidence(data, expected, {
+    mode: "auto",
+    actor: "agent-controller",
+  });
+}
+
+export function assertRecoveryEvidence(data, expected, { mode, actor }) {
   for (const collection of ["cycles", "receipts", "rebuilds"]) {
     assert(Array.isArray(data[collection]), `missing ${collection} inventory`);
     assert.equal(data[collection].length, 1, `expected one ${collection} row`);
@@ -49,7 +56,7 @@ export function assertAutomaticRecoveryEvidence(data, expected) {
       source.template_revision > 0,
   );
   assert.equal(policy.organization_id, expected.organization_id);
-  assert.equal(policy.mode, "auto");
+  assert.equal(policy.mode, mode);
   assert(Number.isSafeInteger(policy.revision) && policy.revision > 0);
   assert(
     Number.isSafeInteger(policy.cooldown_ms) &&
@@ -82,7 +89,7 @@ export function assertAutomaticRecoveryEvidence(data, expected) {
     goJSON({
       RequestID: requestID,
       OrganizationID: expected.organization_id,
-      ActorPrincipalID: "agent-controller",
+      ActorPrincipalID: actor,
       AgentID: expected.agent_id,
       TemplateID: source.template_id,
       TemplateRevision: source.template_revision,
@@ -90,7 +97,7 @@ export function assertAutomaticRecoveryEvidence(data, expected) {
   );
   for (const [key, value] of Object.entries({
     reason: "runtime_barrier_required",
-    actor_principal_id: "agent-controller",
+    actor_principal_id: actor,
     template_id: source.template_id,
     template_revision: source.template_revision,
     source_template_id: source.template_id,
@@ -100,7 +107,7 @@ export function assertAutomaticRecoveryEvidence(data, expected) {
     source_execution_revision_id: source.execution_revision,
     source_runtime_revision: source.runtime_revision,
     policy_revision: policy.revision,
-    policy_mode: "auto",
+    policy_mode: mode,
     policy_cooldown_ms: policy.cooldown_ms,
     kind: "rebuild",
     state: "completed",
@@ -112,7 +119,7 @@ export function assertAutomaticRecoveryEvidence(data, expected) {
     requested_events: 1,
     requested_reason: "runtime_barrier_required",
   }))
-    assert.equal(receipt[key], value, `invalid automatic recovery ${key}`);
+    assert.equal(receipt[key], value, `invalid recovery ${key}`);
   for (const key of ["source_spec_revision_id", "target_spec_revision_id"])
     present(receipt[key]);
   for (const key of ["accepted_at", "cooldown_until", "started_at"])

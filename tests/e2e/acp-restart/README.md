@@ -16,6 +16,8 @@ npm --prefix services/agent-acp-service ci
 make test-acp-restart-fixtures
 make e2e-acp-restart
 make e2e-acp-restart-auto
+make e2e-acp-restart-manual-ui
+make e2e-acp-restart-notify-ui
 ```
 
 `make test-acp-restart-fixtures` runs serial local contract and HTTP component
@@ -85,9 +87,35 @@ joined connections, seven original ACP requests, two Runs (one unresolved and
 one completed), three model requests and one automatic Rebuild. The original
 eight manual cases retain their explicit barrier/refusal checks.
 
-The new suite is part of the remote `c-acp-recovery` gate. These requirements do
-not establish that the suite has passed, or complete the pending notify/manual
-UI delivery for issue #50.
+## Browser recovery
+
+The `manual-ui` and `notify-ui` targets each run one separate real v2 in-flight
+crash against the complete deployment. Install the Agent UI web dependencies
+and Playwright Chromium for local targeted runs; remote CI supplies both.
+The client publishes its original binding only after checking the interrupted
+Run and preserved history, then waits for the browser. It never sends Rebuild
+in either profile.
+
+An actual owner login observes the recovery reason in Workspace. The manual
+case uses an administrator owner and follows the existing Console link; the
+notify case uses a member owner and verifies that only the administrator-contact
+guidance is offered. A separate administrator browser confirms recovery through
+Console with the original barrier, configured Template, request ID and CSRF pair.
+The original operation lookup must return typed `operation_not_found` before
+the sole recovery POST. Opening the dialog and refreshing must not dispatch.
+
+Read-only PostgreSQL inventories prove that the worker observed the current
+binding and policy without admitting a Rebuild before confirmation. Notify
+requires one stable journal notification and its extension; manual requires none.
+Orphan journal entries and wrong-Agent references remain visible and fail
+admission. The browser closes and joins all readers before releasing the client.
+The original manual receipt, cooldown and completed operation are verified;
+the existing client then checks physical Runtime replacement, unchanged history,
+one successful new Run and actual deletion/cleanup. These profiles each require
+four joined ACP connections, seven original requests and three model requests.
+
+All four restart profiles belong to the remote `c-acp-recovery` gate. Source and
+fixture checks alone do not establish that the real browser or Docker cases passed.
 
 ## Trace rules
 

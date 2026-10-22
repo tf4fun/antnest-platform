@@ -785,3 +785,68 @@ test("inventory rejects an unknown recovery mode instead of silently accepting t
   assert.throws(() => index(f));
   assert.deepEqual(f, before);
 });
+
+for (const recoveryMode of ["manual-ui", "notify-ui"]) {
+  test(`${recoveryMode} binds one v2 in-flight case to four joined connections and seven complete requests`, async () => {
+    const f = { ...(await completeAutoInventory()), recoveryMode },
+      before = structuredClone(f);
+    const result = index(f);
+    assert.equal(f.connections.length, 4);
+    assert.equal(result.initializations.length, 4);
+    assert.equal(result.requests.length, 7);
+    assert.deepEqual(
+      result.requests.map((row) => row.method),
+      [
+        "session/new",
+        "session/new",
+        "session/prompt",
+        "session/resume",
+        "session/resume",
+        "session/resume",
+        "session/prompt",
+      ],
+    );
+    assert.deepEqual(
+      result.requests.map((row) => row.label),
+      [
+        "v2-inflight-new",
+        "v2-inflight-other-new",
+        "v2-tool-inflight",
+        "v2-inflight-replay-1",
+        "v2-inflight-replay-2",
+        "v2-inflight-rebuild-replay",
+        "v2-inflight-post",
+      ],
+    );
+    assert.notEqual(result.requests[0].sessionId, result.requests[1].sessionId);
+    assert(result.initializations.every((row) => row.version === 2));
+    assert(result.requests.every((row) => row.version === 2));
+    assert.equal(
+      result.requests.filter((row) => row.kind === "interruption").length,
+      1,
+    );
+    assert.equal(
+      result.requests.filter((row) => row.kind === "ordinary").length,
+      1,
+    );
+    assert.equal(
+      result.requests.filter((row) => row.outcome === "failed").length,
+      0,
+    );
+    assert.equal(result.requests.filter((row) => row.rejection).length, 0);
+    assert.deepEqual(f, before);
+  });
+
+  for (const [name, options] of [
+    ["an extra replay-2 Prompt", { extraReplay2: "prompt" }],
+    ["an ACP barrier-denial probe", { extraReplay2: "denied" }],
+    ["an extra independently recorded connection", { extraConnection: true }],
+    ["an internally consistent v1 profile", { version: 1 }],
+  ])
+    test(`${recoveryMode} inventory rejects ${name}`, async () => {
+      const f = { ...(await completeAutoInventory(options)), recoveryMode },
+        before = structuredClone(f);
+      assert.throws(() => index(f));
+      assert.deepEqual(f, before);
+    });
+}

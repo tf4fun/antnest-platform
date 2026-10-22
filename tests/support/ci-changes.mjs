@@ -602,6 +602,11 @@ function tierC() {
       ...["acp-restart", "acp-restart-auto", "rpc-response-loss"].map(
         (name) => [`e2e-${name}`, name],
       ),
+      ...["manual-ui", "notify-ui"].map((mode) => [
+        `e2e-acp-restart-${mode}`,
+        `acp-restart-${mode}`,
+        { browser: true },
+      ]),
       ...[
         ["stage3-skill-delivery", "ANTNEST_E2E_SKILL_DELIVERY=true"],
         [
@@ -1173,7 +1178,13 @@ export const shards = [
   {
     id: "c-acp-recovery",
     name: "ACP restart and response loss",
-    suites: ["c-acp-restart", "c-acp-restart-auto", "c-rpc-response-loss"],
+    suites: [
+      "c-acp-restart",
+      "c-acp-restart-auto",
+      "c-acp-restart-manual-ui",
+      "c-acp-restart-notify-ui",
+      "c-rpc-response-loss",
+    ],
   },
   {
     id: "c-skill-delivery",
