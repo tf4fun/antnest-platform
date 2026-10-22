@@ -399,3 +399,70 @@ test("Prompt inventory rejects truncated original browser JSON", () => {
   input.browserPrompts[0].rawBody = '{"intentId":';
   reject(input);
 });
+
+test("Prompt inventory accepts exact execution-state HTTP reads without counting them as Prompt dispatches", () => {
+  const input = inventory([0]);
+  input.gateAfter.records.unshift(
+    ...Array.from({ length: 4 }, () => ({
+      method: "POST",
+      path: "/rpc/agent-acp/get-agent-execution-state",
+      body: "{}",
+      forwarded: true,
+      response: null,
+    })),
+  );
+  accept(input, { browserPrompts: 1, gatePrompts: 1, forwardedPrompts: 0 });
+});
+
+for (const [name, body] of [
+  ["malformed JSON", '{"incomplete":'],
+  ["truncated capture", null],
+  ["absent body", undefined],
+  ["array body", "[]"],
+  ["nonempty object", '{"unexpected":true}'],
+  [
+    "smuggled JSON-RPC observation",
+    '{"jsonrpc":"2.0","id":91,"method":"session/list","params":{}}',
+  ],
+]) {
+  test(`Prompt inventory rejects execution-state HTTP reads with ${name}`, () => {
+    const input = inventory([0]);
+    const record = {
+      method: "POST",
+      path: "/rpc/agent-acp/get-agent-execution-state",
+      body,
+      forwarded: true,
+      response: null,
+    };
+    if (body === undefined) delete record.body;
+    input.gateAfter.records.push(record);
+    reject(input);
+  });
+}
+
+test("Prompt inventory rejects a Prompt smuggled onto the execution-state HTTP route", () => {
+  const input = inventory([0]);
+  const record = gatePrompt(input.expected[0].request, 0, 91);
+  record.path = "/rpc/agent-acp/get-agent-execution-state";
+  input.gateAfter.records.push(record);
+  reject(input);
+});
+
+for (const [name, path] of [
+  ["an unknown HTTP route", "/rpc/agent-acp/not-execution-state"],
+  ["a query suffix", "/rpc/agent-acp/get-agent-execution-state?unexpected=1"],
+  ["a path suffix", "/rpc/agent-acp/get-agent-execution-state/extra"],
+  ["the actual ACP JSON-RPC route", "/v1/acp"],
+]) {
+  test(`Prompt inventory rejects an empty-object POST on ${name}`, () => {
+    const input = inventory([0]);
+    input.gateAfter.records.push({
+      method: "POST",
+      path,
+      body: "{}",
+      forwarded: true,
+      response: null,
+    });
+    reject(input);
+  });
+}

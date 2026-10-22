@@ -182,6 +182,16 @@ export function assertPromptInventory({
       "New ACP request inventory contains an invalid HTTP request",
     );
     if (record.method !== "POST") continue;
+    // The Bridge polls this HTTP control route through the same captured ACP
+    // transport. Its empty-object request is not a JSON-RPC dispatch.
+    if (record.path === "/rpc/agent-acp/get-agent-execution-state") {
+      const body = parseBody(record.body);
+      assert.ok(
+        object(body) && Object.keys(body).length === 0,
+        "Captured execution-state HTTP request is invalid",
+      );
+      continue;
+    }
     const message = rpcMessage(record.body);
     if (message.method === "session/prompt") prompts.push({ record, message });
   }
