@@ -96,6 +96,16 @@ export async function verifyBrowserStreamRenewal({
       signal,
     );
     await composer.fill(phase);
+    const send = page.getByRole("button", {
+      name: "Send message",
+      exact: true,
+    });
+    await until(
+      async () => (await send.isVisible()) && (await send.isEnabled()),
+      "New conversation Prompt admission",
+      signal,
+      30_000,
+    );
     const [accepted] = await Promise.all([
       page.waitForResponse(
         (response) =>
@@ -119,8 +129,11 @@ export async function verifyBrowserStreamRenewal({
       signal,
     );
     await until(
-      () => composer.isDisabled(),
-      "Busy composer before lease renewal",
+      () =>
+        page
+          .getByRole("button", { name: "Stop operation", exact: true })
+          .isVisible(),
+      "Accepted operation before lease renewal",
       signal,
     );
     const isObserver = (response) =>
@@ -165,12 +178,17 @@ export async function verifyBrowserStreamRenewal({
       .locator(".message-assistant .message-content")
       .filter({ hasText: `${phase} completed` })
       .waitFor({ timeout: 20_000 });
+    // Control commands remain editable during a Run. Only a nonempty ordinary
+    // draft with an enabled Send control proves that the next Prompt is allowed.
+    // Do not dispatch that draft: the original Prompt must remain the only one.
+    await composer.fill("renewal readiness check");
     await until(
-      () => composer.isEnabled(),
+      async () => (await send.isVisible()) && (await send.isEnabled()),
       "Terminal state after CCT renewal",
       signal,
       20_000,
     );
+    await composer.fill("");
     const elapsedMs = Math.round(performance.now() - releasedAt);
     const final = await model();
     assert.equal(
