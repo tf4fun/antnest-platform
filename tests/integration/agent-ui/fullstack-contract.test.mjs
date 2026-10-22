@@ -101,6 +101,101 @@ test("Agent view keeps operation state visible without a selected Session", () =
   );
 });
 
+function unavailableReasonAgentView() {
+  return {
+    agentId: "agent-1",
+    bridgeEpoch: "epoch-1",
+    availability: "offline",
+    promptCapabilities: { image: true, audio: false, embeddedContext: true },
+    activeSessionId: null,
+    selectedSessionId: null,
+    selectedView: null,
+    operations: [],
+    permissions: [],
+    streamCursor: "opaque",
+  };
+}
+
+test("Agent view unavailable reason is optional, nullable and limited to safe classifications", () => {
+  const valid = definition(ui, "agentView");
+  const legacy = unavailableReasonAgentView();
+  assert.equal(valid(legacy), true, "legacy Agent View may omit the reason");
+  for (const unavailableReason of [null, "agent_unavailable", "runtime_barrier_required"]) {
+    assert.equal(
+      valid({ ...legacy, unavailableReason }),
+      true,
+      "Agent View must accept a safe reason or an explicit null clearing it",
+    );
+  }
+  for (const unavailableReason of [
+    "unknown_dependency_failure",
+    { reason: "runtime_barrier_required", barrier_id: "private-\u0000-barrier" },
+  ]) {
+    assert.equal(
+      valid({ ...legacy, unavailableReason }),
+      false,
+      "Agent View must reject unknown reasons and private barrier objects",
+    );
+  }
+  assert.equal(Object.hasOwn(legacy, "unavailableReason"), false);
+});
+
+test("Agent snapshots preserve safe unavailable reasons and explicit null without requiring the field", () => {
+  const valid = definition(ui, "streamEvent");
+  const legacy = unavailableReasonAgentView();
+  for (const view of [
+    legacy,
+    { ...legacy, unavailableReason: null },
+    { ...legacy, unavailableReason: "agent_unavailable" },
+    { ...legacy, unavailableReason: "runtime_barrier_required" },
+  ]) {
+    assert.equal(
+      valid({
+        type: "snapshot",
+        agentId: "agent-1",
+        bridgeEpoch: "epoch-1",
+        projectionId: "projection-1",
+        fromStreamRevision: 0,
+        toStreamRevision: 1,
+        cursor: "opaque",
+        view,
+      }),
+      true,
+      "snapshot must accept the same optional nullable reason as Agent View",
+    );
+  }
+});
+
+test("Agent deltas can add, update and clear the unavailable reason without a selected Session", () => {
+  const valid = definition(ui, "streamEvent");
+  const base = {
+    type: "delta",
+    agentId: "agent-1",
+    bridgeEpoch: "epoch-1",
+    projectionId: "projection-1",
+    fromStreamRevision: 4,
+    toStreamRevision: 5,
+    cursor: "next",
+    fromCursor: "previous",
+    sessionId: null,
+    incarnation: null,
+    fromSessionViewRevision: null,
+    sessionViewRevision: null,
+  };
+  for (const patch of [
+    { op: "add", path: "/unavailableReason", value: "agent_unavailable" },
+    { op: "replace", path: "/unavailableReason", value: "runtime_barrier_required" },
+    { op: "replace", path: "/unavailableReason", value: null },
+    { op: "remove", path: "/unavailableReason" },
+  ]) {
+    assert.equal(
+      valid({ ...base, patch: [patch] }),
+      true,
+      "the existing scoped delta envelope must allow the unavailableReason path",
+    );
+  }
+});
+
 test("Session View preserves usable history instead of a quota-limited substitute", () => {
   const valid = definition(ui, "sessionView");
   const base = {

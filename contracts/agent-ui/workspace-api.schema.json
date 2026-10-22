@@ -270,7 +270,7 @@
               },
               "path": {
                 "type": "string",
-                "pattern": "^/(?:availability|activeSessionId|promptCapabilities|operations|permissions|controlCommands|skillCommands|systemNotices|learningStatus|selectedView/(?:title|updatedAt|viewRevision|appendVersion|outputWatermark|historyToken|historyState|turns|olderTurnsCursor|operations|permissions|configOptions|configurationToken|usage|availableCommands))(?:/(?!__proto__(?:/|$)|constructor(?:/|$)|prototype(?:/|$))[^/]+)*$",
+                "pattern": "^/(?:availability|unavailableReason|activeSessionId|promptCapabilities|operations|permissions|controlCommands|skillCommands|systemNotices|learningStatus|selectedView/(?:title|updatedAt|viewRevision|appendVersion|outputWatermark|historyToken|historyState|turns|olderTurnsCursor|operations|permissions|configOptions|configurationToken|usage|availableCommands))(?:/(?!__proto__(?:/|$)|constructor(?:/|$)|prototype(?:/|$))[^/]+)*$",
                 "maxLength": 2048
               },
               "value": {}
@@ -463,6 +463,7 @@
         "agentId": { "$ref": "#/$defs/id" },
         "bridgeEpoch": { "$ref": "#/$defs/id" },
         "availability": { "enum": ["ready", "busy", "offline"] },
+        "unavailableReason": { "enum": ["agent_unavailable", "runtime_barrier_required", null] },
         "controlCommands": { "$ref": "#/$defs/commandCatalogue" },
         "skillCommands": { "$ref": "#/$defs/commandCatalogue" },
         "promptCapabilities": {
