@@ -27,6 +27,7 @@ const eventLabels: Record<string, string> = {
   agent_ready: "Agent available",
   agent_build_failed: "Build failed",
   agent_rebuild_requested: "Rebuild requested",
+  agent_runtime_barrier_required: "Runtime recovery required",
   agent_rebuilt: "Rebuild completed",
   agent_disable_requested: "Disable requested",
   agent_disabled: "Agent disabled",

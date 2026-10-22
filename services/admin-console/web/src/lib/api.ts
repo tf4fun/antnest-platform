@@ -28,6 +28,7 @@ import type {
   SelfExternalIdentityPage,
   OIDCPolicy,
   LifecycleOperation,
+  RuntimeRecoveryInput,
   LoginMethodList,
   ModelCatalog,
   ModelProfile,
@@ -583,8 +584,12 @@ export const api = {
     const key = pendingLifecycleKey(`${action}:${agentID}:after:${afterOperation}`, input);
     return key ? request<AgentSkillPreparation>("/api/admin/agent-skill-preparations/by-idempotency-key", { headers: { "Idempotency-Key": key } }) : Promise.resolve(undefined);
   },
-  operation: (requestID: string) =>
-    request<LifecycleOperation>(`/api/admin/operations/${encodeURIComponent(requestID)}`),
+  recoverAgent: (agentID: string, requestID: string, input: RuntimeRecoveryInput, signal?: AbortSignal) =>
+    request<LifecycleOperation>(`/api/admin/agents/${encodeURIComponent(agentID)}/rebuild`, {
+      method: "POST", headers: { "Idempotency-Key": requestID }, body: json(input), signal,
+    }),
+  operation: (requestID: string, signal?: AbortSignal) =>
+    request<LifecycleOperation>(`/api/admin/operations/${encodeURIComponent(requestID)}`, { signal }),
   events: (agentID: string, afterSequence = 0) =>
     request<AgentEventList>(
       `/api/admin/agents/${encodeURIComponent(agentID)}/events?after_sequence=${afterSequence}&limit=200`,

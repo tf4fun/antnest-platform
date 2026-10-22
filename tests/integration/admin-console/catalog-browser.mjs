@@ -2,6 +2,7 @@ import { durablePath } from "../../support/storage.mjs";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { exerciseRuntimeRecovery } from "./runtime-recovery-browser.mjs";
 import {
   assertNoOverflow,
   consoleSessionMetadata,
@@ -340,8 +341,21 @@ async function exercise(browser, origin, viewport, label) {
 
 console.log(
   JSON.stringify({
-    scope: "Console synthetic catalog UI, not B5 integration",
-    results: await withConsoleBrowser(output, exercise),
+    scope:
+      "Console catalog and Runtime recovery UI with controlled HTTP/SSE; not actual Runtime recovery E2E",
+    results: await withConsoleBrowser(
+      output,
+      async (browser, origin, viewport, label) => ({
+        catalog: await exercise(browser, origin, viewport, label),
+        runtimeRecovery: await exerciseRuntimeRecovery(
+          browser,
+          origin,
+          viewport,
+          label,
+          output,
+        ),
+      }),
+    ),
     screenshots: output,
   }),
 );

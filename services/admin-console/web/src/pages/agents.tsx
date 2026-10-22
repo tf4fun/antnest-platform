@@ -1,4 +1,5 @@
 import { AgentNetworkPolicy } from "../components/agent-network-policy";
+import { AgentRuntimeRecovery } from "../components/agent-runtime-recovery";
 import {
   Archive,
   ArrowLeft,
@@ -590,6 +591,18 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
   const [eventFailure, setEventFailure] = useState<ResourceFailure>();
   const [eventReloadGeneration, setEventReloadGeneration] = useState(0);
   const [pending, setPending] = useState("");
+  const mutationOwner = useRef<symbol | undefined>(undefined);
+  const acquireMutation = useCallback((action: string) => {
+    if (mutationOwner.current) return undefined;
+    const owner = Symbol(action);
+    mutationOwner.current = owner;
+    setPending(action);
+    return () => {
+      if (mutationOwner.current !== owner) return;
+      mutationOwner.current = undefined;
+      setPending("");
+    };
+  }, []);
   const [rebuildOpen, setRebuildOpen] = useState(false);
   const [rebuildError, setRebuildError] = useState("");
   const [skillLifecycle, setSkillLifecycle] = useState<PendingSkillLifecycle>();
@@ -913,44 +926,44 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
   ) {
     const permitted = { rebuild: actions.canRebuild, disable: actions.canDisable, enable: actions.canEnable, delete: actions.canDelete };
     if (pending || !permitted[action]) return;
-    setPending(action);
-    setError("");
-    setDeleteError("");
-    setRebuildError("");
-    setAcknowledgement("");
-    const afterOperation = retryIntent?.afterOperation ?? (visibleOperation?.state !== "running" ? visibleOperation?.request_id ?? "" : "");
-    const commandInput = retryIntent?.input ?? input;
+    const release = acquireMutation(action);
+    if (!release) return;
     try {
-      // An observed terminal operation ends the previous intent, including a lost HTTP response.
-      acceptOperation(await api.lifecycle(agentID, action, commandInput, afterOperation));
-      setSkillLifecycle(undefined);
-    } catch (cause) {
-      const reportFailure = action === "delete" ? setDeleteError : action === "rebuild" ? setRebuildError : setError;
-      reportFailure(errorMessage(cause));
-      if (action === "rebuild" || action === "enable") {
-        try {
-          const status = await api.agentSkillPreparationForLifecycle(agentID, action, commandInput, afterOperation);
-          if (status) {
-            if (status.agent_id !== agentID || status.kind !== action) throw new Error("Skill preparation does not belong to this Agent.");
-            setSkillLifecycle({ action, input: commandInput, afterOperation, status });
-            setSkillLifecycleReadError("");
-            reportFailure("");
-          }
-        } catch { /* Keep the original command error if progress cannot be read. */ }
+      setError("");
+      setDeleteError("");
+      setRebuildError("");
+      setAcknowledgement("");
+      const afterOperation = retryIntent?.afterOperation ?? (visibleOperation?.state !== "running" ? visibleOperation?.request_id ?? "" : "");
+      const commandInput = retryIntent?.input ?? input;
+      try {
+        // An observed terminal operation ends the previous intent, including a lost HTTP response.
+        acceptOperation(await api.lifecycle(agentID, action, commandInput, afterOperation));
+        setSkillLifecycle(undefined);
+      } catch (cause) {
+        const reportFailure = action === "delete" ? setDeleteError : action === "rebuild" ? setRebuildError : setError;
+        reportFailure(errorMessage(cause));
+        if (action === "rebuild" || action === "enable") {
+          try {
+            const status = await api.agentSkillPreparationForLifecycle(agentID, action, commandInput, afterOperation);
+            if (status) {
+              if (status.agent_id !== agentID || status.kind !== action) throw new Error("Skill preparation does not belong to this Agent.");
+              setSkillLifecycle({ action, input: commandInput, afterOperation, status });
+              setSkillLifecycleReadError("");
+              reportFailure("");
+            }
+          } catch { /* Keep the original command error if progress cannot be read. */ }
+        }
+        return;
       }
-      setPending("");
-      return;
-    }
-    setAcknowledgement(`${action.charAt(0).toUpperCase()}${action.slice(1)} request accepted.`);
-    setDeleteOpen(false);
-    setRebuildOpen(false);
-    try {
-      await refreshAgent(true);
-    } catch {
-      // Admission succeeded; refreshAgent owns the independent read failure.
-    } finally {
-      setPending("");
-    }
+      setAcknowledgement(`${action.charAt(0).toUpperCase()}${action.slice(1)} request accepted.`);
+      setDeleteOpen(false);
+      setRebuildOpen(false);
+      try {
+        await refreshAgent(true);
+      } catch {
+        // Admission succeeded; refreshAgent owns the independent read failure.
+      }
+    } finally { release(); }
   }
 
   async function rebuild(event: FormEvent<HTMLFormElement>) {
@@ -1110,6 +1123,11 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
       />
       {acknowledgement ? <SuccessNotice message={acknowledgement} onDismiss={() => setAcknowledgement("")} /> : null}
       {error ? <ErrorNotice message={error} /> : null}
+      <AgentRuntimeRecovery agent={agent}
+        blocked={(pending !== "" && pending !== "runtime-recovery") || visibleOperation?.state === "running" ||
+          Boolean(agent.active_operation_request_id) || Boolean(stateFailure) || agentStateRetryPending}
+        acquireMutation={() => acquireMutation("runtime-recovery")}
+        onOperation={acceptOperation} onRefresh={() => refreshAgent(true)} />
       {skillLifecycle?.action === "enable" ? <SkillPreparationPanel status={skillLifecycle.status} rebuild={false} failure={skillLifecycleReadError} /> : null}
       {stateFailure ? <ResourceFailureNotice failure={stateFailure} pending={agentStateRetryPending} retryLabel="Retry Agent state" onRetry={() => void retryAgentState()} /> : null}
       {templateOptionFailure ? <ResourceFailureNotice failure={templateOptionFailure} message={`Rebuild options could not be loaded: ${templateOptionFailure.message}`} retryLabel="Retry template choices" onRetry={retryTemplates} /> : null}

@@ -262,27 +262,28 @@ type agentConfigurationSource struct {
 }
 
 type agentProjectionSource struct {
-	AgentID                         string                    `json:"agent_id"`
-	OwnerUserID                     string                    `json:"owner_user_id"`
-	Name                            string                    `json:"name"`
-	DesiredState                    string                    `json:"desired_state"`
-	LifecycleState                  string                    `json:"lifecycle_state"`
-	ActivationState                 string                    `json:"activation_state,omitempty"`
-	RuntimeState                    string                    `json:"runtime_state"`
-	RuntimeReason                   string                    `json:"runtime_reason,omitempty"`
-	RuntimeDetail                   string                    `json:"runtime_detail,omitempty"`
-	RuntimeObservedAt               string                    `json:"runtime_observed_at,omitempty"`
-	AgentSpecRevision               string                    `json:"agent_spec_revision,omitempty"`
-	LastSuccessfulExecutionRevision string                    `json:"last_successful_execution_revision,omitempty"`
-	ExecutableExecutionRevision     string                    `json:"executable_execution_revision,omitempty"`
-	Runtime                         *runtimeProjectionSource  `json:"runtime,omitempty"`
-	ActiveOperationRequestID        string                    `json:"active_operation_request_id,omitempty"`
-	FailureStage                    string                    `json:"failure_stage,omitempty"`
-	FailureCode                     string                    `json:"failure_code,omitempty"`
-	Configuration                   *agentConfigurationSource `json:"configuration,omitempty"`
-	AggregateSequence               int64                     `json:"aggregate_sequence"`
-	CreatedAt                       string                    `json:"created_at"`
-	UpdatedAt                       string                    `json:"updated_at"`
+	AgentID                         string                     `json:"agent_id"`
+	OwnerUserID                     string                     `json:"owner_user_id"`
+	Name                            string                     `json:"name"`
+	DesiredState                    string                     `json:"desired_state"`
+	LifecycleState                  string                     `json:"lifecycle_state"`
+	ActivationState                 string                     `json:"activation_state,omitempty"`
+	RuntimeState                    string                     `json:"runtime_state"`
+	RuntimeReason                   string                     `json:"runtime_reason,omitempty"`
+	RuntimeDetail                   string                     `json:"runtime_detail,omitempty"`
+	RuntimeObservedAt               string                     `json:"runtime_observed_at,omitempty"`
+	AgentSpecRevision               string                     `json:"agent_spec_revision,omitempty"`
+	LastSuccessfulExecutionRevision string                     `json:"last_successful_execution_revision,omitempty"`
+	ExecutableExecutionRevision     string                     `json:"executable_execution_revision,omitempty"`
+	Runtime                         *runtimeProjectionSource   `json:"runtime,omitempty"`
+	RuntimeRecovery                 *runtimeRecoveryProjection `json:"runtime_recovery,omitempty"`
+	ActiveOperationRequestID        string                     `json:"active_operation_request_id,omitempty"`
+	FailureStage                    string                     `json:"failure_stage,omitempty"`
+	FailureCode                     string                     `json:"failure_code,omitempty"`
+	Configuration                   *agentConfigurationSource  `json:"configuration,omitempty"`
+	AggregateSequence               int64                      `json:"aggregate_sequence"`
+	CreatedAt                       string                     `json:"created_at"`
+	UpdatedAt                       string                     `json:"updated_at"`
 }
 
 type agentListSource struct {
