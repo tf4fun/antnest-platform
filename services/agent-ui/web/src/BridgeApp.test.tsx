@@ -264,6 +264,19 @@ test("Bridge page explicitly retries the original Prompt with its attachment aft
     viewHeldRequests = relevantAfterClick();
     await act(async () => { releaseView.resolve(); });
     await waitFor(() => expect(prompts).toHaveLength(2));
+    const requestsWhileRetryHeld = requests.length;
+    const navigationWhileRetryHeld = screen.getAllByRole("button", { name: "New conversation", exact: true });
+    expect(navigationWhileRetryHeld).toHaveLength(2);
+    for (const button of navigationWhileRetryHeld) {
+      expect(button).toHaveProperty("disabled", true);
+      fireEvent.click(button);
+    }
+    const refreshWhileRetryHeld = screen.getByRole("button", { name: "Refresh workspace" });
+    expect(refreshWhileRetryHeld).toHaveProperty("disabled", true);
+    fireEvent.click(refreshWhileRetryHeld);
+    expect(window.location.pathname).toBe("/workspace/agent-1/sessions/session-1");
+    expect(requests).toHaveLength(requestsWhileRetryHeld);
+    expect(prompts).toHaveLength(2);
     await act(async () => { releaseRetry.resolve(); });
     await act(async () => {
       sources.filter(source => !source.closed).at(-1)!.emit("reset", {
@@ -274,6 +287,9 @@ test("Bridge page explicitly retries the original Prompt with its attachment aft
       });
     });
     await screen.findByText("Original A retry completed");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh workspace" })).toHaveProperty("disabled", false));
+    for (const button of screen.getAllByRole("button", { name: "New conversation", exact: true }))
+      expect(button).toHaveProperty("disabled", false);
     completedVisible = true;
     finalDraft = screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value;
     finalAttachmentVisible = screen.queryByText(changedFile.name) !== null;
