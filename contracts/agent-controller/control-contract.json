@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 40,
+  "revision": 41,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -332,11 +332,13 @@
       "absent",
       "unknown"
     ],
+    "readiness": ["preparing", "ready", "unavailable"],
     "operation_kind": ["create", "rebuild", "disable", "enable", "delete"],
     "operation_state": ["running", "completed", "failed"],
     "event_type": [
       "agent_create_requested",
       "agent_created",
+      "runtime_bound",
       "agent_ready",
       "agent_rebuild_requested",
       "agent_rebuilt",

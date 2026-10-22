@@ -1,7 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 This contract is owned by Agent Controller and transported as authenticated internal
-JSON over HTTP. This document describes control contract revision 38, the
+JSON over HTTP. This document describes control contract revision 41, the
 `revision` value in [`control-contract.json`](control-contract.json).
 
 This contract manages ModelProfiles, Templates, Agents, lifecycle operations,
@@ -35,6 +35,12 @@ detail and observation time. Operation remains responsible for progress and
 terminal errors. Disable intent blocks new Runs before confirmed stopping;
 failed disablement is not a disabled Agent. See
 [state semantics](../../services/agent-controller/docs/agent-state.md).
+
+The [readiness contract](readiness.md) defines the organization publication
+acknowledgement gate for `runtime_bound` and `agent_ready` (#44). Revision 41
+declares optional Agent `readiness` and strict version-2 event proofs while
+preserving all historical version-1 events. Producer behavior and service
+consumers remain pending; strict readers must be updated before emission.
 
 Lifecycle and catalog mutations carry a stable `request_id`. Reusing a request ID with a
 different canonical request returns `request_id_conflict`. Cross-service IDs

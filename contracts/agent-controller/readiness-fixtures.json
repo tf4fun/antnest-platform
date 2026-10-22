@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "purpose": "Synthetic readiness wire conformance only; ACK ordering, organization scope and current binding eligibility require owning-service transaction tests.",
+  "maximum_revision": 9007199254740991,
+  "legacy_agent": {
+    "agent_id": "agent-1",
+    "organization_id": "org-1",
+    "owner_user_id": "owner-1",
+    "name": "Readiness contract Agent",
+    "desired_state": "enabled",
+    "lifecycle_state": "created",
+    "activation_state": "enabled",
+    "runtime_state": "available",
+    "access_revision": "access-1",
+    "agent_spec_revision": "spec-1",
+    "executable_execution_revision": "execution-1",
+    "last_successful_execution_revision": "execution-1",
+    "runtime": { "runtime_revision": "runtime-1" },
+    "aggregate_sequence": 3,
+    "created_at": "2026-10-22T00:00:00Z",
+    "updated_at": "2026-10-22T00:00:01Z"
+  },
+  "legacy_event_types": [
+    "agent_create_requested",
+    "agent_created",
+    "agent_ready",
+    "agent_build_failed",
+    "agent_rebuild_requested",
+    "agent_rebuilt",
+    "agent_disable_requested",
+    "agent_disabled",
+    "agent_disable_failed",
+    "agent_enable_requested",
+    "agent_enabled",
+    "agent_enable_failed",
+    "agent_delete_requested",
+    "agent_deleted",
+    "agent_lifecycle_quarantined",
+    "agent_runtime_restarted",
+    "agent_runtime_missing",
+    "agent_runtime_condition_changed",
+    "agent_owner_revoked",
+    "agent_authorization_updated"
+  ],
+  "event_vectors": [
+    {
+      "name": "legacy-agent-ready",
+      "valid": true,
+      "value": {
+        "event_id": "event-legacy-ready",
+        "global_sequence": 1,
+        "aggregate_sequence": 3,
+        "schema_version": 1,
+        "agent_id": "agent-1",
+        "event_type": "agent_ready",
+        "operation_request_id": "create-1",
+        "occurred_at": "2026-10-22T00:00:01Z",
+        "data": {
+          "agent_spec_revision_id": "spec-1",
+          "execution_revision_id": "execution-1",
+          "runtime_revision": "runtime-1"
+        }
+      }
+    },
+    {
+      "name": "runtime-bound-v2",
+      "valid": true,
+      "value": {
+        "event_id": "event-runtime-bound",
+        "global_sequence": 2,
+        "aggregate_sequence": 4,
+        "schema_version": 2,
+        "agent_id": "agent-1",
+        "event_type": "runtime_bound",
+        "operation_request_id": "create-1",
+        "occurred_at": "2026-10-22T00:00:02Z",
+        "data": {
+          "organization_id": "org-1",
+          "agent_spec_revision_id": "spec-1",
+          "execution_revision_id": "execution-1",
+          "runtime_revision": "runtime-1",
+          "ready_after_revision": 8
+        }
+      }
+    },
+    {
+      "name": "acknowledged-agent-ready-v2",
+      "valid": true,
+      "value": {
+        "event_id": "event-acknowledged-ready",
+        "global_sequence": 3,
+        "aggregate_sequence": 5,
+        "schema_version": 2,
+        "agent_id": "agent-1",
+        "event_type": "agent_ready",
+        "operation_request_id": "create-1",
+        "occurred_at": "2026-10-22T00:00:03Z",
+        "data": {
+          "organization_id": "org-1",
+          "agent_spec_revision_id": "spec-1",
+          "execution_revision_id": "execution-1",
+          "runtime_revision": "runtime-1",
+          "ready_after_revision": 8,
+          "applied_revision": 9
+        }
+      }
+    }
+  ],
+  "readiness_vectors": [
+    { "name": "preparing", "value": "preparing", "valid": true },
+    { "name": "ready", "value": "ready", "valid": true },
+    { "name": "unavailable", "value": "unavailable", "valid": true },
+    { "name": "unknown", "value": "unknown", "valid": false },
+    { "name": "padded", "value": "ready ", "valid": false },
+    { "name": "empty", "value": "", "valid": false },
+    { "name": "null", "value": null, "valid": false },
+    { "name": "boolean", "value": true, "valid": false },
+    { "name": "number", "value": 1, "valid": false },
+    { "name": "object", "value": {}, "valid": false },
+    { "name": "array", "value": ["ready"], "valid": false }
+  ],
+  "revision_vectors": [
+    { "name": "first", "value": 1, "valid": true },
+    { "name": "maximum-safe", "value": 9007199254740991, "valid": true },
+    { "name": "zero", "value": 0, "valid": false },
+    { "name": "negative", "value": -1, "valid": false },
+    { "name": "fractional", "value": 1.5, "valid": false },
+    { "name": "unsafe", "value": 9007199254740992, "valid": false },
+    { "name": "string", "value": "8", "valid": false },
+    { "name": "null", "value": null, "valid": false },
+    { "name": "boolean", "value": true, "valid": false },
+    { "name": "object", "value": {}, "valid": false },
+    { "name": "array", "value": [8], "valid": false }
+  ]
+}

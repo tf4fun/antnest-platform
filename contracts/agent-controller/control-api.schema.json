@@ -674,6 +674,9 @@
         "unknown"
       ]
     },
+    "readiness": {
+      "enum": ["preparing", "ready", "unavailable"]
+    },
     "runtime_resources": {
       "type": "object",
       "additionalProperties": false,
@@ -1400,6 +1403,9 @@
         "runtime_state": {
           "$ref": "#/$defs/runtime_state"
         },
+        "readiness": {
+          "$ref": "#/$defs/readiness"
+        },
         "runtime_reason": {
           "type": "string"
         },
@@ -1534,6 +1540,41 @@
         }
       }
     },
+    "readiness_event_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "agent_spec_revision_id",
+        "execution_revision_id",
+        "runtime_revision",
+        "ready_after_revision"
+      ],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "agent_spec_revision_id": {
+          "$ref": "#/$defs/id"
+        },
+        "execution_revision_id": {
+          "$ref": "#/$defs/id"
+        },
+        "runtime_revision": {
+          "$ref": "#/$defs/id"
+        },
+        "ready_after_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "applied_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
     "agent_event": {
       "type": "object",
       "additionalProperties": false,
@@ -1561,7 +1602,7 @@
         },
         "schema_version": {
           "type": "integer",
-          "const": 1
+          "enum": [1, 2]
         },
         "agent_id": {
           "$ref": "#/$defs/id"
@@ -1570,6 +1611,7 @@
           "enum": [
             "agent_create_requested",
             "agent_created",
+            "runtime_bound",
             "agent_ready",
             "agent_build_failed",
             "agent_rebuild_requested",
@@ -1603,7 +1645,35 @@
         "data": {
           "type": "object"
         }
-      }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "schema_version": { "const": 1 },
+            "event_type": { "not": { "const": "runtime_bound" } }
+          }
+        },
+        {
+          "properties": {
+            "schema_version": { "const": 2 },
+            "event_type": { "const": "runtime_bound" },
+            "data": {
+              "$ref": "#/$defs/readiness_event_data",
+              "not": { "required": ["applied_revision"] }
+            }
+          }
+        },
+        {
+          "properties": {
+            "schema_version": { "const": 2 },
+            "event_type": { "const": "agent_ready" },
+            "data": {
+              "$ref": "#/$defs/readiness_event_data",
+              "required": ["applied_revision"]
+            }
+          }
+        }
+      ]
     },
     "event_list": {
       "type": "object",

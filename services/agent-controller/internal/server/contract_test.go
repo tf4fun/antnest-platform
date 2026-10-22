@@ -82,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 40 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 41 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -303,6 +303,42 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 	}
 	for name, value := range values {
 		assertControlWireType(t, compiler, name, value)
+	}
+}
+
+func TestMachineReadinessFixturesPreserveHistoricalWire(t *testing.T) {
+	t.Parallel()
+
+	root := repositoryRoot(t)
+	compiler := compileControlSchema(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"))
+	var fixtures struct {
+		LegacyAgent  json.RawMessage `json:"legacy_agent"`
+		EventVectors []struct {
+			Name  string          `json:"name"`
+			Valid bool            `json:"valid"`
+			Value json.RawMessage `json:"value"`
+		} `json:"event_vectors"`
+	}
+	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/readiness-fixtures.json"), &fixtures)
+	assertControlWireType(t, compiler, "agent", fixtures.LegacyAgent)
+	if len(fixtures.EventVectors) != 3 {
+		t.Fatalf("readiness event fixtures = %d, want legacy and two v2 proofs", len(fixtures.EventVectors))
+	}
+	for _, vector := range fixtures.EventVectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			if !vector.Valid {
+				t.Fatal("expected a valid historical or complete proof fixture")
+			}
+			assertControlWireType(t, compiler, "agent_event", vector.Value)
+			assertControlWireType(t, compiler, "event_list", map[string]any{
+				"events": []json.RawMessage{vector.Value}, "next_sequence": 3,
+			})
+		})
+	}
+	var contract machineControlContract
+	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
+	if !slices.Equal(contract.Enums["readiness"], []string{"preparing", "ready", "unavailable"}) {
+		t.Fatalf("readiness manifest = %v", contract.Enums["readiness"])
 	}
 }
 
@@ -654,18 +690,19 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 	t.Parallel()
 
 	root := repositoryRoot(t)
-	var schema struct {
-		Defs map[string]struct {
-			Properties map[string]struct {
-				Enum []string `json:"enum"`
-			} `json:"properties"`
-		} `json:"$defs"`
-	}
+	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	actual := schema.Defs["agent_event"].Properties["event_type"].Enum
+	var eventType struct {
+		Enum []string `json:"enum"`
+	}
+	if err := json.Unmarshal(schema.Defs["agent_event"].Properties["event_type"], &eventType); err != nil {
+		t.Fatalf("parse event type enum: %v", err)
+	}
+	actual := eventType.Enum
 	expected := []string{
 		ports.EventAgentCreateRequested,
 		ports.EventAgentCreated,
+		ports.EventRuntimeBound,
 		ports.EventAgentReady,
 		ports.EventAgentBuildFailed,
 		ports.EventAgentRebuildRequested,
