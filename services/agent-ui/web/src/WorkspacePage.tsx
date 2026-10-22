@@ -46,6 +46,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
     setDraft,
     attachments,
     sending,
+    submitting,
     cancelling,
     loggingOut,
     connectionError,
@@ -247,7 +248,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
         principal={workspace.principal}
         onClose={() => setMenuOpen(false)}
         onClosed={focusAfterDialogClose}
-        newConversationDisabled={creating || sending || !connected}
+        newConversationDisabled={creating || submitting || !connected}
         logoutDisabled={loggingOut}
         onAccount={onAccount ? () => { setMenuOpen(false); onAccount(); } : undefined}
         onNewConversation={startNewConversation}
@@ -301,7 +302,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
               <button
                 className="icon-button"
                 type="button"
-                disabled={sending || refreshing}
+                disabled={submitting || refreshing}
                 onClick={() => {
                   void refreshWorkspace();
                 }}
@@ -321,7 +322,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
             <button
               className="icon-button topbar-new-conversation"
               type="button"
-              disabled={creating || sending || !connected}
+              disabled={creating || submitting || !connected}
               onClick={startNewConversation}
               title="New conversation"
               aria-label="New conversation"

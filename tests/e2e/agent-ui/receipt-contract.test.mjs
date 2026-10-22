@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
 import { verifyBrowserStreamRenewal } from "./browser-session-stream.mjs";
+import { verifyBrowserPromptBusy } from "./browser-prompt-busy.mjs";
+import { createGateControl } from "./acp-gate-control.mjs";
 import {
   parseIntentObservation,
   parseExecutionObservation,
@@ -57,7 +60,7 @@ const validExecution = validator.compile({
 const ownerLabel = "io.antnest.verification.project";
 
 test(
-  "Gateway failed Run receipts survive reload and a silent Run survives browser delegation renewal",
+  "Gateway preserves failed receipts, typed busy rejection and silent Runs across browser renewal",
   {
     timeout: 900_000,
     skip: process.env.ANTNEST_UI_RECEIPT_E2E !== "1",
@@ -68,7 +71,7 @@ test(
     const signal = AbortSignal.any([abort.signal, t.signal]);
     const interrupt = () => abort.abort(new Error("Receipt E2E interrupted"));
     for (const event of ["SIGINT", "SIGTERM"]) process.once(event, interrupt);
-    let before, config, browser, failure;
+    let before, config, browser, failure, gateControl;
     const candidates = [];
     const problems = [];
     try {
@@ -204,18 +207,15 @@ test(
       assert(accessToken, "Gateway login did not set a session cookie");
       // Secrets reach the exec only through the Docker client environment,
       // never through command-line arguments.
-      const wireDocker = dockerClient(
-        {
-          ...config.env,
-          RECEIPT_ACCESS_TOKEN: accessToken,
-          RECEIPT_GATEWAY_IDENTITY_TOKEN: readFileSync(
-            `${config.credentials}/edge-gateway/tokens/identity-service`,
-            "utf8",
-          ).trim(),
-        },
-        signal,
-        120_000,
-      );
+      const wireEnvironment = {
+        ...config.env,
+        RECEIPT_ACCESS_TOKEN: accessToken,
+        RECEIPT_GATEWAY_IDENTITY_TOKEN: readFileSync(
+          `${config.credentials}/edge-gateway/tokens/identity-service`,
+          "utf8",
+        ).trim(),
+      };
+      const wireDocker = dockerClient(wireEnvironment, signal, 120_000);
       const readWire = async (path) =>
         JSON.parse(
           await wireDocker([
@@ -319,6 +319,75 @@ test(
         false,
         "Unsupported content must fail before inference",
       );
+      // The edge network is isolated, so published host ports cannot reach it.
+      // Control the gate inside its owned container without widening the network.
+      const gateId = (
+        await docker(compose(["ps", "-q", "acp-prompt-gate"]))
+      ).trim();
+      assert.match(gateId, /^[a-f0-9]{64}$/u);
+      const gateRows = JSON.parse(await docker(["inspect", gateId]));
+      assert.equal(gateRows.length, 1);
+      const gateRow = gateRows[0];
+      assert.equal(gateRow.Id, gateId);
+      assert.equal(gateRow.State.Running, true);
+      assert.equal(
+        gateRow.Config.Labels["com.docker.compose.project"],
+        config.project,
+      );
+      assert.equal(
+        gateRow.Config.Labels["com.docker.compose.service"],
+        "acp-prompt-gate",
+      );
+      const gateDocker = dockerClient(config.env, undefined, 900_000);
+      gateControl = createGateControl({
+        signal,
+        exec: (script) =>
+          gateDocker(
+            ["exec", gateId, "node", "--input-type=module", "-e", script],
+            false,
+            { timeoutMS: 15_000 },
+          ),
+      });
+      // The peer owns an internal deadline. Keep its original Docker exec alive
+      // through parent cancellation so the scenario can release and join it.
+      const peerDocker = dockerClient(wireEnvironment, undefined, 150_000);
+      const promptBusy = await verifyBrowserPromptBusy({
+        page,
+        client,
+        config,
+        fixture,
+        gateControl: gateControl.request,
+        signal,
+        execPeer: (script) =>
+          peerDocker([
+            "exec",
+            "--env",
+            "RECEIPT_ACCESS_TOKEN",
+            "--env",
+            "RECEIPT_GATEWAY_IDENTITY_TOKEN",
+            containerId,
+            "node",
+            "--input-type=module",
+            "-e",
+            script,
+          ]),
+        preserve: async (value, error) => {
+          const output =
+            process.env.ANTNEST_UI_RECEIPT_E2E_OUTPUT ??
+            `artifacts/verification/${config.project}-bridge-receipt`;
+          writeEvidenceFile(
+            output,
+            "browser-prompt-busy.private.json",
+            JSON.stringify(value, null, 2),
+          );
+          if (error)
+            writeEvidenceFile(
+              output,
+              "browser-prompt-busy-failure.private.txt",
+              inspect(error, { depth: 8 }),
+            );
+        },
+      });
       const browserSessionStream = await verifyBrowserStreamRenewal({
         page,
         config,
@@ -329,6 +398,7 @@ test(
       const evidence = {
         receipt,
         execution,
+        promptBusy,
         browserSessionStream,
         checks: [
           "gateway-failed-run",
@@ -337,6 +407,8 @@ test(
           "node-parsers",
           "workspace-failure-and-reload",
           "unsupported-content-no-model-inference",
+          "typed-busy-rejection-without-original-prompt-replay",
+          "explicit-new-conversation-after-peer-completion",
           "silent-run-after-browser-delegation-renewal",
           "genuine-input-activity-without-prompt-replay",
         ],
@@ -367,6 +439,7 @@ test(
           errors.push(error);
         }
       };
+      await attempt(async () => gateControl?.join());
       await attempt(async () => browser?.close());
       if (config) {
         await attempt(() => cleanup(config));

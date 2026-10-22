@@ -264,6 +264,19 @@ test("Bridge page explicitly retries the original Prompt with its attachment aft
     viewHeldRequests = relevantAfterClick();
     await act(async () => { releaseView.resolve(); });
     await waitFor(() => expect(prompts).toHaveLength(2));
+    const requestsWhileRetryHeld = requests.length;
+    const navigationWhileRetryHeld = screen.getAllByRole("button", { name: "New conversation", exact: true });
+    expect(navigationWhileRetryHeld).toHaveLength(2);
+    for (const button of navigationWhileRetryHeld) {
+      expect(button).toHaveProperty("disabled", true);
+      fireEvent.click(button);
+    }
+    const refreshWhileRetryHeld = screen.getByRole("button", { name: "Refresh workspace" });
+    expect(refreshWhileRetryHeld).toHaveProperty("disabled", true);
+    fireEvent.click(refreshWhileRetryHeld);
+    expect(window.location.pathname).toBe("/workspace/agent-1/sessions/session-1");
+    expect(requests).toHaveLength(requestsWhileRetryHeld);
+    expect(prompts).toHaveLength(2);
     await act(async () => { releaseRetry.resolve(); });
     await act(async () => {
       sources.filter(source => !source.closed).at(-1)!.emit("reset", {
@@ -274,6 +287,9 @@ test("Bridge page explicitly retries the original Prompt with its attachment aft
       });
     });
     await screen.findByText("Original A retry completed");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh workspace" })).toHaveProperty("disabled", false));
+    for (const button of screen.getAllByRole("button", { name: "New conversation", exact: true }))
+      expect(button).toHaveProperty("disabled", false);
     completedVisible = true;
     finalDraft = screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value;
     finalAttachmentVisible = screen.queryByText(changedFile.name) !== null;
@@ -312,4 +328,207 @@ test("Bridge page explicitly retries the original Prompt with its attachment aft
   expect(completedVisible).toBe(true);
   expect(sourcesClosedByUnmount).toBe(true);
   expect(pendingFetches.size).toBe(0);
+});
+
+function promptNavigationFixture(holdPrompt = false) {
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
+  vi.spyOn(document, "cookie", "get").mockReturnValue("antnest_csrf=csrf-test");
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 0; });
+  const sources: { closed: boolean; emit(name: string, value: unknown): void }[] = [];
+  vi.stubGlobal("EventSource", class {
+    closed = false;
+    private listeners = new Map<string, (event: { data: string }) => void>();
+    constructor() { sources.push(this); }
+    addEventListener(name: string, listener: (event: { data: string }) => void) {
+      this.listeners.set(name, listener);
+    }
+    emit(name: string, value: unknown) {
+      if (!this.closed) this.listeners.get(name)?.({ data: JSON.stringify(value) });
+    }
+    close() { this.closed = true; }
+  });
+  const prompts: { intentId: string; expectedAppendVersion: number; prompt: unknown[] }[] = [];
+  const sessionPosts: unknown[] = [];
+  const viewReads: { sessionId: string | null; operationIds: string[] }[] = [];
+  const requests: { url: string; method: string }[] = [];
+  let operations: { operationId: string; sessionId: string; phase: string; acceptance: string;
+    error: { code: string; message: string; requestId: string; operationId: string;
+      retryable: boolean; recovery: string } }[] = [];
+  let releasePrompt = () => {};
+  const promptGate = holdPrompt ? new Promise<void>(resolve => { releasePrompt = resolve; }) : Promise.resolve();
+  let promptSettled = false;
+  const pending = new Set<Promise<Response>>();
+  const view = (sessionId: string | null, cursor = "cursor-1") => ({
+    agentId: "agent-1", bridgeEpoch: "epoch-1", availability: "ready",
+    promptCapabilities: {}, activeSessionId: null, selectedSessionId: sessionId,
+    streamCursor: cursor, operations: structuredClone(operations), permissions: [],
+    selectedView: sessionId === null ? null : {
+      agentId: "agent-1", sessionId, bridgeEpoch: "epoch-1", incarnation: "incarnation-1",
+      viewRevision: 1, historyState: "ready", title: null, updatedAt: null,
+      appendVersion: 1, historyToken: "token-1", outputWatermark: 1,
+      streamCursor: "session-cursor-1", operations: structuredClone(operations), permissions: [],
+      configOptions: [], configurationToken: null, usage: null,
+      turns: [{ turnId: "turn-1", outcome: "completed",
+        prompt: [{ type: "text", text: "Question" }],
+        finalResponse: [{ type: "text", text: "Answer" }], contentCursor: null, contentSection: null,
+        processVersion: 0, processCount: 0 }], olderTurnsCursor: null,
+    },
+  });
+  const respond = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    requests.push({ url, method });
+    if (url === "/api/session" && method === "GET") return Response.json({
+      principal: { user_id: "user-1", organization_id: "org-1", membership_id: "member-1",
+        organization_slug: "engineering", organization_name: "Engineering", system_role: "user",
+        organization_role: "member", active: true },
+      expires_at: "2026-10-12T00:00:00Z", idle_expires_at: "2026-10-11T12:30:00Z", activity_interval_ms: 1666,
+    });
+    if (url === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (url.endsWith("/bootstrap")) return Response.json({
+      principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
+        organizationId: "org-1", administrator: false },
+      agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
+      renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",
+    });
+    if (url.endsWith("/sessions") && method === "POST") {
+      sessionPosts.push(init?.body);
+      return Response.json({ sessionId: "unexpected-session" });
+    }
+    if (url.endsWith("/sessions") && method === "GET") return Response.json({
+      items: [{ sessionId: "session-1", title: "Question", updatedAt: "2026-09-23T00:00:00Z",
+        activeOperationId: operations[0]?.operationId ?? null }], nextCursor: null,
+    });
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.pathname.endsWith("/view") && method === "GET") {
+      const sessionId = parsed.searchParams.get("sessionId");
+      viewReads.push({ sessionId, operationIds: operations.map(item => item.operationId) });
+      return Response.json(view(sessionId));
+    }
+    if (url.endsWith("/sessions/session-1/prompts") && method === "POST") {
+      const body = JSON.parse(String(init?.body)) as (typeof prompts)[number];
+      prompts.push(body);
+      await promptGate;
+      promptSettled = true;
+      return Response.json({ operationId: body.intentId, acceptance: "bridge", phase: "dispatching" }, { status: 202 });
+    }
+    throw new Error(`Unexpected Bridge request ${method} ${url}`);
+  };
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const response = respond(input, init);
+    pending.add(response);
+    void response.then(() => pending.delete(response), () => pending.delete(response));
+    return response;
+  }));
+  return {
+    prompts, sessionPosts, requests, viewReads, sources, releasePrompt,
+    get promptSettled() { return promptSettled; },
+    get pendingRequests() { return pending.size; },
+    async join() { while (pending.size) await Promise.allSettled([...pending]); },
+    uncertain() {
+      const original = prompts[0]!;
+      operations = [{ operationId: original.intentId, sessionId: "session-1", phase: "uncertain",
+        acceptance: "unknown", error: { code: "agent_busy", message: "The Agent is busy. Try again shortly.",
+          requestId: "request-1", operationId: original.intentId, retryable: false, recovery: "query_operation" } }];
+      sources.at(-1)!.emit("reset", { type: "reset", agentId: "agent-1", bridgeEpoch: "epoch-1",
+        projectionId: "projection-1", fromStreamRevision: 0, toStreamRevision: 1,
+        cursor: "cursor-2", view: view("session-1", "cursor-2") });
+    },
+  };
+}
+
+test("settled uncertain Prompt permits read-only refresh and both local new-conversation controls", async () => {
+  const fixture = promptNavigationFixture();
+  const page = render(<BridgeApp />);
+  try {
+    expect(await screen.findByText("Answer")).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: "Message" }), { target: { value: "Original message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(fixture.prompts).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value).toBe(""));
+    expect(fixture.promptSettled).toBe(true);
+    const original = structuredClone(fixture.prompts[0]!);
+    act(() => fixture.uncertain());
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("original operation"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Message" }), { target: { value: "Keep the original Session draft" } });
+    expect(screen.getByRole("button", { name: "Stop operation" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Message" }), { key: "Enter", code: "Enter" });
+    expect(fixture.prompts).toEqual([original]);
+    expect(screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value).toBe("Keep the original Session draft");
+    const newConversationButtons = screen.getAllByRole("button", { name: "New conversation", exact: true });
+    expect(newConversationButtons).toHaveLength(2);
+    for (const button of newConversationButtons) expect(button).toHaveProperty("disabled", false);
+    const refresh = screen.getByRole("button", { name: "Refresh workspace" });
+    expect(refresh).toHaveProperty("disabled", false);
+    const readsBeforeRefresh = fixture.viewReads.length;
+    fireEvent.click(refresh);
+    await waitFor(() => expect(fixture.viewReads.length).toBeGreaterThan(readsBeforeRefresh));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh workspace" })).toHaveProperty("disabled", false));
+    expect(fixture.viewReads.at(-1)).toEqual({ sessionId: "session-1", operationIds: [original.intentId] });
+    expect(screen.getByRole("alert")).toHaveProperty("textContent", expect.stringContaining("original operation"));
+    expect(screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value).toBe("Keep the original Session draft");
+    for (let index = 0; index < 2; index++) {
+      const buttons = screen.getAllByRole("button", { name: "New conversation", exact: true });
+      expect(buttons[index]).toHaveProperty("disabled", false);
+      fireEvent.click(buttons[index]!);
+      await waitFor(() => expect(window.location.pathname).toBe("/workspace/agent-1/"));
+      await waitFor(() => expect(fixture.viewReads.at(-1)?.sessionId).toBeNull());
+      expect(screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value).toBe("");
+      expect(fixture.viewReads.at(-1)?.operationIds).toEqual([original.intentId]);
+      expect(fixture.sessionPosts).toHaveLength(0);
+      expect(fixture.prompts).toEqual([original]);
+      fireEvent.click(screen.getByRole("button", { name: /Question/ }));
+      await waitFor(() => expect(window.location.pathname).toBe("/workspace/agent-1/sessions/session-1"));
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveProperty("textContent", expect.stringContaining("original operation")));
+      expect(screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value).toBe("Keep the original Session draft");
+      expect(screen.getByRole("button", { name: "Stop operation" })).toHaveProperty("disabled", true);
+    }
+    expect(fixture.sessionPosts).toHaveLength(0);
+    expect(fixture.prompts).toEqual([original]);
+  } finally {
+    try { await act(async () => { fixture.releasePrompt(); await fixture.join(); }); }
+    finally { page.unmount(); await fixture.join(); }
+  }
+  expect(fixture.pendingRequests).toBe(0);
+  expect(fixture.sources.every(source => source.closed)).toBe(true);
+});
+
+test("held original Prompt HTTP keeps refresh and both new-conversation controls disabled until settlement", async () => {
+  const fixture = promptNavigationFixture(true);
+  const page = render(<BridgeApp />);
+  try {
+    expect(await screen.findByText("Answer")).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: "Message" }), { target: { value: "Held original message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(fixture.prompts).toHaveLength(1));
+    expect(fixture.promptSettled).toBe(false);
+    const original = structuredClone(fixture.prompts[0]!);
+    const reads = fixture.viewReads.length;
+    const requests = fixture.requests.length;
+    const buttons = screen.getAllByRole("button", { name: "New conversation", exact: true });
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(button).toHaveProperty("disabled", true);
+      fireEvent.click(button);
+    }
+    const refresh = screen.getByRole("button", { name: "Refresh workspace" });
+    expect(refresh).toHaveProperty("disabled", true);
+    fireEvent.click(refresh);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Message" }), { key: "Enter", code: "Enter" });
+    expect(window.location.pathname).toBe("/workspace/agent-1/sessions/session-1");
+    expect(fixture.viewReads).toHaveLength(reads);
+    expect(fixture.requests).toHaveLength(requests);
+    expect(fixture.sessionPosts).toHaveLength(0);
+    expect(fixture.prompts).toEqual([original]);
+    await act(async () => { fixture.releasePrompt(); await fixture.join(); });
+    await waitFor(() => expect(screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value).toBe(""));
+    expect(fixture.promptSettled).toBe(true);
+    expect(fixture.sessionPosts).toHaveLength(0);
+    expect(fixture.prompts).toEqual([original]);
+  } finally {
+    try { await act(async () => { fixture.releasePrompt(); await fixture.join(); }); }
+    finally { page.unmount(); await fixture.join(); }
+  }
+  expect(fixture.pendingRequests).toBe(0);
+  expect(fixture.sources.every(source => source.closed)).toBe(true);
 });
