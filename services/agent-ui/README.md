@@ -19,6 +19,28 @@ connection per authorized owner, independently of browser tabs, and rebuilds
 its views from ACP, which remains the authority for Sessions, Runs, history and
 permissions.
 
+## Retrying an uncertain message
+
+The browser offers **Retry original message** only while it retains that
+message's original input. It first reads the same operation, adopts any Run
+receipt without dispatching again, then reads an authorized View for the same
+Agent and Session. Only the history token is refreshed: the intent ID, append
+condition and complete ordered Prompt content, including attachments, remain
+unchanged. The explicit request uses `POST .../prompts?action=retry`.
+
+The complete query/refresh/POST action is single-flight. A pending original
+HTTP submission cannot queue a retry; a late durable SSE receipt also prevents
+redispatch. Invalid or failed reads never authorize a POST. Navigation,
+revocation and browser identity changes cancel the action. Retrying does not
+read the current composer or clear its draft and attachments.
+
+Original inputs are immutable in-memory JSON, bounded to four messages and
+64 MiB in total. They are released on durable Run receipt, terminal outcome,
+Agent/Session navigation or close, and are never written to browser storage.
+Reloaded or evicted inputs allow observation only. Automatic busy/not-ready
+backoff and the full ACP Docker original-message scenario remain separate
+pending delivery work for #53.
+
 ## Responsibilities
 
 - Page-local navigation, selection, composer, attachment and disclosure state.

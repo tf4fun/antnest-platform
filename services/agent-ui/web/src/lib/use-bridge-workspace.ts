@@ -68,6 +68,8 @@ export function useBridgeWorkspace(options: {
   const [configuring, setConfiguring] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [retryingPrompt, setRetryingPrompt] = useState(false);
+  const promptRetryFlight = useRef(false);
   const [commanding, setCommanding] = useState(false);
   const [commandResponse, setCommandResponse] = useState<{ key: string; result: ControlResult } | null>(null);
   const [uncertainCreationAgentId, setUncertainCreationAgentId] = useState<string | null>(null);
@@ -144,6 +146,7 @@ export function useBridgeWorkspace(options: {
   const selectedOperations = bridge.operations.filter((item) => item.sessionId === selected);
   const activeOperation = selectedOperations.find((item) => activePhase(item.phase));
   const uncertainOperation = selectedOperations.find((item) => item.phase === "uncertain");
+  const retryableOperation = selectedOperations.find((item) => item.retryAvailable);
   const observedPromptError = uncertainOperation === undefined ? undefined :
     `${uncertainOperation.error?.message ? uncertainOperation.error.message + " " : ""}` +
     "Message status is uncertain. Refresh this conversation to check the original operation.";
@@ -345,7 +348,10 @@ export function useBridgeWorkspace(options: {
     const next = selectWorkspaceRoute(current, route);
     const changed = next.activeAgentId !== current.activeAgentId ||
       next.activeConversationId !== current.activeConversationId;
-    if (changed) navigationEpoch.current++;
+    if (changed) {
+      navigationEpoch.current++;
+      controllerRef.current?.releasePromptRetry();
+    }
     if (changed) setCommandResponse(null);
     if (changed && viewWaiter.current &&
       (next.activeAgentId !== viewWaiter.current.agentId ||
@@ -469,6 +475,27 @@ export function useBridgeWorkspace(options: {
       submitFlight.current = false;
       setCreating(false);
       setSubmitting(false);
+    }
+  }
+
+  async function retryOriginalPrompt() {
+    const controller = controllerRef.current;
+    const sessionId = workspaceRef.current?.activeConversationId;
+    const operation = retryableOperation;
+    if (!live() || !connected || !controller || !sessionId ||
+      operation?.sessionId !== sessionId || promptRetryFlight.current || submitting) return;
+    const navigation = navigationEpoch.current;
+    promptRetryFlight.current = true;
+    setRetryingPrompt(true);
+    presentation.setError();
+    try {
+      await controller.retryPrompt(operation.operationId);
+    } catch (cause) {
+      if (live() && controllerRef.current === controller && navigation === navigationEpoch.current)
+        presentation.setErrorFor(sessionId, message(cause, "The original message could not be retried."));
+    } finally {
+      promptRetryFlight.current = false;
+      if (mounted.current) setRetryingPrompt(false);
     }
   }
 
@@ -647,6 +674,7 @@ export function useBridgeWorkspace(options: {
     removeAttachment: (id: string) => presentation.setAttachments((current) =>
       current.filter((item) => item.id !== id)),
     submit, cancelRun, setConnectionError,
+    promptRetry: retryableOperation ? { pending: retryingPrompt, retry: retryOriginalPrompt } : undefined,
     sessionWorking, sessionSettled, openingHistory, cancellable,
     onAnswerPermission: (id: string, optionId: string) => {
       if (!live() || !connected) return;

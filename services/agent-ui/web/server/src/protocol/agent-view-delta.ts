@@ -21,6 +21,9 @@ const operation = z.strictObject({ operationId: id, sessionId: id,
   errorClass: z.string().max(128).nullable().optional(), error: error.optional(),
 }).refine((value) => value.acceptance !== "acp" ||
   (value.runId !== undefined && value.outputWatermark !== undefined));
+export function validOperation(value: unknown): boolean {
+  return operation.safeParse(value).success;
+}
 const permission = z.strictObject({ permissionId: id, sessionId: id, generation: revision,
   toolCall: z.strictObject({ toolCallId: id, title: z.string().optional(), kind: z.string().optional(), rawInput: z.unknown().optional() }),
   options: z.array(z.strictObject({ optionId: id, name: z.string().min(1),

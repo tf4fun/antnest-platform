@@ -157,8 +157,8 @@ export class BridgeHttpClient {
     return this.session.track(result.data, request);
   }
 
-  prompt(agentId: string, sessionId: string, admission: PromptAdmission, signal?: AbortSignal): Promise<PromptAccepted> {
-    return this.request(`${sessionPath(agentId, sessionId)}/prompts`, {
+  prompt(agentId: string, sessionId: string, admission: PromptAdmission, signal?: AbortSignal, action?: "retry"): Promise<PromptAccepted> {
+    return this.request(`${sessionPath(agentId, sessionId)}/prompts${action === "retry" ? "?action=retry" : ""}`, {
       method: "POST",
       body: {
         intentId: admission.intentId,

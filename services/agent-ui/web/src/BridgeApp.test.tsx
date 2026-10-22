@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import BridgeApp from "./BridgeApp";
 
@@ -114,4 +114,202 @@ test.each(["antnest_csrf", "__Host-antnest_csrf"])("Bridge page uses HTTP/SSE an
     fromStreamRevision: 1, toStreamRevision: 2, cursor: "cursor-3" });
   expect(await screen.findByText("No Agent available")).toBeTruthy();
   expect(screen.queryByText("Answer finished")).toBeNull();
+});
+
+test("Bridge page explicitly retries the original Prompt with its attachment after querying and refreshing its token", async () => {
+  window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
+  type PromptBody = { intentId: string; expectedAppendVersion: number; prompt: unknown[] };
+  type RequestRow = { path: string; method: string; headers: Headers; body?: PromptBody };
+  const held = <T,>() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(yes => { resolve = yes; });
+    return { promise, resolve };
+  };
+  const releaseQuery = held<void>();
+  const releaseView = held<void>();
+  const releaseRetry = held<void>();
+  const requests: RequestRow[] = [];
+  const prompts: RequestRow[] = [];
+  const pendingFetches = new Set<Promise<Response>>();
+  const sources: Array<{ closed: boolean; emit(name: string, value: unknown): void; close(): void }> = [];
+  const sessionPath = "/api/app/workspace/v1/agents/agent-1/sessions/session-1";
+  const viewPath = "/api/app/workspace/v1/agents/agent-1/view?sessionId=session-1";
+  let retryClicked = false;
+  let firstBody: PromptBody | undefined;
+  let clickIndex = 0;
+  let queryHeldRequests: string[] = [];
+  let viewHeldRequests: string[] = [];
+  let finalDraft = "";
+  let finalAttachmentVisible = false;
+  let completedVisible = false;
+  let sourcesClosedByUnmount = false;
+  let mounted: ReturnType<typeof render> | undefined;
+  const cookie = vi.spyOn(document, "cookie", "get").mockReturnValue("antnest_csrf=csrf-original-retry");
+  const originalText = "Send original message A";
+  const originalFile = new File(["Original A attachment"], "original-a.txt", { type: "text/plain" });
+  const readOriginalFile = vi.fn(async () => new TextEncoder().encode("Original A attachment").buffer);
+  Object.defineProperty(originalFile, "arrayBuffer", { value: readOriginalFile });
+  const changedFile = new File(["Different current attachment"], "current-draft.txt", { type: "text/plain" });
+  const readChangedFile = vi.fn(async () => new TextEncoder().encode("Different current attachment").buffer);
+  Object.defineProperty(changedFile, "arrayBuffer", { value: readChangedFile });
+  const unknownOperation = () => ({
+    operationId: firstBody?.intentId ?? "not-submitted", sessionId: "session-1",
+    phase: "uncertain", acceptance: "unknown",
+    error: { code: "agent_busy", message: "The Agent is busy.", requestId: "busy-original-a",
+      operationId: firstBody?.intentId ?? "not-submitted", retryable: false, recovery: "query_operation" },
+  });
+  const view = (version: number, operations: unknown[] = [], completed = false) => ({
+    agentId: "agent-1", bridgeEpoch: "epoch-1", availability: "ready",
+    promptCapabilities: { image: true, embeddedContext: true }, activeSessionId: null,
+    selectedSessionId: "session-1", streamCursor: `cursor-${version}`,
+    operations, permissions: [],
+    selectedView: { agentId: "agent-1", sessionId: "session-1", bridgeEpoch: "epoch-1",
+      incarnation: "incarnation-1", viewRevision: version, historyState: "ready", title: null, updatedAt: null,
+      appendVersion: version >= 3 ? 2 : 1, historyToken: version >= 3 ? "history-refreshed-2" : "history-original-1",
+      outputWatermark: completed ? 2 : 1, streamCursor: `session-cursor-${version}`,
+      operations, permissions: [], configOptions: [], configurationToken: null, usage: null,
+      turns: [{ turnId: completed ? "run-original-a" : "saved-turn", outcome: "completed",
+        prompt: completed ? firstBody?.prompt ?? [] : [{ type: "text", text: "Saved question" }],
+        finalResponse: [{ type: "text", text: completed ? "Original A retry completed" : "Saved answer" }],
+        contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
+      olderTurnsCursor: null },
+  });
+  const relevantAfterClick = () => requests.slice(clickIndex).filter(row =>
+    row.path === viewPath || row.path.startsWith(`${sessionPath}/operations/`) ||
+    row.path.startsWith(`${sessionPath}/prompts`)).map(row => `${row.method} ${row.path}`);
+  vi.stubGlobal("EventSource", class {
+    closed = false;
+    private listeners = new Map<string, (event: { data: string }) => void>();
+    constructor() { sources.push(this); }
+    addEventListener(name: string, listener: (event: { data: string }) => void) {
+      this.listeners.set(name, listener);
+    }
+    emit(name: string, value: unknown) {
+      if (!this.closed) this.listeners.get(name)?.({ data: JSON.stringify(value) });
+    }
+    close() { this.closed = true; this.listeners.clear(); }
+  });
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    const row: RequestRow = { path, method: init?.method ?? "GET", headers: new Headers(init?.headers) };
+    requests.push(row);
+    const task = (async () => {
+      if (path === "/api/session" && row.method === "GET") return Response.json({
+        principal: { user_id: "user-1", organization_id: "org-1", membership_id: "member-1",
+          organization_slug: "engineering", organization_name: "Engineering", system_role: "user",
+          organization_role: "member", active: true },
+        expires_at: "2026-10-12T00:00:00Z", idle_expires_at: "2026-10-11T12:30:00Z", activity_interval_ms: 1666,
+      });
+      if (path === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+      if (path.endsWith("/bootstrap")) return Response.json({
+        principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
+          organizationId: "org-1", administrator: false },
+        agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }],
+        renderedAt: "2026-09-23T00:00:00Z", bridgeEpoch: "epoch-1",
+      });
+      if (path.endsWith("/sessions")) return Response.json({
+        items: [{ sessionId: "session-1", title: "Conversation", updatedAt: "2026-09-23T00:00:00Z", activeOperationId: null }],
+        nextCursor: null,
+      });
+      if (path === viewPath) {
+        if (retryClicked) { await releaseView.promise; return Response.json(view(3, [unknownOperation()])); }
+        return Response.json(view(1));
+      }
+      if (path === `${sessionPath}/operations/${encodeURIComponent(firstBody?.intentId ?? "not-submitted")}` && row.method === "GET") {
+        await releaseQuery.promise;
+        return Response.json(unknownOperation());
+      }
+      if (path.startsWith(`${sessionPath}/prompts`) && row.method === "POST") {
+        row.body = JSON.parse(String(init?.body)) as PromptBody;
+        prompts.push(row);
+        if (prompts.length === 1) firstBody = structuredClone(row.body);
+        else await releaseRetry.promise;
+        return Response.json({ operationId: row.body.intentId, acceptance: "bridge", phase: "dispatching" }, { status: 202 });
+      }
+      throw new Error(`Unexpected original retry request ${path}`);
+    })();
+    pendingFetches.add(task);
+    void task.then(() => pendingFetches.delete(task), () => pendingFetches.delete(task));
+    return task;
+  }));
+  try {
+    mounted = render(<BridgeApp />);
+    await screen.findByText("Saved answer");
+    fireEvent.change(screen.getByRole("combobox", { name: "Message" }), { target: { value: originalText } });
+    fireEvent.change(screen.getByLabelText("File attachments"), { target: { files: [originalFile] } });
+    await screen.findByText(originalFile.name);
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(prompts).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value).toBe(""));
+    await act(async () => {
+      sources.at(-1)!.emit("reset", { type: "reset", agentId: "agent-1", bridgeEpoch: "epoch-1",
+        projectionId: "projection-original-retry", fromStreamRevision: 0, toStreamRevision: 1,
+        cursor: "cursor-2", view: view(2, [unknownOperation()]) });
+    });
+    await screen.findByText(/Message status is uncertain\./u);
+    fireEvent.change(screen.getByRole("combobox", { name: "Message" }), { target: { value: "A different unsent draft" } });
+    fireEvent.change(screen.getByLabelText("File attachments"), { target: { files: [changedFile] } });
+    await screen.findByText(changedFile.name);
+    // The current baseline reaches this rendered business action before failing:
+    // no invented controller/API method is needed to make this a red test.
+    const retry = await screen.findByRole("button", { name: "Retry original message" });
+    clickIndex = requests.length;
+    retryClicked = true;
+    await act(async () => { fireEvent.click(retry); fireEvent.click(retry); });
+    await waitFor(() => expect(requests.some(row => row.method === "GET" &&
+      row.path === `${sessionPath}/operations/${encodeURIComponent(firstBody!.intentId)}`)).toBe(true));
+    queryHeldRequests = relevantAfterClick();
+    await act(async () => { releaseQuery.resolve(); });
+    await waitFor(() => expect(requests.slice(clickIndex).some(row => row.path === viewPath)).toBe(true));
+    viewHeldRequests = relevantAfterClick();
+    await act(async () => { releaseView.resolve(); });
+    await waitFor(() => expect(prompts).toHaveLength(2));
+    await act(async () => { releaseRetry.resolve(); });
+    await act(async () => {
+      sources.filter(source => !source.closed).at(-1)!.emit("reset", {
+        type: "reset", agentId: "agent-1", bridgeEpoch: "epoch-1", projectionId: "projection-original-retry",
+        fromStreamRevision: 1, toStreamRevision: 2, cursor: "cursor-4",
+        view: view(4, [{ operationId: firstBody!.intentId, sessionId: "session-1", acceptance: "acp",
+          phase: "completed", runId: "run-original-a", outputWatermark: 2, stopReason: "end_turn", errorClass: null }], true),
+      });
+    });
+    await screen.findByText("Original A retry completed");
+    completedVisible = true;
+    finalDraft = screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" }).value;
+    finalAttachmentVisible = screen.queryByText(changedFile.name) !== null;
+  } finally {
+    await act(async () => {
+      mounted?.unmount();
+      cleanup();
+      sourcesClosedByUnmount = sources.length > 0 && sources.every(source => source.closed);
+      releaseQuery.resolve(); releaseView.resolve(); releaseRetry.resolve();
+      while (pendingFetches.size) await Promise.allSettled([...pendingFetches]);
+    });
+    for (const source of sources) source.close();
+    cookie.mockRestore();
+  }
+  const operationPath = `${sessionPath}/operations/${encodeURIComponent(firstBody!.intentId)}`;
+  expect(queryHeldRequests).toEqual([`GET ${operationPath}`]);
+  expect(viewHeldRequests).toEqual([`GET ${operationPath}`, `GET ${viewPath}`]);
+  expect(relevantAfterClick()).toEqual([
+    `GET ${operationPath}`, `GET ${viewPath}`, `POST ${sessionPath}/prompts?action=retry`,
+  ]);
+  expect(prompts).toHaveLength(2);
+  expect(firstBody).toEqual({ intentId: expect.any(String), expectedAppendVersion: 1,
+    prompt: [{ type: "text", text: originalText },
+      { type: "resource", resource: { uri: "attachment:///original-a.txt", mimeType: "text/plain", text: "Original A attachment" } }] });
+  expect(prompts[1]!.body).toEqual(firstBody);
+  expect(prompts[0]!.headers.get("If-Match")).toBe("history-original-1");
+  expect(prompts[1]!.headers.get("If-Match")).toBe("history-refreshed-2");
+  for (const prompt of prompts) {
+    expect(prompt.headers.get("Idempotency-Key")).toBe(firstBody!.intentId);
+    expect(prompt.headers.get("X-Antnest-CSRF-Token")).toBe("csrf-original-retry");
+  }
+  expect(readOriginalFile).toHaveBeenCalledTimes(1);
+  expect(readChangedFile).not.toHaveBeenCalled();
+  expect(finalDraft).toBe("A different unsent draft");
+  expect(finalAttachmentVisible).toBe(true);
+  expect(completedVisible).toBe(true);
+  expect(sourcesClosedByUnmount).toBe(true);
+  expect(pendingFetches.size).toBe(0);
 });

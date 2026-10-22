@@ -309,7 +309,7 @@ test("lost HTTP admission recovers the original public error without another Pro
     const result = await tracker.submit("session-1", admission);
     assert.deepEqual(result, uncertainOperation());
     assert.deepEqual(tracker.get("session-1", "intent-1"), uncertainOperation());
-    assert.deepEqual(changes, [uncertainOperation()]);
+    assert.deepEqual(changes, [uncertainOperation(), { ...uncertainOperation(), retryAvailable: true }]);
     await assert.rejects(tracker.submit("session-1", admission), /already tracked/u);
     assert.deepEqual(calls, [
       ["prompt", "agent-1", "session-1", admission, undefined],
@@ -437,8 +437,8 @@ for (const outcome of ["bridge ACK", "failed recovery", "unknown recovery"] as c
       const result = await pending;
       assert.deepEqual(result, uncertainOperation());
       assert.deepEqual(tracker.get("session-1", "intent-1"), uncertainOperation());
-      assert.deepEqual(tracker.snapshot, [uncertainOperation()]);
-      assert.deepEqual(changes, [uncertainOperation()]);
+      assert.deepEqual(tracker.snapshot, [{ ...uncertainOperation(), retryAvailable: true }]);
+      assert.deepEqual(changes, [uncertainOperation(), { ...uncertainOperation(), retryAvailable: true }]);
       await assert.rejects(tracker.submit("session-1", admission), /already tracked/u);
       assert.equal(submits, 1);
       assert.equal(reads, outcome === "bridge ACK" ? 0 : 1);

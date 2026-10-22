@@ -50,6 +50,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
     loggingOut,
     connectionError,
     interactionError,
+    promptRetry,
     permissions,
     configuring,
     creating,
@@ -372,6 +373,13 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
             <div className="workspace-alert" role="alert">
               {interactionError}
             </div>
+          ) : null}
+          {promptRetry ? (
+            <button className="action-button" type="button"
+              disabled={!connected || promptRetry.pending}
+              onClick={() => { void promptRetry.retry(); }}>
+              {promptRetry.pending ? "Checking original message…" : "Retry original message"}
+            </button>
           ) : null}
           {history.error && !preview && !openingFailure ? (
             <div className="workspace-alert" role="alert">
