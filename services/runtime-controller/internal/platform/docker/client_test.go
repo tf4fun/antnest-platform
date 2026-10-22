@@ -153,6 +153,66 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 	}
 }
 
+func TestHTTPClientRemoveContainerRequestsForcedVolumeRemoval(t *testing.T) {
+	transportFailure := errors.New("container removal connection reset")
+	for _, test := range []struct {
+		name          string
+		status        int
+		body          string
+		transportErr  error
+		wantError     bool
+		wantIs        error
+		wantUncertain bool
+	}{
+		{name: "removed", status: http.StatusNoContent},
+		{name: "not found", status: http.StatusNotFound, body: "missing", wantError: true, wantIs: ErrNotFound},
+		{name: "conflict", status: http.StatusConflict, body: "container removal conflict", wantError: true, wantIs: ErrConflict},
+		{name: "rejected", status: http.StatusBadRequest, body: "container removal rejected", wantError: true},
+		{name: "daemon failure", status: http.StatusInternalServerError, body: "container removal outcome unknown", wantError: true, wantUncertain: true},
+		{name: "transport failure", transportErr: transportFailure, wantError: true, wantIs: transportFailure, wantUncertain: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const identifier = "original-container-id"
+			calls := 0
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				calls++
+				if request.Method != http.MethodDelete || request.URL.Path != "/v1.47/containers/"+identifier {
+					t.Errorf("container removal targeted an unexpected resource: %s %s", request.Method, request.URL.Path)
+				}
+				query := request.URL.Query()
+				if len(query) != 2 || len(query["force"]) != 1 || query.Get("force") != "1" ||
+					len(query["v"]) != 1 || query.Get("v") != "1" {
+					t.Errorf("container removal must request force=1 and v=1: %s", request.URL.RawQuery)
+				}
+				if test.transportErr != nil {
+					return nil, test.transportErr
+				}
+				return responseWith(test.status, test.body), nil
+			})
+			client, err := NewHTTPClient(&http.Client{Transport: transport}, "http://docker")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = client.RemoveContainer(context.Background(), identifier)
+			if calls != 1 {
+				t.Fatalf("container removal requests = %d, want 1", calls)
+			}
+			if (err != nil) != test.wantError {
+				t.Fatalf("container removal error = %v, want error %t", err, test.wantError)
+			}
+			if test.wantIs != nil && !errors.Is(err, test.wantIs) {
+				t.Errorf("container removal error = %v, want %v", err, test.wantIs)
+			}
+			if test.wantError && test.wantIs == nil && !strings.Contains(err.Error(), test.body) {
+				t.Errorf("container removal lost the Docker error detail: %v", err)
+			}
+			if IsUncertain(err) != test.wantUncertain {
+				t.Errorf("container removal uncertainty = %t, want %t: %v", IsUncertain(err), test.wantUncertain, err)
+			}
+		})
+	}
+}
+
 func TestHTTPClientPreservesNotFoundAndAmbiguousTransport(t *testing.T) {
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return responseWith(http.StatusNotFound, "missing"), nil

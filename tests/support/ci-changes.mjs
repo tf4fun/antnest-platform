@@ -47,10 +47,9 @@ const platformImages = [
   "skill-registry",
   "temporal",
 ];
-const observed = [
-  ...temporal,
-  "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0",
-];
+export const auxiliaryCollectorImage =
+  "cr.jaegertracing.io/jaegertracing/jaeger:2.21.0";
+const observed = [...temporal, auxiliaryCollectorImage];
 
 // Prose never changes test behavior; contract and test sources may be parsed.
 const ignored = ["**/*.md", "LICENSE"];
@@ -92,7 +91,10 @@ export const suites = [
       ...compose,
     ],
     pull: base,
-    run: ["make test-runtime-controller-postgres"],
+    run: [
+      "make test-runtime-controller-postgres",
+      "ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock ANTNEST_RUNTIME_CONTROLLER_TEST_ANONYMOUS_VOLUME_IMAGE=postgres:17.11-bookworm node tests/integration/go/run.mjs runtime-controller --profile integration --package internal/platform/docker -- -race -timeout=3m -run ^TestRemoveContainerDeletesAnonymousVolumesAndPreservesNamedResources$",
+    ],
   },
   {
     id: "identity-postgres",
@@ -1027,6 +1029,19 @@ export function selectSuites(files, { all = false, only } = {}) {
   );
 }
 
+// Keep suite.pull as the complete inventory. Only the known Trace collector
+// is auxiliary at execution; all other images remain required.
+function pullPartition(inventory) {
+  return {
+    pull: inventory
+      .filter((image) => image !== auxiliaryCollectorImage)
+      .join(" "),
+    auxiliary_pull: inventory.includes(auxiliaryCollectorImage)
+      ? auxiliaryCollectorImage
+      : "",
+  };
+}
+
 // GitHub matrices accept only scalar conditions, so setup becomes flags.
 export function matrixEntry(suite) {
   const entry = {
@@ -1035,7 +1050,7 @@ export function matrixEntry(suite) {
     tier: suite.tier.toUpperCase(),
     run: suite.run.join("\n"),
     images: (suite.images ?? []).join(","),
-    pull: (suite.pull ?? []).join(" "),
+    ...pullPartition(suite.pull ?? []),
     strict_exit: suite.strict === true,
   };
   for (const setup of setups)
@@ -1237,7 +1252,7 @@ export function shardEntry(shard, members) {
     name: shard.name,
     tier: entries[0].tier,
     images: union(members.map((suite) => suite.images ?? [])).join(","),
-    pull: union(members.map((suite) => suite.pull ?? [])).join(" "),
+    ...pullPartition(union(members.map((suite) => suite.pull ?? []))),
     // A JSON string keeps every matrix value scalar.
     suites: JSON.stringify(
       entries.map(({ id, name, run, strict_exit }) => ({

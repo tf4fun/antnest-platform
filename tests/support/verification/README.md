@@ -5,6 +5,25 @@ evidence tools used by the test targets. Run every command from the repository
 root with Node.js 24 or newer, Go and Python 3 on `PATH`. Run verification
 commands serially and use a new evidence directory or name for each run.
 
+## B Skills resource admission
+
+The CI shard runner captures one Docker inventory before its first B Skills
+suite and checks that same inventory after every suite, including failed or
+interrupted business commands. Each check has an independent two-minute budget
+and waits for its Docker commands to finish. Container, volume, network,
+retained-container or pinned-image drift is a hard failure; auxiliary Trace
+warnings cannot admit it. A previous leak never becomes a later clean baseline.
+The shard artifact preserves each suite's original business result and its
+separate `*.environment.json` inventory evidence. This check reports resources;
+it never deletes them or substitutes for each runner's owned cleanup.
+
+For a focused real-Docker check of the admission boundary, run
+`node tests/support/verification/resource-cleanup-docker-probe.mjs OUTPUT_DIR`.
+It creates one uniquely owned volume, proves that a successful command with a
+remaining volume is rejected, and removes only that verified fixture before
+requiring the original inventory again. It does not prove Runtime lifecycle or
+host-process cleanup.
+
 ## Go service runner
 
 `go-service.mjs` runs one Go service's full test suite against an existing test

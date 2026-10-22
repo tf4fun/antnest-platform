@@ -299,7 +299,9 @@ func (c *Client) StopContainer(ctx context.Context, identifier string) error {
 }
 
 func (c *Client) RemoveContainer(ctx context.Context, identifier string) error {
-	return c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(identifier)+"?force=1", nil, nil)
+	// Image-declared anonymous volumes belong to this compute/helper container.
+	// Docker retains explicitly named volumes for their separate lifecycle.
+	return c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(identifier)+"?force=1&v=1", nil, nil)
 }
 
 // PutArchive writes a tar stream into a container's mounted volume. The

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { composeArgs, dockerClient } from "../lifecycle-closeout/docker.mjs";
+import { dockerClient } from "../lifecycle-closeout/docker.mjs";
+import { skillComposeArgs as composeArgs } from "./observability-setup.mjs";
 
 export const learningImageOverlay = [
   "-f",

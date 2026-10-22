@@ -37,6 +37,8 @@ import { temporaryStorageRoot } from "./storage.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const ids = (selected) => selected.map((suite) => suite.id);
 const enabled = suites.filter((suite) => !suite.disabled);
+const runtimeControllerAnonymousVolumeCommand =
+  "ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock ANTNEST_RUNTIME_CONTROLLER_TEST_ANONYMOUS_VOLUME_IMAGE=postgres:17.11-bookworm node tests/integration/go/run.mjs runtime-controller --profile integration --package internal/platform/docker -- -race -timeout=3m -run ^TestRemoveContainerDeletesAnonymousVolumesAndPreservesNamedResources$";
 
 test("observation ordering always admits the real Controller consumer", () => {
   for (const path of [
@@ -51,7 +53,10 @@ test("observation ordering always admits the real Controller consumer", () => {
       ({ id }) => id === "runtime-controller-postgres",
     );
     assert(suite, `${path} must select the actual observation consumer`);
-    assert.deepEqual(suite.run, ["make test-runtime-controller-postgres"]);
+    assert.deepEqual(suite.run, [
+      "make test-runtime-controller-postgres",
+      runtimeControllerAnonymousVolumeCommand,
+    ]);
   }
   const recipe = readFileSync(resolve(root, "Makefile"), "utf8").match(
     /^test-runtime-controller-postgres:\n(?<body>(?:\t.*\n)+)/mu,
@@ -61,6 +66,26 @@ test("observation ordering always admits the real Controller consumer", () => {
     recipe.groups.body,
     /tests\/integration\/runtime-controller\/observation-consumer\.mjs/u,
   );
+});
+
+test("Runtime Controller container cleanup selects PostgreSQL admission with its cached image", () => {
+  for (const path of [
+    "services/runtime-controller/internal/platform/docker/client.go",
+    "tests/integration/go/runtime-controller/internal/platform/docker/container_cleanup_integration_test.go",
+  ]) {
+    const suite = selectSuites([path]).find(
+      ({ id }) => id === "runtime-controller-postgres",
+    );
+    assert(suite, `${path} must select the actual container cleanup admission`);
+    assert.deepEqual(suite.run, [
+      "make test-runtime-controller-postgres",
+      runtimeControllerAnonymousVolumeCommand,
+    ]);
+    assert.deepEqual(suite.pull, [
+      "postgres:17.11-bookworm",
+      "node:24.21.0-bookworm-slim",
+    ]);
+  }
 });
 
 test("ACP Runtime information provenance runs against the candidate production image", () => {

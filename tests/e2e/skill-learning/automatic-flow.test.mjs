@@ -10,9 +10,12 @@ import { fileURLToPath } from "node:url";
 import {
   configuration,
   dockerClient,
-  composeArgs,
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
+import {
+  skillComposeArgs as composeArgs,
+  startSkillObservability,
+} from "./observability-setup.mjs";
 import {
   setup,
   member as fixtureMember,
@@ -393,6 +396,13 @@ test(
           { mode: 0o600, flag: "wx" },
         );
       }
+      await startSkillObservability({
+        docker,
+        project: config.project,
+        overlay,
+        directory: `${root}/artifacts/verification/skill-learning`,
+        signal: abort.signal,
+      });
       if (!debugLearning && !discovery)
         developmentSettings = await assertStandardComposeIgnoresDebugSettings(
           config,
