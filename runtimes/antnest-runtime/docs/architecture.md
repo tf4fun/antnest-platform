@@ -284,6 +284,23 @@ actor cannot terminate/reap its direct Executor, it stops accepting calls and
 delegates recovery to the container platform. Unobserved side effects remain
 unknown, not rolled back.
 
+Each invocation owns its stdin writer, stdout reader and stderr reader until
+their tasks have been joined. The owner retains partial join results when a
+response-drain timeout cancels its waiter, so cleanup can resume without polling
+an already completed task again. Once the tasks exist, normal and error returns
+pass through the same cleanup before releasing the execution lease. Requesting
+task cancellation alone is not proof that the I/O has stopped.
+
+Process termination and aborted I/O cleanup share one absolute two-second stop
+deadline; a second cleanup attempt does not renew it. Normal response draining
+retains its separate two-second limit. Expected task cancellation is accepted
+only during abort cleanup; other I/O failures and task panics remain errors,
+including secondary cleanup failures when the process stop already failed. An
+I/O task panic or an expired cleanup deadline poisons admission and reports
+containment as unproven. It does not claim that the remaining tasks were joined
+or that side effects were reversed. The outer Runtime shutdown deadline and
+managed MCP lifecycle budgets remain separate.
+
 The Supervisor keeps `CAP_KILL` so it can signal Executors after their
 irreversible UID transition. Admission closure and execution activity are
 separate state: shutdown rejects new calls, cancels the active call, and waits
