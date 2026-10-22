@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { until } from "../workspace-closeout/c4-setup.mjs";
 import { rpcMessages } from "./acp-gate-responses.mjs";
+import { assertPromptInventory } from "./prompt-dispatch-inventory.mjs";
 
 const peerPhase = "c4-browser-hold-peer";
 const refusedPhase = "c4-browser-window-00";
@@ -474,18 +475,13 @@ export async function verifyBrowserPromptBusy({
     );
     return page.items.filter((run) => !before.has(run.run_id));
   };
-  const originalCounts = (state) => {
-    const original = evidence.originalARequest;
-    const count = state.forwardedByIntent?.[original.body.intentId] ?? 0;
-    check(count === 1, "Original UI intent was replayed or never forwarded");
-    check(
-      evidence.browserPrompts.filter(
-        (row) => row.body.intentId === original.body.intentId,
-      ).length === 1,
-      "Browser replayed its original Prompt",
-    );
-    return count;
-  };
+  const promptInventory = (state, expected) =>
+    assertPromptInventory({
+      browserPrompts: evidence.browserPrompts,
+      gateBefore: evidence.gate.before,
+      gateAfter: state,
+      expected,
+    });
   const observeRequest = (request) => {
     try {
       const value = promptRequest(request, gateway, base);
@@ -658,12 +654,9 @@ export async function verifyBrowserPromptBusy({
         ? state
         : false;
     }, "Original UI intent held before ACP");
-    check(
-      (evidence.gate.held.forwardedByIntent?.[
-        evidence.originalARequest.body.intentId
-      ] ?? 0) === 0,
-      "Gate forwarded the original Prompt too early",
-    );
+    promptInventory(evidence.gate.held, [
+      { request: evidence.originalARequest, forwarded: 0 },
+    ]);
     const script =
       "await (" +
       peerMain.toString() +
@@ -762,7 +755,9 @@ export async function verifyBrowserPromptBusy({
     );
     uncertainOperation(evidence.operationQuery.body, original, definition);
     evidence.gate.afterQuery = await gateState();
-    originalCounts(evidence.gate.afterQuery);
+    promptInventory(evidence.gate.afterQuery, [
+      { request: original, forwarded: 1 },
+    ]);
     evidence.models.rejected = await model();
     check(
       evidence.models.rejected.requests.every(
@@ -798,7 +793,9 @@ export async function verifyBrowserPromptBusy({
       definition,
     );
     evidence.gate.afterPeer = await gateState();
-    originalCounts(evidence.gate.afterPeer);
+    promptInventory(evidence.gate.afterPeer, [
+      { request: original, forwarded: 1 },
+    ]);
     await page
       .getByRole("button", { name: "New conversation", exact: true })
       .click();
@@ -851,7 +848,11 @@ export async function verifyBrowserPromptBusy({
       };
       return state;
     }, "Explicit next intent has a real ACP response");
-    const originalDispatches = originalCounts(evidence.gate.completed);
+    const expectedPrompts = [
+      { request: original, forwarded: 1 },
+      { request: evidence.acceptedNext.request, forwarded: 1 },
+    ];
+    promptInventory(evidence.gate.completed, expectedPrompts);
     evidence.models.completed = await model();
     const peerRequests = evidence.models.completed.requests.filter(
       (row) => row.phase === peerPhase,
@@ -867,13 +868,7 @@ export async function verifyBrowserPromptBusy({
         !evidence.models.completed.pending.includes(peerPhase) &&
         evidence.models.completed.requests.every(
           (row) => row.phase !== refusedPhase,
-        ) &&
-        evidence.gate.completed.forwardedByIntent[
-          evidence.acceptedNext.body.operationId
-        ] === 1 &&
-        evidence.browserPrompts.filter(
-          (row) => row.body.intentId === evidence.acceptedNext.body.operationId,
-        ).length === 1,
+        ),
       "Busy recovery repeated or lost actual model work",
     );
     evidence.audits.completed = await auditRuns();
@@ -1000,6 +995,15 @@ export async function verifyBrowserPromptBusy({
         "Persisted execution messages do not bind the original input and visible reply",
       );
     }
+    evidence.gate.afterAudits = await gateState();
+    const inventoryCounts = promptInventory(
+      evidence.gate.afterAudits,
+      expectedPrompts,
+    );
+    const originalDispatches =
+      (evidence.gate.afterAudits.forwardedByIntent[original.body.intentId] ??
+        0) -
+      (evidence.gate.before.forwardedByIntent[original.body.intentId] ?? 0);
     result = {
       checks: [
         "real-peer-agent-busy",
@@ -1007,10 +1011,14 @@ export async function verifyBrowserPromptBusy({
         "original-intent-query-without-replay",
         "explicit-new-intent-after-peer",
         "persisted-run-inventory-without-extra-runs",
+        "complete-browser-and-acp-prompt-inventory",
         "independent-peer-closed",
       ],
       busy_rejections: 1,
       original_prompt_dispatches: originalDispatches,
+      browser_prompts: inventoryCounts.browserPrompts,
+      gate_prompts: inventoryCounts.gatePrompts,
+      forwarded_prompts: inventoryCounts.forwardedPrompts,
       peer_model_requests: peerRequests.length,
       explicit_new_model_requests: nextRequests.length,
       audited_new_runs: completedRuns.length,
@@ -1076,6 +1084,11 @@ export async function verifyBrowserPromptBusy({
     }
     try {
       evidence.gate.final = await gateState(true);
+      if (result)
+        promptInventory(evidence.gate.final, [
+          { request: evidence.originalARequest, forwarded: 1 },
+          { request: evidence.acceptedNext.request, forwarded: 1 },
+        ]);
     } catch (error) {
       remember(error);
     }
