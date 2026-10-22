@@ -2425,3 +2425,795 @@ test(
     }
   },
 );
+
+test(
+  "Bridge Chromium explicitly retries original input and abandons a held retry when its Session changes",
+  { timeout: 90_000 },
+  async () => {
+    const deferred = () => Promise.withResolvers();
+    const requests = [];
+    const prompts = [];
+    const streams = [];
+    const sockets = [];
+    const webSockets = [];
+    const handlers = [];
+    const browserWaits = [];
+    const holds = [];
+    const failures = [];
+    const handlerFailures = [];
+    const operations = new Map();
+    const browserSession = createBrowserSessionFixture();
+    const agentPath = "/api/app/workspace/v1/agents/agent-1";
+    const promptPath = `${agentPath}/sessions/one/prompts`;
+    const viewPath = `${agentPath}/view?sessionId=one`;
+    const originalPosts = [deferred(), deferred()];
+    const states = {
+      one: { revision: 0, authority: 1, watermark: 1, completed: null },
+      two: { revision: 0, authority: 1, watermark: 1, completed: null },
+    };
+    let originalCount = 0;
+    let nextQuery;
+    let nextView;
+    let server;
+    let browser;
+    let context;
+    let page;
+    let browserDisconnected = false;
+    let serverClosed = false;
+
+    async function receipt(promise, label) {
+      let timer;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(`Timed out waiting for ${label}`)),
+              10_000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    function trackBrowser(promise) {
+      browserWaits.push(promise);
+      void promise.catch(() => {});
+      return promise;
+    }
+    function writeJSON(response, value, status = 200) {
+      response.writeHead(status, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      });
+      response.end(JSON.stringify(value));
+    }
+    function hold(label) {
+      const entered = deferred();
+      const release = deferred();
+      const joined = deferred();
+      const owner = {
+        label,
+        started: false,
+        entered: entered.promise,
+        release: () => release.resolve(),
+        joined: joined.promise,
+        async run(row, response, value, status = 200) {
+          owner.started = true;
+          entered.resolve(row);
+          try {
+            await release.promise;
+            if (!response.destroyed) writeJSON(response, value, status);
+          } finally {
+            joined.resolve();
+          }
+        },
+      };
+      holds.push(owner);
+      return owner;
+    }
+    function unknownOperation(intent) {
+      return {
+        operationId: intent,
+        sessionId: "one",
+        phase: "uncertain",
+        acceptance: "unknown",
+        error: {
+          code: "agent_busy",
+          message: "The Agent is busy.",
+          requestId: `busy-${intent}`,
+          operationId: intent,
+          retryable: false,
+          recovery: "query_operation",
+        },
+      };
+    }
+    function agentView(id, authority = states[id].authority) {
+      const state = states[id];
+      const selectedOperations = [...operations.values()].filter(
+        (operation) => operation.sessionId === id,
+      );
+      const cursor = `cursor-${id}-${state.revision}`;
+      return {
+        agentId: "agent-1",
+        bridgeEpoch: "epoch-original-retry",
+        availability: "ready",
+        promptCapabilities: {
+          image: true,
+          audio: false,
+          embeddedContext: true,
+        },
+        activeSessionId: null,
+        selectedSessionId: id,
+        streamCursor: cursor,
+        operations: [...operations.values()],
+        permissions: [],
+        selectedView: {
+          agentId: "agent-1",
+          sessionId: id,
+          title: id === "one" ? "Conversation one" : "Conversation two",
+          updatedAt: "2026-10-22T00:00:00Z",
+          bridgeEpoch: "epoch-original-retry",
+          incarnation: `incarnation-${id}`,
+          viewRevision: state.revision + 1,
+          appendVersion: authority,
+          outputWatermark: state.watermark,
+          historyToken: `history-${id}-${authority}`,
+          streamCursor: `session-${id}-${state.revision}`,
+          historyState: "ready",
+          olderTurnsCursor: null,
+          operations: selectedOperations,
+          permissions: [],
+          configOptions: [],
+          configurationToken: null,
+          usage: null,
+          turns: [
+            {
+              turnId: `saved-${id}`,
+              outcome: "completed",
+              prompt: [{ type: "text", text: `Saved question ${id}` }],
+              finalResponse: [{ type: "text", text: `Answer ${id}` }],
+              contentCursor: null,
+              contentSection: null,
+              processVersion: 0,
+              processCount: 0,
+            },
+            ...(state.completed === null
+              ? []
+              : [
+                  {
+                    turnId: state.completed.runId,
+                    outcome: "completed",
+                    prompt: state.completed.prompt,
+                    finalResponse: [
+                      { type: "text", text: "Original A retry completed" },
+                    ],
+                    contentCursor: null,
+                    contentSection: null,
+                    processVersion: 0,
+                    processCount: 0,
+                  },
+                ]),
+          ],
+        },
+      };
+    }
+    function publish(id) {
+      const state = states[id];
+      state.revision++;
+      const view = agentView(id);
+      const event = {
+        type: "reset",
+        agentId: "agent-1",
+        bridgeEpoch: "epoch-original-retry",
+        projectionId: `projection-${id}`,
+        fromStreamRevision: state.revision - 1,
+        toStreamRevision: state.revision,
+        cursor: view.streamCursor,
+        view,
+      };
+      const observers = streams.filter(
+        (stream) => stream.sessionId === id && !stream.row.closedActual,
+      );
+      assert.ok(
+        observers.length > 0,
+        "The real browser must own an open SSE observer before publication",
+      );
+      for (const observer of observers)
+        observer.response.write(
+          `event: reset\ndata: ${JSON.stringify(event)}\n\n`,
+        );
+    }
+    function relevantSince(index, intent) {
+      const operationPath = `${agentPath}/sessions/one/operations/${encodeURIComponent(intent)}`;
+      return requests
+        .slice(index)
+        .filter(
+          (row) =>
+            row.path === operationPath ||
+            row.path === viewPath ||
+            row.path.startsWith(promptPath),
+        )
+        .map((row) => `${row.method} ${row.path}`);
+    }
+    function responseFor(path, method = "GET") {
+      return trackBrowser(
+        page.waitForResponse(
+          (response) => {
+            const url = new URL(response.url());
+            return (
+              `${url.pathname}${url.search}` === path &&
+              response.request().method() === method
+            );
+          },
+          { timeout: 10_000 },
+        ),
+      );
+    }
+    function streamFor(id) {
+      return trackBrowser(
+        page.waitForResponse(
+          (response) => {
+            const url = new URL(response.url());
+            return (
+              url.pathname === `${agentPath}/events` &&
+              url.searchParams.get("sessionId") === id
+            );
+          },
+          { timeout: 10_000 },
+        ),
+      );
+    }
+    async function finishedResponse(pending, status) {
+      const response = await pending;
+      assert.equal(response.status(), status);
+      const error = await response.finished();
+      if (error) throw error;
+    }
+    async function handle(request, response, url, row) {
+      if (url.pathname === "/api/session" && request.method === "GET") {
+        writeJSON(response, browserSession.read());
+        return;
+      }
+      if (
+        url.pathname === "/api/session/activity" &&
+        request.method === "POST"
+      ) {
+        writeJSON(response, browserSession.activity());
+        return;
+      }
+      if (
+        url.pathname === "/api/session/external-identities" &&
+        request.method === "GET"
+      ) {
+        writeJSON(response, { bindings: [], notices: [] });
+        return;
+      }
+      if (
+        url.pathname === "/api/app/workspace/v1/bootstrap" &&
+        request.method === "GET"
+      ) {
+        writeJSON(response, {
+          principal: {
+            organizationSlug: "engineering",
+            organizationName: "Engineering",
+            userId: "user-1",
+            organizationId: "org-1",
+            administrator: false,
+          },
+          agents: [
+            {
+              agentId: "agent-1",
+              name: "Agent",
+              lifecycle: "created",
+              activation: "enabled",
+              runtime: "available",
+            },
+          ],
+          renderedAt: "2026-10-22T00:00:00Z",
+          bridgeEpoch: "epoch-original-retry",
+        });
+        return;
+      }
+      if (
+        url.pathname === `${agentPath}/sessions` &&
+        request.method === "GET"
+      ) {
+        writeJSON(response, {
+          items: ["one", "two"].map((id) => ({
+            sessionId: id,
+            title: id === "one" ? "Conversation one" : "Conversation two",
+            updatedAt: "2026-10-22T00:00:00Z",
+            activeOperationId: null,
+          })),
+          nextCursor: null,
+        });
+        return;
+      }
+      if (url.pathname === `${agentPath}/view` && request.method === "GET") {
+        const id = url.searchParams.get("sessionId");
+        assert.ok(
+          id === "one" || id === "two",
+          "The requested View must select an owned Session",
+        );
+        if (id === "one" && nextView) {
+          const owner = nextView;
+          nextView = undefined;
+          await owner.run(row, response, agentView(id, 2));
+        } else writeJSON(response, agentView(id));
+        return;
+      }
+      if (url.pathname === `${agentPath}/events` && request.method === "GET") {
+        const id = url.searchParams.get("sessionId");
+        assert.ok(
+          id === "one" || id === "two",
+          "The SSE subscription must select an owned Session",
+        );
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-store",
+          connection: "keep-alive",
+        });
+        response.write(": owned original retry observer\n\n");
+        streams.push({ sessionId: id, response, row });
+        return;
+      }
+      const operationMatch =
+        /^\/api\/app\/workspace\/v1\/agents\/agent-1\/sessions\/one\/operations\/([^/]+)$/u.exec(
+          url.pathname,
+        );
+      if (operationMatch && request.method === "GET") {
+        const intent = decodeURIComponent(operationMatch[1]);
+        assert.ok(
+          operations.has(intent),
+          "Retry must query a real original operation",
+        );
+        assert.ok(
+          nextQuery,
+          "Each explicit retry must own its expected operation query",
+        );
+        const owner = nextQuery;
+        nextQuery = undefined;
+        await owner.run(row, response, operations.get(intent));
+        return;
+      }
+      if (url.pathname === promptPath && request.method === "POST") {
+        const entries = [...url.searchParams.entries()];
+        const retry =
+          entries.length === 1 &&
+          entries[0][0] === "action" &&
+          entries[0][1] === "retry";
+        assert.ok(
+          entries.length === 0 || retry,
+          "The real browser must preserve the frozen Prompt action wire",
+        );
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        row.rawBody = Buffer.concat(chunks).toString("utf8");
+        row.body = JSON.parse(row.rawBody);
+        assert.deepEqual(Object.keys(row.body).sort(), [
+          "expectedAppendVersion",
+          "intentId",
+          "prompt",
+        ]);
+        prompts.push(row);
+        const ack = {
+          operationId: row.body.intentId,
+          acceptance: "bridge",
+          phase: "dispatching",
+        };
+        if (retry) await retryPost.run(row, response, ack, 202);
+        else {
+          assert.ok(
+            originalCount < originalPosts.length,
+            "No automatic or unexpected ordinary Prompt may be submitted",
+          );
+          writeJSON(response, ack, 202);
+          originalPosts[originalCount++].resolve(row);
+        }
+        return;
+      }
+      throw new Error(
+        "Unexpected API request in the owned original retry fixture",
+      );
+    }
+    const firstQuery = hold("first original operation query");
+    const authorizedView = hold("same-Session history authority");
+    const retryPost = hold("original retry POST");
+    const navigationQuery = hold("operation query abandoned by navigation");
+
+    try {
+      server = await createServer({
+        root: fileURLToPath(
+          new URL("../../../services/agent-ui/web/", import.meta.url),
+        ),
+        server: { host: "127.0.0.1", port: 0, strictPort: false },
+        plugins: [
+          {
+            name: "owned-original-prompt-retry-fixture",
+            configureServer(vite) {
+              vite.middlewares.use((request, response, next) => {
+                const url = new URL(request.url, "http://owned-fixture");
+                if (!url.pathname.startsWith("/api/")) {
+                  next();
+                  return;
+                }
+                const closed = deferred();
+                const row = {
+                  method: request.method,
+                  path: `${url.pathname}${url.search}`,
+                  headers: { ...request.headers },
+                  closed: closed.promise,
+                  closedActual: false,
+                };
+                response.once("close", () => {
+                  row.closedActual = true;
+                  closed.resolve();
+                });
+                requests.push(row);
+                const task = handle(request, response, url, row);
+                handlers.push(task);
+                void task.catch((cause) => {
+                  handlerFailures.push(cause);
+                  if (!response.destroyed && !response.writableEnded)
+                    writeJSON(
+                      response,
+                      {
+                        code: "fixture_failure",
+                        message: "Fixture request failed",
+                      },
+                      500,
+                    );
+                });
+              });
+            },
+          },
+        ],
+      });
+      server.httpServer.on("connection", (socket) => {
+        const closed = deferred();
+        const owner = { socket, closed: closed.promise, closedActual: false };
+        socket.once("close", () => {
+          owner.closedActual = true;
+          closed.resolve();
+        });
+        sockets.push(owner);
+      });
+      await server.listen();
+      const address = server.httpServer.address();
+      assert.ok(address && typeof address !== "string");
+      const origin = `http://127.0.0.1:${address.port}`;
+      browser = await chromium.launch({ headless: true });
+      browser.once("disconnected", () => {
+        browserDisconnected = true;
+      });
+      context = await browser.newContext();
+      await context.addCookies([
+        { name: "antnest_csrf", value: "original-retry-csrf", url: origin },
+      ]);
+      page = await context.newPage();
+      page.setDefaultTimeout(10_000);
+      page.on("websocket", (socket) => {
+        const owner = { url: socket.url(), closedActual: false };
+        socket.on("close", () => {
+          owner.closedActual = true;
+        });
+        webSockets.push(owner);
+      });
+      const initialStream = streamFor("one");
+      await page.goto(`${origin}/workspace/agent-1/sessions/one`);
+      await page.getByText("Answer one", { exact: true }).waitFor();
+      assert.equal((await initialStream).status(), 200);
+      await page
+        .getByRole("combobox", { name: "Message" })
+        .fill("Original message A");
+      await page.getByLabel("File attachments", { exact: true }).setInputFiles({
+        name: "original-a.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Complete original A attachment"),
+      });
+      await page.getByText("original-a.txt", { exact: true }).waitFor();
+      const firstAck = responseFor(promptPath, "POST");
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .click();
+      const original = await receipt(
+        originalPosts[0].promise,
+        "the complete original HTTP body",
+      );
+      await finishedResponse(firstAck, 202);
+      await page.waitForFunction(
+        () =>
+          document.querySelector('textarea[aria-label="Message"]')?.value ===
+          "",
+      );
+      assert.deepEqual(original.body, {
+        intentId: original.body.intentId,
+        expectedAppendVersion: 1,
+        prompt: [
+          { type: "text", text: "Original message A" },
+          {
+            type: "resource",
+            resource: {
+              uri: "attachment:///original-a.txt",
+              mimeType: "text/plain",
+              text: "Complete original A attachment",
+            },
+          },
+        ],
+      });
+      assert.equal(typeof original.body.intentId, "string");
+      assert.ok(original.body.intentId.length > 0);
+      operations.set(
+        original.body.intentId,
+        unknownOperation(original.body.intentId),
+      );
+      publish("one");
+      await page.getByText(/Message status is uncertain\./u).waitFor();
+      const retry = page.getByRole("button", {
+        name: "Retry original message",
+        exact: true,
+      });
+      await retry.waitFor();
+      assert.equal(await retry.isEnabled(), true);
+      nextQuery = firstQuery;
+      nextView = authorizedView;
+      const clickIndex = requests.length;
+      const retryAck = responseFor(`${promptPath}?action=retry`, "POST");
+      await retry.click();
+      const queried = await receipt(
+        firstQuery.entered,
+        "the real original operation GET",
+      );
+      const operationPath = `${agentPath}/sessions/one/operations/${encodeURIComponent(original.body.intentId)}`;
+      assert.equal(queried.path, operationPath);
+      assert.deepEqual(relevantSince(clickIndex, original.body.intentId), [
+        `GET ${operationPath}`,
+      ]);
+      assert.equal(prompts.length, 1);
+      firstQuery.release();
+      const refreshed = await receipt(
+        authorizedView.entered,
+        "the authorized same-Session View GET",
+      );
+      assert.equal(refreshed.path, viewPath);
+      assert.deepEqual(relevantSince(clickIndex, original.body.intentId), [
+        `GET ${operationPath}`,
+        `GET ${viewPath}`,
+      ]);
+      assert.equal(prompts.length, 1);
+      authorizedView.release();
+      const retried = await receipt(
+        retryPost.entered,
+        "the complete real retry POST",
+      );
+      assert.equal(prompts.length, 2);
+      assert.equal(retried.path, `${promptPath}?action=retry`);
+      assert.deepEqual(retried.body, original.body);
+      assert.equal(original.headers["if-match"], "history-one-1");
+      assert.equal(retried.headers["if-match"], "history-one-2");
+      for (const row of [original, retried]) {
+        assert.equal(row.headers["idempotency-key"], original.body.intentId);
+        assert.equal(
+          row.headers["x-antnest-csrf-token"],
+          "original-retry-csrf",
+        );
+        assert.equal(row.headers["content-type"], "application/json");
+      }
+      retryPost.release();
+      await finishedResponse(retryAck, 202);
+      await Promise.all([
+        firstQuery.joined,
+        authorizedView.joined,
+        retryPost.joined,
+      ]);
+      const completed = {
+        operationId: original.body.intentId,
+        sessionId: "one",
+        phase: "completed",
+        acceptance: "acp",
+        runId: "run-original-a",
+        outputWatermark: 2,
+        stopReason: "end_turn",
+        errorClass: null,
+      };
+      operations.set(original.body.intentId, completed);
+      states.one.authority = 2;
+      states.one.watermark = 2;
+      states.one.completed = {
+        runId: completed.runId,
+        prompt: original.body.prompt,
+      };
+      publish("one");
+      await page
+        .getByText("Original A retry completed", { exact: true })
+        .waitFor();
+      assert.equal(await retry.count(), 0);
+      assert.deepEqual(relevantSince(clickIndex, original.body.intentId), [
+        `GET ${operationPath}`,
+        `GET ${viewPath}`,
+        `POST ${promptPath}?action=retry`,
+      ]);
+      assert.equal(prompts.length, 2);
+
+      await page
+        .getByRole("combobox", { name: "Message" })
+        .fill("Original message before navigation");
+      const secondAck = responseFor(promptPath, "POST");
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .click();
+      const navigationOriginal = await receipt(
+        originalPosts[1].promise,
+        "the second original Prompt body",
+      );
+      await finishedResponse(secondAck, 202);
+      assert.notEqual(navigationOriginal.body.intentId, original.body.intentId);
+      operations.set(
+        navigationOriginal.body.intentId,
+        unknownOperation(navigationOriginal.body.intentId),
+      );
+      publish("one");
+      await page.getByText(/Message status is uncertain\./u).waitFor();
+      nextQuery = navigationQuery;
+      const navigationIndex = requests.length;
+      await page
+        .getByRole("button", { name: "Retry original message", exact: true })
+        .click();
+      const abandoned = await receipt(
+        navigationQuery.entered,
+        "the navigation scenario's held real GET",
+      );
+      const abandonedPath = `${agentPath}/sessions/one/operations/${encodeURIComponent(navigationOriginal.body.intentId)}`;
+      assert.equal(abandoned.path, abandonedPath);
+      assert.deepEqual(
+        relevantSince(navigationIndex, navigationOriginal.body.intentId),
+        [`GET ${abandonedPath}`],
+      );
+      const nextStream = streamFor("two");
+      await page
+        .getByRole("complementary", { name: "Workspace navigation" })
+        .getByRole("button", { name: /Conversation two/u })
+        .click();
+      await page.waitForURL(
+        (url) => workspaceLocation(url).sessionId === "two",
+      );
+      await page.getByText("Answer two", { exact: true }).waitFor();
+      assert.equal((await nextStream).status(), 200);
+      await receipt(
+        abandoned.closed,
+        "the original GET connection to actually close after navigation",
+      );
+      assert.equal(abandoned.closedActual, true);
+      navigationQuery.release();
+      await receipt(
+        navigationQuery.joined,
+        "the abandoned real GET handler to join after release",
+      );
+      assert.equal(
+        prompts.length,
+        3,
+        "Leaving the Session must not dispatch its held retry",
+      );
+      assert.deepEqual(
+        relevantSince(navigationIndex, navigationOriginal.body.intentId),
+        [`GET ${abandonedPath}`],
+      );
+
+      const returningStream = streamFor("one");
+      await page
+        .getByRole("complementary", { name: "Workspace navigation" })
+        .getByRole("button", { name: /Conversation one/u })
+        .click();
+      await page.waitForURL(
+        (url) => workspaceLocation(url).sessionId === "one",
+      );
+      await page.getByText(/Message status is uncertain\./u).waitFor();
+      assert.equal((await returningStream).status(), 200);
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Retry original message", exact: true })
+          .count(),
+        0,
+      );
+      const reloadedStream = streamFor("one");
+      await page.reload();
+      await page.getByText(/Message status is uncertain\./u).waitFor();
+      assert.equal((await reloadedStream).status(), 200);
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Retry original message", exact: true })
+          .count(),
+        0,
+      );
+      assert.equal(
+        prompts.length,
+        3,
+        "Reload without the immutable input must remain query-only",
+      );
+      assert.equal(
+        prompts.filter((row) =>
+          new URL(row.path, origin).searchParams.has("action"),
+        ).length,
+        1,
+      );
+      assert.deepEqual(
+        webSockets
+          .filter((owner) => {
+            const path = new URL(owner.url).pathname;
+            return path.startsWith("/api/") || path.includes("/v1/acp");
+          })
+          .map((owner) => owner.url),
+        [],
+      );
+    } catch (cause) {
+      failures.push(cause);
+    } finally {
+      for (const owner of holds) owner.release();
+      for (const stream of streams)
+        if (!stream.response.destroyed) stream.response.end();
+      for (const close of [
+        () => page?.close(),
+        () => context?.close(),
+        () => browser?.close(),
+      ]) {
+        try {
+          await close();
+        } catch (cause) {
+          failures.push(cause);
+        }
+      }
+      await Promise.allSettled(browserWaits);
+      await Promise.allSettled(handlers);
+      await Promise.all(
+        holds.filter((owner) => owner.started).map((owner) => owner.joined),
+      );
+      let closing;
+      try {
+        closing = server?.close();
+      } catch (cause) {
+        failures.push(cause);
+      }
+      for (const owner of sockets)
+        if (!owner.socket.destroyed) owner.socket.destroy();
+      try {
+        await closing;
+        serverClosed = closing !== undefined;
+      } catch (cause) {
+        failures.push(cause);
+      }
+      await Promise.all(requests.map((row) => row.closed));
+      await Promise.all(sockets.map((owner) => owner.closed));
+      // Playwright can omit HMR WebSocket close events when the page/context closes.
+      // Actual server TCP sockets above and the browser disconnect remain blocking.
+      const missingCloseNotifications = webSockets.filter(
+        (owner) => !owner.closedActual,
+      ).length;
+      if (missingCloseNotifications)
+        console.warn(
+          `Chromium cleanup: ${missingCloseNotifications} HMR close notification(s) unavailable; actual TCP closure checked.`,
+        );
+      failures.push(...handlerFailures);
+      if (browser && !browserDisconnected)
+        failures.push(
+          new Error("The owned Chromium process did not disconnect"),
+        );
+      if (server && !serverClosed)
+        failures.push(new Error("The owned Vite server did not close"));
+      if (
+        requests.some((row) => !row.closedActual) ||
+        sockets.some((owner) => !owner.closedActual)
+      )
+        failures.push(
+          new Error("An owned HTTP or socket resource did not actually close"),
+        );
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures,
+        "Original Prompt retry or its owned cleanup failed",
+      );
+  },
+);

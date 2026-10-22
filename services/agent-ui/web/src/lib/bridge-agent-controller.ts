@@ -3,7 +3,7 @@ import { openBridgeObserver } from "./bridge-observer.ts";
 import { BridgeOperationTracker, type BridgeOperation } from "./bridge-operations.ts";
 import { BridgePermissionStore } from "./bridge-permissions.ts";
 import { BridgeSessionStore } from "./bridge-session-store.ts";
-import type { BridgeAgentView } from "./bridge-stream.ts";
+import { bridgeViewForScope, type BridgeAgentView } from "./bridge-stream.ts";
 import type { PendingPermission } from "./permissions.ts";
 import type { Conversation } from "./types.ts";
 import { WorkspaceApiError, type BridgeHttpClient } from "./workspace-api-client.ts";
@@ -67,6 +67,7 @@ export class BridgeAgentController {
 
   async select(sessionId: string | null, resetRetry = true): Promise<void> {
     if (this.closed) throw new Error("Bridge Agent controller is closed");
+    if (sessionId !== this.storeSessionId) this.tracker.clearRetryInputs();
     if (resetRetry) this.retryFailures = 0;
     this.selection += 1;
     const selection = this.selection;
@@ -233,6 +234,47 @@ export class BridgeAgentController {
     if (this.current.connection !== "ready")
       return Promise.reject(new Error("A current Bridge connection is required"));
     return this.tracker.cancel(sessionId, intentId, signal);
+  }
+
+  /** Invalidate synchronously when navigation begins, before React selects a View. */
+  releasePromptRetry(): void {
+    this.tracker.clearRetryInputs();
+    this.request?.abort();
+  }
+
+  retryPrompt(intentId: string, signal?: AbortSignal): Promise<BridgeOperation> {
+    const sessionId = this.current.view?.selectedSessionId;
+    const selection = this.selection;
+    const request = this.request;
+    if (!sessionId || !request || this.closed || this.current.connection !== "ready")
+      return Promise.reject(new Error("A current Bridge Session is required before retrying the original message."));
+    const scopedSignal = signal ? AbortSignal.any([signal, request.signal]) : request.signal;
+    const currentScope = () => {
+      scopedSignal.throwIfAborted();
+      if (this.closed || selection !== this.selection || this.current.view?.selectedSessionId !== sessionId ||
+        this.current.connection !== "ready" || !this.api.sessionCurrent())
+        throw new Error("The conversation changed before the original message could be retried.");
+    };
+    return this.tracker.retry(sessionId, intentId, async () => {
+      currentScope();
+      const raw = await this.api.agentView(this.agentId, sessionId, scopedSignal);
+      currentScope();
+      const fresh = bridgeViewForScope(raw, this.agentId, sessionId);
+      if (!fresh || fresh.selectedView?.historyState !== "ready" ||
+        typeof fresh.selectedView.historyToken !== "string" || !fresh.selectedView.historyToken)
+        throw new Error("Conversation history could not be verified before retrying the original message.");
+      this.tracker.observe(fresh.operations);
+      this.tracker.observe(fresh.selectedView.operations);
+      currentScope();
+      // The HTTP View supplies only fresh authorization; SSE owns the displayed projection.
+      return fresh.selectedView.historyToken;
+    }, scopedSignal).catch((cause: unknown) => {
+      if (selection === this.selection && !this.closed && cause instanceof WorkspaceApiError) {
+        if (cause.status === 401 || cause.recovery === "login") this.close(false, true);
+        else if (cause.status === 403) this.close(true);
+      }
+      throw cause;
+    });
   }
 
   async decidePermission(id: string, optionId: string, signal?: AbortSignal): Promise<void> {
