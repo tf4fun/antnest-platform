@@ -269,9 +269,37 @@ Success proves acceptance, not successful lifecycle completion.
 Each dependency call uses the caller's context and settles before return.
 Cancellation prevents subsequent dispatch and cannot become a successful
 confirmation after a delayed SDK response. This adapter never acknowledges
-the database pending row. The later worker must confirm the original request
+the database pending row. The pending-start worker confirms the original request
 and fingerprint only after successful engine verification; a crash between
 these steps leaves the same command available for retry.
+
+### Pending Workflow Start Worker
+
+`RuntimeBarrierRecoveryStartWorker` resumes durable accepted commands through
+only pending enumeration, original engine-start verification and confirmation.
+It does not query current ACP, policy, catalog or admission state. Confirmation
+means that Temporal accepted the original command, not that Rebuild completed.
+
+Each round reads one page with a configured limit of 1–1000 receipts and one
+deadline shared by enumeration, starts, confirmations and the local cursor gate.
+The entire page must have valid, strictly increasing request IDs before any
+dispatch. Failed attempts advance the cursor so later requests can progress;
+unattempted entries are not skipped. Completing a short page, including an empty
+one, wraps the cursor so retained failures and newly inserted lower IDs are
+revisited. A process restart begins a new scan from durable pending state.
+
+Unknown or conflicting starts never confirm. Confirmation errors retain their
+original causes; a lost commit response is not treated as rollback. All calls
+remain synchronous. Cancellation waits for the actual outstanding call to
+settle and prevents further dispatch, including confirmation after a late start
+response. Polling starts immediately, then waits between rounds with a
+cancellable timer. Logs contain only a fixed failure classification.
+
+The worker has no main-process activation yet. Observation/admission polling,
+policy notifications, UI and actual ACP crash-to-Rebuild integration remain
+separate required work. Component coverage uses real PostgreSQL and Temporal
+acceptance, with synthetic response-loss/held-return adapters; it does not claim
+execution against a real Runtime, ACP or Egress service.
 
 ## Lifecycle Settlement
 
