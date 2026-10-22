@@ -128,6 +128,31 @@
     "retry_after_seconds": 1,
     "control_requests_bypass_upload_budget": true
   },
+  "prompt_retry": {
+    "status": "pending",
+    "query_schema": "promptQueryEntries",
+    "query_action": "retry",
+    "invalid_query_status": 422,
+    "invalid_query_code": "invalid_request",
+    "request": "promptRequest",
+    "response": "promptAccepted",
+    "upload_admission": "prompt_upload_admission",
+    "single_flight_key": [
+      "organization",
+      "principal",
+      "agent",
+      "session",
+      "intent"
+    ],
+    "preserve": ["intentId", "expectedAppendVersion", "prompt"],
+    "refresh_only": ["historyToken"],
+    "durable_receipt": "adopt_without_dispatch",
+    "query_failure": "no_dispatch",
+    "in_flight_original": "no_queued_replay",
+    "unknown_receipt": "uncertain",
+    "original_body_missing": "query_only",
+    "automatic_prompt_replay": false
+  },
   "ordinary_browser_timeout_ms": 30000,
   "ordinary_node_timeout_ms": 60000,
   "sse_heartbeat_ms": 15000,

@@ -265,6 +265,8 @@ silently changes the intent ID. A user-directed retry obtains a current
 history token but keeps the original immutable append version and identical
 content. ACP resolves a duplicate receipt before considering new admission;
 otherwise its append CAS decides whether that old intent may be admitted.
+The concrete query action and its implementation boundary are defined in the
+[pending explicit original Prompt retry amendment](#pending-explicit-original-prompt-retry-53).
 
 `POST .../operations/O/cancel` carries `expectedRunId`; O remains the intent
 ID. Cancellation must target that Run through ACP's durable state and in-memory
@@ -409,6 +411,81 @@ monotonic time to establish a conservative deadline without assuming synchronize
 service clocks. The receipt identifies the original stream's delegation budget;
 it does not prove the cause of a remote close or replace the actual Identity
 fault, revocation and Resolve evidence.
+
+## Pending explicit original Prompt retry (#53)
+
+This amendment is pending. Its schema, manifest and fixtures define the next
+Agent UI service batch; they do not enable retry in Node or the browser, prove
+query/dispatch serialization, or complete the UI and Docker acceptance for #53.
+Ordinary Prompt submission, its existing route, body and Bridge ACK remain
+unchanged.
+
+The future explicit action is `POST .../prompts?action=retry`. The decoded
+query must retain all entries, including repeated keys. `promptQueryEntries`
+accepts only `[]` for ordinary submit or `[["action", "retry"]]` for explicit
+retry. Empty, unknown, duplicate, differently cased or additional entries are
+`422 invalid_request`; an invalid action must never fall back to ordinary
+submission. The action is Bridge control metadata only. It is not a new body
+member or ACP admission parameter and is excluded from the ACP digest.
+
+An explicit retry has the same original organization, principal, Agent,
+Session and intent. Its body still has exactly `intentId`,
+`expectedAppendVersion` and `prompt`. Preserve the original intent and append
+condition and every ordered content block, including complete attachment
+content; do not rebuild them from the current draft, reread files, select a new
+CAS or generate a new intent. Use the same Idempotency-Key. Only the history
+token is refreshed through a current authorized View of that same Session,
+then supplied as If-Match. A fresh history token does not replace the original
+append condition. ACP remains the authority for digest equality, duplicate
+resolution and append CAS.
+
+The browser first queries the original operation under current authorization.
+Any durable receipt or Run is adopted without another Prompt dispatch,
+including a durable receipt whose phase is unknown. The Node owner must also
+query the original ACP intent before dispatch rather than trust a browser
+assertion of absence. Only a successful query that remains unknown, a settled
+original ACP call and an explicit user action allow another dispatch of that
+same immutable input. Settled means the original ACP dispatch has finished,
+not merely that its browser HTTP response returned. Unknown remains uncertain;
+it is never proof that the original Prompt was unaccepted.
+
+The complete query and retry decision is single-flight for
+`(organization, principal, agent, session, intent)`. Concurrent clicks join the
+same decision and cannot each dispatch after a shared query. Ordinary duplicate
+submit retains its existing local deduplication behavior. A query failure or
+an original call still in flight causes no new dispatch and queues no future
+replay when a dependency recovers or the original finishes. A late durable
+receipt takes precedence over an unknown read, Bridge ACK or late failure;
+recheck observed receipt state before dispatch and never regress accepted Run
+state. Producer deduplication and CAS still protect a receipt racing the final
+dispatch decision. The existing `202` remains only Bridge receipt of the action.
+
+Retain the original input only as a bounded in-memory snapshot under the
+existing operation ownership and retention limits. Do not add an unbounded
+input queue or durable browser outbox. Navigating away from its Agent/Session,
+replacing browser identity or closing its owner releases the browser snapshot;
+late work cannot migrate it into a new scope. Refreshing the same Session's
+history authority must not replace its immutable input. Reload without the
+original body permits operation queries only: do not construct a retry from a
+new draft, current history or administrative audit data. Releasing a browser
+snapshot does not cancel work already owned by Node or an accepted ACP Run.
+
+Every explicit retry carries a complete Prompt and uses the same authenticated
+Prompt upload admission as ordinary submission: the 64 MiB native maximum,
+configured ACP encoded-request maximum, shared global and principal byte/count
+budgets, and receive-through-dispatch-completion reservation lifetime all
+apply. Parsing, input preparation, disconnect and HTTP deadline cleanup retain
+their existing ownership. This action must not use the 16 KiB control-body
+path or bypass upload accounting. The existing cancel paths retain their small
+body limits and independent admission.
+
+The original #53 automatic retry with backoff goal for busy/not-ready errors
+remains a separate pending delivery; this explicit-action amendment neither
+implements nor removes it. `retryable`, busy/not-ready classification and an
+unknown receipt do not authorize automatic Prompt replay. Any future automatic
+policy needs its own trustworthy non-admission evidence and contract, producer,
+consumer and integration acceptance. Success of a different new intent does
+not prove that the original Prompt was retried successfully.
 
 ## Related contracts
 

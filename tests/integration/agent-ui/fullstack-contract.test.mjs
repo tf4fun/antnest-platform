@@ -26,6 +26,7 @@ function definition(relativePath, name) {
 
 const ui = "../../../contracts/agent-ui/workspace-api.schema.json";
 const acp = "../../../contracts/agent-acp/workspace-bridge.schema.json";
+const promptRetryFixtures = "../../support/fixtures/agent-ui/prompt-retry.json";
 
 test("prompt upload admission leaves control requests independent and retains dispatch ownership", () => {
   const contract = json("../../../contracts/agent-ui/workspace-api.json");
@@ -212,6 +213,141 @@ test("prompt admission requires a stable intent and append condition, never brow
     }),
     false,
   );
+});
+
+test("explicit Prompt retry publishes pending metadata without changing ordinary admission", () => {
+  const contract = json("../../../contracts/agent-ui/workspace-api.json");
+  assert.ok(
+    Object.hasOwn(contract, "prompt_retry"),
+    "Workspace API must define the pending explicit Prompt retry contract",
+  );
+  assert.deepEqual(contract.prompt_retry, {
+    status: "pending",
+    query_schema: "promptQueryEntries",
+    query_action: "retry",
+    invalid_query_status: 422,
+    invalid_query_code: "invalid_request",
+    request: "promptRequest",
+    response: "promptAccepted",
+    upload_admission: "prompt_upload_admission",
+    single_flight_key: [
+      "organization",
+      "principal",
+      "agent",
+      "session",
+      "intent",
+    ],
+    preserve: ["intentId", "expectedAppendVersion", "prompt"],
+    refresh_only: ["historyToken"],
+    durable_receipt: "adopt_without_dispatch",
+    query_failure: "no_dispatch",
+    in_flight_original: "no_queued_replay",
+    unknown_receipt: "uncertain",
+    original_body_missing: "query_only",
+    automatic_prompt_replay: false,
+  });
+  assert.equal(contract.routes.prompt.method, "POST");
+  assert.equal(
+    contract.routes.prompt.path,
+    "/agents/{agentId}/sessions/{sessionId}/prompts",
+  );
+  assert.equal(contract.routes.prompt.request, contract.prompt_retry.request);
+  assert.equal(contract.routes.prompt.response, contract.prompt_retry.response);
+  assert.equal(contract.routes.prompt.success_status, 202);
+  assert.ok(Object.hasOwn(contract, contract.prompt_retry.upload_admission));
+});
+
+test("Prompt query entries allow only ordinary submit or one explicit retry action", () => {
+  const schema = json(ui);
+  assert.ok(
+    schema.$defs && Object.hasOwn(schema.$defs, "promptQueryEntries"),
+    "Workspace API schema must define promptQueryEntries before compilation",
+  );
+  const valid = definition(ui, "promptQueryEntries");
+  const fixtures = json(promptRetryFixtures);
+  assert.deepEqual(
+    fixtures.validQueries.map((fixture) => fixture.entries),
+    [[], [["action", "retry"]]],
+  );
+  for (const fixture of fixtures.validQueries)
+    assert.equal(valid(fixture.entries), true, fixture.name);
+  for (const fixture of fixtures.invalidQueries)
+    assert.equal(valid(fixture.entries), false, fixture.name);
+});
+
+test("explicit retry wire fixtures retain the strict original Prompt body and refresh only history authority", () => {
+  const fixtures = json(promptRetryFixtures);
+  const valid = definition(ui, "promptRequest");
+  const original = fixtures.original;
+  const retry = fixtures.retry;
+  for (const request of [original, retry]) {
+    assert.equal(valid(request.body), true);
+    assert.deepEqual(Object.keys(request.body).sort(), [
+      "expectedAppendVersion",
+      "intentId",
+      "prompt",
+    ]);
+    assert.equal(request.headers["Idempotency-Key"], request.body.intentId);
+  }
+  assert.equal(original.scope.intent, original.body.intentId);
+  assert.equal(retry.path, original.path);
+  assert.deepEqual(original.queryEntries, []);
+  assert.deepEqual(retry.queryEntries, [["action", "retry"]]);
+  assert.deepEqual(retry.body, original.body);
+  assert.equal(
+    retry.headers["Idempotency-Key"],
+    original.headers["Idempotency-Key"],
+  );
+  assert.notEqual(retry.headers["If-Match"], original.headers["If-Match"]);
+  for (const field of ["intentId", "expectedAppendVersion", "prompt"]) {
+    const missing = structuredClone(original.body);
+    delete missing[field];
+    assert.equal(valid(missing), false, field);
+  }
+  for (const field of ["action", "historyToken", "principalId"])
+    assert.equal(valid({ ...original.body, [field]: "retry" }), false, field);
+  assert.equal(definition(ui, "promptAccepted")(fixtures.bridgeAck), true);
+  assert.equal(fixtures.bridgeAck.operationId, original.body.intentId);
+  assert.equal(definition(ui, "operation")(fixtures.uncertainOperation), true);
+  assert.equal(fixtures.uncertainOperation.phase, "uncertain");
+  assert.equal(fixtures.uncertainOperation.acceptance, "unknown");
+});
+
+test("future Prompt retry scenarios contain valid wire values without claiming production behavior", () => {
+  const fixtures = json(promptRetryFixtures);
+  assert.equal(fixtures.implementation_status, "pending");
+  assert.equal(fixtures.automatic_backoff_status, "pending_separate_delivery");
+  assert.deepEqual(
+    fixtures.scenarios.map((scenario) => scenario.name),
+    [
+      "ordinary_duplicate",
+      "explicit_busy",
+      "explicit_not_ready",
+      "durable_receipt",
+      "query_failure",
+      "access_denied",
+      "in_flight_original",
+      "double_click",
+      "late_receipt_during_query",
+      "changed_cas",
+      "changed_content",
+      "reload_without_original_body",
+    ],
+  );
+  const validReceipt = definition(acp, "intentReceipt");
+  const validPrompt = definition(ui, "promptRequest");
+  // These fixtures are inputs for later service tests. Schema validation here
+  // does not execute query ordering, single-flight, dispatch or receipt races.
+  for (const scenario of fixtures.scenarios) {
+    for (const receipt of [scenario.query.receipt, scenario.lateReceipt]) {
+      if (receipt === undefined) continue;
+      assert.equal(validReceipt(receipt), true, scenario.name);
+      assert.equal(receipt.intentId, fixtures.original.body.intentId);
+      assert.equal(receipt.sessionId, fixtures.original.scope.session);
+    }
+    if (scenario.requestedBody !== undefined)
+      assert.equal(validPrompt(scenario.requestedBody), true, scenario.name);
+  }
 });
 
 test("configuration request accepts the SDK's select and boolean values", () => {
