@@ -85,35 +85,34 @@ match the replacement.
 
 ### Trace rules
 
-This is an opt-in crash-recovery profile, not a Trace completeness gate. The six
-intentionally interrupted requests report `strict_trace=not_applicable` together
-with diagnostic completeness, raw error spans, warnings and unresolved parent
-IDs. Missing or unfinished crash spans do not fail recovery, but exit 137,
-public recovery audits, replay, effect protection and replacement proof are
-mandatory. Trace identity, privacy and malformed-evidence checks still apply,
-and missing diagnostic data is reported as unavailable.
+Trace collection and strict inspection are auxiliary for every request and
+lifecycle operation. Raw errors, missing parents, incomplete or invalid evidence
+are retained as diagnostics. Budget exhaustion is reported as not collected;
+in-flight collection is cancelled and joined. No Trace result blocks the next
+fault injection, business acceptance or cleanup.
 
 Confirmed external SDK defects are non-blocking under the repository policy;
 retain their diagnostics without investigation or workaround. Internal service
 logic and business recovery requirements still apply.
 
-Completed requests and lifecycle operations keep strict topology, privacy,
-error and warning checks. Their spans must finish and reach the backend before
-the next fault or teardown; the test polls for the required evidence rather than
-relying on a fixed sleep. Completed setup, replay, denial and ordinary execution
-Traces are archived before the next SIGKILL, and a failed export blocks the next
-injection. The interrupted request is collected afterwards from its propagated
-Model Trace ID; missing active spans remain missing.
-
 Private Trace checks reuse the existing ACP collector and the owning command,
 Session, initialization and Runtime barrier inspectors. The recorder's original
 inputs and results supply their expectations. Only the precise recorded barrier
 rejection is projected from a failed RPC to the inspector's rejected outcome.
-Every current connection's initialization is archived before the next SIGKILL,
-even while that connection remains open. Completed request reports stay bound to
-their original requests; interrupted requests never enter this success path.
+Attempted initialization and completed-request reports stay bound to their
+original requests; interrupted requests never become completed evidence.
 The final inventory contains 26 initializations, 40 completed business requests,
 six interrupted diagnostics and four independent lifecycle operations.
+
+### Physical deletion acceptance
+
+The original successful Delete and joined client resources do not replace the
+host's physical check. Both Runtime-scope container and volume inventories must
+actually become empty before fallback teardown. The host waits at most 60 seconds,
+capped by the original suite deadline, for asynchronous unreferenced-Skill cleanup.
+It preserves every inventory read and original error, never deletes resources
+during observation, and rejects persistent leftovers, failed reads, cancellation,
+late empty results and failed evidence preservation.
 
 ## Verification order
 

@@ -61,31 +61,18 @@ The client has no Docker socket, database credential or production collector.
 
 ## Trace rules
 
-The six intentionally interrupted requests report available spans, errors,
-warnings and missing parents as diagnostics with `strict_trace=not_applicable`;
-they do not require complete Traces. Their SIGKILL and all durable recovery and
-effect assertions must still pass. Missing Trace data is reported as
-unavailable. Wrong identities, malformed evidence and privacy violations still
-fail.
+Trace collection and strict inspection are auxiliary for interrupted requests,
+completed requests and lifecycle operations. The collectors retain original
+request/result bindings and raw failures under one bounded diagnostic budget.
+Missing, incomplete or invalid Trace evidence remains a warning; exhausted
+collection is reported as not collected, and an in-flight attempt is cancelled
+and joined. It cannot prevent the next business step or substitute for a
+business check that did not run.
 
-Completed requests and lifecycle operations keep strict Trace checks. The
-existing private ACP collector and command, Session, initialization and barrier
-inspectors consume the recorder's original request/result evidence. Before
-another SIGKILL, every current initialization and completed request must pass
-topology, protocol and privacy inspection through bounded polling and then be
-archived, even if its connection remains open. Cached reports stay bound to the
-original request. A pause in span
-arrivals alone is not evidence, and the SDK's five-second batch interval does
-not guarantee backend visibility after five seconds. The reviewed clock-skew
-warning (`clock skew adjustment disabled; not applying calculated delta of ...`)
-is reported in
-`strict_trace` but does not fail the exit.
-
-Confirmed external SDK issues are also non-blocking under the repository policy;
-the existing private inspectors retain their owned diagnostics without adding
-investigations or workarounds. The summary preserves the original strict failure
-while keeping the existing successful exit for accepted diagnostics. Unowned errors, internal service logic
-and the recovery business assertions still require acceptance.
+Confirmed external SDK issues remain non-blocking without additional
+investigation or workarounds. SIGKILL ownership, durable Run recovery, replay,
+physical effects, access and actual resource cleanup remain independent hard
+checks.
 
 Process observations, physical proof, public audits and raw Traces are private
 artifacts under `artifacts/verification/acp-restart/<project>/`.
@@ -94,3 +81,11 @@ artifacts under `artifacts/verification/acp-restart/<project>/`.
 
 The host wrapper owns the disposable project and removes its Compose and Runtime
 resources, including the replaced Runtime, after success or failure.
+Before that fallback teardown, successful Agent deletion must be followed by
+empty Runtime-scope container and volume inventories. Runtime Controller releases
+Skill references in the delete transaction and reclaims unreferenced volumes
+asynchronously. The test therefore polls actual inventories for at most 60
+seconds within the original suite deadline; it never removes resources to make
+this check pass. Every observation, partial Docker read and original failure is
+saved privately. Persistent resources, failed reads, cancellation and evidence
+archive failures still fail the suite.

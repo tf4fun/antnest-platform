@@ -99,9 +99,7 @@ status=$(docker_cmd inspect --format '{{.State.ExitCode}}' "$client")
 docker_cmd logs "$client"
 if docker_cmd cp "$client:/tmp/restart-business.json" "$temporary/business.json" >/dev/null 2>&1; then
   node -e 'const a=require("node:assert/strict"),b=require(process.argv[1]);a.equal(b.status,"business_passed");a.equal(b.deleted,true);' "$temporary/business.json"
-  [ -z "$(docker_cmd ps -aq --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME")" ] || exit 1
-  [ -z "$(docker_cmd volume ls -q --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME")" ] || exit 1
-  echo '{"status":"deletion_resources_passed","runtime_containers":0,"runtime_volumes":0}'
+  node "$root/tests/e2e/acp-restart/deletion-resources-cli.mjs" "$COMPOSE_PROJECT_NAME" "$evidence"
 else
   [ "$status" != 0 ] || status=1
 fi
