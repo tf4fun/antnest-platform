@@ -223,8 +223,7 @@ changes nothing and cannot acknowledge another Agent's pending command.
 This storage API does not start or confirm a Temporal workflow on its own. The
 orchestration batch must prove that the engine accepted the original command
 before confirming it; timeout, cancellation or an unknown response must leave
-the command pending. Activation of the bounded observation worker,
-manual/notify presentation and actual ACP mid-tool-crash recovery acceptance
+the command pending. Manual/notify presentation and actual ACP mid-tool-crash recovery acceptance
 remain required before the complete recovery workflow is delivered.
 
 ### Application Admission
@@ -249,7 +248,7 @@ Cancellation stops subsequent dependency calls at admission boundaries. A
 cancelled preparation does not begin a new lifecycle; cancellation after a
 commit leaves its original command pending. This application service never
 starts a workflow or acknowledges a pending start. The observation worker below
-selects candidates for this boundary; main-process activation remains separate.
+selects candidates for this boundary and runs independently of pending starts.
 
 ### Original Workflow Start
 
@@ -295,8 +294,7 @@ settle and prevents further dispatch, including confirmation after a late start
 response. Polling starts immediately, then waits between rounds with a
 cancellable timer. Logs contain only a fixed failure classification.
 
-The worker has no main-process activation yet. Observation/admission activation,
-policy notifications, UI and actual ACP crash-to-Rebuild integration remain
+Policy notifications, UI and actual ACP crash-to-Rebuild integration remain
 separate required work. Component coverage uses real PostgreSQL and Temporal
 acceptance, with synthetic response-loss/held-return adapters; it does not claim
 execution against a real Runtime, ACP or Egress service.
@@ -334,12 +332,48 @@ Logs use a fixed failure classification without raw causes or Agent identities.
 
 Observation never starts a workflow or confirms a pending command. The separate
 pending-start worker can resume a committed original even when current ACP or
-policy reads fail. Both workers still require main-process startup/shutdown
-wiring before automatic recovery is active. Component coverage uses real
+policy reads fail. Both workers are started by the main-process owner below.
+Component coverage uses real
 PostgreSQL candidate queries, atomic admission, reopening and intervening policy
 or owner-binding changes; ACP observations and RC preparation are synthetic.
 Real ACP kill-mid-tool, Runtime replacement, new Run, and manual UI acceptance
 remain required before issue #50 is complete.
+
+### Main Process Ownership
+
+Controller constructs both recovery workers with the existing PostgreSQL
+repository and lifecycle application. Observation uses the configured ACP
+control origin and workload-authenticated HTTP client; pending starts use the
+same orchestration service as public lifecycle commands. Deploy the ACP barrier
+query producer before this Controller version. The logical Organization default
+remains `manual`; only an explicitly stored `auto` policy admits new recovery.
+
+All configuration, service construction and listener creation finish before the
+Temporal worker and background loops start. Recovery observation, pending
+starts, execution publication, Runtime observations and identity revocations run
+independently. A held publication or failed current ACP query cannot prevent
+already committed commands from reaching the pending-start worker.
+
+`ANTNEST_AGENT_CONTROLLER_RUNTIME_BARRIER_RECOVERY_POLL_INTERVAL` defaults to
+`2s`, `ANTNEST_AGENT_CONTROLLER_RUNTIME_BARRIER_RECOVERY_ROUND_TIMEOUT` to `10s`,
+and `ANTNEST_AGENT_CONTROLLER_RUNTIME_BARRIER_RECOVERY_BATCH_SIZE` to `100`.
+Both durations must be positive and the page limit must be 1–1000. The workers
+share configured values, but each round has its own deadline and cursor; these
+settings do not override Organization mode or cooldown.
+
+Parent cancellation or an HTTP Serve failure cancels the common background
+context and initiates HTTP shutdown. The existing shutdown timeout bounds the
+graceful phase. Exceeding it remains an error, but does not release dependency
+ownership: all five actual worker callbacks and HTTP Serve must return before
+main stops the Temporal worker, closes its client, and closes PostgreSQL. This
+is not a claim that an unresponsive dependency can always finish within `15s`.
+HTTP Serve, Shutdown and Close errors are retained together, and one cleanup
+error cannot skip another worker. A pre-cancelled owner closes its listener
+without dispatching Serve or background business.
+
+Ownership tests hold callbacks through cancellation and budget expiry and
+observe their actual returns before simulated dependency closes. They do not
+replace real ACP/Runtime fault-recovery acceptance.
 
 ## Lifecycle Settlement
 

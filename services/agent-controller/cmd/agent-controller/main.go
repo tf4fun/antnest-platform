@@ -248,11 +248,11 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 	}
 	defer closeWorkflowClient()
 	workflowWorker := orchestration.NewWorker(workflowClient, lifecycle, cfg.ShutdownTimeout)
-	if err := workflowWorker.Start(); err != nil {
-		return classifyFailure("workflow_worker_startup", err)
-	}
-	defer workflowWorker.Stop()
 	commands := orchestration.NewService(lifecycle, workflowClient)
+	barrierObservation, barrierStarts, err := configureRuntimeBarrierRecovery(repository, cfg, lifecycle, commands, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	identityWorker, err := application.NewIdentityRevocationWorker(identity, repository, commands, cfg.IdentityRevocationPollInterval, logger)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -292,68 +292,25 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 	if cfg.Authentication.Config.ServerTLS != nil {
 		listener = tls.NewListener(listener, cfg.Authentication.Config.ServerTLS)
 	}
+	if err := workflowWorker.Start(); err != nil {
+		return errors.Join(classifyFailure("workflow_worker_startup", err), classifyFailure("listener_close", listener.Close()))
+	}
+	defer workflowWorker.Stop()
 	logger.Info("Agent Controller is ready", "listen_address", cfg.ListenAddress)
-	serverErrors := make(chan error, 1)
-	go func() { serverErrors <- httpServer.Serve(listener) }()
-	observationCtx, stopObservation := context.WithCancel(ctx)
-	observationStopped := make(chan struct{})
-	go func() {
-		defer close(observationStopped)
-		runtimeObservationWorker.Run(observationCtx)
-	}()
-	identityStopped := make(chan struct{})
-	go func() {
-		defer close(identityStopped)
-		identityWorker.Run(observationCtx)
-	}()
-	executionStopped := make(chan struct{})
-	go func() {
-		defer close(executionStopped)
-		executionWorker.Run(observationCtx)
-	}()
-	select {
-	case <-ctx.Done():
-	case serveErr := <-serverErrors:
-		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			resultErr = classifyFailure("http_serve", serveErr)
-		}
-	}
-	stopObservation()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-	resultErr = errors.Join(
-		resultErr,
-		shutdownHTTP(shutdownCtx, httpServer),
-		waitForRuntimeObservationWorker(shutdownCtx, observationStopped),
-		waitForIdentityWorker(shutdownCtx, identityStopped),
-		waitForExecutionPublication(shutdownCtx, executionStopped),
+	return serveController(ctx, httpServer, listener, cfg.ShutdownTimeout,
+		controllerBackgroundWorker{name: "runtime_observation", run: runtimeObservationWorker.Run},
+		controllerBackgroundWorker{name: "identity_offboarding", run: identityWorker.Run},
+		controllerBackgroundWorker{name: "execution_publication", run: executionWorker.Run},
+		controllerBackgroundWorker{name: "runtime_barrier_recovery_observation", run: barrierObservation.Run},
+		controllerBackgroundWorker{name: "runtime_barrier_recovery_start", run: barrierStarts.Run},
 	)
-	return resultErr
-}
-
-func waitForIdentityWorker(ctx context.Context, stopped <-chan struct{}) error {
-	select {
-	case <-stopped:
-		return nil
-	case <-ctx.Done():
-		return classifyFailure("identity_offboarding_shutdown", ctx.Err())
-	}
-}
-
-func waitForRuntimeObservationWorker(ctx context.Context, stopped <-chan struct{}) error {
-	select {
-	case <-stopped:
-		return nil
-	case <-ctx.Done():
-		return classifyFailure("runtime_observation_shutdown", ctx.Err())
-	}
 }
 
 type systemClock struct{}
 
 func (systemClock) Now() time.Time { return time.Now().UTC() }
 
-func shutdownHTTP(ctx context.Context, server *http.Server) error {
+func shutdownHTTP(ctx context.Context, server controllerHTTPServer) error {
 	if err := server.Shutdown(ctx); err != nil {
 		return errors.Join(classifyFailure("http_shutdown", err), classifyFailure("http_close", server.Close()))
 	}
