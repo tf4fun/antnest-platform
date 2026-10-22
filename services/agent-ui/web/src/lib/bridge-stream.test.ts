@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { applyBridgeEvent, initialBridgeStream, type BridgeStreamState } from "./bridge-stream.ts";
+import { applyAgentDelta, diffAgentViews, validAgentView } from "../../server/src/protocol/agent-view-delta.ts";
 
 function view(sessionId: string | null, cursor: string) {
   return {
@@ -124,4 +125,53 @@ test("Agent-only deltas update availability without materializing a Session", ()
   assert.equal(result.action, "view");
   assert.equal(result.state.view?.availability, "ready");
   assert.equal(result.state.view?.selectedView, null);
+});
+
+test("Agent recovery reason is scoped and clears through nullable and removed deltas", () => {
+  const snapshot = reset(null, 1);
+  const initial = applyBridgeEvent(initialBridgeStream("agent-1", null), {
+    ...snapshot, view: { ...snapshot.view, availability: "offline", unavailableReason: "runtime_barrier_required" },
+  });
+  assert.equal(initial.action, "view");
+  assert.equal(initial.state.view?.unavailableReason, "runtime_barrier_required");
+  const event = { type: "delta", agentId: "agent-1", bridgeEpoch: "epoch-1", projectionId: "projection-1",
+    fromStreamRevision: 1, toStreamRevision: 2, fromCursor: "cursor-1", cursor: "cursor-2",
+    sessionId: null, incarnation: null, fromSessionViewRevision: null, sessionViewRevision: null };
+  const cleared = applyBridgeEvent(initial.state, { ...event, patch: [
+    { op: "replace", path: "/availability", value: "ready" },
+    { op: "replace", path: "/unavailableReason", value: null },
+  ] });
+  assert.equal(cleared.action, "view");
+  assert.equal(cleared.state.view?.unavailableReason, null);
+  assert.equal(initial.state.view?.unavailableReason, "runtime_barrier_required");
+  const removed = applyBridgeEvent(initial.state, { ...event,
+    patch: [{ op: "remove", path: "/unavailableReason" }] });
+  assert.equal(removed.action, "view");
+  assert.equal(removed.state.view?.unavailableReason, undefined);
+  for (const value of ["private_reason", { barrierId: "secret", requestId: "private" }]) {
+    const invalid = applyBridgeEvent(initial.state, { ...event,
+      patch: [{ op: "replace", path: "/unavailableReason", value }] });
+    assert.equal(invalid.action, "refresh");
+    assert.equal(invalid.state, initial.state);
+  }
+  assert.equal(applyBridgeEvent(initial.state, { ...event, type: "access_revoked" }).state.view, null);
+  assert.equal(applyBridgeEvent(initialBridgeStream("agent-2", null), snapshot).state.view, null);
+});
+
+test("optional recovery reason roundtrips legacy snapshots through generated wire deltas", () => {
+  const base = { ...view(null, "cursor-1"), availability: "offline" };
+  const snapshots = [base,
+    { ...base, unavailableReason: "runtime_barrier_required", streamCursor: "cursor-2" },
+    { ...base, unavailableReason: null, streamCursor: "cursor-3" },
+    { ...base, streamCursor: "cursor-4" },
+  ];
+  for (let index = 1; index < snapshots.length; index++) {
+    const before = snapshots[index - 1]!; const next = snapshots[index]!;
+    assert.ok(validAgentView(before)); assert.ok(validAgentView(next));
+    const delta = diffAgentViews(before, next);
+    assert.ok(delta);
+    const wire = JSON.parse(JSON.stringify({ ...delta, fromCursor: before.streamCursor, cursor: next.streamCursor }));
+    const result = applyAgentDelta(before, wire);
+    assert.deepEqual(result, next);
+  }
 });

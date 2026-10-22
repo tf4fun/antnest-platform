@@ -295,6 +295,7 @@ export function createWorkspaceRuntime(input: {
     const systemNotices = owner.systemNotices;
     return (streamCursor) => ({ agentId: scope.agentId, bridgeEpoch: lease.epoch,
       availability: state.availability === "ready" && active ? "busy" : state.availability,
+      unavailableReason: state.unavailableReason ?? null,
       promptCapabilities, controlCommands, skillCommands: owner.skillCommands,
       activeSessionId: state.activeSessionId ?? active?.sessionId ?? null,
       selectedSessionId, selectedView, operations,

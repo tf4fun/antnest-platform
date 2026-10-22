@@ -830,8 +830,50 @@ test("Agent-only SSE reports a new operation without selecting its Session", asy
   finish();
 });
 
+test("Agent View retains unavailable reasons and clears them when ready", async () => {
+  const states = [
+    { availability: "offline" as const, activeSessionId: null,
+      unavailableReason: "runtime_barrier_required" as const },
+    { availability: "offline" as const, activeSessionId: null,
+      unavailableReason: "agent_unavailable" as const },
+    { availability: "ready" as const, activeSessionId: null, unavailableReason: null },
+  ];
+  let state = states[0]!;
+  const runtime = createWorkspaceRuntime({
+    connect: async () => ({
+      async readAgentExecutionState() { return state; },
+      async load() { return { cut: { sealedWatermark: 0, appendVersion: 1 } }; },
+      async readExecution(sessionId) {
+        return { sessionId, appendVersion: 1, outputWatermark: 0,
+          activeRunId: null, recentReceipts: [], configurationRevision: null };
+      },
+      async readIntent() { return { kind: "unknown" as const }; },
+      async prompt() { return { stopReason: "end_turn" }; },
+      async cancel() {}, close() {},
+    }),
+  });
+  const headers = { "x-antnest-organization-id": "org-1",
+    "x-antnest-principal-id": "user-1", "x-antnest-agent-id": "agent-1" };
+  try {
+    for (const next of states) {
+      state = next;
+      const response = await runtime.handle(new Request(
+        "http://localhost/api/app/workspace/v1/agents/agent-1/view", { headers },
+      ));
+      assert.equal(response?.status, 200);
+      const view = await response?.json();
+      assert.equal(view.agentId, "agent-1");
+      assert.equal(view.availability, state.availability);
+      assert.equal(view.activeSessionId, null);
+      assert.equal(view.unavailableReason, state.unavailableReason);
+    }
+  } finally { await runtime.drain(1_000); }
+});
+
 test("upstream Agent watch pushes external state changes into Agent-only SSE", async () => {
-  let state = { availability: "ready" as "ready" | "busy", activeSessionId: null as string | null };
+  let state = { availability: "ready" as "ready" | "busy" | "offline",
+    activeSessionId: null as string | null,
+    unavailableReason: null as "runtime_barrier_required" | "agent_unavailable" | null };
   let emit!: (value: typeof state) => void | Promise<void>;
   const runtime = createWorkspaceRuntime({
     connect: async () => ({
@@ -839,7 +881,8 @@ test("upstream Agent watch pushes external state changes into Agent-only SSE", a
       async watchAgentExecutionState(changed, signal) {
         emit = changed;
         await changed(state);
-        await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+        if (!signal.aborted)
+          await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
       },
       async load() { return { cut: { sealedWatermark: 0, appendVersion: 1 } }; },
       async readExecution(sessionId) {
@@ -858,37 +901,51 @@ test("upstream Agent watch pushes external state changes into Agent-only SSE", a
     "x-antnest-agent-id": "agent-1",
   };
   const url = "http://localhost/api/app/workspace/v1/agents/agent-1";
-  const view = await (await runtime.handle(new Request(`${url}/view`, { headers })))?.json();
   const abort = new AbortController();
-  const response = await runtime.handle(new Request(
-    `${url}/events?cursor=${encodeURIComponent(view.streamCursor)}`,
-    { headers, signal: abort.signal },
-  ));
-  assert.equal(response?.status, 200);
-  const reader = response!.body!.getReader();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    state = { availability: "busy", activeSessionId: "session-2" };
-    await emit(state);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let chunk: ReadableStreamReadResult<Uint8Array>;
-    try {
-      chunk = await Promise.race([
-        reader.read(),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error("External state did not reach SSE")), 2000);
-        }),
-      ]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
+    const view = await (await runtime.handle(new Request(`${url}/view`, { headers })))?.json();
+    assert.equal(view.unavailableReason, null);
+    const response = await runtime.handle(new Request(
+      `${url}/events?cursor=${encodeURIComponent(view.streamCursor)}`,
+      { headers, signal: abort.signal },
+    ));
+    assert.equal(response?.status, 200);
+    reader = response!.body!.getReader();
+    let previous = view;
+    for (const next of [
+      { availability: "busy" as const, activeSessionId: "session-2", unavailableReason: null },
+      { availability: "offline" as const, activeSessionId: null,
+        unavailableReason: "runtime_barrier_required" as const },
+      { availability: "offline" as const, activeSessionId: null,
+        unavailableReason: "agent_unavailable" as const },
+      { availability: "ready" as const, activeSessionId: null, unavailableReason: null },
+    ]) {
+      state = next;
+      await emit(state);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("External state did not reach SSE")), 2000);
+          }),
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      const frame = new TextDecoder().decode(chunk.value);
+      const event = expandedEvent(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null"), previous);
+      assert.equal(event.type, "delta");
+      assert.equal(event.view.availability, state.availability);
+      assert.equal(event.view.activeSessionId, state.activeSessionId);
+      assert.equal(event.view.unavailableReason, state.unavailableReason);
+      previous = event.view;
     }
-    const frame = new TextDecoder().decode(chunk.value);
-    const event = expandedEvent(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null"), view);
-    assert.equal(event.type, "delta");
-    assert.equal(event.view.availability, "busy");
-    assert.equal(event.view.activeSessionId, "session-2");
   } finally {
     abort.abort();
-    await reader.cancel();
+    await reader?.cancel();
     await runtime.drain(100);
   }
 });

@@ -72,6 +72,7 @@ const systemNotice = z.strictObject({
   sourceRunId: id.optional(),
 });
 const agent = z.strictObject({ agentId: id, bridgeEpoch: id, availability: z.enum(["ready", "busy", "offline"]),
+  unavailableReason: z.enum(["agent_unavailable", "runtime_barrier_required"]).nullable().optional(),
   controlCommands: availableCommandsSchema.optional(),
   skillCommands: availableCommandsSchema.optional(),
   promptCapabilities: z.strictObject({ image: z.boolean().optional(), audio: z.boolean().optional(), embeddedContext: z.boolean().optional() }),
@@ -88,7 +89,7 @@ export type AgentView = z.infer<typeof agent>;
 export type Patch = { op: "add" | "replace"; path: string; value: unknown } | { op: "remove"; path: string };
 export type DeltaBody = { type: "delta"; sessionId: string | null; incarnation: string | null;
   fromSessionViewRevision: number | null; sessionViewRevision: number | null; patch: Patch[] };
-const agentFields = new Set(["availability", "activeSessionId", "promptCapabilities", "operations", "permissions", "controlCommands", "skillCommands", "systemNotices", "learningStatus"]);
+const agentFields = new Set(["availability", "unavailableReason", "activeSessionId", "promptCapabilities", "operations", "permissions", "controlCommands", "skillCommands", "systemNotices", "learningStatus"]);
 const sessionFields = new Set(["title", "updatedAt", "viewRevision", "appendVersion", "outputWatermark", "historyToken",
   "historyState", "turns", "olderTurnsCursor", "operations", "permissions", "configOptions", "configurationToken", "usage", "availableCommands"]);
 const forbidden = new Set(["__proto__", "constructor", "prototype"]);
@@ -181,7 +182,14 @@ export function diffAgentViews(previous: AgentView, next: AgentView): DeltaBody 
     } else emit({ op: "replace", path, value: after });
   };
   try {
-    for (const field of agentFields) diff(previous[field as keyof AgentView], next[field as keyof AgentView], `/${field}`);
+    for (const field of agentFields) {
+      const key = field as keyof AgentView;
+      if (!Object.hasOwn(previous, key) && Object.hasOwn(next, key))
+        emit({ op: "add", path: `/${field}`, value: next[key] });
+      else if (Object.hasOwn(previous, key) && !Object.hasOwn(next, key))
+        emit({ op: "remove", path: `/${field}` });
+      else diff(previous[key], next[key], `/${field}`);
+    }
     if (previous.selectedView && next.selectedView) for (const field of sessionFields) {
       const key = field as keyof NonNullable<AgentView["selectedView"]>;
       if (!Object.hasOwn(previous.selectedView, key) && Object.hasOwn(next.selectedView, key))

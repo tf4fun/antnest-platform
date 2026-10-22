@@ -345,6 +345,17 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
               composerHadFocus.current = false;
           }}
         >
+          {activeAgent.unavailableReason === "runtime_barrier_required" ? (
+            <div className="workspace-alert" role="status" aria-label="Workspace recovery">
+              <strong>Workspace recovery required</strong>
+              <p>An interrupted tool call requires workspace recovery before this Agent can run again.</p>
+              {workspace.principal.administrator ? (
+                <a href={`/#agents/${encodeURIComponent(activeAgent.id)}`}>Recover workspace</a>
+              ) : (
+                <p>Contact an organization administrator to recover this workspace.</p>
+              )}
+            </div>
+          ) : null}
           <Thread
             agent={activeAgent}
             conversation={activeConversation}
