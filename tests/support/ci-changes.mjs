@@ -91,7 +91,10 @@ export const suites = [
       ...compose,
     ],
     pull: base,
-    run: ["make test-runtime-controller-postgres"],
+    run: [
+      "make test-runtime-controller-postgres",
+      "ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock ANTNEST_RUNTIME_CONTROLLER_TEST_ANONYMOUS_VOLUME_IMAGE=postgres:17.11-bookworm node tests/integration/go/run.mjs runtime-controller --profile integration --package internal/platform/docker -- -race -timeout=3m -run ^TestRemoveContainerDeletesAnonymousVolumesAndPreservesNamedResources$",
+    ],
   },
   {
     id: "identity-postgres",

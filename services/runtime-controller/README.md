@@ -52,6 +52,9 @@ Startup rejects published PostgreSQL passwords under the [development secret pol
   ordered, time-retained observation journal.
 - Create and retain the Agent workspace as part of lifecycle commands;
   workspace operations are never exposed as a cross-service API.
+  Removing a Docker compute or helper container also removes its image-declared
+  anonymous volumes. Explicitly named workspace and Skill volumes retain their
+  separate lifecycle and are preserved by container removal.
 - Prepare per-Agent system Skill volumes from exact Skill Registry versions and
   mount them read-only into Runtime containers.
 - Freeze the Runtime Skill maintenance verifier keys into each accepted
@@ -227,6 +230,14 @@ The root Go runner overlays those sources into the owning packages so they can
 reach package-private details. The lifecycle E2E covers initialization from an
 empty environment, Controller restart recovery, Runtime restart observation,
 Update, Disable workspace retention, Enable, and Delete cleanup.
+
+The PostgreSQL CI suite also runs the real Docker anonymous-volume deletion
+regression against the already installed `postgres:17.11-bookworm` image.
+It opts in with `ANTNEST_RUNTIME_CONTROLLER_TEST_ANONYMOUS_VOLUME_IMAGE` and
+`ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET`; the generic image-inspection
+fixture setting does not enable it. The test creates unstarted containers,
+checks anonymous-volume removal and named-volume retention, and restores the
+original container and volume inventories with independent fixture cleanup.
 
 The observation retry E2E builds a separately tagged candidate Controller and
 uses a private Unix-socket proxy to simulate unavailable Docker at startup and
