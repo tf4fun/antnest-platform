@@ -254,11 +254,12 @@ type createAgentRequest struct {
 }
 
 type rebuildAgentRequest struct {
-	RequestID        string `json:"request_id"`
-	OrganizationID   string `json:"organization_id"`
-	ActorPrincipalID string `json:"actor_principal_id"`
-	TemplateID       string `json:"template_id"`
-	TemplateRevision int64  `json:"template_revision"`
+	RequestID        string          `json:"request_id"`
+	OrganizationID   string          `json:"organization_id"`
+	ActorPrincipalID string          `json:"actor_principal_id"`
+	TemplateID       string          `json:"template_id"`
+	TemplateRevision int64           `json:"template_revision"`
+	Recovery         json.RawMessage `json:"recovery,omitempty"`
 }
 
 type lifecycleRequest struct {
@@ -349,29 +350,30 @@ type agentConfigurationResponse struct {
 }
 
 type agentResponse struct {
-	ActivationState                 domain.ActivationState      `json:"activation_state,omitempty"`
-	RuntimeState                    domain.RuntimeState         `json:"runtime_state"`
-	RuntimeReason                   string                      `json:"runtime_reason,omitempty"`
-	RuntimeDetail                   string                      `json:"runtime_detail,omitempty"`
-	RuntimeObservedAt               *time.Time                  `json:"runtime_observed_at,omitempty"`
-	AgentID                         string                      `json:"agent_id"`
-	OrganizationID                  string                      `json:"organization_id"`
-	OwnerUserID                     string                      `json:"owner_user_id"`
-	Name                            string                      `json:"name"`
-	DesiredState                    domain.DesiredState         `json:"desired_state"`
-	LifecycleState                  domain.AgentState           `json:"lifecycle_state"`
-	AccessRevision                  string                      `json:"access_revision"`
-	AgentSpecRevision               string                      `json:"agent_spec_revision,omitempty"`
-	ExecutableExecutionRevision     string                      `json:"executable_execution_revision,omitempty"`
-	LastSuccessfulExecutionRevision string                      `json:"last_successful_execution_revision,omitempty"`
-	Runtime                         *runtimeBindingResponse     `json:"runtime,omitempty"`
-	ActiveOperationRequestID        string                      `json:"active_operation_request_id,omitempty"`
-	FailureStage                    string                      `json:"failure_stage,omitempty"`
-	FailureCode                     string                      `json:"failure_code,omitempty"`
-	Configuration                   *agentConfigurationResponse `json:"configuration,omitempty"`
-	AggregateSequence               int64                       `json:"aggregate_sequence"`
-	CreatedAt                       time.Time                   `json:"created_at"`
-	UpdatedAt                       time.Time                   `json:"updated_at"`
+	RuntimeRecovery                 *ports.RuntimeBarrierRecoveryProjection `json:"runtime_recovery,omitempty"`
+	ActivationState                 domain.ActivationState                  `json:"activation_state,omitempty"`
+	RuntimeState                    domain.RuntimeState                     `json:"runtime_state"`
+	RuntimeReason                   string                                  `json:"runtime_reason,omitempty"`
+	RuntimeDetail                   string                                  `json:"runtime_detail,omitempty"`
+	RuntimeObservedAt               *time.Time                              `json:"runtime_observed_at,omitempty"`
+	AgentID                         string                                  `json:"agent_id"`
+	OrganizationID                  string                                  `json:"organization_id"`
+	OwnerUserID                     string                                  `json:"owner_user_id"`
+	Name                            string                                  `json:"name"`
+	DesiredState                    domain.DesiredState                     `json:"desired_state"`
+	LifecycleState                  domain.AgentState                       `json:"lifecycle_state"`
+	AccessRevision                  string                                  `json:"access_revision"`
+	AgentSpecRevision               string                                  `json:"agent_spec_revision,omitempty"`
+	ExecutableExecutionRevision     string                                  `json:"executable_execution_revision,omitempty"`
+	LastSuccessfulExecutionRevision string                                  `json:"last_successful_execution_revision,omitempty"`
+	Runtime                         *runtimeBindingResponse                 `json:"runtime,omitempty"`
+	ActiveOperationRequestID        string                                  `json:"active_operation_request_id,omitempty"`
+	FailureStage                    string                                  `json:"failure_stage,omitempty"`
+	FailureCode                     string                                  `json:"failure_code,omitempty"`
+	Configuration                   *agentConfigurationResponse             `json:"configuration,omitempty"`
+	AggregateSequence               int64                                   `json:"aggregate_sequence"`
+	CreatedAt                       time.Time                               `json:"created_at"`
+	UpdatedAt                       time.Time                               `json:"updated_at"`
 }
 
 type agentListResponse struct {
@@ -842,6 +844,10 @@ func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Reque
 		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
 		return
 	}
+	if len(payload.Recovery) != 0 {
+		h.recoverRuntimeBarrier(response, request, payload)
+		return
+	}
 	ctx := request.Context()
 	result, err := h.lifecycle.RebuildAgent(ctx, application.RebuildAgentInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
@@ -1188,6 +1194,14 @@ func agentPayload(agent application.AgentView) agentResponse {
 		FailureStage:                    agent.FailureStage, FailureCode: agent.FailureCode,
 		AggregateSequence: agent.AggregateSequence,
 		CreatedAt:         agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
+	}
+	if agent.RuntimeRecovery != nil {
+		projection := *agent.RuntimeRecovery
+		if projection.CooldownUntil != nil {
+			deadline := *projection.CooldownUntil
+			projection.CooldownUntil = &deadline
+		}
+		response.RuntimeRecovery = &projection
 	}
 	if agent.RuntimeRevision != "" {
 		response.Runtime = &runtimeBindingResponse{

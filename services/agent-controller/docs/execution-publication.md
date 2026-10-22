@@ -180,10 +180,9 @@ pairs and safe cancellation causes without returning remote messages, endpoint
 addresses or credentials. A cancellation that arrives during response cleanup
 cannot turn into a successful read after cleanup finishes.
 
-The adapter and the storage boundary below do not activate recovery polling.
-Workflow start/replay, notifications and UI consumers remain separate delivery
-batches. Activation requires the ACP producer and the explicit recovery
-integration gate.
+Controller main runs the observation and pending-start workers with this
+authenticated adapter. Automatic recovery has a real ACP mid-tool crash gate;
+the UI consumer and real manual UI recovery remain separate acceptance work.
 
 ## Atomic Runtime Barrier Admission
 
@@ -196,13 +195,48 @@ Unicode and NUL identities survive PostgreSQL and restart without normalization.
 
 An existing tuple returns its original receipt before current policy, Template,
 cooldown or lifecycle checks. A regular lifecycle operation without a matching
-recovery receipt cannot be converted into a recovery. A new admission requires
-the observed policy revision in `auto` mode, the same configured Runtime/source
+recovery receipt cannot be converted into a recovery. A new automatic admission
+requires the observed policy revision in `auto` mode, the same configured Runtime/source
 and Template revision, unchanged owner authorization and revocation watermarks,
 and an active owner binding. It retains the existing lifecycle CAS and does not
 require execution readiness or equate the barrier's original execution ID with
 a later health observation. The absent policy defaults to `manual`; neither
 `manual` nor `notify` admits automatic recovery.
+
+Migration 0029 adds an explicit `manual` origin flag, defaulting existing
+receipts to automatic. An internal manual intent retains the authenticated
+administrator's actor and can use any valid current policy mode; it still
+requires the exact policy revision and every source, lifecycle, authorization
+watermark and cooldown check. The flag is never part of the public request or
+the existing six-field lifecycle fingerprint. Receipt readers and Temporal
+startup use the saved origin, actor and policy. Automatic receipts still require
+the `agent-controller` actor and an accepted `auto` policy. Cross-origin replay
+follows the original operation and never renews its cooldown.
+
+The internal flag is not authorization. The existing administrator Rebuild HTTP
+entry verifies workload/CCT scope before both admission and replay. Its optional
+`recovery` object contains only the original `barrier_id` and
+`expected_runtime_revision`; null, duplicate, unknown or invalid fields fail
+without falling through to ordinary Rebuild. The request ID must derive from
+the original organization/Agent/barrier tuple, and the requested Template must
+match the configured target. The existing operation response remains HTTP 202.
+
+`RuntimeBarrierManualRecoveryService` first replays a committed original tuple,
+preserving its actor, fingerprint, policy and cooldown. On a fresh request it
+reads the current Agent, the exact ACP barrier and policy, then uses shared
+atomic admission. If a concurrent recovery commits after the first receipt
+miss, a changed Runtime, target, lifecycle source or barrier triggers another
+original-receipt read; replay still validates the requested original Runtime
+and target. Cancellation prevents further reads or admission. Controller main
+installs this service with the same authenticated ACP reader as observation;
+the pending-start worker starts the persisted workflow command.
+
+Real HTTP/PostgreSQL component tests cover all three policy modes, reopen and
+replay, current authorization, binding/target conflicts and an active cooldown.
+ACP facts and RC Skill preparation are controlled in those tests; they do not
+prove manual Runtime recovery. The persistent observation and notification
+boundary below supplies the Agent detail projection; UI consumers and real
+manual UI acceptance remain pending.
 
 Lock order is lifecycle request, policy organization, Identity admission,
 execution organization, Agent, owner binding/cooldown and event journal. After
@@ -223,8 +257,8 @@ changes nothing and cannot acknowledge another Agent's pending command.
 This storage API does not start or confirm a Temporal workflow on its own. The
 orchestration batch must prove that the engine accepted the original command
 before confirming it; timeout, cancellation or an unknown response must leave
-the command pending. Manual/notify presentation and actual ACP mid-tool-crash recovery acceptance
-remain required before the complete recovery workflow is delivered.
+the command pending. Manual/notify presentation and real manual UI recovery
+acceptance remain required before the complete recovery workflow is delivered.
 
 ### Application Admission
 
@@ -294,8 +328,8 @@ settle and prevents further dispatch, including confirmation after a late start
 response. Polling starts immediately, then waits between rounds with a
 cancellable timer. Logs contain only a fixed failure classification.
 
-Policy notifications, UI and actual ACP crash-to-Rebuild integration remain
-separate required work. Component coverage uses real PostgreSQL and Temporal
+UI and real manual recovery integration remain separate required work.
+Component coverage uses real PostgreSQL and Temporal
 acceptance, with synthetic response-loss/held-return adapters; it does not claim
 execution against a real Runtime, ACP or Egress service.
 
@@ -319,7 +353,14 @@ The intent carries the stable barrier-derived request ID, configured Template
 snapshot, and Agent owner/authorization/revocation watermarks. The admission
 transaction rechecks binding, policy, lifecycle and cooldown after these reads;
 an observation is not authority to bypass those guards. `manual` and `notify`
-perform no automatic admission. Notification persistence and UI remain pending.
+perform no automatic admission; notify mode persists a deduplicated journal
+notification, while manual mode only records the observed recovery state.
+
+Before the ACP read, the worker captures the persisted observation revision.
+A successful read, including an explicit null, is recorded with the current
+policy and source snapshot before any automatic admission. Failed or malformed
+reads retain the previous observation. Persistence failures prevent admission
+for that candidate and leave other candidates eligible in the bounded round.
 
 A configured page limit of 1–1000 bounds candidate count, and one round deadline
 covers the cursor gate, query, base, ACP, policy and admission calls. Each visited
@@ -329,6 +370,40 @@ unvisited tail. Calls remain synchronous and cancellation waits for the actual
 outstanding call to return; a late successful read cannot start new admission.
 The first round runs immediately and subsequent rounds use cancellable polling.
 Logs use a fixed failure classification without raw causes or Agent identities.
+
+### Durable Observation, Notification And Agent Projection
+
+Migration 0030 stores one versioned observation per Agent, including explicit
+null tombstones. The transaction locks policy, Identity admission, execution
+organization, Agent and owner binding before writing. Runtime/spec/execution
+lineage, access revision and owner authorization/revocation watermarks must
+still match; changing health observations or aggregate sequence alone does not
+invalidate that source. An unchanged fact/source/policy is a durable no-op.
+A changed result requires the revision read before the ACP query, so a late
+null cannot erase a newer barrier and a late barrier cannot resurrect a cleared
+one. No ACP or Temporal call occurs while these database locks are held.
+
+Notify mode atomically appends one v1 `agent_runtime_barrier_required` event for
+the original organization/Agent/barrier tuple. Its immutable notification row
+is separate from Rebuild receipts, starts and cooldowns: notifying does not
+consume an operation, and later manual recovery remains possible. Repeated
+observations and policy changes cannot republish or rewrite that notification.
+The Agent aggregate advances only for a newly committed notification.
+
+Opaque barrier IDs, including NUL, are stored as BYTEA. The journal JSONB holds
+the other four public fields. List/Watch reads join the typed notification row
+in the same database query and validate its tuple, stable ID and payload before
+adding the barrier ID. A missing or inconsistent extension fails the entire
+page; historical v1 payloads and readiness v2 readers retain their contracts.
+
+The optional `runtime_recovery` Agent field contains only the nine frozen
+management fields. It excludes execution IDs, endpoints, credentials and Run
+content. Reads fence the observation against the caller's source, the current
+Agent, active owner binding and revocation watermark in one database snapshot.
+An original Rebuild may retain its reason until it replaces that source. The
+nullable UTC cooldown comes from the accepted Agent cooldown, never a new
+deadline derived from the current policy. This read-only projection grants no
+recovery authority; the existing administrator Rebuild grant still applies.
 
 Observation never starts a workflow or confirms a pending command. The separate
 pending-start worker can resume a committed original even when current ACP or

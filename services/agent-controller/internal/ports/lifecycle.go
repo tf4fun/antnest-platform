@@ -39,6 +39,7 @@ const (
 	EventAgentRuntimeMissing          = "agent_runtime_missing"
 	EventAgentRuntimeConditionChanged = "agent_runtime_condition_changed"
 	EventAgentOwnerRevoked            = "agent_owner_revoked"
+	EventAgentRuntimeBarrierRequired  = "agent_runtime_barrier_required"
 )
 
 type AgentSpecSource interface {

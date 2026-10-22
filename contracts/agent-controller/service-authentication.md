@@ -92,13 +92,16 @@ JSON and no query fields. Replays still require current authentication and scope
 before reading a durable receipt. Policy configuration and persistence do not
 start a recovery worker, Rebuild or notification delivery.
 
-The recovery worker, Agent projection, notification persistence/delivery and
-manual Rebuild extension remain pending. The optional recovery extension will
-use the existing Rebuild administrator grant;
+Revision 43 adds the optional Agent projection, manual Rebuild extension and
+v1 notification wire. Their declarations grant no authority and do not prove
+notification persistence, manual admission or UI delivery. The optional recovery
+extension uses the existing Rebuild administrator grant, rechecked before every
+new request or durable replay;
 Agent UI and ordinary Agent owners gain no new mutation authority. Policy
 management does not accept Agent-scoped credentials as a replacement for an
 Organization administrator. ACP barrier reads remain workload-only Controller
-control queries; recovery does not use a user CCT or execution-state subscription.
+control queries; automatic observation does not use a user CCT or execution-state
+subscription. Manual recovery always uses the existing administrator CCT.
 Runtime recovery projections and notification data exclude execution IDs, private
 endpoints, credentials and Run/Tool content. Notification List/Watch keeps its
 existing visibility and does not introduce a new notification service.

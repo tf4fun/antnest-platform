@@ -40,7 +40,7 @@ func (service *RuntimeBarrierRecoveryAdmissionService) Admit(ctx context.Context
 	if result, found, err := service.replay(ctx, intent.Fact); found || err != nil {
 		return result, err
 	}
-	input, err := runtimeBarrierRecoveryCommandInput(intent.Fact, intent.Command)
+	input, err := runtimeBarrierRecoveryCommandInput(intent.Fact, intent.Command, intent.Manual)
 	if err != nil || intent.ExpectedPolicyRevision < 0 || intent.ExpectedPolicyRevision > domain.RuntimeBarrierRecoveryMaxRevision ||
 		intent.ExpectedOwnerUserID == "" || intent.ExpectedOwnerAuthorizationSequence < 0 || intent.ExpectedIdentityRevocationSequence < 0 {
 		return RuntimeBarrierRecoveryAdmissionResult{}, ports.ErrInvalidRuntimeBarrierRecovery
@@ -79,10 +79,10 @@ func validRuntimeBarrierRecoveryFact(fact ports.RuntimeBarrierResult) bool {
 		fact.Matches(ports.RuntimeBarrierQuery{OrganizationID: fact.OrganizationID, AgentID: fact.AgentID, ExpectedRuntimeRevision: fact.RuntimeRevision})
 }
 
-func runtimeBarrierRecoveryCommandInput(fact ports.RuntimeBarrierResult, command ports.RuntimeBarrierRebuildCommand) (RebuildAgentInput, error) {
+func runtimeBarrierRecoveryCommandInput(fact ports.RuntimeBarrierResult, command ports.RuntimeBarrierRebuildCommand, manual bool) (RebuildAgentInput, error) {
 	input := RebuildAgentInput(command)
 	if !validRuntimeBarrierRecoveryFact(fact) || command.OrganizationID != fact.OrganizationID ||
-		command.AgentID != fact.AgentID || command.ActorPrincipalID != "agent-controller" || validateRebuildAgentInput(input) != nil {
+		command.AgentID != fact.AgentID || !ports.ValidRuntimeBarrierRecoveryActor(command.ActorPrincipalID, manual) || validateRebuildAgentInput(input) != nil {
 		return RebuildAgentInput{}, ports.ErrInvalidRuntimeBarrierRecovery
 	}
 	requestID, err := ports.RuntimeBarrierRecoveryRequestID(fact.OrganizationID, fact.AgentID, fact.Barrier.BarrierID)
@@ -106,10 +106,10 @@ func (service *RuntimeBarrierRecoveryAdmissionService) readReceipt(ctx context.C
 	if !found {
 		return ports.RuntimeBarrierRecoveryReceipt{}, false, nil
 	}
-	input, err := runtimeBarrierRecoveryCommandInput(receipt.Fact, receipt.Command)
+	input, err := runtimeBarrierRecoveryCommandInput(receipt.Fact, receipt.Command, receipt.Manual)
 	if err != nil || receipt.Fact.OrganizationID != fact.OrganizationID || receipt.Fact.AgentID != fact.AgentID ||
 		receipt.Fact.Barrier.BarrierID != fact.Barrier.BarrierID || receipt.Policy.OrganizationID != fact.OrganizationID ||
-		receipt.Policy.Validate() != nil || receipt.Policy.Mode != "auto" || receipt.AcceptedAt.IsZero() ||
+		receipt.Policy.Validate() != nil || (!receipt.Manual && receipt.Policy.Mode != "auto") || receipt.AcceptedAt.IsZero() ||
 		!receipt.CooldownUntil.Equal(receipt.AcceptedAt.Add(time.Duration(receipt.Policy.CooldownMS)*time.Millisecond)) {
 		return ports.RuntimeBarrierRecoveryReceipt{}, false, ErrQueryContract
 	}

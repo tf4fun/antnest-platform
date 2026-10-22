@@ -19,7 +19,7 @@ var _ ports.RuntimeBarrierRecoveryStore = (*Repository)(nil)
 const runtimeBarrierRecoverySelect = `SELECT r.organization_id, r.agent_id, r.barrier_id,
 r.runtime_revision, r.runtime_execution_id, r.reason, r.request_id, r.request_fingerprint,
 r.policy_revision, r.policy_mode, r.policy_cooldown_ms, r.actor_principal_id,
-r.template_id, r.template_revision, r.accepted_at, r.cooldown_until
+r.template_id, r.template_revision, r.accepted_at, r.cooldown_until, r.manual
 FROM agent_controller.runtime_barrier_recovery_receipts r`
 
 func recoveryCommandFingerprint(command ports.RuntimeBarrierRebuildCommand) string {
@@ -29,14 +29,14 @@ func recoveryCommandFingerprint(command ports.RuntimeBarrierRebuildCommand) stri
 	return hex.EncodeToString(digest[:])
 }
 
-func validRecoveryCommand(fact ports.RuntimeBarrierResult, command ports.RuntimeBarrierRebuildCommand, fingerprint string) bool {
+func validRecoveryCommand(fact ports.RuntimeBarrierResult, command ports.RuntimeBarrierRebuildCommand, fingerprint string, manual bool) bool {
 	if fact.Barrier == nil || !fact.Matches(ports.RuntimeBarrierQuery{
 		OrganizationID: command.OrganizationID, AgentID: command.AgentID,
 		ExpectedRuntimeRevision: fact.RuntimeRevision,
 	}) || !domain.ValidRuntimeBarrierPolicyIdentifier(command.OrganizationID) ||
 		!domain.ValidRuntimeBarrierPolicyIdentifier(command.AgentID) ||
 		!domain.ValidRuntimeBarrierPolicyIdentifier(command.TemplateID) ||
-		command.TemplateRevision < 1 || command.ActorPrincipalID != "agent-controller" {
+		command.TemplateRevision < 1 || !ports.ValidRuntimeBarrierRecoveryActor(command.ActorPrincipalID, manual) {
 		return false
 	}
 	requestID, err := ports.RuntimeBarrierRecoveryRequestID(fact.OrganizationID, fact.AgentID, fact.Barrier.BarrierID)
@@ -48,7 +48,7 @@ func validateRuntimeBarrierRecovery(input ports.BeginAgentRebuild) error {
 	if intent == nil {
 		return nil
 	}
-	if !validRecoveryCommand(intent.Fact, intent.Command, input.Operation.RequestFingerprint) ||
+	if !validRecoveryCommand(intent.Fact, intent.Command, input.Operation.RequestFingerprint, intent.Manual) ||
 		intent.Command.RequestID != input.Operation.RequestID || intent.Command.AgentID != input.AgentID ||
 		intent.Fact.RuntimeRevision != input.ExpectedRuntimeRevision ||
 		intent.ExpectedPolicyRevision < 0 || intent.ExpectedPolicyRevision > domain.RuntimeBarrierRecoveryMaxRevision ||
@@ -71,7 +71,7 @@ func scanRuntimeBarrierRecovery(row catalogRowScanner) (ports.RuntimeBarrierReco
 		&receipt.Fact.RuntimeRevision, &executionID, &barrier.Reason,
 		&receipt.Command.RequestID, &receipt.RequestFingerprint, &receipt.Policy.Revision,
 		&receipt.Policy.Mode, &receipt.Policy.CooldownMS, &receipt.Command.ActorPrincipalID,
-		&receipt.Command.TemplateID, &receipt.Command.TemplateRevision, &receipt.AcceptedAt, &receipt.CooldownUntil)
+		&receipt.Command.TemplateID, &receipt.Command.TemplateRevision, &receipt.AcceptedAt, &receipt.CooldownUntil, &receipt.Manual)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ports.RuntimeBarrierRecoveryReceipt{}, false, nil
 	}
@@ -82,8 +82,8 @@ func scanRuntimeBarrierRecovery(row catalogRowScanner) (ports.RuntimeBarrierReco
 	receipt.Fact.Barrier = barrier
 	receipt.Command.OrganizationID, receipt.Command.AgentID = receipt.Fact.OrganizationID, receipt.Fact.AgentID
 	receipt.Policy.OrganizationID = receipt.Fact.OrganizationID
-	if !validRecoveryCommand(receipt.Fact, receipt.Command, receipt.RequestFingerprint) ||
-		receipt.Policy.Validate() != nil || receipt.Policy.Mode != "auto" || receipt.AcceptedAt.IsZero() ||
+	if !validRecoveryCommand(receipt.Fact, receipt.Command, receipt.RequestFingerprint, receipt.Manual) ||
+		receipt.Policy.Validate() != nil || (!receipt.Manual && receipt.Policy.Mode != "auto") || receipt.AcceptedAt.IsZero() ||
 		!receipt.CooldownUntil.Equal(receipt.AcceptedAt.Add(time.Duration(receipt.Policy.CooldownMS)*time.Millisecond)) {
 		return ports.RuntimeBarrierRecoveryReceipt{}, false, fmt.Errorf("invalid persisted Runtime barrier recovery receipt")
 	}
@@ -173,7 +173,7 @@ func lockRuntimeBarrierRecoveryPolicy(ctx context.Context, tx *databaseTransacti
 	if err != nil {
 		return domain.RuntimeBarrierRecoveryPolicy{}, err
 	}
-	if policy.Revision != intent.ExpectedPolicyRevision || policy.Mode != "auto" {
+	if policy.Revision != intent.ExpectedPolicyRevision || (!intent.Manual && policy.Mode != "auto") {
 		return domain.RuntimeBarrierRecoveryPolicy{}, ports.ErrConcurrentChange
 	}
 	return policy, nil
@@ -242,7 +242,7 @@ WHERE agent_id=$1 FOR UPDATE`, input.AgentID).Scan(&previousDeadline)
 	}
 	data["rebuild_reason"] = ports.ExecutionRuntimeBarrierRequired
 	input.RequestedEvent.Data = data
-	return ports.RuntimeBarrierRecoveryReceipt{Fact: input.Recovery.Fact, Policy: policy,
+	return ports.RuntimeBarrierRecoveryReceipt{Fact: input.Recovery.Fact, Policy: policy, Manual: input.Recovery.Manual,
 		Command: input.Recovery.Command, RequestFingerprint: input.Operation.RequestFingerprint,
 		AcceptedAt: acceptedAt, CooldownUntil: acceptedAt.Add(time.Duration(policy.CooldownMS) * time.Millisecond)}, nil
 }
@@ -251,12 +251,12 @@ func insertRuntimeBarrierRecovery(ctx context.Context, tx *databaseTransaction, 
 	fact, command, policy := receipt.Fact, receipt.Command, receipt.Policy
 	_, err := tx.Exec(ctx, `INSERT INTO agent_controller.runtime_barrier_recovery_receipts
 (organization_id,agent_id,barrier_id,runtime_revision,runtime_execution_id,reason,request_id,request_fingerprint,
-policy_revision,policy_mode,policy_cooldown_ms,actor_principal_id,template_id,template_revision,accepted_at,cooldown_until)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+policy_revision,policy_mode,policy_cooldown_ms,actor_principal_id,template_id,template_revision,accepted_at,cooldown_until,manual)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		fact.OrganizationID, fact.AgentID, []byte(fact.Barrier.BarrierID), fact.RuntimeRevision,
 		[]byte(fact.Barrier.RuntimeExecutionID), fact.Barrier.Reason, command.RequestID, receipt.RequestFingerprint,
 		policy.Revision, policy.Mode, policy.CooldownMS, command.ActorPrincipalID, command.TemplateID,
-		command.TemplateRevision, receipt.AcceptedAt, receipt.CooldownUntil)
+		command.TemplateRevision, receipt.AcceptedAt, receipt.CooldownUntil, receipt.Manual)
 	if err != nil {
 		return fmt.Errorf("insert Runtime barrier recovery receipt: %w", err)
 	}

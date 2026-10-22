@@ -8,20 +8,23 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
+const agentEventSelect = `
+ SELECT event.global_sequence, event.event_id, event.agent_id,
+        event.aggregate_sequence, event.schema_version, event.event_type,
+        event.operation_request_id, event.trace_id, event.data, event.occurred_at,
+        notice.event_id, notice.organization_id, notice.runtime_revision, notice.policy_revision, notice.barrier_id
+ FROM agent_controller.agent_events AS event
+ JOIN agent_controller.agents AS agent ON agent.id=event.agent_id
+ LEFT JOIN agent_controller.runtime_barrier_recovery_notifications AS notice
+   ON notice.event_id=event.event_id AND notice.agent_id=event.agent_id AND notice.organization_id=agent.organization_id`
+
 func (repository *Repository) ListAgentEvents(
 	ctx context.Context, query ports.AgentEventQuery,
 ) ([]ports.AgentEventRecord, error) {
 	if query.AfterSequence < 0 || query.Limit < 1 {
 		return nil, fmt.Errorf("query Agent events: invalid cursor or limit")
 	}
-	statement := `
-	SELECT event.global_sequence, event.event_id, event.agent_id,
-	       event.aggregate_sequence, event.schema_version, event.event_type,
-	       event.operation_request_id, event.trace_id,
-	       event.data, event.occurred_at
-	FROM agent_controller.agent_events AS event
-	JOIN agent_controller.agents AS agent ON agent.id = event.agent_id
-	WHERE event.global_sequence > $1`
+	statement := agentEventSelect + ` WHERE event.global_sequence > $1`
 	arguments := []any{query.AfterSequence}
 	if query.OrganizationID != "" {
 		arguments = append(arguments, query.OrganizationID)
@@ -55,15 +58,20 @@ func (repository *Repository) ListAgentEvents(
 func scanAgentEvent(scanner lifecycleRowScanner) (ports.AgentEventRecord, error) {
 	var record ports.AgentEventRecord
 	var payload []byte
+	var extension runtimeBarrierNotificationExtension
 	if err := scanner.Scan(
 		&record.GlobalSequence, &record.EventID, &record.AgentID, &record.AggregateSequence,
 		&record.SchemaVersion, &record.EventType, &record.OperationRequestID,
 		&record.TraceID, &payload, &record.OccurredAt,
+		&extension.eventID, &extension.organizationID, &extension.runtimeRevision, &extension.policyRevision, &extension.barrierID,
 	); err != nil {
 		return ports.AgentEventRecord{}, fmt.Errorf("scan Agent event: %w", err)
 	}
 	if err := json.Unmarshal(payload, &record.Data); err != nil {
 		return ports.AgentEventRecord{}, fmt.Errorf("decode Agent event data: %w", err)
+	}
+	if err := hydrateRuntimeBarrierNotification(&record, extension); err != nil {
+		return ports.AgentEventRecord{}, err
 	}
 	return record, nil
 }

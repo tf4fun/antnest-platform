@@ -32,6 +32,9 @@ func configureRuntimeBarrierRecovery(repository *postgres.Repository, cfg config
 	if err != nil {
 		return nil, nil, err
 	}
+	// Configure both HTTP admission and background consumers before main starts
+	// serving requests or launches a worker. Both use the same workload reader.
+	application.WithRuntimeBarrierManualRecovery(repository, reader)(lifecycle)
 	schedule := cfg.RuntimeBarrierRecovery
 	observation, err := application.NewRuntimeBarrierRecoveryObservationWorker(repository, reader,
 		application.NewRuntimeBarrierRecoveryAdmissionService(lifecycle, repository),

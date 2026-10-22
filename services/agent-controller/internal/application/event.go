@@ -208,6 +208,7 @@ func validateEventRecords(records []ports.AgentEventRecord, query ports.AgentEve
 			!validAgentEventSchema(record) ||
 			record.OccurredAt.IsZero() || record.Data == nil ||
 			(query.AgentID != "" && record.AgentID != query.AgentID) ||
+			(record.EventType == ports.EventAgentRuntimeBarrierRequired && query.OrganizationID != "" && record.Data["organization_id"] != query.OrganizationID) ||
 			(record.OperationRequestID != "" && !validIdentifier(record.OperationRequestID)) ||
 			(record.TraceID != "" && !traceIDPattern.MatchString(record.TraceID)) {
 			return fmt.Errorf("%w: invalid Agent event envelope", ErrQueryContract)
@@ -220,6 +221,9 @@ func validateEventRecords(records []ports.AgentEventRecord, query ports.AgentEve
 func validAgentEventSchema(record ports.AgentEventRecord) bool {
 	switch record.SchemaVersion {
 	case 1:
+		if record.EventType == ports.EventAgentRuntimeBarrierRequired {
+			return validRecoveryNotification(record)
+		}
 		return validAgentEventType(record.EventType)
 	case 2:
 		fieldCount := 5
@@ -249,6 +253,20 @@ func validAgentEventSchema(record ports.AgentEventRecord) bool {
 	default:
 		return false
 	}
+}
+
+func validRecoveryNotification(record ports.AgentEventRecord) bool {
+	if len(record.Data) != 5 || record.OperationRequestID != "" {
+		return false
+	}
+	organization, orgOK := record.Data["organization_id"].(string)
+	barrier, barrierOK := record.Data["barrier_id"].(string)
+	runtime, runtimeOK := record.Data["runtime_revision"].(string)
+	revision, revisionOK := record.Data["policy_revision"].(float64)
+	notificationID, err := ports.RuntimeBarrierNotificationID(organization, record.AgentID, barrier)
+	return orgOK && barrierOK && runtimeOK && validIdentifier(runtime) &&
+		revisionOK && revision >= 0 && revision <= 9007199254740991 && math.Trunc(revision) == revision &&
+		record.Data["reason"] == ports.ExecutionRuntimeBarrierRequired && err == nil && record.EventID == notificationID
 }
 
 func validReadinessEventRevision(value any) bool {
