@@ -4,7 +4,7 @@ import { collectRestoreTraces } from "../lifecycle-closeout/restore-private-sess
 
 // The concrete runner supplies I/O. A failed business step must not suppress
 // independent observations, source archives or the final owned-resource join.
-export async function runC4Flow({ report, signal }, actions) {
+export async function runC4Flow({ report, signal, diagnostics }, actions) {
   const errors = [];
   let config, fixture;
   const attempt = async (work) => {
@@ -48,24 +48,47 @@ export async function runC4Flow({ report, signal }, actions) {
         }
         await activeAttempt(checkpoint);
         await activeAttempt(() => actions.flush(config, report));
-        const rows =
-          (await activeAttempt(() => actions.inventory(report, config))) ?? [];
-        if (!signal?.aborted)
-          report.traces = await collectRestoreTraces(
-            rows,
-            (row) => actions.collect(row, config, report),
-            (row, error) => actions.preserve(row, error, config, report),
-            signal,
-            errors,
-          );
+        if (!signal?.aborted) {
+          await diagnostics.run("c4-sources", async (diagnosticSignal) => {
+            const rows = await actions.inventory(report, config);
+            const collectionErrors = [];
+            report.traces = await collectRestoreTraces(
+              rows,
+              (row) => actions.collect(row, config, report, diagnosticSignal),
+              (row, error) => actions.preserve(row, error, config, report),
+              diagnosticSignal,
+              collectionErrors,
+            );
+            if (collectionErrors.length)
+              throw new AggregateError(
+                collectionErrors,
+                "C4 Trace collection or diagnostic archive failed",
+              );
+          });
+          await diagnostics.run("c4-inspection", async (diagnosticSignal) => {
+            const outcome = await actions.inspectTraces(
+              report,
+              config,
+              diagnosticSignal,
+            );
+            diagnosticSignal.throwIfAborted();
+            assert(outcome && [0, 2].includes(outcome.exit_code));
+            report.trace_outcome = outcome;
+            if (outcome.exit_code !== 0)
+              throw new Error("C4 strict Trace findings retained", {
+                cause: outcome,
+              });
+            return outcome;
+          });
+        }
         await activeAttempt(async () => {
           const admission = await actions.admit(report, config);
           assert(
-            admission && [0, 2].includes(admission.exitCode),
+            admission && admission.exitCode === 0,
             "C4 admission verdict required",
           );
           assert(
-            [0, 2].includes(admission.rawExitCode),
+            [null, 0, 2].includes(admission.rawExitCode),
             "original C4 strict verdict required",
           );
           report.admission = admission;
@@ -86,6 +109,7 @@ export async function runC4Flow({ report, signal }, actions) {
     } else report.cleanup = "not-created";
   }
   const record = () => {
+    report.trace_diagnostics = diagnostics.summary();
     if (signal?.aborted) errors.push(signal.reason);
     const unique = [...new Set(errors)];
     if (!Object.hasOwn(report, "c4Errors"))
@@ -93,12 +117,7 @@ export async function runC4Flow({ report, signal }, actions) {
     report.c4Errors.splice(0, report.c4Errors.length, ...unique);
     report.private_errors = unique.map((error) => inspect(error, { depth: 8 }));
     report.exit_code = unique.length ? 1 : (report.admission?.exitCode ?? 1);
-    report.status =
-      report.exit_code === 0
-        ? "passed"
-        : report.exit_code === 2
-          ? "strict_findings"
-          : "failed";
+    report.status = report.exit_code === 0 ? "passed" : "failed";
   };
   record();
   const errorsBeforeWrite = report.c4Errors.length;
@@ -119,6 +138,12 @@ export function c4PublicResult(report) {
     trace_count: report.traces.length,
     strict_trace: report.admission?.strict_trace,
     raw_exit_code: report.admission?.rawExitCode,
+    trace_diagnostics: {
+      role: "auxiliary",
+      status: report.trace_diagnostics?.status ?? "not_run",
+      check_count: report.trace_diagnostics?.checks.length ?? 0,
+      evidence: report.trace_diagnostics?.evidence,
+    },
     exit_code: report.exit_code,
     error_count: report.c4Errors.length,
     cleanup: report.cleanup,
