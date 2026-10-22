@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 import { transcript } from "../acp-commands/evidence.mjs";
 import {
   assertEarly,
@@ -288,16 +292,11 @@ export function createProgressScenario({
           rejection = error;
         }
         assert(rejection, "Runtime barrier did not reject the next prompt");
-        if (!(
-          rejection.code === -32020 &&
-          rejection.data?.code === "runtime_barrier_required" &&
-          rejection.data?.retryable === false
-        ))
-          throw rejection;
+        assertAdmissionError(rejection, "runtime_barrier_required");
+        const expected = admissionErrorReceipt("runtime_barrier_required");
         assert.deepEqual(client.lastRequest.rejectionReceipt, {
-          rpcCode: -32020,
-          code: "runtime_barrier_required",
-          retryable: false,
+          rpcCode: expected.code,
+          ...expected.data,
         });
       }
       await close(client);

@@ -8,8 +8,9 @@ import { permissionRequest, v1Permission } from "../permission-request.js";
 import type { PermissionConnectionsPort } from "../../../ports/tool-permissions.js";
 import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
-import { DomainError } from "../../../domain/errors.js";
+import { errorCapability } from "../../../domain/error-catalog.js";
 import { RunRecoveryRequiredError } from "../../../ports/acp-application.js";
+import { publicError } from "../../public-error.js";
 import { availableCommands } from "../../../domain/slash-commands.js";
 import type { SkillCommand } from "../../../domain/skill-commands.js";
 import type { SkillCommandsPort } from "../../../ports/skill-commands.js";
@@ -240,26 +241,23 @@ export function createAcpV1Agent({
               close: {},
             },
           },
-          ...(bridgeDelivery || skillCommands !== undefined
-            ? {
-                _meta: {
-                  ...(skillCommands === undefined
-                    ? {}
-                    : { "antnest.dev/skill-commands": { version: 1, commands: skills } }),
-                  ...(bridgeDelivery
-                    ? {
-                        "antnest.dev/bridge": {
-                          intentReceipt: 1,
-                          targetCancel: 1,
-                          deliveryMark: 1,
-                          configurationCas: 1,
-                          ...(bridgeLearningNotices ? { learningNotices: 1 } : {}),
-                        },
-                      }
-                    : {}),
-                },
-              }
-            : {}),
+          _meta: {
+            "antnest.dev/errors": errorCapability,
+            ...(skillCommands === undefined
+              ? {}
+              : { "antnest.dev/skill-commands": { version: 1, commands: skills } }),
+            ...(bridgeDelivery
+              ? {
+                  "antnest.dev/bridge": {
+                    intentReceipt: 1,
+                    targetCancel: 1,
+                    deliveryMark: 1,
+                    configurationCas: 1,
+                    ...(bridgeLearningNotices ? { learningNotices: 1 } : {}),
+                  },
+                }
+              : {}),
+          },
         };
       });
     })
@@ -427,7 +425,7 @@ export function createAcpV1Agent({
           );
           observing = true;
           outputs.invalidate(key);
-          const result = await mapError(() => accepted.completion);
+          const result = await mapError(() => accepted.completion, true);
           return promptResponse(result);
         } finally {
           observing = true;
@@ -763,31 +761,25 @@ function toClientMcpInputs(servers: readonly acp.McpServer[]): ClientMcpInput[] 
   return servers.map((server) => structuredClone(server) as ClientMcpInput);
 }
 
-async function mapError<Result>(operation: () => Promise<Result>): Promise<Result> {
+async function mapError<Result>(
+  operation: () => Promise<Result>,
+  accepted = false,
+): Promise<Result> {
   try {
     return await operation();
   } catch (error) {
-    if (error instanceof acp.RequestError) {
+    if (!accepted && error instanceof acp.RequestError) {
       throw error;
     }
-    if (error instanceof RunRecoveryRequiredError) {
-      throw Object.assign(
-        new acp.RequestError(-32603, "A database operation requires service recovery", {
-          code: "database_error",
-          retryable: false,
-        }),
-        { cause: error },
-      );
-    }
-    if (error instanceof DomainError) {
-      throw Object.assign(
-        new acp.RequestError(-32020, error.message, {
-          code: error.code,
-          retryable: false,
-        }),
-        { cause: error },
-      );
-    }
-    throw error;
+    // Completion belongs to an accepted Run and cannot authorize admission
+    // retry, even when its failure resembles a retryable admission error.
+    const failure = publicError(
+      accepted && !(error instanceof RunRecoveryRequiredError) ? undefined : error,
+      "admission",
+    );
+    throw Object.assign(
+      new acp.RequestError(failure.jsonRpcCode ?? -32020, failure.message, failure.data),
+      { cause: error },
+    );
   }
 }

@@ -4,6 +4,7 @@ import { linkSync, mkdirSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { inspectPlanRuntimeFiles } from "./runtime-files.mjs";
 import {
   durablePath,
   shellStoragePreflight,
@@ -46,6 +47,7 @@ function inspectRequest(request, env) {
 }
 function inspectReceipt(receipt, request) {
   assert.deepEqual(Object.keys(receipt).sort(), [
+    "files",
     "raw_sha256",
     "request",
     "runtimes",
@@ -75,6 +77,7 @@ function inspectReceipt(receipt, request) {
     assert.match(row.container_id ?? "", /^[a-f0-9]{64}$/u);
     assert(Number.isSafeInteger(row.generation) && row.generation > 0);
   }
+  inspectPlanRuntimeFiles(receipt.files, receipt.runtimes);
   return receipt;
 }
 function prepare(directory) {

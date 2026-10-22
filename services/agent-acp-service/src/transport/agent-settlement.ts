@@ -5,6 +5,7 @@ import type { AgentSettlementPort } from "../ports/agent-settlement.js";
 import { activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError, rpcContent } from "../telemetry/diagnostics.js";
 import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
+import { httpFailure } from "./public-error.js";
 
 export const AGENT_SETTLEMENT_PATH = "/rpc/agent-acp/settle-agent";
 
@@ -51,31 +52,10 @@ export async function settleAgent(
 }
 
 function settlementError(error: unknown) {
-  if (error instanceof RpcRequestError)
-    return {
-      status: error.status,
-      body: { code: error.code, message: error.message, retryable: false },
-    };
+  if (error instanceof RpcRequestError) return httpFailure(error.code);
   if (error instanceof DomainError && error.code === "invalid_agent_settlement")
-    return {
-      status: 400,
-      body: { code: error.code, message: "Invalid Agent settlement request", retryable: false },
-    };
+    return httpFailure(error.code);
   if (error instanceof DomainError && error.code === "agent_operation_conflict")
-    return {
-      status: 409,
-      body: {
-        code: error.code,
-        message: "Agent lifecycle operation no longer matches the applied configuration",
-        retryable: false,
-      },
-    };
-  return {
-    status: 503,
-    body: {
-      code: "settlement_unavailable",
-      message: "Agent execution could not be settled",
-      retryable: true,
-    },
-  };
+    return httpFailure(error.code);
+  return httpFailure("settlement_unavailable");
 }

@@ -4,6 +4,7 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
 import type { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
 import { readRpcRequest, readRequestBytes, RpcRequestError, rpcJson } from "../rpc-request.js";
+import { httpFailure } from "../public-error.js";
 
 // Retain SDK ownership of ACP routing/connection IDs/SSE. This adapter validates
 // raw UTF-8 and duplicate JSON members before the SDK's text decoding boundary.
@@ -60,12 +61,11 @@ async function handle(
     else response.end();
   } catch (error) {
     if (!response.destroyed && !response.headersSent) {
-      const status = error instanceof RpcRequestError ? error.status : 503;
+      const failure = httpFailure(
+        error instanceof RpcRequestError ? error.code : "acp_http_unavailable",
+      );
       response.setHeader("Connection", "close");
-      rpcJson(response, status, {
-        code: error instanceof RpcRequestError ? error.code : "acp_http_unavailable",
-        retryable: status === 503,
-      });
+      rpcJson(response, failure.status, failure.body);
     } else if (!response.destroyed) response.destroy();
   } finally {
     request.off("aborted", close);

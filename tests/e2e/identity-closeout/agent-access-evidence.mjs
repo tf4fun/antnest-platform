@@ -11,6 +11,7 @@ import { collectTrace as collectCompleteTrace } from "../managed-mcp/trace.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import { saveSessionTrace } from "./session-trace.mjs";
 import { assertMessageReplay } from "../acp-closeout/replay.mjs";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
 export function assertUnchanged(before, after) {
   assert(
@@ -158,11 +159,7 @@ export function assertDeniedSessionError(error, boundary = "organization") {
     ["organization", "Agent"].includes(boundary),
     "unknown Session boundary",
   );
-  assert(
-    error?.code === -32020 &&
-      error.message === `Session belongs to another ${boundary}`,
-    "foreign Session must return only the generic access error",
-  );
+  assertAdmissionError(error, "session_access_denied");
   assert(
     error.data?.code === "session_access_denied" &&
       error.data.retryable === false &&
@@ -256,29 +253,39 @@ export async function verifyAccessTraces(base, expectations, secrets, options) {
   return results;
 }
 
-export async function verifyAccessEvidence(base, expectations, secrets) {
+export async function verifyAccessEvidence(
+  base,
+  expectations,
+  secrets,
+  options = {},
+) {
   const results = [];
   for (const id of new Set(expectations.map((e) => e.traceID))) {
     assert.match(id ?? "", /^[a-f0-9]{32}$/);
     results.push(
-      ...(await collectCompleteTrace(base, id, (trace) => {
-        saveSessionTrace(trace);
-        const checks = expectations
-          .filter((e) => e.traceID === id)
-          .map((e) => inspectAccessTraceTopology(trace, e, secrets));
-        const warnings = [
-          ...(trace.warnings ?? []),
-          ...trace.spans.flatMap((s) => s.warnings ?? []),
-        ];
-        const errors = trace.spans.filter(hasError).length;
-        return checks.map((c) => ({
-          ...c,
-          warning_count: warnings.length,
-          warnings: [...new Set(warnings)],
-          error_spans: errors,
-          strict_trace: warnings.length || errors ? "failed" : "passed",
-        }));
-      })),
+      ...(await collectCompleteTrace(
+        base,
+        id,
+        (trace) => {
+          saveSessionTrace(trace);
+          const checks = expectations
+            .filter((e) => e.traceID === id)
+            .map((e) => inspectAccessTraceTopology(trace, e, secrets));
+          const warnings = [
+            ...(trace.warnings ?? []),
+            ...trace.spans.flatMap((s) => s.warnings ?? []),
+          ];
+          const errors = trace.spans.filter(hasError).length;
+          return checks.map((c) => ({
+            ...c,
+            warning_count: warnings.length,
+            warnings: [...new Set(warnings)],
+            error_spans: errors,
+            strict_trace: warnings.length || errors ? "failed" : "passed",
+          }));
+        },
+        options,
+      )),
     );
   }
   return results;

@@ -1,4 +1,5 @@
 import { RunRecoveryRequiredError } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
+import { DomainError } from "../../../../services/agent-acp-service/src/domain/errors.js";
 import { sessionConfigurationView } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import { v1Configuration } from "../../../../services/agent-acp-service/src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
@@ -29,6 +30,180 @@ const binding: ConnectionBinding = {
 };
 
 describe("ACP v1 agent mapping", () => {
+  it("advertises the error capability without requiring Bridge negotiation", async () => {
+    const agent = createAcpV1Agent({
+      binding,
+      application: createApplication({}),
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    await acp.client().connectWith(agent, async (context) => {
+      const initialized = await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      expect(initialized._meta?.["antnest.dev/errors"]).toEqual({ version: 1 });
+    });
+  });
+
+  it.each([
+    {
+      code: "agent_busy",
+      numeric: -32030,
+      retryable: true,
+      delay: 1000,
+      message: "Agent already has an active Run",
+    },
+    {
+      code: "configuration_not_ready",
+      numeric: -32032,
+      retryable: true,
+      delay: 1000,
+      message: "Execution configuration is not ready",
+    },
+    {
+      code: "runtime_barrier_required",
+      numeric: -32036,
+      retryable: true,
+      delay: undefined,
+      message: "Previous Runtime execution requires recovery before new work",
+    },
+    {
+      code: "session_access_denied",
+      numeric: -32011,
+      retryable: false,
+      delay: undefined,
+      message: "Session access is not allowed",
+    },
+    {
+      code: "connection_binding_stale",
+      numeric: -32020,
+      retryable: false,
+      delay: undefined,
+      message: "Agent request failed",
+    },
+    {
+      code: null,
+      numeric: -32020,
+      retryable: false,
+      delay: undefined,
+      message: "Agent request failed",
+    },
+  ])(
+    "maps $code admission from the catalog and keeps the connection usable",
+    async ({ code, numeric, retryable, delay, message }) => {
+      const failure =
+        code === null
+          ? new Error("PRIVATE_ADMISSION_DETAIL")
+          : new DomainError(code, "PRIVATE_ADMISSION_DETAIL");
+      const execute = vi.fn<OutputApplication["execute"]>();
+      const application = createApplication({
+        acceptPrompt: () => Promise.reject(failure),
+        execute,
+      });
+      const agent = createAcpV1Agent({
+        binding,
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      await acp.client().connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const result: unknown = await context
+          .request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text: "refused before acceptance" }],
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        expect(result).toMatchObject({
+          code: numeric,
+          message,
+          data: {
+            code:
+              code === null || code === "connection_binding_stale"
+                ? "internal_error"
+                : code,
+            retryable,
+            ...(delay === undefined ? {} : { retry_after_ms: delay }),
+          },
+        });
+        const data = (result as { data: Record<string, unknown> }).data;
+        expect(Object.keys(data).sort()).toEqual(
+          delay === undefined
+            ? ["code", "retryable"]
+            : ["code", "retry_after_ms", "retryable"],
+        );
+        expect(JSON.stringify(result)).not.toContain(
+          "PRIVATE_ADMISSION_DETAIL",
+        );
+        await expect(
+          context.request(acp.methods.agent.session.new, {
+            cwd: "/workspace",
+            mcpServers: [],
+          }),
+        ).resolves.toMatchObject({ sessionId: "session-1" });
+        expect(execute).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  it.each(["domain", "request", "unknown"] as const)(
+    "never advertises admission retry for an already accepted Run %s failure",
+    async (kind) => {
+      const failure =
+        kind === "domain"
+          ? new DomainError("agent_busy", "PRIVATE_ACCEPTED_DETAIL")
+          : kind === "request"
+            ? new acp.RequestError(-32030, "PRIVATE_ACCEPTED_DETAIL", {
+                code: "agent_busy",
+                retryable: true,
+                retry_after_ms: 1000,
+              })
+            : new Error("PRIVATE_ACCEPTED_DETAIL");
+      const execute = vi.fn<OutputApplication["execute"]>(() =>
+        Promise.reject(failure),
+      );
+      const application = createApplication({ execute });
+      const acceptPrompt = vi.spyOn(application, "acceptPrompt");
+      const agent = createAcpV1Agent({
+        binding,
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      await acp.client().connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const result: unknown = await context
+          .request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text: "accepted once" }],
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        expect(result).toMatchObject({
+          code: -32020,
+          message: "Agent request failed",
+          data: { code: "internal_error", retryable: false },
+        });
+        expect((result as { data: unknown }).data).toEqual({
+          code: "internal_error",
+          retryable: false,
+        });
+        expect(JSON.stringify(result)).not.toContain("PRIVATE_ACCEPTED_DETAIL");
+      });
+      expect(acceptPrompt).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it.each(["acceptPrompt", "execute"] as const)(
     "returns a safe non-retryable database_error for uncertain %s persistence",
     async (stage) => {

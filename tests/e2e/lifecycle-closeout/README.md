@@ -81,9 +81,11 @@ identified Runtime and Egress mutations. Drain includes ACP snapshot publication
 and the matching settlement acknowledgement. ACP Runs have their own message
 traces and do not acquire Controller admissions.
 
-Completed traces must pass topology checks and converge across three samples.
-A topology failure exits 1. Raw warnings and error spans stay in the evidence
-and make the strict result exit 2. Supplied passwords, model keys and session
+The legacy diagnostic inspectors check topology and convergence across three
+samples. They retain failures, warnings and strict exit codes in the evidence.
+Default Foundation and Runtime Loss treat these results as auxiliary under one shared 60-second
+collection budget; its business and cleanup admission is described below.
+Supplied passwords, model keys and session
 cookies must not appear in any span; RPC content capture is disabled. A span
 that was never exported because its process was killed is reported as a gap,
 never replaced by a fabricated span.
@@ -114,12 +116,12 @@ through Identity and uses private ACP v1. The actual upgrade CLIENT, connection
 and dispatched wire request select every initialize and business Trace. Both
 closed connections retain their original SDK results, raw responses and updates;
 the held Prompt and two busy probes remain concurrent on the first connection.
-Every raw diagnostic in the main and upgrade Traces must have its exact owning
-classification. Only the existing busy rejection, completed MCP information-read
-disconnect, completed Runtime Tool HTTP disconnect and Jaeger clock diagnostics
-are accepted. Unknown internal errors fail. Raw strict failures and exit 2 remain
-recorded even when the complete default inventory admits exit 0 to the outer
-runner. Other Lifecycle and Workspace consumers remain separate migration work.
+Trace collection, topology, timing and exporter results remain private diagnostics.
+They do not determine default Foundation's exit code. The original two Runs and
+Tools, four Provider requests, busy denials, lifecycle receipts and SQL observations
+are validated independently. Collector cancellation waits for the actual callback
+to finish; exporter shutdown is always awaited even after the collection budget
+expires. Other Lifecycle consumers remain separate migration work.
 
 Controller-root Runtime observation and Identity offboarding keep their own
 admission paths. The opt-in killed-process crash collector validates the original
@@ -178,19 +180,19 @@ test requires:
 
 - durable `running/drain`, the original executable binding and container, an
   open network attachment, and only the first workspace effect;
-- a second Session prompt rejected with `agent_busy` (`-32020`, nonretryable),
+- a second Session prompt rejected with `agent_busy` (`-32030`, retryable,
+  `retry_after_ms=1000`),
   with no updates, Run intent, model request or tool dispatch;
 - a graceful Agent Controller stop and start during drain, with exit code zero
   and no OOM. The ACP service, Runtime, shell PID and pending prompt survive;
-- the stopped worker's Workflow span ends with `worker_shutdown` and the
-  replacement's with `workflow_return`, and both drain attempts use the same
-  acknowledged ACP snapshot revision;
 - after the barrier is released, the held Run completes before the Runtime is
   replaced. Loading the same Session shows the new Template guidance and an
   environment-rebuild notice, and a real `read` returns both workspace effects
   without replaying the old tool.
 
 This profile covers a graceful restart. It does not claim SIGKILL recovery.
+Worker Span endings and the Trace projection of both drain attempts are retained
+as auxiliary diagnostics.
 
 Admission requires two initialized and fully joined connections, seven business
 requests (`new`, `new`, held Prompt, two busy Prompts, reconnect `load`, fresh
@@ -202,15 +204,18 @@ permission response and 180-second held / 60-second fresh Prompt budgets remain.
 Parent cancellation closes the socket and joins pending requests and archives;
 business, original cancellation, archival and cleanup errors are preserved.
 
+The two Session audit pages and both Run detail/event pages are retained as six
+original responses, alongside complete model records and both busy before/after
+checkpoints. Partial originals survive a read or business-validation failure.
 The nine lifecycle admissions (three create, one rebuild, one disable, one
-enable, three delete), one read-only failed-Runtime create replay and each
-independent Runtime observation Trace are counted separately. The final summary
-counts distinct persisted observation events and their distinct Trace roots:
-one synchronize operation may commit two condition events under the same root.
-Each event retains its own SQL provenance, and observation roots cannot reuse
-an admission, replay or ACP request Trace. The final summary
-requires all of them, private connection/exporter completion and actual Docker
-cleanup. Missing evidence cannot be accepted merely because a child exited 2.
+enable, three delete) bind their original operation IDs and terminal results.
+The failed-Runtime Create still completes provisioning. Its exact replay and
+every independent Runtime observation retain hard history and SQL provenance
+checks. Distinct observation events are counted independently of Trace roots.
+Raw business inputs and lifecycle requests are excluded from the public summary.
+Exit 0 is written only after business checks, private connection/work/exporter
+joins and actual Docker cleanup; missing business evidence cannot be accepted
+because diagnostic collection failed or a child exited 2.
 
 ## Whole-Platform Stream Shutdown
 
@@ -413,6 +418,20 @@ unknown internal diagnostics still fail admission.
 
 ## Unplanned Runtime Loss
 
+The current Loss admission uses complete original Admin Run/detail/event pages,
+SDK replies and replay/denial checkpoints independently of Trace. Four completed
+Runs and durable Tools, eight model requests, private offline state, six completed
+lifecycle operations, physical Runtime removal/replacement and workspace checks
+remain required. Request, lifecycle and strict Trace collectors share one
+60-second auxiliary budget. Original findings and unavailable collections are
+retained; actual seven-service stops and resource joins remain hard requirements.
+
+Organization scope comes from the original login, creation principal and
+authenticated requests. Public Agent and Run projections bind the owner, Agent,
+Session, spec and execution revision. Captured container IDs, scope/Agent labels,
+public Runtime revisions and workspace volumes establish replacement lineage;
+the real flow separately verifies physical Runtime and SQL observations.
+
 Two Agents each complete a real Bash append before their idle Runtime is
 stopped and removed without force.
 
@@ -431,7 +450,7 @@ nine application images.
 
 Loss events have an `event_<32 lowercase hex>` identity; see the
 [resource ID contract](../../../contracts/resource-identifiers.md). ACP state
-becomes offline and prompts fail with `-32020/agent_unavailable` without
+becomes offline and prompts fail with the negotiated `agent_unavailable` error without
 notifications, model calls or new Runs. An explicit rebuild with the same
 Template revision restores the Agent with new compute and Runtime identity and
 the same configuration and workspace. A real `read` returns the original bytes,

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 import { mkdir, writeFile, access, readFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
-import { inspect } from "node:util";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
@@ -14,11 +13,10 @@ import {
 } from "../acp-commands/connection.mjs";
 import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
 import { preserveFileFailure } from "../acp-files/failure-evidence.mjs";
-import { summarizeFailure } from "../../support/verification/failure.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   createRestartRecorder,
   indexRestartRequests,
-  preserveRestartFailure,
 } from "./client-evidence.mjs";
 import {
   assertPromptComplete,
@@ -44,6 +42,7 @@ import { captureRuntime } from "../managed-mcp/rebuild-evidence.mjs";
 import {
   assertInterrupted,
   assertReplacement,
+  assertReplacementRun,
   assertBarrierRejection,
 } from "./evidence.mjs";
 import { assertReplay } from "../../integration/agent-acp-service/support/persistence/evidence.mjs";
@@ -53,6 +52,9 @@ import { collectInterruptedTrace } from "./collection.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 const archive = new Map(),
   runtimeBindings = new Map();
+const diagnostics = createTraceDiagnostics({
+  directory: "/tmp/restart-traces",
+});
 const traceRequest = (request) =>
   runtimeBindings.has(request.label)
     ? { ...request, runtimeBinding: runtimeBindings.get(request.label) }
@@ -62,14 +64,18 @@ async function archiveReady() {
   await archiveCompleted(
     requests.map(traceRequest),
     archive,
-    (expected) =>
+    (expected, { signal }) =>
       collectPrivateRestartTrace("http://jaeger:16686", expected, {
         directory: "/tmp/restart-traces",
         flush: () => telemetry.flush(),
         secrets,
         requests: modelRequests,
+        signal,
       }),
-    { initializations: restartTraceInitializations([...connections.values()]) },
+    {
+      initializations: restartTraceInitializations([...connections.values()]),
+      diagnostics,
+    },
   );
 }
 import { readRestartExecutionState, stateReady } from "./readiness.mjs";
@@ -505,8 +511,15 @@ async function exercise(version, kind, template) {
     "later Run rewrote prior audit",
   );
   if (replacement) {
+    const postRun = (await saved(sessionId)).run;
+    assertReplacementRun(postRun, {
+      agentId,
+      sessionId,
+      phase: label + "-post",
+      replacement,
+    });
     runtimeBindings.set(label + "-post", {
-      run: (await saved(sessionId)).run,
+      run: postRun,
       runtime: replacement,
     });
   }
@@ -533,7 +546,7 @@ async function exercise(version, kind, template) {
   );
 }
 async function main() {
-  await mkdir("/tmp/restart-traces", { mode: 0o700 });
+  await mkdir("/tmp/restart-traces", { mode: 0o700, recursive: true });
   assert.match(
     process.env.TEST_RUNTIME_IMAGE ?? "",
     /^antnest\/antnest-runtime:[\w.-]+$/,
@@ -641,10 +654,7 @@ async function main() {
   };
   assert.equal(restarts, 8);
   assert.equal(faults.length, 8);
-  await writeFile("/tmp/restart-business.json", JSON.stringify(business), {
-    mode: 0o600,
-  });
-  console.log(asciiJSON(business));
+
   await mkdir("/tmp/restart-traces", { mode: 0o700, recursive: true });
   const save = (label) => (trace) =>
     writeFileSync(`/tmp/restart-traces/${label}.json`, JSON.stringify(trace), {
@@ -666,81 +676,89 @@ async function main() {
   ]) {
     const label = expected.label ?? expected.kind;
     stage = `trace:${label}`;
-    try {
-      let trace;
-      if (archive.has(label)) {
-        const entry = archive.get(label);
-        assert.deepEqual(entry.request, traceRequest(expected));
-        results.push(entry.report);
-        continue;
-      }
-      if (expected.kind === "interruption") {
-        const ids = [
-          ...new Set(
-            modelResult.requests
-              .filter((r) => r.phase === expected.phase)
-              .map((r) => r.trace_id),
-          ),
-        ];
-        assert.equal(ids.length, 1);
-        trace = await collectInterruptedTrace("http://jaeger:16686", ids[0]);
-        if (trace) save(label)(trace);
-      } else {
-        assert(
-          expected.traceID,
-          "completed private request was not archived before fault or teardown",
-        );
-        trace = await collectTrace(
-          "http://jaeger:16686",
-          expected.traceID,
-          (t) => {
-            if (t) save(label)(t);
-            return t;
-          },
-        );
-      }
-      results.push(
-        expected.kind === "interruption"
+    const diagnostic = await diagnostics.run(
+      `final-${label}`,
+      async (signal) => {
+        let trace;
+        if (archive.has(label)) {
+          const entry = archive.get(label);
+          assert.deepEqual(entry.request, traceRequest(expected));
+          return entry.report ?? { label, diagnostic: entry.diagnostic };
+        }
+        if (expected.kind === "interruption") {
+          const ids = [
+            ...new Set(
+              modelResult.requests
+                .filter((r) => r.phase === expected.phase)
+                .map((r) => r.trace_id),
+            ),
+          ];
+          assert.equal(ids.length, 1);
+          trace = await collectInterruptedTrace("http://jaeger:16686", ids[0], {
+            signal,
+          });
+          if (trace) save(label)(trace);
+        } else {
+          assert(
+            expected.traceID,
+            "completed private request was not archived before fault or teardown",
+          );
+          trace = await collectTrace(
+            "http://jaeger:16686",
+            expected.traceID,
+            (t) => {
+              if (t) save(label)(t);
+              return t;
+            },
+            signal,
+          );
+        }
+        return expected.kind === "interruption"
           ? inspectInterruptedTrace(
               trace,
               expected,
               secrets,
               modelResult.requests,
             )
-          : inspectLifecycle(trace, expected, secrets),
-      );
-    } catch (error) {
-      await preserveRestartFailure(error, (original) =>
-        writeEvidenceFile(
-          "/tmp/restart-traces",
-          `${label}-failure.private.txt`,
-          inspect(original, { depth: 8 }) + "\n",
-        ),
-      );
-      results.push({
-        label,
-        strict_trace: "failed",
-        ...summarizeFailure(error),
-      });
-    }
+          : inspectLifecycle(trace, expected, secrets);
+      },
+    );
+    results.push(diagnostic.value ?? { label, diagnostic });
   }
-  const { accepted, ...strict } = restartStrictOutcome(results);
-  save("results")(results);
+  const assessment = await diagnostics.run("strict-assessment", () => {
+    const strict = restartStrictOutcome(results);
+    save("results")(results);
+    return strict;
+  });
   console.log(
     asciiJSON({
       status: "trace_assessment",
-      trace_gate_scope: "completed_requests_and_lifecycle",
+      trace_role: "auxiliary",
       interrupted_trace_diagnostics: results.filter(
         (r) => r.strict_trace === "not_applicable",
       ).length,
-      ...strict,
+      observability: assessment.value ?? assessment,
+      trace_diagnostics: diagnostics.summary(),
       traces: results,
     }),
   );
-  if (!accepted) process.exitCode = 1;
+  return business;
 }
 try {
-  await withPrivateCommandResources(clients, telemetry, main);
+  const business = await withPrivateCommandResources(clients, telemetry, main, {
+    directory: "/tmp/restart-traces",
+  });
+  business.resources_joined = true;
+  await writeFile("/tmp/restart-business.json", JSON.stringify(business), {
+    mode: 0o600,
+  });
+  console.log(
+    asciiJSON({
+      ...business,
+      resources_joined: true,
+      trace_diagnostics: diagnostics.summary(),
+    }),
+  );
 } catch (error) {
   console.error(
     asciiJSON(

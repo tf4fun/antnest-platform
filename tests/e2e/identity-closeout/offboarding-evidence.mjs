@@ -129,9 +129,19 @@ export function inspectOffboardingTrace(traces, expected, secrets) {
     gateway_ancestry: true,
   };
 }
-export async function verifyOffboardingTrace(base, expected, secrets) {
-  return collectTrace(base, expected.sourceID, (trace) => {
-    saveSessionTrace(trace);
-    return inspectOffboardingTrace([trace], expected, secrets);
-  });
+export async function verifyOffboardingTrace(
+  base,
+  expected,
+  secrets,
+  options = {},
+) {
+  return collectTrace(
+    base,
+    expected.sourceID,
+    (trace) => {
+      saveSessionTrace(trace);
+      return inspectOffboardingTrace([trace], expected, secrets);
+    },
+    options,
+  );
 }

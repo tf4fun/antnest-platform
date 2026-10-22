@@ -162,25 +162,25 @@
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
-      "sha256": "83900bb3fe3b6bd22671988ca603bdd22117466507ea83a321308d8ad8c1d987",
+      "sha256": "29b53d4434602b23cd49030fec368719ea0e05fb42946d124cb715e9aa8eb91a",
       "routes": [
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/watch-agent-execution-state"
       ]
     },
     "services/agent-acp-service/src/transport/agent-settlement.ts": {
-      "sha256": "75bc7fe0abbab8dbf2f59154f5ba5c6f383a7053d8fa778313d8fd510d4d13c6",
+      "sha256": "da72511e2e101cf4c540965a993a00545838ea96317090f35e0949a1eb7e7a18",
       "routes": ["POST /rpc/agent-acp/settle-agent"]
     },
     "services/agent-acp-service/src/transport/bridge-observation.ts": {
-      "sha256": "5fea78b9f8d76ebe4cf27f89606ab03bcecd7e07282ded385fb815c10310b789",
+      "sha256": "870592518f10ef4aae6d950b4e103b7f449f36d44dd5d4f36da19c5ad6fe1e7c",
       "routes": [
         "GET /rpc/agent-acp/workspace/sessions/{session_id}/execution",
         "GET /rpc/agent-acp/workspace/sessions/{session_id}/intents/{intent_id}"
       ]
     },
     "services/agent-acp-service/src/transport/execution-audit.ts": {
-      "sha256": "e36247fa6a6f5f828a435451399fbac9c7caaf49c9603fcdfa8bd5f26416ef4d",
+      "sha256": "ec694e964e8178933ab29a21b80ac69eebf445bcd2fb0b767c406b70954dfddb",
       "routes": [
         "POST /rpc/agent-acp/list-execution-audits",
         "POST /rpc/agent-acp/get-execution-audit",
@@ -188,21 +188,21 @@
       ]
     },
     "services/agent-acp-service/src/transport/execution-configuration.ts": {
-      "sha256": "f24b06661d9aa726c8317decfb36e6d5933bbbc1585ead41585b42d16526797b",
+      "sha256": "95d76a7cd153106eedf2828e698356b905deffa8a5b874ff82d2ece9b68e80ca",
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "740540858f677d50c3a728bd6f961891eb9e1334bbd1b0addd16d539629ad78b",
+      "sha256": "0953078f4aeaf7d41c231822fde6acee678901b6f57e9fe1447f13b608659c92",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
-      "sha256": "8e0b03c7c680f9ce5676fe25e236ef150ed030769ff8892df9f13e90bab03da1",
+      "sha256": "f5185e4dcdfdcc3310c5e025d24e4c777bbaec630aecbef6ac83138592fab3b0",
       "routes": [
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes"
       ]
     },
     "services/agent-acp-service/src/transport/learning-status.ts": {
-      "sha256": "19acc090e95e6a7aeff7bd03b9045b42bb1b80ad8d63a1801777ea81668c9ee1",
+      "sha256": "cb4efc63fc61e78f5a159893f6ef9c4d53b4dd007f865eb973cc71701c004e63",
       "routes": [
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-status"
       ]
@@ -212,7 +212,7 @@
       "routes": []
     },
     "services/agent-acp-service/src/transport/skill-sources.ts": {
-      "sha256": "7bf22aaefa70e0e7f80c89b5072af24a2a9c557c194f3b904ddc75266646a39e",
+      "sha256": "ee414915736074973843f0a3d24f15c63c1d338e5176deab2bdf877e39d6cfbe",
       "routes": [
         "POST /internal/skill-sources/inspect",
         "POST /internal/skill-sources/artifact"
@@ -243,7 +243,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/acp/validated-node-handler.ts": {
-      "sha256": "c401b69385b6147da844ac7d4765def6e67240b9faadb4714d9d06993840a502",
+      "sha256": "20b2bca7f0930285dcb6b20f321f67c1ec0911887a016226f8be57c93ee178d3",
       "routes": []
     },
     "services/agent-acp-service/src/transport/trusted-identity.ts": {

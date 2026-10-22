@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inspect } from "node:util";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
@@ -27,10 +28,7 @@ import { requestPlanRuntimeInspection } from "./runtime-inspection.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { seedPlans } from "./setup.mjs";
-import {
-  collectPrivatePlanTrace,
-  privatePlanStrictOutcome,
-} from "./collector.mjs";
+import { collectPlanTraceDiagnostics } from "./diagnostics.mjs";
 import {
   planPromptInputs,
   relevantUpdates,
@@ -38,6 +36,10 @@ import {
 } from "./evidence.mjs";
 import { phases, marker, stepsFor } from "./model.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+import {
+  collectPromptRunAudits,
+  inspectPromptRunAudits,
+} from "../../support/acp-run-audits.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -45,6 +47,7 @@ const admin = new GatewayClient(gateway),
 const setup = { cwd: "/workspace", mcpServers: [] };
 const outcomes = [],
   agents = [],
+  readyAgents = [],
   executionRequests = [],
   replayRequests = [],
   setupRequests = [],
@@ -169,7 +172,19 @@ async function prompt(client, version, sessionId, phase) {
   });
   for (const frame of result.updates)
     assert(validators[version - 1](frame.update), "invalid live schema");
-  executionRequests.push(result.request);
+  executionRequests.push({
+    ...result.request,
+    expectedTools: stepsFor(phase).map(({ name, arguments: input }) => ({
+      name,
+      arguments: structuredClone(input),
+    })),
+    promptReceipt: {
+      requestId: result.request.requestId,
+      input: result.input,
+      result: structuredClone(result.response),
+      updates: structuredClone(result.updates),
+    },
+  });
   outcomes.push({ phase, ...result.outcome });
   console.log(asciiJSON({ status: "scenario_passed", ...outcomes.at(-1) }));
   return relevantUpdates(result.updates);
@@ -230,11 +245,6 @@ async function modelStatus() {
       Array.from({ length: stepsFor(phase).length + 1 }, (_, index) => index),
     );
   assert.equal(executionRequests.length, outcomes.length);
-  assert.equal(
-    new Set(observed.requests.map((request) => request.trace_id)).size,
-    outcomes.length,
-    "one independent execution trace per prompt",
-  );
   return observed;
 }
 
@@ -259,7 +269,7 @@ async function main() {
   await login(member, "plan-owner@example.com", "plan-owner-password");
   await login(stranger, "plan-stranger@example.com", "plan-stranger-password");
   const template = await seedPlans(api, image);
-  const { runtimeInspection, observed } = await withAgentCleanup(
+  const { runtimeInspection, observed, runBusiness } = await withAgentCleanup(
     agents,
     api,
     async () => {
@@ -278,8 +288,10 @@ async function main() {
         );
         agents.push(created.agent.agent_id);
         await operation(created.operation.request_id);
-        await waitForAgentReady(() =>
-          api(`/api/admin/agents/${agents.at(-1)}`),
+        readyAgents.push(
+          await waitForAgentReady(() =>
+            api(`/api/admin/agents/${agents.at(-1)}`),
+          ),
         );
         const foreign = await connect(version, agents.at(-1), stranger);
         await use(foreign, async () => {
@@ -351,84 +363,86 @@ async function main() {
         ["connection-inventory.private.json", connectionInventory],
       ])
         writeEvidenceFile(directory, name, JSON.stringify(value) + "\n");
+      stage = "run-business";
+      const runEvidence = await collectPromptRunAudits({
+        read: (path) => api(path),
+        readyAgents,
+        requests: executionRequests,
+        principalId: issuedSessions.get(member).principal.user_id,
+        preserve: (evidence, failure) => {
+          if (failure !== undefined)
+            writeEvidenceFile(
+              directory,
+              "run-audit-failure.private.txt",
+              inspect(failure, { depth: 8 }) + "\n",
+            );
+          writeEvidenceFile(
+            directory,
+            "run-business.private.json",
+            JSON.stringify(evidence) + "\n",
+          );
+        },
+      });
+      const runBusiness = inspectPromptRunAudits(runEvidence);
       stage = "runtime-inspection";
       const runtimeInspection = await requestPlanRuntimeInspection(agents);
-      return { runtimeInspection, observed };
+      return { runtimeInspection, observed, runBusiness };
     },
   );
   stage = "trace-verification";
-  const checked = [];
-  for (const expected of [
-    ...setupRequests,
-    ...executionRequests,
-    ...replayRequests,
-    ...initializationRequests,
-  ]) {
-    stage = `trace:${expected.phase ?? expected.method}`;
-    checked.push(
-      await collectPrivatePlanTrace("http://jaeger:16686", expected, {
-        directory,
-        flush: () => telemetry.flush(),
-        secrets,
-        requests: observed.requests,
-      }),
-    );
-  }
-  const setups = checked.slice(0, setupRequests.length);
-  const traces = checked.slice(
-    setupRequests.length,
-    setupRequests.length + executionRequests.length,
+  const diagnostic = await collectPlanTraceDiagnostics(
+    "http://jaeger:16686",
+    {
+      setupRequests,
+      executionRequests,
+      replayRequests,
+      initializationRequests,
+      runtimeInspection,
+    },
+    {
+      directory,
+      flush: () => telemetry.flush(),
+      secrets,
+      requests: observed.requests,
+    },
   );
-  const replays = checked.slice(
-    setupRequests.length + executionRequests.length,
-    40,
-  );
-  const auxiliary = checked.slice(40);
-  assert.equal(
-    new Set(checked.slice(0, 40).map((trace) => trace.trace_id)).size,
-    40,
-  );
-  assert.deepEqual(
-    new Set(traces.map((trace) => trace.trace_id)),
-    new Set(observed.requests.map((request) => request.trace_id)),
-  );
-  assert.equal(
-    new Set(traces.map((trace) => trace.run_id)).size,
-    outcomes.length,
-  );
-  assert.equal(
-    traces.reduce((sum, trace) => sum + trace.runtime_tool_calls, 0),
-    2,
-  );
-  assert.equal(replays.length, 26);
-  assert.equal(replays.filter((trace) => !trace.denial).length, 20);
-  assert.equal(replays.filter((trace) => trace.denial).length, 6);
-  assert.equal(auxiliary.length, 14);
-  const { exit_code: exitCode, ...strict } = privatePlanStrictOutcome(checked);
-  console.log(
-    asciiJSON({
-      status: "business_passed",
-      ...strict,
-      scenarios: outcomes.length,
-      model_requests: observed.requests.length,
-      plan_commits: outcomes.reduce((sum, outcome) => sum + outcome.plans, 0),
-      invalid_plan_rejections: outcomes.filter((outcome) =>
-        outcome.phase.endsWith("-invalid"),
-      ).length,
-      outcomes,
-      traces,
-      replay_traces: replays,
-      setup_traces: setups,
-      auxiliary_traces: auxiliary,
-      runtime_inspection: runtimeInspection,
-      cross_user_rejections: 2,
-      cross_agent_rejections: 4,
-    }),
-  );
-  process.exitCode = exitCode;
+  const checked = diagnostic.checked;
+  const setups = checked.slice(0, setupRequests.length),
+    traces = checked.slice(
+      setupRequests.length,
+      setupRequests.length + executionRequests.length,
+    ),
+    replays = checked.slice(
+      setupRequests.length + executionRequests.length,
+      40,
+    ),
+    auxiliary = checked.slice(40);
+  return {
+    status: "business_passed",
+    run_business: runBusiness,
+    observability: diagnostic.strict,
+    trace_diagnostics: diagnostic.trace_diagnostics,
+    scenarios: outcomes.length,
+    model_requests: observed.requests.length,
+    plan_commits: outcomes.reduce((sum, outcome) => sum + outcome.plans, 0),
+    invalid_plan_rejections: outcomes.filter((outcome) =>
+      outcome.phase.endsWith("-invalid"),
+    ).length,
+    outcomes,
+    traces,
+    replay_traces: replays,
+    setup_traces: setups,
+    auxiliary_traces: auxiliary,
+    runtime_inspection: runtimeInspection,
+    cross_user_rejections: 2,
+    cross_agent_rejections: 4,
+  };
 }
 try {
-  await withPrivateCommandResources(clients, telemetry, main);
+  const business = await withPrivateCommandResources(clients, telemetry, main, {
+    directory,
+  });
+  console.log(asciiJSON({ ...business, resources_joined: true }));
 } catch (error) {
   console.error(
     asciiJSON({

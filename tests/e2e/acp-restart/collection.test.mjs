@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 import { collectInterruptedTrace } from "./collection.mjs";
 
 test("HTTP trace-not-found remains unavailable, while backend errors still fail", async () => {
@@ -72,4 +73,71 @@ test("diagnostic collection does not disguise backend failures or a foreign trac
         attempts: 3,
       }),
     );
+});
+
+test("the diagnostic budget aborts and joins an actual pending HTTP request", async () => {
+  const controller = new AbortController();
+  const reason = new Error("original diagnostic budget exhausted");
+  let requests = 0;
+  let closed;
+  const connectionClosed = new Promise((resolve) => {
+    closed = resolve;
+  });
+  const server = createServer((request) => {
+    requests++;
+    request.once("close", closed);
+    controller.abort(reason);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await assert.rejects(
+      collectInterruptedTrace(
+        `http://127.0.0.1:${server.address().port}`,
+        "actual",
+        {
+          signal: controller.signal,
+          attempts: 1,
+        },
+      ),
+      (error) => error === reason,
+    );
+    await connectionClosed;
+    assert.equal(requests, 1);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("the same budget signal cancels sampling waits and prevents a second fetch", async () => {
+  const controller = new AbortController();
+  const reason = new Error("sampling budget exhausted");
+  let requests = 0;
+  await assert.rejects(
+    collectInterruptedTrace("http://jaeger", "actual", {
+      signal: controller.signal,
+      fetcher: async () => {
+        requests++;
+        return { status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
+      },
+      wait: async (signal) => {
+        assert.equal(signal, controller.signal);
+        controller.abort(reason);
+        await delay(1000, undefined, { signal });
+      },
+    }),
+    (error) => error === reason || error.cause === reason,
+  );
+  assert.equal(requests, 1);
+  await assert.rejects(
+    collectInterruptedTrace("http://jaeger", "actual", {
+      signal: controller.signal,
+      fetcher: async () => {
+        requests++;
+        throw new Error("unexpected fetch");
+      },
+    }),
+    (error) => error === reason,
+  );
+  assert.equal(requests, 1);
 });

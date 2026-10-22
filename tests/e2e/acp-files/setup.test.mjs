@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { seedFiles, assertAgentDenied } from "./setup.mjs";
 
 test("file fixture creates a Provider and uses a stable Model and returned Template revision", async () => {
@@ -27,10 +28,8 @@ test("file fixture creates a Provider and uses a stable Model and returned Templ
 });
 
 test("Agent isolation requires an ACP access denial, not a transport error or successful upgrade", async () => {
-  const denied = Object.assign(new Error("Agent access is not allowed"), {
-    code: -32020,
-    data: { code: "access_denied" },
-  });
+  const receipt = admissionErrorReceipt("access_denied");
+  const denied = Object.assign(new Error(receipt.message), receipt);
   await assertAgentDenied({
     updates: [],
     request: async () => {
@@ -43,7 +42,7 @@ test("Agent isolation requires an ACP access denial, not a transport error or su
       throw new Error("disconnected");
     },
     async () => {
-      throw { ...denied, code: -32603 };
+      throw { ...receipt, code: -32603 };
     },
   ])
     await assert.rejects(assertAgentDenied({ updates: [], request }));

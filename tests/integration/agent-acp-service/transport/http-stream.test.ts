@@ -1656,8 +1656,9 @@ describe("ACP v1 Streamable HTTP", () => {
         mcpServers: [],
       }),
     ).rejects.toMatchObject({
-      code: -32020,
-      data: { code: "access_denied" },
+      code: -32010,
+      message: "Agent access is not allowed",
+      data: { code: "access_denied", retryable: false },
     });
     expect(
       await connection.agent.request(acp.methods.agent.session.list, {}),

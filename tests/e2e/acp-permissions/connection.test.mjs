@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 import { setImmediate as turn } from "node:timers/promises";
 import { commandFixture, setup } from "../acp-commands/connection.fixture.mjs";
 import { until } from "../acp-closeout/wait.mjs";
@@ -336,7 +337,7 @@ for (const profile of profiles) {
     const f = await fixture(t, profile, { denyNew: true });
     const client = await f.open();
     const result = await observe(client.request("new", setup));
-    assert.equal(result.error.code, -32020);
+    assertAdmissionError(result.error, "access_denied");
     assert.deepEqual(result.error.data, {
       code: "access_denied",
       retryable: false,
@@ -344,7 +345,7 @@ for (const profile of profiles) {
     assert.equal(client.lastRequest.outcome, "rejected");
     assert.equal(client.lastRequest.rejection, "access_denied");
     assert.deepEqual(client.lastRequest.rejectionReceipt, {
-      rpcCode: -32020,
+      rpcCode: -32010,
       code: "access_denied",
       retryable: false,
     });

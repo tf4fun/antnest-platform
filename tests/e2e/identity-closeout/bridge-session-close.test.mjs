@@ -337,3 +337,110 @@ for (const [label, mutate] of [
     assert.equal(f.browser.requests, 0);
     assert.equal(f.client.requests.length, 1);
   });
+
+for (const [mode, trace] of [
+  ["missing", undefined],
+  ["malformed", "invalid-trace"],
+])
+  test(`business closure accepts the original ${mode} SSE Trace without fabricating an identity`, async () => {
+    const f = fixture();
+    if (trace === undefined) delete f.stream.evidence.trace_id;
+    else f.stream.evidence.trace_id = trace;
+    const original = structuredClone(f.stream.evidence);
+    const point = checkpoint(f);
+    f.stream.closure = {
+      kind: "remote-end",
+      at: 1200,
+      observed_at_ms: 20200,
+      ...(trace === undefined ? {} : { trace_id: trace }),
+    };
+    const result = await finish(f, point);
+    assert.deepEqual(point.stream, {
+      ...original,
+      trace_id: undefined,
+      traceDiagnostic: "missing_or_invalid_trace_id",
+    });
+    assert.deepEqual(f.stream.evidence, original);
+    assert.equal(result.traceID, undefined);
+    assert.equal(result.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.equal(result.closure.trace_id, undefined);
+    assert.equal(result.closure.traceDiagnostic, "missing_or_invalid_trace_id");
+    assert.equal(f.stream.closure.trace_id, trace);
+    assert(!JSON.stringify({ point, result }).includes("invalid-trace"));
+    assert.equal(result.transport, "http-sse");
+    assert.equal(result.credentialScope, original.credential_scope);
+    assert.equal(result.agentId, "agent-1");
+    assert.equal(result.sessionId, "session-1");
+    assert.equal(result.silent, true);
+    assert.equal(result.localClose, false);
+    assert.equal(result.authorizationCauseVerified, false);
+    assert.deepEqual(result.sdkRequests, point.sdkRequests);
+  });
+
+test("business closure uses its original scope and path rather than Trace equality", async () => {
+  const f = fixture();
+  const point = checkpoint(f);
+  f.stream.evidence.trace_id = null;
+  f.stream.closure = {
+    kind: "transport-end",
+    at: 1200,
+    observed_at_ms: 20200,
+    trace_id: "unavailable-at-close",
+  };
+  const result = await finish(f, point);
+  assert.equal(point.stream.trace_id, "a".repeat(32));
+  assert.equal(f.stream.evidence.trace_id, null);
+  assert.equal(result.traceDiagnostic, "trace_id_mismatch");
+  assert.equal(result.closure.trace_id, undefined);
+  assert.equal(result.closure.traceDiagnostic, "missing_or_invalid_trace_id");
+  assert.equal(f.stream.closure.trace_id, "unavailable-at-close");
+  assert(!JSON.stringify(result).includes("unavailable-at-close"));
+  assert.equal(result.credentialScope, point.stream.credential_scope);
+  assert.equal(result.closure.kind, "transport-end");
+});
+
+test("business checkpoint keeps original authority, scoped views, HTTP status and trigger order hard", () => {
+  for (const mutate of [
+    (f) => (f.stream.evidence.path = "/api/app/agents/agent-1/v2/acp"),
+    (f) => (f.stream.evidence.status = 403),
+    (f) => (f.stream.evidence.set_cookie_count = 1),
+    (f) => (f.stream.evidence.credential_scope = ""),
+    (f) => (f.stream.records[0].view.agentId = "foreign"),
+    (f) => (f.stream.records[0].view.selectedSessionId = "foreign"),
+    (f) => (f.stream.records[0].view.selectedView.sessionId = "foreign"),
+    (f) => (f.stream.evidence.headers_at = 1001),
+    (f) => (f.stream.closure = { kind: "remote-end" }),
+  ]) {
+    const f = fixture();
+    mutate(f);
+    assert.throws(() => checkpoint(f));
+  }
+});
+
+test("business closure keeps remote end, both 30s clocks, quiet requests and original stream scope hard", async () => {
+  for (const mutate of [
+    (f) => (f.stream.closure.kind = "local-close"),
+    (f) => (f.stream.closure.kind = "aborted"),
+    (f) => (f.stream.closure.kind = "invalid-event"),
+    (f) => (f.stream.closure.at = 999),
+    (f) => (f.stream.closure.at = 31001),
+    (f) => (f.stream.closure.observed_at_ms = 19999),
+    (f) => (f.stream.closure.observed_at_ms = 50001),
+    (f) => (f.stream.evidence.path = "/other-stream"),
+    (f) => (f.stream.evidence.credential_scope = "foreign-authority"),
+    (f) => f.browser.requests++,
+    (f) => f.client.requests.push({ requestId: "2", method: "session/list" }),
+    (f) => (f.client.requests[0].method = "session/prompt"),
+  ]) {
+    const f = fixture();
+    const point = checkpoint(f);
+    f.stream.closure = {
+      kind: "remote-end",
+      at: 1200,
+      observed_at_ms: 20200,
+      trace_id: "a".repeat(32),
+    };
+    mutate(f);
+    await assert.rejects(() => finish(f, point));
+  }
+});

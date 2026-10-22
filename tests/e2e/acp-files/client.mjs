@@ -25,15 +25,16 @@ import {
 import { requestFilesRuntimeInspection } from "./runtime-inspection.mjs";
 import { fileStateExpectations } from "./file-state.mjs";
 import { preserveFileFailure } from "./failure-evidence.mjs";
-import {
-  collectPrivateFileTrace,
-  privateFileStrictOutcome,
-} from "./collector.mjs";
+import { collectFileTraceDiagnostics } from "./diagnostics.mjs";
 import { assertFileEvents } from "./evidence.mjs";
 import { seedFiles, assertAgentDenied } from "./setup.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { cases, contentMarker } from "./model.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+import {
+  collectPromptRunAudits,
+  inspectPromptRunAudits,
+} from "../../support/acp-run-audits.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -41,6 +42,7 @@ const admin = new GatewayClient(gateway),
 const setup = { cwd: "/workspace", mcpServers: [] };
 const outcomes = [],
   agents = [],
+  readyAgents = [],
   executionRequests = [],
   replayRequests = [],
   setupRequests = [],
@@ -151,9 +153,10 @@ async function scenario(version, item, agent) {
     setupRequests.push(fileRequestIdentity(original, "session/new", sessionId));
     original.updates.length = 0;
     stage = phase + ":prompt";
+    const input = [{ type: "text", text: phase }];
     const response = await original.request(
       "prompt",
-      { sessionId, prompt: [{ type: "text", text: phase }] },
+      { sessionId, prompt: input },
       120000,
     );
     const execution = fileRequestIdentity(
@@ -192,6 +195,15 @@ async function scenario(version, item, agent) {
       "foreign actual file Tool call ID",
     );
     execution.toolCallId = toolCallId;
+    execution.expectedTools = [
+      { name: item.tool, arguments: structuredClone(item.args) },
+    ];
+    execution.promptReceipt = {
+      requestId: execution.requestId,
+      input: structuredClone(input),
+      result: structuredClone(response),
+      updates: structuredClone(original.updates),
+    };
     if (patch !== undefined) {
       const parsed = parsePatch(patch);
       assert.equal(parsed.length, 1);
@@ -268,7 +280,7 @@ async function main() {
   await login(member, "file-owner@example.com", "file-owner-password");
   await login(stranger, "file-stranger@example.com", "file-stranger-password");
   const template = await seedFiles(api, image);
-  const { observed, runtimeInspection } = await withAgentCleanup(
+  const { observed, runtimeInspection, runBusiness } = await withAgentCleanup(
     agents,
     api,
     async () => {
@@ -287,7 +299,9 @@ async function main() {
         const agent = created.agent.agent_id;
         agents.push(agent);
         await operation(created.operation.request_id);
-        await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
+        readyAgents.push(
+          await waitForAgentReady(() => api(`/api/admin/agents/${agent}`)),
+        );
         const foreign = await connect(version, agent, stranger);
         await use(foreign, async () => {
           await assertAgentDenied(foreign);
@@ -327,89 +341,82 @@ async function main() {
         ["live-updates.private.json", liveUpdates],
       ])
         writeEvidenceFile(directory, name, JSON.stringify(value) + "\n");
+      stage = "run-business";
+      const runEvidence = await collectPromptRunAudits({
+        read: (path) => api(path),
+        readyAgents,
+        requests: executionRequests,
+        principalId: issuedSessions.get(member).principal.user_id,
+        preserve: (evidence) =>
+          writeEvidenceFile(
+            directory,
+            "run-business.private.json",
+            JSON.stringify(evidence) + "\n",
+          ),
+      });
+      const runBusiness = inspectPromptRunAudits(runEvidence);
       stage = "runtime-and-file-inspection";
       const runtimeInspection = await requestFilesRuntimeInspection(agents, {
         files,
       });
-      return { observed, runtimeInspection };
+      return { observed, runtimeInspection, runBusiness };
     },
   );
   stage = "trace-verification";
-  const checked = [];
-  for (const expected of [
-    ...setupRequests,
-    ...executionRequests,
-    ...replayRequests,
-    ...initializationRequests,
-  ]) {
-    stage = `trace:${expected.phase ?? expected.method}`;
-    checked.push(
-      await collectPrivateFileTrace("http://jaeger:16686", expected, {
-        directory,
-        flush: () => telemetry.flush(),
-        secrets,
-        requests: observed.requests,
-      }),
-    );
-  }
+  const diagnostic = await collectFileTraceDiagnostics(
+    "http://jaeger:16686",
+    {
+      setupRequests,
+      executionRequests,
+      replayRequests,
+      initializationRequests,
+      runtimeInspection,
+    },
+    {
+      directory,
+      flush: () => telemetry.flush(),
+      secrets,
+      requests: observed.requests,
+    },
+  );
+  const checked = diagnostic.checked;
   const setups = checked.slice(0, 18),
     traces = checked.slice(18, 34),
     replays = checked.slice(34, 82),
     auxiliary = checked.slice(82);
-  assert.equal(checked.length, 116);
-  assert.equal(
-    new Set(checked.slice(0, 82).map((trace) => trace.trace_id)).size,
-    82,
-  );
-  assert.equal(new Set(traces.map((trace) => trace.run_id)).size, 16);
-  assert.deepEqual(
-    new Set(traces.map((trace) => trace.trace_id)),
-    new Set(observed.requests.map((request) => request.trace_id)),
-  );
-  for (const trace of traces) {
-    assert.equal(trace.phases.length, 1);
-    assert.equal(trace.tool_calls, 1);
-    assert.equal(trace.runtime_tool_calls, 1);
-    const runtime = runtimeInspection.runtimes.find(
-      (row) => row.agent_id === trace.agent_id,
-    );
-    assert(runtime, "Files Trace belongs to an uninspected Runtime");
-    assert.equal(trace.runtime_generation, String(runtime.generation));
-  }
-  assert.equal(replays.length, 48);
-  assert.equal(auxiliary.length, 34);
-  const { exit_code: exitCode, ...strict } = privateFileStrictOutcome(checked);
-  console.log(
-    asciiJSON({
-      status: "business_passed",
-      ...strict,
-      scenarios: outcomes.length,
-      model_requests: observed.requests.length,
-      outcomes,
-      traces,
-      replay_traces: replays,
-      setup_traces: setups,
-      auxiliary_traces: auxiliary,
-      cross_user_rejections: 2,
-      runtime_inspection: {
-        status: runtimeInspection.status,
-        raw_sha256: runtimeInspection.raw_sha256,
-        runtimes: runtimeInspection.runtimes,
-        files: runtimeInspection.files.map((file) => ({
-          agent_id: file.agent_id,
-          protocol_version: file.protocol_version,
-          path: file.path,
-          read_sha256: file.read.sha256,
-          final: file.final,
-          claim: file.claim,
-        })),
-      },
-    }),
-  );
-  process.exitCode = exitCode;
+  return {
+    status: "business_passed",
+    run_business: runBusiness,
+    observability: diagnostic.strict,
+    trace_diagnostics: diagnostic.trace_diagnostics,
+    scenarios: outcomes.length,
+    model_requests: observed.requests.length,
+    outcomes,
+    traces,
+    replay_traces: replays,
+    setup_traces: setups,
+    auxiliary_traces: auxiliary,
+    cross_user_rejections: 2,
+    runtime_inspection: {
+      status: runtimeInspection.status,
+      raw_sha256: runtimeInspection.raw_sha256,
+      runtimes: runtimeInspection.runtimes,
+      files: runtimeInspection.files.map((file) => ({
+        agent_id: file.agent_id,
+        protocol_version: file.protocol_version,
+        path: file.path,
+        read_sha256: file.read.sha256,
+        final: file.final,
+        claim: file.claim,
+      })),
+    },
+  };
 }
 try {
-  await withPrivateCommandResources(clients, telemetry, main);
+  const business = await withPrivateCommandResources(clients, telemetry, main, {
+    directory,
+  });
+  console.log(asciiJSON({ ...business, resources_joined: true }));
 } catch (error) {
   console.error(
     asciiJSON(

@@ -10,6 +10,7 @@ import type { Duplex } from "node:stream";
 import { context } from "@opentelemetry/api";
 import { observeHttpRequest, startHttpBoundary, activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError } from "../telemetry/diagnostics.js";
+import { httpFailure } from "./public-error.js";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { AcpApplicationPort } from "../ports/acp-application.js";
@@ -247,14 +248,11 @@ export class AgentAcpHttpServer {
     }
     const admission = await this.options.authentication.admit(request);
     if ("status" in admission) {
+      const failure = httpFailure(admission.code);
       if (admission.challenge !== undefined)
         response.setHeader("WWW-Authenticate", admission.challenge);
       response.setHeader("Connection", "close");
-      json(response, admission.status, {
-        code: admission.code,
-        message: "Request authentication failed",
-        retryable: admission.status === 503,
-      });
+      json(response, failure.status, failure.body);
       return;
     }
     const sourceRoute = skillSourceRoute(request.url);
@@ -521,7 +519,7 @@ function rejectUpgrade(socket: Duplex, status: number, reason: string): number {
 
 function rejectAuthenticatedUpgrade(socket: Duplex, failure: AuthenticationFailure): number {
   if (!socket.destroyed) {
-    const body = JSON.stringify({ code: failure.code, retryable: failure.status === 503 });
+    const body = JSON.stringify(httpFailure(failure.code).body);
     const challenge =
       failure.challenge === undefined ? "" : `WWW-Authenticate: ${failure.challenge}\r\n`;
     socket.end(

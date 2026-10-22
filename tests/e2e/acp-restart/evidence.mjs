@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 export function assertInterrupted(before, after, kind) {
   if (kind === "completed") {
     assert.equal(before.run.state, "completed");
@@ -90,9 +91,73 @@ export function assertReplacement(before, after) {
     assert.notEqual(after[key], before[key]);
   }
 }
+export function assertReplacementRun(run, expected) {
+  assert(
+    run && typeof run === "object" && !Array.isArray(run),
+    "missing post Run",
+  );
+  assert(expected && typeof expected === "object", "missing post Run binding");
+  for (const key of ["agentId", "sessionId", "phase"])
+    assert(
+      typeof expected[key] === "string" && expected[key].trim().length > 0,
+      `missing post Run ${key}`,
+    );
+  const replacement = expected.replacement;
+  assert(
+    replacement &&
+      typeof replacement === "object" &&
+      !Array.isArray(replacement),
+    "missing replacement Runtime receipt",
+  );
+  assert.equal(
+    replacement.agent_id,
+    expected.agentId,
+    "wrong replacement Agent",
+  );
+  assert(
+    typeof replacement.execution_revision === "string" &&
+      replacement.execution_revision.trim().length > 0,
+    "missing replacement execution revision",
+  );
+  assert(
+    typeof run.run_id === "string" && run.run_id.trim().length > 0,
+    "missing post Run identity",
+  );
+  assert.equal(run.agent_id, expected.agentId, "wrong post Run Agent");
+  assert.equal(run.session_id, expected.sessionId, "wrong post Run Session");
+  assert.deepEqual(
+    run.input,
+    [{ type: "text", text: expected.phase }],
+    "post Run changed the original prompt",
+  );
+  const snapshot = run.execution_snapshot;
+  assert(
+    snapshot && typeof snapshot === "object" && !Array.isArray(snapshot),
+    "missing post Run execution snapshot",
+  );
+  // Admin exposes executionRevision; Runtime process/endpoint identity remains
+  // in the separate captureRuntime receipt checked by assertReplacement.
+  assert.equal(
+    snapshot.executionRevision,
+    replacement.execution_revision,
+    "post Run used another execution revision",
+  );
+  for (const [key, value] of Object.entries({
+    state: "completed",
+    terminal_class: "completed",
+    executor_state: "quiescent",
+    tool_effect_state: "settled",
+    stop_reason: "end_turn",
+    error_class: null,
+  }))
+    assert.equal(run[key], value, `wrong post Run ${key}`);
+  assert.equal(
+    run.unknown_effect_source ?? null,
+    null,
+    "post Run retained an unknown effect",
+  );
+}
 export function assertBarrierRejection(error) {
-  assert.equal(error.code, -32020);
-  assert.equal(error.data?.code, "runtime_barrier_required");
-  assert.equal(error.data?.retryable, false);
+  assertAdmissionError(error, "runtime_barrier_required");
   return true;
 }

@@ -7,6 +7,7 @@ import {
   writeEvidenceFile,
 } from "../../support/storage.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+import { completeStage3Business } from "./business-completion.mjs";
 
 const recoveries = {
   "registry-outage": ["registry_outage", "registry_outage_recovered"],
@@ -194,11 +195,11 @@ if (
       );
       const read = (name) =>
         JSON.parse(readFileSync(evidenceFilePath(directory, name), "utf8"));
-      const result = completeStage3(
+      const result = completeStage3Business(
         {
           business: read("business.json"),
-          report: read("report.json"),
           inventory: read("private-inventory.json"),
+          logouts: read("logout-observations.json"),
           cleanup: read("cleanup.json"),
         },
         { status: Number(entryStatus), profile },

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { replayRequest } from "../managed-mcp/protocol.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 const implementation = await import("./client-evidence.mjs").catch((error) => {
   if (
     error.code !== "ERR_MODULE_NOT_FOUND" ||
@@ -13,6 +14,10 @@ const setup = { cwd: "/workspace", mcpServers: [] };
 let identity = 0;
 function controlledClient(version) {
   const n = ++identity;
+  const initializationResult = {
+    protocolVersion: version,
+    _meta: { "antnest.dev/errors": { version: 1 } },
+  };
   const c = {
     boundary: "private-acp",
     transport: "websocket",
@@ -20,9 +25,9 @@ function controlledClient(version) {
     agentId: "agent",
     connectionTraceID: n.toString(16).padStart(32, "0"),
     clientSpanID: n.toString(16).padStart(16, "0"),
-    initializationResult: { protocolVersion: version },
+    initializationResult,
     requests: [{ requestId: "1", method: "initialize" }],
-    rawFrames: [{ id: 1, result: { protocolVersion: version } }],
+    rawFrames: [{ id: 1, result: structuredClone(initializationResult) }],
     updates: [],
     async request(method, params) {
       const id = c.requests.length + 1;
@@ -32,10 +37,8 @@ function controlledClient(version) {
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       });
       if (params.prompt?.[0]?.text.endsWith("-denied")) {
-        const error = Object.assign(new Error("Agent unavailable"), {
-          code: -32020,
-          data: { code: "agent_unavailable", retryable: false },
-        });
+        const rejection = admissionErrorReceipt("agent_unavailable");
+        const error = Object.assign(new Error(rejection.message), rejection);
         c.rawFrames.push({
           id,
           error: { code: error.code, message: error.message, data: error.data },
@@ -96,9 +99,9 @@ async function inventory() {
     }
   return { agentId: "agent", connections };
 }
-function index(f) {
+function index(f, options) {
   assert.equal(typeof implementation.indexRpcLossRequests, "function");
-  return implementation.indexRpcLossRequests(f);
+  return implementation.indexRpcLossRequests(f, options);
 }
 test("four response-loss cases bind 12 initializations and 22 original requests", async () => {
   const f = await inventory(),
@@ -171,7 +174,7 @@ for (const [name, mutate] of [
   [
     "wrong raw error",
     (f) => {
-      f.connections[3].raw_frames.at(-1).error.data.retryable = true;
+      f.connections[3].raw_frames.at(-1).error.data.retryable = false;
     },
   ],
   ["missing raw rejection", (f) => f.connections[3].raw_frames.pop()],
@@ -193,3 +196,77 @@ for (const [name, mutate] of [
     mutate(f);
     assert.throws(() => index(f));
   });
+
+function unavailableTrace(f, inconsistent = false) {
+  for (const c of f.connections) {
+    if (inconsistent) {
+      c.connectionTraceID = "unavailable";
+      c.clientSpanID = "unavailable";
+    } else {
+      delete c.connectionTraceID;
+      delete c.clientSpanID;
+    }
+    for (const row of [c.initialization, ...c.evidence]) {
+      if (inconsistent) {
+        row.connectionTraceID = "different-diagnostic-context";
+        row.clientSpanID = "different-diagnostic-parent";
+      } else {
+        delete row.connectionTraceID;
+        delete row.clientSpanID;
+      }
+    }
+  }
+}
+
+test("RPC business inventory ignores unavailable or inconsistent Trace identities while default admission remains strict", async () => {
+  for (const inconsistent of [false, true]) {
+    const f = await inventory();
+    unavailableTrace(f, inconsistent);
+    const before = structuredClone(f);
+    const result = index(f, { requireTrace: false });
+    assert.equal(result.initializations.length, 12);
+    assert.equal(result.requests.length, 22);
+    assert.equal(
+      result.requests.filter((row) => row.kind === "ordinary").length,
+      8,
+    );
+    assert.equal(
+      result.requests.filter((row) => row.rejection === "agent_unavailable")
+        .length,
+      2,
+    );
+    assert.deepEqual(
+      f,
+      before,
+      "business inspection changed original diagnostics",
+    );
+    assert.throws(() => index(f), "default Trace policy was relaxed");
+  }
+});
+
+test("RPC business inventory still binds roles, SDK request IDs, raw replies, Sessions, canonical errors and actual closure", async () => {
+  for (const mutate of [
+    (f) => {
+      f.connections[0].role = "replay-1";
+    },
+    (f) => {
+      f.connections[0].evidence[1].requestId =
+        f.connections[0].initialization.requestId;
+    },
+    (f) => f.connections[0].raw_frames.pop(),
+    (f) => {
+      f.connections[0].evidence[1].sessionId = "foreign-session";
+    },
+    (f) => {
+      f.connections[3].raw_frames.at(-1).error.code = -32020;
+    },
+    (f) => {
+      f.connections[11].closed = false;
+    },
+  ]) {
+    const f = await inventory();
+    unavailableTrace(f);
+    mutate(f);
+    assert.throws(() => index(f, { requireTrace: false }));
+  }
+});

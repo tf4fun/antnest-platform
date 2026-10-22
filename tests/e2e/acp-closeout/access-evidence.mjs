@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 
 export function assertExecutionBinding(result, expected) {
   assert(
@@ -15,11 +19,10 @@ export function assertExecutionBinding(result, expected) {
 
 export function assertScopeDenial(error, scope) {
   assert(["principal", "Agent"].includes(scope));
-  assert.equal(error?.code, -32020, "expected ACP domain rejection");
-  assert.equal(error.message, `Session belongs to another ${scope}`);
+  assertAdmissionError(error, "session_access_denied");
   assert.deepEqual(
     error.data,
-    { code: "session_access_denied", retryable: false },
+    admissionErrorReceipt("session_access_denied").data,
     "Session denial leaked extra data",
   );
 }

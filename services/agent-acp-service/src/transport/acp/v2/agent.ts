@@ -5,8 +5,8 @@ import { permissionRequest, v2Permission } from "../permission-request.js";
 import type { PermissionConnectionsPort } from "../../../ports/tool-permissions.js";
 import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
-import { DomainError } from "../../../domain/errors.js";
-import { RunRecoveryRequiredError } from "../../../ports/acp-application.js";
+import { errorCapability } from "../../../domain/error-catalog.js";
+import { publicError } from "../../public-error.js";
 import { availableCommands } from "../../../domain/slash-commands.js";
 import type { ClientMcpInput } from "../../../domain/mcp.js";
 import type { ConnectionBinding, ContentBlock } from "../../../domain/types.js";
@@ -114,6 +114,7 @@ export function createAcpV2Agent({
             },
           },
         },
+        _meta: { "antnest.dev/errors": errorCapability },
       })),
     )
     .onRequest(acp.methods.agent.session.new, ({ params, requestId }) =>
@@ -514,24 +515,10 @@ async function mapError<T>(operation: () => Promise<T>): Promise<T> {
     if (error instanceof acp.RequestError) {
       throw error;
     }
-    if (error instanceof RunRecoveryRequiredError) {
-      throw Object.assign(
-        new acp.RequestError(-32603, "A database operation requires service recovery", {
-          code: "database_error",
-          retryable: false,
-        }),
-        { cause: error },
-      );
-    }
-    if (error instanceof DomainError) {
-      throw Object.assign(
-        new acp.RequestError(-32020, error.message, {
-          code: error.code,
-          retryable: false,
-        }),
-        { cause: error },
-      );
-    }
-    throw error;
+    const failure = publicError(error, "admission");
+    throw Object.assign(
+      new acp.RequestError(failure.jsonRpcCode ?? -32020, failure.message, failure.data),
+      { cause: error },
+    );
   }
 }

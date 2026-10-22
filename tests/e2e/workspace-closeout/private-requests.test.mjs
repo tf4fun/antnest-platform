@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { inspect } from "node:util";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 const implementation = await import("./private-requests.mjs").catch((error) => {
   if (
     error.code !== "ERR_MODULE_NOT_FOUND" ||
@@ -50,15 +51,24 @@ function fixture(method = "session/load", rejection) {
     method,
   };
   if (rejection) {
+    const expected = admissionErrorReceipt(rejection);
     row.outcome = "failed";
     delete row.requestResult;
     row.failure = "RequestError";
-    row.failureCode = -32020;
-    row.failureData = { code: rejection, retryable: false };
-    row.rejectionReceipt = { rpcCode: -32020, ...row.failureData };
+    row.failureCode = expected.code;
+    row.failureData = structuredClone(expected.data);
+    row.rejectionReceipt = {
+      rpcCode: expected.code,
+      code: expected.data.code,
+      retryable: expected.data.retryable,
+    };
     frame = {
       id: 2,
-      error: { code: -32020, data: row.failureData, message: "rejected" },
+      error: {
+        code: expected.code,
+        data: row.failureData,
+        message: expected.message,
+      },
     };
     observation.rejection = rejection;
   }
@@ -94,15 +104,16 @@ for (const method of ["initialize", "session/new", "session/load"])
       });
     assert.deepEqual({ row: f.row, connection: f.connection }, before);
   });
+const accessDenied = admissionErrorReceipt("access_denied");
 for (const method of ["initialize", "session/new", "session/load"])
   for (const [key, value] of Object.entries({
     rejectionReceipt: {
-      rpcCode: -32020,
-      code: "access_denied",
-      retryable: false,
+      rpcCode: accessDenied.code,
+      code: accessDenied.data.code,
+      retryable: accessDenied.data.retryable,
     },
-    failureCode: -32020,
-    failureData: { code: "access_denied", retryable: false },
+    failureCode: accessDenied.code,
+    failureData: accessDenied.data,
   }))
     test(
       "successful " + method + " projection rejects contradictory " + key,

@@ -12,6 +12,11 @@ import { observeStream, observeFetch } from "./transport.mjs";
 import { openBrowserPrivateACP } from "../identity-closeout/private-acp-browser.mjs";
 import { createPrivateACPHTTP } from "../identity-closeout/private-acp-http.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
+import {
+  assertAdmissionError,
+  assertErrorCapability,
+} from "../../support/acp-errors.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
 const gateway = process.env.TEST_GATEWAY_URL ?? "http://edge-gateway:8080";
 
@@ -52,7 +57,15 @@ export function withPrivateCommandConnection(client, records, action) {
   ]);
 }
 
-export function withPrivateCommandResources(clients, telemetry, action) {
+export function withPrivateCommandResources(
+  clients,
+  telemetry,
+  action,
+  {
+    traceDiagnostics,
+    directory = process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+  } = {},
+) {
   return finishCommandAction(action, [
     async () => {
       const errors = [];
@@ -69,7 +82,26 @@ export function withPrivateCommandResources(clients, telemetry, action) {
       if (errors.length)
         throw new AggregateError(errors, "Command connection cleanup failed");
     },
-    () => telemetry.shutdown(),
+    async () => {
+      try {
+        // Joining the actual exporter is independent of the diagnostic budget.
+        await telemetry.shutdown();
+      } catch (error) {
+        console.warn(
+          "Private ACP telemetry shutdown failed; auxiliary diagnostics retained",
+        );
+        try {
+          const diagnostics =
+            traceDiagnostics ??
+            (directory ? createTraceDiagnostics({ directory }) : undefined);
+          await diagnostics?.run("telemetry-shutdown", () => {
+            throw error;
+          });
+        } catch {
+          console.warn("Private ACP telemetry diagnostic recording failed");
+        }
+      }
+    },
   ]);
 }
 
@@ -163,20 +195,24 @@ export function commandConnection(profile, agentId, browser) {
 // Opt-in owning consumer. Existing callers retain commandConnection until their
 // own private/Bridge migration and integration gates have passed.
 function commandRejectionReceipt(error) {
+  const code = error?.data?.code;
   if (
-    error?.code !== -32020 ||
-    typeof error.data?.retryable !== "boolean" ||
     ![
       "access_denied",
       "session_access_denied",
       "unsupported_resource_content",
       "unsupported_audio_content",
-    ].includes(error.data?.code)
+    ].includes(code)
   )
     return undefined;
+  try {
+    assertAdmissionError(error, code);
+  } catch {
+    return undefined;
+  }
   return {
     rpcCode: error.code,
-    code: error.data.code,
+    code,
     retryable: error.data.retryable,
   };
 }
@@ -383,6 +419,7 @@ export async function openPrivateCommandConnection(
       },
     );
     signal?.throwIfAborted();
+    assertErrorCapability(initializationResult);
     transport.completeInitialization();
     client.initializationResult = initializationResult;
     return client;

@@ -155,7 +155,10 @@ for (const version of [1, 2])
             },
             agentInfo: { name: "browser-negotiation-peer", version: "41" },
             authMethods: [],
-            _meta: { negotiation: "browser-v1" },
+            _meta: {
+              negotiation: "browser-v1",
+              "antnest.dev/errors": { version: 1 },
+            },
           }
         : {
             protocolVersion: 2,
@@ -165,7 +168,10 @@ for (const version of [1, 2])
                 prompt: { image: {}, audio: {}, embeddedContext: {} },
               },
             },
-            _meta: { negotiation: "browser-v2" },
+            _meta: {
+              negotiation: "browser-v2",
+              "antnest.dev/errors": { version: 1 },
+            },
           };
     const f = await fixture(t, { initializationResult });
     const client = await f.open(version);

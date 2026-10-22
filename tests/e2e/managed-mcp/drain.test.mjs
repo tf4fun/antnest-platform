@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { assertClosedRun, isBusyDenied } from "./drain.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 
 test("busy rejection uses the current ACP domain error mapping", () => {
-  const error = {
-    code: -32020,
-    data: { code: "agent_busy", retryable: false },
-  };
+  const error = admissionErrorReceipt("agent_busy");
   assert.equal(isBusyDenied(error), true);
   for (const changed of [
     { code: -32021 },
-    { data: { code: "agent_busy", retryable: true } },
+    { data: { ...error.data, retryable: false } },
+    { data: { ...error.data, retry_after_ms: 999 } },
     { data: { code: "agent_unavailable", retryable: false } },
     { data: { code: "access_denied", retryable: false } },
   ])

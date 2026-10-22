@@ -476,8 +476,10 @@ describe.skipIf(databaseUrl === undefined)(
               sessionId,
               prompt: [{ type: "text", text: "must-not-admit" }],
             });
-            expect(refused.error).toMatchObject({
-              data: { code: "service_stopping", retryable: false },
+            expect(refused.error).toEqual({
+              code: -32034,
+              message: "Agent ACP Service is not accepting new Runs",
+              data: { code: "service_stopping", retryable: true },
             });
             expect(outcome).toHaveProperty(
               "frame.error.data.code",

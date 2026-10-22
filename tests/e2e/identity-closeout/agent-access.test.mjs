@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { once } from "node:events";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import * as evidence from "./agent-access-evidence.mjs";
 import {
   authorizeCompletion,
@@ -214,11 +215,7 @@ for (const version of [1, 2])
   });
 
 test("Session denial cannot smuggle history in its error or notifications", () => {
-  const error = {
-    code: -32020,
-    message: "Session belongs to another organization",
-    data: { code: "session_access_denied", retryable: false },
-  };
+  const error = admissionErrorReceipt("session_access_denied");
   evidence.assertDeniedSessionError(error);
   for (const invalid of [
     { ...error, message: "Private history v1-b" },
@@ -240,14 +237,15 @@ test("Session denial cannot smuggle history in its error or notifications", () =
   );
 });
 
-test("cross-Agent denial requires an explicit boundary and keeps error data private", () => {
-  const error = {
-    code: -32020,
-    message: "Session belongs to another Agent",
-    data: { code: "session_access_denied", retryable: false },
-  };
+test("cross-Agent denial uses the canonical Session error and keeps error data private", () => {
+  const error = admissionErrorReceipt("session_access_denied");
   evidence.assertDeniedSessionError(error, "Agent");
-  assert.throws(() => evidence.assertDeniedSessionError(error));
+  assert.throws(() =>
+    evidence.assertDeniedSessionError(
+      admissionErrorReceipt("access_denied"),
+      "Agent",
+    ),
+  );
   for (const invalid of [
     { ...error, message: "Session belongs to another organization" },
     { ...error, message: "Session belongs to another principal" },

@@ -5,6 +5,7 @@ import type { BridgeObservationService } from "../application/bridge-observation
 import { activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError } from "../telemetry/diagnostics.js";
 import { trustedIdentity } from "./trusted-identity.js";
+import { httpFailure } from "./public-error.js";
 
 const PREFIX = "/rpc/agent-acp/workspace/sessions/";
 
@@ -48,16 +49,12 @@ export async function serveBridgeObservation(
   try {
     if (request.method !== "GET") {
       response.setHeader("Allow", "GET");
-      json(response, 405, { code: "method_not_allowed", message: "Use GET", retryable: false });
+      failure(response, "method_not_allowed");
       return;
     }
     const identity = trustedIdentity(request.headers);
     if (identity === null) {
-      json(response, 401, {
-        code: "access_denied",
-        message: "Trusted caller identity is required",
-        retryable: false,
-      });
+      failure(response, "access_denied");
       return;
     }
     if (service === undefined || !(await ready()))
@@ -68,11 +65,7 @@ export async function serveBridgeObservation(
         ? await service.readIntent(binding, route.sessionId, route.intentId)
         : await service.readSession(binding, route.sessionId);
     if (result === null) {
-      json(response, 404, {
-        code: "intent_unknown",
-        message: "Intent receipt is unavailable; dispatch may still be in flight",
-        retryable: false,
-      });
+      failure(response, "intent_unknown");
       return;
     }
     json(response, 200, result);
@@ -103,24 +96,15 @@ function identifier(raw: string | undefined): string | null {
 function mapFailure(error: unknown): { status: number; body: object } {
   if (error instanceof DomainError) {
     if (error.code === "session_not_found" || error.code === "session_access_denied")
-      return {
-        status: 404,
-        body: { code: "session_not_found", message: "Session not found", retryable: false },
-      };
-    if (error.code === "access_denied")
-      return {
-        status: 403,
-        body: { code: "access_denied", message: "Agent access denied", retryable: false },
-      };
+      return httpFailure("session_not_found");
+    if (error.code === "access_denied") return httpFailure("access_denied");
   }
-  return {
-    status: 503,
-    body: {
-      code: "workspace_observation_unavailable",
-      message: "Execution observation unavailable",
-      retryable: true,
-    },
-  };
+  return httpFailure("workspace_observation_unavailable");
+}
+
+function failure(response: ServerResponse, code: string): void {
+  const value = httpFailure(code);
+  json(response, value.status, value.body);
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {

@@ -16,6 +16,7 @@ import {
 } from "vitest";
 
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
+import { admissionErrorReceipt } from "../../../support/acp-errors.mjs";
 import type { AcpWireClient, WireFrame } from "../support/acp-wire-client.js";
 import {
   boundaryState,
@@ -432,7 +433,7 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
             prompt: [content],
           })
         ).error,
-      ).toMatchObject({ code: -32020, data: { code } });
+      ).toMatchObject(admissionErrorReceipt(code));
     }
     expect(await boundaryState(pool)).toEqual(before);
     expect(app.acceptRun).not.toHaveBeenCalled();

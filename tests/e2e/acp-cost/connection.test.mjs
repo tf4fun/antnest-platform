@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 import { createRequire, registerHooks } from "node:module";
 import { pathToFileURL } from "node:url";
 import { setImmediate as turn } from "node:timers/promises";
@@ -345,21 +349,19 @@ for (const profile of profiles) {
     async (t) => {
       const f = await fixture(t, profile, { denyNew: true });
       const client = await f.open();
-      await assert.rejects(
-        client.request("new", setup),
-        (error) =>
-          error.code === -32020 &&
-          error.data.code === "access_denied" &&
-          error.data.retryable === false,
-      );
+      await assert.rejects(client.request("new", setup), (error) => {
+        assertAdmissionError(error, "access_denied");
+        return true;
+      });
       assert.equal(f.evidence.length, 1);
       assert.equal(f.evidence[0].rejection, "access_denied");
       assert.equal(f.evidence[0].outcome, "rejected");
       assert.equal(f.evidence[0].requestReceipt, undefined);
+      const denied = admissionErrorReceipt("access_denied");
       assert.deepEqual(f.evidence[0].rejectionReceipt, {
-        rpcCode: -32020,
-        code: "access_denied",
-        retryable: false,
+        rpcCode: denied.code,
+        code: denied.data.code,
+        retryable: denied.data.retryable,
       });
       assert.equal(f.evidence[0].inputSessionID, null);
       assert.equal(f.evidence[0].sessionId, undefined);

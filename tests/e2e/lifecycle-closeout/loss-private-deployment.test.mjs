@@ -39,7 +39,10 @@ test("Loss keeps sixteen raw private services, nine application images and its e
     source,
     /profile === "loss"\s*\? inspectFoundationPrivateDeployment\(rows, config\)/u,
   );
-  assert.match(source, /admission = lossPrivateAdmission\(result\)/u);
+  assert.match(
+    source,
+    /if \(profile === "loss"\) \{\s*lossFailures\(result\.lossErrors\);\s*admission = await admitLossBusiness\(result, \{\s*traceDiagnostics: foundationDiagnostics,\s*\}\);\s*\}/u,
+  );
   const makefile = readFileSync(
     new URL("../../../Makefile", import.meta.url),
     "utf8",

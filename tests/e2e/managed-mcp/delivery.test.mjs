@@ -80,10 +80,11 @@ for (const [name, mutate] of [
   });
 
 const complete = () => ({
+  policy_revision: 2,
   complete: true,
   version: 1,
   project: "project",
-  exit_code: 2,
+  exit_code: 0,
   accepted: true,
   strict_trace: "failed",
   cleanup_completed: true,
@@ -93,16 +94,25 @@ const complete = () => ({
     deleted: true,
     runs: 6,
     model_requests: 16,
+    execution: {
+      status: "passed",
+      runs: 6,
+      tool_calls: 10,
+      managed_tool_calls: 6,
+      builtin_tool_calls: 4,
+      failed_tool_calls: 1,
+      model_requests: 16,
+    },
   },
   private_requests: 14,
   initializations: 3,
   business_requests: 11,
   lifecycle_traces: 3,
-  runtime_tool_calls: 10,
+  tool_calls: 10,
   diagnostics: { accepted: true, strict_trace: "failed", exit_code: 2 },
 });
-const result = () => ({ complete: true, exit_code: 2 });
-test("Managed delivery accepts reviewed warning only after business, trace inventory and joined cleanup", () => {
+const result = () => ({ complete: true, exit_code: 0 });
+test("Managed delivery uses independent Run/Tool evidence and joined cleanup despite Trace warnings", () => {
   assert.equal(typeof implementation.assertManagedDelivery, "function");
   implementation.assertManagedDelivery(result(), complete(), {
     version: 1,
@@ -117,10 +127,46 @@ for (const [name, mutate] of [
   ["wrong version", (f) => (f.report.version = 2)],
   ["wrong project", (f) => (f.report.project = "foreign")],
   ["cleanup failure", (f) => (f.report.cleanup_completed = false)],
-  ["unowned diagnostic", (f) => (f.report.diagnostics.accepted = false)],
+  ["legacy completion policy", (f) => delete f.report.policy_revision],
+  [
+    "legacy Trace exit",
+    (f) => {
+      f.command.exit_code = 2;
+      f.report.exit_code = 2;
+    },
+  ],
+  ["incomplete business", (f) => (f.report.business.status = "pending")],
+  ["Agent not deleted", (f) => (f.report.business.deleted = false)],
   ["incomplete request inventory", (f) => (f.report.private_requests = 13)],
   ["missing initialize", (f) => (f.report.initializations = 2)],
-  ["missing tool", (f) => (f.report.runtime_tool_calls = 9)],
+  ["missing request", (f) => (f.report.business_requests = 10)],
+  ["missing tool", (f) => (f.report.tool_calls = 9)],
+  ["missing raw business review", (f) => delete f.report.business.execution],
+  [
+    "failed raw business review",
+    (f) => (f.report.business.execution.status = "failed"),
+  ],
+  ["missing persisted Run", (f) => (f.report.business.execution.runs = 5)],
+  [
+    "missing persisted Tool",
+    (f) => (f.report.business.execution.tool_calls = 9),
+  ],
+  [
+    "wrong managed Tool count",
+    (f) => (f.report.business.execution.managed_tool_calls = 5),
+  ],
+  [
+    "wrong builtin Tool count",
+    (f) => (f.report.business.execution.builtin_tool_calls = 5),
+  ],
+  [
+    "expected Tool failure missing",
+    (f) => (f.report.business.execution.failed_tool_calls = 0),
+  ],
+  [
+    "extra model request",
+    (f) => (f.report.business.execution.model_requests = 17),
+  ],
 ])
   test(`Managed delivery rejects ${name}`, () => {
     assert.equal(typeof implementation.assertManagedDelivery, "function");
@@ -132,4 +178,46 @@ for (const [name, mutate] of [
         project: "project",
       }),
     );
+  });
+
+for (const [label, mutate] of [
+  [
+    "collector failure",
+    (report) => {
+      report.diagnostics = { accepted: false, exit_code: 1 };
+    },
+  ],
+  [
+    "strict failure",
+    (report) => {
+      report.strict_trace = "failed";
+    },
+  ],
+  [
+    "no lifecycle Trace",
+    (report) => {
+      report.lifecycle_traces = 0;
+    },
+  ],
+  [
+    "no Span tool count",
+    (report) => {
+      delete report.runtime_tool_calls;
+    },
+  ],
+  [
+    "diagnostic unavailable",
+    (report) => {
+      report.diagnostics = undefined;
+      report.strict_trace = "not_collected";
+    },
+  ],
+])
+  test(`Managed ${label} stays auxiliary with independently completed business`, () => {
+    const report = complete();
+    mutate(report);
+    implementation.assertManagedDelivery(result(), report, {
+      version: 1,
+      project: "project",
+    });
   });

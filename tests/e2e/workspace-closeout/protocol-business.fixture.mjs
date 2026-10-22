@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { readProcesses } from "./process.mjs";
 import { runtimeBinding } from "./current-evidence.mjs";
 
@@ -177,12 +178,17 @@ export function workspaceBusinessFixture() {
     return clone(result);
   }
   function rejected(row, code) {
-    const error = new Error(`Operation reported ${code}`);
-    error.code = -32020;
-    error.data = { code, retryable: false };
+    const rejection = admissionErrorReceipt(code);
+    const error = new Error(rejection.message);
+    error.code = rejection.code;
+    error.data = clone(rejection.data);
     row.outcome = "rejected";
     row.rejection = code;
-    row.rejectionReceipt = { rpcCode: -32020, code, retryable: false };
+    row.rejectionReceipt = {
+      rpcCode: error.code,
+      code: error.data.code,
+      retryable: error.data.retryable,
+    };
     row.response = {
       id: row.requestId,
       error: {

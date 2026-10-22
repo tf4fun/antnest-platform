@@ -31,6 +31,7 @@ function assertCompletePage(page, agentID) {
 function assertIndependentEvent(
   event,
   { agentID, runtimeRevision, admissionTraceID, replayTraceID },
+  { requireTrace = true } = {},
 ) {
   assert(event && typeof event === "object" && !Array.isArray(event));
   assert.equal(event.event_type, "agent_runtime_condition_changed");
@@ -62,6 +63,7 @@ function assertIndependentEvent(
     typeof runtimeRevision === "string" && runtimeRevision.length > 0,
     "observation target missing",
   );
+  if (!requireTrace) return;
   assert.match(admissionTraceID, traceIdentity, "admission trace missing");
   assert.match(replayTraceID, traceIdentity, "replay trace missing");
   assert.match(event.trace_id, traceIdentity, "observation trace missing");
@@ -77,11 +79,34 @@ function assertIndependentEvent(
   );
 }
 
-function assertObservationEvidence(evidence, event, agentID) {
+function assertObservationEvidence(
+  evidence,
+  event,
+  agentID,
+  { requireTrace = true } = {},
+) {
   assert(
     evidence && typeof evidence === "object" && !Array.isArray(evidence),
     "observation collector returned no verified evidence",
   );
+  if (!requireTrace) {
+    assert.equal(
+      evidence.business,
+      "passed",
+      "observation business was not verified",
+    );
+    assert.equal(
+      evidence.event_id,
+      event.event_id,
+      "collector returned another event",
+    );
+    assert.equal(
+      evidence.agent_id,
+      agentID,
+      "collector returned another Agent",
+    );
+    return;
+  }
   assert.equal(evidence.kind, "runtime-observation");
   assert.equal(
     evidence.topology,
@@ -119,7 +144,11 @@ function assertObservationEvidence(evidence, event, agentID) {
 
 // Replay preserves the full old history. Only a failed-start Create may append
 // independently verified Runtime observations while its replay is read.
-export async function assertReplayHistory(input, collect) {
+export async function assertReplayHistory(
+  input,
+  collect,
+  { requireTrace = true } = {},
+) {
   const { before, after, agentID, kind, runtimeStartupFailure } = input;
   assertCompletePage(before, agentID);
   assertCompletePage(after, agentID);
@@ -143,32 +172,25 @@ export async function assertReplayHistory(input, collect) {
   assert.equal(typeof collect, "function", "observation collector missing");
   const evidence = [];
   for (const event of appended) {
-    assertIndependentEvent(event, input);
+    assertIndependentEvent(event, input, { requireTrace });
     const observed = await collect(event);
-    assertObservationEvidence(observed, event, agentID);
+    assertObservationEvidence(observed, event, agentID, { requireTrace });
     evidence.push(observed);
   }
   return evidence;
 }
 
-export function inspectReplayObservation(
-  trace,
-  {
+export function inspectReplayObservationBusiness({
+  event,
+  persisted,
+  agentID,
+  runtimeRevision,
+}) {
+  assertIndependentEvent(
     event,
-    persisted,
-    agentID,
-    runtimeRevision,
-    admissionTraceID,
-    replayTraceID,
-  },
-  secrets = [],
-) {
-  assertIndependentEvent(event, {
-    agentID,
-    runtimeRevision,
-    admissionTraceID,
-    replayTraceID,
-  });
+    { agentID, runtimeRevision },
+    { requireTrace: false },
+  );
   assert(
     persisted && typeof persisted === "object" && !Array.isArray(persisted),
     "persisted observation event missing",
@@ -180,7 +202,6 @@ export function inspectReplayObservation(
     "global_sequence",
     "schema_version",
     "event_type",
-    "trace_id",
   ])
     assert.equal(
       persisted[field],
@@ -202,6 +223,38 @@ export function inspectReplayObservation(
     persisted.data.runtime_revision,
     runtimeRevision,
     "observation target differs",
+  );
+  return { event_id: event.event_id, agent_id: agentID, business: "passed" };
+}
+
+export function inspectReplayObservation(
+  trace,
+  {
+    event,
+    persisted,
+    agentID,
+    runtimeRevision,
+    admissionTraceID,
+    replayTraceID,
+  },
+  secrets = [],
+) {
+  assertIndependentEvent(event, {
+    agentID,
+    runtimeRevision,
+    admissionTraceID,
+    replayTraceID,
+  });
+  inspectReplayObservationBusiness({
+    event,
+    persisted,
+    agentID,
+    runtimeRevision,
+  });
+  assert.equal(
+    persisted.trace_id,
+    event.trace_id,
+    "public/persisted observation mismatch",
   );
   assert.equal(trace?.traceID, event.trace_id, "trace differs from its event");
   const tree = traceTopology(trace);

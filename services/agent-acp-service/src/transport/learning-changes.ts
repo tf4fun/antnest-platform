@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { LearningChangeReader } from "../application/learning-change-reader.js";
 import { DomainError } from "../domain/errors.js";
 import { trustedIdentity } from "./trusted-identity.js";
+import { httpFailure } from "./public-error.js";
 
 const PREFIX = "/rpc/agent-acp/workspace/agents/";
 const SUFFIX = "/learning-changes";
@@ -54,28 +55,20 @@ export async function serveLearningChanges(
 ): Promise<void> {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
-    json(response, 405, { code: "method_not_allowed", message: "Use GET", retryable: false });
+    failure(response, "method_not_allowed");
     return;
   }
   const identity = trustedIdentity(request.headers);
   if (identity === null) {
-    json(response, 401, {
-      code: "access_denied",
-      message: "Trusted identity required",
-      retryable: false,
-    });
+    failure(response, "access_denied");
     return;
   }
   if (identity.agentId !== route.agentId) {
-    json(response, 404, { code: "agent_not_found", message: "Agent not found", retryable: false });
+    failure(response, "agent_not_found");
     return;
   }
   if (route.invalid) {
-    json(response, 400, {
-      code: "invalid_request",
-      message: "Invalid learning change query",
-      retryable: false,
-    });
+    failure(response, "invalid_request");
     return;
   }
   try {
@@ -85,22 +78,14 @@ export async function serveLearningChanges(
     json(response, 200, page);
   } catch (error) {
     if (error instanceof DomainError && error.code === "cursor_expired") {
-      json(response, 409, { code: "cursor_expired", message: "Cursor expired", retryable: false });
+      failure(response, "cursor_expired");
       return;
     }
     if (error instanceof DomainError && error.code === "access_denied") {
-      json(response, 404, {
-        code: "agent_not_found",
-        message: "Agent not found",
-        retryable: false,
-      });
+      failure(response, "agent_not_found");
       return;
     }
-    json(response, 503, {
-      code: "learning_changes_unavailable",
-      message: "Learning changes unavailable",
-      retryable: true,
-    });
+    failure(response, "learning_changes_unavailable");
   }
 }
 
@@ -111,6 +96,11 @@ function identifier(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+function failure(response: ServerResponse, code: string): void {
+  const value = httpFailure(code);
+  json(response, value.status, value.body);
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {

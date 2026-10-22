@@ -98,7 +98,8 @@ export async function runFoundationFlow(
   scenario,
   options = {},
 ) {
-  const requireTrace = !options.workspaceTraceAuxiliary;
+  const traceDiagnostics = options.traceDiagnostics;
+  const requireTrace = !options.workspaceTraceAuxiliary && !traceDiagnostics;
   const client = new GatewayClient(config.gateway);
   const api = async (path, options) => {
     signal.throwIfAborted();
@@ -220,15 +221,26 @@ export async function runFoundationFlow(
       admissionTraceID: response.traceID,
       replayTraceID: replayResponse.traceID,
     };
-    if (expectation.runtimeStartupFailure)
-      replayTraces.push(
-        await collectReadonlyCreateReplay(
+    if (expectation.runtimeStartupFailure) {
+      const collectReplay = (localSignal) =>
+        collectReadonlyCreateReplay(
           config,
           { traceID: replayResponse.traceID, agentID: id },
           traceSecrets,
-          signal,
-        ),
-      );
+          localSignal,
+        );
+      if (traceDiagnostics) {
+        const diagnostic = await traceDiagnostics.run(
+          `foundation-create-replay-${admitted.length}`,
+          collectReplay,
+        );
+        replayTraces.push(
+          diagnostic.status === "passed"
+            ? diagnostic.value
+            : { kind: "create-replay", diagnostic },
+        );
+      } else replayTraces.push(await collectReplay(signal));
+    }
     await assertReplayHistory(
       {
         ...replayContext,
@@ -236,6 +248,7 @@ export async function runFoundationFlow(
         after: await json(historyPath),
       },
       (event) => observation(event, replayContext),
+      { requireTrace: !traceDiagnostics },
     );
     const result = {
       ...foundationLifecycleExpectation(kind, expectation),
@@ -264,6 +277,7 @@ export async function runFoundationFlow(
           { ...context, event },
           traceSecrets,
           signal,
+          { traceDiagnostics },
         ),
       );
     return observationTraces.get(event.event_id);
@@ -323,6 +337,7 @@ export async function runFoundationFlow(
       resources,
       ready,
       traceSecrets,
+      traceDiagnostics,
     });
     if (result.profile === "workspace-protocol")
       return collectWorkspaceLifecycles(
@@ -381,11 +396,17 @@ export async function runFoundationFlow(
       const errors = [];
       const traces = await collectLossTraces(
         admitted,
-        (operation) =>
-          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, localSignal = signal) =>
+          collectFoundationLifecycle(
+            config,
+            operation,
+            traceSecrets,
+            localSignal,
+          ),
         (operation, error) => saveFoundationFailure(config, operation, error),
         signal,
         errors,
+        traceDiagnostics,
       );
       recordLossFailures(result, errors);
       return recordLossFailures(
@@ -471,6 +492,7 @@ export async function runFoundationFlow(
     template: revision,
     signal,
     ready,
+    traceDiagnostics,
   });
   const rebuilt = await ready(agentID);
   assert.notEqual(rebuilt.container.Id, initial.container.Id);
@@ -648,16 +670,54 @@ export async function runFoundationFlow(
     failed.events,
     "restart/replay altered failed Agent events",
   );
-  const traces = await collectLifecycleEvidence(
-    admitted,
-    (op) => collectFoundationLifecycle(config, op, traceSecrets, signal),
-    (op, error) => saveFoundationFailure(config, op, error),
-    signal,
-  );
+  let traces;
+  if (traceDiagnostics) {
+    traces = [];
+    for (const [index, op] of admitted.entries()) {
+      const diagnostic = await traceDiagnostics.run(
+        `foundation-lifecycle-${index}`,
+        (localSignal) =>
+          collectFoundationLifecycle(config, op, traceSecrets, localSignal),
+      );
+      traces.push(
+        diagnostic.status === "passed"
+          ? diagnostic.value
+          : { kind: op.kind, diagnostic },
+      );
+    }
+  } else {
+    traces = await collectLifecycleEvidence(
+      admitted,
+      (op) => collectFoundationLifecycle(config, op, traceSecrets, signal),
+      (op, error) => saveFoundationFailure(config, op, error),
+      signal,
+    );
+  }
+  const observations = [...observationTraces.values()];
+  const observationDiagnostics = traceDiagnostics
+    ? observations.map((observation) =>
+        observation.diagnostic.status === "passed"
+          ? observation.diagnostic.value
+          : {
+              kind: "runtime-observation",
+              event_id: observation.event_id,
+              agent_id: observation.agent_id,
+              diagnostic: observation.diagnostic,
+            },
+      )
+    : observations;
   return {
     profile: "lifecycle-foundation-and-startup-failure",
     operations: admitted.length,
-    lifecycle_kinds: traces.map((t) => t.kind),
+    lifecycle_kinds: admitted.map((op) => op.kind),
+    ...(traceDiagnostics
+      ? {
+          private_lifecycle_admissions: admitted,
+          private_observations: observations.map(
+            ({ diagnostic, ...business }) => business,
+          ),
+        }
+      : {}),
     events: events.length,
     network_cas_changes: 2,
     workspace_preserved_and_removed: true,
@@ -666,6 +726,6 @@ export async function runFoundationFlow(
     failed_agent_events: failed.events.events.length,
     active_run_rebuild: drain.evidence,
     replay_observation_events: observationTraces.size,
-    traces: [...traces, ...replayTraces, ...observationTraces.values()],
+    traces: [...traces, ...replayTraces, ...observationDiagnostics],
   };
 }

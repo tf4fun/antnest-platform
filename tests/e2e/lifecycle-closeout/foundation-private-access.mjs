@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerHooks } from "node:module";
+import { inspect } from "node:util";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
 function loopback(value, path = "/") {
   const url = new URL(value);
@@ -33,6 +35,8 @@ export async function createFoundationPrivateAccess(
     secrets,
     collectTrace,
     watchFactory,
+    telemetryFactory,
+    traceDiagnostics,
     preserveWatch = (index, value) =>
       writeEvidenceFile(
         config.evidence,
@@ -56,6 +60,9 @@ export async function createFoundationPrivateAccess(
   assert(Array.isArray(secrets));
   assert(collectTrace === undefined || typeof collectTrace === "function");
   assert(watchFactory === undefined || typeof watchFactory === "function");
+  assert(
+    telemetryFactory === undefined || typeof telemetryFactory === "function",
+  );
   signal?.throwIfAborted();
   const privateAccess = config.privateAccess;
   assert(
@@ -116,7 +123,7 @@ export async function createFoundationPrivateAccess(
       );
     },
   });
-  const telemetry = createPrivateACPTelemetry(otlp),
+  const telemetry = (telemetryFactory ?? createPrivateACPTelemetry)(otlp),
     clients = [],
     receipts = [],
     watches = [],
@@ -221,7 +228,7 @@ export async function createFoundationPrivateAccess(
       fail(errors);
       return state;
     },
-    collect(expected, requests) {
+    collect(expected, requests, collectorSignal = signal) {
       return (collectTrace ?? collectFoundationPrivateTrace)(
         config.jaeger,
         expected,
@@ -229,7 +236,7 @@ export async function createFoundationPrivateAccess(
           directory: config.evidence + "/traces",
           secrets,
           requests,
-          signal,
+          signal: collectorSignal,
           flush: () => telemetry.flush(),
         },
       );
@@ -256,7 +263,26 @@ export async function createFoundationPrivateAccess(
         try {
           await telemetry.shutdown();
         } catch (error) {
-          errors.push(error);
+          console.warn(
+            "Foundation telemetry shutdown failed; auxiliary diagnostics retained",
+          );
+          try {
+            // Preserve the original failure even if the shared collection
+            // budget is exhausted. Actual shutdown above is always joined.
+            writeEvidenceFile(
+              config.evidence,
+              "foundation-telemetry-shutdown.private.txt",
+              inspect(error, { depth: 8 }) + "\n",
+            );
+            const diagnostics =
+              traceDiagnostics ??
+              createTraceDiagnostics({ directory: config.evidence });
+            await diagnostics.run("foundation-telemetry-shutdown", () => {
+              throw error;
+            });
+          } catch {
+            console.warn("Foundation telemetry diagnostic recording failed");
+          }
         }
         try {
           await saveState();

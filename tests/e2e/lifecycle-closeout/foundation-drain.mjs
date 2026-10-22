@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inspect } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertCompletedExecution } from "./foundation-evidence.mjs";
@@ -14,6 +15,8 @@ import {
 import { lines } from "./docker.mjs";
 import { createFoundationPrivateAccess } from "./foundation-private-access.mjs";
 import { collectFoundationRequests } from "./foundation-private-trace.mjs";
+import { collectFoundationBusinessEvidence } from "./foundation-business-collection.mjs";
+import { writeEvidenceFile } from "../../support/storage.mjs";
 
 export async function withHeldRun({
   config,
@@ -26,6 +29,7 @@ export async function withHeldRun({
   template,
   ready,
   signal,
+  traceDiagnostics,
 }) {
   const owner = new GatewayClient(config.gateway);
   const login = await owner.request("/api/session/login", {
@@ -44,20 +48,43 @@ export async function withHeldRun({
   const access = await createFoundationPrivateAccess(config, {
     signal,
     secrets,
+    traceDiagnostics,
   });
   let client, prompt, pid, output;
   let settled = false;
   const errors = [];
-  const audits = async (sessionId) => {
-    const value = await json(
-      `/api/admin/execution-audits?agent_id=${agentID}&session_id=${sessionId}`,
+  const originalReads = [],
+    modelStates = [];
+  let businessEvidence = {
+    agent_id: agentID,
+    principal_id: principal.user_id,
+    private_connections: [],
+    execution_revisions: {
+      "c3-held-run": initial.agent.executable_execution_revision,
+    },
+    busy_checks: [],
+    provider_requests: [],
+    audits: [],
+  };
+  const readAudit = async (path) => {
+    const body = await json(path);
+    originalReads.push({ path, body });
+    return body;
+  };
+  const auditPage = async (sessionId) => {
+    const value = await readAudit(
+      `/api/admin/execution-audits?agent_id=${encodeURIComponent(agentID)}&session_id=${encodeURIComponent(sessionId)}&limit=100`,
     );
     assert.equal(value.next_cursor, null);
+    return value;
+  };
+  const audits = async (sessionId) => {
+    const value = await auditPage(sessionId);
     return value.items;
   };
   const saved = async (id) => {
-    const run = await json(`/api/admin/execution-audits/${id}`);
-    const events = await json(
+    const run = await readAudit(`/api/admin/execution-audits/${id}`);
+    const events = await readAudit(
       `/api/admin/execution-audits/${id}/events?limit=100`,
     );
     assert.equal(events.next_cursor, null, "Run event evidence is truncated");
@@ -69,6 +96,8 @@ export async function withHeldRun({
     });
     assert.equal(response.status, 200);
     const state = await response.json();
+    modelStates.push(state);
+    businessEvidence.provider_requests = state.requests;
     assert.deepEqual(
       state.errors,
       [],
@@ -151,33 +180,51 @@ export async function withHeldRun({
     const heldRunId = heldAudit[0].run_id;
     const originalExecution = (await saved(heldRunId)).run.execution_snapshot;
     const deny = async () => {
-      const beforeUpdates = client.updates.filter((u) => u.sessionId === other);
-      const before = await audits(other);
-      assert.deepEqual(before, []);
-      await assert.rejects(
-        client.request(
-          "prompt",
-          {
-            sessionId: other,
-            prompt: [{ type: "text", text: "c3-denied" }],
-          },
-          15000,
-          { rejection: "agent_busy" },
+      const before = {
+        page: await auditPage(other),
+        model_requests: await modelState(),
+        updates: structuredClone(
+          client.updates.filter((u) => u.sessionId === other),
         ),
-        (error) => {
-          return isBusyDenied(error);
-        },
-      );
+      };
+      const checkpoint = {
+        request_id: null,
+        session_id: other,
+        before,
+        after: null,
+      };
+      businessEvidence.busy_checks.push(checkpoint);
+      assert.deepEqual(before.page.items, []);
+      const requestIndex = client.snapshot().evidence.length;
+      try {
+        await assert.rejects(
+          client.request(
+            "prompt",
+            { sessionId: other, prompt: [{ type: "text", text: "c3-denied" }] },
+            15000,
+            { rejection: "agent_busy" },
+          ),
+          (error) => isBusyDenied(error),
+        );
+      } finally {
+        checkpoint.request_id =
+          client.snapshot().evidence[requestIndex]?.requestId ?? null;
+      }
+      checkpoint.after = {
+        page: await auditPage(other),
+        model_requests: await modelState(),
+        updates: structuredClone(
+          client.updates.filter((u) => u.sessionId === other),
+        ),
+      };
+      assert.deepEqual(checkpoint.after.updates, before.updates);
+      assert.deepEqual(checkpoint.after.page, before.page);
       assert.deepEqual(
-        client.updates.filter((u) => u.sessionId === other),
-        beforeUpdates,
-      );
-      assert.deepEqual(await audits(other), before);
-      assert.deepEqual(
-        await modelState(),
+        checkpoint.after.model_requests,
         firstRequests,
         "denied prompt reached the model",
       );
+      assert.deepEqual(checkpoint.after.model_requests, before.model_requests);
     };
     let controllerRestart;
     const rebuild = await command(
@@ -253,6 +300,8 @@ export async function withHeldRun({
       },
     );
     const rebuilt = await ready(agentID);
+    businessEvidence.execution_revisions["c3-after-rebuild"] =
+      rebuilt.agent.executable_execution_revision;
     assert.notEqual(rebuilt.container.Id, initial.container.Id);
     assert.notEqual(
       rebuilt.agent.executable_execution_revision,
@@ -309,6 +358,35 @@ export async function withHeldRun({
       ],
     );
     await client.closeAndWait();
+    businessEvidence.private_connections = access.snapshots();
+    const collected = await collectFoundationBusinessEvidence(
+      {
+        agent_id: businessEvidence.agent_id,
+        principal_id: businessEvidence.principal_id,
+        private_connections: businessEvidence.private_connections,
+        execution_revisions: businessEvidence.execution_revisions,
+        busy_checks: businessEvidence.busy_checks,
+        provider_requests: requests,
+      },
+      {
+        signal,
+        readJSON: async (path, { signal: localSignal }) => {
+          localSignal?.throwIfAborted();
+          return readAudit(path);
+        },
+        preserve(evidence, failure) {
+          businessEvidence = evidence;
+          writeEvidenceFile(
+            config.evidence,
+            "foundation-business-collection.private.json",
+            JSON.stringify({
+              evidence,
+              ...(failure ? { failure: inspect(failure, { depth: 8 }) } : {}),
+            }),
+          );
+        },
+      },
+    );
     const runIds = {
       "c3-held-run": heldRunId,
       "c3-after-rebuild": fresh.run_id,
@@ -319,11 +397,27 @@ export async function withHeldRun({
         ...(row.kind === "ordinary" ? { runId: runIds[row.phase] } : {}),
       })),
     );
-    const traces = await collectFoundationRequests(
-      observed,
-      (expected) => access.collect(expected, requests),
-      signal,
-    );
+    let traces;
+    if (traceDiagnostics) {
+      traces = [];
+      for (const [index, expected] of observed.entries()) {
+        const diagnostic = await traceDiagnostics.run(
+          `foundation-request-${index}`,
+          (localSignal) => access.collect(expected, requests, localSignal),
+        );
+        traces.push(
+          diagnostic.status === "passed"
+            ? diagnostic.value
+            : { method: expected.method, diagnostic },
+        );
+      }
+    } else {
+      traces = await collectFoundationRequests(
+        observed,
+        (expected) => access.collect(expected, requests),
+        signal,
+      );
+    }
     output = {
       rebuild,
       evidence: {
@@ -334,6 +428,8 @@ export async function withHeldRun({
         physical_tool_effects_exact: true,
         run_traces: traces,
         run_ids: [heldRunId, fresh.run_id],
+        private_business: collected.evidence,
+        execution: collected.summary,
         provider_requests: requests.map(({ phase, stage, trace_id }) => ({
           phase,
           stage,
@@ -354,6 +450,21 @@ export async function withHeldRun({
       if (result.error) errors.push(result.error);
     }
     if (signal?.aborted) errors.push(signal.reason);
+    try {
+      writeEvidenceFile(
+        config.evidence,
+        "foundation-business-progress.private.json",
+        JSON.stringify({
+          ...businessEvidence,
+          private_connections: access.snapshots(),
+          original_reads: originalReads,
+          model_states: modelStates,
+          errors: errors.map((error) => inspect(error, { depth: 8 })),
+        }),
+      );
+    } catch (error) {
+      errors.push(error);
+    }
   }
   const failures = [...new Set(errors)];
   if (failures.length === 1) throw failures[0];

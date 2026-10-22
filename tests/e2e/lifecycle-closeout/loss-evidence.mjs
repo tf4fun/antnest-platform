@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { scopeLabel } from "./docker.mjs";
 import { assertAgentReady } from "../../support/verification/agent-state.mjs";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
 export function assertOwnedRuntime(container, initial, project) {
   assert.match(project, /^antnest-lifecycle-[a-f0-9]{8}$/);
@@ -92,9 +93,7 @@ export function assertReplacement(initial, replacement) {
 }
 
 export function assertLossDenial(error) {
-  assert.equal(error?.code, -32020);
-  assert.equal(error.data?.code, "agent_unavailable");
-  assert.equal(error.data?.retryable, false);
+  assertAdmissionError(error, "agent_unavailable");
 }
 
 export function assertLossBinding(initial, binding) {

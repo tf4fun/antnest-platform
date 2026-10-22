@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { checkPrivateACPConnection } from "../../support/private-acp-recorder.mjs";
+import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
 const clone = (value) => structuredClone(value);
 const text = (value) => assert(typeof value === "string" && value.length > 0);
 const key = (row) => JSON.stringify([row.connectionTraceID, row.requestId]);
@@ -203,29 +207,25 @@ export function indexCloseoutAccessRequests({
             ? "access_denied"
             : "session_access_denied";
         assert.equal(purpose === "denied-agent", rejection === "access_denied");
-        assert.equal(row.failureCode, -32020);
-        assert.deepEqual(row.failureData, {
-          code: rejection,
-          retryable: false,
-        });
+        const expected = admissionErrorReceipt(rejection);
+        assert.equal(row.failureCode, expected.code);
+        assert.deepEqual(row.failureData, expected.data);
         assert.deepEqual(row.rejectionReceipt, {
-          rpcCode: -32020,
+          rpcCode: expected.code,
           code: rejection,
-          retryable: false,
+          retryable: expected.data.retryable,
         });
         const raw = c.raw_frames.filter(
           (frame) =>
             Object.hasOwn(frame, "id") && String(frame.id) === row.requestId,
         );
         assert.equal(raw.length, 1);
+        assertAdmissionError(raw[0].error, rejection);
         assert.equal(raw[0].error.code, row.failureCode);
         assert.deepEqual(raw[0].error.data, row.failureData);
         if (rejection === "session_access_denied") {
           assert(["principal", "Agent"].includes(detail.scope));
-          assert.equal(
-            raw[0].error.message,
-            `Session belongs to another ${detail.scope}`,
-          );
+          assert.equal(raw[0].error.message, expected.message);
           const source = created.get(row.inputSessionID);
           assert(source);
           assert.equal(source.version, version);

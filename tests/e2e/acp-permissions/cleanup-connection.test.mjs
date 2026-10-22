@@ -193,10 +193,9 @@ for (const mode of [
       withPrivateCommandResources(clients, telemetry, () => close(f, clients)),
       (error) => {
         if (mode === "business and telemetry cleanup") {
-          assert(error instanceof AggregateError);
-          assert.equal(error.errors[0].code, original.code);
-          assert.deepEqual(error.errors[0].data, original.data);
-          assert.equal(error.errors[1], cleanupError);
+          assert.equal(error instanceof AggregateError, false);
+          assert.equal(error.code, original.code);
+          assert.deepEqual(error.data, original.data);
         } else if (["list", "close"].includes(mode)) {
           assert.equal(error.code, original.code);
           assert.deepEqual(error.data, original.data);

@@ -59,11 +59,18 @@ import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertAgentDenied } from "../acp-files/setup.mjs";
 import { identityEvidenceExitCode } from "./trace.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
+import {
+  collectAccessDiagnostics,
+  shutdownAccessTelemetry,
+} from "./access-diagnostics.mjs";
+import { inspectDirectoryBrowserBusiness } from "./access-browser-business.mjs";
 
 const evidenceRoot = evidenceDirectory(
   process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
 );
 evidenceFilePath(evidenceRoot, "failure.private.txt");
+const diagnostics = createTraceDiagnostics({ directory: evidenceRoot });
 installFailureBoundary();
 const seed = JSON.parse(await readFile("/fixture-seed.json", "utf8"));
 const adminA = new GatewayClient(gateway),
@@ -96,6 +103,11 @@ for (const browser of [adminA, adminB, memberB])
   browser.onStatusFailure = onStatusFailure;
 const save = (name, value) =>
   writeEvidenceFile(evidenceRoot, name, JSON.stringify(value, null, 2));
+let originalRead = 0;
+function saveOriginal(kind, value) {
+  save(`access-${++originalRead}-${kind}.private.json`, value);
+  return value;
+}
 function archiveRequests() {
   save(
     "private-connections.json",
@@ -129,6 +141,7 @@ async function modelState() {
   assert.equal(response.status, 200);
   const state = await response.json();
   save("provider.private.json", state);
+  saveOriginal("model", state);
   assert.equal(state.errors.length, 0, "model rejected unexpected activity");
   return state.requests;
 }
@@ -146,6 +159,7 @@ async function acpSnapshot() {
       await pool.query(`SELECT * FROM ${table} ORDER BY id`)
     ).rows;
   save("acp-database.private.json", result);
+  saveOriginal("database", result);
   return result;
 }
 async function snapshot() {
@@ -164,7 +178,11 @@ async function snapshot() {
       responses.push((await item.admin.request(path)).body);
     projections.push(responses);
   }
-  return { projections, acp: await acpSnapshot(), model: await modelState() };
+  return saveOriginal("scope", {
+    projections,
+    acp: await acpSnapshot(),
+    model: await modelState(),
+  });
 }
 async function login(browser, slug, email, password) {
   const startedMono = performance.now();
@@ -573,6 +591,8 @@ async function replay(client, version, session) {
   return client.updates.slice(offset);
 }
 async function baseline(version, item, phase = `v${version}-${item.key}`) {
+  item.traceDiagnostics = diagnostics;
+  item.evidenceDirectory = evidenceRoot;
   step = `${phase}_baseline`;
   await until(async () => {
     try {
@@ -827,6 +847,7 @@ async function workspaceAStillAvailable() {
   await bootstrap(adminA, [resources[0].agent]);
 }
 
+let completed;
 try {
   await setup();
   await administratorIsolation();
@@ -878,7 +899,7 @@ try {
       },
     })),
   );
-  step = "trace_acceptance";
+  step = "business_admission";
   const calls = await modelState();
   assert.equal(calls.length, 9);
   assert.equal(deniedAdmin, 36);
@@ -893,54 +914,74 @@ try {
     observations,
   });
   save("private-request-inventory.json", indexed);
-  await telemetry.flush();
-  const evidence = await verifyAccessEvidence(
-    "http://jaeger:16686",
-    traces,
-    secrets,
-  );
-  const privateEvidence = [];
-  for (const request of [...indexed.initializations, ...indexed.requests]) {
-    privateEvidence.push(
-      await collectPrivateAccessTrace("http://jaeger:16686", request, {
-        secrets,
-        requests: calls,
-        directory: evidenceRoot,
-        flush: () => telemetry.flush(),
-      }),
-    );
-    save("private-reports.json", privateEvidence);
-  }
-  assert.equal(privateAccessStrictOutcome(privateEvidence).accepted, true);
-  evidence.push(
-    ...privateEvidence,
-    ...(await collectMembershipBrowserClosures(
-      "http://jaeger:16686",
-      revokedMessages,
-      secrets,
-      { directory: evidenceRoot },
-    )),
-  );
-  save("reports.json", [...evidence, ...offboarding]);
-  process.exitCode = identityEvidenceExitCode([...evidence, ...offboarding]);
+  const browserBusiness = revokedMessages.map(inspectDirectoryBrowserBusiness);
+  save("access-business.private.json", {
+    indexed,
+    calls,
+    browserBusiness,
+    offboarding,
+  });
+  // Actual logout must execute even when no Trace can be collected.
   for (const browser of [adminA, adminB, memberB])
     await browser.request("/api/session", { method: "DELETE", status: 204 });
-  process.stdout.write(
-    asciiJSON({
-      status: "business_passed",
-      versions: [1, 2],
-      denied_admin: deniedAdmin,
-      denied_agent_requests: deniedAgents,
-      denied_session_commands: deniedSessions,
-      membership_revocations: 2,
-      private_connections: indexed.initializations.length,
-      private_business_requests: indexed.requests.length,
-      browser_http_denials: revokedMessages.length,
-      completed_runs: calls.length,
-      offboarding,
-      traces: evidence,
-    }) + "\n",
+  step = "trace_diagnostics";
+  const diagnostic = await collectAccessDiagnostics(
+    {
+      diagnostics,
+      requests: [...indexed.initializations, ...indexed.requests],
+    },
+    {
+      collectManagement: async (signal) => {
+        await telemetry.flush();
+        return verifyAccessEvidence("http://jaeger:16686", traces, secrets, {
+          signal,
+        });
+      },
+      collectRequest: (request, signal) =>
+        collectPrivateAccessTrace("http://jaeger:16686", request, {
+          secrets,
+          requests: calls,
+          directory: evidenceRoot,
+          flush: () => telemetry.flush(),
+          signal,
+        }),
+      collectClosures: (signal) =>
+        collectMembershipBrowserClosures(
+          "http://jaeger:16686",
+          revokedMessages,
+          secrets,
+          { directory: evidenceRoot, signal },
+        ),
+      inspect: ({ management, reports, closures }) => {
+        assert.equal(privateAccessStrictOutcome(reports).accepted, true);
+        assert.equal(
+          identityEvidenceExitCode([
+            ...(management ?? []),
+            ...reports,
+            ...(closures ?? []),
+            ...offboarding,
+          ]),
+          0,
+        );
+      },
+    },
   );
+  save("reports.json", { ...diagnostic, offboarding });
+  completed = {
+    status: "business_passed",
+    versions: [1, 2],
+    denied_admin: deniedAdmin,
+    denied_agent_requests: deniedAgents,
+    denied_session_commands: deniedSessions,
+    membership_revocations: 2,
+    private_connections: indexed.initializations.length,
+    private_business_requests: indexed.requests.length,
+    browser_http_denials: revokedMessages.length,
+    completed_runs: calls.length,
+    browser_business: browserBusiness,
+    offboarding,
+    traces: diagnostic,
+  };
 } catch (error) {
   if (evidenceRoot)
     writeEvidenceFile(
@@ -962,7 +1003,18 @@ try {
   process.exitCode = 1;
 } finally {
   try {
-    await closeSessionFaultResources({ clients, observers, pool, telemetry });
+    await closeSessionFaultResources({
+      clients,
+      observers,
+      pool,
+      telemetry: {
+        shutdown: () =>
+          shutdownAccessTelemetry(telemetry, {
+            directory: evidenceRoot,
+            diagnostics,
+          }),
+      },
+    });
     archiveRequests();
   } catch (error) {
     writeEvidenceFile(
@@ -978,4 +1030,10 @@ try {
       }),
     );
   }
+}
+
+if (completed && process.exitCode !== 1) {
+  completed.trace_diagnostics = diagnostics.summary();
+  process.exitCode = 0;
+  process.stdout.write(asciiJSON(completed) + "\n");
 }

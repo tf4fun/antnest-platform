@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inspect } from "node:util";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { archiveCompleted } from "./archive.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 test("completed request evidence is archived before another kill, while interrupted work remains uncached", async () => {
   const requests = [
       { label: "new", kind: "request", requestId: "2" },
@@ -111,4 +115,65 @@ test("cancellation after collection cannot cache a success or admit the next fau
     (error) => error === reason,
   );
   assert.equal(cache.size, 0);
+});
+
+function diagnosticFixture(t, budgetMs = 1000) {
+  const directory = mkdtempSync(join(tmpdir(), "restart-diagnostics-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  return createTraceDiagnostics({ directory, budgetMs });
+}
+
+test("auxiliary collection failure joins and preserves its original request without blocking later recovery", async (t) => {
+  const diagnostics = diagnosticFixture(t),
+    cache = new Map(),
+    seen = [];
+  const requests = [
+    { label: "first", kind: "request", requestId: 1 },
+    { label: "second", kind: "request", requestId: 2 },
+  ];
+  const collect = async (request, { signal }) => {
+    assert(signal instanceof AbortSignal);
+    seen.push(request.label);
+    if (request.label === "first")
+      throw new Error("original collector failure");
+    return { trace_id: "original-second", strict_trace: "passed" };
+  };
+  await archiveCompleted(requests, cache, collect, { diagnostics });
+  assert.deepEqual(seen, ["first", "second"]);
+  assert.deepEqual(cache.get("first").request, requests[0]);
+  assert.equal(cache.get("first").report, undefined);
+  assert.equal(cache.get("first").diagnostic.status, "failed");
+  assert.equal(cache.get("second").report.trace_id, "original-second");
+  await archiveCompleted(requests, cache, collect, { diagnostics });
+  assert.deepEqual(
+    seen,
+    ["first", "second"],
+    "collection failure must not trigger a retry",
+  );
+  await assert.rejects(
+    archiveCompleted([{ ...requests[0], requestId: 9 }], cache, collect, {
+      diagnostics,
+    }),
+    /archive label reused/u,
+  );
+});
+
+test("exhausted diagnostic budget retains the request without inventing a successful trace", async (t) => {
+  const diagnostics = diagnosticFixture(t, 0),
+    cache = new Map();
+  let called = false;
+  const request = { label: "after-budget", kind: "request" };
+  await archiveCompleted(
+    [request],
+    cache,
+    async () => {
+      called = true;
+      return { trace_id: "must-not-run" };
+    },
+    { diagnostics },
+  );
+  assert.equal(called, false);
+  assert.deepEqual(cache.get(request.label).request, request);
+  assert.equal(cache.get(request.label).report, undefined);
+  assert.equal(cache.get(request.label).diagnostic.status, "not_collected");
 });

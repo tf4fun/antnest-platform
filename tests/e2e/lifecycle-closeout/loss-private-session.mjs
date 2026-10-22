@@ -64,10 +64,48 @@ export async function collectLossTraces(
   preserve,
   signal,
   errors,
+  traceDiagnostics,
 ) {
   const results = [];
   for (const row of rows) {
     if (signal?.aborted) break;
+    if (traceDiagnostics) {
+      const diagnostic = await traceDiagnostics.run(
+        `loss-collection-${results.length}`,
+        async (localSignal) => {
+          try {
+            return await collect(row, localSignal);
+          } catch (error) {
+            try {
+              await preserve(row, error);
+            } catch (archiveError) {
+              throw new AggregateError(
+                [error, archiveError],
+                "Loss diagnostic collection and archival failed",
+              );
+            }
+            throw error;
+          }
+        },
+      );
+      results.push(
+        diagnostic.status === "passed"
+          ? { ...diagnostic.value, topology: "passed" }
+          : {
+              trace_id: row.traceID,
+              request_id: row.requestID ?? row.requestId,
+              agent_id: row.agentID ?? row.agentId,
+              kind: row.kind,
+              topology:
+                diagnostic.status === "not_collected"
+                  ? "not_collected"
+                  : "failed",
+              strict_trace: "failed",
+              diagnostic,
+            },
+      );
+      continue;
+    }
     try {
       results.push({ ...(await collect(row)), topology: "passed" });
     } catch (error) {

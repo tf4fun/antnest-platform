@@ -17,6 +17,7 @@ import {
 import { dockerClient } from "../lifecycle-closeout/docker.mjs";
 import { inspectDeployment } from "../stage3-base/deployment.mjs";
 import { servePlanRuntimeInspection } from "./runtime-inspection.mjs";
+import { capturePlanRuntimeFiles } from "./runtime-files.mjs";
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const owner = "io.antnest.deployment-admission";
 const names = [
@@ -509,8 +510,15 @@ export async function runPlanDeployment(
         manifest,
         request.agent_ids,
       );
+      const files = await capturePlanRuntimeFiles({
+        directory: checkpoints,
+        runtimes,
+        docker,
+        signal: inspectionSignal,
+      });
       return {
         runtimes,
+        files,
         raw_sha256: createHash("sha256").update(bytes).digest("hex"),
       };
     },

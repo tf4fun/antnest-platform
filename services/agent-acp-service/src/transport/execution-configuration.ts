@@ -4,6 +4,7 @@ import type { ExecutionConfigurationPort } from "../ports/execution-configuratio
 import { activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError } from "../telemetry/diagnostics.js";
 import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
+import { httpFailure } from "./public-error.js";
 
 export const EXECUTION_CONFIGURATION_PATH = "/rpc/agent-acp/apply-execution-snapshot";
 
@@ -45,37 +46,13 @@ function configurationError(error: unknown) {
         : error.status === 413
           ? "configuration_too_large"
           : error.code;
-    return {
-      status: error.status,
-      body: {
-        code,
-        message: error.status === 400 ? "Invalid execution configuration" : error.message,
-        retryable: false,
-      },
-    };
+    return httpFailure(code);
   }
   if (error instanceof DomainError && error.code === "invalid_execution_configuration") {
-    return {
-      status: 400,
-      body: { code: error.code, message: "Invalid execution configuration", retryable: false },
-    };
+    return httpFailure(error.code);
   }
   if (error instanceof DomainError && error.code === "configuration_conflict") {
-    return {
-      status: 409,
-      body: {
-        code: error.code,
-        message: "Execution configuration revision conflicts with current state",
-        retryable: false,
-      },
-    };
+    return httpFailure(error.code);
   }
-  return {
-    status: 503,
-    body: {
-      code: "configuration_unavailable",
-      message: "Execution configuration could not be applied",
-      retryable: true,
-    },
-  };
+  return httpFailure("configuration_unavailable");
 }

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { requestPlanRuntimeInspection } from "./runtime-inspection.mjs";
+import { stepsFor } from "./model.mjs";
 
 const url = new URL("./deployment.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
@@ -610,6 +611,23 @@ for (const valid of [true, false])
               );
               return rows.map((row) => row.Id).join("\n");
             }
+            if (args[0] === "cp") {
+              const index = rows.findIndex((row) =>
+                args[1].startsWith(row.Id + ":"),
+              );
+              assert(index >= 0);
+              const phase = `v${index + 1}-execute`;
+              assert.equal(
+                args[1],
+                `${rows[index].Id}:/workspace/${phase}.txt`,
+              );
+              await writeFile(
+                args[2],
+                stepsFor(phase).find((step) => step.name === "write").arguments
+                  .content,
+              );
+              return "";
+            }
             assert.deepEqual(args, ["inspect", ...rows.map((row) => row.Id)]);
             return raw;
           },
@@ -633,6 +651,17 @@ for (const valid of [true, false])
           createHash("sha256").update(captured).digest("hex"),
         );
         assert(receipt.runtimes.every((row) => row.image_id === id(11)));
+        assert.equal(receipt.files.length, 2);
+        for (const file of receipt.files) {
+          const bytes = await readFile(
+            join(f.directory, "deployment", file.evidence_file),
+          );
+          assert.equal(file.bytes, bytes.length);
+          assert.equal(
+            file.sha256,
+            createHash("sha256").update(bytes).digest("hex"),
+          );
+        }
       }
       assert.equal(
         await readFile(

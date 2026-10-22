@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 import { withMultimodalAgentCleanup } from "./cleanup-evidence.mjs";
 import { preserveFileFailure as preserveNativeFailure } from "../acp-files/failure-evidence.mjs";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -290,14 +291,12 @@ async function rejectInputs(client, profile, sessionId) {
     await assert.rejects(
       client.request("prompt", { sessionId, prompt: [content] }),
       (error) => {
-        assert.equal(error.code, -32020);
-        assert.equal(
-          error.data?.code,
+        assertAdmissionError(
+          error,
           content.type === "audio"
             ? "unsupported_audio_content"
             : "unsupported_resource_content",
         );
-        assert.equal(error.data?.retryable, false);
         return true;
       },
     );

@@ -1,3 +1,5 @@
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
+
 const clone = (v) => structuredClone(v);
 export function closeoutRequestFixture() {
   const connections = [],
@@ -39,13 +41,17 @@ export function closeoutRequestFixture() {
       requestId: String(c.requests.length + 1),
       inputSessionID: params.sessionId ?? null,
     });
+    const initializationResult = {
+      protocolVersion: version,
+      _meta: { "antnest.dev/errors": { version: 1 } },
+    };
     c.initialization = {
       ...identity("initialize"),
       outcome: "succeeded",
-      initializationResult: { protocolVersion: version },
+      initializationResult,
     };
     c.requests.push({ requestId: "1", method: "initialize" });
-    c.raw_frames.push({ id: 1, result: { protocolVersion: version } });
+    c.raw_frames.push({ id: 1, result: clone(initializationResult) });
     connections.push(c);
     function request(name, session, scope) {
       const denied = purpose === "denied-agent" || scope !== undefined;
@@ -78,19 +84,25 @@ export function closeoutRequestFixture() {
       };
       if (denied) {
         const code = scope ? "session_access_denied" : "access_denied";
-        const message = scope
-          ? `Session belongs to another ${scope}`
-          : "Agent access denied";
+        const rejection = admissionErrorReceipt(code);
         Object.assign(row, {
-          failure: message,
-          failureCode: -32020,
-          failureData: { code, retryable: false },
-          rejectionReceipt: { rpcCode: -32020, code, retryable: false },
+          failure: rejection.message,
+          failureCode: rejection.code,
+          failureData: clone(rejection.data),
+          rejectionReceipt: {
+            rpcCode: rejection.code,
+            code,
+            retryable: rejection.data.retryable,
+          },
         });
         if (scope) note.scope = scope;
         c.raw_frames.push({
           id: Number(row.requestId),
-          error: { code: -32020, message, data: clone(row.failureData) },
+          error: {
+            code: rejection.code,
+            message: rejection.message,
+            data: clone(row.failureData),
+          },
         });
       } else {
         row.requestResult =

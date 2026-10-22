@@ -5,6 +5,7 @@ import type { ExecutionAuditPort } from "../ports/execution-audit.js";
 import { activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError, rpcContent } from "../telemetry/diagnostics.js";
 import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
+import { httpFailure } from "./public-error.js";
 import { trustedAuditPrincipal } from "./trusted-identity.js";
 
 const routes = new Map<string, { method: keyof ExecutionAuditPort; name: string }>([
@@ -36,7 +37,7 @@ export async function serveExecutionAudit(
   try {
     const principal = trustedAuditPrincipal(request.headers);
     if (principal === null)
-      throw new RpcRequestError(401, "access_denied", "Trusted management identity is required");
+      throw new RpcRequestError(403, "access_denied", "Trusted management identity is required");
     span?.setAttribute("antnest.organization.id", principal.organizationId);
     const input = await readRpcRequest(request, maxBytes);
     if (span !== undefined) rpcContent(span, "request", input);
@@ -60,32 +61,11 @@ export async function serveExecutionAudit(
 }
 
 function auditFailure(error: unknown) {
-  if (error instanceof RpcRequestError)
-    return {
-      status: error.status,
-      body: { code: error.code, message: error.message, retryable: false },
-    };
-  if (error instanceof ZodError)
-    return {
-      status: 400,
-      body: { code: "invalid_request", message: "Invalid audit query", retryable: false },
-    };
+  if (error instanceof RpcRequestError) return httpFailure(error.code);
+  if (error instanceof ZodError) return httpFailure("invalid_request");
   if (error instanceof DomainError) {
-    const status = new Map([
-      ["access_denied", 403],
-      ["audit_not_found", 404],
-      ["invalid_cursor", 400],
-      ["invalid_request", 400],
-    ]).get(error.code);
-    if (status !== undefined)
-      return { status, body: { code: error.code, message: error.message, retryable: false } };
+    const known = ["access_denied", "audit_not_found", "invalid_cursor", "invalid_request"];
+    if (known.includes(error.code)) return httpFailure(error.code);
   }
-  return {
-    status: 503,
-    body: {
-      code: "execution_audit_unavailable",
-      message: "Execution audit is unavailable",
-      retryable: true,
-    },
-  };
+  return httpFailure("execution_audit_unavailable");
 }

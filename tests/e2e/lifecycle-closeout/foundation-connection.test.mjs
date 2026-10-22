@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
+import {
   foundationConnectionFixture,
   principal,
   setup,
@@ -54,10 +58,10 @@ test(
     for (let i = 0; i < 2; i++) {
       await assert.rejects(
         c.request("prompt", prompt(other), 15000, { rejection: "agent_busy" }),
-        (error) =>
-          error.code === -32020 &&
-          error.data.code === "agent_busy" &&
-          error.data.retryable === false,
+        (error) => {
+          assertAdmissionError(error, "agent_busy");
+          return true;
+        },
       );
       assert.equal(settled, false);
     }
@@ -89,11 +93,12 @@ test(
       );
       assert.deepEqual(actual.params, row.requestParams);
     }
+    const busy = admissionErrorReceipt("agent_busy");
     for (const row of receipts.slice(1))
       assert.deepEqual(row.rejectionReceipt, {
-        rpcCode: -32020,
-        code: "agent_busy",
-        retryable: false,
+        rpcCode: busy.code,
+        code: busy.data.code,
+        retryable: busy.data.retryable,
       });
     assert.deepEqual(f.identities[0].body, {
       access_token: f.browser.accessToken,
@@ -169,10 +174,9 @@ test(
     await assert.rejects(f.client.request("prompt", prompt(other)), (error) => {
       assert(error instanceof AggregateError);
       assert(error.errors.includes(archiveError));
-      assert(
-        error.errors.some(
-          (value) => value.code === -32020 && value.data.code === "agent_busy",
-        ),
+      assertAdmissionError(
+        error.errors.find((value) => value?.data?.code === "agent_busy"),
+        "agent_busy",
       );
       return true;
     });

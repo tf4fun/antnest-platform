@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
+import {
   openPrivateCommandConnection,
   withPrivateCommandConnection,
 } from "../acp-commands/connection.mjs";
@@ -196,22 +200,21 @@ export async function openPrivateProgressConnection(
           `session/${name}`,
           name === "new" ? result?.sessionId : params.sessionId,
         );
-        const barrier =
-          original?.code === -32020 &&
-          original.data?.code === "runtime_barrier_required" &&
-          original.data?.retryable === false;
+        const barrier = original?.data?.code === "runtime_barrier_required";
+        if (barrier) assertAdmissionError(original, "runtime_barrier_required");
         Object.assign(row, {
           outcome: barrier ? "rejected" : original ? "failed" : "succeeded",
         });
-        if (barrier)
+        if (barrier) {
+          const expected = admissionErrorReceipt("runtime_barrier_required");
           Object.assign(row, {
             rejection: "runtime_barrier_required",
             rejectionReceipt: {
-              rpcCode: -32020,
-              code: "runtime_barrier_required",
-              retryable: false,
+              rpcCode: expected.code,
+              ...expected.data,
             },
           });
+        }
         if (!original)
           row.requestReceipt = structuredClone({
             requestId: row.requestId,

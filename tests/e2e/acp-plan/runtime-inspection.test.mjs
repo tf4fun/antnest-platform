@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
+import { stepsFor } from "./model.mjs";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +49,19 @@ async function fixture(t) {
   };
 }
 const proof = () => ({
+  files: agents.map((agent_id, index) => {
+    const phase = `v${index + 1}-execute`;
+    const content = stepsFor(phase).find((step) => step.name === "write")
+      .arguments.content;
+    return {
+      agent_id,
+      container_id: String(index + 1).repeat(64),
+      path: `/workspace/${phase}.txt`,
+      evidence_file: `plan-${phase}.private.bin`,
+      bytes: Buffer.byteLength(content),
+      sha256: createHash("sha256").update(content).digest("hex"),
+    };
+  }),
   raw_sha256: "a".repeat(64),
   runtimes: agents.map((agent_id, index) => ({
     project,
@@ -115,6 +130,24 @@ test("client waits for the host inspection of both live Agent Runtimes before cl
   ]);
 });
 for (const [label, mutate] of [
+  [
+    "missing physical file proof",
+    (value) => {
+      delete value.files;
+    },
+  ],
+  [
+    "foreign physical file source",
+    (value) => {
+      value.files[0].container_id = value.runtimes[1].container_id;
+    },
+  ],
+  [
+    "wrong physical bytes",
+    (value) => {
+      value.files[0].sha256 = "0".repeat(64);
+    },
+  ],
   [
     "stale nonce",
     (value) => {

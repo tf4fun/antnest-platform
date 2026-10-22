@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verdict } from "../../support/ci-shard.mjs";
+import { stage3BusinessFixture } from "./business-completion.fixture.mjs";
 
 const url = new URL("./completion.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
@@ -273,7 +274,14 @@ test("Stage3 completion selection excludes independent fault profiles", () => {
   );
 });
 
-for (const failure of ["none", "outer", "missing-report", "write"]) {
+for (const failure of [
+  "none",
+  "outer",
+  "trace-exit",
+  "missing-report",
+  "missing-logouts",
+  "write",
+]) {
   test(
     "Stage3 completion CLI preserves private evidence: " + failure,
     async () => {
@@ -286,15 +294,18 @@ for (const failure of ["none", "outer", "missing-report", "write"]) {
           project,
         );
         await mkdir(evidence, { recursive: true, mode: 0o700 });
-        const input = fixture();
+        const input = stage3BusinessFixture("base");
+        input.report = { status: "collection_failed", strict_trace: "failed" };
         const originals = new Map();
         for (const [key, name] of [
           ["business", "business.json"],
           ["report", "report.json"],
           ["inventory", "private-inventory.json"],
+          ["logouts", "logout-observations.json"],
           ["cleanup", "cleanup.json"],
         ]) {
           if (failure === "missing-report" && key === "report") continue;
+          if (failure === "missing-logouts" && key === "logouts") continue;
           const data = JSON.stringify(input[key]);
           originals.set(name, data);
           await writeFile(join(evidence, name), data, { mode: 0o600 });
@@ -302,7 +313,11 @@ for (const failure of ["none", "outer", "missing-report", "write"]) {
         if (failure === "write") await mkdir(join(evidence, "completion.json"));
         const result = spawnSync(
           process.execPath,
-          [fileURLToPath(url), project, failure === "outer" ? "1" : "2"],
+          [
+            fileURLToPath(url),
+            project,
+            failure === "outer" ? "1" : failure === "trace-exit" ? "2" : "0",
+          ],
           {
             cwd: directory,
             encoding: "utf8",
@@ -315,11 +330,13 @@ for (const failure of ["none", "outer", "missing-report", "write"]) {
           },
         );
         assert.ifError(result.error);
-        assert.equal(result.status, failure === "none" ? 0 : 1, result.stderr);
-        if (failure === "none") {
+        const accepted = ["none", "missing-report"].includes(failure);
+        assert.equal(result.status, accepted ? 0 : 1, result.stderr);
+        if (accepted) {
           const report = JSON.parse(result.stdout);
-          assert.equal(report.accepted_exit, 2);
-          assert.equal(verdict(2, result.stdout, true), "warning");
+          assert.equal(report.status, "business_passed");
+          assert.equal(report.policy_revision, 1);
+          assert.equal(verdict(0, result.stdout, true), "passed");
           assert.deepEqual(
             JSON.parse(
               await readFile(join(evidence, "completion.json"), "utf8"),
@@ -331,7 +348,7 @@ for (const failure of ["none", "outer", "missing-report", "write"]) {
             0o600,
           );
         } else
-          assert.doesNotMatch(result.stdout, /business_and_topology_passed/u);
+          assert.doesNotMatch(result.stdout, /"status":"business_passed"/u);
         for (const [name, data] of originals)
           assert.equal(await readFile(join(evidence, name), "utf8"), data);
       } finally {

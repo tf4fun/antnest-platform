@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { commandFixture, setup } from "../acp-commands/connection.fixture.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 const url = new URL("./connection.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
   if (
@@ -95,16 +96,20 @@ for (const profile of profiles) {
         if (failing) throw new Error("archive sentinel");
       });
       failing = true;
+      const rejection = admissionErrorReceipt("access_denied");
       await assert.rejects(c.request("new", setup), (error) => {
         assert(error instanceof AggregateError);
-        assert(error.errors.some((e) => e.code === -32020));
+        const rpcError = error.errors.find((e) => e.code === rejection.code);
+        assert(rpcError);
+        assert.equal(rpcError.message, rejection.message);
+        assert.deepEqual(rpcError.data, rejection.data);
         assert(error.errors.some((e) => e.message === "archive sentinel"));
         return true;
       });
       failing = false;
       await c.closeAndWait();
       assert.equal(saved.at(-1).evidence[0].outcome, "failed");
-      assert.equal(saved.at(-1).raw_frames.at(-1).error.code, -32020);
+      assert.deepEqual(saved.at(-1).raw_frames.at(-1).error, rejection);
     },
   );
 }

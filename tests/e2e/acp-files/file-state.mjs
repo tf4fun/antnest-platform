@@ -11,11 +11,41 @@ const exactKeys = (value, keys) =>
   assert.deepEqual(Object.keys(value).sort(), [...keys].sort());
 const reference = (row) => ({
   phase: row.phase,
-  trace_id: row.trace_id,
-  model_span_id: row.model_span_id,
+  ...(Object.hasOwn(row, "trace_id") ? { trace_id: row.trace_id } : {}),
+  ...(Object.hasOwn(row, "model_span_id")
+    ? { model_span_id: row.model_span_id }
+    : {}),
   tool_call_id: row.tool_result.tool_call_id,
 });
 const filename = (version) => `file-v${version}-after-failed-edit.private.bin`;
+
+// Retain the original Trace assertions for the caller's auxiliary diagnostics.
+// Business checkpoints and physical byte receipts do not depend on these IDs.
+export function inspectFileTraceMetadata(requests, files) {
+  assert.equal(new Set(requests.map((row) => row.model_span_id)).size, 32);
+  assert.equal(new Set(requests.map((row) => row.trace_id)).size, 16);
+  for (let index = 0; index < requests.length; index += 2) {
+    const [first, final] = requests.slice(index, index + 2);
+    assert.equal(first.trace_id, final.trace_id);
+    for (const row of [first, final]) {
+      assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
+      assert.match(row.model_span_id ?? "", /^[a-f0-9]{16}$/u);
+    }
+  }
+  for (const file of files) {
+    for (const row of [file.read, file.failed_edit]) {
+      assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
+      assert.match(row.model_span_id ?? "", /^[a-f0-9]{16}$/u);
+    }
+    assert.notEqual(file.read.trace_id, file.failed_edit.trace_id);
+  }
+  assert.equal(
+    new Set(
+      files.flatMap((file) => [file.read.trace_id, file.failed_edit.trace_id]),
+    ).size,
+    4,
+  );
+}
 
 export function inspectFileCheckpoints(files, agents) {
   assert(
@@ -44,17 +74,14 @@ export function inspectFileCheckpoints(files, agents) {
       const row = file[name];
       exactKeys(row, [
         "phase",
-        "trace_id",
-        "model_span_id",
+        ...(Object.hasOwn(row, "trace_id") ? ["trace_id"] : []),
+        ...(Object.hasOwn(row, "model_span_id") ? ["model_span_id"] : []),
         "tool_call_id",
         ...(name === "read" ? ["content", "bytes", "sha256"] : []),
       ]);
       assert.equal(row.phase, phase);
       assert.match(row.tool_call_id ?? "", /^[a-f0-9]{64}$/u);
-      assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
-      assert.match(row.model_span_id ?? "", /^[a-f0-9]{16}$/u);
     }
-    assert.notEqual(file.read.trace_id, file.failed_edit.trace_id);
     assert.equal(file.read.content, item.result.content);
     const bytes = Buffer.from(file.read.content);
     assert.equal(file.read.bytes, bytes.length);
@@ -69,12 +96,6 @@ export function inspectFileCheckpoints(files, agents) {
     ).size,
     4,
     "reused file checkpoint Tool ID",
-  );
-  assert.equal(
-    new Set(
-      files.flatMap((file) => [file.read.trace_id, file.failed_edit.trace_id]),
-    ).size,
-    4,
   );
   return files;
 }
@@ -96,8 +117,6 @@ export function fileStateExpectations(agents, requests, executions) {
       [phase, "final"],
     ]),
   );
-  assert.equal(new Set(requests.map((row) => row.model_span_id)).size, 32);
-  assert.equal(new Set(requests.map((row) => row.trace_id)).size, 16);
   assert.equal(
     new Set(executions.map((row) => row.toolCallId)).size,
     16,
@@ -110,12 +129,7 @@ export function fileStateExpectations(agents, requests, executions) {
     assert.equal(executions[index].agentId, agents[version - 1]);
     assert.equal(executions[index].protocolVersion, version);
     assert.match(executions[index].toolCallId ?? "", /^[a-f0-9]{64}$/u);
-    assert.equal(first.trace_id, final.trace_id);
     assert.equal(first.tool_result, undefined);
-    for (const row of [first, final]) {
-      assert.match(row.trace_id ?? "", /^[a-f0-9]{32}$/u);
-      assert.match(row.model_span_id ?? "", /^[a-f0-9]{16}$/u);
-    }
     assert.deepEqual(final.tool_result, {
       tool_call_id: executions[index].toolCallId,
       tool: item.tool,

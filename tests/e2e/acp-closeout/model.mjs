@@ -92,24 +92,39 @@ function uncertainEffect(payload, phase, results) {
   return { phase, call };
 }
 
-export function startModel(decision = decide) {
+export function startModel(
+  decision = decide,
+  { port = 8080, host = "0.0.0.0" } = {},
+) {
   const requests = [];
   const errors = [];
+  const diagnostics = [];
   return createServer(async (request, response) => {
     const reply = (status, body) => {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(body));
     };
     if (request.method === "GET" && request.url === "/status")
-      return reply(200, { requests, errors });
+      return reply(200, { requests, errors, diagnostics });
     try {
       assert.equal(request.method, "POST");
       assert.equal(request.url, "/v1/chat/completions");
-      assert.equal(request.headers.authorization, "Bearer acp-closeout-model");
-      assert.match(
-        request.headers.traceparent ?? "",
-        /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
+      assert(
+        request.headers.authorization === "Bearer acp-closeout-model",
+        "fixture authorization rejected",
       );
+      const parent =
+        typeof request.headers.traceparent === "string"
+          ? /^00-([a-f0-9]{32})-([a-f0-9]{16})-0[01]$/.exec(
+              request.headers.traceparent,
+            )
+          : null;
+      const trace =
+        parent !== null &&
+        parent[1] !== "0".repeat(32) &&
+        parent[2] !== "0".repeat(16)
+          ? parent
+          : null;
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -128,9 +143,10 @@ export function startModel(decision = decide) {
       requests.push({
         phase: result.phase,
         stage,
-        trace_id: request.headers.traceparent.split("-")[1],
-        model_span_id: request.headers.traceparent.split("-")[2],
+        trace_id: trace?.[1] ?? null,
+        model_span_id: trace?.[2] ?? null,
       });
+      if (trace === null) diagnostics.push("missing_or_invalid_traceparent");
       if (result.hold) return; // Host SIGKILL is released only after this recorded barrier.
       reply(200, {
         choices: [
@@ -163,6 +179,6 @@ export function startModel(decision = decide) {
       );
       reply(400, { error: error.message });
     }
-  }).listen(8080, "0.0.0.0");
+  }).listen(port, host);
 }
 if (process.argv[1]?.endsWith("/model.mjs")) startModel();

@@ -210,6 +210,7 @@ PY`;
 export function createModelFixture({ timeoutMs = 60000 } = {}) {
   const requests = [];
   const errors = [];
+  const diagnostics = [];
   let held = null;
   let release;
   return createServer(async (request, response) => {
@@ -218,7 +219,7 @@ export function createModelFixture({ timeoutMs = 60000 } = {}) {
       response.end(JSON.stringify(payload));
     };
     if (request.method === "GET" && request.url === "/status")
-      return reply(200, { requests, errors, held });
+      return reply(200, { requests, errors, held, diagnostics });
     if (request.method === "POST" && /^\/release\/[12]$/.test(request.url)) {
       if (!held || held.step !== Number(request.url.split("/").at(-1)))
         return reply(409, { error: "no_matching_barrier" });
@@ -229,10 +230,18 @@ export function createModelFixture({ timeoutMs = 60000 } = {}) {
       assert.equal(request.method, "POST");
       assert.equal(request.url, "/v1/chat/completions");
       assert.equal(request.headers.authorization, "Bearer managed-model-test");
-      assert.match(
-        request.headers.traceparent ?? "",
-        /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
-      );
+      const parent =
+        typeof request.headers.traceparent === "string"
+          ? /^00-([a-f0-9]{32})-([a-f0-9]{16})-0[01]$/.exec(
+              request.headers.traceparent,
+            )
+          : null;
+      const trace =
+        parent !== null &&
+        parent[1] !== "0".repeat(32) &&
+        parent[2] !== "0".repeat(16)
+          ? parent
+          : null;
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -256,10 +265,11 @@ export function createModelFixture({ timeoutMs = 60000 } = {}) {
       requests.push({
         phase,
         step,
-        trace_id: request.headers.traceparent.split("-")[1],
-        model_span_id: request.headers.traceparent.split("-")[2],
+        trace_id: trace?.[1] ?? null,
+        model_span_id: trace?.[2] ?? null,
         outcome: "validated",
       });
+      if (trace === null) diagnostics.push("missing_or_invalid_traceparent");
       if (phase === "managed-draining" && step > 0) {
         assert.equal(held, null, "overlapping model barriers");
         held = { phase, step, received_at: Date.now() };

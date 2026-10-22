@@ -35,6 +35,37 @@ Every exception records the specific surface, reason, source and revisit
 condition. An unverified stability status remains pending review, not an
 automatic deferral. Existing draft implementations keep their regression tests.
 
+## Error capability version 1
+
+Both v1 and v2 advertise the
+[shared error catalog](../../../contracts/agent-acp/errors.md) at the top level
+of `initialize`, independently of Bridge or Skill negotiation. Registered
+admission errors now use class-specific numeric codes instead of the previous
+generic `-32020`; clients retain the public `data.code` and must require the
+capability before using its retry guidance. Only the five catalog backoff cases
+supply `retry_after_ms`; Runtime rebuild, reconnect and binding recovery do not
+imply a timer-based replay.
+
+The protocol tests cover fixed safe messages, fallback for unknown errors,
+continued connection usability after refusal and zero execution before accepted
+admission. V1 completion failures after acceptance remain non-retryable,
+including failures that resemble a retryable admission. Database uncertainty
+retains `database_error` / `-32603`; terminal `-32022` and `-32023` remain
+separate from admission. These producer checks do not establish client retry
+behavior or the cross-service workflow.
+
+HTTP routes project their selected public code through the same catalog. Fixed
+messages replace exception text; dependency failures retain their route-specific
+503 classification. Authentication failures remain 401, while authenticated
+business access denial is 403. Session and learning reads retain their existing
+non-enumerating 404 classifications. Skill-source errors retain the strict
+`{error:{code,message}}` envelope required by Skill Registry. SSE error frames
+use the same safe projection and still wait for the response to finish.
+
+Real HTTP regressions cover these boundaries and preserve request cancellation,
+stream delivery deadlines and transport cleanup. Client retry behavior and
+live E2E consumer migration remain separate acceptance work.
+
 ## Coverage States
 
 | State                 | Meaning                                                                                                                          |

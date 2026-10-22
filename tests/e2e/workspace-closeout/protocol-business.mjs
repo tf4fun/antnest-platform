@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 import { assertBarrierRejection } from "../acp-restart/evidence.mjs";
 import { assertCompletedExecution } from "../lifecycle-closeout/foundation-evidence.mjs";
 import { assertAgentDisabled } from "../../support/verification/agent-state.mjs";
@@ -168,7 +169,7 @@ export async function workspaceProtocolBusiness(input, work) {
       prompt: [{ type: "text", text: "must-not-execute" }],
     }),
     (error) => {
-      assert.equal(error.data?.code, "agent_busy");
+      assertAdmissionError(error, "agent_busy");
       return true;
     },
   );
@@ -452,9 +453,7 @@ export async function workspaceProtocolBusiness(input, work) {
       prompt: [{ type: "text", text: "must-not-execute" }],
     }),
     (error) => {
-      assert.equal(error.code, -32020);
-      assert.equal(error.data?.code, "access_denied");
-      assert.equal(error.data?.retryable, false);
+      assertAdmissionError(error, "access_denied");
       return true;
     },
   );

@@ -18,10 +18,10 @@ import {
   configureFoundationPrivate,
   inspectFoundationPrivateDeployment,
 } from "./foundation-private-deployment.mjs";
-import {
-  foundationPrivateAdmission,
-  foundationPublicResult,
-} from "./foundation-private-evidence.mjs";
+import { foundationPublicResult } from "./foundation-private-evidence.mjs";
+import { admitFoundationBusiness } from "./foundation-completion.mjs";
+import { admitLossBusiness } from "./loss-completion.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   configureHealthPrivate,
   inspectHealthPrivateDeployment,
@@ -52,10 +52,7 @@ import {
   restorePrivateAdmission,
   restorePublicResult,
 } from "./restore-private-evidence.mjs";
-import {
-  lossPrivateAdmission,
-  lossPublicResult,
-} from "./loss-private-evidence.mjs";
+import { lossPublicResult } from "./loss-private-evidence.mjs";
 import {
   networkPrivateAdmission,
   networkPublicResult,
@@ -264,12 +261,22 @@ export async function runFoundation(
                             await import("../workspace-closeout/browser-current-flow.mjs")
                           ).runBrowserProfile
                         : undefined;
+    const foundationDiagnostics = ["foundation", "loss"].includes(profile)
+      ? createTraceDiagnostics({
+          directory: config.evidence,
+          signal: abort.signal,
+          budgetMs: 60_000,
+        })
+      : undefined;
     result = await runFoundationFlow(config, docker, abort.signal, scenario, {
       workspaceTraceAuxiliary: profile === "workspace",
+      traceDiagnostics: foundationDiagnostics,
     });
     writeEvidenceFile(config.evidence, "business.json", JSON.stringify(result));
     if (profile === "foundation")
-      admission = foundationPrivateAdmission(result);
+      admission = await admitFoundationBusiness(result, {
+        traceDiagnostics: foundationDiagnostics,
+      });
     if (profile === "health") admission = healthPrivateAdmission(result);
     if (profile === "network") {
       networkFailures(result.networkErrors);
@@ -277,7 +284,9 @@ export async function runFoundation(
     }
     if (profile === "loss") {
       lossFailures(result.lossErrors);
-      admission = lossPrivateAdmission(result);
+      admission = await admitLossBusiness(result, {
+        traceDiagnostics: foundationDiagnostics,
+      });
     }
     if (profile === "restore") {
       restoreFailures(result.restoreErrors);
@@ -433,17 +442,17 @@ export async function runFoundation(
   const code =
     admission?.accepted_exit ??
     foundationAcceptedTraceExitCode(traceEvidence, profile);
-  const reviewed = strictCode === 2 && code === 0;
+  const reviewed =
+    !["foundation", "loss"].includes(profile) && strictCode === 2 && code === 0;
   console.log(
     JSON.stringify({
-      status:
-        profile === "workspace"
-          ? "business_passed"
-          : code === 1
-            ? "business_passed_trace_failed"
-            : profile === "crash"
-              ? "business_and_recovery_topology_passed"
-              : "business_and_topology_passed",
+      status: ["workspace", "foundation", "loss"].includes(profile)
+        ? "business_passed"
+        : code === 1
+          ? "business_passed_trace_failed"
+          : profile === "crash"
+            ? "business_and_recovery_topology_passed"
+            : "business_and_topology_passed",
       ...(profile === "foundation"
         ? foundationPublicResult(result)
         : profile === "health"
@@ -462,7 +471,7 @@ export async function runFoundation(
                       ? workspacePublicResult(result)
                       : result),
       ...(admission ? { private_admission: admission } : {}),
-      ...(profile === "workspace"
+      ...(["workspace", "foundation", "loss"].includes(profile)
         ? { trace_diagnostics: admission.trace_diagnostics }
         : {}),
       deployment,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import {
   assertScopeDenial,
   assertReplayMetadata,
@@ -7,11 +8,7 @@ import {
 } from "./access-evidence.mjs";
 
 for (const scope of ["principal", "Agent"]) {
-  const denial = () => ({
-    code: -32020,
-    message: `Session belongs to another ${scope}`,
-    data: { code: "session_access_denied", retryable: false },
-  });
+  const denial = () => admissionErrorReceipt("session_access_denied");
   test(`same-organization ${scope} denial requires exact error and no private data`, () => {
     assertScopeDenial(denial(), scope);
     for (const mutate of [

@@ -24,7 +24,9 @@ used. Set `ANTNEST_E2E_CONTROLLER_IMAGE` to test a Controller image other than
 To exercise delayed Admin Console span export, run
 `ANTNEST_E2E_ADMIN_SPAN_DELAY_MS=30000 make e2e-rpc-response-loss`.
 This fixture setting changes only the Admin SDK batch interval in this disposable
-stack; the default remains 5000 ms. The same business and strict trace gates apply.
+stack; the default remains 5000 ms. Original strict Trace results remain auxiliary
+diagnostics. Business, authorization, Run persistence, Runtime behavior,
+cancellation and actual cleanup remain blocking checks.
 
 ## Scenario
 
@@ -59,28 +61,21 @@ real publication worker or Temporal; the proxy never retries.
 The client uses public Admin Console audits plus read-only Runtime operation and
 identity inspection. Neither the client nor the proxy has database access or a
 Docker socket. Receipts contain only bounded identities and canonical hashes,
-never credentials or request and response bodies. Propagated HTTP span IDs
-connect each receipt to its Controller CLIENT span and ACP SERVER span; driver
-SQL spans establish the durable effects. Each SDK request is correlated by its
-JSON-RPC ID and connection.
+never credentials or request and response bodies. The business gate uses original Admin Run lists, Run details and complete
+execution event pages together with the original SDK requests and replies. It
+requires all eight completed Runs and durable Tools, 16 model requests, twelve
+joined connections and 22 business requests. Replay and rejection checkpoints
+must leave the persisted execution and model inventory unchanged. Post-Rebuild
+Runs must use the actual replacement Runtime binding. Proxy receipt identity,
+request hashes, actual delivery, deadlines, operation completion and physical
+Runtime cleanup remain required.
 
-The original SDK parameters, results/errors and full raw replies are saved
-privately after each request and after joined connection closure. The inventory
-requires 12 initializations and 22 business requests across the four cases.
-Private collection reuses the existing initialization, Session and ordinary
-request inspectors; a consumer-owned closed-admission checker requires exactly
-four reads and the original `agent_unavailable` error, with no execution.
-Post-Rebuild reads also bind their public Run to the replacement Runtime.
-
-Each publication attempt must own an `agent_controller.execution_publication`
-span and its source read. The oracle rejects missing, foreign or premature SQL.
-Strict timing warnings and unrelated ERROR spans are reported as failures,
-separately from the scoped business and topology result. Only the reviewed
-clock-skew warning (`clock skew adjustment disabled; not applying calculated
-delta of ...`) and the existing private inspectors' precisely owned diagnostics
-are accepted without changing their raw strict failure. The expected two
-closed-admission rejections own their application/RPC error spans. The existing
-CLI exits zero for accepted evidence and one for rejected evidence. Confirmed
+Trace collection, topology, timing and exporter failures are auxiliary. A single
+60-second budget covers the diagnostic collectors and strict report, preserving
+original findings and recording unavailable or unexecuted collections explicitly.
+The actual collectors and exporter are still awaited. Business success is emitted
+only after the resource wrapper has joined all owned connections. Full merge
+admission runs in remote CI; local checks target changed behavior. Confirmed
 external SDK issues are non-blocking under repository policy.
 
 Full Traces stay in the private directory

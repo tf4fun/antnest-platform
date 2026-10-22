@@ -401,6 +401,27 @@ describe("AgentAcpHttpServer", () => {
   ] as const)(
     "returns local %s/%s %s through ACP rather than denying the handshake",
     async (path, version, code) => {
+      const errors = {
+        access_denied: {
+          code: -32010,
+          message: "Agent access is not allowed",
+          data: { code: "access_denied", retryable: false },
+        },
+        configuration_not_ready: {
+          code: -32032,
+          message: "Execution configuration is not ready",
+          data: {
+            code: "configuration_not_ready",
+            retryable: true,
+            retry_after_ms: 1000,
+          },
+        },
+        agent_unavailable: {
+          code: -32035,
+          message: "Agent execution is unavailable",
+          data: { code: "agent_unavailable", retryable: true },
+        },
+      };
       const application = applicationPort();
       application.createSession = vi
         .fn<AcpApplicationPort["createSession"]>()
@@ -424,7 +445,7 @@ describe("AgentAcpHttpServer", () => {
           }),
         ).resolves.toMatchObject({
           id: 2,
-          error: { code: -32020, data: { code } },
+          error: errors[code],
         });
         expect(socket.readyState).toBe(WebSocket.OPEN);
       } finally {

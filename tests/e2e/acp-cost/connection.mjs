@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
@@ -79,13 +80,13 @@ function requestIdentity(
   }
   if (Object.hasOwn(actual, "inputSessionID"))
     assert.equal(actual.inputSessionID, inputSessionID);
-  if (rejection)
+  if (rejection) {
+    const expected = admissionErrorReceipt(rejection);
     assert.deepEqual(actual.rejectionReceipt, {
-      rpcCode: -32020,
-      code: rejection,
-      retryable: false,
+      rpcCode: expected.code,
+      ...expected.data,
     });
-  else
+  } else
     assert.equal(
       actual.rejectionReceipt,
       undefined,

@@ -58,7 +58,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   assert(
     archiveIndex >= 0 &&
       archiveIndex <
-        source.indexOf("admission = foundationPrivateAdmission(result)"),
+        source.indexOf("admission = await admitFoundationBusiness(result, {"),
     "raw business evidence must survive a rejected admission",
   );
   const networkFailureIndex = source.indexOf(
@@ -95,7 +95,7 @@ test("Foundation public summary excludes original RPC and state bodies without c
   assert(
     lossFailureIndex > archiveIndex &&
       lossFailureIndex <
-        source.indexOf("admission = lossPrivateAdmission(result)"),
+        source.indexOf("admission = await admitLossBusiness(result, {"),
     "Loss must archive original business evidence before propagating collection/cleanup failures",
   );
   assert(

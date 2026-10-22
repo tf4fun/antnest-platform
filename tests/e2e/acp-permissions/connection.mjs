@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import {
+  admissionErrorReceipt,
+  assertAdmissionError,
+} from "../../support/acp-errors.mjs";
+import {
   openPrivateCommandConnection,
   withPrivateCommandConnection,
 } from "../acp-commands/connection.mjs";
@@ -319,17 +323,15 @@ export async function openPrivatePermissionConnection(
             : `session/${name}`,
           name === "new" ? result?.sessionId : params.sessionId,
         );
-        const denied =
-          original?.code === -32020 &&
-          original.data?.code === "access_denied" &&
-          original.data?.retryable === false;
+        const denied = original?.data?.code === "access_denied";
+        if (denied) assertAdmissionError(original, "access_denied");
         row.requestParams = structuredClone(params);
         row.outcome = denied ? "rejected" : original ? "failed" : "succeeded";
         if (denied) {
+          const expected = admissionErrorReceipt("access_denied");
           assert.deepEqual(actual.rejectionReceipt, {
-            rpcCode: -32020,
-            code: "access_denied",
-            retryable: false,
+            rpcCode: expected.code,
+            ...expected.data,
           });
           row.rejection = "access_denied";
           row.rejectionReceipt = structuredClone(actual.rejectionReceipt);

@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
 export async function assertAgentDenied(client) {
   await assert.rejects(
     client.request("new", { cwd: "/workspace", mcpServers: [] }),
-    (error) => error.code === -32020 && error.data?.code === "access_denied",
+    (error) => {
+      assertAdmissionError(error, "access_denied");
+      return true;
+    },
   );
   assert.deepEqual(
     client.updates,

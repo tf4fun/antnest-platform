@@ -5,6 +5,7 @@ import { inspect } from "node:util";
 import { writeEvidenceFile } from "../../support/storage.mjs";
 import { createFoundationPrivateAccess } from "./foundation-private-access.mjs";
 import { collectPrivateLossTrace } from "./loss-private-trace.mjs";
+import { inspectLossBusinessEvidence } from "./loss-business.mjs";
 import {
   assertLossOwner,
   closeLossConnections,
@@ -133,6 +134,32 @@ export async function runLoss(input) {
     confirmations: [],
     provider_requests: [],
     lifecycle_admissions: [],
+    original_reads: [],
+    model_states: [],
+  };
+  work.business = {
+    principal: work.principal,
+    creation_principal: work.creation_principal,
+    agents: work.agents,
+    private_connections: [],
+    provider_requests: work.provider_requests,
+  };
+  const readAudit = async (path) => {
+    signal.throwIfAborted();
+    const original = { path };
+    work.original_reads.push(original);
+    try {
+      original.body = await input.json(path, {
+        onResponse(receipt) {
+          original.response = receipt;
+        },
+      });
+      signal.throwIfAborted();
+      return original.body;
+    } catch (error) {
+      original.failure = inspect(error, { depth: 8 });
+      throw error;
+    }
   };
   const modelState = async () => {
     const response = await fetch(config.model + "/status", {
@@ -140,17 +167,25 @@ export async function runLoss(input) {
     });
     assert.equal(response.status, 200);
     const state = await response.json();
+    work.model_states.push(state);
     assert.deepEqual(
       state.errors,
       [],
       "model fixture rejected unexpected execution",
     );
+    assert(
+      Array.isArray(state.requests),
+      "original Loss model inventory required",
+    );
+    work.provider_requests = state.requests;
+    signal.throwIfAborted();
     return state.requests;
   };
   const access = await createFoundationPrivateAccess(config, {
     signal,
     secrets: input.traceSecrets,
     collectTrace: collectPrivateLossTrace,
+    traceDiagnostics: input.traceDiagnostics,
   });
   const clients = [],
     errors = [],
@@ -178,6 +213,7 @@ export async function runLoss(input) {
             ...input,
             owner,
             modelState,
+            readAudit,
             reader,
             runtimeRead,
             access,
@@ -200,7 +236,34 @@ export async function runLoss(input) {
       } catch (error) {
         errors.push(error);
       }
-      work.provider_requests = calls;
+    } else errors.push(signal.reason);
+    calls = work.provider_requests;
+    work.business.provider_requests = calls;
+    try {
+      work.business.private_connections = access.snapshots();
+      signal.throwIfAborted();
+      work.business_summary = inspectLossBusinessEvidence(work.business);
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      // The original business archive is a hard gate, before any auxiliary
+      // Trace collection. Partial reads and original failures survive too.
+      writeEvidenceFile(
+        config.evidence,
+        "loss-business-collection.private.json",
+        JSON.stringify({
+          evidence: work.business,
+          summary: work.business_summary,
+          original_reads: work.original_reads,
+          model_states: work.model_states,
+          errors: errors.map((error) => inspect(error, { depth: 8 })),
+        }),
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+    if (!signal.aborted) {
       try {
         await flushTraceProducers(config, input.docker);
       } catch (error) {
@@ -221,12 +284,13 @@ export async function runLoss(input) {
         );
         requestTraces = await collectLossTraces(
           rows,
-          (row) =>
+          (row, localSignal = signal) =>
             access.collect(
               row,
               row.kind === "ordinary"
                 ? calls.filter((c) => c.phase === row.phase)
                 : [],
+              localSignal,
             ),
           (row, error) =>
             writeEvidenceFile(
@@ -236,14 +300,31 @@ export async function runLoss(input) {
             ),
           signal,
           errors,
+          input.traceDiagnostics,
         );
       } catch (error) {
         errors.push(error);
       }
-    } else errors.push(signal.reason);
+    }
     try {
       await access.closeAndWait();
       cleanup = true;
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      writeEvidenceFile(
+        config.evidence,
+        "loss-business-progress.private.json",
+        JSON.stringify({
+          evidence: work.business,
+          summary: work.business_summary,
+          private_connections: access.snapshots(),
+          original_reads: work.original_reads,
+          model_states: work.model_states,
+          errors: errors.map((error) => inspect(error, { depth: 8 })),
+        }),
+      );
     } catch (error) {
       errors.push(error);
     }
@@ -263,6 +344,8 @@ export async function runLoss(input) {
       private_connections: access.snapshots(),
       private_state_receipts: access.stateReceipts(),
       private_loss: work,
+      private_business: work.business,
+      execution: work.business_summary,
       private_cleanup_completed: cleanup,
     },
     errors,
@@ -282,6 +365,7 @@ async function lossCase(
     owner,
     traceSecrets,
     modelState,
+    readAudit,
     reader,
     runtimeRead,
     access,
@@ -298,7 +382,7 @@ async function lossCase(
   });
   const agentID = created.agentID;
   const initial = await ready(agentID);
-  const owned = { id: agentID, mode, initial };
+  const owned = { id: agentID, mode, initial, replays: [] };
   work.agents.push(owned);
   assertLossOwner(work.principal, work.creation_principal, owned);
   const open = async () => {
@@ -306,20 +390,53 @@ async function lossCase(
     clients.push(next);
     return next;
   };
-  const auditPath = `/api/admin/execution-audits?agent_id=${agentID}`;
+  const auditPath = () =>
+    `/api/admin/execution-audits?agent_id=${encodeURIComponent(agentID)}&session_id=${encodeURIComponent(owned.session_id)}&limit=100`;
   const completedRun = async (agent, prior) => {
-    const page = await json(auditPath);
+    const page = await readAudit(auditPath());
     assert.equal(page.next_cursor, null);
     assert.equal(page.items.length, prior ? 2 : 1);
     const latest = page.items.filter((r) => r.run_id !== prior?.run_id);
     assert.equal(latest.length, 1);
     return assertRestoreRun(
-      [await json(`/api/admin/execution-audits/${latest[0].run_id}`)],
+      [
+        await readAudit(
+          `/api/admin/execution-audits/${encodeURIComponent(latest[0].run_id)}`,
+        ),
+      ],
       agent,
       latest[0].session_id,
     );
   };
   let client;
+  const checkpoint = async (state) => {
+    state.page = await readAudit(auditPath());
+    state.model_requests = await modelState();
+    state.updates = client.snapshot().updates;
+  };
+  const replayHistory = async () => {
+    const replay = {
+      connection_index: clients.indexOf(client),
+      request_id: null,
+      before: {},
+      after: null,
+    };
+    owned.replays.push(replay);
+    await checkpoint(replay.before);
+    const requestIndex = client.snapshot().evidence.length;
+    let value;
+    try {
+      value = await history(client, owned.session_id);
+    } finally {
+      // The recorder owns the real, connection-local ID; never infer it from
+      // the number of previous requests or a Trace identifier.
+      replay.request_id =
+        client.snapshot().evidence[requestIndex]?.requestId ?? null;
+    }
+    replay.after = { history: value };
+    await checkpoint(replay.after);
+    return value;
+  };
   try {
     client = await open();
     const sessionId = (
@@ -330,22 +447,22 @@ async function lossCase(
     const beforeRun = await completedRun(initial.agent);
     assert.equal(beforeRun.session_id, sessionId);
     owned.before_run = beforeRun;
-    const baselineAudits = await json(auditPath);
+    const baselineAudits = await readAudit(auditPath());
     const baselineRequests = await modelState();
-    const savedHistory = await history(client, sessionId);
-    assertReplayAudits(baselineAudits, await json(auditPath));
+    const savedHistory = await replayHistory();
+    assertReplayAudits(baselineAudits, owned.replays[0].after.page);
     assert(
       savedHistory.some((event) => event.update.sessionUpdate === "tool_call"),
     );
     assert.deepEqual(
-      await modelState(),
+      owned.replays[0].after.model_requests,
       baselineRequests,
       "load replay invoked model",
     );
     await closeLossConnections([client], errors);
     client = await open();
-    assert.deepEqual(await history(client, sessionId), savedHistory);
-    assertReplayAudits(baselineAudits, await json(auditPath));
+    assert.deepEqual(await replayHistory(), savedHistory);
+    assertReplayAudits(baselineAudits, owned.replays[1].after.page);
     assert.equal((await reader.runtimeCursor()).initialized, true);
     const stopped =
       mode === "cold" ? await stopController(config, docker) : undefined;
@@ -450,22 +567,37 @@ async function lossCase(
       connection_closed: connection.closed,
       receipt_index: access.stateReceipts().length - 1,
     });
+    owned.denial = {
+      connection_index: clients.indexOf(client),
+      request_id: null,
+      before: {},
+      after: null,
+    };
+    await checkpoint(owned.denial.before);
     const notifications = client.updates.length;
-    await expectLossDenial(() =>
-      client.request(
-        "prompt",
-        {
-          sessionId,
-          prompt: [{ type: "text", text: `c5-${mode}-denied` }],
-        },
-        15000,
-        { rejection: "agent_unavailable" },
-      ),
-    );
+    const denialIndex = client.snapshot().evidence.length;
+    try {
+      await expectLossDenial(() =>
+        client.request(
+          "prompt",
+          {
+            sessionId,
+            prompt: [{ type: "text", text: `c5-${mode}-denied` }],
+          },
+          15000,
+          { rejection: "agent_unavailable" },
+        ),
+      );
+    } finally {
+      owned.denial.request_id =
+        client.snapshot().evidence[denialIndex]?.requestId ?? null;
+    }
     assert.equal(client.updates.length, notifications);
-    assertReplayAudits(baselineAudits, await json(auditPath));
+    owned.denial.after = {};
+    await checkpoint(owned.denial.after);
+    assertReplayAudits(baselineAudits, owned.denial.after.page);
     assert.deepEqual(
-      await modelState(),
+      owned.denial.after.model_requests,
       baselineRequests,
       "denied prompt invoked model",
     );
@@ -491,10 +623,10 @@ async function lossCase(
     owned.replacement = replacement;
     assertReplacement(initial, replacement);
     client = await open();
-    assert.deepEqual(await history(client, sessionId), savedHistory);
-    assertReplayAudits(baselineAudits, await json(auditPath));
+    assert.deepEqual(await replayHistory(), savedHistory);
+    assertReplayAudits(baselineAudits, owned.replays[2].after.page);
     assert.deepEqual(
-      await modelState(),
+      owned.replays[2].after.model_requests,
       baselineRequests,
       "recovery history replay invoked model",
     );
@@ -503,10 +635,12 @@ async function lossCase(
     assert.equal(afterRun.session_id, sessionId);
     owned.after_run = afterRun;
     assert.deepEqual(
-      await json(`/api/admin/execution-audits/${beforeRun.run_id}`),
+      await readAudit(
+        `/api/admin/execution-audits/${encodeURIComponent(beforeRun.run_id)}`,
+      ),
       beforeRun,
     );
-    const completedAudits = await json(auditPath);
+    const completedAudits = await readAudit(auditPath());
     await closeLossConnections([client], errors);
     const beforeRestart = await json(eventsPath);
     await startController(config, docker, await stopController(config, docker));
@@ -523,7 +657,7 @@ async function lossCase(
     );
     const stable = await ready(agentID);
     assert.deepEqual(physicalIdentity(stable), physicalIdentity(replacement));
-    assertReplayAudits(completedAudits, await json(auditPath));
+    assertReplayAudits(completedAudits, await readAudit(auditPath()));
     assert.equal(stable.container.Id, replacement.container.Id);
     assert.deepEqual(
       await json(eventsPath),
@@ -551,6 +685,28 @@ async function lossCase(
         [`c5-${mode}-after`, "reply"],
       ],
     );
+    // Capture the complete original inventory while this Agent still exists.
+    // Each detail and event page remains the exact Admin response DTO.
+    owned.audit = { page: null, all: [] };
+    owned.audit.page = await readAudit(auditPath());
+    assert.equal(
+      owned.audit.page.next_cursor,
+      null,
+      "Loss Run inventory is truncated",
+    );
+    assert.equal(owned.audit.page.items.length, 2);
+    for (const item of owned.audit.page.items) {
+      const saved = { run: null, events: null };
+      owned.audit.all.push(saved);
+      const path = `/api/admin/execution-audits/${encodeURIComponent(item.run_id)}`;
+      saved.run = await readAudit(path);
+      saved.events = await readAudit(path + "/events?limit=100");
+      assert.equal(
+        saved.events.next_cursor,
+        null,
+        "Loss Run event evidence is truncated",
+      );
+    }
     const deleted = await command("delete", agentID, {});
     assert.deepEqual(await resources(agentID), { containers: [], volumes: [] });
     return {

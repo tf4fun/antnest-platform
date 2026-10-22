@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { terminalStatus } from "./evidence.mjs";
 
 const phases = [1, 2].flatMap((version) =>
@@ -175,13 +176,13 @@ export function indexProgressRequests({
           row.rejection,
           barrier ? "runtime_barrier_required" : undefined,
         );
-        if (barrier)
+        if (barrier) {
+          const expected = admissionErrorReceipt("runtime_barrier_required");
           assert.deepEqual(row.rejectionReceipt, {
-            rpcCode: -32020,
-            code: "runtime_barrier_required",
-            retryable: false,
+            rpcCode: expected.code,
+            ...expected.data,
           });
-        else assert.equal(row.rejectionReceipt, undefined);
+        } else assert.equal(row.rejectionReceipt, undefined);
         const expected = {
           ...structuredClone(row),
           label: `${phase}:${role}:${row.method}`,

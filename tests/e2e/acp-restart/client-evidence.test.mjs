@@ -3,6 +3,7 @@ import test from "node:test";
 import { commandFixture, setup } from "../acp-commands/connection.fixture.mjs";
 import { replayRequest } from "../managed-mcp/protocol.mjs";
 import { until } from "../acp-closeout/wait.mjs";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 
 const implementation = await import("./client-evidence.mjs").catch((error) => {
   if (
@@ -61,6 +62,10 @@ const meta = {
 let identity = 0;
 function controlledClient(version = 1, options = {}) {
   const n = ++identity;
+  const initializationResult = {
+    protocolVersion: version,
+    _meta: { "antnest.dev/errors": { version: 1 } },
+  };
   const client = {
     boundary: "private-acp",
     transport: "websocket",
@@ -68,9 +73,9 @@ function controlledClient(version = 1, options = {}) {
     agentId: "agent",
     connectionTraceID: n.toString(16).padStart(32, "0"),
     clientSpanID: n.toString(16).padStart(16, "0"),
-    initializationResult: { protocolVersion: version },
+    initializationResult,
     requests: [{ requestId: "1", method: "initialize" }],
-    rawFrames: [{ id: 1, result: { protocolVersion: version } }],
+    rawFrames: [{ id: 1, result: structuredClone(initializationResult) }],
     async request(name, params) {
       const requestId = String(client.requests.length + 1);
       if (!options.noWire)
@@ -81,10 +86,8 @@ function controlledClient(version = 1, options = {}) {
         });
       if (options.fail?.(name)) throw originalFailure;
       if (params.prompt?.[0]?.text === "unresolved-denied") {
-        const error = Object.assign(new Error("Runtime barrier"), {
-          code: -32020,
-          data: { code: "runtime_barrier_required", retryable: false },
-        });
+        const rejection = admissionErrorReceipt("runtime_barrier_required");
+        const error = Object.assign(new Error(rejection.message), rejection);
         client.rawFrames.push({
           id: Number(requestId),
           error: {

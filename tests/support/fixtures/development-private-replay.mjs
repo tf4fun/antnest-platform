@@ -273,6 +273,7 @@ export async function developmentPrivateReplayFixture(
                   ? {
                       protocolVersion: 1,
                       agentCapabilities: { loadSession: true },
+                      _meta: { "antnest.dev/errors": { version: 1 } },
                     }
                   : {},
               }),

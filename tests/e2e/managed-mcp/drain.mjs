@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
-export const isBusyDenied = (error) =>
-  error.code === -32020 &&
-  error.data?.code === "agent_busy" &&
-  error.data?.retryable === false;
+export const isBusyDenied = (error) => {
+  try {
+    assertAdmissionError(error, "agent_busy");
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 export function assertClosedRun(state, audit, expected) {
   assert.equal(state.agent_id, expected.agentId);

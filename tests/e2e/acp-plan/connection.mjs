@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import {
   openPrivateCommandConnection,
   withPrivateCommandConnection,
@@ -22,13 +23,13 @@ function identity(client, actual, method, sessionId, { phase, denial } = {}) {
   const inputSessionID = wire[0].sessionId ?? null;
   if (Object.hasOwn(actual, "inputSessionID"))
     assert.equal(actual.inputSessionID, inputSessionID);
-  if (denial)
+  if (denial) {
+    const expected = admissionErrorReceipt(denial);
     assert.deepEqual(actual.rejectionReceipt, {
-      rpcCode: -32020,
-      code: denial,
-      retryable: false,
+      rpcCode: expected.code,
+      ...expected.data,
     });
-  else
+  } else
     assert.equal(
       actual.rejectionReceipt,
       undefined,
@@ -115,15 +116,10 @@ export async function runPlanPrompt(
   const expected = caseFor(phase);
   assert.equal(typeof release, "function");
   client.updates.length = 0;
+  const input = [{ type: "text", text: phase }];
   let completed = false;
   const observed = Promise.resolve()
-    .then(() =>
-      client.request(
-        "prompt",
-        { sessionId, prompt: [{ type: "text", text: phase }] },
-        120000,
-      ),
-    )
+    .then(() => client.request("prompt", { sessionId, prompt: input }, 120000))
     .then(
       (response) => {
         completed = version === 1;
@@ -174,6 +170,7 @@ export async function runPlanPrompt(
       "foreign live Plan Session",
     );
     return {
+      input: structuredClone(input),
       response: result.response,
       request: planRequestIdentity(client, "session/prompt", sessionId, {
         phase,
