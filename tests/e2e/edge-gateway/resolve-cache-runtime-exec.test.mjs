@@ -6,6 +6,7 @@ import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspect } from "node:util";
+import { runInNewContext } from "node:vm";
 
 const container = "a".repeat(64);
 const load = () => import("./resolve-cache-runtime-exec.mjs");
@@ -429,4 +430,323 @@ test("a result receipt does not release ownership before remote exit", async () 
   assert.equal(child.exitCode, null);
   assert.equal(await run, "complete");
   assert.equal(child.exitCode, 0);
+});
+
+test("the actual Runtime process parser accepts complete Linux command names", async () => {
+  const { parseRuntimeProcessStat } = await load();
+  for (const name of [
+    "",
+    "sleep",
+    "name with spaces",
+    "name ) with (parens)",
+    "fake) Z 1 999 tail",
+    "line\nbreak",
+    "carriage\rreturn",
+    "tab\tname",
+    "名字\n) R 0 999 tail",
+  ]) {
+    const stat = `42 (${name}) S 1 40 40 0\n`;
+    assert.deepEqual(parseRuntimeProcessStat(stat, "42"), {
+      pid: 42,
+      state: "S",
+      group: 40,
+    });
+  }
+  assert.deepEqual(parseRuntimeProcessStat("1 () t 0 0 0 0\n", "1"), {
+    pid: 1,
+    state: "t",
+    group: 0,
+  });
+  const maximum = String(Number.MAX_SAFE_INTEGER);
+  assert.deepEqual(
+    parseRuntimeProcessStat(
+      `${maximum} (boundary) R ${maximum} ${maximum} 0 0\n`,
+      maximum,
+    ),
+    {
+      pid: Number.MAX_SAFE_INTEGER,
+      state: "R",
+      group: Number.MAX_SAFE_INTEGER,
+    },
+  );
+});
+
+test("the actual Runtime process parser rejects malformed or mismatched inventory", async () => {
+  const { parseRuntimeProcessStat } = await load();
+  for (const [stat, expectedPID] of [
+    ["not a process stat", "42"],
+    ["42 sleep S 1 40 40 0", "42"],
+    ["42 (sleep S 1 40 40 0", "42"],
+    ["42 (sleep) S", "42"],
+    ["42 (sleep) S 1 40", "42"],
+    ["42 (x) S 1 40 ", "42"],
+    ["42 (sleep) SS 1 40 40 0", "42"],
+    ["42 (sleep) 1 1 40 40 0", "42"],
+    ["0 (sleep) S 1 40 40 0", "0"],
+    ["9007199254740992 (sleep) S 1 40 40 0", "9007199254740992"],
+    ["42 (sleep) S -1 40 40 0", "42"],
+    ["42 (sleep) S 1 -40 40 0", "42"],
+    ["42 (sleep) S 1.5 40 40 0", "42"],
+    ["42 (sleep) S 1 40.5 40 0", "42"],
+    ["42 (sleep) S 9007199254740992 40 40 0", "42"],
+    ["42 (sleep) S 1 9007199254740992 40 0", "42"],
+    ["42 (sleep) S 1 40 40 0", "43"],
+    ["42 (sleep) S 1 40 40 0", "not-a-pid"],
+  ]) {
+    assert.throws(
+      () => parseRuntimeProcessStat(stat, expectedPID),
+      (error) => {
+        assert.equal(error.message, "invalid process inventory");
+        assert.deepEqual(error.inventory, {
+          pid: expectedPID,
+          stat,
+          stat_bytes: Buffer.byteLength(stat),
+          stat_truncated: false,
+        });
+        return true;
+      },
+    );
+  }
+});
+
+test("the same Runtime parser serializes without module closures", async () => {
+  const { parseRuntimeProcessStat } = await load();
+  const parse = runInNewContext(`(${parseRuntimeProcessStat.toString()})`, {
+    Buffer,
+    TextDecoder,
+  });
+  assert.deepEqual(
+    { ...parse("42 (line\n) S 0 999 tail) S 1 40 40 0", "42") },
+    {
+      pid: 42,
+      state: "S",
+      group: 40,
+    },
+  );
+  assert.throws(
+    () => parse("42 (sleep) S 1 40 40 0", "43"),
+    (error) => {
+      assert.equal(error.message, "invalid process inventory");
+      assert.equal(error.inventory.pid, "43");
+      assert.equal(error.inventory.stat, "42 (sleep) S 1 40 40 0");
+      return true;
+    },
+  );
+});
+
+test("malformed Runtime inventory retains bounded original UTF-8 diagnostics", async () => {
+  const { parseRuntimeProcessStat } = await load();
+  for (const [stat, retained] of [
+    ["x".repeat(12000), "x".repeat(8192)],
+    ["x".repeat(8191) + "€tail", "x".repeat(8191)],
+    ["x".repeat(8189) + "€tail", "x".repeat(8189) + "€"],
+  ]) {
+    assert.throws(
+      () => parseRuntimeProcessStat(stat, "42"),
+      (error) => {
+        assert.equal(error.message, "invalid process inventory");
+        assert.deepEqual(error.inventory, {
+          pid: "42",
+          stat: retained,
+          stat_bytes: Buffer.byteLength(stat),
+          stat_truncated: true,
+        });
+        assert(Buffer.byteLength(error.inventory.stat) <= 8192);
+        assert.equal(error.inventory.stat.includes("\uFFFD"), false);
+        return true;
+      },
+    );
+  }
+});
+
+function inventoryReceiptProcess(inventory, stderr = "") {
+  const failure = {
+    kind: "failure",
+    name: "Error",
+    message: "invalid process inventory",
+    code: null,
+    shell: {
+      exit_code: 0,
+      signal: null,
+      stderr: "",
+      stderr_bytes: 0,
+      stderr_truncated: false,
+    },
+    inventory,
+  };
+  const output =
+    JSON.stringify(failure) +
+    "\n" +
+    JSON.stringify({ kind: "joined", joined: false }) +
+    "\n";
+  return (_command, _invocation, options) =>
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+        process.stdout.write(JSON.stringify({kind:"ready"})+"\\n");
+        process.stdin.once("data", () => {
+          process.stdout.write(${JSON.stringify(output)});
+          process.stderr.write(${JSON.stringify(stderr)});
+          process.stdin.destroy();
+          process.exitCode = 1;
+        });
+      `,
+      ],
+      options,
+    );
+}
+
+test("malformed remote inventory preserves private evidence and cannot certify cleanup", async () => {
+  const { joinedRuntimeExec } = await load();
+  const secret = "fixture-inventory-credential-canary";
+  const raw = `private-inventory-canary ${secret}\n${"x".repeat(12000)}`;
+  const inventory = {
+    pid: "42",
+    stat: raw.slice(0, 8192),
+    stat_bytes: Buffer.byteLength(raw),
+    stat_truncated: true,
+  };
+  const invocation = args("true");
+  invocation.splice(1, 0, "-e", `PRIVATE_TOKEN=${secret}`);
+  await assert.rejects(
+    joinedRuntimeExec({
+      args: invocation,
+      spawnProcess: inventoryReceiptProcess(
+        inventory,
+        "Runtime sampling failed\n",
+      ),
+      timeoutMS: 5000,
+    }),
+    (error) => {
+      assert.equal(error.remoteCleanupPending, true);
+      assert.equal(error.runtimeExec.ready, true);
+      assert.equal(error.runtimeExec.result_seen, false);
+      assert.equal(error.runtimeExec.joined, false);
+      assert.equal(error.runtimeExec.forced, false);
+      assert.equal(error.runtimeExec.exit_code, 1);
+      assert.equal(error.runtimeExec.signal, null);
+      assert.equal(
+        error.runtimeExec.remote?.message,
+        "invalid process inventory",
+      );
+      assert.equal(error.runtimeExec.remote.shell.exit_code, 0);
+      const retained = error.runtimeExec.remote.inventory;
+      assert.equal(retained.pid, "42");
+      assert(retained.stat.startsWith("private-inventory-canary [redacted]\n"));
+      assert(Buffer.byteLength(retained.stat) <= 8192);
+      assert.equal(retained.stat_bytes, Buffer.byteLength(raw));
+      assert.equal(retained.stat_truncated, true);
+      assert.equal(JSON.stringify(error.runtimeExec).includes(secret), false);
+      assert.equal(Object.keys(error).includes("runtimeExec"), false);
+      assert.equal(
+        JSON.stringify(error).includes("private-inventory-canary"),
+        false,
+      );
+      assert.equal(
+        inspect(new AggregateError([error])).includes(
+          "private-inventory-canary",
+        ),
+        false,
+      );
+      return true;
+    },
+  );
+});
+
+test("private inventory redacts a credential prefix clipped at the byte limit", async () => {
+  const { joinedRuntimeExec } = await load();
+  const secret = "fixture-inventory-long-credential-canary";
+  const invocation = args("true");
+  invocation.splice(1, 0, "-e", `PRIVATE_TOKEN=${secret}`);
+  await assert.rejects(
+    joinedRuntimeExec({
+      args: invocation,
+      spawnProcess: inventoryReceiptProcess({
+        pid: "42",
+        stat: "x".repeat(8180) + secret.slice(0, 12),
+        stat_bytes: 8180 + Buffer.byteLength(secret),
+        stat_truncated: true,
+      }),
+      timeoutMS: 5000,
+    }),
+    (error) => {
+      assert.equal(error.remoteCleanupPending, true);
+      const inventory = error.runtimeExec.remote?.inventory;
+      assert(inventory);
+      assert.equal(inventory.stat, "x".repeat(8180) + "[redacted]");
+      assert(Buffer.byteLength(inventory.stat) <= 8192);
+      assert.equal(inventory.stat_truncated, true);
+      return true;
+    },
+  );
+});
+
+test("malformed inventory receipts are rejected rather than retained as trusted diagnostics", async () => {
+  const { joinedRuntimeExec } = await load();
+  const inventory = {
+    pid: "42",
+    stat: "bad process stat",
+    stat_bytes: 16,
+    stat_truncated: false,
+  };
+  for (const invalid of [
+    { ...inventory, pid: 42 },
+    { ...inventory, stat: 7 },
+    { ...inventory, stat_bytes: -1 },
+    { ...inventory, stat_bytes: 1.5 },
+    { ...inventory, stat_truncated: "false" },
+    { ...inventory, stat: "bad", stat_bytes: 4, stat_truncated: true },
+    { ...inventory, unexpected: true },
+  ]) {
+    await assert.rejects(
+      joinedRuntimeExec({
+        args: args("true"),
+        spawnProcess: inventoryReceiptProcess(invalid),
+        timeoutMS: 5000,
+      }),
+      (error) => {
+        assert.equal(error.message, "Runtime exec receipt invalid");
+        assert.equal(error.remoteCleanupPending, true);
+        assert.equal(error.runtimeExec.remote, null);
+        return true;
+      },
+    );
+  }
+});
+
+test("attachment stderr still rejects an otherwise successful joined receipt", async () => {
+  const { joinedRuntimeExec } = await load();
+  await assert.rejects(
+    joinedRuntimeExec({
+      args: args("true"),
+      spawnProcess: (_command, _invocation, options) =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `
+            process.stdout.write(JSON.stringify({kind:"ready"})+"\\n");
+            process.stdin.once("data", () => {
+              process.stdout.write(JSON.stringify({kind:"result",output:"complete"})+"\\n");
+              process.stdout.write(JSON.stringify({kind:"joined",joined:true})+"\\n");
+              process.stderr.write("joined-stderr-canary\\n");
+              process.stdin.destroy();
+            });
+          `,
+          ],
+          options,
+        ),
+      timeoutMS: 5000,
+    }),
+    (error) => {
+      assert.equal(error.message, "Runtime exec reported failure");
+      assert.equal(error.remoteCleanupPending, false);
+      assert.equal(error.runtimeExec.joined, true);
+      assert.equal(error.runtimeExec.exit_code, 0);
+      assert.equal(error.runtimeExec.stderr, "joined-stderr-canary\n");
+      return true;
+    },
+  );
 });

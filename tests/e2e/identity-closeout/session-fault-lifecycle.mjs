@@ -156,12 +156,23 @@ export async function finishSessionFault({
       // client-monotonic bound. The shared RPC's 5s cap cannot renew that cache
       // budget: validUntil is anchored to its actual start, not its delivery.
       const deadline = checkpoint.stream.headers_at + 17000;
-      const remaining = deadline - now();
+      let observed = now();
+      let remaining = deadline - observed;
       assert(Number.isFinite(remaining) && remaining <= 17000);
-      if (remaining >= 0) await wait(remaining + 1, undefined, { signal });
+      while (remaining >= 0) {
+        await wait(remaining + 1, undefined, { signal });
+        signal?.throwIfAborted();
+        const next = now();
+        assert(
+          Number.isFinite(next) && next > observed,
+          "HTTP denial authority/cache wait did not advance the clock",
+        );
+        observed = next;
+        remaining = deadline - observed;
+      }
       signal?.throwIfAborted();
       assert(
-        now() > deadline,
+        observed > deadline,
         "HTTP denial preceded original authority/cache upper bound",
       );
     }
