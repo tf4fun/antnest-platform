@@ -223,7 +223,7 @@ changes nothing and cannot acknowledge another Agent's pending command.
 This storage API does not start or confirm a Temporal workflow on its own. The
 orchestration batch must prove that the engine accepted the original command
 before confirming it; timeout, cancellation or an unknown response must leave
-the command pending. The bounded observation worker, durable ensure-start,
+the command pending. The bounded observation worker,
 manual/notify presentation and actual ACP mid-tool-crash recovery acceptance
 remain required before the complete recovery workflow is delivered.
 
@@ -249,7 +249,29 @@ Cancellation stops subsequent dependency calls at admission boundaries. A
 cancelled preparation does not begin a new lifecycle; cancellation after a
 commit leaves its original command pending. This application service never
 starts a workflow or acknowledges a pending start. Its observation worker
-and Temporal ensure-start integration remain separate delivery batches.
+remains a separate delivery batch.
+
+### Original Workflow Start
+
+`EnsureRuntimeBarrierRecoveryStarted` starts only the receipt's original
+`LifecycleCommand`, using `agent-rebuild/<request_id>` and the existing
+`LifecycleWorkflow` task queue. It uses existing running executions and rejects
+duplicate closed executions. The business row, an admission Update or an old
+Update handle cannot substitute for engine acceptance.
+
+For a new, running or retained closed execution, the adapter checks the exact
+workflow/run identity, type, task queue and known execution status. It reads
+the original Started event and requires one input equal to the full original
+command. Missing or expired history, conflicting input and unknown dependency
+results remain errors; no replacement workflow or refreshed command is sent.
+Success proves acceptance, not successful lifecycle completion.
+
+Each dependency call uses the caller's context and settles before return.
+Cancellation prevents subsequent dispatch and cannot become a successful
+confirmation after a delayed SDK response. This adapter never acknowledges
+the database pending row. The later worker must confirm the original request
+and fingerprint only after successful engine verification; a crash between
+these steps leaves the same command available for retry.
 
 ## Lifecycle Settlement
 
