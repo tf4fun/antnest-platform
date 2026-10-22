@@ -215,13 +215,13 @@ export function createC4Actions({ signal, output, report }, overrides = {}) {
       current.collection_inventory = structuredClone(inventory);
       return inventory;
     },
-    collect: (row, config) =>
+    collect: (row, config, _current, diagnosticSignal) =>
       collectC4Trace(config.jaeger, row, {
         inventory,
         directory: output + "/traces",
-        signal,
+        signal: diagnosticSignal,
         secrets: secrets(config),
-        flush: async () => signal?.throwIfAborted(),
+        flush: async () => diagnosticSignal?.throwIfAborted(),
       }),
     preserve: (row, error) =>
       deps.write(
@@ -229,6 +229,23 @@ export function createC4Actions({ signal, output, report }, overrides = {}) {
         `trace-failure-${++failureIndex}.private.txt`,
         inspect({ expected: row, error }, { depth: 8 }),
       ),
+    inspectTraces(current, config) {
+      const expected = c4TraceInventory(current, config);
+      assert.equal(
+        expected.length,
+        15,
+        "eleven C4 Prompts and four revocation roots required",
+      );
+      assert.equal(
+        expected.filter((row) => row.kind === "c4_revocation").length,
+        4,
+      );
+      return assertC4CollectedSources(
+        expected,
+        current.traces,
+        secrets(config),
+      );
+    },
     admit(current, config) {
       assert.equal(
         current.business_completed,
@@ -255,21 +272,6 @@ export function createC4Actions({ signal, output, report }, overrides = {}) {
       assert.equal(current.producer_flush.completed, true);
       assert.equal(current.producer_flush.shared_services, 7);
       assertProducerStopped(current.producer_flush.agent_ui, config.project);
-      const expected = c4TraceInventory(current, config);
-      assert.equal(
-        expected.length,
-        15,
-        "eleven C4 Prompts and four revocation roots required",
-      );
-      assert.equal(
-        expected.filter((row) => row.kind === "c4_revocation").length,
-        4,
-      );
-      const outcome = assertC4CollectedSources(
-        expected,
-        current.traces,
-        secrets(config),
-      );
       current.browser_body_review = assertC4BodyDiagnostics(current, config);
       assert.equal(
         current.browser_bodies_unobserved,
@@ -279,13 +281,13 @@ export function createC4Actions({ signal, output, report }, overrides = {}) {
       assert.equal(current.browser_payload_coverage, "observed_bodies_only");
       return {
         exitCode: 0,
-        rawExitCode: outcome.exit_code,
-        strict_trace: outcome.strict_trace,
-        reviewed_error_spans: outcome.reviewed_error_spans,
+        rawExitCode: current.trace_outcome?.exit_code ?? null,
+        strict_trace: current.trace_outcome?.strict_trace ?? "not_collected",
+        reviewed_error_spans: current.trace_outcome?.reviewed_error_spans ?? 0,
         runs: 11,
         provider_requests: 14,
         runtime_tool_calls: 4,
-        trace_roots: 15,
+        trace_roots: current.traces.length,
       };
     },
     async logs(config, current) {

@@ -319,7 +319,7 @@ export function createC4BodyAudit({
   return { track, arm, read, beforeChange, confirm };
 }
 
-// Called only after all browser, execution and collected-source owning gates.
+// Called after independent browser and execution gates, even if Trace failed.
 // Keep raw diagnostics pending until that independent evidence has passed.
 export function assertC4BodyDiagnostics(report, { gateway }) {
   const rows = report.browser_body_diagnostics ?? [];

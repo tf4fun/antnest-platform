@@ -105,11 +105,14 @@ test("commit evidence requires durable scoped state and exact recovery classific
       session_id: "s",
       run_id: "run",
       delivery: "held",
-      command_tag: phase === "finish" ? "SELECT 1" : "COMMIT",
+      command_tag: "COMMIT",
       query_hash: "a".repeat(64),
       receipt_id: "receipt",
     };
     assertDurable(a, receipt);
+    assert.throws(() =>
+      assertDurable(a, { ...receipt, command_tag: "SELECT 1" }),
+    );
     assertRecovered(a, b, phase);
     assert.throws(() => assertDurable(a, { ...receipt, run_id: "foreign" }));
     assert.throws(() =>

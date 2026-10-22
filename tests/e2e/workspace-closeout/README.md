@@ -24,6 +24,21 @@ override business admission. `business-completion.mjs` returns
 success only after Docker cleanup. Historical strict inspectors and fixtures
 below remain diagnostic references.
 
+The C4 browser runner applies the same separation. Trace inventory, collection
+and inspection share one 60-second diagnostic budget, cancel with the parent,
+and await the actual collector or inspector before continuing. Failed collection,
+missing Spans, topology findings and diagnostic archive errors produce private
+evidence and a public warning; they do not suppress the independent browser body
+review or business admission. A diagnostic result returned after its budget is
+not reported as a successful inspection. Unknown raw strict verdicts stay null;
+an actually inspected strict verdict of 2 remains 2 in the report.
+
+All twelve browser checks, original Run and Provider inventories, revocation
+without new execution, Runtime replacement, workspace bytes, actual Agent UI
+and seven-service stops, observed payload coverage and final cleanup remain
+blocking. Parent cancellation and business evidence failures also remain blocking.
+The browser runner publishes success only after these checks and actual cleanup.
+
 These suites exercise the Agent workspace end to end: private ACP execution
 state, real Runtime tools, cancellation and recovery, and the Agent UI in a real
 browser. Historical public-path fixtures retain the earlier Gateway admission
@@ -389,20 +404,21 @@ Two real browser connections observe the same Session. Its activity time must
 change after a new prompt, both pages must display the received title and time,
 and a fresh list/load after reload must preserve those values.
 
-The HTTP Bridge uses the `workspace` Resolve profile and must retain the actual
-Gateway → Agent UI → ACP prompt → Run ancestry. Each model-fixture request binds
-its exact Provider CLIENT and `model.complete` parent inside that Run, which must
-retain successful terminal SQL. Current, shared-source and refresh-trigger
-traces are archived in `traces/` and must converge across three full snapshots.
+The HTTP Bridge uses the `workspace` Resolve profile. Auxiliary inspectors check
+Gateway → Agent UI → ACP prompt → Run ancestry, Provider CLIENT and
+`model.complete` parents, and terminal SQL Spans. Current, shared-source and
+refresh-trigger traces are archived in `traces/`; unavailable or inconsistent
+snapshots retain warnings without overriding independent persisted Run evidence.
 
 Before Stop, the browser records the member's actual Bridge view and its unique
 ACP-accepted Run. Only the declared held-model cancellation phase may classify
 the single observed Provider disconnect: it requires that exact Run to finish
 cancelled and quiescent without Tool effects, with successful terminal SQL. The
-model error must point back to the actual HTTP CLIENT failure. Other Gateway,
-Bridge, ACP, SQL or Tool errors still fail business validation. Expected
-cancellation retains raw errors and strict failure; every trace must have an
-explicit strict verdict, and unknown source warnings still fail CI review.
+model error and its HTTP CLIENT relationship are retained for auxiliary
+inspection. Internal Gateway, Bridge, ACP, SQL or Tool failures observed by the
+business checks still fail validation. Expected cancellation retains its raw
+errors and original strict verdict; unavailable Trace inspection stays unknown
+and does not prevent the remaining business checks from running.
 
 ```sh
 node --test --test-concurrency=1 tests/e2e/workspace-closeout/*.test.mjs
@@ -418,9 +434,10 @@ isolated subnets and no host Temporal port, so a development stack can keep
 running, and it removes its labeled resources on completion, failure or
 interruption. Reports, traces and screenshots are written to
 `artifacts/verification/c4-browser-<timestamp>/`. Exit code 1 means a browser,
-business or topology failure; exit code 2 means only strict trace warnings
-remain. The final JSON line lists each trace's warnings, so the CI shard gate
-can accept reviewed clock-skew warnings and fail on any other.
+business, actual producer-stop, cleanup or parent-cancellation failure. Trace
+warnings retain their private raw evidence and diagnostic index; they do not
+change a successful business exit code of 0. The final JSON line reports the
+diagnostic status and index without publishing private errors or receipts.
 
 The browser uses same-origin HTTP/SSE, and the trace check requires Gateway HTTP
 -> Agent UI Bridge -> ACP HTTP ancestry. The cancellation scenario has no

@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { evidenceDirectory } from "../../support/storage.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import { runC4Flow, c4PublicResult } from "./c4-flow.mjs";
 import { createC4Actions } from "./c4-actions.mjs";
 
@@ -26,7 +27,14 @@ const report = {
 console.error(`C4 browser evidence: ${output}`);
 try {
   await runC4Flow(
-    { report, signal: abort.signal },
+    {
+      report,
+      signal: abort.signal,
+      diagnostics: createTraceDiagnostics({
+        directory: output,
+        signal: abort.signal,
+      }),
+    },
     createC4Actions({ report, signal: abort.signal, output }),
   );
   process.exitCode = report.exit_code;

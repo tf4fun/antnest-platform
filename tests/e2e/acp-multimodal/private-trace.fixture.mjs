@@ -19,7 +19,7 @@ const source = readFileSync(
   "utf8",
 );
 export const actualFinishQuery = source.match(
-  /public async finish[\s\S]*?`([^`]+)`/u,
+  /public async finish[\s\S]*?`(WITH finished AS \(UPDATE runs\b[^`]+)`/u,
 )[1];
 const owningSource = (name) =>
   readFileSync(

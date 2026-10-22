@@ -6,10 +6,7 @@ export function assertDurable(saved, receipt) {
   assert.equal(receipt.delivery, "held");
   assert(receipt.receipt_id);
   assert.match(receipt.query_hash, /^[a-f0-9]{64}$/);
-  assert.equal(
-    receipt.command_tag,
-    receipt.phase === "finish" ? "SELECT 1" : "COMMIT",
-  );
+  assert.equal(receipt.command_tag, "COMMIT");
   assert.equal(
     run.state,
     { intent: "admitting", accept: "running", finish: "completed" }[

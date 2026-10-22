@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import type {
   RunOutcome,
   RunState,
@@ -14,6 +15,7 @@ import type {
   RuntimeProtectionScope,
 } from "../../ports/execution-repository.js";
 import type { PostgresKernel } from "./kernel.js";
+import { createRuntimeBarrierForRun, lockRuntimeBarrierOrganization } from "./runtime-barrier.js";
 
 export class PostgresExecutionRepository
   implements ExecutionRepository, RunRecoveryReader, RuntimeProtectionRepository
@@ -67,8 +69,21 @@ export class PostgresExecutionRepository
   }
 
   public async finish(input: FinishLocalRunInput): Promise<void> {
-    const result = await this.kernel.query(
-      `WITH finished AS (UPDATE runs
+    await this.kernel.transaction(async (client) => {
+      const scope = await client.query<{ organization_id: string; session_id: string }>(
+        `SELECT session.organization_id, run.session_id FROM runs run
+       JOIN acp_sessions session ON session.id=run.session_id WHERE run.id=$1`,
+        [input.runId],
+      );
+      const original = scope.rows[0];
+      if (!original) throw new Error("Run cannot enter the requested terminal state");
+      await lockRuntimeBarrierOrganization(client, original.organization_id);
+      // Keep the established Session -> Run order used by execution writers.
+      await client.query("SELECT id FROM acp_sessions WHERE id=$1 FOR UPDATE", [
+        original.session_id,
+      ]);
+      const result = await client.query(
+        `WITH finished AS (UPDATE runs
           SET state = $2, terminal_class = $2, executor_state = $3,
               tool_effect_state = $4, unknown_effect_source = $5,
               stop_reason = $6, error_class = $7, updated_at = $8
@@ -88,28 +103,30 @@ export class PostgresExecutionRepository
          UPDATE tool_permissions SET decision = 'cancelled', reason = 'run_finished', decided_at = $8
          FROM finished WHERE tool_permissions.run_id = finished.id AND decision IS NULL
        ) SELECT id FROM finished`,
-      [
-        input.runId,
-        input.terminalClass,
-        input.executorState,
-        input.toolEffectState,
-        input.unknownEffectSource ?? null,
-        input.stopReason ?? null,
-        input.errorClass ?? null,
-        input.finishedAt,
-      ],
-    );
-    if (result.rowCount === 1) {
-      return;
-    }
-    const stored = await this.loadTerminalOutcome(input.runId);
-    if (stored === null || !sameOutcome(stored, input)) {
-      throw new Error("Run cannot enter the requested terminal state");
-    }
+        [
+          input.runId,
+          input.terminalClass,
+          input.executorState,
+          input.toolEffectState,
+          input.unknownEffectSource ?? null,
+          input.stopReason ?? null,
+          input.errorClass ?? null,
+          input.finishedAt,
+        ],
+      );
+      if (result.rowCount === 1) {
+        await createRuntimeBarrierForRun(client, input.runId);
+        return;
+      }
+      const stored = await this.loadTerminalOutcome(client, input.runId);
+      if (stored === null || !sameOutcome(stored, input)) {
+        throw new Error("Run cannot enter the requested terminal state");
+      }
+    });
   }
 
-  private async loadTerminalOutcome(runId: string): Promise<RunOutcome | null> {
-    const result = await this.kernel.query<TerminalOutcomeRow>(
+  private async loadTerminalOutcome(client: PoolClient, runId: string): Promise<RunOutcome | null> {
+    const result = await client.query<TerminalOutcomeRow>(
       `SELECT terminal_class, executor_state, tool_effect_state,
               unknown_effect_source, stop_reason, error_class
          FROM runs
