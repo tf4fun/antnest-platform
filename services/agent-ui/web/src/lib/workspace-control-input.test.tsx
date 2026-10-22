@@ -19,7 +19,7 @@ async function setup(sessionId: string | null = null, busy = false) {
       availability: busy ? "busy" : "ready", activeSessionId: busy ? "session" : null,
       selectedSessionId: selected, selectedView: selected ? { historyState: "ready", configurationToken: "token" } : null,
       controlCommands: controlCatalogue(null, false) }, operations: busy ? [{ operationId: "intent", sessionId: "session", runId: "run", phase: "running" }] : [], permissions: [] });
-    const controller = { snapshot: snapshot(sessionId), submitPrompt, cancelOperation, close: vi.fn(),
+    const controller = { snapshot: snapshot(sessionId), submitPrompt, cancelOperation, close: vi.fn(), releasePromptRetry: vi.fn(),
       async select(id: string | null) { controller.snapshot = snapshot(id); changed(controller.snapshot); } };
     return controller as never;
   } }));
