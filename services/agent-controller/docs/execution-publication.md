@@ -214,11 +214,29 @@ startup use the saved origin, actor and policy. Automatic receipts still require
 the `agent-controller` actor and an accepted `auto` policy. Cross-origin replay
 follows the original operation and never renews its cooldown.
 
-The internal flag is not authorization. The manual HTTP entry must verify the
-existing administrator workload/CCT scope before both admission and replay.
-That HTTP entry, persistent notifications, the Agent detail projection and UI
-consumers remain pending in this batch; these storage and application changes
-alone do not expose a user recovery action.
+The internal flag is not authorization. The existing administrator Rebuild HTTP
+entry verifies workload/CCT scope before both admission and replay. Its optional
+`recovery` object contains only the original `barrier_id` and
+`expected_runtime_revision`; null, duplicate, unknown or invalid fields fail
+without falling through to ordinary Rebuild. The request ID must derive from
+the original organization/Agent/barrier tuple, and the requested Template must
+match the configured target. The existing operation response remains HTTP 202.
+
+`RuntimeBarrierManualRecoveryService` first replays a committed original tuple,
+preserving its actor, fingerprint, policy and cooldown. On a fresh request it
+reads the current Agent, the exact ACP barrier and policy, then uses shared
+atomic admission. If a concurrent recovery commits after the first receipt
+miss, a changed Runtime, target, lifecycle source or barrier triggers another
+original-receipt read; replay still validates the requested original Runtime
+and target. Cancellation prevents further reads or admission. Controller main
+installs this service with the same authenticated ACP reader as observation;
+the pending-start worker starts the persisted workflow command.
+
+Real HTTP/PostgreSQL component tests cover all three policy modes, reopen and
+replay, current authorization, binding/target conflicts and an active cooldown.
+ACP facts and RC Skill preparation are controlled in those tests; they do not
+prove manual Runtime recovery. Persistent notifications, the Agent detail
+projection, UI consumers and real manual UI acceptance remain pending.
 
 Lock order is lifecycle request, policy organization, Identity admission,
 execution organization, Agent, owner binding/cooldown and event journal. After

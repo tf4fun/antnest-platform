@@ -18,16 +18,17 @@ import (
 var ErrDependencyUnavailable = errors.New("dependency unavailable")
 
 type LifecycleService struct {
-	specs        ports.AgentSpecSource
-	store        ports.LifecycleStore
-	egress       ports.EgressClient
-	runtime      ports.RuntimeClient
-	identities   ports.OwnerAuthorizationSource
-	clock        ports.Clock
-	drainTimeout time.Duration
-	execution    ports.LifecycleExecution
-	skillIntents ports.SkillPreparationIntentStore
-	skillClient  ports.SkillPreparationClient
+	specs          ports.AgentSpecSource
+	store          ports.LifecycleStore
+	egress         ports.EgressClient
+	runtime        ports.RuntimeClient
+	identities     ports.OwnerAuthorizationSource
+	clock          ports.Clock
+	drainTimeout   time.Duration
+	execution      ports.LifecycleExecution
+	skillIntents   ports.SkillPreparationIntentStore
+	skillClient    ports.SkillPreparationClient
+	manualRecovery *RuntimeBarrierManualRecoveryService
 }
 
 type LifecycleOption func(*LifecycleService)

@@ -254,11 +254,12 @@ type createAgentRequest struct {
 }
 
 type rebuildAgentRequest struct {
-	RequestID        string `json:"request_id"`
-	OrganizationID   string `json:"organization_id"`
-	ActorPrincipalID string `json:"actor_principal_id"`
-	TemplateID       string `json:"template_id"`
-	TemplateRevision int64  `json:"template_revision"`
+	RequestID        string          `json:"request_id"`
+	OrganizationID   string          `json:"organization_id"`
+	ActorPrincipalID string          `json:"actor_principal_id"`
+	TemplateID       string          `json:"template_id"`
+	TemplateRevision int64           `json:"template_revision"`
+	Recovery         json.RawMessage `json:"recovery,omitempty"`
 }
 
 type lifecycleRequest struct {
@@ -840,6 +841,10 @@ func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Reque
 	}
 	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
 		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		return
+	}
+	if len(payload.Recovery) != 0 {
+		h.recoverRuntimeBarrier(response, request, payload)
 		return
 	}
 	ctx := request.Context()
