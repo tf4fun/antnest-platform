@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { until } from "../workspace-closeout/c4-setup.mjs";
 import { rpcMessages } from "./acp-gate-responses.mjs";
 import { assertPromptInventory } from "./prompt-dispatch-inventory.mjs";
+import { sendBrowserPrompt } from "./browser-prompt-send.mjs";
 
 const peerPhase = "c4-browser-hold-peer";
 const refusedPhase = "c4-browser-window-00";
@@ -530,37 +531,20 @@ export async function verifyBrowserPromptBusy({
   };
   const composer = page.getByRole("combobox", { name: "Message", exact: true });
   const send = async (phase) => {
-    await composer.fill(phase);
-    const pending = page.waitForResponse(
-      (response) => {
+    const response = await sendBrowserPrompt({
+      page,
+      composer,
+      phase,
+      poll,
+      matchesResponse: (response) => {
         const request = promptRequest(response.request(), gateway, base);
         return request?.body.prompt?.[0]?.text === phase;
       },
-      { timeout: 30_000 },
-    );
-    // Install the rejection handler before pressing Enter, including failures
-    // in the browser action. Both original Playwright operations are joined.
-    const observed = pending.then(
-      (value) => ({ value }),
-      (error) => ({ error }),
-    );
-    let pressError;
-    try {
-      await composer.press("Enter");
-    } catch (error) {
-      pressError = error;
-    }
-    const response = await observed;
-    if (pressError && response.error)
-      throw new AggregateError(
-        [pressError, response.error],
-        "Prompt browser actions failed",
-      );
-    if (pressError || response.error) throw pressError ?? response.error;
-    const rawBody = await response.value.text();
+    });
+    const rawBody = await response.text();
     const receipt = {
-      request: promptRequest(response.value.request(), gateway, base),
-      status: response.value.status(),
+      request: promptRequest(response.request(), gateway, base),
+      status: response.status(),
       rawBody,
       body: JSON.parse(rawBody),
     };
