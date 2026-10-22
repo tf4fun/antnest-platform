@@ -273,7 +273,6 @@ func (endpoint *runtimeBarrierPolicyHTTPServer) request(t *testing.T, ctx contex
 	}
 	response, err := endpoint.client.Do(request)
 	require.NoError(t, err)
-	defer response.Body.Close()
 	raw, readError := io.ReadAll(response.Body)
 	closeError := response.Body.Close()
 	require.NoError(t, readError)

@@ -42,7 +42,7 @@ func NewRuntimeBarrierRecoveryStartWorker(store RuntimeBarrierRecoveryStartStore
 ) (*RuntimeBarrierRecoveryStartWorker, error) {
 	if store == nil || starter == nil || schedule.PollInterval <= 0 || schedule.RoundTimeout <= 0 ||
 		schedule.BatchSize < 1 || schedule.BatchSize > 1000 {
-		return nil, fmt.Errorf("Runtime barrier recovery start dependencies or schedule are invalid")
+		return nil, fmt.Errorf("runtime barrier recovery start dependencies or schedule are invalid")
 	}
 	if logger == nil {
 		logger = slog.Default()

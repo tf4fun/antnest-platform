@@ -317,7 +317,8 @@ func TestRuntimeBarrierRecoveryStartWorkerCancellationJoinsEveryActualCallback(t
 					worker := newPendingStartWorker(t, store, starter, schedule)
 					ctx, cancel := context.WithCancel(context.Background())
 					task := startPendingStartWorkerTask(func() error { return worker.RunOnce(ctx) })
-					defer func() { cancel(); hold.release(); task.join(t) }()
+					// Cleanup waits for actual exit; the normal path checks the returned error.
+					defer func() { cancel(); hold.release(); _ = task.join(t) }()
 					waitPendingStartWorkerHeld(t, hold, task)
 					if deadline {
 						time.Sleep(schedule.RoundTimeout)
@@ -386,7 +387,7 @@ func TestRuntimeBarrierRecoveryStartWorkerRunAndSerialGateActuallyJoin(t *testin
 			worker := newPendingStartWorker(t, store, starter, schedule)
 			ctx, cancel := context.WithCancel(context.Background())
 			task := startPendingStartWorkerTask(func() error { worker.Run(ctx); return nil })
-			defer func() { cancel(); task.join(t) }()
+			defer func() { cancel(); _ = task.join(t) }()
 			synctest.Wait()
 			require.Len(t, calls.snapshot().listed, 1, "startup must not wait for the poll timer")
 			time.Sleep(schedule.PollInterval - time.Nanosecond)
@@ -424,7 +425,7 @@ func TestRuntimeBarrierRecoveryStartWorkerRunAndSerialGateActuallyJoin(t *testin
 			worker := newPendingStartWorker(t, store, starter, pendingStartWorkerSchedule(1))
 			ctx, cancel := context.WithCancel(context.Background())
 			task := startPendingStartWorkerTask(func() error { worker.Run(ctx); return nil })
-			defer func() { cancel(); hold.release(); task.join(t) }()
+			defer func() { cancel(); hold.release(); _ = task.join(t) }()
 			waitPendingStartWorkerHeld(t, hold, task)
 			cancel()
 			synctest.Wait()
@@ -466,9 +467,9 @@ func TestRuntimeBarrierRecoveryStartWorkerRunAndSerialGateActuallyJoin(t *testin
 					cancelFirst()
 					cancelSecond()
 					hold.release()
-					first.join(t)
+					_ = first.join(t)
 					if second != nil {
-						second.join(t)
+						_ = second.join(t)
 					}
 				}()
 				waitPendingStartWorkerHeld(t, hold, first)

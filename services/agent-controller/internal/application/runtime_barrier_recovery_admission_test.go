@@ -320,9 +320,10 @@ func TestRuntimeBarrierRecoveryAdmissionPreservesErrorsAndRecoversCommittedRecei
 			fixture := newRuntimeBarrierAdmissionApplicationFixture(t)
 			original := errors.New("receipt unavailable after durable Begin")
 			reply := runtimeBarrierAdmissionApplicationRead{}
-			if postCommit == "read-error" {
+			switch postCommit {
+			case "read-error":
 				reply.err = original
-			} else if postCommit == "wrong-scope" {
+			case "wrong-scope":
 				reply.receipt = cloneRuntimeBarrierAdmissionApplicationReceipt(fixture.receipt)
 				reply.receipt.Fact.AgentID = "other-agent"
 				reply.found = true
