@@ -223,7 +223,7 @@ changes nothing and cannot acknowledge another Agent's pending command.
 This storage API does not start or confirm a Temporal workflow on its own. The
 orchestration batch must prove that the engine accepted the original command
 before confirming it; timeout, cancellation or an unknown response must leave
-the command pending. The bounded observation worker,
+the command pending. Activation of the bounded observation worker,
 manual/notify presentation and actual ACP mid-tool-crash recovery acceptance
 remain required before the complete recovery workflow is delivered.
 
@@ -248,8 +248,8 @@ preserved.
 Cancellation stops subsequent dependency calls at admission boundaries. A
 cancelled preparation does not begin a new lifecycle; cancellation after a
 commit leaves its original command pending. This application service never
-starts a workflow or acknowledges a pending start. Its observation worker
-remains a separate delivery batch.
+starts a workflow or acknowledges a pending start. The observation worker below
+selects candidates for this boundary; main-process activation remains separate.
 
 ### Original Workflow Start
 
@@ -295,11 +295,51 @@ settle and prevents further dispatch, including confirmation after a late start
 response. Polling starts immediately, then waits between rounds with a
 cancellable timer. Logs contain only a fixed failure classification.
 
-The worker has no main-process activation yet. Observation/admission polling,
+The worker has no main-process activation yet. Observation/admission activation,
 policy notifications, UI and actual ACP crash-to-Rebuild integration remain
 separate required work. Component coverage uses real PostgreSQL and Temporal
 acceptance, with synthetic response-loss/held-return adapters; it does not claim
 execution against a real Runtime, ACP or Egress service.
+
+### Barrier Observation And Admission Worker
+
+`RuntimeBarrierRecoveryObservationWorker` scans created, enabled Agents across
+organizations using the existing `(created_at, agent_id)` keyset query. It does
+not filter Runtime state: a Controller projection can still report `available`
+while ACP retains a durable barrier. Each round validates one complete ordered
+page before reading any candidate's current lifecycle base. Stale, disabled,
+revoked or already-owned lifecycle work is not eligible for a new observation.
+
+The current base must belong to the selected Agent and Organization and retain
+valid configured spec/execution lineage. The ACP read uses that Runtime revision
+and must return the exact requested scope. A null barrier means no matching fact;
+errors never become an empty or safe result. The barrier's original execution
+identity is preserved and need not match a later health observation.
+
+Only a valid, current Organization policy in `auto` mode invokes admission.
+The intent carries the stable barrier-derived request ID, configured Template
+snapshot, and Agent owner/authorization/revocation watermarks. The admission
+transaction rechecks binding, policy, lifecycle and cooldown after these reads;
+an observation is not authority to bypass those guards. `manual` and `notify`
+perform no automatic admission. Notification persistence and UI remain pending.
+
+A configured page limit of 1–1000 bounds candidate count, and one round deadline
+covers the cursor gate, query, base, ACP, policy and admission calls. Each visited
+candidate advances the cursor even if it fails; later candidates can proceed.
+A completed short or empty page wraps, while cancellation preserves the
+unvisited tail. Calls remain synchronous and cancellation waits for the actual
+outstanding call to return; a late successful read cannot start new admission.
+The first round runs immediately and subsequent rounds use cancellable polling.
+Logs use a fixed failure classification without raw causes or Agent identities.
+
+Observation never starts a workflow or confirms a pending command. The separate
+pending-start worker can resume a committed original even when current ACP or
+policy reads fail. Both workers still require main-process startup/shutdown
+wiring before automatic recovery is active. Component coverage uses real
+PostgreSQL candidate queries, atomic admission, reopening and intervening policy
+or owner-binding changes; ACP observations and RC preparation are synthetic.
+Real ACP kill-mid-tool, Runtime replacement, new Run, and manual UI acceptance
+remain required before issue #50 is complete.
 
 ## Lifecycle Settlement
 
