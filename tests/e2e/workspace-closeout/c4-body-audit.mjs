@@ -47,6 +47,68 @@ const unavailableDuringNavigation = (error) =>
   error.message.includes("No resource with given identifier found") &&
   error.message.includes("navigated away");
 
+function processScope(row, gateway, agentId) {
+  const url = new URL(row.url);
+  const prefix = `/api/app/workspace/v1/agents/${encodeURIComponent(agentId)}/sessions/`;
+  if (
+    url.origin !== new URL(gateway).origin ||
+    url.hash ||
+    !url.pathname.startsWith(prefix) ||
+    row.method !== "GET" ||
+    row.status !== 200 ||
+    !row.mainFrame ||
+    row.redirected ||
+    row.requestURL !== row.url ||
+    row.contentType?.split(";", 1)[0].trim().toLowerCase() !==
+      "application/json"
+  )
+    return null;
+  const parts = /^([^/]+)\/turns\/([^/]+)\/process$/u.exec(
+    url.pathname.slice(prefix.length),
+  );
+  if (!parts) return null;
+  try {
+    return {
+      sessionId: decodeURIComponent(parts[1]),
+      runId: decodeURIComponent(parts[2]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function controlledProcessCancellation(row, gateway, agentId) {
+  const scope = processScope(row, gateway, agentId);
+  const proof = row.cancellation,
+    terminal = row.requestTerminal;
+  return !!(
+    scope &&
+    row.agentId === agentId &&
+    row.sessionId === scope.sessionId &&
+    row.runId === scope.runId &&
+    terminal?.kind === "failed" &&
+    terminal.failure === "net::ERR_ABORTED" &&
+    Number.isFinite(terminal.at) &&
+    terminal.at >= row.startedMono &&
+    proof?.reasonKind === "default_abort" &&
+    proof.method === "GET" &&
+    proof.path === new URL(row.url).pathname &&
+    typeof proof.documentId === "string" &&
+    proof.documentId.length > 0 &&
+    typeof proof.fetchId === "string" &&
+    proof.fetchId.startsWith(proof.documentId + ":") &&
+    Number.isFinite(proof.startedAt) &&
+    Number.isFinite(proof.abortedAt) &&
+    proof.abortedAt >= proof.startedAt &&
+    proof.abortedAt - proof.startedAt < 30_000 &&
+    Number.isFinite(row.failedMono) &&
+    row.failedMono >= row.startedMono &&
+    row.body === "not_observed" &&
+    typeof row.raw_error?.name === "string" &&
+    typeof row.raw_error.message === "string"
+  );
+}
+
 // This observes our E2E reader's coverage. It neither retries the SDK read nor
 // turns an unread body into an audited payload. Business/Trace admission follows.
 export function createC4BodyAudit({
@@ -110,7 +172,12 @@ export function createC4BodyAudit({
       )
         record.target = armed;
   }
-  async function read(page, response, lastCompletedCheck) {
+  async function read(
+    page,
+    response,
+    lastCompletedCheck,
+    { terminal, cancellation } = {},
+  ) {
     const state = pages.get(page);
     assert(state, "C4 response page not tracked");
     const request = response.request();
@@ -122,9 +189,12 @@ export function createC4BodyAudit({
       requestURL: request.url(),
       method: request.method(),
       status: response.status(),
+      contentType: response.headers()["content-type"],
       traceID: response.headers()["x-antnest-trace-id"],
       mainFrame: request.frame() === page.mainFrame(),
-      redirected: request.redirectedFrom() !== null,
+      redirected:
+        request.redirectedFrom() !== null ||
+        (request.redirectedTo?.() ?? null) !== null,
       startedMono: now(),
       lastCompletedCheck,
     });
@@ -143,6 +213,46 @@ export function createC4BodyAudit({
       const failedMono = now(),
         target = record.target,
         navigation = target?.navigation;
+      const process = processScope(snapshot, gateway, agentId);
+      if (process && terminal && cancellation) {
+        // A body rejection can precede the network terminal event. Join both
+        // originals before attributing it to the application's own signal.
+        const requestTerminal = await terminal;
+        if (
+          requestTerminal.kind === "failed" &&
+          requestTerminal.failure === "net::ERR_ABORTED"
+        ) {
+          try {
+            await cancellation.flushAndWait();
+          } catch (observationError) {
+            throw new AggregateError(
+              [error, observationError],
+              "C4 body and original cancellation observation failed",
+            );
+          }
+        }
+        const proof = cancellation.match(request);
+        const diagnostic = {
+          id: diagnostics.length + 1,
+          ...snapshot,
+          classification: "cancelled_process_read",
+          agentId,
+          ...process,
+          failedMono,
+          requestTerminal,
+          cancellation: proof,
+          body: "not_observed",
+          raw_error: {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          },
+        };
+        if (controlledProcessCancellation(diagnostic, gateway, agentId)) {
+          diagnostics.push(diagnostic);
+          return null;
+        }
+      }
       if (
         !unavailableDuringNavigation(error) ||
         !target ||
@@ -221,49 +331,66 @@ export function assertC4BodyDiagnostics(report, { gateway }) {
     true,
     "C4 body diagnostic lacks completed business",
   );
-  const revocation = report.browser_revocation,
-    proof = revocation?.bodyObservation;
-  assert(proof, "C4 body diagnostic lacks original login proof");
-  assert.equal(revocation.cause.status, 200);
-  assert(traceID(revocation.cause.traceID));
-  assert.equal(proof.startedMono, revocation.cause.startedMono);
-  assert.equal(proof.sessionId, revocation.selectedView.sessionId);
-  assert.equal(proof.signInVisible, true);
-  assert.equal(proof.composerCount, 0);
-  assert.equal(proof.messageCount, 0);
-  assert(
-    loginURL(
-      proof.loginURL,
-      gateway,
-      revocation.selectedView.agentId,
-      proof.sessionId,
-    ),
-  );
+  const navigationRows = [];
   for (const [index, row] of rows.entries()) {
     assert.equal(row.id, index + 1);
-    assert.equal(row.pageId, proof.pageId);
-    assert.equal(row.agentId, revocation.selectedView.agentId);
-    assert.equal(row.sessionId, proof.sessionId);
-    assert.equal(row.revocationStartedMono, proof.startedMono);
-    assert.deepEqual(row.loginNavigation, proof.loginNavigation);
-    assert.equal(row.generation, row.loginNavigation.fromGeneration);
-    assert.equal(row.loginNavigation.pageId, row.pageId);
-    assert.equal(row.loginNavigation.toGeneration, row.generation + 1);
+    if (row.classification === "cancelled_process_read") {
+      assert(
+        controlledProcessCancellation(row, gateway, report.agent_id),
+        "C4 process cancellation lacks original scoped proof",
+      );
+    } else {
+      assert.equal(row.classification, undefined, "Unknown C4 body diagnostic");
+      navigationRows.push(row);
+    }
+  }
+  if (navigationRows.length) {
+    const revocation = report.browser_revocation,
+      proof = revocation?.bodyObservation;
+    assert(proof, "C4 body diagnostic lacks original login proof");
+    assert.equal(revocation.cause.status, 200);
+    assert(traceID(revocation.cause.traceID));
+    assert.equal(proof.startedMono, revocation.cause.startedMono);
+    assert.equal(proof.sessionId, revocation.selectedView.sessionId);
+    assert.equal(proof.signInVisible, true);
+    assert.equal(proof.composerCount, 0);
+    assert.equal(proof.messageCount, 0);
     assert(
-      loginURL(row.loginNavigation.url, gateway, row.agentId, row.sessionId),
+      loginURL(
+        proof.loginURL,
+        gateway,
+        revocation.selectedView.agentId,
+        proof.sessionId,
+      ),
     );
-    assert(
-      row.startedMono <= row.loginNavigation.atMono &&
-        proof.startedMono <= row.loginNavigation.atMono &&
-        row.loginNavigation.atMono <= row.failedMono &&
-        row.failedMono <= proof.confirmedMono,
-    );
-    assert(scopedResponse(row, gateway, row.agentId, row.sessionId));
-    assert.equal(row.body, "not_observed");
-    assert(unavailableDuringNavigation(row.raw_error));
+    for (const row of navigationRows) {
+      assert.equal(row.pageId, proof.pageId);
+      assert.equal(row.agentId, revocation.selectedView.agentId);
+      assert.equal(row.sessionId, proof.sessionId);
+      assert.equal(row.revocationStartedMono, proof.startedMono);
+      assert.deepEqual(row.loginNavigation, proof.loginNavigation);
+      assert.equal(row.generation, row.loginNavigation.fromGeneration);
+      assert.equal(row.loginNavigation.pageId, row.pageId);
+      assert.equal(row.loginNavigation.toGeneration, row.generation + 1);
+      assert(
+        loginURL(row.loginNavigation.url, gateway, row.agentId, row.sessionId),
+      );
+      assert(
+        row.startedMono <= row.loginNavigation.atMono &&
+          proof.startedMono <= row.loginNavigation.atMono &&
+          row.loginNavigation.atMono <= row.failedMono &&
+          row.failedMono <= proof.confirmedMono,
+      );
+      assert(scopedResponse(row, gateway, row.agentId, row.sessionId));
+      assert.equal(row.body, "not_observed");
+      assert(unavailableDuringNavigation(row.raw_error));
+    }
   }
   return {
-    status: "accepted_external_observation",
+    status:
+      navigationRows.length === rows.length
+        ? "accepted_external_observation"
+        : "accepted_unobserved_bodies",
     body_count: rows.length,
     body_ids: rows.map((row) => row.id),
   };

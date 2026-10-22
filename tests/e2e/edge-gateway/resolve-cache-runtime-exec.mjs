@@ -1,10 +1,46 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 
+export function parseRuntimeProcessStat(stat, expectedPID) {
+  const prefix = stat.match(/^(\d+) \(/u);
+  const end = stat.lastIndexOf(") ");
+  const fields = stat.slice(end + 2).match(/^([A-Za-z]) (\d+) (\d+) (?=\S)/u);
+  const decimal = (value) =>
+    typeof value === "string" &&
+    /^\d+$/u.test(value) &&
+    Number.isSafeInteger(Number(value));
+  if (
+    !prefix ||
+    end < prefix[0].length ||
+    !fields ||
+    !decimal(prefix[1]) ||
+    Number(prefix[1]) <= 0 ||
+    !decimal(expectedPID) ||
+    Number(prefix[1]) !== Number(expectedPID) ||
+    !decimal(fields[2]) ||
+    !decimal(fields[3])
+  ) {
+    const bytes = Buffer.from(stat);
+    const error = new Error("invalid process inventory");
+    error.inventory = {
+      pid: expectedPID,
+      stat: new TextDecoder().decode(bytes.subarray(0, 8192), { stream: true }),
+      stat_bytes: bytes.length,
+      stat_truncated: bytes.length > 8192,
+    };
+    throw error;
+  }
+  return {
+    pid: Number(prefix[1]),
+    state: fields[1],
+    group: Number(fields[3]),
+  };
+}
+
 // The original Runtime's Node process owns the finite sampling command. Keep
 // stdin open until exit: closing it cancels and joins the actual shell group,
 // rather than merely killing the host's Docker attachment.
-async function remoteProgram() {
+async function remoteProgram(parseProcessStat) {
   const { spawn } = await import("node:child_process");
   const { createInterface } = await import("node:readline");
   const { readdir, readFile } = await import("node:fs/promises");
@@ -28,9 +64,8 @@ async function remoteProgram() {
         if (["ENOENT", "ESRCH"].includes(error.code)) continue;
         throw error;
       }
-      const match = stat.match(/^\d+ \(.*\) ([A-Za-z]) \d+ (\d+) /u);
-      if (!match) throw new Error("invalid process inventory");
-      if (Number(match[2]) === pgid && match[1] !== "Z") return true;
+      const processStat = parseProcessStat(stat, name);
+      if (processStat.group === pgid && processStat.state !== "Z") return true;
     }
     return false;
   };
@@ -140,6 +175,9 @@ async function remoteProgram() {
         message: error.message,
         code: error.code ?? null,
         shell,
+        ...(error.inventory === undefined
+          ? {}
+          : { inventory: error.inventory }),
       }) + "\n",
     );
     throw error;
@@ -152,7 +190,7 @@ async function remoteProgram() {
   }
 }
 
-const program = `await (${remoteProgram.toString()})().catch(() => { process.stderr.write("Runtime sampling failed\\n"); process.exitCode = 1; });`;
+const program = `await (${remoteProgram.toString()})(${parseRuntimeProcessStat.toString()}).catch(() => { process.stderr.write("Runtime sampling failed\\n"); process.exitCode = 1; });`;
 
 export async function joinedRuntimeExec({
   args,
@@ -271,13 +309,9 @@ export async function joinedRuntimeExec({
           } else if (value.kind === "failure") {
             assert(ready);
             assert.equal(remote, undefined);
-            assert.deepEqual(Object.keys(value).sort(), [
-              "code",
-              "kind",
-              "message",
-              "name",
-              "shell",
-            ]);
+            const fields = ["code", "kind", "message", "name", "shell"];
+            if (Object.hasOwn(value, "inventory")) fields.push("inventory");
+            assert.deepEqual(Object.keys(value).sort(), fields.sort());
             assert.equal(typeof value.name, "string");
             assert.equal(typeof value.message, "string");
             assert(value.code === null || typeof value.code === "string");
@@ -306,6 +340,39 @@ export async function joinedRuntimeExec({
               );
               shell.stderr = stderr.text;
               shell.stderr_truncated = stderr.truncated;
+            }
+            if (Object.hasOwn(value, "inventory")) {
+              const inventory = value.inventory;
+              assert(inventory !== null && typeof inventory === "object");
+              assert.deepEqual(Object.keys(inventory).sort(), [
+                "pid",
+                "stat",
+                "stat_bytes",
+                "stat_truncated",
+              ]);
+              assert.equal(typeof inventory.pid, "string");
+              assert.match(inventory.pid, /^\d+$/u);
+              assert(
+                Number.isSafeInteger(Number(inventory.pid)) &&
+                  Number(inventory.pid) > 0,
+              );
+              assert.equal(typeof inventory.stat, "string");
+              const capturedBytes = Buffer.byteLength(inventory.stat);
+              assert(capturedBytes <= 8192);
+              assert(Number.isSafeInteger(inventory.stat_bytes));
+              assert.equal(typeof inventory.stat_truncated, "boolean");
+              assert(
+                inventory.stat_truncated
+                  ? inventory.stat_bytes > 8192 &&
+                      inventory.stat_bytes > capturedBytes
+                  : inventory.stat_bytes === capturedBytes,
+              );
+              const retained = diagnosticText(
+                inventory.stat,
+                inventory.stat_truncated,
+              );
+              inventory.stat = retained.text;
+              inventory.stat_truncated = retained.truncated;
             }
             const { kind: _kind, ...diagnostic } = value;
             remote = {

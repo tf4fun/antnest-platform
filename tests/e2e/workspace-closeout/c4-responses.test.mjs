@@ -42,6 +42,86 @@ function emitResponse(page, value = response()) {
   return value;
 }
 
+for (const kind of ["finished", "failed", "closed"])
+  test(`C4 capture receives the original Request ${kind} terminal and still joins its body`, async () => {
+    const body = Promise.withResolvers(),
+      captured = Promise.withResolvers();
+    const order = [];
+    let time = 10;
+    await fixture(async ({ page, scope }) => {
+      let metadata;
+      const reader = observeC4Responses(
+        page,
+        scope,
+        async (_response, _url, options) => {
+          metadata = options;
+          captured.resolve();
+          await body.promise;
+          order.push("body joined");
+        },
+        { now: () => time },
+      );
+      const value = response(
+        "/api/app/workspace/v1/agents/agent/sessions/session/turns/run/process",
+      );
+      const original = value.request();
+      page.emit("request", original);
+      page.emit("response", value);
+      const next = reader.before(() => order.push("next business action"));
+      void next.catch(() => {});
+      try {
+        await captured.promise;
+        assert(
+          metadata?.terminal instanceof Promise,
+          "capture must receive the same Request's terminal Promise",
+        );
+        let settled = false;
+        void metadata.terminal.then(() => {
+          settled = true;
+        });
+        page.emit("requestfailed", { ...original });
+        await turn();
+        assert.equal(settled, false, "another Request cannot finish this body");
+        assert.deepEqual(order, []);
+        time = 55;
+        original.failure = () => ({ errorText: "net::ERR_ABORTED" });
+        if (kind === "closed") page.emit("close");
+        else
+          page.emit(
+            kind === "failed" ? "requestfailed" : "requestfinished",
+            original,
+          );
+        const terminal = await metadata.terminal;
+        assert.deepEqual(terminal, {
+          kind,
+          failure: kind === "failed" ? "net::ERR_ABORTED" : null,
+          at: 55,
+        });
+        time = 99;
+        original.failure = () => ({ errorText: "net::ERR_FAILED" });
+        assert.deepEqual(await metadata.terminal, {
+          kind,
+          failure: kind === "failed" ? "net::ERR_ABORTED" : null,
+          at: 55,
+        });
+        await turn();
+        assert.deepEqual(
+          order,
+          [],
+          "a terminal event cannot skip the body join",
+        );
+        body.resolve();
+        await next;
+        assert.deepEqual(order, ["body joined", "next business action"]);
+        assert.equal(reader.ready(), true);
+      } finally {
+        body.resolve();
+        page.emit("requestfailed", original);
+        await scope.capture(() => next);
+      }
+    });
+  });
+
 function denialFixture() {
   const frame = {},
     gateway = "http://gateway",

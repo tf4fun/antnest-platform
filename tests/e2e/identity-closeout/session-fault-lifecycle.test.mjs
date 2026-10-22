@@ -849,3 +849,95 @@ for (const mode of ["cancelled", "late"])
     );
     await reply;
   });
+
+test(
+  "expiry joins a second wait after a fractional early wake before probing the original deadline",
+  { timeout: 5000 },
+  async () => {
+    const f = fault("expired");
+    const deadline = f.checkpoint.stream.headers_at + 17000;
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const waits = [];
+    let at = deadline - 20.5,
+      heldWait,
+      waitJoined = false,
+      settled = false;
+    f.now = () => at;
+    f.wait = (milliseconds) => {
+      assert(Number.isFinite(milliseconds) && milliseconds > 0);
+      waits.push(milliseconds);
+      if (waits.length === 1) {
+        at = deadline - 0.25;
+        return Promise.resolve();
+      }
+      assert.equal(waits.length, 2);
+      heldWait = release.promise.then(() => {
+        waitJoined = true;
+      });
+      entered.resolve();
+      return heldWait;
+    };
+    const rejectPrompt = f.observer.rejectPrompt;
+    f.observer.rejectPrompt = async () => {
+      assert(
+        at > deadline,
+        "The HTTP probe must follow the original authority/cache bound",
+      );
+      assert.equal(
+        waitJoined,
+        true,
+        "The second wait must join before the HTTP probe",
+      );
+      return rejectPrompt();
+    };
+    const completed = implementation.finishSessionFault(f).then(
+      (value) => {
+        settled = true;
+        return { value };
+      },
+      (error) => {
+        settled = true;
+        return { error };
+      },
+    );
+    try {
+      const progress = await Promise.race([
+        entered.promise.then(() => ({ waiting: true })),
+        completed,
+      ]);
+      if (progress.error) throw progress.error;
+      assert.equal(progress.waiting, true);
+      assert.equal(waits.length, 2);
+      assert.equal(at, deadline - 0.25);
+      assert.equal(settled, false);
+      assert.equal(waitJoined, false);
+      assert(!f.calls.includes("http-denial"));
+      assert(
+        !f.calls.includes("sdk-joined") && !f.calls.includes("observer-joined"),
+      );
+      at = deadline + 0.25;
+      await Promise.resolve();
+      assert.equal(
+        settled,
+        false,
+        "Advancing the clock cannot replace joining the held wait",
+      );
+      assert(!f.calls.includes("http-denial"));
+      release.resolve();
+      const result = await completed;
+      if (result.error) throw result.error;
+      assert.equal(waitJoined, true);
+      assert.equal(waits.length, 2);
+      assert.equal(f.calls.filter((call) => call === "http-denial").length, 1);
+      assert(
+        f.calls.includes("sdk-joined") && f.calls.includes("observer-joined"),
+      );
+    } finally {
+      at = deadline + 0.25;
+      release.resolve();
+      await heldWait;
+      await completed;
+    }
+  },
+);

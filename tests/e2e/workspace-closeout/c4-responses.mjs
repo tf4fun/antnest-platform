@@ -45,7 +45,12 @@ export async function beforeC4Responses(readers, action) {
   }
 }
 
-export function observeC4Responses(page, scope, capture) {
+export function observeC4Responses(
+  page,
+  scope,
+  capture,
+  { now = () => performance.now() } = {},
+) {
   const pending = new Set(),
     failures = new Set(),
     requests = new Map();
@@ -64,19 +69,32 @@ export function observeC4Responses(page, scope, capture) {
     let state = requests.get(request);
     if (!state) {
       const completion = Promise.withResolvers();
-      state = { ...completion, terminal: false, bodyDone: true };
+      state = {
+        ...completion,
+        terminal: null,
+        terminalReceipt: Promise.withResolvers(),
+        bodyDone: true,
+      };
       requests.set(request, state);
       pending.add(state.promise);
     }
     return state;
   };
-  const terminal = (request) => {
+  const terminal = (request, kind) => {
     const state = requests.get(request);
-    if (state) {
-      state.terminal = true;
+    if (state && !state.terminal) {
+      state.terminal = Object.freeze({
+        kind,
+        failure:
+          kind === "failed" ? (request.failure()?.errorText ?? null) : null,
+        at: now(),
+      });
+      state.terminalReceipt.resolve(state.terminal);
       settle(request, state);
     }
   };
+  const finished = (request) => terminal(request, "finished");
+  const failed = (request) => terminal(request, "failed");
   const receive = (response) => {
     const url = new URL(response.url());
     if (!finite(url)) return;
@@ -85,11 +103,18 @@ export function observeC4Responses(page, scope, capture) {
     // An unrecognized stream route is finite only until its headers identify
     // SSE. Its lifetime belongs to the stream observer, not this drain.
     if (response.headers()["content-type"]?.startsWith("text/event-stream")) {
-      terminal(request);
+      requests.delete(request);
+      pending.delete(state.promise);
+      state.resolve();
       return;
     }
     state.bodyDone = false;
-    const read = scope.track((async () => capture(response, url))());
+    const read = scope.track(
+      (async () =>
+        capture(response, url, {
+          terminal: state.terminalReceipt.promise,
+        }))(),
+    );
     const complete = () => {
       state.bodyDone = true;
       settle(request, state);
@@ -102,19 +127,19 @@ export function observeC4Responses(page, scope, capture) {
   const closed = () => {
     page.off("request", issued);
     page.off("response", receive);
-    page.off("requestfinished", terminal);
-    page.off("requestfailed", terminal);
+    page.off("requestfinished", finished);
+    page.off("requestfailed", failed);
     page.off("close", closed);
     // Closure can precede a requestfailed event. Release requests that never
     // had a response, while joining every body read already registered.
-    for (const request of requests.keys()) terminal(request);
+    for (const request of requests.keys()) terminal(request, "closed");
   };
   // Register before headers arrive: response-only tracking lets navigation
   // overtake an already-issued request and invalidate its later body read.
   page.on("request", issued);
   page.on("response", receive);
-  page.on("requestfinished", terminal);
-  page.on("requestfailed", terminal);
+  page.on("requestfinished", finished);
+  page.on("requestfailed", failed);
   page.on("close", closed);
   const ready = () => {
     // Settled errors must still block navigation. The scope retains every

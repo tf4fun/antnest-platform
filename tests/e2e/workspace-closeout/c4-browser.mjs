@@ -18,6 +18,7 @@ import { captureC4Login } from "./c4-login.mjs";
 import { captureC4PromptReceipt } from "./c4-prompt-receipt.mjs";
 import { createC4BodyAudit } from "./c4-body-audit.mjs";
 import { observeC4PageStreams } from "./c4-stream-observer.mjs";
+import { observeC4ProcessCancellation } from "./c4-process-cancellation.mjs";
 import {
   snapshotC4Execution,
   assertC4NoNewExecution,
@@ -85,6 +86,7 @@ async function runBrowserInContext(
   let lastCompletedCheck = null;
   const paths = [];
   const streams = new Map();
+  const cancellations = new Map();
   const responses = new Map();
   const beforePageChange = (target, change) =>
     responses.get(target).before(() => bodyAudit.beforeChange(target, change));
@@ -92,6 +94,23 @@ async function runBrowserInContext(
     beforeC4Responses([...responses.values()], change);
   const track = async (page) => {
     bodyAudit.track(page, scope);
+    const cancellation = await observeC4ProcessCancellation(page, {
+      gateway: config.gateway,
+      agentId: fixture.agentID,
+      signal,
+    });
+    cancellations.set(page, cancellation);
+    scope.addObserver({
+      async closeAndWait() {
+        try {
+          await cancellation.closeAndWait();
+        } finally {
+          report.process_request_cancellations = [
+            ...cancellations.values(),
+          ].flatMap((value) => value.records);
+        }
+      },
+    });
     const observer = observeC4PageStreams(page, {
       gateway: config.gateway,
       agentId: fixture.agentID,
@@ -128,7 +147,7 @@ async function runBrowserInContext(
     });
     responses.set(
       page,
-      observeC4Responses(page, scope, async (response, url) => {
+      observeC4Responses(page, scope, async (response, url, { terminal }) => {
         const previousCheck = lastCompletedCheck;
         try {
           paths.push(url.pathname);
@@ -158,7 +177,10 @@ async function runBrowserInContext(
             );
             if (denial) bootstrapDenials.push(denial);
             else {
-              const body = await bodyAudit.read(page, response, previousCheck);
+              const body = await bodyAudit.read(page, response, previousCheck, {
+                terminal,
+                cancellation,
+              });
               if (body !== null) frames.push(body);
             }
           }

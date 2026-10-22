@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { setImmediate as turn } from "node:timers/promises";
 import test from "node:test";
 import { observeC4Responses } from "./c4-responses.mjs";
 
@@ -110,9 +111,525 @@ function fixture(status = 200, route = "view") {
     navigate,
     fail,
     report,
+    setTime: (value) => {
+      time = value;
+    },
     reads: () => reads,
   };
 }
+
+const processPath =
+  "/api/app/workspace/v1/agents/agent/sessions/session/turns/run/process";
+function processFixture() {
+  const f = fixture();
+  const url =
+    "http://gateway" + processPath + "?cursor=original-process-cursor";
+  f.request.url = () => url;
+  f.request.redirectedTo = () => null;
+  f.request.failure = () => ({ errorText: "net::ERR_ABORTED" });
+  f.response.url = () => url;
+  f.response.headers = () => ({
+    "content-type": "application/json; charset=utf-8",
+  });
+  f.terminal = Promise.withResolvers();
+  f.requestTerminal = { kind: "failed", failure: "net::ERR_ABORTED", at: 45 };
+  f.proof = Object.freeze({
+    documentId: "original-document",
+    fetchId: "original-document:1",
+    method: "GET",
+    path: processPath,
+    startedAt: 1_790_000_000_000,
+    abortedAt: 1_790_000_000_100,
+    reasonKind: "default_abort",
+  });
+  f.matchedRequest = f.request;
+  f.matched = [];
+  f.cancellation = {
+    async flushAndWait() {},
+    match(original) {
+      f.matched.push(original);
+      return original === f.matchedRequest ? f.proof : null;
+    },
+  };
+  f.error = new Error(
+    "response.text: Protocol error (Network.getResponseBody): No data found for resource with given identifier",
+  );
+  f.processReport = () => ({
+    agent_id: "agent",
+    business_completed: true,
+    browser_body_diagnostics: f.diagnostics,
+  });
+  return f;
+}
+
+async function failedProcessRead(f, overrides = {}) {
+  const read = f.audit.read(f.page, f.response, "process_complete", {
+    terminal: f.terminal.promise,
+    cancellation: f.cancellation,
+    ...overrides,
+  });
+  void read.catch(() => {});
+  try {
+    f.fail(f.error);
+    f.setTime(45);
+    f.terminal.resolve(f.requestTerminal);
+    return await read;
+  } finally {
+    f.body.resolve("cleanup joins original body");
+    f.terminal.resolve(f.requestTerminal);
+    await Promise.allSettled([read]);
+    for (const observer of f.observers) await observer.closeAndWait();
+  }
+}
+
+test("C4 records a proved default-aborted process body without requiring login navigation or Trace", async () => {
+  const f = processFixture();
+  const originalError = {
+    name: f.error.name,
+    message: f.error.message,
+    stack: f.error.stack,
+  };
+  assert.equal(Object.isFrozen(f.proof), true);
+  assert.equal(await failedProcessRead(f), null);
+  assert.equal(
+    f.reads(),
+    1,
+    "cancellation cannot replace the original body attempt",
+  );
+  assert(
+    f.matched.length > 0 && f.matched.every((value) => value === f.request),
+  );
+  assert.equal(f.diagnostics.length, 1);
+  const [row] = f.diagnostics;
+  assert.equal(row.classification, "cancelled_process_read");
+  assert.equal(row.agentId, "agent");
+  assert.equal(row.sessionId, "session");
+  assert.equal(row.runId, "run");
+  assert.equal(row.contentType, "application/json; charset=utf-8");
+  assert.equal(row.url, f.response.url());
+  assert.equal(row.requestURL, f.request.url());
+  assert.equal(row.body, "not_observed");
+  assert.deepEqual(row.requestTerminal, f.requestTerminal);
+  assert.deepEqual(row.cancellation, f.proof);
+  assert.deepEqual(row.raw_error, originalError);
+  const report = f.processReport();
+  assert.equal(Object.hasOwn(report, "browser_revocation"), false);
+  const result = implementation.assertC4BodyDiagnostics(report, {
+    gateway: "http://gateway",
+  });
+  assert.equal(result.body_count, 1);
+  assert.deepEqual(result.body_ids, [1]);
+});
+
+test("C4 body failure before requestfailed waits for the terminal and late same-Request cancellation proof", async () => {
+  const f = processFixture();
+  let ended = false,
+    proofAvailable = false;
+  f.cancellation.match = (original) => {
+    f.matched.push(original);
+    return proofAvailable && original === f.request ? f.proof : null;
+  };
+  const read = f.audit.read(f.page, f.response, "process_complete", {
+    terminal: f.terminal.promise,
+    cancellation: f.cancellation,
+  });
+  void read.then(
+    () => {
+      ended = true;
+    },
+    () => {
+      ended = true;
+    },
+  );
+  try {
+    f.fail(f.error);
+    await turn();
+    assert.equal(
+      ended,
+      false,
+      "body rejection must wait for the original requestfailed",
+    );
+    assert.deepEqual(f.diagnostics, []);
+    proofAvailable = true;
+    f.setTime(45);
+    f.terminal.resolve(f.requestTerminal);
+    assert.equal(await read, null);
+    assert.deepEqual(f.diagnostics[0].cancellation, f.proof);
+    assert.deepEqual(f.diagnostics[0].requestTerminal, f.requestTerminal);
+  } finally {
+    f.body.resolve("cleanup joins original body");
+    f.terminal.resolve(f.requestTerminal);
+    await Promise.allSettled([read]);
+    for (const observer of f.observers) await observer.closeAndWait();
+  }
+});
+
+test("C4 proved requestfailed still joins the original held body before classifying cancellation", async () => {
+  const f = processFixture();
+  let ended = false;
+  const read = f.audit.read(f.page, f.response, "process_complete", {
+    terminal: f.terminal.promise,
+    cancellation: f.cancellation,
+  });
+  void read.then(
+    () => {
+      ended = true;
+    },
+    () => {
+      ended = true;
+    },
+  );
+  try {
+    f.terminal.resolve(f.requestTerminal);
+    await turn();
+    assert.equal(
+      ended,
+      false,
+      "requestfailed cannot replace joining response.text",
+    );
+    assert.equal(f.reads(), 1);
+    assert.deepEqual(f.diagnostics, []);
+    f.fail(f.error);
+    assert.equal(await read, null);
+    assert.equal(f.diagnostics.length, 1);
+  } finally {
+    f.body.resolve("cleanup joins original body");
+    f.terminal.resolve(f.requestTerminal);
+    await Promise.allSettled([read]);
+    for (const observer of f.observers) await observer.closeAndWait();
+  }
+});
+
+test("C4 process cancellation joins the body and terminal before the next business action and never invents a payload read", async () => {
+  const f = processFixture();
+  const payloads = [],
+    actions = [];
+  const reader = observeC4Responses(
+    f.page,
+    f.scope,
+    async (value, _url, options) => {
+      const text = await f.audit.read(f.page, value, "process_complete", {
+        terminal: options?.terminal,
+        cancellation: f.cancellation,
+      });
+      if (text !== null) payloads.push(text);
+      actions.push("body joined");
+    },
+    { now: () => 45 },
+  );
+  f.page.emit("request", f.request);
+  f.page.emit("response", f.response);
+  const next = reader.before(() => actions.push("next business action"));
+  void next.catch(() => {});
+  try {
+    f.fail(f.error);
+    await turn();
+    assert.deepEqual(actions, []);
+    assert.equal(reader.ready(), false);
+    f.setTime(45);
+    f.page.emit("requestfailed", f.request);
+    await next;
+    assert.deepEqual(actions, ["body joined", "next business action"]);
+    assert.deepEqual(
+      payloads,
+      [],
+      "unobserved bodies are not audited payload frames",
+    );
+    assert.equal(f.reads(), 1);
+    assert.deepEqual(f.failures, []);
+    assert.equal(f.diagnostics[0].classification, "cancelled_process_read");
+  } finally {
+    f.body.resolve("cleanup joins original body");
+    f.page.emit("requestfailed", f.request);
+    await Promise.allSettled([
+      next,
+      ...f.observers.map((observer) => observer.closeAndWait()),
+    ]);
+  }
+});
+
+for (const [name, change, options] of [
+  [
+    "missing proof",
+    (f) => {
+      f.proof = null;
+    },
+  ],
+  [
+    "another Request with the same URL",
+    (f) => {
+      f.matchedRequest = { ...f.request };
+    },
+  ],
+  ["missing cancellation observer", () => {}, { cancellation: undefined }],
+  ["missing request terminal", () => {}, { terminal: undefined }],
+  [
+    "finished request",
+    (f) => {
+      f.requestTerminal = { kind: "finished", failure: null, at: 45 };
+    },
+  ],
+  [
+    "closed page",
+    (f) => {
+      f.requestTerminal = { kind: "closed", failure: null, at: 45 };
+    },
+  ],
+  [
+    "different transport failure",
+    (f) => {
+      f.requestTerminal.failure = "net::ERR_FAILED";
+    },
+  ],
+  [
+    "ambiguous transport failure",
+    (f) => {
+      f.requestTerminal.failure = "net::ERR_ABORTED or deadline";
+    },
+  ],
+  [
+    "foreign Agent",
+    (f) => {
+      f.response.url = () =>
+        "http://gateway" +
+        processPath.replace("/agents/agent/", "/agents/other/");
+      f.request.url = f.response.url;
+      f.proof = Object.freeze({
+        ...f.proof,
+        path: new URL(f.response.url()).pathname,
+      });
+    },
+  ],
+  [
+    "foreign origin",
+    (f) => {
+      f.response.url = () => "http://other" + processPath;
+      f.request.url = f.response.url;
+    },
+  ],
+  [
+    "POST",
+    (f) => {
+      f.request.method = () => "POST";
+    },
+  ],
+  [
+    "401",
+    (f) => {
+      f.response.status = () => 401;
+    },
+  ],
+  [
+    "403",
+    (f) => {
+      f.response.status = () => 403;
+    },
+  ],
+  [
+    "non-JSON body",
+    (f) => {
+      f.response.headers = () => ({ "content-type": "text/html" });
+    },
+  ],
+  [
+    "subframe",
+    (f) => {
+      f.request.frame = () => ({});
+    },
+  ],
+  [
+    "redirect source",
+    (f) => {
+      f.request.redirectedFrom = () => ({});
+    },
+  ],
+  [
+    "redirect target",
+    (f) => {
+      f.request.redirectedTo = () => ({});
+    },
+  ],
+  [
+    "another response URL",
+    (f) => {
+      f.request.url = () => "http://gateway" + processPath + "?cursor=other";
+    },
+  ],
+  [
+    "another proof path",
+    (f) => {
+      f.proof = Object.freeze({
+        ...f.proof,
+        path: processPath.replace("/run/", "/other/"),
+      });
+    },
+  ],
+  ...["deadline", "session_changed", "unknown"].map((reasonKind) => [
+    reasonKind,
+    (f) => {
+      f.proof = Object.freeze({ ...f.proof, reasonKind });
+    },
+  ]),
+  ...[30_000, 30_001, Infinity, -1].map((duration) => [
+    `invalid cancellation duration ${duration}`,
+    (f) => {
+      f.proof = Object.freeze({
+        ...f.proof,
+        abortedAt: f.proof.startedAt + duration,
+      });
+    },
+  ]),
+])
+  test(`C4 process body remains blocking for ${name}`, async () => {
+    const f = processFixture();
+    change(f);
+    await assert.rejects(
+      failedProcessRead(f, options),
+      (error) => error === f.error,
+    );
+    assert.deepEqual(f.diagnostics, []);
+  });
+
+for (const [name, change] of [
+  [
+    "unfinished business",
+    (report) => {
+      report.business_completed = false;
+    },
+  ],
+  [
+    "unrecognized classification",
+    (report, row) => {
+      row.classification = "unknown";
+    },
+  ],
+  [
+    "another report Agent",
+    (report) => {
+      report.agent_id = "other";
+    },
+  ],
+  [
+    "another row Agent",
+    (report, row) => {
+      row.agentId = "other";
+    },
+  ],
+  [
+    "another Session",
+    (report, row) => {
+      row.sessionId = "other";
+    },
+  ],
+  [
+    "another Run",
+    (report, row) => {
+      row.runId = "other";
+    },
+  ],
+  [
+    "missing original error",
+    (report, row) => {
+      delete row.raw_error;
+    },
+  ],
+  [
+    "missing cancellation proof",
+    (report, row) => {
+      delete row.cancellation;
+    },
+  ],
+  [
+    "changed proof path",
+    (report, row) => {
+      row.cancellation.path = processPath.replace("/run/", "/other/");
+    },
+  ],
+  [
+    "changed proof method",
+    (report, row) => {
+      row.cancellation.method = "POST";
+    },
+  ],
+  [
+    "application deadline",
+    (report, row) => {
+      row.cancellation.reasonKind = "deadline";
+    },
+  ],
+  [
+    "thirty-second cancellation",
+    (report, row) => {
+      row.cancellation.abortedAt = row.cancellation.startedAt + 30_000;
+    },
+  ],
+  [
+    "finished request",
+    (report, row) => {
+      row.requestTerminal.kind = "finished";
+      row.requestTerminal.failure = null;
+    },
+  ],
+  [
+    "different request failure",
+    (report, row) => {
+      row.requestTerminal.failure = "net::ERR_FAILED";
+    },
+  ],
+  [
+    "missing terminal",
+    (report, row) => {
+      delete row.requestTerminal;
+    },
+  ],
+  [
+    "non-JSON response",
+    (report, row) => {
+      row.contentType = "text/plain";
+    },
+  ],
+  [
+    "forbidden response",
+    (report, row) => {
+      row.status = 403;
+    },
+  ],
+  [
+    "POST response",
+    (report, row) => {
+      row.method = "POST";
+    },
+  ],
+  [
+    "redirect",
+    (report, row) => {
+      row.redirected = true;
+    },
+  ],
+  [
+    "subframe",
+    (report, row) => {
+      row.mainFrame = false;
+    },
+  ],
+  [
+    "changed request URL",
+    (report, row) => {
+      row.requestURL += "&other=1";
+    },
+  ],
+])
+  test(`C4 final cancelled-process diagnostic review rejects ${name}`, async () => {
+    const f = processFixture();
+    assert.equal(await failedProcessRead(f), null);
+    const report = structuredClone(f.processReport());
+    change(report, report.browser_body_diagnostics[0]);
+    assert.throws(() =>
+      implementation.assertC4BodyDiagnostics(report, {
+        gateway: "http://gateway",
+      }),
+    );
+  });
 
 for (const status of [200, 401, 403])
   for (const route of ["view", "bootstrap"])
