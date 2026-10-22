@@ -739,9 +739,47 @@ export async function verifyBrowserPromptBusy({
       "UI lost the original-intent query guidance",
     );
     check(
-      await composer.isDisabled(),
-      "Uncertain original Session became replayable",
+      await composer.isEnabled(),
+      "Uncertain Session lost editable command input",
     );
+    const blockedDraft = `${refusedPhase} blocked retry`;
+    evidence.blockedSubmission = {
+      draft: blockedDraft,
+      enterPressed: false,
+    };
+    await composer.fill(blockedDraft);
+    const sendMessage = page.getByRole("button", {
+      name: "Send message",
+      exact: true,
+    });
+    const sendMessageCount = await sendMessage.count();
+    evidence.blockedSubmission.sendMessageCount = sendMessageCount;
+    check(sendMessageCount <= 1, "Ambiguous ordinary Send control");
+    if (sendMessageCount === 1) {
+      const disabled = await sendMessage.isDisabled();
+      evidence.blockedSubmission.sendMessageDisabled = disabled;
+      check(disabled, "Uncertain original Session enabled ordinary sending");
+    } else {
+      const stop = page.getByRole("button", {
+        name: "Stop operation",
+        exact: true,
+      });
+      const stopVisible =
+        (await stop.count()) === 1 && (await stop.isVisible());
+      evidence.blockedSubmission.stopVisible = stopVisible;
+      check(stopVisible, "Uncertain Session lost its sending control");
+    }
+    await composer.press("Enter");
+    evidence.blockedSubmission.enterPressed = true;
+    evidence.blockedSubmission.draftAfterEnter = await composer.inputValue();
+    check(
+      evidence.blockedSubmission.draftAfterEnter === blockedDraft,
+      "Blocked ordinary submission changed the unsent draft",
+    );
+    evidence.gate.afterBlockedSubmission = await gateState();
+    promptInventory(evidence.gate.afterBlockedSubmission, [
+      { request: original, forwarded: 1 },
+    ]);
     evidence.operationQuery = await client.request(
       base +
         "/sessions/" +
