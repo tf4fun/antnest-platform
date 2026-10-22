@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { runBash, runShard, summary, verdict } from "./ci-shard.mjs";
+import {
+  createResourceCheckedRunner,
+  runBash,
+  runShard,
+  summary,
+  verdict,
+} from "./ci-shard.mjs";
 
 const clock =
   "clock skew adjustment disabled; not applying calculated delta of -2ms";
@@ -391,3 +397,619 @@ test("runBash runs with errexit and pipefail", async () => {
   assert.notEqual(result.code, 0);
   assert.doesNotMatch(result.output, /unreachable/u);
 });
+
+function emptyResourceSnapshot() {
+  return {
+    resources: { containers: [], volumes: [], networks: [] },
+    retained: [],
+    images: {},
+  };
+}
+
+function leakedResourceSnapshot() {
+  const snapshot = emptyResourceSnapshot();
+  snapshot.resources.volumes.push("anonymous-fixture-volume");
+  return snapshot;
+}
+
+function resourceCleanupResult(result) {
+  const records = result.output.split(/\r?\n/u).flatMap((line) => {
+    try {
+      const value = JSON.parse(line);
+      return value?.resource_cleanup ? [value.resource_cleanup] : [];
+    } catch {
+      return [];
+    }
+  });
+  assert.equal(records.length, 1, "append exactly one resource cleanup record");
+  assert.deepEqual(
+    JSON.parse(result.output.trimEnd().split(/\r?\n/u).at(-1)).resource_cleanup,
+    records[0],
+  );
+  return records[0];
+}
+
+function resourceBoundary() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+test("resource admission guards all six B Skills suites against one original baseline", async () => {
+  const ids = [
+    "skill-registry-discovery",
+    "skill-registry-rc-prepare",
+    "skill-registry-console",
+    "skill-temporary-runtime",
+    "skill-learning-runtime",
+    "runtime-controller-skill-archives",
+  ];
+  const baseline = emptyResourceSnapshot();
+  const snapshots = [],
+    ran = [],
+    recorded = [];
+  const checked = createResourceCheckedRunner({
+    run: async (command, id) => {
+      ran.push([command, id]);
+      return { code: 0, output: `${id} business completed`, timedOut: false };
+    },
+    snapshot: async ({ before, signal }) => {
+      assert(signal instanceof AbortSignal);
+      assert.equal(signal.aborted, false);
+      snapshots.push(before);
+      if (before) assert.deepEqual(before, baseline);
+      return structuredClone(baseline);
+    },
+    record: (id, evidence) => recorded.push({ id, evidence }),
+  });
+  for (const id of ids) {
+    const result = await checked(`command-${id}`, id);
+    assert.equal(result.code, 0);
+    assert.equal(result.timedOut, false);
+    assert.equal(resourceCleanupResult(result).status, "passed");
+  }
+  assert.deepEqual(
+    ran,
+    ids.map((id) => [`command-${id}`, id]),
+  );
+  assert.equal(snapshots.length, ids.length + 1);
+  assert.equal(snapshots.filter((before) => !before).length, 1);
+  assert.deepEqual(
+    recorded.map(({ id }) => id),
+    ids,
+  );
+  for (const { evidence } of recorded) {
+    assert.deepEqual(evidence.baseline, baseline);
+    assert.deepEqual(evidence.after, baseline);
+    assert.equal(evidence.comparison.unchanged, true);
+    assert.deepEqual(evidence.business, {
+      executed: true,
+      code: 0,
+      timedOut: false,
+    });
+  }
+});
+
+test("unguarded suites pass through without snapshots or cleanup records", async () => {
+  const original = { code: 7, output: "original output", timedOut: true };
+  let calls = 0;
+  const checked = createResourceCheckedRunner({
+    run: async (command, id) => {
+      calls++;
+      assert.equal(command, "ordinary command");
+      assert.equal(id, "agent-ui-receipt");
+      return original;
+    },
+    snapshot: async () => assert.fail("unguarded suite must not snapshot"),
+    record: () => assert.fail("unguarded suite must not record cleanup"),
+  });
+  assert.deepEqual(
+    await checked("ordinary command", "agent-ui-receipt"),
+    original,
+  );
+  assert.equal(calls, 1);
+});
+
+test("successful business with a leaked anonymous volume is a hard failure", async () => {
+  const baseline = emptyResourceSnapshot();
+  const after = leakedResourceSnapshot();
+  const recorded = [];
+  const checked = createResourceCheckedRunner({
+    run: async () => ({
+      code: 0,
+      output: "business completed",
+      timedOut: false,
+    }),
+    snapshot: async ({ before }) => (before ? after : baseline),
+    record: (id, evidence) => recorded.push({ id, evidence }),
+  });
+  const result = await checked("prepare", "skill-registry-rc-prepare");
+  assert.equal(result.code, 1);
+  assert.equal(result.timedOut, false);
+  assert(result.output.startsWith("business completed"));
+  assert.equal(resourceCleanupResult(result).status, "failed");
+  assert.equal(
+    verdict(result.code, result.output, false, "skill-registry-rc-prepare"),
+    "failed",
+  );
+  assert.equal(recorded.length, 1);
+  const { evidence } = recorded[0];
+  assert.deepEqual(evidence.baseline, emptyResourceSnapshot());
+  assert.deepEqual(evidence.after, leakedResourceSnapshot());
+  assert.equal(evidence.comparison.unchanged, false);
+  assert.deepEqual(evidence.comparison.resources.volumes, {
+    added: ["anonymous-fixture-volume"],
+    removed: [],
+  });
+  assert.deepEqual(evidence.business, {
+    executed: true,
+    code: 0,
+    timedOut: false,
+  });
+  assert.deepEqual(
+    baseline,
+    emptyResourceSnapshot(),
+    "the original baseline must not be mutated",
+  );
+  assert.deepEqual(
+    after,
+    leakedResourceSnapshot(),
+    "the observed inventory must not be mutated",
+  );
+});
+
+test("business failure and timeout retain their original code and output alongside cleanup failure", async () => {
+  const original = {
+    code: 7,
+    output: "business failed\noriginal diagnostic\n",
+    timedOut: true,
+  };
+  const recorded = [];
+  let postflight = 0;
+  const checked = createResourceCheckedRunner({
+    run: async () => original,
+    snapshot: async ({ before, signal }) => {
+      if (!before) return emptyResourceSnapshot();
+      postflight++;
+      assert(signal instanceof AbortSignal);
+      assert.equal(
+        signal.aborted,
+        false,
+        "business timeout must not cancel cleanup admission",
+      );
+      return leakedResourceSnapshot();
+    },
+    record: (_, evidence) => recorded.push(evidence),
+  });
+  const result = await checked("prepare", "skill-registry-rc-prepare");
+  assert.equal(postflight, 1);
+  assert.equal(result.code, original.code);
+  assert.equal(result.timedOut, true);
+  assert(result.output.startsWith(original.output));
+  assert.equal(resourceCleanupResult(result).status, "failed");
+  assert.deepEqual(recorded[0].business, {
+    executed: true,
+    code: 7,
+    timedOut: true,
+  });
+  assert.equal(recorded[0].comparison.unchanged, false);
+  assert.deepEqual(original, {
+    code: 7,
+    output: "business failed\noriginal diagnostic\n",
+    timedOut: true,
+  });
+});
+
+test("baseline failure records unexecuted business and cannot admit the suite", async () => {
+  const recorded = [];
+  let businessCalls = 0;
+  const checked = createResourceCheckedRunner({
+    run: async () => {
+      businessCalls++;
+      return { code: 0, output: "must not run", timedOut: false };
+    },
+    snapshot: async () => {
+      throw new Error("baseline unavailable");
+    },
+    record: (_, evidence) => recorded.push(evidence),
+  });
+  const result = await checked("prepare", "skill-registry-rc-prepare");
+  assert.equal(businessCalls, 0);
+  assert.notEqual(result.code, 0);
+  assert.equal(resourceCleanupResult(result).status, "failed");
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].business.executed, false);
+  assert(recorded[0].error);
+});
+
+test("postflight exception is a hard failure while preserving completed business", async () => {
+  const recorded = [];
+  const checked = createResourceCheckedRunner({
+    run: async () => ({
+      code: 0,
+      output: "completed business output\n",
+      timedOut: false,
+    }),
+    snapshot: async ({ before }) => {
+      if (!before) return emptyResourceSnapshot();
+      throw new Error("postflight unavailable");
+    },
+    record: (_, evidence) => recorded.push(evidence),
+  });
+  const result = await checked("install", "skill-learning-runtime");
+  assert.equal(result.code, 1);
+  assert(result.output.startsWith("completed business output\n"));
+  assert.equal(resourceCleanupResult(result).status, "failed");
+  assert.deepEqual(recorded[0].business, {
+    executed: true,
+    code: 0,
+    timedOut: false,
+  });
+  assert(recorded[0].error);
+});
+
+for (const failedPostflight of [false, true]) {
+  test(`a thrown business command still joins postflight${failedPostflight ? " and preserves its separate failure" : ""}`, async () => {
+    const recorded = [],
+      steps = [];
+    const checked = createResourceCheckedRunner({
+      run: async () => {
+        steps.push("business");
+        throw new Error("business command failed");
+      },
+      snapshot: async ({ before }) => {
+        steps.push(before ? "postflight" : "baseline");
+        if (before && failedPostflight)
+          throw new Error("postflight also failed");
+        return emptyResourceSnapshot();
+      },
+      record: (_, evidence) => recorded.push(evidence),
+    });
+    const result = await checked("release", "skill-learning-runtime");
+    assert.deepEqual(steps, ["baseline", "business", "postflight"]);
+    assert.notEqual(result.code, 0);
+    assert.equal(
+      resourceCleanupResult(result).status,
+      failedPostflight ? "failed" : "passed",
+    );
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0].business.executed, true);
+    assert(recorded[0].business.error);
+    if (failedPostflight) assert(recorded[0].error);
+    else assert.equal(recorded[0].comparison.unchanged, true);
+  });
+}
+
+test(
+  "held postflight cannot report success before its actual snapshot settles",
+  { timeout: 5000 },
+  async (t) => {
+    const entered = resourceBoundary();
+    const release = resourceBoundary();
+    const recorded = [];
+    let settled = false,
+      returned = false;
+    const checked = createResourceCheckedRunner({
+      run: async () => ({ code: 0, output: "completed", timedOut: false }),
+      snapshot: async ({ before }) => {
+        if (!before) return emptyResourceSnapshot();
+        entered.resolve();
+        try {
+          await release.promise;
+          return emptyResourceSnapshot();
+        } finally {
+          settled = true;
+        }
+      },
+      record: (_, evidence) => recorded.push(evidence),
+    });
+    const pending = checked("prepare", "skill-registry-rc-prepare");
+    pending.then(
+      () => {
+        returned = true;
+      },
+      () => {
+        returned = true;
+      },
+    );
+    t.after(async () => {
+      release.resolve();
+      await pending;
+    });
+    try {
+      await entered.promise;
+      await new Promise((done) => setImmediate(done));
+      assert.equal(settled, false);
+      assert.equal(returned, false);
+      assert.equal(recorded.length, 0);
+    } finally {
+      release.resolve();
+      await pending;
+    }
+    assert.equal(settled, true);
+    assert.equal(resourceCleanupResult(await pending).status, "passed");
+  },
+);
+
+test(
+  "postflight timeout aborts the snapshot and joins it before returning failure",
+  { timeout: 5000 },
+  async (t) => {
+    const entered = resourceBoundary();
+    const aborted = resourceBoundary();
+    const release = resourceBoundary();
+    const recorded = [];
+    let settled = false,
+      returned = false,
+      diagnosticSignal;
+    const checked = createResourceCheckedRunner({
+      timeoutMs: 20,
+      run: async () => ({
+        code: 0,
+        output: "completed before postflight\n",
+        timedOut: false,
+      }),
+      snapshot: async ({ before, signal }) => {
+        if (!before) return emptyResourceSnapshot();
+        assert(signal instanceof AbortSignal);
+        diagnosticSignal = signal;
+        const cancelled = () => aborted.resolve();
+        signal.addEventListener("abort", cancelled, { once: true });
+        if (signal.aborted) cancelled();
+        entered.resolve();
+        try {
+          await release.promise;
+          signal.throwIfAborted();
+          return emptyResourceSnapshot();
+        } finally {
+          signal.removeEventListener("abort", cancelled);
+          settled = true;
+        }
+      },
+      record: (_, evidence) => recorded.push(evidence),
+    });
+    const pending = checked("prepare", "skill-registry-rc-prepare");
+    pending.then(
+      () => {
+        returned = true;
+      },
+      () => {
+        returned = true;
+      },
+    );
+    t.after(async () => {
+      release.resolve();
+      await pending;
+    });
+    try {
+      await entered.promise;
+      await aborted.promise;
+      await new Promise((done) => setImmediate(done));
+      assert.equal(diagnosticSignal.aborted, true);
+      assert.equal(settled, false, "abort delivery is not snapshot completion");
+      assert.equal(
+        returned,
+        false,
+        "timeout must not race ahead of actual snapshot join",
+      );
+      assert.equal(recorded.length, 0);
+    } finally {
+      release.resolve();
+      await pending;
+    }
+    const result = await pending;
+    assert.equal(settled, true);
+    assert.equal(result.code, 1);
+    assert(result.output.startsWith("completed before postflight\n"));
+    assert.equal(resourceCleanupResult(result).status, "failed");
+    assert.deepEqual(recorded[0].business, {
+      executed: true,
+      code: 0,
+      timedOut: false,
+    });
+    assert(recorded[0].error);
+  },
+);
+
+test("later guarded suites cannot adopt an earlier leaked volume into their baseline", async () => {
+  const original = emptyResourceSnapshot();
+  const recorded = [],
+    snapshots = [],
+    ran = [];
+  const checked = createResourceCheckedRunner({
+    run: async (_, id) => {
+      ran.push(id);
+      return { code: 0, output: `${id} completed`, timedOut: false };
+    },
+    snapshot: async ({ before }) => {
+      snapshots.push(before);
+      if (!before) {
+        assert.equal(snapshots.length, 1, "baseline must be captured once");
+        return structuredClone(original);
+      }
+      assert.deepEqual(
+        before,
+        original,
+        "every postflight uses the original baseline",
+      );
+      return leakedResourceSnapshot();
+    },
+    record: (_, evidence) => recorded.push(evidence),
+  });
+  for (const id of ["skill-registry-rc-prepare", "skill-learning-runtime"]) {
+    const result = await checked("business", id);
+    assert.equal(result.code, 1);
+    assert.equal(resourceCleanupResult(result).status, "failed");
+  }
+  assert.deepEqual(ran, [
+    "skill-registry-rc-prepare",
+    "skill-learning-runtime",
+  ]);
+  assert.equal(snapshots.length, 3);
+  assert.equal(recorded.length, 2);
+  for (const evidence of recorded) {
+    assert.deepEqual(evidence.baseline, original);
+    assert.equal(evidence.comparison.unchanged, false);
+    assert.deepEqual(evidence.comparison.resources.volumes.added, [
+      "anonymous-fixture-volume",
+    ]);
+  }
+});
+
+test(
+  "stopping during baseline joins both snapshots without starting business",
+  { timeout: 5000 },
+  async (t) => {
+    const baseline = emptyResourceSnapshot();
+    const baselineEntered = resourceBoundary();
+    const baselineRelease = resourceBoundary();
+    const postflightEntered = resourceBoundary();
+    const postflightRelease = resourceBoundary();
+    const snapshots = [],
+      settled = [],
+      recorded = [];
+    let stopped = false,
+      businessCalls = 0,
+      returned = false;
+    const checked = createResourceCheckedRunner({
+      stopped: () => stopped,
+      run: async () => {
+        businessCalls++;
+        return { code: 0, output: "business must not start", timedOut: false };
+      },
+      snapshot: async ({ before, signal }) => {
+        const phase = before ? "postflight" : "baseline";
+        snapshots.push(phase);
+        assert(signal instanceof AbortSignal);
+        assert.equal(signal.aborted, false);
+        if (before) assert.deepEqual(before, baseline);
+        const entered = before ? postflightEntered : baselineEntered;
+        const release = before ? postflightRelease : baselineRelease;
+        entered.resolve();
+        try {
+          await release.promise;
+          return structuredClone(baseline);
+        } finally {
+          settled.push(phase);
+        }
+      },
+      record: (_, evidence) => recorded.push(evidence),
+    });
+    const pending = checked("prepare", "skill-registry-rc-prepare");
+    const outcome = pending.then(
+      () => {
+        returned = true;
+        return "returned";
+      },
+      () => {
+        returned = true;
+        return "returned";
+      },
+    );
+    t.after(async () => {
+      baselineRelease.resolve();
+      postflightRelease.resolve();
+      await pending;
+    });
+    try {
+      assert.equal(
+        await Promise.race([
+          baselineEntered.promise.then(() => "baseline"),
+          outcome,
+        ]),
+        "baseline",
+      );
+      stopped = true;
+      await new Promise((done) => setImmediate(done));
+      assert.equal(
+        returned,
+        false,
+        "stopping must still join the held baseline",
+      );
+      assert.deepEqual(settled, []);
+      assert.equal(recorded.length, 0);
+      baselineRelease.resolve();
+      assert.equal(
+        await Promise.race([
+          postflightEntered.promise.then(() => "postflight"),
+          outcome,
+        ]),
+        "postflight",
+        "stopping must retain independent postflight against the original baseline",
+      );
+      await new Promise((done) => setImmediate(done));
+      assert.equal(returned, false, "stopping must join the held postflight");
+      assert.deepEqual(settled, ["baseline"]);
+      assert.equal(recorded.length, 0);
+    } finally {
+      baselineRelease.resolve();
+      postflightRelease.resolve();
+      await pending;
+    }
+    const result = await pending;
+    assert.equal(
+      businessCalls,
+      0,
+      "a latched stop must prevent business dispatch",
+    );
+    assert.deepEqual(snapshots, ["baseline", "postflight"]);
+    assert.deepEqual(settled, ["baseline", "postflight"]);
+    assert.equal(result.code, 130);
+    assert.equal(result.timedOut, false);
+    assert.equal(
+      verdict(result.code, result.output, false, "skill-registry-rc-prepare"),
+      "failed",
+    );
+    const cleanup = resourceCleanupResult(result);
+    assert.equal(cleanup.business.executed, false);
+    assert.equal(cleanup.business.interrupted, true);
+    assert.equal(cleanup.comparison.unchanged, true);
+    assert.equal(recorded.length, 1);
+    assert.deepEqual(recorded[0].baseline, baseline);
+    assert.deepEqual(recorded[0].after, baseline);
+    assert.equal(recorded[0].business.executed, false);
+  },
+);
+
+for (const leaked of [false, true]) {
+  test(`a strict Trace warning ${leaked ? "cannot swallow resource cleanup failure" : "remains auxiliary after verified cleanup"}`, async () => {
+    const output = `${report([clock])}\n`;
+    const recorded = [];
+    const checked = createResourceCheckedRunner({
+      run: async () => ({ code: 2, output, timedOut: false }),
+      snapshot: async ({ before }) =>
+        before && leaked ? leakedResourceSnapshot() : emptyResourceSnapshot(),
+      record: (_, evidence) => recorded.push(evidence),
+    });
+    const result = await checked(
+      "archives",
+      "runtime-controller-skill-archives",
+    );
+    assert.equal(
+      result.code,
+      2,
+      "the original business exit code must remain intact",
+    );
+    assert(result.output.startsWith(output));
+    assert.equal(
+      resourceCleanupResult(result).status,
+      leaked ? "failed" : "passed",
+    );
+    assert.equal(
+      verdict(
+        result.code,
+        result.output,
+        true,
+        "runtime-controller-skill-archives",
+      ),
+      leaked ? "failed" : "warning",
+    );
+    assert.deepEqual(recorded[0].business, {
+      executed: true,
+      code: 2,
+      timedOut: false,
+    });
+  });
+}

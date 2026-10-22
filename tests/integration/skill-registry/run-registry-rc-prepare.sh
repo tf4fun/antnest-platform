@@ -21,14 +21,14 @@ cleanup() {
   if [[ -n "$proxy_pid" ]]; then kill "$proxy_pid" 2>/dev/null || true; wait "$proxy_pid" 2>/dev/null || true; fi
   if [[ -n "$registry_pid" ]]; then kill "$registry_pid" 2>/dev/null || true; wait "$registry_pid" 2>/dev/null || true; fi
   docker ps -aq --filter "label=io.antnest.runtime-controller-scope=$network_name" |
-    while IFS= read -r container; do [[ -z "$container" ]] || docker rm -f "$container" >/dev/null 2>&1 || true; done
+    while IFS= read -r container; do [[ -z "$container" ]] || docker rm -fv "$container" >/dev/null 2>&1 || true; done
   docker volume ls -q --filter "label=io.antnest.runtime-controller-scope=$network_name" |
     while IFS= read -r volume; do [[ -z "$volume" ]] || docker volume rm "$volume" >/dev/null 2>&1 || true; done
   docker image rm "$runtime_image" >/dev/null 2>&1 || true
   docker network rm "$network_name" >/dev/null 2>&1 || true
-  docker rm -f "$postgres_name" >/dev/null 2>&1 || true
-  docker rm -f "$identity_name" >/dev/null 2>&1 || true
-  docker rm -f "$egress_name" >/dev/null 2>&1 || true
+  docker rm -fv "$postgres_name" >/dev/null 2>&1 || true
+  docker rm -fv "$identity_name" >/dev/null 2>&1 || true
+  docker rm -fv "$egress_name" >/dev/null 2>&1 || true
   rm -rf "$temp_dir"
 }
 trap cleanup EXIT

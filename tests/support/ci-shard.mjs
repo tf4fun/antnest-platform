@@ -4,6 +4,10 @@ import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  compareEnvironment,
+  snapshotEnvironment,
+} from "./verification/environment.mjs";
 import { hasStrictCompletion } from "./strict-findings.mjs";
 import {
   hasResolveCacheCompletion,
@@ -32,6 +36,17 @@ function hasAuxiliaryTraceWarning(output) {
 // Strict runners retain exit 2 and their original Trace findings. A completed
 // business report admits those findings as auxiliary diagnostics with a warning.
 export function verdict(code, output, strict, suiteID) {
+  for (const line of output.split(/\r?\n/u)) {
+    try {
+      if (
+        JSON.parse(line.trim().replace(/^# /u, "")).resource_cleanup?.status ===
+        "failed"
+      )
+        return "failed";
+    } catch {
+      // Ordinary command output is not necessarily JSON.
+    }
+  }
   if (
     suiteID === resolveCacheCISuite &&
     code !== 0 &&
@@ -50,6 +65,108 @@ export function verdict(code, output, strict, suiteID) {
 }
 
 const signals = ["SIGINT", "SIGTERM"];
+
+const resourceCheckedSuites = new Set([
+  "skill-registry-discovery",
+  "skill-registry-rc-prepare",
+  "skill-registry-console",
+  "skill-temporary-runtime",
+  "skill-learning-runtime",
+  "runtime-controller-skill-archives",
+]);
+
+// Keep the first inventory for the entire shard. A previous suite's leak must
+// remain a failure, rather than becoming the next suite's accepted baseline.
+export function createResourceCheckedRunner({
+  run,
+  snapshot = snapshotEnvironment,
+  record = () => {},
+  stopped = () => false,
+  timeoutMs = 120000,
+}) {
+  let baselinePromise;
+  const takeSnapshot = async (before) => {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error("resource inventory deadline exceeded")),
+      timeoutMs,
+    );
+    try {
+      const value = await snapshot({ before, signal: controller.signal });
+      controller.signal.throwIfAborted();
+      return value;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  return async (command, id) => {
+    if (!resourceCheckedSuites.has(id)) return run(command, id);
+    const evidence = { business: { executed: false } };
+    let result = { code: 1, output: "", timedOut: false };
+    try {
+      baselinePromise ??= takeSnapshot();
+      evidence.baseline = await baselinePromise;
+    } catch (error) {
+      evidence.error = `baseline: ${String(error)}`;
+    }
+    if (evidence.baseline) {
+      if (stopped()) {
+        result.code = 130;
+        evidence.business.interrupted = true;
+      } else {
+        try {
+          result = await run(command, id);
+          evidence.business = {
+            executed: true,
+            code: result.code,
+            timedOut: Boolean(result.timedOut),
+          };
+        } catch (error) {
+          evidence.business = {
+            executed: true,
+            code: 1,
+            timedOut: false,
+            error: String(error),
+          };
+          result.output = `${String(error)}\n`;
+        }
+      }
+      try {
+        // Independent of the business command's cancellation. Await the real
+        // Docker client completion, including after this new budget expires.
+        evidence.after = await takeSnapshot(evidence.baseline);
+        evidence.comparison = compareEnvironment(
+          evidence.baseline,
+          evidence.after,
+        );
+      } catch (error) {
+        evidence.error = `postflight: ${String(error)}`;
+      }
+    }
+    evidence.status =
+      evidence.comparison?.unchanged && !evidence.error ? "passed" : "failed";
+    try {
+      await record(id, evidence);
+    } catch (error) {
+      evidence.error = [evidence.error, `evidence: ${String(error)}`]
+        .filter(Boolean)
+        .join("; ");
+      evidence.status = "failed";
+    }
+    const cleanup = {
+      status: evidence.status,
+      business: evidence.business,
+      comparison: evidence.comparison,
+      error: evidence.error,
+    };
+    return {
+      ...result,
+      code: result.code === 0 && evidence.status === "failed" ? 1 : result.code,
+      output: `${result.output}\n${JSON.stringify({ resource_cleanup: cleanup })}\n`,
+      resourceCleanup: cleanup,
+    };
+  };
+}
 
 // The suite runs in its own process group so a timeout or an interrupted
 // job stops every process it started, including detached Compose clients.
@@ -139,7 +256,10 @@ export async function runShard(
     }
     write(`::group::${suite.name}`);
     const start = now();
-    const { code, output, timedOut } = await run(suite.run, suite.id);
+    const { code, output, timedOut, resourceCleanup } = await run(
+      suite.run,
+      suite.id,
+    );
     const end = now();
     const interrupted = stopped();
     write("::endgroup::");
@@ -165,6 +285,7 @@ export async function runShard(
       durationMs: Math.max(0, end - start),
       timedOut: Boolean(timedOut),
       interrupted,
+      ...(resourceCleanup ? { resourceCleanup } : {}),
     });
   }
   return results;
@@ -194,6 +315,20 @@ async function main() {
     process.on(signal, () => {
       interrupted = true;
     });
+  const checkedRun = createResourceCheckedRunner({
+    stopped: () => interrupted,
+    run: (command, id) =>
+      runBash(command, {
+        log: join(logs, `${id}.log`),
+        stream: (chunk) => process.stdout.write(chunk),
+      }),
+    record: (id, evidence) =>
+      writeFileSync(
+        join(logs, `${id}.environment.json`),
+        `${JSON.stringify(evidence, null, 2)}\n`,
+        { flag: "wx", mode: 0o600 },
+      ),
+  });
   const results = await runShard(suites, {
     stopped: () => interrupted,
     onResult: (result) => {
@@ -205,11 +340,15 @@ async function main() {
         { mode: 0o600 },
       );
     },
-    run: (command, id) =>
-      runBash(command, {
-        log: join(logs, `${id}.log`),
-        stream: (chunk) => process.stdout.write(chunk),
-      }),
+    run: async (command, id) => {
+      const result = await checkedRun(command, id);
+      if (result.resourceCleanup) {
+        const line = `${JSON.stringify({ resource_cleanup: result.resourceCleanup })}\n`;
+        appendFileSync(join(logs, `${id}.log`), line, { mode: 0o600 });
+        process.stdout.write(line);
+      }
+      return result;
+    },
     write: (line) => process.stdout.write(`${line}\n`),
   });
   if (process.env.GITHUB_STEP_SUMMARY)
