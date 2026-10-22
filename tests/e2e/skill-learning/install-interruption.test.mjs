@@ -8,9 +8,12 @@ import { fileURLToPath } from "node:url";
 import {
   configuration,
   dockerClient,
-  composeArgs,
   cleanup,
 } from "../lifecycle-closeout/docker.mjs";
+import {
+  skillComposeArgs as composeArgs,
+  startSkillObservability,
+} from "./observability-setup.mjs";
 import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { learningImageOverlay } from "./development-settings.mjs";
@@ -209,6 +212,13 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       true,
       { env: candidateEnvironment(config.env) },
     );
+    await startSkillObservability({
+      docker,
+      project: config.project,
+      overlay,
+      directory: `${root}/artifacts/verification/skill-learning`,
+      signal: abort.signal,
+    });
     await docker(
       composeArgs(config.project, [
         ...overlay,
