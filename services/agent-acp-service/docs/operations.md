@@ -270,9 +270,10 @@ Collector retention. This service adds no retention service.
   Failure during publication after persistence closes the affected organization,
   aborts its execution and detaches approval/output consumers; retry the same or
   newer snapshot. Neither the request nor raw error text is telemetry content.
-- Local acceptance, Run-event or terminal persistence uncertainty fails readiness
-  and requests process replacement. Startup records interruption without model or
-  Tool replay. No Controller admission or completion receipt is involved.
+- Uncertain initial Run acceptance fails readiness and requests process
+  replacement. Startup records interruption without model or Tool replay.
+  Run-event and terminal acknowledgement failures use the scoped recovery path
+  below. No Controller admission or completion receipt is involved.
 - Model timeout: cancel the request and terminate the Run as failed unless the
   client cancellation path applies.
 - Runtime MCP timeout after dispatch: report Tool effect unknown and
@@ -295,8 +296,11 @@ Collector retention. This service adds no retention service.
   a Runtime revision mismatch is `409 configuration_conflict`. Readiness or
   storage failure is an error, never a successful null barrier. A non-null
   receipt retains its original Runtime execution identity across ACP restart.
-  The query neither clears protection nor triggers Rebuild. Automatic policy,
-  UI recovery actions and full crash/recovery integration remain pending.
+  The query neither clears protection nor triggers Rebuild. Controller's
+  configured automatic policy can admit one durable Rebuild for the original
+  barrier; the default policy remains manual. The automatic kill-during-tool
+  integration verifies Runtime replacement and a new Run. Notification and
+  manual UI recovery consumers remain pending.
 - An unconfirmed Run admission write stops new Run admission and
   requires service recovery. An unacknowledged prompt returns JSON-RPC `-32603`
   with `code: database_error` and `retryable: false`; its public message contains
