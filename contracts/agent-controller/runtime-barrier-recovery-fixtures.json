@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "purpose": "Synthetic pending wire conformance only; authentication, CAS, durable deduplication, notification delivery and actual recovery require later owning-service tests.",
+  "purpose": "Synthetic frozen wire conformance, including revision 43 Agent/Rebuild/notification envelopes; authentication, CAS, durable deduplication, notification delivery and actual recovery require owning-service tests.",
   "schema_vectors": [
     {
       "name": "historical-default",

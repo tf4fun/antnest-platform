@@ -148,6 +148,8 @@ function activeValidators() {
     [
       "agent",
       "rebuild_agent_request",
+      "agent_event",
+      "event_list",
       "runtime_barrier_recovery_policy",
       "set_runtime_barrier_recovery_policy_request",
     ].map((name) => [
@@ -162,6 +164,39 @@ function check(validators, definition, value, valid, label) {
   assert.equal(validators[definition](value), valid, label);
   if (definition === "policy")
     assert.equal(validators.root(value), valid, label + " at the schema root");
+}
+
+function notificationEvent(data = samples.notification_data()) {
+  return {
+    event_id: "notification-1",
+    global_sequence: 1,
+    aggregate_sequence: 1,
+    schema_version: 1,
+    agent_id: "agent-1",
+    event_type: "agent_runtime_barrier_required",
+    occurred_at: "2026-10-22T00:00:00Z",
+    data,
+  };
+}
+
+function checkActive(validators, definition, value, valid, label) {
+  const before = structuredClone(value);
+  assert.equal(validators[definition](value), valid, label);
+  assert.deepEqual(value, before, label + " cannot mutate input");
+}
+
+function checkActiveEvent(validators, value, valid, label) {
+  checkActive(validators, "agent_event", value, valid, label);
+  checkActive(
+    validators,
+    "event_list",
+    {
+      events: [structuredClone(value)],
+      next_sequence: value?.global_sequence ?? 1,
+    },
+    valid,
+    label + " in event list",
+  );
 }
 
 test("the pending recovery proposal retains its frozen policy routes and administrator authority", () => {
@@ -248,10 +283,10 @@ test("pending manual recovery and notifications reuse existing lifecycle and eve
   });
 });
 
-test("revision 42 activates only policy GET and PUT with their exact administrator grants", () => {
+test("revision 43 preserves policy GET and PUT and their exact administrator grants", () => {
   const active = read("agent-controller/control-contract.json");
   const callers = read("agent-controller/callers.json");
-  assert.equal(active.revision, 42);
+  assert.equal(active.revision, 43);
   const expected = {
     get: {
       method: "GET",
@@ -357,7 +392,7 @@ test("active policy aliases preserve the frozen wire vectors without inserting d
     }
 });
 
-test("policy activation leaves recovery projections, notifications and the Rebuild extension pending", () => {
+test("active recovery wire references the frozen definitions and notification catalog", () => {
   const schema = read("agent-controller/control-api.schema.json");
   const manifest = read("agent-controller/control-contract.json");
   for (const name of [
@@ -365,36 +400,288 @@ test("policy activation leaves recovery projections, notifications and the Rebui
     "recovery_request",
     "notification_data",
   ])
+    assert.deepEqual(schema.$defs[name], {
+      $ref: `runtime-barrier-recovery.schema.json#/$defs/${name}`,
+    });
+  assert.deepEqual(schema.$defs.agent.properties.runtime_recovery, {
+    $ref: "#/$defs/runtime_recovery",
+  });
+  assert.deepEqual(schema.$defs.rebuild_agent_request.properties.recovery, {
+    $ref: "#/$defs/recovery_request",
+  });
+  assert.equal(schema.$defs.agent.required.includes("runtime_recovery"), false);
+  assert.equal(
+    schema.$defs.rebuild_agent_request.required.includes("recovery"),
+    false,
+  );
+  for (const eventTypes of [
+    manifest.enums.event_type,
+    schema.$defs.agent_event.properties.event_type.enum,
+  ])
     assert.equal(
-      Object.hasOwn(schema.$defs, name),
-      false,
-      name + " is not active",
+      eventTypes.filter((type) => type === "agent_runtime_barrier_required")
+        .length,
+      1,
     );
-  assert.equal(
-    Object.hasOwn(schema.$defs.agent.properties, "runtime_recovery"),
-    false,
-  );
-  assert.equal(
-    Object.hasOwn(schema.$defs.rebuild_agent_request.properties, "recovery"),
-    false,
-  );
-  assert.equal(
-    manifest.enums.event_type.includes("agent_runtime_barrier_required"),
-    false,
-  );
+});
+
+test("active Agent and Rebuild accept optional complete recovery objects without defaults", () => {
   const active = activeValidators();
   const agent = read("agent-controller/readiness-fixtures.json").legacy_agent;
-  assert.equal(
-    active.agent({ ...agent, runtime_recovery: samples.runtime_recovery() }),
-    false,
+  for (const [definition, original, field, make] of [
+    ["agent", agent, "runtime_recovery", samples.runtime_recovery],
+    [
+      "rebuild_agent_request",
+      samples.rebuild_agent_request(),
+      "recovery",
+      samples.recovery_request,
+    ],
+  ]) {
+    const legacy = structuredClone(original);
+    checkActive(
+      active,
+      definition,
+      legacy,
+      true,
+      definition + " without recovery",
+    );
+    assert.equal(Object.hasOwn(legacy, field), false);
+    checkActive(
+      active,
+      definition,
+      { ...structuredClone(original), [field]: make() },
+      true,
+      definition + " complete recovery",
+    );
+    for (const value of [null, false, 1, "recovery", [], {}])
+      checkActive(
+        active,
+        definition,
+        { ...structuredClone(original), [field]: value },
+        false,
+        definition + " rejects incomplete recovery object",
+      );
+    for (const required of Object.keys(make())) {
+      const incomplete = make();
+      delete incomplete[required];
+      checkActive(
+        active,
+        definition,
+        { ...structuredClone(original), [field]: incomplete },
+        false,
+        definition + " requires recovery field " + required,
+      );
+    }
+    for (const privateField of [
+      "unknown_field",
+      "runtime_execution_id",
+      "mcp_endpoint",
+      "credential",
+      "run",
+      "tool",
+    ])
+      checkActive(
+        active,
+        definition,
+        {
+          ...structuredClone(original),
+          [field]: { ...make(), [privateField]: "synthetic-private-field" },
+        },
+        false,
+        definition + " rejects recovery field " + privateField,
+      );
+  }
+});
+
+test("active recovery projections, Rebuild and events preserve every frozen wire vector", () => {
+  const active = activeValidators();
+  const agent = read("agent-controller/readiness-fixtures.json").legacy_agent;
+  const fixtures = read(
+    "agent-controller/runtime-barrier-recovery-fixtures.json",
   );
-  assert.equal(
-    active.rebuild_agent_request({
-      ...samples.rebuild_agent_request(),
-      recovery: samples.recovery_request(),
+  const wrappers = {
+    runtime_recovery: (value) => ({
+      ...structuredClone(agent),
+      runtime_recovery: value,
     }),
-    false,
+    recovery_request: (value) => ({
+      ...samples.rebuild_agent_request(),
+      recovery: value,
+    }),
+    rebuild_agent_request: (value) => value,
+    notification_data: notificationEvent,
+  };
+  const seen = new Set();
+  for (const row of fixtures.schema_vectors) {
+    if (!Object.hasOwn(wrappers, row.definition)) continue;
+    seen.add(row.definition);
+    const value = wrappers[row.definition](structuredClone(row.value));
+    if (row.definition === "notification_data")
+      checkActiveEvent(active, value, row.valid, row.name + " active wire");
+    else
+      checkActive(
+        active,
+        row.definition === "runtime_recovery"
+          ? "agent"
+          : "rebuild_agent_request",
+        value,
+        row.valid,
+        row.name + " active wire",
+      );
+  }
+  assert.deepEqual([...seen].sort(), Object.keys(wrappers).sort());
+});
+
+test("the barrier notification is schema version 1 with exactly five required data fields", () => {
+  const active = activeValidators();
+  const original = notificationEvent();
+  assert.deepEqual(Object.keys(original.data).sort(), [
+    "barrier_id",
+    "organization_id",
+    "policy_revision",
+    "reason",
+    "runtime_revision",
+  ]);
+  checkActiveEvent(active, original, true, "complete barrier notification");
+  for (const schema_version of [0, 2, 3, 1.5, "1", null])
+    checkActiveEvent(
+      active,
+      { ...notificationEvent(), schema_version },
+      false,
+      "notification rejects unsupported schema version",
+    );
+  for (const field of Object.keys(original.data)) {
+    const value = notificationEvent();
+    delete value.data[field];
+    checkActiveEvent(
+      active,
+      value,
+      false,
+      "notification requires data " + field,
+    );
+  }
+  for (const field of Object.keys(original)) {
+    const value = notificationEvent();
+    delete value[field];
+    checkActiveEvent(
+      active,
+      value,
+      false,
+      "notification requires envelope " + field,
+    );
+  }
+  for (const data of [null, false, 1, "notification", [], {}])
+    checkActiveEvent(
+      active,
+      notificationEvent(data),
+      false,
+      "notification requires complete data object",
+    );
+  for (const field of [
+    "unknown_field",
+    "runtime_execution_id",
+    "mcp_endpoint",
+    "cct",
+    "credential",
+    "run",
+    "tool",
+  ]) {
+    checkActiveEvent(
+      active,
+      notificationEvent({
+        ...samples.notification_data(),
+        [field]: "synthetic-private-field",
+      }),
+      false,
+      "notification rejects data field " + field,
+    );
+    checkActiveEvent(
+      active,
+      { ...notificationEvent(), [field]: "synthetic-private-field" },
+      false,
+      "notification rejects envelope field " + field,
+    );
+  }
+});
+
+test("notification validation stays strict in lists mixed with historical and readiness events", () => {
+  const active = activeValidators();
+  const fixtures = read("agent-controller/readiness-fixtures.json");
+  const events = fixtures.event_vectors
+    .filter((row) => row.valid)
+    .map((row) => structuredClone(row.value));
+  events.push(notificationEvent());
+  checkActive(
+    active,
+    "event_list",
+    { events, next_sequence: 10 },
+    true,
+    "mixed historical, readiness and notification list",
   );
+  const invalid = structuredClone(events);
+  invalid.at(-1).data.tool = { arguments: "synthetic-private-field" };
+  checkActive(
+    active,
+    "event_list",
+    { events: invalid, next_sequence: 10 },
+    false,
+    "mixed list cannot hide extended notification data",
+  );
+});
+
+test("active recovery wire preserves opaque Unicode and NUL barrier identities exactly", () => {
+  const active = activeValidators();
+  const agent = read("agent-controller/readiness-fixtures.json").legacy_agent;
+  for (const [barrier_id, valid] of [
+    ["屏障:\u0000😀/原执行", true],
+    ["😀".repeat(200), true],
+    ["😀".repeat(201), false],
+    ["屏障 id", false],
+  ]) {
+    const projection = JSON.parse(
+      JSON.stringify({
+        ...structuredClone(agent),
+        runtime_recovery: { ...samples.runtime_recovery(), barrier_id },
+      }),
+    );
+    checkActive(
+      active,
+      "agent",
+      projection,
+      valid,
+      "opaque Agent barrier identity",
+    );
+    assert.equal(projection.runtime_recovery.barrier_id, barrier_id);
+    const request = JSON.parse(
+      JSON.stringify({
+        ...samples.rebuild_agent_request(),
+        recovery: { ...samples.recovery_request(), barrier_id },
+      }),
+    );
+    checkActive(
+      active,
+      "rebuild_agent_request",
+      request,
+      valid,
+      "opaque Rebuild barrier identity",
+    );
+    assert.equal(request.recovery.barrier_id, barrier_id);
+    const value = JSON.parse(
+      JSON.stringify(
+        notificationEvent({
+          ...samples.notification_data(),
+          barrier_id,
+        }),
+      ),
+    );
+    checkActiveEvent(
+      active,
+      value,
+      valid,
+      "opaque notification barrier identity",
+    );
+    assert.equal(value.data.barrier_id, barrier_id);
+  }
 });
 
 test("pending wire has exactly its closed field sets and a policy root", () => {

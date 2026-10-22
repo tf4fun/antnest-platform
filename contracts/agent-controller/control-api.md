@@ -646,9 +646,10 @@ recovery wire. The proposal remains pending overall. Revision 42 activates only
 the two policy routes and their exact administrator grants in the active
 route/caller catalogs. The control schema aliases `runtime_barrier_recovery_policy`
 and `set_runtime_barrier_recovery_policy_request` reference the proposal's
-`policy` and `policy_update_request` definitions. Recovery projections, actions
-and events remain inactive. Schema conformance is not evidence of transactional
-or recovery behavior.
+`policy` and `policy_update_request` definitions. Revision 43 additionally
+activates the recovery projection, action and notification wire described below.
+Their remaining service consumers and integration acceptance are still pending;
+schema conformance is not evidence of transactional or recovery behavior.
 
 | Operation | Request definition | Successful response |
 | --- | --- | --- |
@@ -683,9 +684,15 @@ returns `409 request_id_conflict`. A new request with a stale expected revision
 returns `409 resource_version_conflict`. Policy mutation and its durable replay
 receipt commit in the same transaction.
 
-### Pending recovery projections and actions
+### Recovery projections and actions
 
-The future Agent detail may add an optional `runtime_recovery` projection.
+Control contract revision 43 adds an optional `runtime_recovery` Agent projection,
+the optional Rebuild `recovery` request and a v1 recovery notification wire.
+These schema declarations do not prove that the Controller producer, manual
+admission or UI consumers have been delivered. The proposal manifest remains
+`pending` until its owning-service and integration acceptance is complete.
+
+Agent detail may include the optional `runtime_recovery` projection.
 Absence preserves old Agent responses and does not prove the Runtime is safe.
 When present, its closed object contains `barrier_id`, the fixed
 `runtime_barrier_required` reason, `runtime_revision`, `policy_revision`, `mode`,
@@ -697,7 +704,7 @@ Run/Tool content are excluded. A failed ACP read retains the last known reason;
 the projection is diagnostic and cannot authorize recovery. Existing scoped read
 permissions still apply when consumers adopt it.
 
-The pending manual recovery request extends the existing
+The manual recovery wire extends the existing
 `POST /internal/agents/{agent_id}/rebuild` request with an optional, closed
 `recovery` object containing `barrier_id` and `expected_runtime_revision`.
 The original five required Rebuild fields and its administrator grant remain.
@@ -721,7 +728,7 @@ the deadline, and the same barrier never creates a second operation. An active
 cooldown rejects a new manual admission with `409 lifecycle_conflict`, which is
 not automatically retried. Automatic observation defers boundedly until eligible.
 
-Notify mode adds a pending v1 `agent_runtime_barrier_required` Agent journal
+Notify mode uses a v1 `agent_runtime_barrier_required` Agent journal
 event, whose closed `notification_data` contains only Organization, barrier,
 Runtime revision, fixed reason and policy revision. It reuses the existing
 List/Watch transport and visibility, with a stable notification/event identity
@@ -731,7 +738,7 @@ the tuple's one recovery operation. The projected IDs do not prove that an event
 or operation has already been created. Readiness/v2 events are unchanged.
 
 Policy management admission requires HTTP/PG scope rejection, original receipt
-replay and atomic CAS evidence. Pending recovery admission must additionally
+replay and atomic CAS evidence. Recovery admission must additionally
 prove cross-restart operation/notification deduplication, frozen cooldown and
 current lifecycle checks. Controller recovery, Console/Agent UI consumption and
 real auto/manual kill-mid-tool Docker acceptance remain separate delivery batches.

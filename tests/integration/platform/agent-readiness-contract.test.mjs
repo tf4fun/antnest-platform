@@ -41,6 +41,7 @@ function validators({ useDefaults = false } = {}) {
     read("runtime/managed-mcp.schema.json"),
     new URL("../runtime/managed-mcp.schema.json", schema.$id).href,
   );
+  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
   ajv.addSchema(schema);
   return Object.fromEntries(
     ["agent", "agent_event", "event_list"].map((name) => [
@@ -78,6 +79,9 @@ test("readiness fixtures retain the historical event set and complete v2 proof s
   assert.equal(new Set(fixtures.legacy_event_types).size, 20);
   assert(fixtures.legacy_event_types.includes("agent_ready"));
   assert(!fixtures.legacy_event_types.includes("runtime_bound"));
+  assert(
+    !fixtures.legacy_event_types.includes("agent_runtime_barrier_required"),
+  );
   for (const name of proofNames) {
     const value = event(name),
       expected = [...proofIdentityFields, "ready_after_revision"];
@@ -255,6 +259,7 @@ for (const name of proofNames) {
     for (const event_type of [
       "unknown_readiness_event",
       "agent_runtime_bound",
+      "agent_runtime_barrier_required",
       ...fixtures.legacy_event_types.filter((type) => type !== "agent_ready"),
     ])
       checkEvent(

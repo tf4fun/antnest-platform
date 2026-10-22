@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 42,
+  "revision": 43,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -372,7 +372,8 @@
       "agent_runtime_condition_changed",
       "agent_owner_revoked",
       "agent_authorization_updated",
-      "agent_build_failed"
+      "agent_build_failed",
+      "agent_runtime_barrier_required"
     ]
   },
   "errors": {

@@ -82,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 42 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 43 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -722,6 +722,7 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 		ports.EventAgentRuntimeConditionChanged,
 		ports.EventAgentOwnerRevoked,
 		ports.EventAgentAuthorizationUpdated,
+		ports.EventAgentRuntimeBarrierRequired,
 	}
 	if !slices.Equal(actual, expected) {
 		t.Fatalf("event type schema=%v producers=%v", actual, expected)
