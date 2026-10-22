@@ -153,3 +153,94 @@ test("completion selects exact Run and requires a successful auto-commit result"
   ])
     assert.equal(successfulResult(frames, r), false);
 });
+
+function explicitFinishTransaction({
+  sessionId = "session",
+  runId = "run",
+  lockSession = true,
+  rollback = false,
+} = {}) {
+  const tracker = new Tracker(() => ({
+    phase: "finish",
+    session_id: "session",
+    run_id: "run",
+  }));
+  const send = (frame) => tracker.observe(framed(frame));
+  const statement = (sql, values) => {
+    assert.equal(send(parse(sql)), undefined);
+    assert.equal(send(bind(values)), undefined);
+    assert.equal(
+      send(execute()),
+      undefined,
+      "a statement cannot acknowledge the transaction",
+    );
+  };
+
+  // These frontend frames select the production transaction. Backend COMMIT
+  // and idle ReadyForQuery frames separately prove whether it committed.
+  assert.equal(send(query("BEGIN")), undefined);
+  statement(
+    "SELECT session.organization_id, run.session_id FROM runs run JOIN acp_sessions session ON session.id=run.session_id WHERE run.id=$1",
+    [runId],
+  );
+  statement("SELECT pg_advisory_xact_lock($1::integer, hashtext($2::text))", [
+    String(0x41425243),
+    "organization",
+  ]);
+  if (lockSession)
+    statement("SELECT id FROM acp_sessions WHERE id=$1 FOR UPDATE", [
+      sessionId,
+    ]);
+  statement(finish, [runId, "completed"]);
+  statement(
+    "INSERT INTO runtime_barrier_cycles (barrier_id, organization_id, agent_id, runtime_revision, runtime_execution_id) VALUES ($1,$2,$3,$4,$5)",
+    [
+      "barrier",
+      "organization",
+      "agent",
+      "runtime-revision",
+      "runtime-execution",
+    ],
+  );
+  if (rollback) assert.equal(send(query("ROLLBACK")), undefined);
+  return { receipt: send(query("COMMIT")), send };
+}
+
+test("explicit finish selects only the exact Session and Run at successful COMMIT", () => {
+  const { receipt, send } = explicitFinishTransaction();
+  assert(receipt, "explicit finish must select its COMMIT response");
+  assert.equal(receipt.phase, "finish");
+  assert.equal(receipt.session_id, "session");
+  assert.equal(receipt.run_id, "run");
+  assert.equal(receipt.command_tag, "COMMIT");
+  assert.match(receipt.query_hash, /^[a-f0-9]{64}$/);
+
+  const committed = framed(message("C", string("COMMIT")));
+  const idle = framed(message("Z", Buffer.from("I")));
+  assert.equal(successfulResult([committed, idle], receipt), true);
+  for (const frames of [
+    [framed(message("C", string("ROLLBACK"))), idle],
+    [framed(message("E", string("commit failed"))), idle],
+    [committed, framed(message("Z", Buffer.from("T")))],
+    [framed(message("C", string("SELECT 1"))), idle],
+    [committed],
+  ])
+    assert.equal(successfulResult(frames, receipt), false);
+
+  assert.equal(send(query("BEGIN")), undefined);
+  assert.equal(
+    send(query("COMMIT")),
+    undefined,
+    "finish selection cannot leak into a later transaction",
+  );
+});
+
+for (const [name, options] of [
+  ["a different Session", { sessionId: "foreign" }],
+  ["no Session lock", { lockSession: false }],
+  ["a different Run", { runId: "foreign" }],
+  ["a rolled-back transaction", { rollback: true }],
+])
+  test(`explicit finish rejects ${name}`, () => {
+    assert.equal(explicitFinishTransaction(options).receipt, undefined);
+  });

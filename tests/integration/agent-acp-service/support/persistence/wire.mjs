@@ -125,8 +125,8 @@ export class Tracker {
       return {
         ...base,
         run_id: values[0],
-        transactional: false,
-        command_tag: "SELECT 1",
+        transactional: this.transaction,
+        command_tag: this.transaction ? "COMMIT" : "SELECT 1",
       };
     return {};
   }
@@ -168,7 +168,8 @@ export class Tracker {
     if (action.transactional) {
       if (
         !this.transaction ||
-        (action.phase === "accept" && this.session !== action.session_id) ||
+        (["accept", "finish"].includes(action.phase) &&
+          this.session !== action.session_id) ||
         (this.session !== undefined && this.session !== action.session_id)
       )
         return;
