@@ -167,6 +167,22 @@ cause list contains fixed classifications only, without exception messages,
 stacks, credentials or identity labels. These diagnostic summaries do not grant
 retirement qualification.
 
+Node accepts explicit original-Prompt retry through
+`POST .../prompts?action=retry`. Ordinary duplicate submissions never
+redispatch. Reuse the original intent ID, Idempotency-Key, append condition and
+complete ordered content, including attachments; refresh only If-Match from a
+current authorized View of the same Session.
+
+Before another dispatch, Node requires a locally known, settled original ACP
+call and a successful unknown intent query. Any durable receipt, including an
+unknown-phase receipt, prevents redispatch. Concurrent actions share one query
+and decision, including queued preparation. Failed queries and in-flight calls
+queue no replay. HTTP 202 remains Bridge acceptance only; unknown stays
+uncertain until a durable receipt arrives. Retry uses the existing Prompt upload
+limits and reservation lifetime. The browser UI retry action, real original-A
+Docker acceptance and automatic backoff remain separate pending deliveries;
+Node support does not complete the cross-service workflow.
+
 Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
 16 requests per process and 64 MiB / 4 requests per signed user in an
 organization. It preserves the configured single Prompt limit. Control requests

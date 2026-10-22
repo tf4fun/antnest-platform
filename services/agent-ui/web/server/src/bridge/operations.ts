@@ -12,6 +12,7 @@ export type PromptIntent = {
 };
 
 export type PreparedPrompt = Readonly<{ requestBytes: number }>;
+export type RetryTicket = Readonly<{ release(): void }>;
 type BridgeAcceptance = { operationId: string; acceptance: "bridge"; phase: "dispatching" };
 
 export type Operation = {
@@ -63,6 +64,20 @@ type LocalOperation = {
   acceptedAppendVersion?: number;
 };
 
+type RetryAttempt = {
+  key: string;
+  sessionId: string;
+  intentId: string;
+  entry: LocalOperation | undefined;
+  inFlightAtEntry: boolean;
+  tickets: number;
+  digest?: string;
+  decision?: Promise<BridgeAcceptance>;
+  completed: boolean;
+  abort: AbortController;
+  releaseWork: () => void;
+};
+
 export class OperationConflictError extends Error {
   public constructor(message: string) {
     super(message);
@@ -79,6 +94,9 @@ export class OperationReconciliationTimeoutError extends Error {
 
 export class OperationCoordinator {
   private readonly local = new Map<string, LocalOperation>();
+  private readonly retries = new Map<string, RetryAttempt>();
+  private readonly retryTickets = new WeakMap<RetryTicket, RetryAttempt>();
+  private draining = false;
   private readonly prepared = new WeakMap<PreparedPrompt, {
     input: PromptIntent; digest: string; signal: AbortSignal | undefined;
   }>();
@@ -147,11 +165,143 @@ export class OperationCoordinator {
     return this.commit(captured.input, captured.digest);
   }
 
+  public beginRetry(sessionId: string, intentId: string): RetryTicket {
+    if (this.draining) throw new Error("Bridge operations are draining");
+    const key = operationKey(sessionId, intentId);
+    let attempt = this.retries.get(key);
+    if (attempt === undefined) {
+      if (this.retries.size >= 256)
+        throw new OperationConflictError("Bridge retry capacity is exhausted");
+      const entry = this.local.get(key);
+      attempt = {
+        key, sessionId, intentId, entry,
+        inFlightAtEntry: entry?.inFlight === true,
+        tickets: 0, completed: false, abort: new AbortController(),
+        releaseWork: this.retainWork(),
+      };
+      this.retries.set(key, attempt);
+    }
+    const owned = attempt;
+    owned.tickets++;
+    const ticket: RetryTicket = Object.freeze({ release: () => {
+      if (!this.retryTickets.delete(ticket)) return;
+      owned.tickets--;
+      this.retireRetry(owned);
+    } });
+    this.retryTickets.set(ticket, owned);
+    return ticket;
+  }
+
+  public async retryPrepared(prepared: PreparedPrompt, ticket?: RetryTicket): Promise<BridgeAcceptance> {
+    const captured = this.prepared.get(prepared);
+    if (captured === undefined) throw new Error("Invalid or consumed prepared Prompt");
+    this.prepared.delete(prepared);
+    captured.signal?.throwIfAborted();
+    const ownedTicket = ticket ?? this.beginRetry(captured.input.sessionId, captured.input.intentId);
+    try {
+      const attempt = this.retryTickets.get(ownedTicket);
+      if (attempt === undefined || attempt.key !== operationKey(captured.input.sessionId, captured.input.intentId))
+        throw new Error("Invalid or released retry ticket");
+      if ((attempt.entry !== undefined && attempt.entry.digest !== captured.digest) ||
+        (attempt.digest !== undefined && attempt.digest !== captured.digest)) {
+        this.dependencies.recordLocalIntentReuse?.("conflict");
+        throw new OperationConflictError("Intent ID was already used with different input");
+      }
+      attempt.digest = captured.digest;
+      if (attempt.decision === undefined) {
+        if (this.draining) throw new Error("Bridge operations are draining");
+        const signal = captured.signal === undefined ? attempt.abort.signal :
+          AbortSignal.any([captured.signal, attempt.abort.signal]);
+        attempt.decision = this.decideRetry(attempt, captured.input, signal);
+        const completed = () => {
+          attempt.completed = true;
+          this.retireRetry(attempt);
+        };
+        void attempt.decision.then(completed, completed);
+      }
+      // Await the actual query/decision, including after caller cancellation.
+      // The HTTP dispatch and its upload reservation remain owned until join.
+      const accepted = await attempt.decision;
+      captured.signal?.throwIfAborted();
+      return accepted;
+    } finally {
+      if (ticket === undefined) ownedTicket.release();
+    }
+  }
+
+  public beginDrain(): void {
+    this.draining = true;
+    for (const attempt of this.retries.values())
+      attempt.abort.abort(new Error("Bridge operations are draining"));
+  }
+
+  public async joinRetryDecisions(): Promise<void> {
+    while (true) {
+      const pending = [...this.retries.values()].filter((attempt) =>
+        attempt.decision !== undefined && !attempt.completed);
+      if (pending.length === 0) return;
+      await Promise.allSettled(pending.map((attempt) => attempt.decision!));
+    }
+  }
+
+  private retireRetry(attempt: RetryAttempt): void {
+    if (attempt.tickets !== 0 || (attempt.decision !== undefined && !attempt.completed)) return;
+    if (this.retries.get(attempt.key) !== attempt) return;
+    this.retries.delete(attempt.key);
+    attempt.releaseWork();
+  }
+
+  private async decideRetry(attempt: RetryAttempt, input: PromptIntent, signal: AbortSignal): Promise<BridgeAcceptance> {
+    const accepted: BridgeAcceptance = {
+      operationId: input.intentId, acceptance: "bridge", phase: "dispatching",
+    };
+    const entry = attempt.entry;
+    const hasReceipt = () => entry?.operation.acceptance === "acp";
+    signal.throwIfAborted();
+    if (hasReceipt() || attempt.inFlightAtEntry) return accepted;
+    let result: Awaited<ReturnType<Dependencies["readIntent"]>>;
+    try {
+      result = await this.dependencies.readIntent(input.sessionId, input.intentId, signal);
+    } catch (cause) {
+      if (hasReceipt()) return accepted;
+      signal.throwIfAborted();
+      throw cause;
+    }
+    // A newer observed receipt wins even over a stale response or read failure.
+    if (hasReceipt()) return accepted;
+    if (result.kind === "receipt") {
+      if (result.receipt.sessionId !== input.sessionId || result.receipt.intentId !== input.intentId)
+        throw new OperationConflictError("ACP returned a receipt for another operation");
+      if (entry !== undefined) {
+        entry.acceptedAppendVersion = result.receipt.appendVersion;
+        this.setOperation(entry, operationFromReceipt(result.receipt));
+        if (terminal(entry.operation.phase)) {
+          entry.retired = true;
+          entry.releaseWork();
+        }
+        this.dependencies.changed?.(input.sessionId);
+      }
+      return accepted;
+    }
+    signal.throwIfAborted();
+    if (entry === undefined || this.local.get(attempt.key) !== entry || entry.inFlight)
+      return accepted;
+    if (this.draining) throw new Error("Bridge operations are draining");
+    // Reacquire work for this actual call. Its prior uncertain observation is
+    // retained until a durable receipt arrives; another ACK proves no progress.
+    entry.releaseWork = this.retainWork();
+    entry.inFlight = true;
+    entry.retired = false;
+    this.dispatch(input, entry);
+    return accepted;
+  }
+
   public submit(input: PromptIntent): BridgeAcceptance {
     return this.commit(input, promptDigest(input));
   }
 
   private commit(input: PromptIntent, digest: string): BridgeAcceptance {
+    if (this.draining) throw new Error("Bridge operations are draining");
     const key = operationKey(input.sessionId, input.intentId);
     const existing = this.local.get(key);
     if (existing !== undefined) {
@@ -169,20 +319,15 @@ export class OperationCoordinator {
       };
     }
     if (this.local.size >= 256) {
-      const retired = [...this.local].find(([, entry]) => entry.retired);
+      const retired = [...this.local].find(([key, entry]) =>
+        entry.retired && !entry.inFlight && !this.retries.has(key));
       if (retired === undefined)
         throw new OperationConflictError(
           "Bridge operation capacity is exhausted",
         );
       this.local.delete(retired[0]);
     }
-    const heldWork = this.dependencies.retainWork();
-    let released = false;
-    const releaseWork = () => {
-      if (released) return;
-      released = true;
-      heldWork();
-    };
+    const releaseWork = this.retainWork();
     const entry: LocalOperation = {
       digest,
       inFlight: true,
@@ -201,8 +346,30 @@ export class OperationCoordinator {
     };
     this.local.set(key, entry);
     this.dependencies.changed?.(input.sessionId);
+    this.dispatch(input, entry);
+    return {
+      operationId: input.intentId,
+      acceptance: "bridge",
+      phase: "dispatching",
+    };
+  }
+
+  private retainWork(): () => void {
+    const release = this.dependencies.retainWork();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+    };
+  }
+
+  private dispatch(input: PromptIntent, entry: LocalOperation): void {
     entry.settled = Promise.resolve()
-      .then(() => this.dependencies.prompt(input))
+      .then(() => {
+        if (this.draining) throw new Error("Bridge operations are draining");
+        return this.dependencies.prompt(input);
+      })
       .then(
         () => {
           entry.inFlight = false;
@@ -243,11 +410,6 @@ export class OperationCoordinator {
           }
         },
       );
-    return {
-      operationId: input.intentId,
-      acceptance: "bridge",
-      phase: "dispatching",
-    };
   }
 
   public settled(sessionId: string, intentId: string): Promise<void> {

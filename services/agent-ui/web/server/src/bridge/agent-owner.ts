@@ -275,7 +275,10 @@ export class AgentBridgeOwner {
     });
     this.operations = new OperationCoordinator({
       prompt: async (input) => {
-        try { return await this.connection().prompt(input); }
+        try {
+          if (this.retired || this.draining) throw new Error("Bridge owner is draining");
+          return await this.connection().prompt(input);
+        }
         finally { this.notifyChanged(input.sessionId, true); }
       },
       readIntent: (sessionId, intentId, signal) =>
@@ -1179,15 +1182,15 @@ export class AgentBridgeOwner {
     let cleanup: Promise<void>;
     try { cleanup = Promise.resolve(this.acp?.close()); }
     catch (error) { cleanup = Promise.reject(error); }
-    void Promise.allSettled([cleanup, this.watchTask, ...authorizations]).then((results) => {
+    void Promise.allSettled([cleanup, this.watchTask, this.operations.joinRetryDecisions(), ...authorizations]).then((results) => {
       // Authorization failures belong to their callers. Join them before
       // releasing the owner, while retaining transport/watch cleanup failures.
-      for (const result of results.slice(0, 2))
+      for (const result of results.slice(0, 3))
         if (result.status === "rejected") failures.push(result.reason);
       try { this.closed(this); } catch (error) { failures.push(error); }
       try {
         this.replaceAfterPeerLoss = this.peerLost && !this.accessRevoked &&
-          results[0].status === "rejected" && results[1].status === "fulfilled" &&
+          results[0].status === "rejected" && results[1].status === "fulfilled" && results[2].status === "fulfilled" &&
           failures.length === 1 && this.acp?.canReplaceAfterPeerLoss === true;
       } catch (error) { failures.push(error); }
       if (failures.length) fail(new AggregateError(failures, "Bridge owner cleanup failed"));
@@ -1199,6 +1202,7 @@ export class AgentBridgeOwner {
   public beginDrain(): Promise<void> {
     if (this.draining) return this.watchTask;
     this.draining = true;
+    this.operations.beginDrain();
     this.watchAbort.abort();
     for (const journal of this.journals.values()) journal.close();
     this.journals.clear();

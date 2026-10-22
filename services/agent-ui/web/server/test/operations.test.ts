@@ -651,3 +651,426 @@ for (const phase of ["running", "completed"] as const)
     assert.equal(dispatches, 1);
     assert.equal(releases, 1);
   });
+
+type RetryInput = Parameters<OperationCoordinator["submit"]>[0];
+type RetryPrepared = Awaited<ReturnType<OperationCoordinator["prepare"]>>;
+type RetryObservation = { kind: "unknown" } | { kind: "receipt"; receipt: IntentReceipt };
+type RetryReader = (sessionId: string, intentId: string, signal?: AbortSignal) => Promise<RetryObservation>;
+
+function retryOriginal(): RetryInput {
+  return {
+    ...intent,
+    prompt: [
+      { type: "text", text: "Original ordered Prompt" },
+      { type: "image", mimeType: "image/png", data: "b3JpZ2luYWwtaW1hZ2U=" },
+      { type: "resource", resource: {
+        uri: "file:///original.txt", mimeType: "text/plain", text: "Original attachment 原件",
+      } },
+    ],
+  };
+}
+
+const retryTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+const retryAck = { operationId: intent.intentId, acceptance: "bridge", phase: "dispatching" } as const;
+
+async function retryBounded<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([promise, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Retry test operation did not settle")), 2_000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+async function retryProgress(started: Promise<void>, decision: Promise<unknown>): Promise<"query" | "decision"> {
+  return retryBounded(Promise.race([
+    started.then(() => "query" as const),
+    decision.then(() => "decision" as const, () => "decision" as const),
+  ]));
+}
+
+function retryFixture(reader: RetryReader = async () => ({ kind: "unknown" })) {
+  const input = retryOriginal();
+  const calls: Array<{
+    input: RetryInput; complete(value: unknown): void; reject(reason?: unknown): void;
+    task: Promise<unknown>; finished: boolean; activeWhenStarted: number;
+  }> = [];
+  const queries: Array<{
+    sessionId: string; intentId: string; signal: AbortSignal | undefined;
+    task: Promise<RetryObservation>; finished: boolean;
+  }> = [];
+  const decisions: Promise<unknown>[] = [];
+  const leases: Array<{ releases: number }> = [];
+  const events: string[] = [];
+  let active = 0, closing = false;
+  const operations = new OperationCoordinator({
+    prompt(value) {
+      const gate = Promise.withResolvers<unknown>();
+      const call = {
+        input: structuredClone(value), complete: gate.resolve, reject: gate.reject,
+        task: gate.promise, finished: false, activeWhenStarted: active,
+      };
+      call.task = gate.promise.then(
+        (result) => { call.finished = true; return result; },
+        (reason: unknown) => { call.finished = true; throw reason; },
+      );
+      void call.task.catch(() => {});
+      calls.push(call);
+      events.push(`prompt:${value.intentId}`);
+      if (closing) gate.resolve(undefined);
+      return call.task;
+    },
+    readIntent(sessionId, intentId, signal) {
+      const execution = Promise.resolve().then(() => reader(sessionId, intentId, signal));
+      const query = { sessionId, intentId, signal, task: execution, finished: false };
+      query.task = execution.then(
+        (result) => { query.finished = true; return result; },
+        (reason: unknown) => { query.finished = true; throw reason; },
+      );
+      void query.task.catch(() => {});
+      queries.push(query);
+      events.push(`query:${intentId}`);
+      return query.task;
+    },
+    cancel: async () => {},
+    retainWork() {
+      const lease = { releases: 0 };
+      leases.push(lease);
+      active++;
+      return () => { lease.releases++; active--; };
+    },
+  });
+  return {
+    input, operations, calls, queries, leases, events, active: () => active,
+    retry(prepared: RetryPrepared) {
+      const decision = operations.retryPrepared(prepared);
+      decisions.push(decision);
+      void decision.catch(() => {});
+      return decision;
+    },
+    async close() {
+      closing = true;
+      for (const call of calls) call.complete(undefined);
+      await Promise.allSettled(decisions);
+      await Promise.allSettled(queries.map((query) => query.task));
+      for (const call of calls) call.complete(undefined);
+      await Promise.allSettled(calls.map((call) => call.task));
+      await Promise.allSettled(calls.map((call) =>
+        operations.settled(call.input.sessionId, call.input.intentId)));
+      assert(calls.every((call) => call.finished), "Every actual ACP call must finish during cleanup");
+      assert(queries.every((query) => query.finished), "Every actual intent query must finish during cleanup");
+      assert.equal(active, 0, "Retry tests must release all retained work");
+      assert(leases.every((lease) => lease.releases === 1), "Every work lease must be released exactly once");
+    },
+  };
+}
+
+type RetryFixture = ReturnType<typeof retryFixture>;
+
+async function startRetryOriginal(fixture: RetryFixture): Promise<void> {
+  fixture.operations.submit(structuredClone(fixture.input));
+  await retryTurn();
+  assert.equal(fixture.calls.length, 1);
+}
+
+async function settleRetryOriginal(fixture: RetryFixture): Promise<void> {
+  await startRetryOriginal(fixture);
+  fixture.calls[0]!.reject(promptFailure());
+  await retryBounded(fixture.operations.settled(fixture.input.sessionId, fixture.input.intentId));
+  assert.equal(fixture.active(), 0);
+}
+
+test("retryPrepared queries and redispatches only the same settled original Prompt while its state stays uncertain", async () => {
+  const f = retryFixture();
+  try {
+    await settleRetryOriginal(f);
+    f.operations.submit(structuredClone(f.input));
+    await f.operations.settled(f.input.sessionId, f.input.intentId);
+    assert.equal(f.calls.length, 1, "Ordinary duplicate submit must retain local deduplication");
+    assert.equal(f.queries.length, 0);
+    const request = structuredClone(f.input);
+    const prepared = await f.operations.prepare(request);
+    request.prompt.reverse();
+    request.expectedAppendVersion++;
+    assert.deepEqual(await retryBounded(f.retry(prepared)), retryAck);
+    await retryTurn();
+    assert.deepEqual(f.queries.map(({ sessionId, intentId }) => [sessionId, intentId]),
+      [[f.input.sessionId, f.input.intentId]]);
+    assert.deepEqual(f.calls.map((call) => call.input), [f.input, f.input]);
+    assert.deepEqual(f.events, [`prompt:${f.input.intentId}`, `query:${f.input.intentId}`, `prompt:${f.input.intentId}`]);
+    const uncertain = f.operations.snapshot(f.input.sessionId, [])[0]!;
+    assert.equal(uncertain.acceptance, "unknown");
+    assert.equal(uncertain.phase, "uncertain");
+    assert.equal(uncertain.runId, undefined);
+    assert(f.active() >= 1);
+    assert(f.leases.length >= 2, "The second actual dispatch must retain work again");
+    assert(f.calls.every((call) => call.activeWhenStarted >= 1));
+    let finished = false;
+    const currentSettlement = f.operations.settled(f.input.sessionId, f.input.intentId)
+      .then(() => { finished = true; });
+    await retryTurn();
+    assert.equal(finished, false, "settled must refer to the second actual ACP call");
+    f.calls[1]!.complete({ stopReason: "end_turn" });
+    await retryBounded(currentSettlement);
+    assert.equal(f.active(), 0);
+    assert.equal(f.operations.snapshot(f.input.sessionId, [])[0]!.phase, "uncertain");
+    const receipt = recoveredPromptReceipt("completed");
+    f.operations.observeReceipts(f.input.sessionId, [receipt]);
+    assert.deepEqual(f.operations.snapshot(f.input.sessionId, []), [operationFromReceipt(receipt)]);
+    f.operations.submit(structuredClone(f.input));
+    await retryTurn();
+    assert.equal(f.calls.length, 2);
+  } finally { await f.close(); }
+});
+
+for (const change of ["append CAS", "attachment content", "content order"] as const) {
+  test(`retryPrepared rejects changed ${change} before any query or redispatch`, async () => {
+    const f = retryFixture();
+    try {
+      await settleRetryOriginal(f);
+      const changed = structuredClone(f.input);
+      if (change === "append CAS") changed.expectedAppendVersion++;
+      else if (change === "attachment content") changed.prompt[1] = {
+        type: "image", mimeType: "image/png", data: "Y2hhbmdlZC1pbWFnZQ==",
+      };
+      else changed.prompt.reverse();
+      const prepared = await f.operations.prepare(changed);
+      await assert.rejects(f.retry(prepared), OperationConflictError);
+      assert.equal(f.queries.length, 0);
+      assert.equal(f.calls.length, 1);
+    } finally { await f.close(); }
+  });
+}
+
+for (const phase of ["persisting", "accepted", "running", "awaiting_permission", "cancelling",
+  "completed", "failed", "cancelled", "unknown"] as const) {
+  test(`retryPrepared adopts an existing durable ${phase} receipt without another Prompt`, async () => {
+    const receipt: IntentReceipt = { ...recoveredPromptReceipt("running"), phase };
+    const f = retryFixture(async () => ({ kind: "receipt", receipt }));
+    try {
+      await settleRetryOriginal(f);
+      assert.deepEqual(await retryBounded(f.retry(await f.operations.prepare(f.input))), retryAck);
+      assert.equal(f.queries.length, 1);
+      assert.equal(f.calls.length, 1);
+      assert.deepEqual(f.operations.snapshot(f.input.sessionId, []), [operationFromReceipt(receipt)]);
+      if (phase === "unknown") {
+        assert.equal(f.operations.snapshot(f.input.sessionId, [])[0]!.acceptance, "acp");
+        assert.equal(f.operations.snapshot(f.input.sessionId, [])[0]!.phase, "uncertain");
+      }
+    } finally { await f.close(); }
+  });
+}
+
+for (const observation of ["unknown", "receipt"] as const) {
+  test(`retryPrepared with no local original entry only queries the ${observation} result`, async () => {
+    const f = retryFixture(async () => observation === "unknown" ? { kind: "unknown" }
+      : { kind: "receipt", receipt: recoveredPromptReceipt("completed") });
+    try {
+      assert.deepEqual(await retryBounded(f.retry(await f.operations.prepare(f.input))), retryAck);
+      await retryTurn();
+      assert.equal(f.queries.length, 1);
+      assert.equal(f.calls.length, 0, "Missing local settlement evidence must never become ordinary submit");
+    } finally { await f.close(); }
+  });
+}
+
+test("retryPrepared query failure preserves uncertainty and queues no replay when reads recover", async () => {
+  let unavailable = true;
+  const f = retryFixture(async () => {
+    if (unavailable) throw new Error("fixture intent query failed");
+    return { kind: "unknown" };
+  });
+  try {
+    await settleRetryOriginal(f);
+    const [outcome] = await retryBounded(Promise.allSettled([f.retry(await f.operations.prepare(f.input))]));
+    if (outcome!.status === "fulfilled") assert.deepEqual(outcome!.value, retryAck);
+    assert.equal(f.queries.length, 1);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.operations.snapshot(f.input.sessionId, [])[0]!.phase, "uncertain");
+    unavailable = false;
+    await retryTurn();
+    await retryTurn();
+    assert.equal(f.queries.length, 1);
+    assert.equal(f.calls.length, 1);
+  } finally { await f.close(); }
+});
+
+test("retryPrepared never queues replay when the original was in flight at entry but settles during its query", async () => {
+  const started = Promise.withResolvers<void>();
+  const query = Promise.withResolvers<RetryObservation>();
+  const f = retryFixture(async () => { started.resolve(); return query.promise; });
+  try {
+    await startRetryOriginal(f);
+    const decision = f.retry(await f.operations.prepare(f.input));
+    const progress = await retryProgress(started.promise, decision);
+    // An immediate ACK without a query is also a safe in-flight short circuit.
+    // If the owner queries, finish the original call while that read is held.
+    f.calls[0]!.reject(promptFailure());
+    await Promise.allSettled([f.calls[0]!.task]);
+    await retryTurn();
+    if (progress === "query") {
+      assert.equal(f.queries.length, 1);
+      assert.equal(f.queries[0]!.finished, false);
+      query.resolve({ kind: "unknown" });
+    }
+    assert.deepEqual(await retryBounded(decision), retryAck);
+    await retryTurn();
+    await retryTurn();
+    assert.equal(f.calls.length, 1, "An in-flight action must not become a queued replay after settlement");
+    assert.equal(f.operations.snapshot(f.input.sessionId, [])[0]!.phase, "uncertain");
+    assert.equal(f.active(), 0);
+  } finally { started.resolve(); query.resolve({ kind: "unknown" }); await f.close(); }
+});
+
+test("retryPrepared concurrent clicks share one held query and one new actual dispatch", async () => {
+  const started = Promise.withResolvers<void>();
+  const query = Promise.withResolvers<RetryObservation>();
+  const f = retryFixture(async () => { started.resolve(); return query.promise; });
+  try {
+    await settleRetryOriginal(f);
+    const firstPrepared = await f.operations.prepare(f.input);
+    const secondPrepared = await f.operations.prepare(structuredClone(f.input));
+    const first = f.retry(firstPrepared);
+    assert.equal(await retryProgress(started.promise, first), "query", "Explicit retry must query before deciding");
+    const second = f.retry(secondPrepared);
+    await retryTurn();
+    assert.equal(f.queries.length, 1, "Concurrent actions must share the query as well as dispatch");
+    assert.equal(f.calls.length, 1);
+    f.operations.submit(structuredClone(f.input));
+    assert.equal(f.queries.length, 1, "Ordinary duplicate submit must not start another retry decision");
+    query.resolve({ kind: "unknown" });
+    assert.deepEqual(await retryBounded(Promise.all([first, second])), [retryAck, retryAck]);
+    await retryTurn();
+    assert.equal(f.queries.length, 1);
+    assert.deepEqual(f.calls.map((call) => call.input), [f.input, f.input]);
+    assert.equal(f.operations.snapshot(f.input.sessionId, [])[0]!.phase, "uncertain");
+  } finally { started.resolve(); query.resolve({ kind: "unknown" }); await f.close(); }
+});
+
+for (const queryResult of ["unknown", "older receipt", "error"] as const) {
+  test(`retryPrepared preserves a late observed receipt over a held query returning ${queryResult}`, async () => {
+    const started = Promise.withResolvers<void>();
+    const query = Promise.withResolvers<RetryObservation>();
+    const f = retryFixture(async () => { started.resolve(); return query.promise; });
+    const receipt = recoveredPromptReceipt("completed");
+    try {
+      await settleRetryOriginal(f);
+      const decision = f.retry(await f.operations.prepare(f.input));
+      assert.equal(await retryProgress(started.promise, decision), "query");
+      f.operations.observeReceipts(f.input.sessionId, [receipt]);
+      assert.deepEqual(f.operations.snapshot(f.input.sessionId, []), [operationFromReceipt(receipt)]);
+      if (queryResult === "error") query.reject(new Error("fixture stale query failed"));
+      else query.resolve(queryResult === "unknown" ? { kind: "unknown" }
+        : { kind: "receipt", receipt: recoveredPromptReceipt("running") });
+      const [outcome] = await retryBounded(Promise.allSettled([decision]));
+      if (outcome!.status === "fulfilled") assert.deepEqual(outcome!.value, retryAck);
+      await retryTurn();
+      assert.equal(f.queries.length, 1);
+      assert.equal(f.calls.length, 1, "A late durable receipt forbids another Prompt");
+      assert.deepEqual(f.operations.snapshot(f.input.sessionId, []), [operationFromReceipt(receipt)],
+        "A stale query outcome must not regress the observed durable Run");
+    } finally { started.resolve(); query.resolve({ kind: "unknown" }); await f.close(); }
+  });
+}
+
+test("retryPrepared cancellation joins a non-cooperative original query before ending and never redispatches", async () => {
+  const parent = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const query = Promise.withResolvers<RetryObservation>();
+  const f = retryFixture(async () => { started.resolve(); return query.promise; });
+  try {
+    await settleRetryOriginal(f);
+    const prepared = await f.operations.prepare(f.input, parent.signal);
+    let decisionFinished = false;
+    const decision = f.retry(prepared);
+    const outcome = decision.then(
+      (value) => { decisionFinished = true; return { status: "fulfilled" as const, value }; },
+      (reason: unknown) => { decisionFinished = true; return { status: "rejected" as const, reason }; },
+    );
+    assert.equal(await retryProgress(started.promise, decision), "query");
+    parent.abort(new Error("fixture request cancelled during intent query"));
+    await retryTurn();
+    assert.equal(f.queries[0]!.signal?.aborted, true, "The actual intent read must receive cancellation");
+    assert.equal(f.queries[0]!.finished, false);
+    assert.equal(decisionFinished, false, "Cancellation must not abandon the actual query Promise");
+    assert.equal(f.calls.length, 1);
+    query.resolve({ kind: "unknown" });
+    const result = await retryBounded(outcome);
+    if (result.status === "fulfilled") assert.deepEqual(result.value, retryAck);
+    assert.equal(f.queries[0]!.finished, true);
+    await retryTurn();
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.operations.snapshot(f.input.sessionId, [])[0]!.phase, "uncertain");
+  } finally {
+    parent.abort();
+    started.resolve();
+    query.resolve({ kind: "unknown" });
+    await f.close();
+  }
+});
+
+async function fillRetryCapacity(f: RetryFixture): Promise<void> {
+  const fillers = Array.from({ length: 255 }, (_, index) => ({
+    ...structuredClone(f.input), intentId: `retry-capacity-${index}`,
+  }));
+  for (const filler of fillers) f.operations.submit(filler);
+  await retryTurn();
+  for (const call of f.calls)
+    if (call.input.intentId.startsWith("retry-capacity-")) call.complete(undefined);
+  await retryBounded(Promise.all(fillers.map((filler) =>
+    f.operations.settled(filler.sessionId, filler.intentId))));
+}
+
+async function overflowRetryCapacity(f: RetryFixture): Promise<void> {
+  const overflow = { ...structuredClone(f.input), intentId: "retry-capacity-overflow" };
+  f.operations.submit(overflow);
+  await retryTurn();
+  for (const call of f.calls)
+    if (call.input.intentId === overflow.intentId) call.complete(undefined);
+  await retryBounded(f.operations.settled(overflow.sessionId, overflow.intentId));
+}
+
+test("retryPrepared keeps a held decision entry under the existing 256-operation eviction limit", async () => {
+  const started = Promise.withResolvers<void>();
+  const query = Promise.withResolvers<RetryObservation>();
+  const f = retryFixture(async () => { started.resolve(); return query.promise; });
+  try {
+    await settleRetryOriginal(f);
+    const decision = f.retry(await f.operations.prepare(f.input));
+    assert.equal(await retryProgress(started.promise, decision), "query");
+    await fillRetryCapacity(f);
+    await overflowRetryCapacity(f);
+    const changed = { ...structuredClone(f.input), expectedAppendVersion: f.input.expectedAppendVersion + 1 };
+    assert.throws(() => f.operations.submit(changed), OperationConflictError,
+      "Capacity eviction must not erase the immutable input of a held retry decision");
+    assert.equal(f.queries.length, 1);
+    query.resolve({ kind: "unknown" });
+    assert.deepEqual(await retryBounded(decision), retryAck);
+    await retryTurn();
+    assert.deepEqual(f.calls.filter((call) => call.input.intentId === f.input.intentId)
+      .map((call) => call.input), [f.input, f.input]);
+  } finally { started.resolve(); query.resolve({ kind: "unknown" }); await f.close(); }
+});
+
+test("retryPrepared capacity fencing preserves an actual in-flight call even after a terminal receipt retires its work", async () => {
+  const f = retryFixture();
+  try {
+    await startRetryOriginal(f);
+    f.operations.observeReceipts(f.input.sessionId, [recoveredPromptReceipt("completed")]);
+    assert.equal(f.calls[0]!.finished, false, "The actual ACP call is still owned after its receipt arrives");
+    await fillRetryCapacity(f);
+    await overflowRetryCapacity(f);
+    const changed = { ...structuredClone(f.input), expectedAppendVersion: f.input.expectedAppendVersion + 1 };
+    assert.throws(() => f.operations.submit(changed), OperationConflictError,
+      "A terminal receipt must not permit eviction while the actual ACP call remains in flight");
+    let finished = false;
+    const settled = f.operations.settled(f.input.sessionId, f.input.intentId)
+      .then(() => { finished = true; });
+    await retryTurn();
+    assert.equal(finished, false, "Capacity pressure must retain the actual original settlement Promise");
+    f.calls[0]!.complete({ stopReason: "end_turn" });
+    await retryBounded(settled);
+    assert.equal(f.calls.filter((call) => call.input.intentId === f.input.intentId).length, 1);
+    assert.equal(f.queries.length, 0);
+  } finally { await f.close(); }
+});
