@@ -21,6 +21,42 @@ type containerCleanupInventory struct {
 	Volumes    []string
 }
 
+func sameContainerCleanupRetainedContainer(left, right Container) bool {
+	leftMounts, rightMounts := left.Mounts, right.Mounts
+	left.Mounts, right.Mounts = nil, nil
+	if !reflect.DeepEqual(left, right) || len(leftMounts) != len(rightMounts) {
+		return false
+	}
+	// Inspect lists mounts without defining their order. Compare every complete
+	// record with its multiplicity, preserving the original evidence unchanged.
+	counts := make(map[ObservedMount]int, len(leftMounts))
+	for _, mount := range leftMounts {
+		counts[mount]++
+	}
+	for _, mount := range rightMounts {
+		if counts[mount] == 0 {
+			return false
+		}
+		counts[mount]--
+	}
+	return true
+}
+
+func containerCleanupRetainedChangedFields(left, right Container) []string {
+	var changed []string
+	if !sameContainerCleanupRetainedContainer(Container{Mounts: left.Mounts}, Container{Mounts: right.Mounts}) {
+		changed = append(changed, "Mounts")
+	}
+	left.Mounts, right.Mounts = nil, nil
+	l, r := reflect.ValueOf(left), reflect.ValueOf(right)
+	for index := 0; index < l.NumField(); index++ {
+		if !reflect.DeepEqual(l.Field(index).Interface(), r.Field(index).Interface()) {
+			changed = append(changed, l.Type().Field(index).Name)
+		}
+	}
+	return changed
+}
+
 func readContainerCleanupInventory(ctx context.Context, client *Client) (containerCleanupInventory, error) {
 	var containers []struct {
 		ID string `json:"Id"`
@@ -278,8 +314,9 @@ func TestRemoveContainerDeletesAnonymousVolumesAndPreservesNamedResources(t *tes
 			}
 		}
 		retained, err := client.InspectContainer(ctx, containers[0].ID)
-		if err != nil || !reflect.DeepEqual(retained, containers[0]) {
-			failures = append(failures, fmt.Errorf("independent retained container changed: %v", err))
+		if err != nil || !sameContainerCleanupRetainedContainer(retained, containers[0]) {
+			failures = append(failures, fmt.Errorf("independent retained container changed: %v; fields=%v; mounts=%d expected=%d", err,
+				containerCleanupRetainedChangedFields(retained, containers[0]), len(retained.Mounts), len(containers[0].Mounts)))
 		}
 		if _, err := client.InspectVolume(ctx, anonymous[0]); err != nil {
 			failures = append(failures, fmt.Errorf("independent retained anonymous volume was removed: %w", err))
