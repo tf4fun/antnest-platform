@@ -93,7 +93,7 @@ jobs:
       # runner image ships Engine 28 and Compose 2, whose builds and network
       # setup differ (for example, built images lack Compose project labels).
       - name: Install Docker Engine
-        if: fromJSON(inputs.suite).pull != ''
+        if: fromJSON(inputs.suite).pull != '' || fromJSON(inputs.suite).auxiliary_pull != ''
         env:
           ENGINE_VERSION: 29.4.0
           COMPOSE_VERSION: 5.1.2
@@ -114,10 +114,11 @@ jobs:
           docker compose version
 
       - name: Pull images
-        if: fromJSON(inputs.suite).pull != ''
+        if: fromJSON(inputs.suite).pull != '' || fromJSON(inputs.suite).auxiliary_pull != ''
         env:
           IMAGES: ${{ fromJSON(inputs.suite).pull }}
-        run: for image in $IMAGES; do docker pull "$image"; done
+          AUXILIARY_IMAGES: ${{ fromJSON(inputs.suite).auxiliary_pull }}
+        run: node tests/support/ci-pull-images.mjs
 
       - uses: docker/login-action@v4
         if: fromJSON(inputs.suite).images != ''
