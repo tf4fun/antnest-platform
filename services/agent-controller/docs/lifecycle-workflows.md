@@ -53,6 +53,26 @@ or second Temporal workflow. Pending readiness does not hold a lifecycle operati
 slot; rebuilding, disabling or deleting an unhealthy configured Runtime remains
 possible. See [Runtime availability](runtime-availability.md).
 
+### Versioned readiness event readers
+
+The application event reader accepts mixed pages and notification-driven watches
+containing the twenty existing version-1 event types and the version-2
+`runtime_bound` and `agent_ready` proofs defined by the
+[readiness contract](../../../contracts/agent-controller/readiness.md).
+Version-1 data keeps its historical object shape. Version-2 data admits exactly
+the documented binding identifiers and positive JavaScript-safe revision numbers;
+only `agent_ready` includes `applied_revision`. Unknown versions, event types and
+proof fields remain invalid. A malformed row rejects the complete page before
+any event in that page is emitted or its cursor is advanced. HTTP and SSE retain
+the original envelope, proof and sequence values.
+
+This is reader compatibility, not a readiness decision. The reader does not
+infer current authorization or binding eligibility from a historical proof, and
+does not compare the acknowledgement to the binding threshold. Those checks
+belong to the future owning transaction. The current storage constraints and
+producer still use version 1; version-2 persistence, ACK-gated production, ACP
+preparing admission and the client and Docker acceptance batches remain pending.
+
 ### ACP owns execution settlement
 
 Drain publishes the current closed Agent configuration and confirms ACP applied

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"time"
 
@@ -203,8 +204,8 @@ func validateEventRecords(records []ports.AgentEventRecord, query ports.AgentEve
 	previous := query.AfterSequence
 	for _, record := range records {
 		if record.GlobalSequence <= previous || record.AggregateSequence < 1 ||
-			record.SchemaVersion != 1 || !validIdentifier(record.EventID) ||
-			!validIdentifier(record.AgentID) || !validAgentEventType(record.EventType) ||
+			!validIdentifier(record.EventID) || !validIdentifier(record.AgentID) ||
+			!validAgentEventSchema(record) ||
 			record.OccurredAt.IsZero() || record.Data == nil ||
 			(query.AgentID != "" && record.AgentID != query.AgentID) ||
 			(record.OperationRequestID != "" && !validIdentifier(record.OperationRequestID)) ||
@@ -214,6 +215,46 @@ func validateEventRecords(records []ports.AgentEventRecord, query ports.AgentEve
 		previous = record.GlobalSequence
 	}
 	return nil
+}
+
+func validAgentEventSchema(record ports.AgentEventRecord) bool {
+	switch record.SchemaVersion {
+	case 1:
+		return validAgentEventType(record.EventType)
+	case 2:
+		fieldCount := 5
+		switch record.EventType {
+		case ports.EventRuntimeBound:
+		case ports.EventAgentReady:
+			fieldCount = 6
+		default:
+			return false
+		}
+		if len(record.Data) != fieldCount {
+			return false
+		}
+		for _, field := range []string{
+			"organization_id", "agent_spec_revision_id", "execution_revision_id", "runtime_revision",
+		} {
+			identifier, ok := record.Data[field].(string)
+			if !ok || !validIdentifier(identifier) {
+				return false
+			}
+		}
+		if !validReadinessEventRevision(record.Data["ready_after_revision"]) {
+			return false
+		}
+		return record.EventType != ports.EventAgentReady ||
+			validReadinessEventRevision(record.Data["applied_revision"])
+	default:
+		return false
+	}
+}
+
+func validReadinessEventRevision(value any) bool {
+	// Persisted event data uses json.Unmarshal's float64 representation.
+	revision, ok := value.(float64)
+	return ok && revision >= 1 && revision <= 9007199254740991 && math.Trunc(revision) == revision
 }
 
 func validAgentEventType(eventType string) bool {
