@@ -654,7 +654,7 @@ export function useBridgeWorkspace(options: {
     dismissCommandFeedback: () => setCommandResponse(null),
     draft: presentation.draft, setDraft: presentation.setDraft,
     attachments: presentation.attachments,
-    sending, cancelling, loggingOut, connectionError,
+    sending, submitting, cancelling, loggingOut, connectionError,
     interactionError: presentation.error || observedPromptError || observedFailure,
     permissions: [...bridge.permissions], configuring, creating, refreshing,
     history: { ready: conversationReady,

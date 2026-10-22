@@ -348,6 +348,14 @@ error. The browser validates the existing error envelope, shows the message
 and original-operation query hint only in its owning Session, and removes that
 hint when the durable operation replaces the uncertain state.
 
+Once the local submission finishes, Refresh workspace and both New conversation
+controls remain available while an operation is uncertain. Refresh only rereads
+state; opening a new conversation selects a local draft without creating a
+Session or resubmitting the original intent. Returning to the original Session
+preserves its draft and operation. These controls stay disabled while the local
+submission is in flight, and ordinary sending in the uncertain Session remains
+blocked until its operation settles.
+
 Prompt admission checks the full serialized ACP request against the ACP POST
 body limit before returning `202`. The default is 16 MiB; Compose passes
 `ANTNEST_ACP_MAX_PROMPT_BYTES` to ACP and the same value to Node as
