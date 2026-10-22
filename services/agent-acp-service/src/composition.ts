@@ -40,6 +40,7 @@ import { McpToolCatalog } from "./adapters/mcp/tool-catalog.js";
 import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
 import { PostgresContextRepository } from "./adapters/postgres/context-repository.js";
 import { PostgresExecutionRepository } from "./adapters/postgres/execution-repository.js";
+import { PostgresRuntimeBarrierReader } from "./adapters/postgres/runtime-barrier.js";
 import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
 import { PostgresRunEventRepository } from "./adapters/postgres/run-event-repository.js";
@@ -210,6 +211,7 @@ export async function startAgentAcpService(
       settlement: built.settlement,
       executionState: built.executionState,
       executionAudits: built.executionAudits,
+      runtimeBarriers: built.runtimeBarriers,
       bridgeObservation: built.bridgeObservation,
       learningChanges: built.learningChanges,
       learningStatus: built.learningStatus,
@@ -579,6 +581,7 @@ export function buildComponents(
     }),
     executionState: new AgentExecutionState({ directory, supervisor, protection: executions }),
     executionAudits: new ExecutionAudits(new PostgresExecutionAudits(kernel)),
+    runtimeBarriers: new PostgresRuntimeBarrierReader(kernel),
     bridgeObservation: new BridgeObservationService({
       access,
       sessions: sessionService,

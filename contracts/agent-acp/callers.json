@@ -99,6 +99,14 @@
       },
       "request_body": "json"
     },
+    "POST /rpc/agent-acp/get-runtime-barrier": {
+      "callers": ["agent-controller"],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
     "POST /rpc/agent-acp/list-execution-audits": {
       "callers": ["admin-console"],
       "authentication": "workload",
@@ -192,7 +200,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "0953078f4aeaf7d41c231822fde6acee678901b6f57e9fe1447f13b608659c92",
+      "sha256": "0f75a866dbaf3ace71f60efab03af47442b782d13108319d49ad05c8dbefbd68",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -219,7 +227,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/request-authentication.ts": {
-      "sha256": "f307084f2df901124d323ebf30b271f3f3d0754e37d76203ab489dab32f9808c",
+      "sha256": "4d3a28b5ae8f5b47ace7819b4df011b832d762771ff32c20ba2407acda1c73dd",
       "routes": [
         "DELETE /v1/acp",
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes",
@@ -233,6 +241,7 @@
         "POST /rpc/agent-acp/apply-execution-snapshot",
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/get-execution-audit",
+        "POST /rpc/agent-acp/get-runtime-barrier",
         "POST /rpc/agent-acp/list-execution-audits",
         "POST /rpc/agent-acp/list-execution-events",
         "POST /rpc/agent-acp/settle-agent",
@@ -249,6 +258,10 @@
     "services/agent-acp-service/src/transport/trusted-identity.ts": {
       "sha256": "f9e2794ba2f913ed1a244d0d094a24afe66c042f8ca5325d03af080d06b55041",
       "routes": []
+    },
+    "services/agent-acp-service/src/transport/runtime-barrier-query.ts": {
+      "sha256": "c31e853a6692cb11b67617663b619c0b4a5adfed4dca92d273f30d429ccfe460",
+      "routes": ["POST /rpc/agent-acp/get-runtime-barrier"]
     }
   }
 }

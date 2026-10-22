@@ -13,7 +13,7 @@ afterEach(async () => {
   await server?.close();
 });
 
-it.each(["apply-execution-snapshot", "settle-agent"])(
+it.each(["apply-execution-snapshot", "settle-agent", "get-runtime-barrier"])(
   "never exposes Controller %s on the workspace listener, even with valid credentials",
   async (operation) => {
     const apply = vi.fn().mockResolvedValue({
