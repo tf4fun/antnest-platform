@@ -613,9 +613,21 @@ recovery. Each selected set retains the original authority checks; owned rows
 are rejected before any changes commit. Only omitted scope selects the global
 path. Learning recovery serializes scope-specific transactions on the dedicated
 worker-lock connection, and every release caller joins the same cleanup promise.
-These scoped helpers are component-tested; production startup still uses the
-global path until protected-scope inventory, fixed Agent components and all
-background dispatch gates are wired together. A successful scoped cleanup does
+`PostgresAgentStartup` inventories owned Run, permission, Runtime, Temporary and
+Learning facts by complete organization/Agent identity. Its fenced recheck reads
+again after the organization and lease barriers; it never clears historical
+facts. Terminal conditional installs may cover older pending/unknown attempts
+only with matching canonical history, receipt and durable result. Reserved or
+unknown model calls remain protected. An owned pending task must still be
+pristine before first claim; the authority marker cannot bypass that check.
+`PostgresExecutionConfiguration.loadOwnedAuthority` uses that same lock order
+to authenticate the encrypted configuration on the fenced transaction's own
+connection. It captures the fence before waiting and rejects a lease that
+expired during the wait; public projection alone is never executable authority.
+
+These scoped helpers and inventory are component-tested; production startup
+still uses the global path until fixed Agent components and all background
+dispatch gates are wired together. A successful scoped cleanup does
 not prove that a previous owned executor has stopped.
 
 Live ACP delivery uses a per-connection ordered output stream, not a second

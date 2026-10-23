@@ -296,6 +296,8 @@ and no spent budget, review, model, candidate, evidence, apply or maintenance ef
 Adoption and the pending operation (first claim, cancellation or enqueue replay)
 commit under the current lease in the same transaction;
 there is no downgrade or fallback after an ownership failure.
+An already-owned task with no claim must satisfy the same pristine-work checks;
+an owned marker does not permit spending or child records before admission.
 
 Each dispatched generation persists its own immutable owner binding. Ordinary
 pause, resume, terminal transitions and receipt replay cannot replace or erase
@@ -342,6 +344,26 @@ Global startup Run recovery, abandoned permissions and learning recovery cannot
 remain unchanged when the worker lock is removed. The current owner may recover
 a predecessor's Run under the new fence while preserving its historical facts.
 Other healthy owners' work must remain untouched.
+
+Before preparing a new Agent generation, inventory persistent work by the full
+organization/Agent identity. Owned admitting/running Runs, pending permissions,
+unstopped Runtime attempts and unreleased Temporary scopes protect that Agent.
+The Run determines a Temporary scope's ownership even if copied scope metadata
+is inconsistent. Claimed nonterminal Learning and unsettled model calls also
+protect the Agent, independently of its completed source Run.
+
+An earlier pending/unknown install can be covered by a later terminal conditional
+install only when the complete canonical attempt sequence, claim, candidate,
+apply basis and final receipt agree. Applied outcomes additionally require the
+matching durable change, including principal and source Run. A replacement
+Runtime execution for a legitimate resend is allowed: the final receipt must
+match the final intent, not the older basis execution. Do not rewrite historical
+attempts or infer a model-call outcome from a terminal task label.
+
+Inventory is advisory until repeated under the acquired fixed fence, after the
+organization and lease barriers. Capture caller inputs before waiting and read
+fresh work after the wait. This only admits scopes without protected predecessor
+work; it is not the stopping proof required to recover an occupied scope.
 
 Expiry or process loss is not evidence that remote Runtime effects have stopped.
 Recovery must follow [Run recovery](execution-api.md#runtime-barrier-recovery-50-pending)

@@ -9,6 +9,7 @@ import {
   type PublicExecutionConfiguration,
 } from "../../domain/execution-configuration.js";
 import { DomainError } from "../../domain/errors.js";
+import { ownershipFence, type AgentOwnershipFence } from "../../domain/agent-ownership.js";
 import {
   InvalidExecutionAuthorityError,
   type ExecutionConfigurationRepository,
@@ -171,6 +172,25 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
     );
     const row = result.rows[0];
     return row === undefined ? null : (this.openAuthority(row)?.configuration ?? null);
+  }
+
+  /** Read the authenticated private payload under the captured Agent lease. */
+  public async loadOwnedAuthority(
+    input: AgentOwnershipFence,
+  ): Promise<ExecutionConfiguration | null> {
+    const fence = ownershipFence(input);
+    return this.kernel.agentTransaction(
+      fence,
+      async (client) => {
+        const result = await client.query<StoredAuthority>(
+          `SELECT ${authorityColumns} FROM execution_configurations WHERE organization_id = $1`,
+          [fence.organizationId],
+        );
+        const row = result.rows[0];
+        return row === undefined ? null : (this.openAuthority(row)?.configuration ?? null);
+      },
+      { organizationBarrier: true },
+    );
   }
 
   private openAuthority(row: StoredAuthority): Authority | null {

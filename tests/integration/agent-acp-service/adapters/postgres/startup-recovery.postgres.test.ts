@@ -1,13 +1,4 @@
-import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import {
-  createLegacyAgentRepositories,
-  createOwnedAgentRepositories,
-} from "../../../../../services/agent-acp-service/src/adapters/postgres/agent-repositories.js";
-import {
-  createLegacyLearningRepositories,
-  createOwnedLearningRepositories,
-} from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-repositories.js";
 import {
   PostgresWorkerLock,
   WorkerOwnershipLostError,
@@ -17,153 +8,20 @@ import {
   AgentOwnershipLostError,
   type AgentOwnershipScope,
 } from "../../../../../services/agent-acp-service/src/domain/agent-ownership.js";
-import { learningPolicySchema } from "../../../../../services/agent-acp-service/src/domain/learning-policy.js";
 import { NOOP_TELEMETRY } from "../../../../../services/agent-acp-service/src/ports/telemetry.js";
+import { withDatabase } from "../../support/run-fencing-fixture.js";
 import {
-  withDatabase,
-  type FencingFixture,
-} from "../../support/run-fencing-fixture.js";
-
+  worker,
+  run,
+  permission,
+  learning,
+  task,
+  unchanged,
+} from "../../support/startup-recovery-fixture.js";
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 const a = { organizationId: "organization-a", agentId: "shared-agent" };
 const b = { organizationId: "organization-b", agentId: "shared-agent" };
 const c = { organizationId: "organization-b", agentId: "agent-c" };
-
-async function worker(f: FencingFixture) {
-  const ownership = new AbortController();
-  const lock = await PostgresWorkerLock.acquire(f.a, {
-    probeIntervalMs: 60_000,
-  });
-  void lock.waitForLoss().then((error) => ownership.abort(error));
-  const legacy = createLegacyAgentRepositories(
-    f.kernelA,
-    f.secretBox,
-    ownership.signal,
-  );
-  return {
-    lock,
-    legacy,
-    signal: ownership.signal,
-    close: async () => {
-      try {
-        await lock.release();
-      } finally {
-        ownership.abort();
-      }
-    },
-  };
-}
-async function run(
-  f: FencingFixture,
-  scope: AgentOwnershipScope,
-  signal: AbortSignal,
-  owned: boolean,
-  completed = false,
-) {
-  const session = await f.session(scope);
-  const owner = owned ? await f.owner(scope) : undefined;
-  const repositories =
-    owner === undefined
-      ? createLegacyAgentRepositories(f.kernelA, f.secretBox, signal)
-      : createOwnedAgentRepositories(f.kernelA, f.secretBox, owner.authority);
-  const input = f.input(session);
-  if (completed) input.createdAt = new Date(Date.now() - 120_000);
-  await repositories.runs.createRunIntent(input);
-  const acceptance = f.acceptance(session, input.runId);
-  if (completed) acceptance.acceptedAt = new Date(Date.now() - 90_000);
-  await repositories.runs.acceptRun(acceptance);
-  if (completed)
-    await repositories.executions.finish({
-      runId: input.runId,
-      terminalClass: "completed",
-      executorState: "quiescent",
-      toolEffectState: "none",
-      stopReason: "end_turn",
-      finishedAt: new Date(Date.now() - 60_000),
-    });
-  return { session, owner, repositories, input };
-}
-async function permission(value: Awaited<ReturnType<typeof run>>) {
-  await value.repositories.permissions.open({
-    runId: value.input.runId,
-    sessionId: value.session.sessionId,
-    call: { id: "permission-1", name: "write", arguments: {} },
-    tool: {
-      source: "runtime",
-      sourceId: "runtime",
-      name: "write",
-      modelName: "write",
-      description: "write",
-    },
-  });
-}
-async function learning(
-  f: FencingFixture,
-  scope: AgentOwnershipScope,
-  signal: AbortSignal,
-  owned: boolean,
-) {
-  const source = await run(f, scope, signal, owned, true);
-  const repositories =
-    source.owner === undefined
-      ? createLegacyLearningRepositories(f.kernelA, signal)
-      : createOwnedLearningRepositories(f.kernelA, source.owner.authority);
-  const policy = learningPolicySchema.parse({
-    organization_id: scope.organizationId,
-    agent_id: scope.agentId,
-    owner_principal_id: source.session.binding.principalId,
-    revision: "b".repeat(64),
-    activation_cut_at: new Date(Date.now() - 180_000).toISOString(),
-    mode: "automatic",
-    scope: { auto_generated_personal: true, adopted_paths: [] },
-    pinned_paths: [],
-    limits: {
-      daily_reviews: 20,
-      daily_model_input_tokens: 320000,
-      daily_model_output_tokens: 80000,
-    },
-  });
-  const scanScope = { ...scope, ownerId: source.session.binding.principalId };
-  await repositories.scan.activate(
-    scanScope,
-    policy.revision,
-    policy.activation_cut_at,
-  );
-  const pending = await repositories.scan.enqueue(
-    scanScope,
-    source.input.runId,
-    policy,
-  );
-  expect(pending).not.toBeNull();
-  const claim = await repositories.scan.claimNext(policy, pending!.taskId);
-  expect(claim).not.toBeNull();
-  await repositories.budget.reserve(claim!, policy, randomUUID(), {
-    inputTokens: 100,
-    outputTokens: 100,
-    durationMs: 1000,
-  });
-  return { source, taskId: pending!.taskId, repositories, claim: claim! };
-}
-async function task(f: FencingFixture, id: string) {
-  return (
-    await f.observer.query<{ task: unknown; calls: unknown }>(
-      "SELECT to_jsonb(t) AS task,(SELECT jsonb_agg(to_jsonb(c) ORDER BY call_index) FROM learning_model_calls c WHERE c.task_id=t.id) AS calls FROM learning_tasks t WHERE id=$1",
-      [id],
-    )
-  ).rows[0];
-}
-async function unchanged(f: FencingFixture) {
-  return [
-    await f.snapshot(),
-    JSON.stringify(
-      (
-        await f.observer.query(
-          "SELECT jsonb_build_object('permissions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY run_id,tool_call_id) FROM tool_permissions p),'learning',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM learning_tasks t),'calls',(SELECT jsonb_agg(to_jsonb(c) ORDER BY task_id,call_index) FROM learning_model_calls c)) AS value",
-        )
-      ).rows,
-    ),
-  ];
-}
 
 describe.skipIf(databaseUrl === undefined)(
   "scoped legacy startup recovery under the actual worker lock",

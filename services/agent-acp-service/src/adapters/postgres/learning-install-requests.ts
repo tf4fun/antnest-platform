@@ -1,7 +1,11 @@
-import { learningApplyRequestId } from "../../domain/learning-apply-request-id.js";
-import { installRejectionIsResendable } from "../../domain/learning-maintenance-errors.js";
 import type { LearningTaskClaim } from "../../domain/learning-scan.js";
 import type { PostgresKernel } from "./kernel.js";
+import {
+  inspectInstallAttempts,
+  type InstallAttemptCandidate,
+  type InstallAttemptFinal,
+  type InstallAttemptRow,
+} from "./learning-install-attempts.js";
 
 type TaskRow = {
   organization_id: string;
@@ -12,21 +16,11 @@ type TaskRow = {
   generation: number;
   state: string;
 };
-type CandidateRow = {
+type CandidateRow = InstallAttemptCandidate & {
   claim_id: string;
   generation: number;
   state: string;
-  package_path: string;
-  expected_base_digest: string | null;
-  target_digest: string;
 };
-type IntentRow = {
-  request_id: string;
-  state: "pending" | "unknown" | "settled";
-  request_facts: Record<string, unknown>;
-  receipt: Record<string, unknown> | null;
-};
-type Final = "applied" | "conflict" | "rejected";
 
 /**
  * Allocates install attempts for one admitted candidate. An attempt without a
@@ -39,7 +33,7 @@ export class PostgresLearningInstallRequests {
   public async next(
     claim: LearningTaskClaim,
     candidateId: string,
-  ): Promise<{ kind: "fresh" | Final | "not_ready"; requestId: string }> {
+  ): Promise<{ kind: "fresh" | InstallAttemptFinal | "not_ready"; requestId: string }> {
     if (
       !/^[!-~]{1,200}$/u.test(candidateId) ||
       candidateId.includes("/") ||
@@ -83,7 +77,7 @@ export class PostgresLearningInstallRequests {
       )
         throw new Error("Learning candidate has no ready apply basis");
       const rows = (
-        await client.query<IntentRow>(
+        await client.query<InstallAttemptRow>(
           `SELECT request_id,state,request_facts,receipt
          FROM learning_maintenance_intents
          WHERE task_id=$1 AND claim_id=$2 AND generation=$3 AND action='install'
@@ -91,40 +85,11 @@ export class PostgresLearningInstallRequests {
           [claim.taskId, claim.claimId, claim.generation, candidateId],
         )
       ).rows;
-      const byId = new Map(rows.map((row) => [row.request_id, row]));
-      if (byId.size !== rows.length) throw new Error("Duplicate learning install intents");
-      let final: Final | null = null;
-      for (let ordinal = 1; ordinal <= rows.length; ordinal += 1) {
-        const row = byId.get(learningApplyRequestId(claim, candidateId, "install", ordinal));
-        if (
-          !row ||
-          row.request_facts.package_path !== candidate.package_path ||
-          row.request_facts.expected_base_digest !== candidate.expected_base_digest ||
-          row.request_facts.target_digest !== candidate.target_digest
-        )
-          throw new Error("Learning install intent sequence or target conflicts");
-        final = finalOutcome(row);
-        if (final !== null && ordinal < rows.length)
-          throw new Error("Learning install attempt follows a settled final outcome");
-      }
-      const last = learningApplyRequestId(claim, candidateId, "install", Math.max(rows.length, 1));
-      if (final !== null) return { kind: final, requestId: last };
-      const requestId = learningApplyRequestId(claim, candidateId, "install", rows.length + 1);
+      const inspected = inspectInstallAttempts(claim, candidateId, candidate, rows);
+      if (inspected.kind !== "fresh") return inspected;
       if (task.state !== "running" || candidate.state !== "ready_waiting_idle")
-        return { kind: "not_ready", requestId };
-      return { kind: "fresh", requestId };
+        return { kind: "not_ready", requestId: inspected.requestId };
+      return inspected;
     });
   }
-}
-
-function finalOutcome(row: IntentRow): Final | null {
-  if (row.state !== "settled" || row.receipt === null) return null;
-  if (row.receipt.kind === "rejection")
-    return typeof row.receipt.code === "string" && installRejectionIsResendable(row.receipt.code)
-      ? null
-      : "rejected";
-  if (row.receipt.outcome === "applied") return "applied";
-  if (row.receipt.outcome === "conflict") return "conflict";
-  if (row.receipt.outcome === "blocked" || row.receipt.outcome === "preempted") return null;
-  throw new Error("Learning install receipt has no known outcome");
 }
