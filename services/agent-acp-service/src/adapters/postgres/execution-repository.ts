@@ -117,63 +117,9 @@ export class PostgresExecutionRepository
         )
           throw new Error("Run changed Session identity");
         this.#authority.assertRun(runRow);
-        const result = await client.query(
-          `WITH finished AS (UPDATE runs
-          SET state = $2, terminal_class = $2, executor_state = $3,
-              tool_effect_state = $4, unknown_effect_source = $5,
-              stop_reason = $6, error_class = $7, updated_at = $8
-        WHERE id = $1 AND state = 'running' RETURNING id, session_id),
-       refused_messages AS (
-         UPDATE session_messages SET context_excluded = true
-         FROM finished WHERE session_messages.session_id = finished.session_id
-           AND session_messages.run_id = finished.id AND $6 = 'refusal'
-         RETURNING session_messages.session_id, session_messages.sequence
-       ),
-       invalidated_checkpoints AS (
-         DELETE FROM context_checkpoints USING refused_messages
-         WHERE context_checkpoints.session_id = refused_messages.session_id
-           AND context_checkpoints.through_sequence >= refused_messages.sequence
-       ),
-       cancelled_permissions AS (
-         UPDATE tool_permissions SET decision = 'cancelled', reason = 'run_finished', decided_at = $8
-         FROM finished WHERE tool_permissions.run_id = finished.id AND decision IS NULL
-       ) SELECT id FROM finished`,
-          [
-            input.runId,
-            input.terminalClass,
-            input.executorState,
-            input.toolEffectState,
-            input.unknownEffectSource ?? null,
-            input.stopReason ?? null,
-            input.errorClass ?? null,
-            input.finishedAt,
-          ],
-        );
-        if (result.rowCount === 1) {
-          await createRuntimeBarrierForRun(client, input.runId);
-          return;
-        }
-        const stored = await this.loadTerminalOutcome(client, input.runId);
-        if (stored === null || !sameOutcome(stored, input)) {
-          throw new Error("Run cannot enter the requested terminal state");
-        }
+        await finishLockedRun(client, input);
       },
     );
-  }
-
-  private async loadTerminalOutcome(client: PoolClient, runId: string): Promise<RunOutcome | null> {
-    const result = await client.query<TerminalOutcomeRow>(
-      `SELECT terminal_class, executor_state, tool_effect_state,
-              unknown_effect_source, stop_reason, error_class
-         FROM runs
-        WHERE id = $1`,
-      [runId],
-    );
-    const row = result.rows[0];
-    if (row === undefined || row.terminal_class === null) {
-      return null;
-    }
-    return storedOutcome(row);
   }
 
   public async listRecoveryWork(scope?: AgentOwnershipScope): Promise<RecoveryWork[]> {
@@ -195,6 +141,67 @@ export class PostgresExecutionRepository
       return result.rows.map(({ id, kind }) => ({ id, kind }));
     });
   }
+}
+
+export async function finishLockedRun(
+  client: PoolClient,
+  input: FinishLocalRunInput,
+): Promise<void> {
+  const result = await client.query(
+    `WITH finished AS (UPDATE runs
+          SET state = $2, terminal_class = $2, executor_state = $3,
+              tool_effect_state = $4, unknown_effect_source = $5,
+              stop_reason = $6, error_class = $7, updated_at = $8
+        WHERE id = $1 AND state = 'running' RETURNING id, session_id),
+       refused_messages AS (
+         UPDATE session_messages SET context_excluded = true
+         FROM finished WHERE session_messages.session_id = finished.session_id
+           AND session_messages.run_id = finished.id AND $6 = 'refusal'
+         RETURNING session_messages.session_id, session_messages.sequence
+       ),
+       invalidated_checkpoints AS (
+         DELETE FROM context_checkpoints USING refused_messages
+         WHERE context_checkpoints.session_id = refused_messages.session_id
+           AND context_checkpoints.through_sequence >= refused_messages.sequence
+       ),
+       cancelled_permissions AS (
+         UPDATE tool_permissions SET decision = 'cancelled', reason = 'run_finished', decided_at = $8
+         FROM finished WHERE tool_permissions.run_id = finished.id AND decision IS NULL
+       ) SELECT id FROM finished`,
+    [
+      input.runId,
+      input.terminalClass,
+      input.executorState,
+      input.toolEffectState,
+      input.unknownEffectSource ?? null,
+      input.stopReason ?? null,
+      input.errorClass ?? null,
+      input.finishedAt,
+    ],
+  );
+  if (result.rowCount === 1) {
+    await createRuntimeBarrierForRun(client, input.runId);
+    return;
+  }
+  const stored = await loadTerminalOutcome(client, input.runId);
+  if (stored === null || !sameOutcome(stored, input)) {
+    throw new Error("Run cannot enter the requested terminal state");
+  }
+}
+
+async function loadTerminalOutcome(client: PoolClient, runId: string): Promise<RunOutcome | null> {
+  const result = await client.query<TerminalOutcomeRow>(
+    `SELECT terminal_class, executor_state, tool_effect_state,
+              unknown_effect_source, stop_reason, error_class
+         FROM runs
+        WHERE id = $1`,
+    [runId],
+  );
+  const row = result.rows[0];
+  if (row === undefined || row.terminal_class === null) {
+    return null;
+  }
+  return storedOutcome(row);
 }
 
 type TerminalOutcomeRow = {

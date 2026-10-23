@@ -337,23 +337,7 @@ export class PostgresRunRepository implements RunRepository {
     const capturedAt = new Date(rejectedAt.getTime());
     return this.#authority.transaction(this.kernel, async (client) => {
       requireRow(await this.lockRun(client, runId), "Run intent is no longer admitting");
-      const result = await client.query<{ state: "failed" | "cancelled" }>(
-        `UPDATE runs
-          SET state = CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
-              pending_user_message_id = NULL,
-              terminal_class = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'cancelled' END,
-              executor_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'quiescent' END,
-              tool_effect_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'none' END,
-              error_class = CASE WHEN cancel_requested_at IS NULL THEN $2 ELSE NULL END,
-              updated_at = $3
-        WHERE id = $1 AND state = 'admitting'
-        RETURNING state`,
-        [runId, errorClass, capturedAt],
-      );
-      if (result.rowCount !== 1) {
-        throw new Error("Run intent is no longer admitting");
-      }
-      return requireRow(result.rows[0], "Run rejection did not return state").state;
+      return rejectLockedRunIntent(client, runId, errorClass, capturedAt);
     });
   }
 
@@ -394,6 +378,31 @@ export class PostgresRunRepository implements RunRepository {
     this.#authority.assertRun(runRow);
     return { session: sessionRow, run: runRow };
   }
+}
+
+export async function rejectLockedRunIntent(
+  client: PoolClient,
+  runId: string,
+  errorClass: string,
+  capturedAt: Date,
+): Promise<"failed" | "cancelled"> {
+  const result = await client.query<{ state: "failed" | "cancelled" }>(
+    `UPDATE runs
+          SET state = CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
+              pending_user_message_id = NULL,
+              terminal_class = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'cancelled' END,
+              executor_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'quiescent' END,
+              tool_effect_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'none' END,
+              error_class = CASE WHEN cancel_requested_at IS NULL THEN $2 ELSE NULL END,
+              updated_at = $3
+        WHERE id = $1 AND state = 'admitting'
+        RETURNING state`,
+    [runId, errorClass, capturedAt],
+  );
+  if (result.rowCount !== 1) {
+    throw new Error("Run intent is no longer admitting");
+  }
+  return requireRow(result.rows[0], "Run rejection did not return state").state;
 }
 
 async function insertEnvironmentFact(

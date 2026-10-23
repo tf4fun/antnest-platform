@@ -278,103 +278,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
     const interruptedAt = new Date(requestedAt.getTime());
     return this.#authority.transaction(this.kernel, async (client) => {
       const locked = await lockRunAndSession(client, runId, this.#authority);
-      const attempts = await client.query<{
-        id: string;
-        tool_call_id: string;
-        source: "runtime" | "client" | "agent";
-        state: string;
-        tool_effect_state: ToolEffectState;
-        temporary_scope: boolean;
-        temporary_pending: boolean;
-      }>(
-        `SELECT id, tool_call_id, source, state, tool_effect_state,
-                (source='agent' AND source_id='skill_registry' AND tool_name='load_skill'
-                 AND EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=tool_attempts.run_id)) AS temporary_scope,
-                EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=tool_attempts.run_id AND t.released_at IS NULL) AS temporary_pending
-           FROM tool_attempts
-          WHERE run_id = $1
-          ORDER BY created_at, id
-          FOR UPDATE`,
-        [runId],
-      );
-      let effectState: ToolEffectState = "none";
-      let unknownEffectSource: UnknownEffectSource | undefined;
-      let interrupted = 0;
-      for (const attempt of attempts.rows) {
-        effectState = combineEffects(effectState, attempt.tool_effect_state);
-        const attemptEffectSource =
-          attempt.source === "runtime" || attempt.temporary_scope
-            ? "runtime_mcp"
-            : attempt.source === "client"
-              ? "client_mcp"
-              : "unclassified";
-        if (attempt.tool_effect_state === "unknown") {
-          unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
-        }
-        if (attempt.state !== "in_progress") {
-          continue;
-        }
-        const interruptedEffect = attempt.temporary_scope
-          ? attempt.temporary_pending
-            ? "unknown"
-            : "settled"
-          : attempt.source === "agent"
-            ? "none"
-            : "unknown";
-        effectState = combineEffects(effectState, interruptedEffect);
-        if (interruptedEffect === "unknown")
-          unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
-        const content = [
-          {
-            type: "text" as const,
-            text:
-              reason === "persistence_failure"
-                ? attempt.source === "agent" && !attempt.temporary_scope
-                  ? "Skill discovery read was interrupted by Run persistence failure. No Runtime mutation was dispatched."
-                  : "Tool outcome is unknown after Run persistence was interrupted."
-                : attempt.source === "agent" && !attempt.temporary_scope
-                  ? "Skill discovery read was interrupted by Agent ACP Service restart. No Runtime mutation was dispatched."
-                  : "Tool outcome is unknown because Agent ACP Service restarted.",
-          },
-        ];
-        await client.query(
-          `UPDATE tool_attempts
-              SET state = 'failed', result_summary = $2::jsonb,
-                  tool_effect_state = $4, finished_at = $3, updated_at = $3,
-                  runtime_call_stopped = CASE WHEN source='agent' THEN $5 ELSE runtime_call_stopped END
-            WHERE id = $1`,
-          [
-            attempt.id,
-            JSON.stringify(content),
-            interruptedAt,
-            interruptedEffect,
-            attempt.source === "agent" && (!attempt.temporary_scope || !attempt.temporary_pending),
-          ],
-        );
-        await appendLocked(
-          client,
-          { ...locked, nextSequence: locked.nextSequence + interrupted },
-          deriveResourceId("message", "tool-interrupted", attempt.id),
-          "tool_call",
-          {
-            kind: "tool_call",
-            initial: false,
-            toolCallId: attempt.tool_call_id,
-            status: "failed",
-            content,
-          },
-          interruptedAt,
-        );
-        interrupted += 1;
-      }
-      await appendUnstartedToolResults(client, locked, runId, interruptedAt, interrupted, reason);
-      if (effectState === "unknown") {
-        return {
-          toolEffectState: "unknown",
-          unknownEffectSource: unknownEffectSource ?? "unclassified",
-        };
-      }
-      return { toolEffectState: effectState };
+      return interruptLockedToolAttempts(client, locked, interruptedAt, reason);
     });
   }
 
@@ -414,6 +318,112 @@ function mergeUnknownEffectSource(
 }
 
 type LockedRun = { runId: string; sessionId: string; nextSequence: number };
+
+export async function interruptLockedToolAttempts(
+  client: PoolClient,
+  locked: LockedRun,
+  interruptedAt: Date,
+  reason: "service_restart" | "persistence_failure" = "service_restart",
+): Promise<InterruptedToolEffects> {
+  const runId = locked.runId;
+  const attempts = await client.query<{
+    id: string;
+    tool_call_id: string;
+    source: "runtime" | "client" | "agent";
+    state: string;
+    tool_effect_state: ToolEffectState;
+    temporary_scope: boolean;
+    temporary_pending: boolean;
+  }>(
+    `SELECT id, tool_call_id, source, state, tool_effect_state,
+                (source='agent' AND source_id='skill_registry' AND tool_name='load_skill'
+                 AND EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=tool_attempts.run_id)) AS temporary_scope,
+                EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=tool_attempts.run_id AND t.released_at IS NULL) AS temporary_pending
+           FROM tool_attempts
+          WHERE run_id = $1
+          ORDER BY created_at, id
+          FOR UPDATE`,
+    [runId],
+  );
+  let effectState: ToolEffectState = "none";
+  let unknownEffectSource: UnknownEffectSource | undefined;
+  let interrupted = 0;
+  for (const attempt of attempts.rows) {
+    effectState = combineEffects(effectState, attempt.tool_effect_state);
+    const attemptEffectSource =
+      attempt.source === "runtime" || attempt.temporary_scope
+        ? "runtime_mcp"
+        : attempt.source === "client"
+          ? "client_mcp"
+          : "unclassified";
+    if (attempt.tool_effect_state === "unknown") {
+      unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
+    }
+    if (attempt.state !== "in_progress") {
+      continue;
+    }
+    const interruptedEffect = attempt.temporary_scope
+      ? attempt.temporary_pending
+        ? "unknown"
+        : "settled"
+      : attempt.source === "agent"
+        ? "none"
+        : "unknown";
+    effectState = combineEffects(effectState, interruptedEffect);
+    if (interruptedEffect === "unknown")
+      unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
+    const content = [
+      {
+        type: "text" as const,
+        text:
+          reason === "persistence_failure"
+            ? attempt.source === "agent" && !attempt.temporary_scope
+              ? "Skill discovery read was interrupted by Run persistence failure. No Runtime mutation was dispatched."
+              : "Tool outcome is unknown after Run persistence was interrupted."
+            : attempt.source === "agent" && !attempt.temporary_scope
+              ? "Skill discovery read was interrupted by Agent ACP Service restart. No Runtime mutation was dispatched."
+              : "Tool outcome is unknown because Agent ACP Service restarted.",
+      },
+    ];
+    await client.query(
+      `UPDATE tool_attempts
+              SET state = 'failed', result_summary = $2::jsonb,
+                  tool_effect_state = $4, finished_at = $3, updated_at = $3,
+                  runtime_call_stopped = CASE WHEN source='agent' THEN $5 ELSE runtime_call_stopped END
+            WHERE id = $1`,
+      [
+        attempt.id,
+        JSON.stringify(content),
+        interruptedAt,
+        interruptedEffect,
+        attempt.source === "agent" && (!attempt.temporary_scope || !attempt.temporary_pending),
+      ],
+    );
+    await appendLocked(
+      client,
+      { ...locked, nextSequence: locked.nextSequence + interrupted },
+      deriveResourceId("message", "tool-interrupted", attempt.id),
+      "tool_call",
+      {
+        kind: "tool_call",
+        initial: false,
+        toolCallId: attempt.tool_call_id,
+        status: "failed",
+        content,
+      },
+      interruptedAt,
+    );
+    interrupted += 1;
+  }
+  await appendUnstartedToolResults(client, locked, runId, interruptedAt, interrupted, reason);
+  if (effectState === "unknown") {
+    return {
+      toolEffectState: "unknown",
+      unknownEffectSource: unknownEffectSource ?? "unclassified",
+    };
+  }
+  return { toolEffectState: effectState };
+}
 
 type EventReceiptExpectation = {
   id: string;
