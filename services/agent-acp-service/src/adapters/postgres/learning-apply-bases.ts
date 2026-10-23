@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { AutomaticApplyBasis } from "../../domain/learning-apply-admission.js";
 import type { LearningTaskClaim } from "../../domain/learning-scan.js";
 import type { PostgresKernel } from "./kernel.js";
+import { LearningWriteAuthority } from "./learning-write-authority.js";
 
 type TaskRow = {
   organization_id: string;
@@ -38,14 +39,25 @@ type BasisRow = {
 };
 
 export class PostgresLearningApplyBases {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: LearningWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: LearningWriteAuthority,
+  ) {
+    if (!(authority instanceof LearningWriteAuthority))
+      throw new TypeError("Learning writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async read(
     claim: LearningTaskClaim,
     candidateId: string,
   ): Promise<AutomaticApplyBasis | null> {
-    const result = await this.kernel.read<BasisRow>(
-      `SELECT basis.* FROM learning_apply_bases basis
+    claim = structuredClone(claim);
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
+      const result = await client.query<BasisRow>(
+        `SELECT basis.* FROM learning_apply_bases basis
        JOIN learning_tasks task ON task.id=basis.task_id
        JOIN learning_candidates candidate ON candidate.candidate_id=basis.candidate_id
        WHERE basis.candidate_id=$1 AND basis.task_id=$2
@@ -53,29 +65,30 @@ export class PostgresLearningApplyBases {
          AND task.owner_principal_id=$5 AND task.source_run_id=$6
          AND task.claim_id=$7 AND task.generation=$8
          AND candidate.claim_id=$7 AND candidate.generation=$8`,
-      [
-        candidateId,
-        claim.taskId,
-        claim.organizationId,
-        claim.agentId,
-        claim.ownerId,
-        claim.sourceRunId,
-        claim.claimId,
-        claim.generation,
-      ],
-    );
-    const saved = result.rows[0];
-    return saved
-      ? {
-          kind: "policy",
-          policyRevision: saved.policy_revision,
-          packagePath: saved.package_path,
-          expectedBaseDigest: saved.expected_base_digest,
-          targetDigest: saved.target_digest,
-          evidenceIds: saved.evidence_ids,
-          executionId: saved.execution_id,
-        }
-      : null;
+        [
+          candidateId,
+          claim.taskId,
+          claim.organizationId,
+          claim.agentId,
+          claim.ownerId,
+          claim.sourceRunId,
+          claim.claimId,
+          claim.generation,
+        ],
+      );
+      const saved = result.rows[0];
+      return saved
+        ? {
+            kind: "policy",
+            policyRevision: saved.policy_revision,
+            packagePath: saved.package_path,
+            expectedBaseDigest: saved.expected_base_digest,
+            targetDigest: saved.target_digest,
+            evidenceIds: saved.evidence_ids,
+            executionId: saved.execution_id,
+          }
+        : null;
+    });
   }
 
   /** Freezes the authority that admitted a draft; no Runtime call is part of admission. */
@@ -84,6 +97,8 @@ export class PostgresLearningApplyBases {
     candidateId: string,
     basis: AutomaticApplyBasis,
   ): Promise<{ state: string }> {
+    claim = structuredClone(claim);
+    basis = structuredClone(basis);
     if (
       !/^[0-9a-f]{64}$/u.test(basis.policyRevision) ||
       !/^sha256:[0-9a-f]{64}$/u.test(basis.targetDigest) ||
@@ -94,7 +109,7 @@ export class PostgresLearningApplyBases {
       basis.evidenceIds.length > 64
     )
       throw new Error("Invalid automatic Skill apply basis");
-    return this.kernel.transaction(async (client) => {
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const task = (
         await client.query<TaskRow>("SELECT * FROM learning_tasks WHERE id=$1 FOR UPDATE", [
           claim.taskId,

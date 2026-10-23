@@ -5,6 +5,7 @@ import { learningPolicySchema, type LearningPolicy } from "../../domain/learning
 import type { ModelCallBudget } from "../../domain/learning-budget.js";
 import type { LearningReviewDecision } from "../../domain/learning-review-proposal.js";
 import type { PostgresKernel } from "./kernel.js";
+import { LearningWriteAuthority } from "./learning-write-authority.js";
 
 export type { ModelCallBudget } from "../../domain/learning-budget.js";
 
@@ -39,7 +40,16 @@ const MAX_OUTPUT = 4_000;
 const MAX_TIME_MS = 90_000;
 
 export class PostgresLearningBudget {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: LearningWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: LearningWriteAuthority,
+  ) {
+    if (!(authority instanceof LearningWriteAuthority))
+      throw new TypeError("Learning writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async reserve(
     claim: LearningTaskClaim,
@@ -47,9 +57,12 @@ export class PostgresLearningBudget {
     requestId: string,
     budget: ModelCallBudget,
   ): Promise<{ callIndex: number; state: CallRow["state"]; dispatch: boolean }> {
+    claim = structuredClone(claim);
+    currentPolicy = structuredClone(currentPolicy);
+    budget = structuredClone(budget);
     checkRequestId(requestId);
     checkReservation(budget);
-    return this.kernel.transaction(async (client) => {
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const result = await client.query<TaskRow>(
         `SELECT organization_id,agent_id,owner_principal_id,state,claim_id,generation,
                 model_calls,frozen_policy
@@ -186,26 +199,30 @@ export class PostgresLearningBudget {
   }
 
   public async readReview(claim: LearningTaskClaim, requestId: string): Promise<unknown> {
+    claim = structuredClone(claim);
     checkRequestId(requestId);
-    const result = await this.kernel.read<
-      Pick<TaskRow, "organization_id" | "agent_id" | "owner_principal_id"> &
-        Pick<CallRow, "claim_id" | "generation" | "state" | "review_decision">
-    >(
-      `SELECT task.organization_id,task.agent_id,task.owner_principal_id,
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
+      const result = await client.query<
+        Pick<TaskRow, "organization_id" | "agent_id" | "owner_principal_id"> &
+          Pick<CallRow, "claim_id" | "generation" | "state" | "review_decision">
+      >(
+        `SELECT task.organization_id,task.agent_id,task.owner_principal_id,
               call.claim_id,call.generation,call.state,call.review_decision
        FROM learning_model_calls call JOIN learning_tasks task ON task.id=call.task_id
        WHERE call.task_id=$1 AND call.request_id=$2`,
-      [claim.taskId, requestId],
-    );
-    const row = result.rows[0];
-    if (row === undefined || !sameScope(row, claim) || !sameClaim(row, claim))
-      throw new Error("Learning model request is unavailable");
-    return row.state === "settled" ? row.review_decision : null;
+        [claim.taskId, requestId],
+      );
+      const row = result.rows[0];
+      if (row === undefined || !sameScope(row, claim) || !sameClaim(row, claim))
+        throw new Error("Learning model request is unavailable");
+      return row.state === "settled" ? row.review_decision : null;
+    });
   }
 
   public async markUnknown(claim: LearningTaskClaim, requestId: string): Promise<void> {
+    claim = structuredClone(claim);
     checkRequestId(requestId);
-    await this.kernel.transaction(async (client) => {
+    await this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const result = await client.query<
         Pick<TaskRow, "organization_id" | "agent_id" | "owner_principal_id"> &
           Pick<CallRow, "claim_id" | "generation" | "state">
@@ -235,11 +252,13 @@ export class PostgresLearningBudget {
     actual: ModelCallBudget,
     decisionJson?: string,
   ): Promise<void> {
+    claim = structuredClone(claim);
+    actual = structuredClone(actual);
     checkRequestId(requestId);
     for (const value of [actual.inputTokens, actual.outputTokens, actual.durationMs])
       if (!Number.isSafeInteger(value) || value < 0 || value > 2_147_483_647)
         throw new Error("Invalid actual learning model usage");
-    await this.kernel.transaction(async (client) => {
+    await this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const taskResult = await client.query<TaskRow>(
         `SELECT organization_id,agent_id,owner_principal_id,state,claim_id,generation,
                 model_calls,frozen_policy

@@ -8,6 +8,7 @@ import {
   runtimeMcpEndpointSchema,
 } from "../../domain/runtime-connection.js";
 import type { PostgresKernel } from "./kernel.js";
+import { LearningWriteAuthority } from "./learning-write-authority.js";
 
 type Action = "install";
 type State = "pending" | "unknown" | "settled";
@@ -40,14 +41,22 @@ type SavedIntent = {
 };
 
 export class PostgresLearningMaintenanceLedger {
+  readonly #authority: LearningWriteAuthority;
+
   public constructor(
     private readonly kernel: PostgresKernel,
+    authority: LearningWriteAuthority,
     private readonly onSettled?: (requestId: string) => void,
-  ) {}
+  ) {
+    if (!(authority instanceof LearningWriteAuthority))
+      throw new TypeError("Learning writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async reserve(input: Intent): Promise<{ dispatch: boolean; state: State }> {
+    input = structuredClone(input);
     validateIntent(input);
-    return this.kernel.transaction(async (client) => {
+    return this.#authority.claimTransaction(this.kernel, input.claim, async (client) => {
       const task = await client.query<{
         organization_id: string;
         agent_id: string;
@@ -101,7 +110,8 @@ export class PostgresLearningMaintenanceLedger {
   }
 
   public async markUnknown(claim: LearningTaskClaim, requestId: string): Promise<void> {
-    await this.kernel.transaction(async (client) => {
+    claim = structuredClone(claim);
+    await this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const saved = await this.lockClaimIntent(client, claim, requestId);
       if (saved.state === "pending")
         await client.query(
@@ -116,7 +126,9 @@ export class PostgresLearningMaintenanceLedger {
     requestId: string,
     receipt: unknown,
   ): Promise<void> {
-    await this.kernel.transaction(async (client) => {
+    claim = structuredClone(claim);
+    receipt = structuredClone(receipt);
+    await this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const saved = await this.lockClaimIntent(client, claim, requestId);
       const serialized = JSON.stringify(receipt) as string | undefined;
       if (
@@ -150,6 +162,8 @@ export class PostgresLearningMaintenanceLedger {
     requestId: string,
     rejection: { status: number; code: string },
   ): Promise<void> {
+    claim = structuredClone(claim);
+    rejection = structuredClone(rejection);
     if (
       !Number.isSafeInteger(rejection.status) ||
       rejection.status < 400 ||
@@ -158,7 +172,7 @@ export class PostgresLearningMaintenanceLedger {
       !/^[a-z][a-z0-9_]{0,63}$/u.test(rejection.code)
     )
       throw new Error("Invalid deterministic Runtime maintenance rejection");
-    await this.kernel.transaction(async (client) => {
+    await this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const saved = await this.lockClaimIntent(client, claim, requestId);
       const receipt = {
         kind: "rejection",

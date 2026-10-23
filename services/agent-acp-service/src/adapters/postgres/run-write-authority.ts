@@ -138,4 +138,10 @@ export class RunWriteAuthority {
       fence.epoch,
     ];
   }
+
+  public scope(): Readonly<{ organizationId: string; agentId: string }> | null {
+    if (this.mode.kind === "legacy") return null;
+    const { organizationId, agentId } = this.mode.authority.fence;
+    return Object.freeze({ organizationId, agentId });
+  }
 }

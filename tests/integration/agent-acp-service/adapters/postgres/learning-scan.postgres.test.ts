@@ -2,11 +2,8 @@ import { Pool } from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
-import { PostgresLearningScan } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-scan.js";
-import { PostgresLearningEvidence } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-evidence.js";
-import { PostgresLearningBudget } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-budget.js";
+import { createLegacyLearningRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-repositories.js";
 import { PostgresLearningReviewSource } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-review-source.js";
-import { PostgresLearningTaskOutcomes } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-task-outcomes.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { PostgresWorkerLock } from "../../../../../services/agent-acp-service/src/adapters/postgres/worker-lock.js";
 import { learningPolicySchema } from "../../../../../services/agent-acp-service/src/domain/learning-policy.js";
@@ -17,9 +14,18 @@ const url = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 
 describe.skipIf(url === undefined)("Skill learning completed-Run scan", () => {
   const pool = new Pool({ connectionString: url, max: 2 });
-  const scanner = new PostgresLearningScan(new PostgresKernel(pool));
-  const evidence = new PostgresLearningEvidence(new PostgresKernel(pool));
-  const budget = new PostgresLearningBudget(new PostgresKernel(pool));
+  const scanner = createLegacyLearningRepositories(
+    new PostgresKernel(pool),
+    new AbortController().signal,
+  ).scan;
+  const evidence = createLegacyLearningRepositories(
+    new PostgresKernel(pool),
+    new AbortController().signal,
+  ).evidence;
+  const budget = createLegacyLearningRepositories(
+    new PostgresKernel(pool),
+    new AbortController().signal,
+  ).budget;
   const reviewSource = new PostgresLearningReviewSource(
     new PostgresKernel(pool),
   );
@@ -179,7 +185,10 @@ describe.skipIf(url === undefined)("Skill learning completed-Run scan", () => {
       taskId: last!.taskId,
       reviewPromptVersion: 2,
     });
-    const outcomes = new PostgresLearningTaskOutcomes(new PostgresKernel(pool));
+    const outcomes = createLegacyLearningRepositories(
+      new PostgresKernel(pool),
+      new AbortController().signal,
+    ).outcomes;
     await outcomes.pauseRunning(lastClaim!, "foreground_preempted");
     expect(
       (await outcomes.listPaused(null, 10))[0]!.claim.reviewPromptVersion,

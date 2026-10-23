@@ -730,6 +730,24 @@ basis but accepts the target Skill already being present, because the
 interrupted install may have renamed it; Runtime's conditional install settles
 identical bytes as `applied` without a second rename.
 
+Learning repositories capture explicit Agent authority through
+`createOwnedLearningRepositories`, or the worker-lock signal through the legacy
+factory. Every mutation and idempotent receipt verifies the current lease and
+the task's original claim, generation and registration/member/incarnation/epoch
+before changing model, evidence, candidate, apply, maintenance or change facts.
+Claim-bound review and apply reads use the same boundary. The completed source
+Run is historical evidence: its owner may differ from the new Learning claim.
+
+Migration 0027 distinguishes legacy and owned pending tasks. Pristine legacy
+pending work can be adopted under the current lease; spent budget or existing
+claim/effect history forbids adoption. Each owned claim and review attempt keeps
+its original execution identity and frozen policy. Pause/resume preserves that
+claim and budget. A successor cannot resume a predecessor's claim or write its
+late receipts. Global startup recovery locks its selected running tasks, rejects
+owned work, and updates only the validated legacy set. Production still uses
+the global worker lock; Agent generation dispatch, scoped recovery with stopping
+proof, original network-task joins and two-replica integration remain required.
+
 ## Workspace Bridge Extension
 
 The [workspace Bridge extension](../../../contracts/agent-acp/workspace-bridge.md)

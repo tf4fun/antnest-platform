@@ -27,6 +27,8 @@ export type {
 } from "../../domain/learning-scan.js";
 
 import type { PostgresKernel } from "./kernel.js";
+import { LearningWriteAuthority } from "./learning-write-authority.js";
+import { AgentOwnershipLostError } from "../../domain/agent-ownership.js";
 
 type CursorRow = {
   owner_principal_id: string;
@@ -63,6 +65,17 @@ function claimableTaskQuery(lock: boolean): string {
           FROM learning_tasks t JOIN runs source ON source.id=t.source_run_id
           WHERE t.state='pending' AND source.state='completed'
             AND ($2::text IS NULL OR t.id=$2)
+            AND ($4::text IS NULL OR (t.organization_id=$4 AND t.agent_id=$5))
+            AND (t.authority_mode=$3 OR ($3='owned' AND t.authority_mode='legacy'
+              AND t.generation=0 AND t.claim_id IS NULL AND t.started_at IS NULL
+              AND t.model_calls=0 AND t.input_tokens=0 AND t.output_tokens=0 AND t.model_time_ms=0
+              AND NOT EXISTS (SELECT 1 FROM learning_review_attempts e WHERE e.task_id=t.id)
+              AND NOT EXISTS (SELECT 1 FROM learning_model_calls e WHERE e.task_id=t.id)
+              AND NOT EXISTS (SELECT 1 FROM learning_evidence_snapshots e WHERE e.task_id=t.id)
+              AND NOT EXISTS (SELECT 1 FROM learning_candidates e WHERE e.task_id=t.id)
+              AND NOT EXISTS (SELECT 1 FROM learning_apply_bases e WHERE e.task_id=t.id)
+              AND NOT EXISTS (SELECT 1 FROM learning_maintenance_intents e WHERE e.task_id=t.id)
+              AND NOT EXISTS (SELECT 1 FROM learning_changes e WHERE e.task_id=t.id)))
             AND NOT EXISTS (SELECT 1 FROM learning_tasks active WHERE active.state='running')
             AND source.updated_at<=$1::timestamptz-interval '15 seconds'
             AND NOT EXISTS (
@@ -96,12 +109,22 @@ function claimableTaskQuery(lock: boolean): string {
 }
 
 export class PostgresLearningScan {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: LearningWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: LearningWriteAuthority,
+  ) {
+    if (!(authority instanceof LearningWriteAuthority))
+      throw new TypeError("Learning writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async listScopes(
     after: LearningScanScope | null,
     limit: number,
   ): Promise<LearningScanScope[]> {
+    after = after === null ? null : structuredClone(after);
     if (after !== null) checkScope(after);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error("Learning scan scope page must contain 1–100 Agents");
@@ -113,10 +136,18 @@ export class PostgresLearningScan {
       `SELECT DISTINCT organization_id,agent_id,principal_id
        FROM acp_sessions
        WHERE state<>'deleted'
+         AND ($5::text IS NULL OR (organization_id=$5 AND agent_id=$6))
          AND ($1::text IS NULL OR
            (organization_id,agent_id,principal_id)>($1::text,$2::text,$3::text))
        ORDER BY organization_id,agent_id,principal_id LIMIT $4`,
-      [after?.organizationId ?? null, after?.agentId ?? null, after?.ownerId ?? null, limit],
+      [
+        after?.organizationId ?? null,
+        after?.agentId ?? null,
+        after?.ownerId ?? null,
+        limit,
+        this.#authority.scope()?.organizationId ?? null,
+        this.#authority.scope()?.agentId ?? null,
+      ],
     );
     return result.rows.map((row) => ({
       organizationId: row.organization_id,
@@ -130,6 +161,7 @@ export class PostgresLearningScan {
     policyRevision: string,
     activatedAt: string,
   ): Promise<void> {
+    scope = structuredClone(scope);
     checkScope(scope);
     if (
       !REVISION.test(policyRevision) ||
@@ -137,8 +169,9 @@ export class PostgresLearningScan {
       !Number.isFinite(Date.parse(activatedAt))
     )
       throw new Error("Invalid learning policy activation");
-    const result = await this.kernel.query(
-      `INSERT INTO learning_scan_cursors
+    await this.#authority.transaction(this.kernel, scope, async (client) => {
+      const result = await client.query(
+        `INSERT INTO learning_scan_cursors
          (organization_id,agent_id,owner_principal_id,policy_revision,activated_at)
        VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (organization_id,agent_id) DO UPDATE
@@ -150,13 +183,16 @@ export class PostgresLearningScan {
              activated_at=EXCLUDED.activated_at,updated_at=now()
        WHERE learning_scan_cursors.owner_principal_id=EXCLUDED.owner_principal_id
          AND learning_scan_cursors.activated_at<=EXCLUDED.activated_at`,
-      [scope.organizationId, scope.agentId, scope.ownerId, policyRevision, activatedAt],
-    );
-    if (result.rowCount !== 1)
-      throw new Error("Learning policy owner or activation cut conflicts with persisted scan");
+        [scope.organizationId, scope.agentId, scope.ownerId, policyRevision, activatedAt],
+      );
+      if (result.rowCount !== 1)
+        throw new Error("Learning policy owner or activation cut conflicts with persisted scan");
+    });
   }
 
   public async list(scope: LearningScanScope, limit: number): Promise<LearningSource[]> {
+    scope = structuredClone(scope);
+    this.#authority.assertScope(scope);
     checkScope(scope);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error("Learning scan page must contain 1–100 Runs");
@@ -198,6 +234,7 @@ export class PostgresLearningScan {
     runId: string,
     reason: LearningSkipReason,
   ): Promise<void> {
+    scope = structuredClone(scope);
     checkScope(scope);
     if (
       runId === "" ||
@@ -210,7 +247,7 @@ export class PostgresLearningScan {
       ].includes(reason)
     )
       throw new Error("Invalid learning source decision");
-    await this.kernel.transaction(async (client) => {
+    await this.#authority.transaction(this.kernel, scope, async (client) => {
       const cursor = await lockCursor(client, scope);
       const existing = await client.query<{
         organization_id: string;
@@ -276,6 +313,7 @@ export class PostgresLearningScan {
     policyInput: unknown,
     reviewPromptVersion: LearningReviewPromptVersion = 1,
   ): Promise<{ taskId: string } | null> {
+    scope = structuredClone(scope);
     checkScope(scope);
     if (runId === "") throw new Error("Learning source Run is required");
     const policy = frozenPolicy.parse(policyInput);
@@ -285,7 +323,7 @@ export class PostgresLearningScan {
       policy.owner_principal_id !== scope.ownerId
     )
       throw new Error("Frozen policy scope mismatch");
-    return this.kernel.transaction(async (client) => {
+    return this.#authority.transaction(this.kernel, scope, async (client) => {
       const cursor = await lockCursor(client, scope, policy.activation_cut_at);
       const existing = await client.query<{
         id: string;
@@ -304,6 +342,7 @@ export class PostgresLearningScan {
           task.owner_principal_id !== scope.ownerId
         )
           throw new Error("Learning task source scope conflict");
+        await this.#authority.pendingTask(client, task.id);
         return { taskId: task.id };
       }
       if (cursor.policy_revision !== policy.revision || cursor.activation_matches !== true)
@@ -345,8 +384,8 @@ export class PostgresLearningScan {
       await client.query(
         `INSERT INTO learning_tasks
         (id,organization_id,agent_id,owner_principal_id,source_run_id,trigger_kind,
-         policy_revision,frozen_policy,review_prompt_version,package_rules_version,state)
-        VALUES ($1,$2,$3,$4,$5,'run_completed',$6,$7::jsonb,$8,1,'pending')`,
+         policy_revision,frozen_policy,review_prompt_version,package_rules_version,state,authority_mode)
+        VALUES ($1,$2,$3,$4,$5,'run_completed',$6,$7::jsonb,$8,1,'pending',$9)`,
         [
           taskId,
           scope.organizationId,
@@ -356,6 +395,7 @@ export class PostgresLearningScan {
           policy.revision,
           JSON.stringify(policy),
           reviewPromptVersion,
+          this.#authority.mode,
         ],
       );
       await client.query(
@@ -378,6 +418,9 @@ export class PostgresLearningScan {
     const next = await this.kernel.read<ClaimCandidateRow>(claimableTaskQuery(false), [
       clock.rows[0]!.at,
       null,
+      this.#authority.mode,
+      this.#authority.scope()?.organizationId ?? null,
+      this.#authority.scope()?.agentId ?? null,
     ]);
     const row = next.rows[0];
     return row === undefined
@@ -397,6 +440,7 @@ export class PostgresLearningScan {
     candidate: LearningClaimCandidate,
     reason: "policy_off" | "policy_changed",
   ): Promise<boolean> {
+    candidate = structuredClone(candidate);
     checkScope({
       organizationId: candidate.organizationId,
       agentId: candidate.agentId,
@@ -420,20 +464,30 @@ export class PostgresLearningScan {
       JSON.stringify(frozen),
       reason,
     ];
-    const updated = await this.kernel.query(
-      `UPDATE learning_tasks SET state='cancelled',cancel_reason=$7,updated_at=now()
+    return this.#authority.transaction(this.kernel, candidate, async (client) => {
+      const task = await this.#authority.pendingTask(client, candidate.taskId);
+      if (
+        task.organization_id !== candidate.organizationId ||
+        task.agent_id !== candidate.agentId ||
+        task.owner_principal_id !== candidate.ownerId ||
+        task.source_run_id !== candidate.sourceRunId
+      )
+        throw new AgentOwnershipLostError();
+      const updated = await client.query(
+        `UPDATE learning_tasks SET state='cancelled',cancel_reason=$7,updated_at=now()
        WHERE id=$1 AND organization_id=$2 AND agent_id=$3 AND owner_principal_id=$4
          AND policy_revision=$5 AND frozen_policy=$6::jsonb AND state='pending'`,
-      values,
-    );
-    if (updated.rowCount === 1) return true;
-    const replay = await this.kernel.read<{ state: string; cancel_reason: string }>(
-      `SELECT state,cancel_reason FROM learning_tasks
+        values,
+      );
+      if (updated.rowCount === 1) return true;
+      const replay = await client.query<{ state: string; cancel_reason: string }>(
+        `SELECT state,cancel_reason FROM learning_tasks
        WHERE id=$1 AND organization_id=$2 AND agent_id=$3 AND owner_principal_id=$4
          AND policy_revision=$5 AND frozen_policy=$6::jsonb`,
-      values.slice(0, 6),
-    );
-    return replay.rows[0]?.state === "cancelled" && replay.rows[0].cancel_reason === reason;
+        values.slice(0, 6),
+      );
+      return replay.rows[0]?.state === "cancelled" && replay.rows[0].cancel_reason === reason;
+    });
   }
 
   public async claimNext(
@@ -443,56 +497,80 @@ export class PostgresLearningScan {
     if (expectedTaskId.length === 0 || expectedTaskId.length > 200)
       throw new Error("Invalid learning claim candidate");
     const currentPolicy = learningPolicySchema.parse(currentPolicyInput);
-    return this.kernel.transaction(async (client) => {
-      await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [2_026_092_902]);
-      const active = await client.query<{ active: boolean }>(
-        "SELECT EXISTS(SELECT 1 FROM learning_tasks WHERE state='running') AS active",
-      );
-      if (active.rows[0]?.active) return null;
-      const clock = await client.query<{ at: string }>("SELECT clock_timestamp()::text AS at");
-      const claimedAt = clock.rows[0]!.at;
-      const next = await client.query<ClaimCandidateRow>(claimableTaskQuery(true), [
-        claimedAt,
-        expectedTaskId,
-      ]);
-      const row = next.rows[0];
-      if (row === undefined) return null;
-      const frozen = frozenPolicy.parse(row.frozen_policy);
-      if (
-        currentPolicy.mode !== "automatic" ||
-        currentPolicy.organization_id !== row.organization_id ||
-        currentPolicy.agent_id !== row.agent_id ||
-        currentPolicy.owner_principal_id !== row.owner_principal_id ||
-        !isDeepStrictEqual(currentPolicy, frozen)
-      )
-        throw new Error("Learning claim policy changed or access is unavailable");
-      const claimId = randomUUID();
-      const claimed = await client.query<{ generation: number }>(
-        `UPDATE learning_tasks
-         SET state='running',generation=generation+1,claim_id=$2,started_at=$3,updated_at=$3
+    return this.#authority.transaction(
+      this.kernel,
+      {
+        organizationId: currentPolicy.organization_id,
+        agentId: currentPolicy.agent_id,
+      },
+      async (client) => {
+        await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [2_026_092_902]);
+        const target = await this.#authority.pendingTask(client, expectedTaskId, false);
+        if (
+          target.organization_id !== currentPolicy.organization_id ||
+          target.agent_id !== currentPolicy.agent_id ||
+          target.owner_principal_id !== currentPolicy.owner_principal_id
+        )
+          throw new AgentOwnershipLostError();
+        const active = await client.query<{ active: boolean }>(
+          "SELECT EXISTS(SELECT 1 FROM learning_tasks WHERE state='running') AS active",
+        );
+        if (active.rows[0]?.active) return null;
+        const clock = await client.query<{ at: string }>("SELECT clock_timestamp()::text AS at");
+        const claimedAt = clock.rows[0]!.at;
+        const next = await client.query<ClaimCandidateRow>(claimableTaskQuery(true), [
+          claimedAt,
+          expectedTaskId,
+          this.#authority.mode,
+          this.#authority.scope()?.organizationId ?? null,
+          this.#authority.scope()?.agentId ?? null,
+        ]);
+        const row = next.rows[0];
+        if (row === undefined) return null;
+        const frozen = frozenPolicy.parse(row.frozen_policy);
+        if (
+          currentPolicy.mode !== "automatic" ||
+          currentPolicy.organization_id !== row.organization_id ||
+          currentPolicy.agent_id !== row.agent_id ||
+          currentPolicy.owner_principal_id !== row.owner_principal_id ||
+          !isDeepStrictEqual(currentPolicy, frozen)
+        )
+          throw new Error("Learning claim policy changed or access is unavailable");
+        const claimId = randomUUID();
+        await this.#authority.pendingTask(client, row.id);
+        const claimed = await client.query<{ generation: number }>(
+          `UPDATE learning_tasks
+         SET state='running',generation=generation+1,claim_id=$2,started_at=$3,updated_at=$3,
+             claim_owner_registration_id=$4,claim_owner_member_id=$5,
+             claim_owner_incarnation_id=$6,claim_owner_epoch=$7
          WHERE id=$1 RETURNING generation`,
-        [row.id, claimId, claimedAt],
-      );
-      await client.query(
-        `INSERT INTO learning_review_attempts (task_id,generation,started_at)
-         SELECT id,generation,started_at FROM learning_tasks WHERE id=$1`,
-        [row.id],
-      );
-      return {
-        taskId: row.id,
-        claimId,
-        generation: claimed.rows[0]!.generation,
-        organizationId: row.organization_id,
-        agentId: row.agent_id,
-        ownerId: row.owner_principal_id,
-        sourceRunId: row.source_run_id,
-        frozenPolicy: row.frozen_policy,
-        reviewPromptVersion: row.review_prompt_version,
-      };
-    });
+          [row.id, claimId, claimedAt, ...this.#authority.origin()],
+        );
+        await client.query(
+          `INSERT INTO learning_review_attempts (task_id,generation,started_at,authority_mode,claim_id,
+          claim_owner_registration_id,claim_owner_member_id,claim_owner_incarnation_id,claim_owner_epoch)
+         SELECT id,generation,started_at,authority_mode,claim_id,claim_owner_registration_id,
+          claim_owner_member_id,claim_owner_incarnation_id,claim_owner_epoch FROM learning_tasks WHERE id=$1`,
+          [row.id],
+        );
+        return {
+          taskId: row.id,
+          claimId,
+          generation: claimed.rows[0]!.generation,
+          organizationId: row.organization_id,
+          agentId: row.agent_id,
+          ownerId: row.owner_principal_id,
+          sourceRunId: row.source_run_id,
+          frozenPolicy: row.frozen_policy,
+          reviewPromptVersion: row.review_prompt_version,
+        };
+      },
+    );
   }
 
   public async countExecutedToolRounds(scope: LearningScanScope, runId: string): Promise<number> {
+    scope = structuredClone(scope);
+    this.#authority.assertScope(scope);
     checkScope(scope);
     if (runId === "" || runId.length > 200) throw new Error("Invalid learning source Run");
     const result = await this.kernel.read<{ count: number }>(
@@ -527,6 +605,8 @@ export class PostgresLearningScan {
     scope: LearningScanScope,
     runId: string,
   ): Promise<boolean> {
+    scope = structuredClone(scope);
+    this.#authority.assertScope(scope);
     checkScope(scope);
     if (runId === "" || runId.length > 200) throw new Error("Invalid learning source Run");
     const result = await this.kernel.read<{

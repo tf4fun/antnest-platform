@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { setTimeout as delay } from "node:timers/promises";
+import { AgentOwnershipLostError } from "../../domain/agent-ownership.js";
 
 const WORKER_LOCK = 2_026_083_002;
 const DEFAULT_PROBE_INTERVAL_MS = 1_000;
@@ -74,14 +75,21 @@ export class PostgresWorkerLock {
   private async pauseAbandonedLearningTasksUnderLock(): Promise<number> {
     await this.client.query("BEGIN");
     try {
+      const selected = await this.client.query<{ id: string; authority_mode: string }>(
+        "SELECT id,authority_mode FROM learning_tasks WHERE state='running' ORDER BY id FOR UPDATE",
+      );
+      if (selected.rows.some((task) => task.authority_mode !== "legacy"))
+        throw new AgentOwnershipLostError();
+      const taskIds = selected.rows.map((task) => task.id);
       await this.client.query(
         `UPDATE learning_model_calls SET state='unknown'
-         WHERE state='reserved' AND task_id IN
-           (SELECT id FROM learning_tasks WHERE state='running')`,
+         WHERE state='reserved' AND task_id=ANY($1::text[])`,
+        [taskIds],
       );
       const result = await this.client.query(
         `UPDATE learning_tasks SET state='paused',pause_reason='worker_lost',updated_at=now()
-         WHERE state='running'`,
+         WHERE state='running' AND id=ANY($1::text[])`,
+        [taskIds],
       );
       if (!this.isHeld()) throw new WorkerOwnershipLostError();
       await this.client.query("COMMIT");
