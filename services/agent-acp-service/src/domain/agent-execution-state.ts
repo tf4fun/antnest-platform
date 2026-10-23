@@ -20,7 +20,11 @@ export const agentExecutionStateSchema = z.union([
   authorizedState.extend({
     availability: z.literal("offline"),
     active_session_id: z.null(),
-    unavailable_reason: z.enum(["agent_unavailable", "runtime_barrier_required"]),
+    unavailable_reason: z.enum([
+      "agent_unavailable",
+      "agent_preparing",
+      "runtime_barrier_required",
+    ]),
   }),
   z.strictObject({
     agent_id: z.string().min(1).max(200),

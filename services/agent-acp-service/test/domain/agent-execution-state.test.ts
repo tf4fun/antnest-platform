@@ -52,6 +52,7 @@ describe("workspace state contract", () => {
     { ...ready, availability: "busy", unavailable_reason: "agent_unavailable" },
     { ...ready, availability: "offline", unavailable_reason: "runtime_barrier_required" },
     { ...ready, availability: "offline", unavailable_reason: "agent_unavailable" },
+    { ...ready, availability: "offline", unavailable_reason: "agent_preparing" },
   ])("accepts an authorized view or sanitized denial: %j", (state) => {
     expect(agentExecutionStateSchema.safeParse(state).success).toBe(true);
     expect(validator("agent-execution-state")(state)).toBe(true);
@@ -66,6 +67,16 @@ describe("workspace state contract", () => {
     { ...ready, availability: "offline" },
     { ...ready, run_id: "internal" },
     { ...ready, credential: "secret" },
+    { ...ready, unavailable_reason: "agent_preparing" },
+    { ...denied, unavailable_reason: "agent_preparing" },
+    {
+      ...ready,
+      availability: "offline",
+      unavailable_reason: "agent_preparing",
+      active_session_id: "leaked-session",
+    },
+    { ...ready, availability: "busy", access_allowed: false, active_session_id: "leaked-session" },
+    { ...ready, availability: "busy", active_session_id: "session-1", run_id: "internal" },
   ])("rejects contradictory or leaking states: %j", (state) => {
     expect(agentExecutionStateSchema.safeParse(state).success).toBe(false);
     expect(validator("agent-execution-state")(state)).toBe(false);

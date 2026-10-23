@@ -603,6 +603,24 @@ require verified workload and an Agent-scoped signed CCT and repeat
 authorization before reading; they are not browser endpoints. ACP remains the
 execution and history authority when the Agent UI Node Bridge reconnects.
 
+An authorized, listed Agent with closed admission and the exact snapshot reason
+`agent_preparing` rejects new Run/Prompt admission with the
+existing retryable catalog error (`-32033`, HTTP 503, retry after 1000 ms).
+The Prompt coordinator checks this before allocating an intent or Run. Unknown
+Agents and unauthorized principals remain `access_denied`; an absent organization
+configuration remains `configuration_not_ready`. Authorization itself still
+allows permitted history reads and cancellation while execution is preparing.
+
+The read/watch execution-state projection reports offline/preparing with no
+active Session. Existing busy work takes precedence and retains owner/peer
+Session privacy; after it settles, the preparing state becomes visible. A new
+executable snapshot changes the view to ready, while revocation sanitizes and
+terminates the subscription even if access is regranted. Generic unavailability,
+Runtime barriers and storage failures retain their existing classifications.
+The Controller's transactional binding/ACK proof and the 100-iteration delayed
+publication acceptance remain separate work under the
+[readiness contract](../../../contracts/agent-controller/readiness.md).
+
 ## Resource Identifiers
 
 New Session, Run, message, MCP revision, checkpoint and Tool attempt records

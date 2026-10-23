@@ -191,13 +191,18 @@ function stateView(
       active_session_id: slot.activeSessionId,
       unavailable_reason: unavailable ? "agent_unavailable" : null,
     };
-  if (unavailable || protectedRuntime)
+  if (unavailable || protectedRuntime) {
+    const unavailableReason =
+      !current.agent.accepting_runs && current.agent.unavailable_reason === "agent_preparing"
+        ? "agent_preparing"
+        : "agent_unavailable";
     return {
       ...shared,
       availability: "offline",
       active_session_id: null,
-      unavailable_reason: unavailable ? "agent_unavailable" : "runtime_barrier_required",
+      unavailable_reason: unavailable ? unavailableReason : "runtime_barrier_required",
     };
+  }
   return { ...shared, availability: "ready", active_session_id: null, unavailable_reason: null };
 }
 
