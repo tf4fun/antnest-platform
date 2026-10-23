@@ -1,4 +1,4 @@
-import { createLegacyLearningRepositories } from "./adapters/postgres/learning-repositories.js";
+import type { createLegacyLearningRepositories } from "./adapters/postgres/learning-repositories.js";
 import type { TemporarySkills } from "./application/temporary-skills.js";
 import type { RuntimeConnectionAuthority } from "./ports/runtime-connections.js";
 import type { ExecutionDirectory } from "./application/execution-directory.js";
@@ -37,25 +37,34 @@ import { PostgresLearningInstallRequests } from "./adapters/postgres/learning-in
 import type { AgentAcpConfig } from "./config.js";
 import type { TelemetryPort } from "./ports/telemetry.js";
 
-export function buildLearningWorker(input: {
+export type LearningPipelineInput = {
   config: AgentAcpConfig;
-  ownershipSignal: AbortSignal;
+  learningRepositories: ReturnType<typeof createLegacyLearningRepositories> | undefined;
   kernel: PostgresKernel;
   directory: ExecutionDirectory;
   providers: ProviderClients;
   rawTools: McpToolCatalog;
   gate: LearningForegroundGate;
   telemetry: TelemetryPort;
-  onCommitted: () => void;
   temporarySkills: TemporarySkills;
   runtimeConnections: RuntimeConnectionAuthority;
-}): LearningWorker | undefined {
-  const { config, kernel, directory, providers, rawTools, gate, telemetry, onCommitted } = input;
+};
+
+export function buildLearningWorker(input: LearningPipelineInput): LearningWorker | undefined {
+  return buildLearningPipeline(input)?.worker;
+}
+
+export function buildLearningPipeline(
+  input: LearningPipelineInput,
+): { worker: LearningWorker; paused: LearningPausedRecovery } | undefined {
+  const { config, kernel, directory, providers, rawTools, gate, telemetry } = input;
   if (
     config.skillLearningControllerUrl === undefined ||
     config.skillMaintenanceSigning === undefined
   )
     return undefined;
+  if (input.learningRepositories === undefined)
+    throw new Error("Learning repositories are required when Skill learning is enabled");
   const policy = new ControllerLearningPolicyClient(
     config.skillLearningControllerUrl,
     tracedFetch(config.dependencyFetchers.controller!, "agent_controller"),
@@ -69,10 +78,7 @@ export function buildLearningWorker(input: {
     intents,
     bases,
     changes,
-  } = createLegacyLearningRepositories(kernel, input.ownershipSignal, {
-    onSettled: (requestId) => input.runtimeConnections.releaseOperation(requestId),
-    onCommitted,
-  });
+  } = input.learningRepositories;
   const managed = new PostgresLearningManagedSkills(kernel);
   const installRequests = new PostgresLearningInstallRequests(kernel);
   const binding = new DirectoryLearningRuntimeBinding(directory);
@@ -143,7 +149,7 @@ export function buildLearningWorker(input: {
       error,
     ),
   );
-  return new LearningWorker(
+  const worker = new LearningWorker(
     paused,
     scan,
     new LearningClaimAdmission(policy, scanStore),
@@ -163,4 +169,5 @@ export function buildLearningWorker(input: {
     undefined,
     (error) => telemetry.log("warn", "skill_learning_cycle_failed", {}, error),
   );
+  return { worker, paused };
 }

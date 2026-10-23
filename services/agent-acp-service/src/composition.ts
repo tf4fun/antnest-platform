@@ -1,4 +1,4 @@
-import { buildLearningWorker } from "./composition-learning.js";
+import { buildAgentComponents } from "./composition-agent.js";
 import { LearningStatusReader } from "./application/learning-status-reader.js";
 import { SkillSources } from "./application/skill-sources.js";
 import { SkillProjectionWorker } from "./application/skill-projection-worker.js";
@@ -8,17 +8,7 @@ import {
   RuntimeSkillSourceVerifier,
 } from "./adapters/skill-source-http.js";
 import { PostgresLearningStatusRead } from "./adapters/postgres/learning-status-read.js";
-import { SessionConfigurationService } from "./application/session-configuration.js";
-import { PostgresSkillDiscoveryAuthority } from "./adapters/postgres/skill-discovery-authority.js";
-import { RegistrySkillDiscoveryClient } from "./adapters/skill-discovery-http.js";
-import { SkillDiscoveryTools } from "./application/skill-discovery-tools.js";
-import { TemporarySkills } from "./application/temporary-skills.js";
-import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
-import { RuntimeSkillTemporaryClient } from "./adapters/runtime-skill-temporary-client.js";
-import { DomainError } from "./domain/errors.js";
 import { PermissionConnections } from "./application/permission-connections.js";
-import { ToolPermissions } from "./application/tool-permissions.js";
-import { newResourceId } from "./domain/resource-id.js";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { Pool } from "pg";
@@ -34,44 +24,28 @@ import { ExecutionAudits } from "./application/execution-audit.js";
 import { PostgresExecutionAudits } from "./adapters/postgres/execution-audit.js";
 import type { ExecutionAccessSnapshot } from "./domain/execution-configuration.js";
 import { SessionOutputStreams } from "./transport/acp/session-output.js";
-import { OfficialMcpDialer } from "./adapters/mcp/official-client.js";
-import { McpToolCatalog } from "./adapters/mcp/tool-catalog.js";
 import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
 import { PostgresRuntimeBarrierReader } from "./adapters/postgres/runtime-barrier.js";
 import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
 import { createLegacyAgentRepositories } from "./adapters/postgres/agent-repositories.js";
+import { createLegacyLearningRepositories } from "./adapters/postgres/learning-repositories.js";
 import { PostgresBridgeObservationRepository } from "./adapters/postgres/bridge-observation-repository.js";
 import { BridgeObservationService } from "./application/bridge-observation.js";
 import { SecretBox } from "./adapters/postgres/secret-box.js";
 import { PostgresWorkerLock, WorkerOwnershipLostError } from "./adapters/postgres/worker-lock.js";
-import { AcpApplication } from "./application/application.js";
 import { AccessService } from "./application/access-service.js";
-import { ContextBuilder } from "./application/context-builder.js";
 import { RuntimeSkillCommands } from "./application/runtime-skill-commands.js";
-import { PromptCoordinator } from "./application/prompt-coordinator.js";
-import { RunExecutor } from "./application/run-executor.js";
-import { RunRecovery } from "./application/run-recovery.js";
-import { RunSupervisor } from "./application/run-supervisor.js";
-import { LearningForegroundGate } from "./application/learning-foreground-gate.js";
 import { LearningChangeReader } from "./application/learning-change-reader.js";
 import { LearningNoticePublisher } from "./application/learning-notice-publisher.js";
 import { LearningChangeCursor } from "./domain/learning-change-cursor.js";
 import { tracedFetch } from "./telemetry/http.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
 import { PostgresLearningChangeRead } from "./adapters/postgres/learning-change-read.js";
-import { SessionService } from "./application/session-service.js";
 import type { AgentAcpConfig } from "./config.js";
 import type { TelemetryPort } from "./ports/telemetry.js";
-import {
-  InstrumentedAcpApplication,
-  InstrumentedRunExecutor,
-  InstrumentedModel,
-  InstrumentedToolCatalog,
-  InstrumentedRuntimeInformation,
-} from "./telemetry/instrumented-ports.js";
+import { InstrumentedModel } from "./telemetry/instrumented-ports.js";
 import { AgentAcpHttpServer } from "./transport/http-server.js";
-import { InstrumentedToolPermissions } from "./telemetry/instrumented-permissions.js";
 import { OwnerIncarnation, OwnerIncarnationError } from "./application/owner-incarnation.js";
 import {
   OwnerRegistrationAttemptError,
@@ -375,16 +349,12 @@ export function buildComponents(
   runtimeConnections: RuntimeConnectionAuthority,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
-  const {
-    sessions,
-    sessionConfiguration,
-    permissions: permissionRepository,
-    temporarySkills: temporaryStore,
-    runs,
-    events,
-    executions,
-    contexts,
-  } = createLegacyAgentRepositories(kernel, new SecretBox(config.clientMcpKey), ownershipSignal);
+  const repositories = createLegacyAgentRepositories(
+    kernel,
+    new SecretBox(config.clientMcpKey),
+    ownershipSignal,
+  );
+  const { permissions: permissionRepository, executions } = repositories;
 
   const model = new InstrumentedModel(
     new OpenAICompatibleModel({
@@ -395,11 +365,8 @@ export function buildComponents(
   const providers = new ProviderClients(model);
   const permissionConnections = new PermissionConnections();
   const outputs = new SessionOutputStreams();
-  const learningGate: LearningForegroundGate = new LearningForegroundGate(
-    (scope) => supervisor.occupancy({ ...scope, principalId: "" }).busy,
-  );
   const revokeAccess = (snapshot: ExecutionAccessSnapshot): void => {
-    supervisor.revokeAccess(snapshot);
+    agent.supervisor.revokeAccess(snapshot);
     permissionConnections.revokeAccess(snapshot);
     outputs.revokeAccess(snapshot);
   };
@@ -414,146 +381,51 @@ export function buildComponents(
       }),
     onApplied: (snapshot) => {
       revokeAccess(snapshot);
-      learningGate.syncOrganization(snapshot.organization_id, snapshot.agents);
+      agent.learningGate.syncOrganization(snapshot.organization_id, snapshot.agents);
       return Promise.resolve();
     },
     onUnavailable: (organizationId) => {
       revokeAccess({ organization_id: organizationId, agents: [] });
-      learningGate.syncOrganization(organizationId, []);
+      agent.learningGate.syncOrganization(organizationId, []);
     },
   });
-  const signing = config.skillMaintenanceSigning;
-  const signer =
-    signing === undefined
-      ? undefined
-      : new RuntimeSkillMaintenanceSigner(signing.kid, signing.privateKey);
-  // Cleanup survives configuration disabling discovery; persisted scopes remain authoritative.
-  const temporarySkills = new TemporarySkills(
-    temporaryStore,
-    new RuntimeSkillTemporaryClient(signer, runtimeConnections, undefined, (scope) =>
-      directory.runtimeForCleanup(scope),
-    ),
-    telemetry,
-  );
-  const temporarySkillCleanupWorker = new TemporarySkillCleanupWorker({
-    skills: temporarySkills,
-    gate: learningGate,
-    report: (outcome) => telemetry.count("antnest.acp.skill_temporary_cleanup", { outcome }),
-  });
-  const rawTools = new McpToolCatalog({
-    runtimeDialer: new OfficialMcpDialer({ trust: "runtime", connections: runtimeConnections }),
-    revisions: sessions,
-    reportConnectionCloseFailure: (source, sourceId, error) => {
-      telemetry.count("antnest.acp.mcp.close_failures", { source });
-      telemetry.log(
-        "warn",
-        "mcp_connection_close_failed",
-        { "mcp.source": source, "mcp.source_id": sourceId },
-        error,
-      );
-    },
-  });
-  const tools = new InstrumentedToolCatalog(
-    config.skillDiscovery === undefined
-      ? rawTools
-      : new SkillDiscoveryTools({
-          runtime: rawTools,
-          registry: new RegistrySkillDiscoveryClient(
-            config.skillDiscovery.registryUrl,
-            tracedFetch(config.dependencyFetchers.registry!, "skill_registry"),
-          ),
-          authority: new PostgresSkillDiscoveryAuthority(kernel, directory),
-          temporary: temporarySkills,
-          telemetry,
-        }),
-    telemetry,
-  );
-  const information = new InstrumentedRuntimeInformation(rawTools, telemetry);
   const access = new AccessService({ directory });
-  const permissions = new InstrumentedToolPermissions(
-    new ToolPermissions(permissionRepository, permissionConnections, access),
-    telemetry,
-  );
-  const recovery = new RunRecovery({
-    executions,
-    runs,
-    events,
-    telemetry,
-    now,
-  });
-  const executor = new RunExecutor({
-    runtimeConnections,
-    temporarySkills,
-    permissions,
-    executions,
-    contextBuilder: new ContextBuilder({
-      repository: contexts,
-      runtimeInformation: information,
-      readSkill: (binding, path, signal) => rawTools.readSkill(binding, path, signal),
-      tools,
-      id: newResourceId,
-      now,
-    }),
-    providers,
-    tools,
-    events,
-    ownershipSignal,
-    recovery,
-    id: newResourceId,
-    now,
-  });
-  const supervisor: RunSupervisor = new RunSupervisor(
-    new InstrumentedRunExecutor(executor, telemetry),
-    async (binding, signal) => {
-      await access.assert(binding);
-      await learningGate.preempt(binding, signal);
-      try {
-        await temporarySkills.releaseAgent(binding, signal);
-      } catch {
-        signal.throwIfAborted();
-        throw new DomainError("runtime_barrier_required", "Temporary Skill cleanup is pending");
-      }
-    },
-  );
-  const sessionService = new SessionService({ repository: sessions, id: newResourceId, now });
-  const application = new InstrumentedAcpApplication(
-    new AcpApplication({
-      configuration: new SessionConfigurationService({
-        sessions: sessionService,
-        repository: sessionConfiguration,
-        directory,
-        now,
-      }),
-      access,
-      sessions: sessionService,
-      prompts: new PromptCoordinator({
-        repository: runs,
-        directory,
-        protection: executions,
-        runTimeoutMs: config.runTimeoutMs,
-        recoveryRequired,
-        id: newResourceId,
-        now,
-      }),
-      runs: supervisor,
-    }),
-    telemetry,
-  );
   const learningChangeRead = new PostgresLearningChangeRead(kernel);
   const learningNotices = new LearningNoticePublisher(access, learningChangeRead);
-  const learningWorker = buildLearningWorker({
+  const learningRepositories =
+    config.skillLearningControllerUrl === undefined || config.skillMaintenanceSigning === undefined
+      ? undefined
+      : createLegacyLearningRepositories(kernel, ownershipSignal, {
+          onSettled: (requestId) => runtimeConnections.releaseOperation(requestId),
+          onCommitted: () => learningNotices.wake(),
+        });
+  const agent: ReturnType<typeof buildAgentComponents> = buildAgentComponents({
     config,
+    repositories,
+    learningRepositories,
     kernel,
-    ownershipSignal,
     directory,
     providers,
-    rawTools,
-    gate: learningGate,
-    telemetry,
-    onCommitted: () => learningNotices.wake(),
-    temporarySkills,
+    permissionConnections,
+    access,
     runtimeConnections,
+    telemetry,
+    ownershipSignal,
+    recoveryRequired,
+    now,
   });
+  const {
+    application,
+    recovery,
+    supervisor,
+    learningGate,
+    learningWorker,
+    rawTools,
+    temporarySkills,
+    temporarySkillCleanupWorker,
+    sessionService,
+  } = agent;
+  const signing = config.skillMaintenanceSigning;
   const sourceRepository = new PostgresSkillSourceProjections(kernel);
   const discovery = config.skillDiscovery;
   const sourceVerifier =
