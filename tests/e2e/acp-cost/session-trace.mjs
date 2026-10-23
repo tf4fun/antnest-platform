@@ -19,6 +19,14 @@ const sessionRead =
   last_execution_revision, last_message_sequence, created_at, updated_at
   FROM acp_sessions WHERE id = $1`);
 const sessionLock = sessionRead + " FOR UPDATE";
+const runGuard =
+  normalize(`SELECT organization_id, agent_id, execution_owner_registration_id,
+  execution_owner_member_id, execution_owner_incarnation_id,
+  execution_owner_epoch::text
+  FROM runs
+  WHERE session_id = $1 AND
+    (($2::text IS NULL AND state IN ('admitting', 'running')) OR id = $2)
+  ORDER BY id FOR UPDATE`);
 const configurationRead =
   "SELECT configuration, configuration_revision FROM acp_sessions WHERE id = $1 AND state <> 'deleted'";
 const outputRead =
@@ -51,11 +59,11 @@ const newQueries = [
   mcpPointer,
   "COMMIT",
 ].map(normalize);
-const replayQueries = ["BEGIN", sessionLock, mcpRead, "COMMIT"];
+const replayQueries = ["BEGIN", sessionLock, runGuard, mcpRead, "COMMIT"];
 const forkQueries = [
   "BEGIN",
   sessionLock,
-  "SELECT 1 FROM runs WHERE session_id = $1 AND state IN ('admitting', 'running') LIMIT 1",
+  runGuard,
   `INSERT INTO acp_sessions(
     id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
     client_mcp_revision_id, last_execution_revision,
