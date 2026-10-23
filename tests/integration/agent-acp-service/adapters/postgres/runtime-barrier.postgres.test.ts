@@ -369,7 +369,8 @@ describe.skipIf(databaseUrl === undefined)(
       const before = await historyFacts();
 
       // Real repositories wrote the historical protection facts. Reconstruct
-      // the pre-0023 schema, including removal of the later 0024 scope fields,
+      // the pre-0023 schema, including removal of the later 0024 scope fields
+      // and 0025 Agent leases,
       // before testing the real forward migrations and their journal prefix.
       const client = await pool.connect();
       try {
@@ -385,11 +386,16 @@ describe.skipIf(databaseUrl === undefined)(
           "ALTER TABLE acp_sessions DROP CONSTRAINT acp_sessions_run_scope_unique",
         );
         await client.query("DROP TABLE runtime_barrier_cycles");
+        await client.query("DROP TABLE agent_leases");
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2)",
-          ["0023_runtime_barrier_cycles.sql", "0024_agent_run_admission.sql"],
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3)",
+          [
+            "0023_runtime_barrier_cycles.sql",
+            "0024_agent_run_admission.sql",
+            "0025_agent_leases.sql",
+          ],
         );
-        expect(removed.rowCount).toBe(2);
+        expect(removed.rowCount).toBe(3);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");

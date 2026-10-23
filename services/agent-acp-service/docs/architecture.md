@@ -36,6 +36,21 @@ See the [durable admission contract](../../../contracts/agent-acp/run-admission.
 This persistence invariant does not provide leases, stale-owner fencing or
 multi-replica recovery; the exclusive worker lock remains in place.
 
+The [Agent ownership contract](../../../contracts/agent-acp/agent-ownership.md)
+has a separate storage foundation: `agent_leases` persists one process
+incarnation, monotonically increasing decimal epoch and database expiry per
+organization/Agent. Acquisition, renewal and release check database time after
+locking that row. Released rows retain their epoch. `PostgresKernel.agentTransaction`
+requires an existing matching live lease, holds a shared row lock through commit,
+and uses PostgreSQL 17's transaction timeout for a bounded database-only callback.
+A missed locking lookup cannot be authorized by a later inserted row, and a
+COMMIT response reporting ROLLBACK cannot return a successful business result.
+
+No production writer or startup coordinator uses these lease primitives yet.
+Connecting every owned write and scoped recovery, covering configuration ACKs
+across owners, forwarding connections and the final two-replica integration
+remain required before removing the global worker lock.
+
 ## Mission
 
 Turn one authenticated ACP connection into durable Session work while keeping

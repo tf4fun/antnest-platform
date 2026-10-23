@@ -45,6 +45,30 @@ barriers remain independent. The database-wide worker lock is still required:
 durable admission alone does not enable additional ACP replicas or define lease
 ownership and handoff.
 
+Migration `0025_agent_leases.sql` adds the storage foundation for partitioned
+ownership. It creates an initially empty lease table and does not switch the
+service to multiple replicas. Composition still acquires the global worker
+lock; no lease coordinator, peer listener or lease tuning environment variable
+is enabled in this batch. Do not remove the global lock to use these primitives.
+
+Lease epochs are positive decimal strings, retained after release and bounded
+by PostgreSQL's signed bigint maximum. The repository accepts durations from
+1 to 300 seconds; it samples database time after acquiring each lease row lock.
+Its transactions and the new fenced transaction helper use a 10-second default
+whole-transaction budget. PostgreSQL 17
+[`transaction_timeout`](https://www.postgresql.org/docs/17/runtime-config-client.html#GUC-TRANSACTION-TIMEOUT)
+enforces that budget, including a callback that keeps issuing SQL statements.
+The helper joins the actual callback and rollback before releasing its client;
+timeouts and lost commit receipts remain failures, never permission to retry an
+effect. These callbacks must contain database work only. Existing transactions
+without this option retain their existing configured statement budgets.
+
+Future production integration must connect every owned write and recovery path,
+cross-owner configuration/revocation acknowledgements, trusted peer routing and
+shutdown handoff before multi-replica deployment is admitted. The
+[ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
+those remaining gates. Lease rows must not be deleted to reset an epoch.
+
 Migration `0021_tool_finish_receipts.sql` retains the original Tool finish
 stopping-evidence input separately from the current `runtime_call_stopped`
 value, which temporary Skill cleanup can later advance. Historical rows retain

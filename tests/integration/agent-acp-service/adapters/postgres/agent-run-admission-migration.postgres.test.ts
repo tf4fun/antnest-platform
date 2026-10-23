@@ -354,7 +354,10 @@ describe.skipIf(databaseUrl === undefined)(
         expect(migrated.slice(0, applied.length)).toEqual(applied);
         expect(
           migrated.slice(applied.length).map((entry) => entry.version),
-        ).toEqual([expect.stringMatching(/^0024_[a-z0-9_]+\.sql$/u)]);
+        ).toEqual([
+          expect.stringMatching(/^0024_[a-z0-9_]+\.sql$/u),
+          "0025_agent_leases.sql",
+        ]);
         const index = await pool.query<{ indexdef: string }>(
           "SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='runs_agent_nonterminal_unique'",
         );

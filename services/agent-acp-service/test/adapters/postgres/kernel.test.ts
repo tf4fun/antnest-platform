@@ -6,6 +6,59 @@ import { PostgresKernel } from "../../../src/adapters/postgres/kernel.js";
 import type { TelemetryAttributes, TelemetryPort } from "../../../src/ports/telemetry.js";
 
 describe("PostgresKernel telemetry", () => {
+  it("refuses a lease created after the locking SELECT missed its row", async () => {
+    const query = vi.fn((sql: string) =>
+      Promise.resolve(
+        sql.includes("FOR SHARE")
+          ? { rows: [], rowCount: 0, command: "SELECT" }
+          : sql.includes(" AS owned")
+            ? { rows: [{ owned: true }], rowCount: 1, command: "SELECT" }
+            : { rows: [], rowCount: 0, command: sql },
+      ),
+    );
+    const release = vi.fn();
+    const client = Object.assign(new EventEmitter(), { query, release }) as unknown as PoolClient;
+    const kernel = new PostgresKernel({
+      connect: () => Promise.resolve(client),
+    } as unknown as Pool);
+    const business = vi.fn(() => Promise.resolve("must not execute"));
+    await expect(
+      kernel.agentTransaction(
+        {
+          organizationId: "organization-1",
+          agentId: "agent-1",
+          ownerInstanceId: "worker-a",
+          epoch: "1",
+        },
+        business,
+      ),
+    ).rejects.toMatchObject({ name: "AgentOwnershipLostError" });
+    expect(business).not.toHaveBeenCalled();
+    expect(query.mock.calls.some(([sql]) => sql.includes(" AS owned"))).toBe(false);
+    expect(release).toHaveBeenCalledOnce();
+    expect(client.listenerCount("error")).toBe(0);
+  });
+
+  it("does not return a business result when COMMIT reports a rollback", async () => {
+    const query = vi.fn((sql: string) =>
+      Promise.resolve({
+        rows: [],
+        rowCount: 0,
+        command: sql === "COMMIT" ? "ROLLBACK" : sql,
+      }),
+    );
+    const release = vi.fn();
+    const client = Object.assign(new EventEmitter(), { query, release }) as unknown as PoolClient;
+    const kernel = new PostgresKernel({
+      connect: () => Promise.resolve(client),
+    } as unknown as Pool);
+    await expect(kernel.transaction(() => Promise.resolve("uncommitted result"))).rejects.toThrow(
+      "PostgreSQL transaction did not commit",
+    );
+    expect(release).toHaveBeenCalledOnce();
+    expect(client.listenerCount("error")).toBe(0);
+  });
+
   it("counts a query without duplicating driver spans or recording bind values", async () => {
     const query = vi.fn(() => Promise.resolve({ rows: [], rowCount: 0 }));
     const telemetry = recordedTelemetry();
