@@ -1,4 +1,5 @@
 import type { RunOutcome, RunState } from "../domain/types.js";
+import type { AgentOwnershipScope } from "../domain/agent-ownership.js";
 
 export type RecoveryWork = {
   kind: "admitting" | "running";
@@ -20,7 +21,7 @@ export interface RunRecoveryReader {
 export interface ExecutionRepository {
   getState(runId: string): Promise<RunState | null>;
   finish(input: FinishLocalRunInput): Promise<void>;
-  listRecoveryWork(): Promise<RecoveryWork[]>;
+  listRecoveryWork(scope?: AgentOwnershipScope): Promise<RecoveryWork[]>;
 }
 
 export type RuntimeProtectionScope = {

@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { ownershipScope, type AgentOwnershipScope } from "../../domain/agent-ownership.js";
 import { DomainError } from "../../domain/errors.js";
 import { sessionConfigurationSchema } from "../../domain/session-configuration.js";
 import type { PermissionRepository, PermissionRequest } from "../../ports/tool-permissions.js";
@@ -97,7 +98,8 @@ export class PostgresToolPermissions implements PermissionRepository {
     });
   }
 
-  public async cancelAbandoned(): Promise<void> {
+  public async cancelAbandoned(scope?: AgentOwnershipScope): Promise<void> {
+    const fixed = scope === undefined ? undefined : ownershipScope(scope);
     this.#authority.assertLegacyRecovery();
     await this.#authority.transaction(this.kernel, async (client) => {
       const pending = await client.query<
@@ -107,7 +109,10 @@ export class PostgresToolPermissions implements PermissionRepository {
                 r.execution_owner_registration_id, r.execution_owner_member_id,
                 r.execution_owner_incarnation_id, r.execution_owner_epoch::text
            FROM tool_permissions p JOIN runs r ON r.id=p.run_id
-          WHERE p.decision IS NULL ORDER BY p.run_id, p.tool_call_id FOR UPDATE OF p`,
+          WHERE p.decision IS NULL
+            AND ($1::text IS NULL OR (r.organization_id=$1 AND r.agent_id=$2))
+          ORDER BY p.run_id, p.tool_call_id FOR UPDATE OF p`,
+        [fixed?.organizationId ?? null, fixed?.agentId ?? null],
       );
       for (const row of pending.rows) this.#authority.assertRun(row);
       if (pending.rows.length === 0) return;

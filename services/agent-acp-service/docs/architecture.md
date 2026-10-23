@@ -607,6 +607,17 @@ same fence. A completed effect may be recovered idempotently after replacement,
 but the stale worker cannot begin the next transition. Active-active execution requires a durable
 per-Run claim design and is not implied by stateless HTTP adapters.
 
+The legacy startup adapters additionally support explicit organization/Agent
+selection for abandoned permission cancellation, Run recovery and Learning
+recovery. Each selected set retains the original authority checks; owned rows
+are rejected before any changes commit. Only omitted scope selects the global
+path. Learning recovery serializes scope-specific transactions on the dedicated
+worker-lock connection, and every release caller joins the same cleanup promise.
+These scoped helpers are component-tested; production startup still uses the
+global path until protected-scope inventory, fixed Agent components and all
+background dispatch gates are wired together. A successful scoped cleanup does
+not prove that a previous owned executor has stopped.
+
 Live ACP delivery uses a per-connection ordered output stream, not a second
 event journal. A single PostgreSQL statement reads visible messages after a
 sequence, the snapshot's maximum sequence, and current Run state. Local event

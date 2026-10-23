@@ -105,6 +105,16 @@ Predecessor recovery still requires the separate stop-proof protocol. Production
 startup must inventory and isolate protected owned scopes before scoped legacy
 recovery; it must not pass those rows to global legacy recovery.
 
+Legacy recovery helpers accept an explicit, validated organization/Agent scope.
+They capture the complete tuple before waiting, select all candidate rows in that
+scope, and reject owned work rather than silently filtering it out. Omitted scope
+retains the global fail-closed behavior; malformed scope cannot fall back to it.
+Learning recovery transactions share one lock-owning connection, so different
+scopes run serially and only identical scopes share a result. Release joins the
+original recovery queue, monitor and unlock, including repeated release calls.
+Successful scoped recovery alone is not admission: the production coordinator
+must still inventory protected predecessors and recheck under the acquired fence.
+
 These lifetime requirements do not remove the global worker lock. Production
 configuration/Prompt/permission/Learning consumers, scoped startup and stopping
 recovery, and explicit multi-replica integration must all be admitted before that
