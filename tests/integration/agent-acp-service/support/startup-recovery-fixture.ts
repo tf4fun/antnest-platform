@@ -152,11 +152,10 @@ export async function learning(
   return { ...pending, claim: claim!, modelRequestId };
 }
 
-export async function completedLearningWithSupersededInstalls(
+export async function learningWithInstallCandidate(
   f: FencingFixture,
   scope: AgentOwnershipScope,
   signal: AbortSignal,
-  final: "applied" | "conflict" | "rejected" = "applied",
 ) {
   const owned = await learning(f, scope, signal, true);
   const { repositories, claim } = owned;
@@ -207,6 +206,18 @@ export async function completedLearningWithSupersededInstalls(
     evidenceIds: candidatePackage.evidenceIds,
     executionId: runtime.executionId,
   });
+  return { ...owned, candidateId, candidatePackage, runtime, finalRuntime };
+}
+
+export async function completedLearningWithSupersededInstalls(
+  f: FencingFixture,
+  scope: AgentOwnershipScope,
+  signal: AbortSignal,
+  final: "applied" | "conflict" | "rejected" = "applied",
+) {
+  const { candidateId, candidatePackage, runtime, finalRuntime, ...owned } =
+    await learningWithInstallCandidate(f, scope, signal);
+  const { repositories, claim } = owned;
   const attempts: string[] = [];
   for (let ordinal = 1; ordinal <= 3; ordinal++) {
     const requestId = learningApplyRequestId(

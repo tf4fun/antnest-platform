@@ -160,6 +160,20 @@ these receipts. ACP stop proof neither proves remote Runtime effects stopped
 nor authorizes replay. Predecessor Learning claims and independent Runtime
 isolation remain separate pending consumers.
 
+The dedicated `recoverLearning` storage operation now preserves the original
+claim and generation while atomically recording its stop-proof association,
+changing only reserved model costs to unknown, and cancelling the review with
+`worker_lost`. Its organization/lease/review-admission/task lock order keeps the
+global review slot occupied until commit. Unknown charges retain their original
+amounts and accounting days. Ordinary writers cannot acquire the old claim.
+Uncertain installs receive separate protection for their own persisted Runtime
+binding, independent of the source Run. Barrier readers and cleanup consult that
+protection; only a valid new-Runtime publication retires it, without settling or
+replaying the original request. Startup inventory validates the complete proof
+before releasing model-only protection. Production Learning discovery and calls
+to this storage operation are still pending; these primitives do not enable
+multi-replica recovery.
+
 Generation initialization has its own monotonic 10-second admission deadline.
 Expiry closes that Agent's ready/dispatch path and permits other Agents to prepare.
 The original initializer, inspection body and cancellation remain registered;
@@ -491,6 +505,8 @@ tool_permissions
 execution_configurations
 owner_stop_receipts
 run_owner_recoveries
+learning_owner_recoveries
+learning_runtime_protections
 ```
 
 There are no cross-service foreign keys, views, triggers, or SQL queries.

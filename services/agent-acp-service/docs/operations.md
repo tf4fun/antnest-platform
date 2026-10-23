@@ -184,6 +184,17 @@ resources. Owned generation preparation consumes these tables before admission;
 predecessor Learning recovery remains pending and the global worker lock remains
 required.
 
+Migration `0029_learning_owner_recovery.sql` adds immutable Learning recovery
+associations and separately retained install Runtime protection. The dedicated
+storage operation requires a current Agent fence and a complete original-owner
+stop proof. It retains unknown model charges and original install requests;
+protection retirement records isolation through a valid replacement publication,
+not a fabricated Runtime receipt. Historical install intents with missing Runtime
+revision or connection identity are rejected without partial recovery; do not
+backfill them from the source Run or current configuration. Production Learning
+recovery dispatch and its startup acceptance remain pending. Keep the global
+worker lock and single-replica deployment restriction.
+
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
 Session/Run scope in the same transaction; existing Runs must also match their

@@ -270,6 +270,19 @@ closure, a same-revision publication or a model-cost record cannot stand in for
 that isolation. Pure unknown model cost does not itself keep a stopped local
 executor or an unrelated Agent busy.
 
+The recovery association identifies the task, claim and generation, the complete
+original owner tuple, and the first recovering owner tuple. It is immutable and
+separate from the task's original authority. Startup may release protection for
+unknown model costs only after validating that committed association and its
+complete stop proof. Cancellation alone is insufficient.
+
+Install protection copies the original intent's execution ID, Runtime revision,
+MCP endpoint and connection ID; none is inferred from the source Run, apply basis
+or current publication. Historical intents without the complete binding remain
+unchanged and protected: recovery rejects before committing any cancellation or
+proof association. These private storage facts do not add public protocol fields
+or grant a successor permission to dispatch the old request.
+
 These are consumer requirements. Run recovery, Learning recovery, startup
 availability, Runtime barrier consumers and real handoff integration are
 separate delivery evidence; one completed storage writer is not the workflow.
