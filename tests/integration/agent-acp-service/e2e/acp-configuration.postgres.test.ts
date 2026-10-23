@@ -8,7 +8,7 @@ import { PostgresSessionConfiguration } from "../../../../services/agent-acp-ser
 import { PostgresBridgeObservationRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
 import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
 import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { configurationView } from "../../../../services/agent-acp-service/src/domain/session-configuration.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
@@ -457,7 +457,10 @@ describe.skipIf(databaseUrl === undefined)(
       );
       await set(client, 1, sessionId, "mode", "chat");
       const kernel = new PostgresKernel(pool);
-      const runs = new PostgresRunRepository(kernel);
+      const runs = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).runs;
       const intent = await runs.createRunIntent({
         runId: "run-1",
         requestId: "request-1",

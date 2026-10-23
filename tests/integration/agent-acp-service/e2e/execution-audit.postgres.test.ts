@@ -12,7 +12,7 @@ import {
 } from "../../../../services/agent-acp-service/src/composition.js";
 import { loadConfig } from "../../../../services/agent-acp-service/src/config.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresSessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
@@ -25,7 +25,10 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
   const kernel = new PostgresKernel(pool);
   const key = randomBytes(32);
   const sessions = new PostgresSessionRepository(kernel, new SecretBox(key));
-  const runs = new PostgresRunRepository(kernel);
+  const runs = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).runs;
   const config = {
     ...loadConfig({
       ...testSecurityEnvironment(),

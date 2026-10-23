@@ -132,6 +132,20 @@ service to multiple replicas. Composition still acquires the global worker
 lock; no lease coordinator, peer listener or lease tuning environment variable
 is enabled in this batch. Do not remove the global lock to use these primitives.
 
+Migration `0026_run_execution_owner.sql` records the original registration,
+member, incarnation and epoch on each newly owned Run intent. The four private
+columns are either all null for legacy execution or a complete validated tuple.
+Existing Runs stay all null, even when their Agent has a current lease. A
+database trigger rejects later backfill, replacement or clearing of that tuple.
+
+The owned Run repository factory captures one immutable registration and fence.
+Intent, accept, reject and cancellation writes verify the live lease and actual
+Session/Run scope in the same transaction; existing Runs must also match their
+original execution tuple. Legacy Run writers reject owned rows. Composition
+still selects the explicit legacy factory with the held worker signal: the
+production Agent coordinator, other writers and scoped recovery are pending.
+Registration bootstrap does not enable this execution mode or additional replicas.
+
 Lease epochs are positive decimal strings, retained after release and bounded
 by PostgreSQL's signed bigint maximum. The repository accepts durations from
 1 to 300 seconds; it samples database time after acquiring each lease row lock.

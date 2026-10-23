@@ -103,6 +103,52 @@ protection, skill projections, and learning claims, budgets, outcomes and
 cleanup. Learning generation fences remain additional requirements. A tested
 generic transaction primitive does not prove those consumers are connected.
 
+## Core Run Writer Requirements
+
+An explicit owned repository factory must copy, validate and freeze the accepted
+registration tuple (`registration_id`, `member_id`, `incarnation_id`) and its
+Agent fence before returning writers. The fence's `owner_instance_id` must equal
+the registration's `incarnation_id`. Later caller mutation cannot change either
+binding. Legacy repositories use a separate explicit factory. Optional-fence
+APIs, ambient AsyncLocalStorage ownership, mutable `currentFence` lookups and
+fallback from an owned failure to legacy writes are forbidden.
+
+The intent transaction records four immutable private Run facts from that
+captured binding: `execution_owner_registration_id`, `execution_owner_member_id`,
+`execution_owner_incarnation_id` and `execution_owner_epoch`. They must be either
+all null or all valid together. Historical rows remain all null; migration or
+later access must not backfill them with a current owner. Acceptance verifies
+the original tuple rather than replacing it. These facts do not change public
+Run snapshots or protocol wire shapes.
+
+Every ordinary owned Run mutation requires both a currently live exact lease
+and a complete match between the Run's original four facts and the captured
+registration and epoch. A new owner cannot use ordinary accept, reject, cancel
+or finish paths to terminate a predecessor's Run, including a previous epoch
+of the same incarnation. Predecessor recovery requires the separate scoped
+stop-proof path in [owner handoff](owner-handoff.md).
+
+Scope derived from a Session or Run must be rechecked on the same connection
+inside the fenced transaction before business mutation. `finish` retains its
+organization barrier and locks in organization, lease, Session, Run order.
+Session cancellation, close and other lifecycle paths that mutate Runs must
+apply the same guard; a fenced Run repository cannot leave those bypasses
+unfenced. Context checkpoints must carry their original Run binding. Looking up
+the Session's latest Run cannot authorize a delayed checkpoint write.
+
+The actual Prompt path must pass the captured owner through admission,
+Supervisor, Coordinator and Executor into event, context and recovery writers.
+Constructing an owned factory without those production consumers is not an
+implemented execution path. Legacy writers reject mutations of every owned row;
+global startup recovery must fail closed when it would act on an owned Run. They
+cannot clear ownership facts, release its reservation or process it through the
+all-null branch.
+
+These are implementation requirements, not evidence of completed consumers.
+Remaining owned writes, scoped recovery, actual task joins, configuration ACKs
+and peer/integration work below remain pending. The global worker lock stays
+until their required admission passes.
+
 ## Configuration And Recovery Boundaries
 
 Controller configuration revision and Agent ownership epoch are independent.

@@ -5,7 +5,8 @@ import { PostgresKernel } from "../../../../../services/agent-acp-service/src/ad
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import type { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { DomainError } from "../../../../../services/agent-acp-service/src/domain/errors.js";
 import { publicExecutionConfiguration } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
@@ -43,7 +44,10 @@ class AdmissionFixture {
       kernel,
       new SecretBox(randomBytes(32)),
     );
-    this.runs = new PostgresRunRepository(kernel);
+    this.runs = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).runs;
     this.executions = new PostgresExecutionRepository(kernel);
   }
 

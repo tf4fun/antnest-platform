@@ -17,7 +17,7 @@ import { PostgresContextRepository } from "../../../../services/agent-acp-servic
 import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { PostgresRunEventRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { AcpApplication } from "../../../../services/agent-acp-service/src/application/application.js";
@@ -66,7 +66,10 @@ export async function startBoundaryApplication(
   const executions = new PostgresExecutionRepository(kernel);
   const persistRun = executions.finish.bind(executions);
   const finish = vi.spyOn(executions, "finish");
-  const runs = new PostgresRunRepository(kernel);
+  const runs = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).runs;
   const createIntent = vi.spyOn(runs, "createRunIntent");
   const acceptRun = vi.spyOn(runs, "acceptRun");
   const identities = new Map<string, ExecutionIdentity>([

@@ -3,7 +3,7 @@ import { Pool } from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
 import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
@@ -43,7 +43,10 @@ describe.skipIf(!databaseUrl)(
         mcpRevisionId: revision,
         mcpSources: [],
       });
-      const runs = new PostgresRunRepository(kernel);
+      const runs = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).runs;
       await runs.createRunIntent({
         runId,
         requestId: randomUUID(),

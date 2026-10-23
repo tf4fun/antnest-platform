@@ -5,7 +5,7 @@ import { PostgresKernel } from "../../../../../services/agent-acp-service/src/ad
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { binding } from "../../../../../services/agent-acp-service/test/support/fixtures.js";
 
 const url = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -17,7 +17,10 @@ describe.skipIf(url === undefined)("durable Session organization", () => {
     kernel,
     new SecretBox(randomBytes(32)),
   );
-  const runs = new PostgresRunRepository(kernel);
+  const runs = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).runs;
 
   beforeAll(async () => {
     await pool.query("DROP SCHEMA public CASCADE");

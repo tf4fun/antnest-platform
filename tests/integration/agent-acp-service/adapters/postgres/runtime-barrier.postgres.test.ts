@@ -6,7 +6,7 @@ import { PostgresExecutionRepository } from "../../../../../services/agent-acp-s
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresRuntimeBarrierReader } from "../../../../../services/agent-acp-service/src/adapters/postgres/runtime-barrier.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
@@ -38,7 +38,10 @@ describe.skipIf(databaseUrl === undefined)(
     const box = new SecretBox(randomBytes(32));
     const configurations = new PostgresExecutionConfiguration(kernel, box);
     const sessions = new PostgresSessionRepository(kernel, box);
-    const runs = new PostgresRunRepository(kernel);
+    const runs = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).runs;
     const events = new PostgresRunEventRepository(kernel);
     const executions = new PostgresExecutionRepository(kernel);
     const temporary = new PostgresTemporarySkills(kernel);
@@ -387,15 +390,25 @@ describe.skipIf(databaseUrl === undefined)(
         );
         await client.query("DROP TABLE runtime_barrier_cycles");
         await client.query("DROP TABLE agent_leases");
+        await client.query(
+          "DROP TRIGGER runs_preserve_execution_owner ON runs",
+        );
+        await client.query("DROP FUNCTION preserve_run_execution_owner()");
+        await client.query(
+          `ALTER TABLE runs DROP COLUMN execution_owner_registration_id,
+           DROP COLUMN execution_owner_member_id, DROP COLUMN execution_owner_incarnation_id,
+           DROP COLUMN execution_owner_epoch`,
+        );
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3)",
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4)",
           [
             "0023_runtime_barrier_cycles.sql",
             "0024_agent_run_admission.sql",
             "0025_agent_leases.sql",
+            "0026_run_execution_owner.sql",
           ],
         );
-        expect(removed.rowCount).toBe(3);
+        expect(removed.rowCount).toBe(4);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");

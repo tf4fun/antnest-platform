@@ -232,7 +232,7 @@ async function facts(pool: Pool) {
   ]) {
     const expression =
       table === "runs"
-        ? "to_jsonb(stored) - 'organization_id' - 'agent_id'"
+        ? "to_jsonb(stored) - 'organization_id' - 'agent_id' - 'execution_owner_registration_id' - 'execution_owner_member_id' - 'execution_owner_incarnation_id' - 'execution_owner_epoch'"
         : "to_jsonb(stored)";
     result[table] = (
       await pool.query<{ value: unknown }>(
@@ -350,6 +350,15 @@ describe.skipIf(databaseUrl === undefined)(
           })),
         );
         expect(await facts(pool)).toEqual(before);
+        expect(
+          (
+            await pool.query(
+              `SELECT count(*)::int AS total FROM runs
+             WHERE execution_owner_registration_id IS NULL AND execution_owner_member_id IS NULL
+               AND execution_owner_incarnation_id IS NULL AND execution_owner_epoch IS NULL`,
+            )
+          ).rows,
+        ).toEqual([{ total: history.length }]);
         const migrated = await journal(pool);
         expect(migrated.slice(0, applied.length)).toEqual(applied);
         expect(
@@ -357,6 +366,7 @@ describe.skipIf(databaseUrl === undefined)(
         ).toEqual([
           expect.stringMatching(/^0024_[a-z0-9_]+\.sql$/u),
           "0025_agent_leases.sql",
+          "0026_run_execution_owner.sql",
         ]);
         const index = await pool.query<{ indexdef: string }>(
           "SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='runs_agent_nonterminal_unique'",

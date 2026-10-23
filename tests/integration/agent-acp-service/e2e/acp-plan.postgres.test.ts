@@ -25,7 +25,7 @@ import {
   binding,
   snapshot,
 } from "../../../../services/agent-acp-service/test/support/fixtures.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import {
   DurableRunEvents,
   RunEventPersistenceError,
@@ -224,7 +224,10 @@ describe.skipIf(databaseUrl === undefined)(
         mcpRevisionId: "client-mcp-1",
         mcpSources: [],
       });
-      const runs = new PostgresRunRepository(new PostgresKernel(pool));
+      const runs = createLegacyRunRepositories(
+        new PostgresKernel(pool),
+        new AbortController().signal,
+      ).runs;
       await runs.createRunIntent({
         runId,
         requestId: "request",

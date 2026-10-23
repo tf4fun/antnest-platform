@@ -45,7 +45,7 @@ import { PostgresRuntimeBarrierReader } from "./adapters/postgres/runtime-barrie
 import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
 import { PostgresRunEventRepository } from "./adapters/postgres/run-event-repository.js";
-import { PostgresRunRepository } from "./adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "./adapters/postgres/run-repositories.js";
 import { PostgresBridgeObservationRepository } from "./adapters/postgres/bridge-observation-repository.js";
 import { BridgeObservationService } from "./application/bridge-observation.js";
 import { SecretBox } from "./adapters/postgres/secret-box.js";
@@ -416,7 +416,7 @@ export function buildComponents(
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
   const sessions = new PostgresSessionRepository(kernel, new SecretBox(config.clientMcpKey));
-  const runs = new PostgresRunRepository(kernel);
+  const { runs } = createLegacyRunRepositories(kernel, ownershipSignal);
   const contexts = new PostgresContextRepository(kernel);
   const executions = new PostgresExecutionRepository(kernel);
   const events = new PostgresRunEventRepository(kernel);

@@ -5,7 +5,7 @@ import { migrate } from "../../../../../services/agent-acp-service/src/adapters/
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
 import {
@@ -29,7 +29,10 @@ describe.skipIf(databaseUrl === undefined)(
       kernel,
       new SecretBox(randomBytes(32)),
     );
-    const runs = new PostgresRunRepository(kernel);
+    const runs = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).runs;
     const executions = new PostgresExecutionRepository(kernel);
     const events = new PostgresRunEventRepository(kernel);
     beforeEach(async () => {

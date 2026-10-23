@@ -137,6 +137,7 @@ describe.skipIf(databaseUrl === undefined)(
         "0023_runtime_barrier_cycles.sql",
         "0024_agent_run_admission.sql",
         "0025_agent_leases.sql",
+        "0026_run_execution_owner.sql",
       ]);
       expect(
         (
