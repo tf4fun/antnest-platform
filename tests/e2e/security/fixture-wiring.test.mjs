@@ -147,5 +147,5 @@ test("the full owner matrix keeps its private member file, UID and isolated list
   );
   assert.equal(mount.source, "/never-mounted-owner-members.json");
   assert.equal(mount.read_only, true);
-  assert.equal(mount.bind.create_host_path, false);
+  assert.equal(mount.bind?.create_host_path ?? false, false);
 });

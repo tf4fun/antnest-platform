@@ -527,6 +527,15 @@ test("Skill discovery/source capabilities are enabled by maintenance keys withou
 
 test("owner bootstrap is opt-in and inherits the credential UID without exposing another network", () => {
   const file = "tests/e2e/security/owner.compose.yaml";
+  const source = require("yaml").parse(
+    readFileSync(new URL(file, root), "utf8"),
+  );
+  assert.equal(
+    source.services["runtime-controller"].volumes.find(
+      (v) => v.target === "/etc/antnest/acp-members.json",
+    ).bind.create_host_path,
+    false,
+  );
   const candidate = composeConfig(["compose.yaml", file], {
     ANTNEST_SERVICE_NETWORK_PREFIX: "10.244.45",
     ANTNEST_E2E_ACP_MEMBERS_FILE:
@@ -551,8 +560,17 @@ test("owner bootstrap is opt-in and inherits the credential UID without exposing
     rc.environment.ANTNEST_RUNTIME_ACP_MEMBERS_FILE,
     "/etc/antnest/acp-members.json",
   );
+  const mount = rc.volumes.find(
+    (v) => v.target === "/etc/antnest/acp-members.json",
+  );
   assert.deepEqual(
-    rc.volumes.find((v) => v.target === "/etc/antnest/acp-members.json"),
+    {
+      ...mount,
+      bind: {
+        ...mount.bind,
+        create_host_path: mount.bind?.create_host_path ?? false,
+      },
+    },
     {
       type: "bind",
       source: "/never-mounted-deployment-credentials/acp-members.json",

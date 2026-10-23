@@ -7,7 +7,10 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { OwnerIncarnation } from "../../../../services/agent-acp-service/src/application/owner-incarnation.js";
 import { OwnerProbeServer } from "../../../../services/agent-acp-service/src/transport/owner-probe-server.js";
-import type { ServiceAuthentication } from "../../../../services/agent-acp-service/src/adapters/service-authentication.js";
+import {
+  SERVICES,
+  type ServiceAuthentication,
+} from "../../../../services/agent-acp-service/src/adapters/service-authentication.js";
 import {
   testAuthentication,
   workloadHeaders,
@@ -317,6 +320,22 @@ function probes(fixture: Fixture) {
 }
 
 describe("independent authenticated ACP incarnation probe", () => {
+  it.each(SERVICES.filter((service) => service !== "agent-acp-service"))(
+    "admits only the RC workload on the owner listener: %s",
+    async (caller) => {
+      await withProbe(async (fixture) => {
+        const response = await reply(
+          fixture.send(undefined, { headers: workloadHeaders(caller) }),
+        );
+        if (caller === "runtime-controller") {
+          expect(response.status).toBe(200);
+          expect(json(response)).toEqual(fixture.input);
+        } else {
+          failure(response, 403, "caller_not_allowed", fixture.input);
+        }
+      });
+    },
+  );
   it("echoes exactly four fields without CCT and leaves the original intent pending", async () => {
     await withProbe(async (fixture) => {
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -426,11 +445,8 @@ describe("independent authenticated ACP incarnation probe", () => {
       const raw = JSON.stringify(fixture.input);
       const encoded = JSON.stringify(fixture.input.incarnation_id);
       const invalid: Record<string, string | Buffer> = {
-        duplicate: raw.replace("{", `{"incarnation_id":${encoded},`),
-        "decoded duplicate": raw.replace(
-          "{",
-          `{"incarnation_\\u0069d":${encoded},`,
-        ),
+        duplicate: `{"incarnation_id":${encoded},${raw.slice(1)}`,
+        "decoded duplicate": `{"incarnation_\\u0069d":${encoded},${raw.slice(1)}`,
         "case alias": JSON.stringify({
           ...fixture.input,
           Incarnation_id: fixture.input.incarnation_id,

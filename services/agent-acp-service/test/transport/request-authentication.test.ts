@@ -13,11 +13,15 @@ const catalog = JSON.parse(
     string,
     { callers: string[]; authentication: string; caller_context: Record<string, string> }
   >;
+  guarded_sources: Record<string, { routes: string[] }>;
 };
 const authentication = testAuthentication();
+const ownerRoutes = new Set(
+  catalog.guarded_sources["services/agent-acp-service/src/transport/owner-probe-server.ts"]!.routes,
+);
 
 it.each(Object.entries(catalog.routes))(
-  "enforces every catalog caller for %s",
+  "enforces ordinary-listener catalog admission for %s",
   async (route, policy) => {
     const [method, path] = route.split(" ");
     for (const caller of SERVICES.filter((service) => service !== "agent-acp-service")) {
@@ -35,7 +39,12 @@ it.each(Object.entries(catalog.routes))(
       }).flat();
       try {
         const result = await authentication.admit(request, method === "UPGRADE");
-        if (policy.authentication === "health" || policy.callers.includes(caller)) {
+        // The independent owner listener has its own real-HTTP caller matrix.
+        // Its grants must never open these routes on ordinary listeners.
+        if (
+          !ownerRoutes.has(route) &&
+          (policy.authentication === "health" || policy.callers.includes(caller))
+        ) {
           expect(result, `${route}: ${caller}`).not.toHaveProperty("status");
         } else {
           expect(result, `${route}: ${caller}`).toMatchObject({
@@ -43,7 +52,7 @@ it.each(Object.entries(catalog.routes))(
             code: "caller_not_allowed",
           });
         }
-        if (policy.caller_context[caller] === "required") {
+        if (!ownerRoutes.has(route) && policy.caller_context[caller] === "required") {
           request.rawHeaders = Object.entries(workloadHeaders(caller)).flat();
           expect(await authentication.admit(request, method === "UPGRADE")).toMatchObject({
             status: 401,
