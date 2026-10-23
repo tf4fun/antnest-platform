@@ -37,9 +37,12 @@ read the current composer or clear its draft and attachments.
 Original inputs are immutable in-memory JSON, bounded to four messages and
 64 MiB in total. They are released on durable Run receipt, terminal outcome,
 Agent/Session navigation or close, and are never written to browser storage.
-Reloaded or evicted inputs allow observation only. Automatic busy/not-ready
-backoff and the full ACP Docker original-message scenario remain separate
-pending delivery work for #53.
+Reloaded or evicted inputs allow observation only. Node's bounded busy/not-ready
+admission backoff is implemented. The [real ACP receipt scenario](../../tests/e2e/agent-ui/receipt-contract.test.mjs)
+requires the original busy-rejected message to complete after the held Run.
+Existing controlled browser fixtures establish their
+HTTP/SSE behavior; they do not prove that a real busy-rejected original Prompt
+retried successfully. Success of a new Session or intent does not satisfy that gate.
 
 ## Responsibilities
 
@@ -195,15 +198,33 @@ redispatch. Reuse the original intent ID, Idempotency-Key, append condition and
 complete ordered content, including attachments; refresh only If-Match from a
 current authorized View of the same Session.
 
-Before another dispatch, Node requires a locally known, settled original ACP
+Before another explicit dispatch, Node requires a locally known, settled original ACP
 call and a successful unknown intent query. Any durable receipt, including an
 unknown-phase receipt, prevents redispatch. Concurrent actions share one query
 and decision, including queued preparation. Failed queries and in-flight calls
 queue no replay. HTTP 202 remains Bridge acceptance only; unknown stays
 uncertain until a durable receipt arrives. Retry uses the existing Prompt upload
-limits and reservation lifetime. The browser UI retry action, real original-A
-Docker acceptance and automatic backoff remain separate pending deliveries;
-Node support does not complete the cross-service workflow.
+limits and reservation lifetime. Node and browser explicit retry are implemented.
+
+Node also implements [bounded admission backoff](../../contracts/agent-ui/workspace-api.md#bounded-prompt-admission-backoff-53)
+for canonical negotiated `agent_busy` or `configuration_not_ready` refusals.
+The actual preceding ACP call must settle, and a fresh currently authorized
+lookup must return typed `404 intent_unknown`. Any durable receipt, including
+an unknown-phase receipt, is adopted without dispatch. Unknown delivery
+disables automation for the original intent; failed queries, denied access and
+revocation stop it. Original scope, intent, append CAS and ordered content,
+including attachment bytes, stay unchanged.
+
+Explicit and automatic actions share one retained original-operation budget:
+at most four actual dispatches including the first, and 30 seconds of cumulative
+monotonic waiting. Delays honor the greater of the wire guidance and the
+1/2/4-second backoff floor. A delay exceeding the remaining budget stops the
+chain without shortening it; explicit retry cannot reset either budget.
+The existing 202 ACK transfers retained upload byte/count reservation ownership
+to the Node chain until actual queries, waits and ACP calls join. Cancellation,
+revocation and owner drain stop new work and abort/join owned work before
+releasing reservations and work pins. Real ACP original-Prompt Docker acceptance
+is still required; these implementation descriptions do not establish it.
 
 Prompt upload admission also limits retained bodies and dispatch to 128 MiB /
 16 requests per process and 64 MiB / 4 requests per signed user in an

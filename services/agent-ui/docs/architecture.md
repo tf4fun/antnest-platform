@@ -354,7 +354,25 @@ the operation keeps its original intent ID and remains `uncertain` until a
 durable receipt is available. Even a busy or denied response cannot prove that
 an intent was never accepted. The Bridge attaches only the classified public
 code and message, a stable local error correlation ID, and `query_operation`
-guidance with `retryable: false`; it never automatically resubmits Prompt.
+guidance with `retryable: false`. The Node owner may automatically retry only
+canonical `agent_busy` and `configuration_not_ready` refusals after the actual
+call settles and a fresh authorized lookup returns typed `intent_unknown`.
+It keeps the original scope, intent, append CAS and ordered content. Automatic
+and explicit actions share at most four actual dispatches and 30 seconds of
+cumulative waiting. Waits use the greater of the wire delay and the 1/2/4-second
+backoff floor; a delay that cannot fit is never shortened. Explicit clicks
+during an automatic decision join it, and exhausted operations remain query-only.
+Unknown delivery permanently disables automation for that retained intent.
+Any durable receipt, failed lookup, revocation, cancellation or drain stops
+further automatic dispatch. A successful transport response without a durable
+receipt does not authorize retry.
+
+The original native upload byte/count reservation transfers to this Node-owned
+chain, independently of the HTTP response lifetime. Normal `202` response close
+does not cancel it. Its timer, receipt query and actual ACP call must all settle
+before the reservation and owner work lease are released; a terminal receipt
+alone cannot substitute for joining the actual call. Read-only recovery after
+owner replacement does not recreate the retained original or its retry budget.
 Original causes stay private. A known durable receipt takes precedence over a
 late error or an unknown observation, and a later receipt clears the local
 error. The browser validates the existing error envelope, shows the message

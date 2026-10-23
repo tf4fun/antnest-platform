@@ -14,13 +14,14 @@ import {
   type PromptIntent,
   type PreparedPrompt,
   type RetryTicket,
+  type TakePromptResources,
 } from "../bridge/operations.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { BridgeCapacityError } from "../bridge/registry.ts";
 import { bindScopeContext, verifiedRequestContext } from "./trusted-identity.ts";
 import { strictObject } from "../adapters/strict-json.ts";
-import { takeValidatedJson } from "./json-request.ts";
+import { takePromptUploadLease, takeValidatedJson } from "./json-request.ts";
 import { largeInputBytes, runInputWork } from "./input-work.ts";
 
 const prefix = ["api", "app", "workspace", "v1", "agents"];
@@ -67,12 +68,12 @@ const defaultAcpPromptBytes = 16 * 1024 * 1024;
 type Operations = {
   prepare(input: PromptIntent, signal?: AbortSignal): Promise<PreparedPrompt>;
   beginRetry(sessionId: string, intentId: string): RetryTicket;
-  retryPrepared(prepared: PreparedPrompt, ticket: RetryTicket): Promise<{
+  retryPrepared(prepared: PreparedPrompt, ticket: RetryTicket, takeResources?: TakePromptResources): Promise<{
     operationId: string;
     acceptance: "bridge";
     phase: "dispatching";
   }>;
-  submitPrepared(prepared: PreparedPrompt): {
+  submitPrepared(prepared: PreparedPrompt, takeResources?: TakePromptResources): {
     operationId: string;
     acceptance: "bridge";
     phase: "dispatching";
@@ -220,13 +221,16 @@ export function createCommandHandler(dependencies: {
               throw new BodyTooLargeError();
             request.signal.throwIfAborted();
             // Ordinary insertion remains atomic with its final abort check.
-            const outcome = retry ? { prepared } : { accepted: authorized.operations.submitPrepared(prepared) };
+            const outcome = retry ? { prepared } : { accepted: authorized.operations.submitPrepared(
+              prepared, () => takePromptUploadLease(request),
+            ) };
             recordPromptInputPrepared();
             return outcome;
           }, request.signal);
           // A held durable query must not occupy the global input work queue.
           const accepted = outcome.prepared !== undefined
-            ? await authorized.operations.retryPrepared(outcome.prepared, ticket!) : outcome.accepted;
+            ? await authorized.operations.retryPrepared(outcome.prepared, ticket!,
+              () => takePromptUploadLease(request)) : outcome.accepted;
           return json(accepted, 202);
         } finally { ticket?.release(); }
       }

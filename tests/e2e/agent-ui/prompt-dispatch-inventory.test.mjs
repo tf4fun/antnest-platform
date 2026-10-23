@@ -466,3 +466,290 @@ for (const [name, path] of [
     reject(input);
   });
 }
+
+function captureExpectedDispatches(input) {
+  input.gateAfter = gateState();
+  for (const { request, forwarded } of input.expectedDispatches)
+    appendGatePrompt(input, request, forwarded);
+  return input;
+}
+
+function dispatchInventory(forwarded = [1, 1]) {
+  const input = inventory();
+  const request = input.expected[0].request;
+  request.body.prompt.push(
+    { type: "image", mimeType: "image/png", data: "b3JpZ2luYWw=" },
+    {
+      type: "resource",
+      resource: {
+        uri: "file:///original.txt",
+        mimeType: "text/plain",
+        text: "Original attachment 原件",
+      },
+    },
+  );
+  request.rawBody = JSON.stringify(request.body);
+  input.browserPrompts = [structuredClone(request)];
+  input.expectedDispatches = forwarded.map((count) => ({
+    request: structuredClone(request),
+    forwarded: count,
+  }));
+  return captureExpectedDispatches(input);
+}
+
+for (const count of [2, 4]) {
+  test(`Prompt inventory accepts ${count} explicitly listed ACP dispatches of one original browser request`, () => {
+    accept(dispatchInventory(Array(count).fill(1)), {
+      browserPrompts: 1,
+      gatePrompts: count,
+      forwardedPrompts: count,
+    });
+  });
+}
+
+test("Prompt inventory counts a held explicitly listed retry without inventing a forwarding", () => {
+  accept(dispatchInventory([1, 0]), {
+    browserPrompts: 1,
+    gatePrompts: 2,
+    forwardedPrompts: 1,
+  });
+});
+
+test("Prompt inventory bounds dispatches per original intent while preserving another browser request", () => {
+  const input = dispatchInventory([1, 1, 1, 1]);
+  const request = browserRequest("intent-C", {
+    sessionId: "session-C",
+    text: "Explicit C",
+  });
+  input.browserPrompts.push(structuredClone(request));
+  input.expected.push({ request, forwarded: 1 });
+  input.expectedDispatches.splice(1, 0, {
+    request: structuredClone(request),
+    forwarded: 1,
+  });
+  accept(captureExpectedDispatches(input), {
+    browserPrompts: 2,
+    gatePrompts: 5,
+    forwardedPrompts: 5,
+  });
+});
+
+test("Prompt inventory still rejects an ACP replay when expectedDispatches is omitted", () => {
+  const input = dispatchInventory();
+  delete input.expectedDispatches;
+  reject(input);
+});
+
+for (const [name, value] of [
+  ["null", null],
+  ["a non-array", {}],
+  ["an empty list", []],
+  ["a malformed entry", [null]],
+]) {
+  test(`Prompt inventory rejects expectedDispatches containing ${name} even when the default inventory matches`, () => {
+    const input = inventory();
+    input.expectedDispatches = structuredClone(value);
+    reject(input);
+  });
+}
+
+for (const [name, change] of [
+  [
+    "missing forwarding state",
+    (entry) => {
+      delete entry.forwarded;
+    },
+  ],
+  [
+    "boolean forwarding state",
+    (entry) => {
+      entry.forwarded = true;
+    },
+  ],
+  [
+    "missing original request",
+    (entry) => {
+      delete entry.request;
+    },
+  ],
+  [
+    "invalid raw original JSON",
+    (entry) => {
+      entry.request.rawBody = '{"intentId":';
+    },
+  ],
+]) {
+  test(`Prompt inventory rejects an explicitly listed dispatch with ${name}`, () => {
+    const input = inventory();
+    input.expectedDispatches = structuredClone(input.expected);
+    change(input.expectedDispatches[0]);
+    reject(input);
+  });
+}
+
+test("Prompt inventory rejects expectedDispatches that omit another original browser request", () => {
+  const input = dispatchInventory();
+  const request = browserRequest("intent-C", {
+    sessionId: "session-C",
+    text: "Explicit C",
+  });
+  input.browserPrompts.push(structuredClone(request));
+  input.expected.push({ request, forwarded: 1 });
+  // Captures and per-intent counters agree with the incomplete dispatch list.
+  reject(input);
+});
+
+test("Prompt inventory rejects an unlisted original even when its extra dispatch is explicitly claimed and captured", () => {
+  const input = dispatchInventory();
+  const request = browserRequest("unlisted-intent", {
+    text: "Same captured extra request",
+  });
+  input.expectedDispatches.push({ request, forwarded: 1 });
+  reject(captureExpectedDispatches(input));
+});
+
+test("Prompt inventory rejects a fifth dispatch even when the explicit list and every counter agree", () => {
+  reject(dispatchInventory([1, 1, 1, 1, 1]));
+});
+
+test("Prompt inventory rejects browser replay despite an allowed ACP retry list", () => {
+  const input = dispatchInventory();
+  input.browserPrompts.push(structuredClone(input.expected[0].request));
+  reject(input);
+});
+
+test("Prompt inventory keeps the expected browser intents unique when ACP retries are enabled", () => {
+  const input = dispatchInventory();
+  input.expected.push(structuredClone(input.expected[0]));
+  input.browserPrompts.push(structuredClone(input.browserPrompts[0]));
+  reject(input);
+});
+
+for (const [name, change] of [
+  [
+    "CAS",
+    (request) => {
+      request.body.expectedAppendVersion++;
+    },
+  ],
+  [
+    "text",
+    (request) => {
+      request.body.prompt[0].text = "Changed retry text";
+    },
+  ],
+  [
+    "attachment",
+    (request) => {
+      request.body.prompt[1].data = "Y2hhbmdlZA==";
+    },
+  ],
+  [
+    "content order",
+    (request) => {
+      request.body.prompt.reverse();
+    },
+  ],
+  [
+    "complete content",
+    (request) => {
+      request.body.prompt.pop();
+    },
+  ],
+  [
+    "Session",
+    (request) => {
+      request.sessionId = "substituted-session";
+      request.path =
+        "/api/app/workspace/v1/agents/agent-1/sessions/substituted-session/prompts";
+    },
+  ],
+  [
+    "Agent path",
+    (request) => {
+      request.path =
+        "/api/app/workspace/v1/agents/another-agent/sessions/session-1/prompts";
+    },
+  ],
+]) {
+  test(`Prompt inventory rejects forged retry ${name} even when actual dispatches match the forged list`, () => {
+    const input = dispatchInventory();
+    const request = input.expectedDispatches[1].request;
+    change(request);
+    request.rawBody = JSON.stringify(request.body);
+    reject(captureExpectedDispatches(input));
+  });
+}
+
+test("Prompt inventory rejects a missing actual retry even when the remaining capture counters agree", () => {
+  const input = dispatchInventory();
+  input.gateAfter.records.pop();
+  input.gateAfter.forwardedPrompts--;
+  input.gateAfter.forwardedByIntent["intent-A"]--;
+  reject(input);
+});
+
+test("Prompt inventory rejects an extra actual retry omitted from expectedDispatches", () => {
+  const input = dispatchInventory([1, 1, 1, 1]);
+  appendGatePrompt(input, input.expected[0].request);
+  reject(input);
+});
+
+for (const [name, change] of [
+  [
+    "CAS",
+    (message) => {
+      message.params._meta["antnest.dev/intent"].expectedAppendVersion++;
+    },
+  ],
+  [
+    "ordered content",
+    (message) => {
+      message.params.prompt.reverse();
+    },
+  ],
+]) {
+  test(`Prompt inventory rejects actual retry ${name} that differs from its explicit expectation`, () => {
+    const input = dispatchInventory();
+    const record = input.gateAfter.records[1];
+    const message = JSON.parse(record.body);
+    change(message);
+    record.body = JSON.stringify(message);
+    reject(input);
+  });
+}
+
+for (const [name, change] of [
+  [
+    "total forwarding",
+    (input) => {
+      input.gateAfter.forwardedPrompts++;
+    },
+  ],
+  [
+    "per-intent forwarding",
+    (input) => {
+      input.gateAfter.forwardedByIntent["intent-A"]++;
+    },
+  ],
+  [
+    "an unobserved intent",
+    (input) => {
+      input.gateAfter.forwardedByIntent["unobserved-intent"] = 1;
+      input.gateAfter.forwardedPrompts++;
+    },
+  ],
+]) {
+  test(`Prompt inventory rejects ${name} counter drift with explicit ACP retries`, () => {
+    const input = dispatchInventory();
+    change(input);
+    reject(input);
+  });
+}
+
+test("Prompt inventory preserves the historical request prefix with explicitly listed retries", () => {
+  const input = withHistory(dispatchInventory());
+  accept(input, { browserPrompts: 1, gatePrompts: 2, forwardedPrompts: 2 });
+  input.gateAfter.records[0].body += " ";
+  reject(input);
+});

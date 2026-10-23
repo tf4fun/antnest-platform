@@ -360,48 +360,72 @@ test("closing an in-flight SSR response leaves an accepted ACP Run independent",
 
 test("forced Bridge drain recovers an accepted intent after restart without resubmitting", async () => {
   let promptCalls = 0;
+  let actualPromptSettled = 0;
   let receipt = null;
   let startedPrompt;
   const promptStarted = new Promise((resolve) => {
     startedPrompt = resolve;
   });
   let forced = 0;
-  const connect = async () => ({
-    async load() {
-      return { cut: { sealedWatermark: 0, appendVersion: 1 } };
-    },
-    async readExecution(sessionId) {
-      return {
-        sessionId,
-        appendVersion: 1,
-        outputWatermark: 0,
-        activeRunId: null,
-        recentReceipts: receipt ? [receipt] : [],
-        configurationRevision: null,
-      };
-    },
-    async readIntent(sessionId, intentId) {
-      return receipt?.sessionId === sessionId && receipt.intentId === intentId
-        ? { kind: "receipt", receipt }
-        : { kind: "unknown" };
-    },
-    async prompt(input) {
-      promptCalls += 1;
-      receipt = {
-        intentId: input.intentId,
-        sessionId: input.sessionId,
-        runId: "run-1",
-        phase: "running",
-        appendVersion: 1,
-        outputWatermark: 0,
-        stopReason: null,
-      };
-      startedPrompt();
-      return new Promise(() => {});
-    },
-    async cancel() {},
-    close() {},
-  });
+  const ownedConnections = [];
+  const connect = async () => {
+    const releasePrompt = Promise.withResolvers();
+    const promptTasks = [];
+    let closing;
+    const close = () =>
+      (closing ??= (async () => {
+        releasePrompt.resolve();
+        await Promise.allSettled(promptTasks);
+      })());
+    ownedConnections.push({ releasePrompt, promptTasks, close });
+    return {
+      async load() {
+        return { cut: { sealedWatermark: 0, appendVersion: 1 } };
+      },
+      async readExecution(sessionId) {
+        return {
+          sessionId,
+          appendVersion: 1,
+          outputWatermark: 0,
+          activeRunId: null,
+          recentReceipts: receipt ? [receipt] : [],
+          configurationRevision: null,
+        };
+      },
+      async readIntent(sessionId, intentId) {
+        return receipt?.sessionId === sessionId && receipt.intentId === intentId
+          ? { kind: "receipt", receipt }
+          : { kind: "unknown" };
+      },
+      prompt(input) {
+        promptCalls += 1;
+        receipt = {
+          intentId: input.intentId,
+          sessionId: input.sessionId,
+          runId: "run-1",
+          phase: "running",
+          appendVersion: 1,
+          outputWatermark: 0,
+          stopReason: null,
+        };
+        const task = releasePrompt.promise
+          .then(() => {
+            throw new Error(
+              "fixture ACP connection closed before the Prompt response",
+            );
+          })
+          .finally(() => {
+            actualPromptSettled++;
+          });
+        promptTasks.push(task);
+        void task.catch(() => {});
+        startedPrompt();
+        return task;
+      },
+      async cancel() {},
+      close,
+    };
+  };
   const first = await startWorkspaceService({
     runtime: createWorkspaceRuntime({ connect }),
     host: "127.0.0.1",
@@ -412,6 +436,7 @@ test("forced Bridge drain recovers an accepted intent after restart without resu
     },
   });
   let second;
+  let primaryFailure;
   try {
     const headers = {
       "x-antnest-organization-id": "org-1",
@@ -440,8 +465,14 @@ test("forced Bridge drain recovers an accepted intent after restart without resu
     assert.equal(accepted.status, 202);
     assert.equal((await accepted.json()).acceptance, "bridge");
     await promptStarted;
+    assert.equal(actualPromptSettled, 0);
     await first.close();
     assert.equal(forced, 1);
+    assert.equal(
+      actualPromptSettled,
+      1,
+      "forced drain must join the actual original Prompt dependency",
+    );
     receipt = { ...receipt, phase: "completed", stopReason: "end_turn" };
     second = await startWorkspaceService({
       runtime: createWorkspaceRuntime({ connect }),
@@ -463,47 +494,93 @@ test("forced Bridge drain recovers an accepted intent after restart without resu
       stopReason: "end_turn",
     });
     assert.equal(promptCalls, 1);
+    assert.equal(actualPromptSettled, 1);
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    await first.close();
-    await second?.close();
+    // Emergency releases are cleanup only; normal forced-drain settlement is
+    // asserted above before this fallback can run.
+    for (const connection of ownedConnections)
+      connection.releasePrompt.resolve();
+    const closed = await Promise.allSettled([
+      first.close(),
+      ...(second ? [second.close()] : []),
+      ...ownedConnections.map((connection) => connection.close()),
+    ]);
+    await Promise.allSettled(
+      ownedConnections.flatMap((connection) => connection.promptTasks),
+    );
+    const failures = closed
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length)
+      throw new AggregateError(
+        [...(primaryFailure ? [primaryFailure] : []), ...failures],
+        "forced-drain business or connection cleanup failed",
+      );
   }
 });
 
 test("Bridge restart leaves a possibly dispatched intent uncertain when ACP has no receipt", async () => {
   let promptCalls = 0;
+  let actualPromptSettled = 0;
   let cancelCalls = 0;
   let forced = 0;
   let markPromptStarted;
   const promptStarted = new Promise((resolve) => {
     markPromptStarted = resolve;
   });
-  const connect = async () => ({
-    async load() {
-      return { cut: { sealedWatermark: 0, appendVersion: 0 } };
-    },
-    async readExecution(sessionId) {
-      return {
-        sessionId,
-        appendVersion: 0,
-        outputWatermark: 0,
-        activeRunId: null,
-        recentReceipts: [],
-        configurationRevision: null,
-      };
-    },
-    async readIntent() {
-      return { kind: "unknown" };
-    },
-    async prompt() {
-      promptCalls++;
-      markPromptStarted();
-      return new Promise(() => {});
-    },
-    async cancel() {
-      cancelCalls++;
-    },
-    close() {},
-  });
+  const ownedConnections = [];
+  const connect = async () => {
+    const releasePrompt = Promise.withResolvers();
+    const promptTasks = [];
+    let closing;
+    const close = () =>
+      (closing ??= (async () => {
+        releasePrompt.resolve();
+        await Promise.allSettled(promptTasks);
+      })());
+    ownedConnections.push({ releasePrompt, promptTasks, close });
+    return {
+      async load() {
+        return { cut: { sealedWatermark: 0, appendVersion: 0 } };
+      },
+      async readExecution(sessionId) {
+        return {
+          sessionId,
+          appendVersion: 0,
+          outputWatermark: 0,
+          activeRunId: null,
+          recentReceipts: [],
+          configurationRevision: null,
+        };
+      },
+      async readIntent() {
+        return { kind: "unknown" };
+      },
+      prompt() {
+        promptCalls++;
+        const task = releasePrompt.promise
+          .then(() => {
+            throw new Error(
+              "fixture ACP connection closed before the Prompt response",
+            );
+          })
+          .finally(() => {
+            actualPromptSettled++;
+          });
+        promptTasks.push(task);
+        void task.catch(() => {});
+        markPromptStarted();
+        return task;
+      },
+      async cancel() {
+        cancelCalls++;
+      },
+      close,
+    };
+  };
   const first = await startWorkspaceService({
     runtime: createWorkspaceRuntime({ connect }),
     host: "127.0.0.1",
@@ -514,6 +591,7 @@ test("Bridge restart leaves a possibly dispatched intent uncertain when ACP has 
     },
   });
   let second;
+  let primaryFailure;
   try {
     const headers = {
       "x-antnest-organization-id": "org-1",
@@ -542,8 +620,14 @@ test("Bridge restart leaves a possibly dispatched intent uncertain when ACP has 
     assert.equal(accepted.status, 202);
     assert.equal((await accepted.json()).acceptance, "bridge");
     await promptStarted;
+    assert.equal(actualPromptSettled, 0);
     await first.close();
     assert.equal(forced, 1);
+    assert.equal(
+      actualPromptSettled,
+      1,
+      "the disconnected original Prompt must actually settle",
+    );
     second = await startWorkspaceService({
       runtime: createWorkspaceRuntime({ connect }),
       host: "127.0.0.1",
@@ -578,9 +662,29 @@ test("Bridge restart leaves a possibly dispatched intent uncertain when ACP has 
       0,
       "An unknown intent has no confirmed Run to cancel",
     );
+    assert.equal(actualPromptSettled, 1);
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    await first.close();
-    await second?.close();
+    for (const connection of ownedConnections)
+      connection.releasePrompt.resolve();
+    const closed = await Promise.allSettled([
+      first.close(),
+      ...(second ? [second.close()] : []),
+      ...ownedConnections.map((connection) => connection.close()),
+    ]);
+    await Promise.allSettled(
+      ownedConnections.flatMap((connection) => connection.promptTasks),
+    );
+    const failures = closed
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length)
+      throw new AggregateError(
+        [...(primaryFailure ? [primaryFailure] : []), ...failures],
+        "uncertain-recovery business or connection cleanup failed",
+      );
   }
 });
 
@@ -1115,10 +1219,10 @@ test(
         new URL("../../../contracts/agent-acp/errors.json", import.meta.url),
         "utf8",
       ),
-    ).errors.agent_busy;
+    ).errors.session_busy;
     const rejection = new AcpPromptError(
       new RequestError(busy.json_rpc_code, busy.message, {
-        code: "agent_busy",
+        code: "session_busy",
         retryable: busy.retryable,
         retry_after_ms: busy.retry_after_ms,
       }),
@@ -1275,7 +1379,7 @@ test(
       assert.equal(unknown.operationId, original.intentId);
       assert.equal(unknown.acceptance, "unknown");
       assert.equal(unknown.phase, "uncertain");
-      assert.equal(unknown.error?.code, "agent_busy");
+      assert.equal(unknown.error?.code, "session_busy");
       assert.equal(unknown.error?.message, busy.message);
       assert.equal(unknown.error?.retryable, false);
       assert.equal(unknown.error?.recovery, "query_operation");
@@ -1446,10 +1550,10 @@ test(
             ),
             "utf8",
           ),
-        ).errors.agent_busy;
+        ).errors.session_busy;
         const rejection = new AcpPromptError(
           new RequestError(busy.json_rpc_code, busy.message, {
-            code: "agent_busy",
+            code: "session_busy",
             retryable: busy.retryable,
             retry_after_ms: busy.retry_after_ms,
           }),
@@ -1806,5 +1910,618 @@ test(
           );
       });
     }
+  },
+);
+
+async function automaticUploadHttpFixture() {
+  const { AcpPromptError } =
+    await import("../../../services/agent-ui/web/server/dist/adapters/acp-http.js");
+  const definition = JSON.parse(
+    readFileSync(
+      new URL("../../../contracts/agent-acp/errors.json", import.meta.url),
+      "utf8",
+    ),
+  ).errors.agent_busy;
+  const rejection = new AcpPromptError(
+    new RequestError(definition.json_rpc_code, definition.message, {
+      code: "agent_busy",
+      retryable: definition.retryable,
+      retry_after_ms: definition.retry_after_ms,
+    }),
+    1,
+  );
+  const agentId = "agent-auto-upload";
+  const otherAgentId = "agent-auto-upload-peer";
+  const sessionId = "session-auto-upload";
+  const original = {
+    intentId: "intent-auto-upload-original",
+    expectedAppendVersion: 7,
+    prompt: [
+      { type: "text", text: "Retain this original ordered Prompt 原件" },
+      { type: "image", mimeType: "image/png", data: "b3JpZ2luYWw=" },
+      {
+        type: "resource",
+        resource: {
+          uri: "file:///original.txt",
+          mimeType: "text/plain",
+          text: "Original attachment",
+        },
+      },
+    ],
+  };
+  const other = {
+    intentId: "intent-auto-upload-capacity-check",
+    expectedAppendVersion: 7,
+    prompt: [
+      { type: "text", text: "Independent Agent, same signed principal" },
+    ],
+  };
+  const firstPrompt = Promise.withResolvers();
+  const secondPrompt = Promise.withResolvers();
+  const releaseQuery = Promise.withResolvers();
+  const observationGate = Promise.withResolvers();
+  const queryStarted = Promise.withResolvers();
+  const queryAborted = Promise.withResolvers();
+  const secondStarted = Promise.withResolvers();
+  const originalHttpClosed = Promise.withResolvers();
+  const prompts = [];
+  const queries = [];
+  const executionReads = [];
+  const handlers = [];
+  const clients = [];
+  const sockets = new Set();
+  const socketClosures = [];
+  const listeners = [];
+  const closedAgents = [];
+  const events = [];
+  let armed = false;
+  let heldQuery;
+  let originalHandler;
+  let origin;
+  let drainTask;
+  let drainFinished = false;
+  let drained;
+  for (const gate of [firstPrompt, secondPrompt, releaseQuery, observationGate])
+    void gate.promise.catch(() => {});
+  const runtime = createWorkspaceRuntime({
+    connect: async (scope) => ({
+      async load() {
+        return { cut: { sealedWatermark: 0, appendVersion: 7 } };
+      },
+      readExecution(selectedSessionId) {
+        const row = { finished: false };
+        row.task = (async () => {
+          // Background View reconciliation must not select the held query
+          // before the independent automatic admission decision reaches it.
+          if (armed && heldQuery === undefined) await observationGate.promise;
+          return {
+            sessionId: selectedSessionId,
+            appendVersion: 7,
+            outputWatermark: 0,
+            activeRunId: null,
+            recentReceipts: [],
+            configurationRevision: null,
+          };
+        })().finally(() => {
+          row.finished = true;
+        });
+        void row.task.catch(() => {});
+        executionReads.push(row);
+        return row.task;
+      },
+      readIntent(selectedSessionId, intentId, signal) {
+        const held =
+          armed &&
+          heldQuery === undefined &&
+          scope.agentId === agentId &&
+          intentId === original.intentId;
+        const row = {
+          agentId: scope.agentId,
+          sessionId: selectedSessionId,
+          intentId,
+          signal,
+          finished: false,
+        };
+        row.task = (
+          held ? releaseQuery.promise : Promise.resolve({ kind: "unknown" })
+        ).then(
+          (value) => {
+            row.finished = true;
+            events.push("query-settled");
+            return value;
+          },
+          (cause) => {
+            row.finished = true;
+            throw cause;
+          },
+        );
+        void row.task.catch(() => {});
+        queries.push(row);
+        if (held) {
+          heldQuery = row;
+          observationGate.resolve();
+          const aborted = () => queryAborted.resolve();
+          signal?.addEventListener("abort", aborted, { once: true });
+          listeners.push(() => signal?.removeEventListener("abort", aborted));
+          if (signal?.aborted) aborted();
+          events.push("automatic-query");
+          queryStarted.resolve(row);
+        }
+        return row.task;
+      },
+      prompt(input) {
+        const originalCall =
+          scope.agentId === agentId && input.intentId === original.intentId;
+        const index = prompts.filter((row) => row.original).length;
+        const row = {
+          agentId: scope.agentId,
+          input: structuredClone(input),
+          original: originalCall,
+          finished: false,
+        };
+        const execution = originalCall
+          ? index === 0
+            ? firstPrompt.promise
+            : secondPrompt.promise
+          : Promise.resolve({ stopReason: "end_turn" });
+        row.task = execution.then(
+          (value) => {
+            row.finished = true;
+            events.push(`prompt-settled:${index}`);
+            return value;
+          },
+          (cause) => {
+            row.finished = true;
+            events.push(`prompt-settled:${index}`);
+            throw cause;
+          },
+        );
+        void row.task.catch(() => {});
+        prompts.push(row);
+        if (originalCall) events.push(`prompt:${index}`);
+        if (originalCall && index === 1) secondStarted.resolve(row);
+        return row.task;
+      },
+      async cancel() {},
+      close() {
+        closedAgents.push(scope.agentId);
+      },
+    }),
+  });
+  const server = createWorkspaceHttpServer({
+    handle(request) {
+      const row = { signal: request.signal, finished: false };
+      const path = new URL(request.url).pathname;
+      if (
+        path.endsWith(`/agents/${agentId}/sessions/${sessionId}/prompts`) &&
+        originalHandler === undefined
+      ) {
+        originalHandler = row;
+        const closed = () => originalHttpClosed.resolve();
+        request.signal.addEventListener("abort", closed, { once: true });
+        listeners.push(() =>
+          request.signal.removeEventListener("abort", closed),
+        );
+        if (request.signal.aborted) closed();
+      }
+      row.task = Promise.resolve()
+        .then(() => runtime.handle(request))
+        .finally(() => {
+          row.finished = true;
+        });
+      void row.task.catch(() => {});
+      handlers.push(row);
+      return row.task;
+    },
+  });
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socketClosures.push(
+      new Promise((resolve) =>
+        socket.once("close", () => {
+          sockets.delete(socket);
+          resolve();
+        }),
+      ),
+    );
+  });
+  const startDrain = () => {
+    if (drainTask === undefined) {
+      drainTask = runtime.drain(0).then(
+        (value) => {
+          drained = value;
+          drainFinished = true;
+          return value;
+        },
+        (cause) => {
+          drainFinished = true;
+          throw cause;
+        },
+      );
+      void drainTask.catch(() => {});
+    }
+    return drainTask;
+  };
+  const send = (selectedAgent, path, body, extra = {}, chunked = false) => {
+    const client = retryLifecycleHttp(
+      `${origin}/api/app/workspace/v1/agents/${selectedAgent}/sessions/${sessionId}${path}`,
+      {
+        "x-antnest-organization-id": "org-1",
+        "x-antnest-principal-id": "user-1",
+        "x-antnest-agent-id": selectedAgent,
+        ...extra,
+      },
+      body,
+      chunked,
+    );
+    clients.push(client);
+    return client;
+  };
+  return {
+    agentId,
+    otherAgentId,
+    sessionId,
+    original,
+    other,
+    rejection,
+    firstPrompt,
+    secondPrompt,
+    releaseQuery,
+    queryStarted,
+    queryAborted,
+    secondStarted,
+    prompts,
+    queries,
+    executionReads,
+    handlers,
+    events,
+    closedAgents,
+    server,
+    sockets,
+    runtime,
+    heldQuery: () => heldQuery,
+    originalHandler: () => originalHandler,
+    drainFinished: () => drainFinished,
+    drained: () => drained,
+    startDrain,
+    send,
+    async start() {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      origin = `http://127.0.0.1:${server.address().port}`;
+      const views = [];
+      for (const selectedAgent of [agentId, otherAgentId]) {
+        const response = await waitForRetryLifecycle(
+          send(selectedAgent, "/view").response,
+          "Automatic upload fixture View did not finish",
+        );
+        assert.equal(response.status, 200);
+        views.push(response.body);
+      }
+      const client = send(
+        agentId,
+        "/prompts",
+        JSON.stringify(original),
+        {
+          "if-match": views[0].historyToken,
+          "idempotency-key": original.intentId,
+        },
+        true,
+      );
+      const accepted = await waitForRetryLifecycle(
+        client.response,
+        "Original chunked Prompt did not return 202",
+      );
+      await waitForRetryLifecycle(
+        client.closed,
+        "Original 202 connection did not close",
+      );
+      await waitForRetryLifecycle(
+        originalHttpClosed.promise,
+        "Original Request did not observe normal 202 close",
+      );
+      return {
+        accepted,
+        otherHeaders: {
+          "if-match": views[1].historyToken,
+          "idempotency-key": other.intentId,
+        },
+      };
+    },
+    async refuseAndHold() {
+      armed = true;
+      firstPrompt.reject(rejection);
+      await Promise.allSettled(
+        prompts.filter((row) => row.original).map((row) => row.task),
+      );
+      return waitForRetryLifecycle(
+        queryStarted.promise,
+        "Settled canonical busy did not start its automatic intent query",
+      );
+    },
+    async cleanup() {
+      const failures = [];
+      // Fence new dispatch first, then release and join every real dependency.
+      startDrain();
+      firstPrompt.resolve({ stopReason: "end_turn" });
+      observationGate.resolve();
+      releaseQuery.resolve({ kind: "unknown" });
+      secondPrompt.resolve({ stopReason: "end_turn" });
+      for (const client of clients) client.cancel();
+      await Promise.allSettled(
+        clients.flatMap((client) => [client.outcome, client.closed]),
+      );
+      await Promise.allSettled(handlers.map((row) => row.task));
+      try {
+        await drainTask;
+      } catch (cause) {
+        failures.push(cause);
+      }
+      await Promise.allSettled([
+        ...prompts.map((row) => row.task),
+        ...queries.map((row) => row.task),
+        ...executionReads.map((row) => row.task),
+      ]);
+      for (const remove of listeners) remove();
+      try {
+        if (server.listening) {
+          const closed = new Promise((resolve, reject) =>
+            server.close((cause) => (cause ? reject(cause) : resolve())),
+          );
+          server.closeAllConnections();
+          await closed;
+        }
+      } catch (cause) {
+        failures.push(cause);
+      }
+      await Promise.all(socketClosures);
+      if (failures.length)
+        throw new AggregateError(
+          failures,
+          "Automatic upload HTTP cleanup failed",
+        );
+    },
+  };
+}
+
+function assertAutomaticUploadHttpJoined(fixture) {
+  assert.equal(fixture.server.listening, false);
+  assert.equal(fixture.sockets.size, 0);
+  assert.ok(
+    fixture.prompts.every((row) => row.finished),
+    "Every actual ACP Prompt must join",
+  );
+  assert.ok(
+    fixture.queries.every((row) => row.finished),
+    "Every actual intent query must join",
+  );
+  assert.ok(
+    fixture.executionReads.every((row) => row.finished),
+    "Every actual execution observation must join",
+  );
+  assert.ok(
+    fixture.handlers.every((row) => row.finished),
+    "Every actual HTTP handler must join",
+  );
+  assert.equal(
+    fixture.closedAgents.filter((id) => id === fixture.agentId).length,
+    1,
+  );
+  assert.equal(
+    fixture.closedAgents.filter((id) => id === fixture.otherAgentId).length,
+    1,
+  );
+  assert.equal(fixture.drainFinished(), true);
+  const metrics = fixture.runtime.metrics();
+  for (const key of [
+    "owners",
+    "observerLeases",
+    "heldWork",
+    "activeReplays",
+    "queuedReplays",
+    "streamSubscribers",
+  ])
+    assert.equal(metrics[key], 0, `Automatic upload cleanup retained ${key}`);
+}
+
+test(
+  "native HTTP transfers a completed 202 upload to its automatic original-Prompt chain",
+  { timeout: 15_000 },
+  async () => {
+    const f = await automaticUploadHttpFixture();
+    const observed = {};
+    let failure;
+    try {
+      const started = await f.start();
+      observed.accepted = started.accepted;
+      observed.handlerFinished = f.originalHandler().finished;
+      observed.requestAborted = f.originalHandler().signal.aborted;
+      const query = await f.refuseAndHold();
+      observed.querySignal = query.signal;
+      observed.queryAborted = query.signal?.aborted;
+      observed.queryFinished = query.finished;
+      observed.blocked = await waitForRetryLifecycle(
+        f.send(
+          f.otherAgentId,
+          "/prompts",
+          JSON.stringify(f.other),
+          started.otherHeaders,
+        ).response,
+        "Same-principal upload did not finish while the automatic query was held",
+      );
+      observed.control = await waitForRetryLifecycle(
+        f.send(f.agentId, `/operations/${f.original.intentId}`).response,
+        "Control read was blocked by the retained automatic Prompt body",
+      );
+      observed.originalDispatchesWhileHeld = f.prompts.filter(
+        (row) => row.original,
+      ).length;
+      observed.otherDispatchesWhileHeld = f.prompts.filter(
+        (row) => !row.original,
+      ).length;
+      f.releaseQuery.resolve({ kind: "unknown" });
+      const second = await waitForRetryLifecycle(
+        f.secondStarted.promise,
+        "Original Prompt was not dispatched after its authorized unknown query",
+      );
+      observed.secondInput = second.input;
+      observed.queryFinishedBeforeSecond = query.finished;
+      observed.secondFinishedBeforeRelease = second.finished;
+      observed.blockedWhilePrompt = await waitForRetryLifecycle(
+        f.send(
+          f.otherAgentId,
+          "/prompts",
+          JSON.stringify(f.other),
+          started.otherHeaders,
+        ).response,
+        "Upload admission did not answer while the second actual ACP Prompt was held",
+      );
+      f.secondPrompt.resolve({ stopReason: "end_turn" });
+      await second.task;
+      await new Promise((resolve) => setImmediate(resolve));
+      observed.available = await waitForRetryLifecycle(
+        f.send(
+          f.otherAgentId,
+          "/prompts",
+          JSON.stringify(f.other),
+          started.otherHeaders,
+        ).response,
+        "Upload capacity did not recover after the actual automatic chain settled",
+      );
+    } catch (cause) {
+      failure = cause;
+    } finally {
+      try {
+        await f.cleanup();
+      } catch (cause) {
+        failure = new AggregateError(
+          [...(failure ? [failure] : []), cause],
+          "Automatic upload scenario cleanup failed",
+        );
+      }
+    }
+    if (failure) throw failure;
+    assertAutomaticUploadHttpJoined(f);
+    assert.equal(observed.accepted.status, 202);
+    assert.equal(
+      observed.handlerFinished,
+      true,
+      "This covers a returned handler, not a still-pending retry HTTP request",
+    );
+    assert.equal(observed.requestAborted, true);
+    assert.ok(observed.querySignal instanceof AbortSignal);
+    assert.notEqual(observed.querySignal, f.originalHandler().signal);
+    assert.equal(
+      observed.queryAborted,
+      false,
+      "Normal 202 close must not cancel the Node-owned automatic query",
+    );
+    assert.equal(observed.queryFinished, false);
+    assert.equal(observed.blocked.status, 429);
+    assert.equal(observed.blocked.body.code, "upload_capacity_exceeded");
+    assert.equal(observed.blocked.headers["retry-after"], "1");
+    assert.equal(observed.control.status, 200);
+    assert.equal(observed.control.body.operationId, f.original.intentId);
+    assert.equal(observed.originalDispatchesWhileHeld, 1);
+    assert.equal(observed.otherDispatchesWhileHeld, 0);
+    assert.equal(observed.queryFinishedBeforeSecond, true);
+    assert.equal(observed.secondFinishedBeforeRelease, false);
+    assert.equal(observed.blockedWhilePrompt.status, 429);
+    assert.equal(
+      observed.blockedWhilePrompt.body.code,
+      "upload_capacity_exceeded",
+    );
+    assert.deepEqual(observed.secondInput, {
+      sessionId: f.sessionId,
+      ...f.original,
+    });
+    assert.equal(observed.available.status, 202);
+    assert.deepEqual(
+      f.prompts.filter((row) => row.original).map((row) => row.input),
+      [
+        { sessionId: f.sessionId, ...f.original },
+        { sessionId: f.sessionId, ...f.original },
+      ],
+    );
+    assert.ok(
+      f.events.indexOf("prompt-settled:0") <
+        f.events.indexOf("automatic-query"),
+    );
+    assert.ok(f.events.indexOf("query-settled") < f.events.indexOf("prompt:1"));
+  },
+);
+
+test(
+  "native HTTP drain retains the transferred upload until its non-cooperative automatic query joins",
+  { timeout: 15_000 },
+  async () => {
+    const f = await automaticUploadHttpFixture();
+    const observed = {};
+    let failure;
+    try {
+      const started = await f.start();
+      observed.accepted = started.accepted;
+      observed.handlerFinished = f.originalHandler().finished;
+      const query = await f.refuseAndHold();
+      const draining = f.startDrain();
+      await waitForRetryLifecycle(
+        f.queryAborted.promise,
+        "Drain did not abort the actual automatic intent query",
+      );
+      observed.blocked = await waitForRetryLifecycle(
+        f.send(
+          f.otherAgentId,
+          "/prompts",
+          JSON.stringify(f.other),
+          started.otherHeaders,
+        ).response,
+        "Upload admission did not answer while drain was joining its held query",
+      );
+      observed.drainFinishedBeforeRelease = f.drainFinished();
+      observed.queryFinishedBeforeRelease = query.finished;
+      observed.queryAborted = query.signal?.aborted;
+      observed.originalDispatchesBeforeRelease = f.prompts.filter(
+        (row) => row.original,
+      ).length;
+      f.releaseQuery.resolve({ kind: "unknown" });
+      await query.task;
+      await draining;
+      observed.drainFinishedAfterRelease = f.drainFinished();
+    } catch (cause) {
+      failure = cause;
+    } finally {
+      try {
+        await f.cleanup();
+      } catch (cause) {
+        failure = new AggregateError(
+          [...(failure ? [failure] : []), cause],
+          "Automatic upload drain cleanup failed",
+        );
+      }
+    }
+    if (failure) throw failure;
+    assertAutomaticUploadHttpJoined(f);
+    assert.equal(observed.accepted.status, 202);
+    assert.equal(observed.handlerFinished, true);
+    assert.equal(observed.queryAborted, true);
+    assert.equal(observed.queryFinishedBeforeRelease, false);
+    assert.equal(
+      observed.drainFinishedBeforeRelease,
+      false,
+      "Drain must join the original query, not only its aborted signal",
+    );
+    assert.equal(
+      observed.blocked.status,
+      429,
+      "The byte/count lease must survive cancellation until the actual query joins",
+    );
+    assert.equal(observed.blocked.body.code, "upload_capacity_exceeded");
+    assert.equal(observed.drainFinishedAfterRelease, true);
+    assert.equal(observed.originalDispatchesBeforeRelease, 1);
+    assert.deepEqual(
+      f.prompts.filter((row) => row.original).map((row) => row.input),
+      [{ sessionId: f.sessionId, ...f.original }],
+      "A late unknown query after drain must not dispatch another Prompt",
+    );
   },
 );

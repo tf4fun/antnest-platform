@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "implementation_status": "pending",
-  "automatic_backoff_status": "pending_separate_delivery",
-  "purpose": "Shared wire examples and future production-test inputs; scenario expectations are not implementation evidence.",
+  "implementation_status": "implemented",
+  "automatic_backoff_status": "implemented",
+  "purpose": "Shared wire examples for implemented explicit retry; scenario expectations are not production acceptance evidence. Bounded admission backoff is implemented; real ACP original-Prompt Docker acceptance is an independent required gate.",
   "validQueries": [
     { "name": "ordinary_submit", "entries": [] },
     { "name": "explicit_retry", "entries": [["action", "retry"]] }

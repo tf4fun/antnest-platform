@@ -321,14 +321,14 @@ test("prompt admission requires a stable intent and append condition, never brow
   );
 });
 
-test("explicit Prompt retry publishes pending metadata without changing ordinary admission", () => {
+test("explicit Prompt retry publishes implemented metadata without changing ordinary admission", () => {
   const contract = json("../../../contracts/agent-ui/workspace-api.json");
   assert.ok(
     Object.hasOwn(contract, "prompt_retry"),
-    "Workspace API must define the pending explicit Prompt retry contract",
+    "Workspace API must define the implemented explicit Prompt retry contract",
   );
   assert.deepEqual(contract.prompt_retry, {
-    status: "pending",
+    status: "implemented",
     query_schema: "promptQueryEntries",
     query_action: "retry",
     invalid_query_status: 422,
@@ -352,6 +352,7 @@ test("explicit Prompt retry publishes pending metadata without changing ordinary
     original_body_missing: "query_only",
     automatic_prompt_replay: false,
   });
+  assert.equal(contract.version, 1);
   assert.equal(contract.routes.prompt.method, "POST");
   assert.equal(
     contract.routes.prompt.path,
@@ -361,6 +362,110 @@ test("explicit Prompt retry publishes pending metadata without changing ordinary
   assert.equal(contract.routes.prompt.response, contract.prompt_retry.response);
   assert.equal(contract.routes.prompt.success_status, 202);
   assert.ok(Object.hasOwn(contract, contract.prompt_retry.upload_admission));
+});
+
+test("implemented Prompt admission backoff freezes the original operation budget and evidence requirements", () => {
+  const contract = json("../../../contracts/agent-ui/workspace-api.json");
+  assert.ok(
+    Object.hasOwn(contract, "prompt_admission_backoff"),
+    "Workspace API must define the implemented Prompt admission backoff contract",
+  );
+  assert.deepEqual(contract.prompt_admission_backoff, {
+    status: "implemented",
+    owner: "agent-ui-node",
+    codes: ["agent_busy", "configuration_not_ready"],
+    required_capabilities: {
+      "antnest.dev/errors": 1,
+      "antnest.dev/bridge.intentReceipt": 1,
+    },
+    evidence: [
+      "settled_original_call",
+      "canonical_admission_rejection",
+      "authorized_intent_unknown",
+    ],
+    budget_scope: "retained_original_operation",
+    maximum_dispatches: 4,
+    total_wait_budget_ms: 30000,
+    initial_delay_ms: 1000,
+    backoff_multiplier: 2,
+    delay_rule: "max(wire_delay, exponential_backoff)",
+    excess_delay: "stop_without_shortening",
+    single_flight_key: [
+      "organization",
+      "principal",
+      "agent",
+      "session",
+      "intent",
+    ],
+    preserve: ["intentId", "expectedAppendVersion", "prompt"],
+    upload_admission: "prompt_upload_admission",
+    retained_body_budget: "retain_until_automatic_chain_joined",
+    durable_receipt: "adopt_without_dispatch",
+    unknown_delivery: "disable_for_original_intent",
+    query_failure: "no_dispatch",
+    access_denied: "stop",
+    cancellation: "abort_and_join_actual_work",
+    explicit_retry_resets_budget: false,
+  });
+  const backoff = contract.prompt_admission_backoff;
+  assert.deepEqual(
+    backoff.single_flight_key,
+    contract.prompt_retry.single_flight_key,
+  );
+  assert.deepEqual(backoff.preserve, contract.prompt_retry.preserve);
+  assert.equal(
+    backoff.upload_admission,
+    contract.prompt_retry.upload_admission,
+  );
+  assert.ok(Object.hasOwn(contract, backoff.upload_admission));
+  assert.equal(contract.prompt_retry.automatic_prompt_replay, false);
+});
+
+test("implemented admission backoff uses canonical retryable admission errors and existing capability versions", () => {
+  const contract = json("../../../contracts/agent-ui/workspace-api.json");
+  assert.ok(
+    Object.hasOwn(contract, "prompt_admission_backoff"),
+    "Workspace API must define the implemented Prompt admission backoff contract",
+  );
+  const backoff = contract.prompt_admission_backoff;
+  const catalog = json("../../../contracts/agent-acp/errors.json");
+  const errorSchema = json("../../../contracts/agent-acp/errors.schema.json");
+  const bridge = json(acp);
+  assert.equal(catalog.capability.name, "antnest.dev/errors");
+  assert.equal(
+    backoff.required_capabilities[catalog.capability.name],
+    catalog.capability.version,
+  );
+  assert.equal(
+    catalog.capability.version,
+    errorSchema.properties.capability.properties.version.const,
+  );
+  assert.equal(
+    backoff.required_capabilities["antnest.dev/bridge.intentReceipt"],
+    bridge.$defs.bridgeCapabilities.properties.intentReceipt.const,
+  );
+  assert.deepEqual(backoff.codes, ["agent_busy", "configuration_not_ready"]);
+  for (const code of backoff.codes) {
+    assert.ok(Object.hasOwn(catalog.errors, code), code);
+    const error = catalog.errors[code];
+    assert.ok(error.surfaces.includes("admission"), code);
+    assert.equal(error.retryable, true, code);
+    assert.equal(error.recovery, "backoff", code);
+  }
+  assert.deepEqual(json(ui).$defs.promptRequest, {
+    type: "object",
+    properties: {
+      intentId: { $ref: "#/$defs/id" },
+      expectedAppendVersion: { $ref: "#/$defs/revision" },
+      prompt: {
+        type: "array",
+        minItems: 1,
+        items: { $ref: "#/$defs/contentBlock" },
+      },
+    },
+    required: ["intentId", "expectedAppendVersion", "prompt"],
+    additionalProperties: false,
+  });
 });
 
 test("Prompt query entries allow only ordinary submit or one explicit retry action", () => {
@@ -419,10 +524,10 @@ test("explicit retry wire fixtures retain the strict original Prompt body and re
   assert.equal(fixtures.uncertainOperation.acceptance, "unknown");
 });
 
-test("future Prompt retry scenarios contain valid wire values without claiming production behavior", () => {
+test("Prompt retry scenarios contain valid wire values without treating fixtures as production evidence", () => {
   const fixtures = json(promptRetryFixtures);
-  assert.equal(fixtures.implementation_status, "pending");
-  assert.equal(fixtures.automatic_backoff_status, "pending_separate_delivery");
+  assert.equal(fixtures.implementation_status, "implemented");
+  assert.equal(fixtures.automatic_backoff_status, "implemented");
   assert.deepEqual(
     fixtures.scenarios.map((scenario) => scenario.name),
     [
@@ -442,8 +547,8 @@ test("future Prompt retry scenarios contain valid wire values without claiming p
   );
   const validReceipt = definition(acp, "intentReceipt");
   const validPrompt = definition(ui, "promptRequest");
-  // These fixtures are inputs for later service tests. Schema validation here
-  // does not execute query ordering, single-flight, dispatch or receipt races.
+  // Schema validation here does not execute query ordering, single-flight,
+  // dispatch, backoff or receipt races.
   for (const scenario of fixtures.scenarios) {
     for (const receipt of [scenario.query.receipt, scenario.lateReceipt]) {
       if (receipt === undefined) continue;

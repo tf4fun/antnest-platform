@@ -277,12 +277,22 @@ export class AgentBridgeOwner {
       prompt: async (input) => {
         try {
           if (this.retired || this.draining) throw new Error("Bridge owner is draining");
+          if (this.accessRevoked) throw new AgentAccessRevokedError();
           return await this.connection().prompt(input);
         }
         finally { this.notifyChanged(input.sessionId, true); }
       },
-      readIntent: (sessionId, intentId, signal) =>
-        this.connection().readIntent(sessionId, intentId, signal),
+      readIntent: async (sessionId, intentId, signal) => {
+        if (this.accessRevoked) throw new AgentAccessRevokedError();
+        try {
+          const result = await this.connection().readIntent(sessionId, intentId, signal);
+          if (this.accessRevoked) throw new AgentAccessRevokedError();
+          return result;
+        } catch (error) {
+          if (error instanceof AgentAccessRevokedError) this.revokeAccess();
+          throw error;
+        }
+      },
       cancel: (sessionId, runId) => this.connection().cancel(sessionId, runId),
       retainWork,
       changed: (sessionId) => this.notifyChanged(sessionId, true),
@@ -1217,6 +1227,14 @@ export class AgentBridgeOwner {
     return this.acp;
   }
 
+  private revokeAccess(): void {
+    this.accessRevoked = true;
+    this.operations.beginDrain();
+    const cause = { reason: "access_denied", source: "agent-execution-state" } as const;
+    for (const journal of this.agentJournals.values()) journal.close(cause);
+    for (const journal of this.journals.values()) journal.close(cause);
+  }
+
   private async watchAgentState(): Promise<void> {
     const watch = this.acp?.watchAgentExecutionState;
     if (watch === undefined) return;
@@ -1240,12 +1258,7 @@ export class AgentBridgeOwner {
       } catch (error) {
         const failures: unknown[] = error instanceof AggregateError ? error.errors : [error];
         const revoked = failures.some((failure) => failure instanceof AgentAccessRevokedError);
-        if (revoked) {
-          this.accessRevoked = true;
-          const cause = { reason: "access_denied", source: "agent-execution-state" } as const;
-          for (const journal of this.agentJournals.values()) journal.close(cause);
-          for (const journal of this.journals.values()) journal.close(cause);
-        }
+        if (revoked) this.revokeAccess();
         if (failures.some((failure) => failure instanceof HttpBodyCleanupError)) throw error;
         if (revoked) return;
       }

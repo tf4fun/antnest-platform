@@ -4,13 +4,15 @@ import { isDeepStrictEqual } from "node:util";
 import { until } from "../workspace-closeout/c4-setup.mjs";
 import { rpcMessages } from "./acp-gate-responses.mjs";
 import { assertPromptInventory } from "./prompt-dispatch-inventory.mjs";
+import {
+  assertCanonicalBusy as canonicalBusy,
+  assertOriginalAdmissionRetry,
+} from "./prompt-admission-retry-evidence.mjs";
 import { sendBrowserPrompt } from "./browser-prompt-send.mjs";
 
 const peerPhase = "c4-browser-hold-peer";
 const refusedPhase = "c4-browser-window-00";
 const nextPhase = "c4-browser-window-01";
-const uncertainHint =
-  "Message status is uncertain. Refresh this conversation to check the original operation.";
 const check = (condition, message) => {
   if (!condition) throw new Error(message);
 };
@@ -78,7 +80,7 @@ function promptRequest(request, gateway, base) {
   };
 }
 
-function gatePrompt(state, intentId, sessionId) {
+function gatePrompts(state, intentId, sessionId) {
   const matches = state.records.flatMap((record, index) => {
     if (record.method !== "POST" || typeof record.body !== "string") return [];
     let message;
@@ -94,71 +96,16 @@ function gatePrompt(state, intentId, sessionId) {
       : [];
   });
   check(
-    matches.length === 1,
-    "Original intent was missing or dispatched again",
+    matches.length >= 1 && matches.length <= 4,
+    "Original intent is missing or exceeded its dispatch budget",
   );
+  return matches;
+}
+
+function gatePrompt(state, intentId, sessionId) {
+  const matches = gatePrompts(state, intentId, sessionId);
+  check(matches.length === 1, "New intent was dispatched more than once");
   return matches[0];
-}
-
-function canonicalBusy(error, definition) {
-  check(
-    object(error) &&
-      isDeepStrictEqual(Object.keys(error).sort(), [
-        "code",
-        "data",
-        "message",
-      ]) &&
-      error.code === definition.json_rpc_code &&
-      error.message === definition.message &&
-      object(error.data),
-    "Actual ACP rejection is not the canonical busy error",
-  );
-  const data = { ...error.data };
-  if (Object.hasOwn(data, "details")) {
-    check(
-      object(data.details) && Object.keys(data.details).length === 0,
-      "Actual ACP rejection contains unapproved details",
-    );
-    delete data.details;
-  }
-  check(
-    isDeepStrictEqual(data, {
-      code: "agent_busy",
-      retryable: definition.retryable,
-      retry_after_ms: definition.retry_after_ms,
-    }),
-    "Actual ACP busy recovery fields changed",
-  );
-}
-
-function uncertainOperation(operation, original, definition) {
-  check(
-    operation?.operationId === original.body.intentId &&
-      operation.sessionId === original.sessionId &&
-      operation.phase === "uncertain" &&
-      operation.acceptance === "unknown" &&
-      operation.runId === undefined &&
-      object(operation.error),
-    "UI did not retain the original uncertain Prompt",
-  );
-  const error = operation.error;
-  check(
-    isDeepStrictEqual(Object.keys(error).sort(), [
-      "code",
-      "message",
-      "operationId",
-      "recovery",
-      "requestId",
-      "retryable",
-    ]) &&
-      error.code === "agent_busy" &&
-      error.message === definition.message &&
-      identity(error.requestId) &&
-      error.operationId === original.body.intentId &&
-      error.retryable === false &&
-      error.recovery === "query_operation",
-    "UI changed the safe original-intent recovery envelope",
-  );
 }
 
 // This function is serialized into the existing, independently owned Docker
@@ -355,7 +302,7 @@ export async function verifyBrowserPromptBusy({
     encodeURIComponent(fixture.agentID) +
     "/sessions/*/prompts";
   const evidence = {
-    version: 1,
+    version: 2,
     browserPrompts: [],
     gate: {},
     models: {},
@@ -458,7 +405,7 @@ export async function verifyBrowserPromptBusy({
     );
     return page;
   };
-  const addedRuns = (page) => {
+  const addedRuns = (page, allowOriginal = false) => {
     const before = new Map(
       evidence.audits.before.items.map((run) => [run.run_id, run]),
     );
@@ -470,18 +417,21 @@ export async function verifyBrowserPromptBusy({
         ),
       ) &&
         page.items.every(
-          (run) => run.session_id !== evidence.originalARequest.sessionId,
+          (run) =>
+            allowOriginal ||
+            run.session_id !== evidence.originalARequest.sessionId,
         ),
       "Original Run history changed or the rejected Session created a Run",
     );
     return page.items.filter((run) => !before.has(run.run_id));
   };
-  const promptInventory = (state, expected) =>
+  const promptInventory = (state, expected, expectedDispatches = expected) =>
     assertPromptInventory({
       browserPrompts: evidence.browserPrompts,
       gateBefore: evidence.gate.before,
       gateAfter: state,
       expected,
+      expectedDispatches,
     });
   const observeRequest = (request) => {
     try {
@@ -673,6 +623,16 @@ export async function verifyBrowserPromptBusy({
         .length === 1,
       "Independent peer repeated model inference",
     );
+    evidence.audits.whileBusy = await auditRuns();
+    const heldRuns = addedRuns(evidence.audits.whileBusy);
+    check(
+      heldRuns.length === 1 && heldRuns[0].state === "running",
+      "The busy window must contain only the independent peer Run",
+    );
+    check(
+      evidence.models.held.requests.every((row) => row.phase !== refusedPhase),
+      "The gated original Prompt reached model inference",
+    );
     evidence.gate.release = await fault("release", {
       body: { intentId: evidence.originalARequest.body.intentId },
     });
@@ -683,11 +643,11 @@ export async function verifyBrowserPromptBusy({
     );
     evidence.gate.rejected = await poll(async () => {
       const state = await gateState();
-      const original = gatePrompt(
+      const original = gatePrompts(
         state,
         evidence.originalARequest.body.intentId,
         evidence.originalARequest.sessionId,
-      );
+      )[0];
       const errors = rpcMessages(state, evidence.gate.before).filter(
         ({ message }) =>
           isDeepStrictEqual(message.id, original.message.id) &&
@@ -697,104 +657,16 @@ export async function verifyBrowserPromptBusy({
       if (!errors.length) return false;
       canonicalBusy(errors[0].message.error, definition);
       evidence.actualAcpRejection = { request: original, response: errors[0] };
+      // Release B as soon as actual rejection is captured. Browser inspection
+      // and Admin audit round trips must not consume A's finite retry budget.
+      evidence.models.release = await releaseModel();
+      check(
+        evidence.models.release.status === 200,
+        "Held model did not release",
+      );
       return state;
     }, "Actual canonical ACP busy rejection");
     const original = evidence.originalARequest;
-    evidence.viewUncertain = await poll(async () => {
-      const current = await view(original.sessionId);
-      const operation = current.body.operations?.find(
-        (entry) =>
-          entry.operationId === original.body.intentId &&
-          entry.phase === "uncertain",
-      );
-      if (!operation) return false;
-      uncertainOperation(operation, original, definition);
-      return current;
-    }, "UI original intent remains uncertain");
-    const alert = page
-      .getByRole("alert")
-      .filter({ hasText: definition.message });
-    await poll(
-      async () => (await alert.count()) === 1 && (await alert.isVisible()),
-      "Safe busy message is rendered",
-    );
-    check(
-      (await alert.innerText()).includes(uncertainHint),
-      "UI lost the original-intent query guidance",
-    );
-    check(
-      await composer.isEnabled(),
-      "Uncertain Session lost editable command input",
-    );
-    const blockedDraft = `${refusedPhase} blocked retry`;
-    evidence.blockedSubmission = {
-      draft: blockedDraft,
-      enterPressed: false,
-    };
-    await composer.fill(blockedDraft);
-    const sendMessage = page.getByRole("button", {
-      name: "Send message",
-      exact: true,
-    });
-    const sendMessageCount = await sendMessage.count();
-    evidence.blockedSubmission.sendMessageCount = sendMessageCount;
-    check(sendMessageCount <= 1, "Ambiguous ordinary Send control");
-    if (sendMessageCount === 1) {
-      const disabled = await sendMessage.isDisabled();
-      evidence.blockedSubmission.sendMessageDisabled = disabled;
-      check(disabled, "Uncertain original Session enabled ordinary sending");
-    } else {
-      const stop = page.getByRole("button", {
-        name: "Stop operation",
-        exact: true,
-      });
-      const stopVisible =
-        (await stop.count()) === 1 && (await stop.isVisible());
-      evidence.blockedSubmission.stopVisible = stopVisible;
-      check(stopVisible, "Uncertain Session lost its sending control");
-    }
-    await composer.press("Enter");
-    evidence.blockedSubmission.enterPressed = true;
-    evidence.blockedSubmission.draftAfterEnter = await composer.inputValue();
-    check(
-      evidence.blockedSubmission.draftAfterEnter === blockedDraft,
-      "Blocked ordinary submission changed the unsent draft",
-    );
-    evidence.gate.afterBlockedSubmission = await gateState();
-    promptInventory(evidence.gate.afterBlockedSubmission, [
-      { request: original, forwarded: 1 },
-    ]);
-    evidence.operationQuery = await client.request(
-      base +
-        "/sessions/" +
-        encodeURIComponent(original.sessionId) +
-        "/operations/" +
-        encodeURIComponent(original.body.intentId),
-    );
-    check(
-      evidence.operationQuery.status === 200,
-      "Original operation lookup failed",
-    );
-    uncertainOperation(evidence.operationQuery.body, original, definition);
-    evidence.gate.afterQuery = await gateState();
-    promptInventory(evidence.gate.afterQuery, [
-      { request: original, forwarded: 1 },
-    ]);
-    evidence.models.rejected = await model();
-    check(
-      evidence.models.rejected.requests.every(
-        (row) => row.phase !== refusedPhase,
-      ),
-      "Rejected original Prompt reached model inference",
-    );
-    evidence.audits.whileBusy = await auditRuns();
-    const heldRuns = addedRuns(evidence.audits.whileBusy);
-    check(
-      heldRuns.length === 1 && heldRuns[0].state === "running",
-      "The busy window created more than the independent peer Run",
-    );
-    evidence.models.release = await releaseModel();
-    check(evidence.models.release.status === 200, "Held model did not release");
     const outcome = await peerOutcome;
     if (outcome.error) throw outcome.error;
     const completedPeer = parsePeer(outcome.stdout);
@@ -803,21 +675,80 @@ export async function verifyBrowserPromptBusy({
         heldRuns[0].session_id === completedPeer.promptRequest.sessionId,
       "The held Admin Run is not the independent peer's original Run",
     );
-    evidence.viewReady = await poll(async () => {
+    evidence.viewOriginalCompleted = await poll(async () => {
       const current = await view(original.sessionId);
-      return current.body.availability === "ready" ? current : false;
-    }, "Agent ready after independent peer completion");
-    uncertainOperation(
-      evidence.viewReady.body.operations.find(
-        (entry) => entry.operationId === original.body.intentId,
-      ),
-      original,
-      definition,
+      const operation = current.body.operations?.find(
+        (entry) =>
+          entry.operationId === original.body.intentId &&
+          entry.phase === "completed" &&
+          entry.acceptance === "acp",
+      );
+      if (!operation) return false;
+      check(
+        operation.sessionId === original.sessionId &&
+          identity(operation.runId) &&
+          operation.runId !== completedPeer.intentObservation.receipt.runId &&
+          operation.stopReason === "end_turn",
+        "Original rejected intent did not complete as its own Run",
+      );
+      return current;
+    }, "Original rejected Prompt automatically completes");
+    const originalReply = page.getByText(`${refusedPhase} completed`, {
+      exact: true,
+    });
+    await poll(
+      async () =>
+        (await originalReply.count()) === 1 &&
+        (await originalReply.isVisible()),
+      "Original retried reply is visible in the browser",
     );
-    evidence.gate.afterPeer = await gateState();
-    promptInventory(evidence.gate.afterPeer, [
-      { request: original, forwarded: 1 },
-    ]);
+    evidence.operationQuery = await client.request(
+      base +
+        "/sessions/" +
+        encodeURIComponent(original.sessionId) +
+        "/operations/" +
+        encodeURIComponent(original.body.intentId),
+    );
+    check(
+      evidence.operationQuery.status === 200 &&
+        evidence.operationQuery.body.operationId === original.body.intentId &&
+        evidence.operationQuery.body.sessionId === original.sessionId &&
+        evidence.operationQuery.body.phase === "completed" &&
+        evidence.operationQuery.body.acceptance === "acp",
+      "Original operation lookup did not preserve completed retry",
+    );
+    evidence.gate.afterPeer = await poll(async () => {
+      const state = await gateState();
+      const attempts = gatePrompts(
+        state,
+        original.body.intentId,
+        original.sessionId,
+      );
+      const last = attempts.at(-1);
+      if (
+        !rpcMessages(state, evidence.gate.before).some(
+          ({ message }) =>
+            isDeepStrictEqual(message.id, last.message.id) &&
+            message.result?.stopReason === "end_turn",
+        )
+      )
+        return false;
+      evidence.originalRetry = assertOriginalAdmissionRetry({
+        state,
+        baseline: evidence.gate.before,
+        original,
+        definition,
+      });
+      return state;
+    }, "Original retry has complete actual ACP wire evidence");
+    const originalDispatchInventory = evidence.originalRetry.attempts.map(
+      () => ({ request: original, forwarded: 1 }),
+    );
+    promptInventory(
+      evidence.gate.afterPeer,
+      [{ request: original, forwarded: 1 }],
+      originalDispatchInventory,
+    );
     await page
       .getByRole("button", { name: "New conversation", exact: true })
       .click();
@@ -828,7 +759,7 @@ export async function verifyBrowserPromptBusy({
         evidence.acceptedNext.body.operationId !== original.body.intentId &&
         evidence.acceptedNext.body.operationId !==
           completedPeer.promptRequest.intentId,
-      "Explicit next Prompt reused an uncertain intent or Session",
+      "Explicit next Prompt reused the recovered original intent or Session",
     );
     evidence.viewCompleted = await poll(async () => {
       const current = await view(evidence.acceptedNext.request.sessionId);
@@ -874,32 +805,58 @@ export async function verifyBrowserPromptBusy({
       { request: original, forwarded: 1 },
       { request: evidence.acceptedNext.request, forwarded: 1 },
     ];
-    promptInventory(evidence.gate.completed, expectedPrompts);
+    const expectedDispatches = [
+      ...originalDispatchInventory,
+      { request: evidence.acceptedNext.request, forwarded: 1 },
+    ];
+    evidence.expectedDispatches = expectedDispatches;
+    promptInventory(
+      evidence.gate.completed,
+      expectedPrompts,
+      expectedDispatches,
+    );
     evidence.models.completed = await model();
     const peerRequests = evidence.models.completed.requests.filter(
       (row) => row.phase === peerPhase,
+    );
+    const originalRequests = evidence.models.completed.requests.filter(
+      (row) => row.phase === refusedPhase,
     );
     const nextRequests = evidence.models.completed.requests.filter(
       (row) => row.phase === nextPhase,
     );
     check(
       peerRequests.length === 1 &&
+        originalRequests.length === 1 &&
+        !originalRequests[0].disconnected &&
         nextRequests.length === 1 &&
         !peerRequests[0].disconnected &&
         !nextRequests[0].disconnected &&
-        !evidence.models.completed.pending.includes(peerPhase) &&
-        evidence.models.completed.requests.every(
-          (row) => row.phase !== refusedPhase,
+        !evidence.models.completed.pending.some((phase) =>
+          [peerPhase, refusedPhase, nextPhase].includes(phase),
         ),
       "Busy recovery repeated or lost actual model work",
     );
     evidence.audits.completed = await auditRuns();
-    const completedRuns = addedRuns(evidence.audits.completed);
+    const completedRuns = addedRuns(evidence.audits.completed, true);
     const nextOperation = evidence.viewCompleted.body.operations.find(
       (operation) =>
         operation.operationId === evidence.acceptedNext.body.operationId,
     );
+    const originalOperation =
+      evidence.viewOriginalCompleted.body.operations.find(
+        (operation) => operation.operationId === original.body.intentId,
+      );
+    check(
+      evidence.operationQuery.body.runId === originalOperation.runId,
+      "Original query changed the recovered Run",
+    );
     const expectedRuns = [
+      {
+        runId: originalOperation.runId,
+        sessionId: original.sessionId,
+        prompt: original.body.prompt,
+      },
       {
         runId: completedPeer.intentObservation.receipt.runId,
         sessionId: completedPeer.promptRequest.sessionId,
@@ -912,8 +869,8 @@ export async function verifyBrowserPromptBusy({
       },
     ];
     check(
-      completedRuns.length === 2 &&
-        new Set(expectedRuns.map((run) => run.runId)).size === 2 &&
+      completedRuns.length === 3 &&
+        new Set(expectedRuns.map((run) => run.runId)).size === 3 &&
         expectedRuns.every((run) =>
           completedRuns.some((row) => row.run_id === run.runId),
         ),
@@ -959,7 +916,7 @@ export async function verifyBrowserPromptBusy({
             run.unknown_effect_source === undefined) &&
           run.stop_reason === "end_turn" &&
           run.error_class === null,
-        "The original peer or explicit-next Run was not durably completed",
+        "An original A/B/C Run was not durably completed",
       );
       const events = audit.events;
       check(
@@ -1021,6 +978,7 @@ export async function verifyBrowserPromptBusy({
     const inventoryCounts = promptInventory(
       evidence.gate.afterAudits,
       expectedPrompts,
+      expectedDispatches,
     );
     const originalDispatches =
       (evidence.gate.afterAudits.forwardedByIntent[original.body.intentId] ??
@@ -1030,18 +988,20 @@ export async function verifyBrowserPromptBusy({
       checks: [
         "real-peer-agent-busy",
         "canonical-busy-wire",
-        "original-intent-query-without-replay",
+        "original-intent-automatic-bounded-retry",
+        "typed-intent-unknown-before-original-redispatch",
         "explicit-new-intent-after-peer",
         "persisted-run-inventory-without-extra-runs",
         "complete-browser-and-acp-prompt-inventory",
         "independent-peer-closed",
       ],
-      busy_rejections: 1,
+      busy_rejections: evidence.originalRetry.rejections.length,
       original_prompt_dispatches: originalDispatches,
       browser_prompts: inventoryCounts.browserPrompts,
       gate_prompts: inventoryCounts.gatePrompts,
       forwarded_prompts: inventoryCounts.forwardedPrompts,
       peer_model_requests: peerRequests.length,
+      original_retry_model_requests: originalRequests.length,
       explicit_new_model_requests: nextRequests.length,
       audited_new_runs: completedRuns.length,
       peer_closed: true,
@@ -1107,10 +1067,14 @@ export async function verifyBrowserPromptBusy({
     try {
       evidence.gate.final = await gateState(true);
       if (result)
-        promptInventory(evidence.gate.final, [
-          { request: evidence.originalARequest, forwarded: 1 },
-          { request: evidence.acceptedNext.request, forwarded: 1 },
-        ]);
+        promptInventory(
+          evidence.gate.final,
+          [
+            { request: evidence.originalARequest, forwarded: 1 },
+            { request: evidence.acceptedNext.request, forwarded: 1 },
+          ],
+          evidence.expectedDispatches,
+        );
     } catch (error) {
       remember(error);
     }

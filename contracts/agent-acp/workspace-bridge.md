@@ -170,9 +170,10 @@ the additive migration is applied, so the number is not a historical message
 count. A duplicate standard ACP prompt request may receive
 `intent_already_recorded` (or `agent_busy` during a reservation race); the
 Bridge reads the original receipt by intent ID. Neither response authorizes
-a new ID or automatic resubmission.
+a new ID or automatic resubmission by itself. The bounded admission
+backoff exception below requires the complete additional evidence.
 
-The Agent UI's [pending explicit original Prompt retry amendment](../agent-ui/workspace-api.md#pending-explicit-original-prompt-retry-53)
+The Agent UI's [explicit original Prompt retry contract](../agent-ui/workspace-api.md#explicit-original-prompt-retry-53)
 uses `POST .../prompts?action=retry` only at the Bridge HTTP boundary. It adds
 no ACP method, capability, receipt field or semantic admission parameter. The
 original scoped intent, canonical content digest, expected append version and
@@ -180,23 +181,40 @@ complete ordered content, including attachments, remain unchanged; only the
 Bridge history token is refreshed. The query action must not be forwarded into
 the ACP body or digest.
 
-That pending consumer flow serializes query plus retry for the original
+That implemented consumer flow serializes query plus retry for the original
 organization/principal/Agent/Session/intent and requires the original ACP call
 to have settled. It adopts any durable receipt or Run without redispatch,
 including a receipt in the unknown phase. A successful lookup with no receipt
-still means uncertain. Only an explicit user decision may then retry the same
-key and digest subject to ACP's existing atomic duplicate lookup and CAS.
+still means uncertain. The explicit flow requires a user decision to retry
+the same key and digest subject to ACP's existing atomic duplicate lookup and
+CAS; the bounded automatic exception has stricter evidence below.
 Query failure or an in-flight original call does not queue later replay. A
 receipt arriving during recovery wins over a stale unknown read or late error;
 it cannot be replaced with a synthetic unaccepted outcome. Reload without the
 original body remains query-only. Browser navigation or identity replacement
 releases retained input instead of transferring it to another scope.
 
-These are pending Agent UI consumer requirements, not newly implemented ACP
-behavior. The original #53 automatic backoff requirement remains separately
-pending; neither error retry guidance nor missing/expired receipt state is
-trustworthy non-admission proof. This explicit flow does not remove that goal
-or count another intent's success as success of the original Prompt.
+Explicit retry consumes existing ACP behavior; it adds no ACP method or
+producer-side retry. The [bounded admission backoff contract](../agent-ui/workspace-api.md#bounded-prompt-admission-backoff-53)
+permits Node automatic retry only after the actual preceding call has settled
+with a canonical v1 `agent_busy` or `configuration_not_ready` admission error,
+and a fresh currently authorized lookup returns typed `404 intent_unknown`.
+Error guidance or a missing/expired receipt alone is never non-admission proof.
+Any receipt, including unknown phase, wins over a stale lookup and stops
+redispatch. Unknown delivery, failed lookup, denied access or malformed error
+metadata cannot enter the automatic path. Original scope, intent, digest,
+ordered content and append CAS remain fixed. Atomic duplicate resolution
+protects a receipt racing the final admission decision.
+
+That implemented Node consumer owns the original body, a shared explicit/automatic
+single-flight decision and at most four actual dispatches including the first,
+plus 30 seconds of cumulative waiting. It honors the greater of the wire delay
+and the 1/2/4-second exponential floor, stops if the remaining wait budget is
+insufficient, and never resets budgets through an explicit action. It retains
+upload byte/count capacity until actual query/wait/call join; owner shutdown
+or cancellation must stop and join that work. These requirements describe the
+implemented Node consumer; real ACP original-Prompt Docker acceptance remains pending.
+Another intent's success does not count as success of the original Prompt.
 
 The principal-scoped internal `GET` observation routes are
 `/rpc/agent-acp/workspace/sessions/{sessionId}/execution` and
