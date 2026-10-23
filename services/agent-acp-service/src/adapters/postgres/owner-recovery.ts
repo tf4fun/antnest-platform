@@ -201,6 +201,74 @@ export class PostgresOwnerRecovery {
     );
   }
 
+  public async listLearningPredecessors(): Promise<
+    readonly Readonly<{
+      taskId: string;
+      claimId: string;
+      generation: number;
+      registration: OwnerRegistration;
+      inspection?: Extract<OwnerInspection, { state: "stopped" }>;
+    }>[]
+  > {
+    const scope = this.#authority.scope()!;
+    const current = this.#authority.origin();
+    return this.#authority.organizationTransaction(
+      this.kernel,
+      scope.organizationId,
+      async (client) => {
+        const result = await client.query<
+          RunOwnerColumns & {
+            task_id: string;
+            claim_id: string;
+            generation: number;
+            accepted_inspection: unknown;
+            accepted_receipt_id: string | null;
+          }
+        >(
+          `SELECT t.id AS task_id,t.claim_id,t.generation,t.organization_id,t.agent_id,
+            t.claim_owner_registration_id AS execution_owner_registration_id,
+            t.claim_owner_member_id AS execution_owner_member_id,
+            t.claim_owner_incarnation_id AS execution_owner_incarnation_id,
+            t.claim_owner_epoch::text AS execution_owner_epoch,
+            p.inspection AS accepted_inspection,p.receipt_id AS accepted_receipt_id
+          FROM learning_tasks t LEFT JOIN owner_stop_receipts p
+            ON p.registration_id=t.claim_owner_registration_id
+          WHERE t.organization_id=$1 AND t.agent_id=$2 AND t.authority_mode='owned'
+            AND t.state IN ('running','paused') AND t.claim_id IS NOT NULL
+            AND t.claim_owner_incarnation_id IS DISTINCT FROM $3 ORDER BY t.created_at,t.id`,
+          [scope.organizationId, scope.agentId, current[2]],
+        );
+        return Object.freeze(
+          result.rows.map((row) => {
+            const [registration_id, member_id, incarnation_id] = originalOwner(row);
+            const registration = parseOwnerRegistration({
+              registration_id,
+              member_id,
+              incarnation_id,
+            });
+            const inspection =
+              row.accepted_receipt_id === null
+                ? undefined
+                : parseOwnerInspection(row.accepted_inspection, registration);
+            if (
+              inspection !== undefined &&
+              (inspection.state !== "stopped" ||
+                inspection.stop_receipt.receipt_id !== row.accepted_receipt_id)
+            )
+              throw new Error("Invalid accepted Learning predecessor stop proof");
+            return Object.freeze({
+              taskId: row.task_id,
+              claimId: row.claim_id,
+              generation: row.generation,
+              registration,
+              ...(inspection === undefined ? {} : { inspection }),
+            });
+          }),
+        );
+      },
+    );
+  }
+
   public async listPredecessors(): Promise<
     readonly Readonly<{
       runId: string;

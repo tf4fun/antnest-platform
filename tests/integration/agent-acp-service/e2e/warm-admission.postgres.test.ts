@@ -19,6 +19,8 @@ import {
 } from "../../../../services/agent-acp-service/src/adapters/runtime-controller-incarnations.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { createOwnedAgentRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/agent-repositories.js";
+import { createOwnedLearningRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/learning-repositories.js";
+import { learningPolicySchema } from "../../../../services/agent-acp-service/src/domain/learning-policy.js";
 import { publicExecutionConfiguration } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import type { OwnerInspection } from "../../../../services/agent-acp-service/src/application/owner-inspection.js";
@@ -129,22 +131,56 @@ describe.skipIf(databaseUrl === undefined)(
   "production ACP warm admission",
   () => {
     it.each([
-      { version: 1, ownership: "legacy", proofSource: "none" },
-      { version: 2, ownership: "legacy", proofSource: "none" },
-      { version: 1, ownership: "owned", proofSource: "none" },
-      { version: 2, ownership: "owned", proofSource: "none" },
-      { version: 1, ownership: "owned", proofSource: "remote" },
-      { version: 2, ownership: "owned", proofSource: "remote" },
-      { version: 1, ownership: "owned", proofSource: "stored" },
-      { version: 2, ownership: "owned", proofSource: "stored" },
-      { version: 2, ownership: "owned", proofSource: "held" },
-      { version: 2, ownership: "owned", proofSource: "held-error" },
-      { version: 2, ownership: "owned", proofSource: "running" },
-      { version: 2, ownership: "owned", proofSource: "unknown" },
-      { version: 2, ownership: "owned", proofSource: "http-error" },
+      ...(
+        [
+          { version: 1, ownership: "legacy", proofSource: "none" },
+          { version: 2, ownership: "legacy", proofSource: "none" },
+          { version: 1, ownership: "owned", proofSource: "none" },
+          { version: 2, ownership: "owned", proofSource: "none" },
+          { version: 1, ownership: "owned", proofSource: "remote" },
+          { version: 2, ownership: "owned", proofSource: "remote" },
+          { version: 1, ownership: "owned", proofSource: "stored" },
+          { version: 2, ownership: "owned", proofSource: "stored" },
+          { version: 2, ownership: "owned", proofSource: "held" },
+          { version: 2, ownership: "owned", proofSource: "held-error" },
+          { version: 2, ownership: "owned", proofSource: "running" },
+          { version: 2, ownership: "owned", proofSource: "unknown" },
+          { version: 2, ownership: "owned", proofSource: "http-error" },
+        ] as const
+      ).map((entry) => ({ ...entry, learningState: "none" as const })),
+      {
+        version: 1,
+        ownership: "owned",
+        proofSource: "remote",
+        learningState: "running",
+      },
+      {
+        version: 2,
+        ownership: "owned",
+        proofSource: "remote",
+        learningState: "running",
+      },
+      {
+        version: 2,
+        ownership: "owned",
+        proofSource: "remote",
+        learningState: "paused",
+      },
+      {
+        version: 2,
+        ownership: "owned",
+        proofSource: "stored",
+        learningState: "paused",
+      },
+      {
+        version: 2,
+        ownership: "owned",
+        proofSource: "running",
+        learningState: "running",
+      },
     ] as const)(
-      "$ownership v$version admits before republication and uses a newer revision (predecessor proof=$proofSource)",
-      async ({ version, ownership, proofSource }) => {
+      "$ownership v$version admits before republication and uses a newer revision (predecessor proof=$proofSource, Learning=$learningState)",
+      async ({ version, ownership, proofSource, learningState }) => {
         const predecessor = proofSource !== "none";
         const heldInspection =
           proofSource === "held" || proofSource === "held-error";
@@ -211,6 +247,17 @@ describe.skipIf(databaseUrl === undefined)(
         let originalStopped = false;
         let predecessorSessionId: string | undefined;
         let predecessorRun: StoredRun | undefined;
+        let predecessorLearning:
+          | {
+              taskId: string;
+              claimId: string;
+              generation: number;
+              epoch: string;
+              facts: Awaited<ReturnType<typeof learningFacts>>;
+            }
+          | undefined;
+        let recoveredLearning:
+          Awaited<ReturnType<typeof learningFacts>> | undefined;
         let registrationOrigin: string | undefined;
         const modelRequests: Array<{
           boot: Boot;
@@ -227,6 +274,39 @@ describe.skipIf(databaseUrl === undefined)(
         let boot: Boot = "published";
         let closing = false;
         let publicationCount = 0;
+
+        async function learningFacts(taskId: string) {
+          const task = (
+            await pool.query<Record<string, unknown>>(
+              "SELECT * FROM learning_tasks WHERE id=$1",
+              [taskId],
+            )
+          ).rows[0]!;
+          const calls = (
+            await pool.query<Record<string, unknown>>(
+              "SELECT * FROM learning_model_calls WHERE task_id=$1 ORDER BY call_index",
+              [taskId],
+            )
+          ).rows;
+          const history = (
+            await pool.query<Record<string, unknown>>(
+              "SELECT * FROM learning_review_attempts WHERE task_id=$1 ORDER BY generation",
+              [taskId],
+            )
+          ).rows;
+          return { task, calls, history };
+        }
+
+        async function assertPredecessorUnchanged() {
+          if (predecessorLearning !== undefined)
+            expect(await learningFacts(predecessorLearning.taskId)).toEqual(
+              predecessorLearning.facts,
+            );
+          else
+            expect(await stored(predecessorSessionId!)).toEqual([
+              predecessorRun!,
+            ]);
+        }
 
         function track<T>(promise: Promise<T>): Promise<T> {
           pending.push(promise);
@@ -883,62 +963,145 @@ describe.skipIf(databaseUrl === undefined)(
               )
             ).rows[0]!;
             const original = registrations[0]!;
-            const repositories = createOwnedAgentRepositories(
-              new PostgresKernel(pool),
-              new SecretBox(Buffer.from(key, "base64")),
-              {
-                registration: original,
-                fence: {
-                  organizationId: identity.organizationId,
-                  agentId: identity.agentId,
-                  ownerInstanceId: original.incarnation_id,
-                  epoch: lease.epoch,
-                },
-              },
-            );
-            predecessorSessionId = randomUUID();
-            const mcpRevisionId = randomUUID(),
-              runId = randomUUID();
-            await repositories.sessions.create({
-              sessionId: predecessorSessionId,
-              binding: identity,
-              cwd: "/workspace",
-              mcpRevisionId,
-              mcpSources: [],
-            });
             const accessRevision = (
               before.rows[0]!.execution_snapshot as { accessRevision: string }
             ).accessRevision;
-            await repositories.runs.createRunIntent({
-              runId,
-              requestId: randomUUID(),
-              sessionId: predecessorSessionId,
-              expectedAccessRevision: accessRevision,
-              userMessageId: randomUUID(),
-              prompt: [
+            if (learningState === "none") {
+              const repositories = createOwnedAgentRepositories(
+                new PostgresKernel(pool),
+                new SecretBox(Buffer.from(key, "base64")),
                 {
-                  type: "text",
-                  text: "This predecessor Prompt must never be replayed",
+                  registration: original,
+                  fence: {
+                    organizationId: identity.organizationId,
+                    agentId: identity.agentId,
+                    ownerInstanceId: original.incarnation_id,
+                    epoch: lease.epoch,
+                  },
                 },
-              ],
-              createdAt: new Date(),
-            });
-            await repositories.runs.acceptRun({
-              runId,
-              snapshot: runSnapshot({
-                configuration: publicExecutionConfiguration(configuration),
-                identity,
-                overrides: {},
-                accessRevision,
-                clientMcpRevisionId: mcpRevisionId,
-                deadlineAt: new Date(Date.now() + 60_000),
-              }),
-              environmentFact: null,
-              acceptedAt: new Date(),
-            });
-            predecessorRun = (await stored(predecessorSessionId))[0]!;
-            expect(predecessorRun.state).toBe("running");
-            expect(modelRequests).toHaveLength(1);
+              );
+              predecessorSessionId = randomUUID();
+              const mcpRevisionId = randomUUID(),
+                runId = randomUUID();
+              await repositories.sessions.create({
+                sessionId: predecessorSessionId,
+                binding: identity,
+                cwd: "/workspace",
+                mcpRevisionId,
+                mcpSources: [],
+              });
+              await repositories.runs.createRunIntent({
+                runId,
+                requestId: randomUUID(),
+                sessionId: predecessorSessionId,
+                expectedAccessRevision: accessRevision,
+                userMessageId: randomUUID(),
+                prompt: [
+                  {
+                    type: "text",
+                    text: "This predecessor Prompt must never be replayed",
+                  },
+                ],
+                createdAt: new Date(),
+              });
+              await repositories.runs.acceptRun({
+                runId,
+                snapshot: runSnapshot({
+                  configuration: publicExecutionConfiguration(configuration),
+                  identity,
+                  overrides: {},
+                  accessRevision,
+                  clientMcpRevisionId: mcpRevisionId,
+                  deadlineAt: new Date(Date.now() + 60_000),
+                }),
+                environmentFact: null,
+                acceptedAt: new Date(),
+              });
+              predecessorRun = (await stored(predecessorSessionId))[0]!;
+              expect(predecessorRun.state).toBe("running");
+              expect(modelRequests).toHaveLength(1);
+            } else {
+              // The source is the actual completed first Prompt. Claim using
+              // legal writers after the real quiet interval; never backdate it.
+              const repositories = createOwnedLearningRepositories(
+                new PostgresKernel(pool),
+                {
+                  registration: original,
+                  fence: {
+                    organizationId: identity.organizationId,
+                    agentId: identity.agentId,
+                    ownerInstanceId: original.incarnation_id,
+                    epoch: lease.epoch,
+                  },
+                },
+              );
+              const policy = learningPolicySchema.parse({
+                organization_id: identity.organizationId,
+                agent_id: identity.agentId,
+                owner_principal_id: identity.principalId,
+                revision: "b".repeat(64),
+                activation_cut_at: new Date(Date.now() - 180_000).toISOString(),
+                mode: "automatic",
+                scope: { auto_generated_personal: true, adopted_paths: [] },
+                pinned_paths: [],
+                limits: {
+                  daily_reviews: 20,
+                  daily_model_input_tokens: 320000,
+                  daily_model_output_tokens: 80000,
+                },
+              });
+              const scanScope = {
+                organizationId: identity.organizationId,
+                agentId: identity.agentId,
+                ownerId: identity.principalId,
+              };
+              await repositories.scan.activate(
+                scanScope,
+                policy.revision,
+                policy.activation_cut_at,
+              );
+              const pending = await repositories.scan.enqueue(
+                scanScope,
+                before.rows[0]!.id,
+                policy,
+              );
+              expect(pending).not.toBeNull();
+              await delay(15_050, undefined, { signal: requestAbort.signal });
+              const claim = await repositories.scan.claimNext(
+                policy,
+                pending!.taskId,
+              );
+              expect(claim).not.toBeNull();
+              const settled = randomUUID();
+              await repositories.budget.reserve(claim!, policy, settled, {
+                inputTokens: 100,
+                outputTokens: 100,
+                durationMs: 1000,
+              });
+              await repositories.budget.settle(claim!, settled, {
+                inputTokens: 10,
+                outputTokens: 20,
+                durationMs: 30,
+              });
+              await repositories.budget.reserve(claim!, policy, randomUUID(), {
+                inputTokens: 100,
+                outputTokens: 100,
+                durationMs: 1000,
+              });
+              if (learningState === "paused")
+                await repositories.outcomes.pauseRunning(
+                  claim!,
+                  "model_unavailable",
+                );
+              predecessorLearning = {
+                taskId: claim!.taskId,
+                claimId: claim!.claimId,
+                generation: claim!.generation,
+                epoch: lease.epoch,
+                facts: await learningFacts(claim!.taskId),
+              };
+              expect(modelRequests).toHaveLength(1);
+            }
             if (proofSource === "stored") {
               // A separate admitting Agent can persist the same process-stop
               // fact first. It needs no Runtime or dispatched model work.
@@ -1088,14 +1251,16 @@ describe.skipIf(databaseUrl === undefined)(
               expect(endPool).toHaveBeenCalledTimes(poolEnds);
             }
             expect(inspectionRequests).toBe(1);
-            expect(await stored(predecessorSessionId!)).toEqual([
-              predecessorRun!,
-            ]);
+            await assertPredecessorUnchanged();
             expect(
               (await pool.query("SELECT * FROM owner_stop_receipts")).rows,
             ).toEqual([]);
             expect(
               (await pool.query("SELECT * FROM run_owner_recoveries")).rows,
+            ).toEqual([]);
+            expect(
+              (await pool.query("SELECT * FROM learning_owner_recoveries"))
+                .rows,
             ).toEqual([]);
             const b = await exercise(
               second,
@@ -1165,9 +1330,7 @@ describe.skipIf(databaseUrl === undefined)(
               "agent-2",
             );
             expect(await stored(b.sessionId)).toEqual(b.rows);
-            expect(await stored(predecessorSessionId!)).toEqual([
-              predecessorRun!,
-            ]);
+            await assertPredecessorUnchanged();
             expect(ownershipLost).not.toHaveBeenCalled();
             expect(failures).toEqual([]);
             expect(JSON.stringify(modelRequests)).not.toContain(
@@ -1215,7 +1378,81 @@ describe.skipIf(databaseUrl === undefined)(
               expect(endPool).toHaveBeenCalledTimes(poolEnds + 1);
             }
           } else {
-            if (predecessor) {
+            if (predecessorLearning !== undefined) {
+              expect(inspectionRequests).toBe(1);
+              expect(inspections).toHaveLength(1);
+              const beforeLearning = predecessorLearning.facts;
+              const afterLearning = await learningFacts(
+                predecessorLearning.taskId,
+              );
+              recoveredLearning = afterLearning;
+              expect(afterLearning.task.updated_at).toBeInstanceOf(Date);
+              expect(afterLearning.task).toEqual({
+                ...beforeLearning.task,
+                state: "cancelled",
+                cancel_reason: "worker_lost",
+                pause_reason: null,
+                updated_at: afterLearning.task.updated_at,
+              });
+              expect(afterLearning.calls).toEqual(
+                beforeLearning.calls.map((call) => ({
+                  ...call,
+                  state: call.state === "reserved" ? "unknown" : call.state,
+                })),
+              );
+              expect(afterLearning.history).toEqual(beforeLearning.history);
+              const currentLease = (
+                await pool.query<{ epoch: string }>(
+                  "SELECT epoch::text FROM agent_leases WHERE organization_id=$1 AND agent_id=$2 AND owner_instance_id=$3",
+                  [
+                    "organization-1",
+                    "agent-1",
+                    registrations[1]!.incarnation_id,
+                  ],
+                )
+              ).rows[0]!;
+              expect(
+                (
+                  await pool.query(
+                    "SELECT task_id,claim_id,generation,organization_id,agent_id,original_registration_id,original_member_id,original_incarnation_id,original_epoch::text,recovering_registration_id,recovering_member_id,recovering_incarnation_id,recovering_epoch::text,receipt_id FROM learning_owner_recoveries",
+                  )
+                ).rows,
+              ).toEqual([
+                {
+                  task_id: predecessorLearning.taskId,
+                  claim_id: predecessorLearning.claimId,
+                  generation: predecessorLearning.generation,
+                  organization_id: "organization-1",
+                  agent_id: "agent-1",
+                  original_registration_id: registrations[0]!.registration_id,
+                  original_member_id: registrations[0]!.member_id,
+                  original_incarnation_id: registrations[0]!.incarnation_id,
+                  original_epoch: predecessorLearning.epoch,
+                  recovering_registration_id: registrations[1]!.registration_id,
+                  recovering_member_id: registrations[1]!.member_id,
+                  recovering_incarnation_id: registrations[1]!.incarnation_id,
+                  recovering_epoch: currentLease.epoch,
+                  receipt_id: stopReceipt.receipt_id,
+                },
+              ]);
+              expect(
+                (await pool.query("SELECT inspection FROM owner_stop_receipts"))
+                  .rows,
+              ).toEqual([{ inspection: inspections[0] }]);
+              if (witness !== undefined) {
+                expect(
+                  (await pool.query("SELECT * FROM owner_stop_receipts")).rows,
+                ).toEqual(storedProof);
+                expect(
+                  (
+                    await pool.query(
+                      "SELECT * FROM run_owner_recoveries WHERE run_id=$1",
+                      [witness.runId],
+                    )
+                  ).rows,
+                ).toEqual(witnessAudit);
+              }
+            } else if (predecessor) {
               expect(inspectionRequests).toBe(1);
               expect(inspections).toHaveLength(1);
               expect(await stored(predecessorSessionId!)).toEqual([
@@ -1359,12 +1596,20 @@ describe.skipIf(databaseUrl === undefined)(
             expect(modelRequests).toHaveLength(2);
             expect(await stored(before.sessionId)).toEqual(before.rows);
             expect(await stored(after.sessionId)).toEqual(after.rows);
+            if (predecessorLearning !== undefined)
+              expect(await learningFacts(predecessorLearning.taskId)).toEqual(
+                recoveredLearning,
+              );
 
             const republished = await exercise(second, {
               configurationRevision: replacement.revision,
               model: replacementModel,
               modelRequestCount: 2,
             });
+            if (predecessorLearning !== undefined)
+              expect(await learningFacts(predecessorLearning.taskId)).toEqual(
+                recoveredLearning,
+              );
             expect([before.sessionId, after.sessionId]).not.toContain(
               republished.sessionId,
             );

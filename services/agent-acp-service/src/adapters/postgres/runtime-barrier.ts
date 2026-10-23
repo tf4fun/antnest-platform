@@ -41,6 +41,12 @@ export async function protectLearningRuntimeIntent(
 ): Promise<void> {
   if (intent.action !== "install" || !["pending", "unknown"].includes(intent.state))
     throw new Error("Learning intent cannot be recovered as an install");
+  if (
+    !/^[!-~]{1,200}$/u.test(intent.execution_id) ||
+    intent.execution_id.includes("/") ||
+    intent.execution_id.includes("\\")
+  )
+    throw new Error("Learning install execution identity is invalid");
   const revision = runtimeRevisionSchema.parse(intent.runtime_revision);
   const connection = runtimeConnectionIdSchema.parse(intent.connection_id);
   runtimeMcpEndpointSchema.parse(intent.mcp_endpoint);

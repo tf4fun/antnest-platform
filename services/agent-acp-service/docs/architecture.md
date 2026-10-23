@@ -170,9 +170,11 @@ Uncertain installs receive separate protection for their own persisted Runtime
 binding, independent of the source Run. Barrier readers and cleanup consult that
 protection; only a valid new-Runtime publication retires it, without settling or
 replaying the original request. Startup inventory validates the complete proof
-before releasing model-only protection. Production Learning discovery and calls
-to this storage operation are still pending; these primitives do not enable
-multi-replica recovery.
+before releasing model-only protection. Generation preparation discovers claimed
+running/paused Learning tasks after Run recovery, reuses permanent stop proof,
+and invokes this operation before its final startup inventory check. Discovery
+uses the claim owner, never the historical source Run owner. This does not enable
+multi-replica recovery or establish actual Runtime isolation.
 
 Generation initialization has its own monotonic 10-second admission deadline.
 Expiry closes that Agent's ready/dispatch path and permits other Agents to prepare.
@@ -185,8 +187,8 @@ Bootstrap is optional. Its validated identity now binds production Agent leases,
 fenced writers and scoped background work. Without owner settings, startup
 retains the legacy path. The global worker lock, single-instance restriction and
 independent ownership-loss fail-stop channel remain; connected generations and
-scoped recovery do not complete predecessor Learning recovery, independent Runtime
-isolation, cross-owner ACKs and peers, or two-replica integration.
+scoped recovery do not complete independent Runtime isolation, cross-owner ACKs
+and peers, or two-replica integration.
 
 ## Mission
 
@@ -529,7 +531,7 @@ lock or approval waits. Global startup cancellation remains legacy-only: it
 rejects a selected owned Run and updates only its locked set of pending requests.
 Registered owner mode captures the generation in production and cancels abandoned
 legacy permissions only within approved scopes. Predecessor Run recovery uses the
-dedicated stopped-proof transaction. Independent Runtime/Learning recovery,
+dedicated stopped-proof transaction. Independent Runtime isolation,
 cross-owner ACKs and peers, and two-replica integration remain pending.
 
 ## Module Map
@@ -855,13 +857,18 @@ application is distinct from Runtime readiness or Agent settlement.
 outside configuration publication and reports local quiescence plus durable
 stopping evidence. New prompts cannot reuse a protected Runtime revision.
 
-Skill learning never fences a Runtime. Settlement aborts in-flight learning
+Normal live Skill learning does not fence a Runtime. Settlement aborts in-flight learning
 without waiting, and an unknown install is resent conditionally on the next
 published execution, so lifecycle never reports `runtime_barrier_required`
 for learning work. A resend re-checks policy, ownership and the frozen apply
 basis but accepts the target Skill already being present, because the
 interrupted install may have renamed it; Runtime's conditional install settles
 identical bytes as `applied` without a second rename.
+
+A stopped predecessor's claim cannot be resent under its successor. Dedicated
+recovery cancels that claim and preserves its uncertain install with separate
+protection for the original install binding. A valid replacement publication
+retires this protection; cancellation alone does not establish Runtime cleanup.
 
 Learning repositories capture explicit Agent authority through
 `createOwnedLearningRepositories`, or the worker-lock signal through the legacy
@@ -883,8 +890,9 @@ writes still use global worker-lock authority, while work cancellation uses
 the entry signal and Learning retains and joins original model work.
 Production component tests hold a real Provider transport close during legacy
 and owned shutdown, and expire Agent A's lease while Agent B completes a real
-foreground Run. Predecessor Learning claim/global review-slot
-recovery, cross-owner ACKs and peers, and two-replica integration remain pending.
+foreground Run. Warm startup also consumes stopped Learning claim recovery before
+new foreground work, retaining original costs and history without replay. Actual
+Runtime isolation, cross-owner ACKs and peers, and two-replica integration remain pending.
 Foreground isolation does not establish another Agent's background claim recovery.
 
 ## Workspace Bridge Extension

@@ -133,6 +133,73 @@ function preserved(row: Record<string, unknown>) {
   );
 }
 
+async function setupInstall(f: FencingFixture, state: "pending" | "unknown") {
+  const value = await learningWithInstallCandidate(
+    f,
+    scope("install-recovery"),
+    new AbortController().signal,
+  );
+  const owner = value.source.owner;
+  if (owner === undefined) throw new Error("Expected an owned install claim");
+  const requestId = learningApplyRequestId(
+    value.claim,
+    value.candidateId,
+    "install",
+    1,
+  );
+  await value.repositories.intents.reserve({
+    claim: value.claim,
+    requestId,
+    action: "install",
+    ...value.finalRuntime,
+    bodySha256: `sha256:${"a".repeat(64)}`,
+    requestFacts: {
+      candidate_id: value.candidateId,
+      package_path: value.candidatePackage.packagePath,
+      expected_base_digest: null,
+      target_digest: value.candidatePackage.targetDigest,
+    },
+  });
+  if (state === "unknown")
+    await value.repositories.intents.markUnknown(value.claim, requestId);
+  const originalIntent = (
+    await f.observer.query<Record<string, unknown>>(
+      "SELECT * FROM learning_maintenance_intents WHERE request_id=$1",
+      [requestId],
+    )
+  ).rows;
+  const originalCandidate = (
+    await f.observer.query<Record<string, unknown>>(
+      "SELECT * FROM learning_candidates WHERE task_id=$1",
+      [value.taskId],
+    )
+  ).rows;
+  const configurations = new PostgresExecutionConfiguration(
+    f.kernelB,
+    f.secretBox,
+  );
+  const configuration = executionConfiguration();
+  configuration.organization_id = value.claim.organizationId;
+  configuration.agents[0]!.agent_id = value.claim.agentId;
+  configuration.agents[0]!.runtime = {
+    ...runtimeConfiguration(),
+    runtime_revision: value.finalRuntime.revision,
+    runtime_execution_id: value.finalRuntime.executionId,
+    mcp_endpoint: value.finalRuntime.mcpEndpoint,
+    connection_id: value.finalRuntime.connectionId,
+  };
+  expect(await configurations.save(configuration, null)).toBe(true);
+  return {
+    ...value,
+    owner,
+    requestId,
+    originalIntent,
+    originalCandidate,
+    configurations,
+    configuration,
+  };
+}
+
 describe.skipIf(databaseUrl === undefined)(
   "stopped predecessor Learning recovery",
   () => {
@@ -459,65 +526,15 @@ describe.skipIf(databaseUrl === undefined)(
       "protects an independent %s install Runtime until a valid replacement publication",
       async (state) => {
         await withDatabase(async (f) => {
-          const value = await learningWithInstallCandidate(
-            f,
-            scope("install-recovery"),
-            new AbortController().signal,
-          );
-          const owner = value.source.owner;
-          if (owner === undefined)
-            throw new Error("Expected an owned install claim");
-          const requestId = learningApplyRequestId(
-            value.claim,
-            value.candidateId,
-            "install",
-            1,
-          );
-          await value.repositories.intents.reserve({
-            claim: value.claim,
+          const {
+            owner,
             requestId,
-            action: "install",
-            ...value.finalRuntime,
-            bodySha256: `sha256:${"a".repeat(64)}`,
-            requestFacts: {
-              candidate_id: value.candidateId,
-              package_path: value.candidatePackage.packagePath,
-              expected_base_digest: null,
-              target_digest: value.candidatePackage.targetDigest,
-            },
-          });
-          if (state === "unknown")
-            await value.repositories.intents.markUnknown(
-              value.claim,
-              requestId,
-            );
-          const originalIntent = (
-            await f.observer.query<Record<string, unknown>>(
-              "SELECT * FROM learning_maintenance_intents WHERE request_id=$1",
-              [requestId],
-            )
-          ).rows;
-          const originalCandidate = (
-            await f.observer.query<Record<string, unknown>>(
-              "SELECT * FROM learning_candidates WHERE task_id=$1",
-              [value.taskId],
-            )
-          ).rows;
-          const configurations = new PostgresExecutionConfiguration(
-            f.kernelB,
-            f.secretBox,
-          );
-          const configuration = executionConfiguration();
-          configuration.organization_id = value.claim.organizationId;
-          configuration.agents[0]!.agent_id = value.claim.agentId;
-          configuration.agents[0]!.runtime = {
-            ...runtimeConfiguration(),
-            runtime_revision: value.finalRuntime.revision,
-            runtime_execution_id: value.finalRuntime.executionId,
-            mcp_endpoint: value.finalRuntime.mcpEndpoint,
-            connection_id: value.finalRuntime.connectionId,
-          };
-          expect(await configurations.save(configuration, null)).toBe(true);
+            originalIntent,
+            originalCandidate,
+            configurations,
+            configuration,
+            ...value
+          } = await setupInstall(f, state);
           const { recovery, input, next } = await takeover(f, {
             ...value,
             owner,
@@ -684,6 +701,456 @@ describe.skipIf(databaseUrl === undefined)(
         expect(await facts(f)).toBe(before);
       });
     });
+
+    it("rejects historical installs without complete Runtime identity and rolls back every recovery write", async () => {
+      await withDatabase(async (f) => {
+        const value = await setupInstall(f, "unknown");
+        // Historical pre-0019 rows legitimately have no recorded connection identity.
+        // This storage compatibility fixture never reconstructs it from current config.
+        await f.observer.query(
+          "UPDATE learning_maintenance_intents SET runtime_revision=NULL,connection_id=NULL WHERE request_id=$1",
+          [value.requestId],
+        );
+        const { recovery, input, next } = await takeover(f, value);
+        const before = await facts(f);
+        await expect(recovery.recoverLearning(input)).rejects.toBeInstanceOf(
+          Error,
+        );
+        expect(await facts(f)).toBe(before);
+        await expect(
+          new PostgresAgentStartup(f.kernelB).assertAvailable(
+            next.authority.fence,
+          ),
+        ).rejects.toBeInstanceOf(AgentOwnershipLostError);
+      });
+    });
+
+    it("records already replaced install protection as retired without resurrecting a barrier", async () => {
+      await withDatabase(async (f) => {
+        const value = await setupInstall(f, "unknown");
+        const replacement = structuredClone(value.configuration);
+        replacement.revision++;
+        replacement.agents[0]!.runtime = runtimeConfiguration(3);
+        expect(
+          await value.configurations.save(
+            replacement,
+            value.configuration.revision,
+          ),
+        ).toBe(true);
+        const { recovery, input, next } = await takeover(f, value);
+        expect(await recovery.recoverLearning(input)).toBe("recovered");
+        const protection = (
+          await f.observer.query<Record<string, unknown>>(
+            "SELECT * FROM learning_runtime_protections WHERE request_id=$1",
+            [value.requestId],
+          )
+        ).rows[0]!;
+        expect(protection).toMatchObject({
+          runtime_revision: value.finalRuntime.revision,
+          execution_id: value.finalRuntime.executionId,
+          retired_at: input.recoveredAt,
+        });
+        expect(
+          (
+            await f.observer.query(
+              "SELECT * FROM runtime_barrier_cycles WHERE retired_at IS NULL",
+            )
+          ).rows,
+        ).toEqual([]);
+        await expect(
+          new PostgresAgentStartup(f.kernelB).assertAvailable(
+            next.authority.fence,
+          ),
+        ).resolves.toBeUndefined();
+        expect(
+          (
+            await f.observer.query(
+              "SELECT * FROM learning_maintenance_intents WHERE request_id=$1",
+              [value.requestId],
+            )
+          ).rows,
+        ).toEqual(value.originalIntent);
+      });
+    });
+
+    it("retains the first proof and recovering owner across a third owner and rejects altered retries", async () => {
+      await withDatabase(async (f) => {
+        const value = await setupInstall(f, "unknown");
+        const { recovery, input, next } = await takeover(f, value);
+        expect(await recovery.recoverLearning(input)).toBe("recovered");
+        const before = await facts(f);
+        await expect(
+          recovery.recoverLearning({
+            ...input,
+            inspection: {
+              ...input.inspection,
+              stop_receipt: {
+                ...input.inspection.stop_receipt,
+                reason: "container_removed",
+              },
+            },
+          }),
+        ).rejects.toBeInstanceOf(Error);
+        expect(await facts(f)).toBe(before);
+        expect(await f.leasesB.release(next.authority.fence)).toBe(true);
+        const third = await f.owner(next.authority.fence);
+        expect(
+          await new PostgresOwnerRecovery(
+            f.kernelA,
+            third.authority,
+          ).recoverLearning({ ...input, recoveredAt: new Date() }),
+        ).toBe("terminal");
+        expect(await facts(f)).toBe(before);
+        await expect(recovery.recoverLearning(input)).rejects.toBeInstanceOf(
+          AgentOwnershipLostError,
+        );
+        expect(await facts(f)).toBe(before);
+      });
+    });
+
+    it("captures the original claim and proof while its task lock is held", async () => {
+      await withDatabase(async (f) => {
+        const value = await setup(f);
+        const { recovery, input } = await takeover(f, value);
+        const expected = structuredClone(input);
+        const held = await f.holdSession(value.source.session.sessionId);
+        await held.query(
+          "SELECT id FROM learning_tasks WHERE id=$1 FOR UPDATE",
+          [value.taskId],
+        );
+        const operation = f.observe(recovery.recoverLearning(input));
+        await f.waitForBlockedWriter(f.nameB);
+        input.taskId = randomUUID();
+        input.claimId = randomUUID();
+        input.generation++;
+        input.recoveredAt.setTime(0);
+        input.inspection = {
+          ...input.inspection,
+          registration_id: randomUUID(),
+          stop_receipt: {
+            ...input.inspection.stop_receipt,
+            receipt_id: randomUUID(),
+          },
+        };
+        await f.release(held);
+        expect(await operation).toBe("recovered");
+        expect(
+          (await f.observer.query("SELECT inspection FROM owner_stop_receipts"))
+            .rows,
+        ).toEqual([{ inspection: expected.inspection }]);
+        expect(
+          (
+            await f.observer.query(
+              "SELECT task_id,claim_id,generation,accepted_at FROM learning_owner_recoveries",
+            )
+          ).rows,
+        ).toEqual([
+          {
+            task_id: expected.taskId,
+            claim_id: expected.claimId,
+            generation: expected.generation,
+            accepted_at: expected.recoveredAt,
+          },
+        ]);
+      });
+    });
+
+    it("reconciles a lost commit acknowledgement without repeating recovery or altering charges", async () => {
+      await withDatabase(async (f) => {
+        class LostCommit extends PostgresKernel {
+          private lost = false;
+          public override async agentTransaction<T>(
+            fence: AgentOwnershipFence,
+            operation: (client: PoolClient) => Promise<T>,
+            options: { timeoutMs?: number; organizationBarrier?: true } = {},
+          ): Promise<T> {
+            const result = await super.agentTransaction(
+              fence,
+              operation,
+              options,
+            );
+            if (!this.lost) {
+              this.lost = true;
+              throw new Error("injected committed acknowledgement loss");
+            }
+            return result;
+          }
+        }
+        const value = await setup(f);
+        const { next, input } = await takeover(f, value);
+        const recovery = new PostgresOwnerRecovery(
+          new LostCommit(f.b),
+          next.authority,
+        );
+        await expect(recovery.recoverLearning(input)).rejects.toThrow(
+          "injected committed acknowledgement loss",
+        );
+        expect(await task(f, value.taskId)).toMatchObject({
+          state: "cancelled",
+          cancel_reason: "worker_lost",
+        });
+        const before = await facts(f);
+        expect(await recovery.recoverLearning(input)).toBe("terminal");
+        expect(await facts(f)).toBe(before);
+      });
+    });
+
+    it("rejects mutable recovery audit and immutable install binding changes", async () => {
+      await withDatabase(async (f) => {
+        const value = await setupInstall(f, "pending");
+        const { recovery, input } = await takeover(f, value);
+        expect(await recovery.recoverLearning(input)).toBe("recovered");
+        const before = await facts(f);
+        for (const sql of [
+          "UPDATE learning_owner_recoveries SET generation=generation+1",
+          "DELETE FROM learning_owner_recoveries",
+          "UPDATE learning_runtime_protections SET runtime_revision='rtv_33333333333333333333333333333333'",
+          "UPDATE learning_runtime_protections SET body_sha256='sha256:'||repeat('b',64)",
+          "DELETE FROM learning_runtime_protections",
+        ]) {
+          await expect(f.observer.query(sql)).rejects.toHaveProperty(
+            "code",
+            "23514",
+          );
+          expect(await facts(f)).toBe(before);
+        }
+      });
+    });
+
+    it.each([" ", "bad/id", "bad\\id"])(
+      "rejects historical invalid install execution identity %j atomically",
+      async (executionId) => {
+        await withDatabase(async (f) => {
+          const value = await setupInstall(f, "unknown");
+          await f.observer.query(
+            "UPDATE learning_maintenance_intents SET execution_id=$2 WHERE request_id=$1",
+            [value.requestId, executionId],
+          );
+          const { recovery, input } = await takeover(f, value);
+          const before = await facts(f);
+          await expect(recovery.recoverLearning(input)).rejects.toBeInstanceOf(
+            Error,
+          );
+          expect(await facts(f)).toBe(before);
+        });
+      },
+    );
+
+    it("rejects retiring install protection while its original Runtime is still current", async () => {
+      await withDatabase(async (f) => {
+        const value = await setupInstall(f, "pending");
+        const { recovery, input } = await takeover(f, value);
+        expect(await recovery.recoverLearning(input)).toBe("recovered");
+        const before = await facts(f);
+        await expect(
+          f.observer.query(
+            "UPDATE learning_runtime_protections SET retired_at=now() WHERE request_id=$1",
+            [value.requestId],
+          ),
+        ).rejects.toHaveProperty("code", "23514");
+        expect(await facts(f)).toBe(before);
+      });
+    });
+
+    it("rejects inserting already retired protection without a saved replacement", async () => {
+      await withDatabase(async (f) => {
+        const value = await setupInstall(f, "pending");
+        // Fault injection modifies a valid INSERT before the real validation trigger.
+        await f.observer
+          .query(`CREATE FUNCTION inject_retired_protection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.retired_at=NEW.accepted_at; RETURN NEW; END; $$;
+          CREATE TRIGGER a_inject_retired_protection BEFORE INSERT ON learning_runtime_protections FOR EACH ROW EXECUTE FUNCTION inject_retired_protection()`);
+        const { recovery, input } = await takeover(f, value);
+        const before = await facts(f);
+        await expect(recovery.recoverLearning(input)).rejects.toHaveProperty(
+          "code",
+          "23514",
+        );
+        expect(await facts(f)).toBe(before);
+      });
+    });
+
+    it("does not let closed, absent or malformed replacement projections retire protection", async () => {
+      await withDatabase(async (f) => {
+        const value = await setupInstall(f, "unknown");
+        const { recovery, input } = await takeover(f, value);
+        expect(await recovery.recoverLearning(input)).toBe("recovered");
+        const original = (
+          await f.observer.query<{ configuration: Record<string, unknown> }>(
+            "SELECT configuration FROM execution_configurations WHERE organization_id=$1",
+            [value.claim.organizationId],
+          )
+        ).rows[0]!.configuration;
+        const originalAgent = (
+          original.agents as Record<string, unknown>[]
+        )[0]!;
+        const replacementRuntime = {
+          ...(originalAgent.runtime as Record<string, unknown>),
+          runtime_revision: `rtv_${"3".repeat(32)}`,
+        };
+        for (const agents of [
+          [],
+          [
+            {
+              ...originalAgent,
+              accepting_runs: false,
+              runtime: replacementRuntime,
+            },
+          ],
+          [
+            {
+              ...originalAgent,
+              accepting_runs: "true",
+              runtime: replacementRuntime,
+            },
+          ],
+          [
+            {
+              ...originalAgent,
+              runtime: { ...replacementRuntime, runtime_revision: "invalid" },
+            },
+          ],
+          [
+            {
+              ...originalAgent,
+              runtime: { ...replacementRuntime, connection_id: null },
+            },
+          ],
+          [
+            {
+              ...originalAgent,
+              runtime: { ...replacementRuntime, connection_id: "invalid" },
+            },
+          ],
+        ]) {
+          await f.observer.query(
+            "UPDATE execution_configurations SET configuration=$2::jsonb WHERE organization_id=$1",
+            [
+              value.claim.organizationId,
+              JSON.stringify({ ...original, agents }),
+            ],
+          );
+          const before = await facts(f);
+          await expect(
+            f.observer.query(
+              "UPDATE learning_runtime_protections SET retired_at=now() WHERE request_id=$1",
+              [value.requestId],
+            ),
+          ).rejects.toHaveProperty("code", "23514");
+          expect(await facts(f)).toBe(before);
+        }
+      });
+    });
+
+    it("rolls back proof, audit, install protection, barrier and cost on late cancellation failure", async () => {
+      await withDatabase(async (f) => {
+        const value = await setupInstall(f, "unknown");
+        await value.repositories.budget.reserve(
+          value.claim,
+          value.policy,
+          randomUUID(),
+          { inputTokens: 15, outputTokens: 16, durationMs: 17 },
+        );
+        await f.observer
+          .query(`CREATE FUNCTION fail_learning_cancellation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+          IF NEW.state='cancelled' THEN
+            IF NOT EXISTS(SELECT 1 FROM learning_owner_recoveries WHERE task_id=NEW.id)
+              OR NOT EXISTS(SELECT 1 FROM learning_runtime_protections WHERE task_id=NEW.id)
+              OR NOT EXISTS(SELECT 1 FROM runtime_barrier_cycles WHERE retired_at IS NULL)
+              OR EXISTS(SELECT 1 FROM learning_model_calls WHERE task_id=NEW.id AND state='reserved')
+            THEN RAISE EXCEPTION 'failure injection occurred before required recovery writes'; END IF;
+            RAISE EXCEPTION 'injected late Learning cancellation failure';
+          END IF; RETURN NEW; END; $$;
+          CREATE TRIGGER inject_learning_cancellation BEFORE UPDATE ON learning_tasks FOR EACH ROW EXECUTE FUNCTION fail_learning_cancellation()`);
+        const { recovery, input } = await takeover(f, value);
+        const before = await facts(f);
+        await expect(recovery.recoverLearning(input)).rejects.toThrow(
+          "injected late Learning cancellation failure",
+        );
+        expect(await facts(f)).toBe(before);
+        await f.observer.query(
+          "DROP TRIGGER inject_learning_cancellation ON learning_tasks; DROP FUNCTION fail_learning_cancellation()",
+        );
+        expect(await recovery.recoverLearning(input)).toBe("recovered");
+      });
+    });
+
+    it.each(["running", "paused"] as const)(
+      "lists only predecessor %s claims under the current fence",
+      async (state) => {
+        await withDatabase(async (f) => {
+          const value = await setup(f, state);
+          expect(
+            await new PostgresOwnerRecovery(
+              f.kernelA,
+              value.owner.authority,
+            ).listLearningPredecessors(),
+          ).toEqual([]);
+          const { recovery, input, next } = await takeover(f, value);
+          expect(await recovery.listLearningPredecessors()).toEqual([
+            {
+              taskId: value.taskId,
+              claimId: value.claim.claimId,
+              generation: value.claim.generation,
+              registration: value.owner.authority.registration,
+            },
+          ]);
+          expect(await recovery.recoverLearning(input)).toBe("recovered");
+          expect(await recovery.listLearningPredecessors()).toEqual([]);
+          expect(await f.leasesB.release(next.authority.fence)).toBe(true);
+          await expect(
+            recovery.listLearningPredecessors(),
+          ).rejects.toBeInstanceOf(AgentOwnershipLostError);
+        });
+      },
+    );
+
+    it.each([false, true])(
+      "reuses a complete proof accepted for another Run scope (other organization=%s)",
+      async (otherOrganization) => {
+        await withDatabase(async (f) => {
+          const value = await setup(f);
+          const binding = {
+            ...scope("proof-witness"),
+            ...(otherOrganization
+              ? { organizationId: "another-organization" }
+              : {}),
+          };
+          const session = await f.session(binding);
+          const owner = await f.owner(
+            binding,
+            value.owner.authority.registration,
+          );
+          const intent = f.input(session);
+          await owner.runs.createRunIntent(intent);
+          const witness = await f.successor(owner);
+          const inspection = stopped(value.owner);
+          await new PostgresOwnerRecovery(
+            f.kernelB,
+            witness.authority,
+          ).recoverRun({
+            runId: intent.runId,
+            inspection,
+            recoveredAt: new Date(),
+          });
+          const before = (
+            await f.observer.query("SELECT * FROM owner_stop_receipts")
+          ).rows;
+          const { recovery } = await takeover(f, value);
+          expect(await recovery.listLearningPredecessors()).toEqual([
+            {
+              taskId: value.taskId,
+              claimId: value.claim.claimId,
+              generation: value.claim.generation,
+              registration: value.owner.authority.registration,
+              inspection,
+            },
+          ]);
+          expect(
+            (await f.observer.query("SELECT * FROM owner_stop_receipts")).rows,
+          ).toEqual(before);
+        });
+      },
+    );
 
     it.each([
       "claim",

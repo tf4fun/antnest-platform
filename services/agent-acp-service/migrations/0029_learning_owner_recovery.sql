@@ -61,7 +61,8 @@ CREATE TABLE learning_runtime_protections (
     generation integer NOT NULL CHECK (generation > 0),
     organization_id text NOT NULL,
     agent_id text NOT NULL,
-    execution_id text NOT NULL CHECK (length(execution_id) BETWEEN 1 AND 200),
+    execution_id text NOT NULL CHECK (execution_id ~ '^[!-~]{1,200}$'
+        AND position('/' in execution_id)=0 AND position(chr(92) in execution_id)=0),
     runtime_revision text NOT NULL CHECK (runtime_revision ~ '^rtv_[0-9a-f]{32}$'),
     mcp_endpoint text NOT NULL CHECK (length(mcp_endpoint) BETWEEN 1 AND 2048),
     connection_id text NOT NULL CHECK (connection_id ~ '^rci_[0-9a-f]{32}$'),
@@ -97,6 +98,23 @@ BEGIN
           AND i.body_sha256=NEW.body_sha256
     ) THEN
         RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='Learning Runtime protection must match the original intent';
+    END IF;
+    -- Only a successfully persisted replacement can retire protection. The
+    -- application validates the complete configuration and seals its authority;
+    -- these necessary binding checks also guard direct INSERT/UPDATE mistakes.
+    IF NEW.retired_at IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM execution_configurations c
+        CROSS JOIN LATERAL jsonb_array_elements(c.configuration->'agents') agent(value)
+        WHERE c.organization_id=NEW.organization_id
+          AND c.configuration->>'organization_id'=NEW.organization_id
+          AND c.authority_version=1 AND c.authority_nonce IS NOT NULL AND c.authority_ciphertext IS NOT NULL
+          AND agent.value->>'agent_id'=NEW.agent_id
+          AND agent.value->'accepting_runs'='true'::jsonb
+          AND agent.value->'runtime'->>'runtime_revision' ~ '^rtv_[0-9a-f]{32}$'
+          AND agent.value->'runtime'->>'runtime_revision'<>NEW.runtime_revision
+          AND agent.value->'runtime'->>'connection_id' ~ '^rci_[0-9a-f]{32}$'
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='Learning Runtime protection requires a saved replacement';
     END IF;
     RETURN NEW;
 END;

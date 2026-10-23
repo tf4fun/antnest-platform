@@ -34,6 +34,9 @@ describe("owned source read lifetime", () => {
     const listPredecessors = vi
       .spyOn(PostgresOwnerRecovery.prototype, "listPredecessors")
       .mockResolvedValue([]);
+    const listLearningPredecessors = vi
+      .spyOn(PostgresOwnerRecovery.prototype, "listLearningPredecessors")
+      .mockResolvedValue([]);
     vi.spyOn(PostgresAgentLeases.prototype, "tryAcquire").mockImplementation(
       (scope, ownerInstanceId) =>
         Promise.resolve({
@@ -87,6 +90,7 @@ describe("owned source read lifetime", () => {
     try {
       await components.directory.apply(configuration);
       expect(listPredecessors).toHaveBeenCalledOnce();
+      expect(listLearningPredecessors).toHaveBeenCalledOnce();
       const manager = components.owned!;
       const generation = capture.mock.results.at(-1)?.value as AgentGeneration<AcpApplicationPort>;
       const dispatch = generation.dispatch.bind(generation);
