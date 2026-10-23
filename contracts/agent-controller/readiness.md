@@ -4,13 +4,15 @@ Control contract revision 41 defines the shared wire representation for
 [#44](https://github.com/tf4fun/antnest-platform/issues/44) in the
 [Controller schema](control-api.schema.json) and
 [shared fixtures](readiness-fixtures.json). The formal Controller wire contract
-and strict readers are delivered. Controller production, ACP preparing admission,
-UI and Console consumption, and cross-service integration remain pending.
+and strict readers are delivered. The current service candidate implements
+Controller binding/ACK transactions and current Agent projection, plus ACP
+preparing admission and read/watch consumption. Agent UI preparing presentation,
+Admin Console readiness consumption, and cross-service integration remain pending.
 The ACP and Workspace state schemas now admit an authorized offline preparing
 reason; Console contract 57 defines its optional current readiness projection.
-These shared definitions do not enable new producer
-behavior, routes, or caller permissions. Consumers must accept the new wire
-representation before a later owning-service batch emits it. The
+These shared definitions do not grant new routes or caller permissions.
+Consumer compatibility remains a rollout prerequisite; the owning-service
+implementation is not evidence that all consumers or integration have passed. The
 [ACP execution API](../agent-acp/execution-api.md) retains its existing envelope.
 
 ## Binding and Applied Readiness
@@ -48,9 +50,24 @@ binding. The readiness fact and event must commit atomically. A later binding
 has its own threshold and readiness decision; an Agent's historical ready event
 is not authority for that later binding.
 
+If a lifecycle rollback retains a binding but closes execution until fresh
+Runtime health is observed, reopening it records a private
+`reopen_after_revision` in the same transaction as the new executable snapshot.
+Current readiness and the first ready event require an ACK covering both the
+original binding threshold and this reopening revision. Unrelated organization
+changes do not move that fence. Existing bound/ready history is preserved and
+an already acknowledged binding does not emit a duplicate ready event.
+Historical failed-operation diagnostics remain visible; they cannot override
+fresh eligible Runtime evidence. Current revocation, lifecycle, Runtime-loss
+and invariant fences still take precedence.
+
+Ordinary ACKs do not advance the desired organization publication revision or
+rewrite its snapshot. Bootstrapping a missing legacy binding proof is the
+explicit exception described below.
+
 ## Current Agent Readiness
 
-The pending Controller Agent projection uses
+The Controller Agent projection uses
 `readiness: preparing | ready | unavailable` independently from lifecycle
 operation completion and Runtime health:
 
@@ -68,7 +85,10 @@ occupancy: an active Run can make ACP busy without invalidating its binding.
 Storage or state-read failures remain errors and cannot fabricate a ready
 projection. The Controller `agent` schema places `readiness` at the top level
 as an optional field, with no default. Legacy Agents without the field remain
-valid and have unknown readiness. The field is not inferred from other state.
+valid and have unknown readiness. Consumers do not infer a missing field from
+other state. The repository's private current-binding, access, owner and applied
+evidence supplies this projection; that evidence is not serialized into the
+Agent response or added to the public five/six-field event payloads.
 
 ## Versioned Readiness Proofs
 
@@ -158,17 +178,27 @@ The ACP get/watch execution-state contract represents an authorized
 preparing Agent using the existing `availability: "offline"` with
 `unavailable_reason: "agent_preparing"`. It does not add a new availability enum.
 Existing busy/active-Session visibility, revocation sanitization, storage failure,
-and Runtime barrier rules remain intact. Formal schemas are defined; service and
-UI consumption of this reason must precede emission. This document does not
-implement those consumers.
+and Runtime barrier rules remain intact. ACP service consumption is implemented
+in the current candidate; Agent UI presentation/consumption remains pending.
+Formal schema support alone does not complete that consumer or integration.
 
 ## Compatibility and Delivery
 
 Historical events are immutable. Existing `agent_ready` rows were produced under
 the earlier health-based semantics and must not be rewritten or treated as proof
-of an ACP acknowledgement for the current binding. A migration must establish
-current readiness from a matching applied-configuration fact; healthy Runtime
-state or a legacy event alone is insufficient.
+of an ACP acknowledgement for the current binding. Migration 0031 preserves
+those rows and adds private per-binding proof storage; healthy Runtime state or
+a legacy event alone remains insufficient.
+
+The existing publisher's startup/periodic equal-revision resend provides legacy
+reconciliation without a new route. When ACK R arrives for committed revision R
+and an eligible legacy binding lacks a threshold, the same transaction records
+the ACK, advances publication to R+1, and appends v2 `runtime_bound` with
+`ready_after_revision: R+1`. The binding stays executable and current readiness
+stays preparing. That old ACK cannot prove the newly bootstrapped revision.
+A later publication and covering ACK can append v2 `agent_ready`. Ordinary ACKs
+then leave publication revision unchanged. Future ACK validation precedes
+bootstrap, and historical v1 events are not rewritten.
 
 The event contract continues to accept all 20 historical `schema_version: 1`
 event types and their existing object payloads without new required fields.
@@ -191,16 +221,19 @@ Delivery remains split into owning-service batches:
 2. Update strict Controller event and Agent readers in their owning services.
    Missing readiness remains unknown; accepting a new field or event does not
    enable preparing admission or certify readiness.
-3. Implement Controller binding facts, organization revision thresholds,
-   transactional ACK gating, idempotent ready events and management projection.
-4. Implement ACP preparing admission and get/watch state consumption, preserving
-   unknown-Agent privacy and existing authorization and execution barriers.
-5. Implement UI preparing presentation and state observation, and Console use of
-   the new meaningful ready fact. Accepted or uncertain Prompts are not replayed.
-6. Run explicit cross-service integration after the owning-service gates pass.
+3. Controller binding facts, organization thresholds, transactional ACK gating,
+   idempotent ready events and management projection are implemented in the
+   current service candidate; PostgreSQL verification remains in progress.
+4. ACP preparing admission and get/watch state consumption are implemented in
+   the candidate, preserving unknown-Agent privacy and existing authorization
+   and execution barriers; this does not complete the UI consumers.
+5. Pending: Agent UI preparing presentation/state observation and Admin Console
+   consumption of meaningful current readiness. Accepted or uncertain Prompts
+   are not replayed because a readiness state or event arrives.
+6. Pending: explicit cross-service integration after the owning-service gates.
 
-The formal wire contract does not complete the pending implementation or
-integration stages. Controller component evidence must cover interleavings of binding,
+The formal wire contract and candidate service code do not complete the pending
+consumer or integration stages. Controller component evidence must cover interleavings of binding,
 publication and acknowledgement, including stale, duplicate and cross-organization
 acknowledgements and concurrent revocation or lifecycle closure. ACP evidence
 must distinguish listed preparing Agents from denied or unlisted Agents.
@@ -211,4 +244,4 @@ Prompt successfully in each of 100 iterations. It must independently verify Run
 persistence, Runtime behavior, authorization, no replay, and actual resource
 cleanup. Span and Trace collection are auxiliary diagnostics and cannot replace
 or block those business checks. Complete merge gates run in remote CI; this
-pending contract is not evidence that #44 is complete.
+candidate is not evidence that #44 is complete.

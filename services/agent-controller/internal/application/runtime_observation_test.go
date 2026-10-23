@@ -221,8 +221,8 @@ func TestRuntimeReadinessReconcilesWithoutANewEvent(t *testing.T) {
 				t.Fatalf("readiness must reconcile even after an early/lost event: error=%v publishes=%d", err, len(store.published))
 			}
 			assertResourceID(t, "execution", store.published[0].Execution.ID)
-			assertResourceID(t, "event", store.published[0].ReadyEvent.EventID)
-			if store.published[0].Execution.RuntimeExecutionID != "process-1" || store.published[0].ReadyEvent.EventType != ports.EventAgentReady {
+			assertResourceID(t, "event", store.published[0].BoundEvent.EventID)
+			if store.published[0].Execution.RuntimeExecutionID != "process-1" || store.published[0].BoundEvent.SchemaVersion != 2 || store.published[0].BoundEvent.EventType != ports.EventRuntimeBound {
 				t.Fatalf("bad observed binding: %+v", store.published[0])
 			}
 		})

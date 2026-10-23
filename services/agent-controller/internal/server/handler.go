@@ -350,6 +350,7 @@ type agentConfigurationResponse struct {
 }
 
 type agentResponse struct {
+	Readiness                       string                                  `json:"readiness,omitempty"`
 	RuntimeRecovery                 *ports.RuntimeBarrierRecoveryProjection `json:"runtime_recovery,omitempty"`
 	ActivationState                 domain.ActivationState                  `json:"activation_state,omitempty"`
 	RuntimeState                    domain.RuntimeState                     `json:"runtime_state"`
@@ -1182,6 +1183,7 @@ func createAgentPayload(result application.CreateAgentResult) createAgentRespons
 
 func agentPayload(agent application.AgentView) agentResponse {
 	response := agentResponse{
+		Readiness:       agent.Readiness,
 		ActivationState: agent.ActivationState, RuntimeState: agent.RuntimeState,
 		RuntimeReason: agent.RuntimeReason, RuntimeDetail: agent.RuntimeDetail, RuntimeObservedAt: agent.RuntimeObservedAt,
 		AgentID: agent.AgentID, OrganizationID: agent.OrganizationID,

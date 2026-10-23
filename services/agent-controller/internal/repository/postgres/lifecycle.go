@@ -584,33 +584,21 @@ func loadAgentCreateState(
 func loadAgentRecord(
 	ctx context.Context, queryer catalogQueryer, agentID string,
 ) (ports.AgentRecord, error) {
-	return scanAgentRecord(queryer.QueryRow(ctx, `
-SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
-       access_revision, executable_spec_revision_id, executable_execution_revision_id,
-       last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
-       runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
-       failure_detail, aggregate_sequence, created_at, updated_at,
-       owner_authorization_sequence, identity_revocation_sequence,
-       activation_state, runtime_state, runtime_reason, runtime_detail, runtime_observed_at
+	return scanAgentRecord(queryer.QueryRow(ctx, "SELECT "+agentRecordColumns+`
 FROM agent_controller.agents WHERE id = $1`, agentID))
 }
 
 func loadAgentRecordForUpdate(
 	ctx context.Context, queryer catalogQueryer, agentID string,
 ) (ports.AgentRecord, error) {
-	return scanAgentRecord(queryer.QueryRow(ctx, `
-SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
-       access_revision, executable_spec_revision_id, executable_execution_revision_id,
-       last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
-       runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
-       failure_detail, aggregate_sequence, created_at, updated_at,
-       owner_authorization_sequence, identity_revocation_sequence,
-       activation_state, runtime_state, runtime_reason, runtime_detail, runtime_observed_at
+	return scanAgentRecord(queryer.QueryRow(ctx, "SELECT "+agentRecordColumns+`
 FROM agent_controller.agents WHERE id = $1 FOR UPDATE`, agentID))
 }
 
 func scanAgentRecord(scanner lifecycleRowScanner) (ports.AgentRecord, error) {
 	var record ports.AgentRecord
+	var access, proof []byte
+	evidence := &ports.AgentReadinessEvidence{}
 	err := scanner.Scan(
 		&record.AgentID, &record.OrganizationID, &record.OwnerUserID, &record.Name,
 		&record.DesiredState, &record.LifecycleState, &record.AccessRevision,
@@ -621,6 +609,7 @@ func scanAgentRecord(scanner lifecycleRowScanner) (ports.AgentRecord, error) {
 		&record.FailureDetail, &record.AggregateSequence, &record.CreatedAt, &record.UpdatedAt,
 		&record.OwnerAuthorizationSequence, &record.IdentityRevocationSequence,
 		&record.ActivationState, &record.RuntimeState, &record.RuntimeReason, &record.RuntimeDetail, &record.RuntimeObservedAt,
+		&access, &evidence.OwnerRevocationSequence, &evidence.CommittedRevision, &evidence.AppliedRevision, &proof,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ports.AgentRecord{}, ports.ErrNotFound
@@ -628,6 +617,10 @@ func scanAgentRecord(scanner lifecycleRowScanner) (ports.AgentRecord, error) {
 	if err != nil {
 		return ports.AgentRecord{}, fmt.Errorf("load Agent projection: %w", err)
 	}
+	if err := decodeAgentReadiness(evidence, access, proof); err != nil {
+		return ports.AgentRecord{}, err
+	}
+	record.Readiness = evidence
 	return record, nil
 }
 

@@ -12,7 +12,7 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
-// Events detect loss; current inspections publish readiness. A ready event can
+// Events detect loss; current inspections publish bindings. A Runtime ready event can
 // arrive before the lifecycle transaction, so every pass also reconciles intent.
 func (worker *RuntimeObservationWorker) reconcilePendingBindings(ctx, peerCtx context.Context) error {
 	var failures []error
@@ -84,10 +84,10 @@ func (worker *RuntimeObservationWorker) reconcilePendingBinding(ctx, peerCtx con
 	_, err = worker.store.PublishRuntimeBinding(ctx, ports.PublishRuntimeBinding{
 		ExpectedAggregateSequence: pending.Agent.AggregateSequence,
 		OperationRequestID:        pending.Operation.RequestID, Execution: execution,
-		ReadyEvent: ports.AgentEventRecord{
-			EventID: domain.DeriveResourceID("event", "event-ready", pending.Operation.RequestID), AgentID: pending.Agent.AgentID,
-			AggregateSequence: pending.Agent.AggregateSequence + 1, SchemaVersion: 1,
-			EventType: ports.EventAgentReady, OperationRequestID: pending.Operation.RequestID,
+		BoundEvent: ports.AgentEventRecord{
+			EventID: domain.DeriveResourceID("event", "event-bound", pending.Operation.RequestID), AgentID: pending.Agent.AgentID,
+			AggregateSequence: pending.Agent.AggregateSequence + 1, SchemaVersion: 2,
+			EventType: ports.EventRuntimeBound, OperationRequestID: pending.Operation.RequestID,
 			TraceID: currentTraceID(ctx), OccurredAt: now,
 			Data: map[string]any{"agent_spec_revision_id": pending.Spec.ID,
 				"execution_revision_id": execution.ID, "runtime_revision": inspection.RuntimeRevision},

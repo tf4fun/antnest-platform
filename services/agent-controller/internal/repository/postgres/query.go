@@ -173,14 +173,7 @@ func buildAgentQueryStatement(query ports.AgentQuery) (string, []any, error) {
 			"(created_at, id) > ($%d, $%d)", len(arguments)-1, len(arguments),
 		))
 	}
-	statement := `
-SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
-       access_revision, executable_spec_revision_id, executable_execution_revision_id,
-       last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
-       runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
-       failure_detail, aggregate_sequence, created_at, updated_at,
-       owner_authorization_sequence, identity_revocation_sequence,
-       activation_state, runtime_state, runtime_reason, runtime_detail, runtime_observed_at
+	statement := "SELECT " + agentRecordColumns + `
 FROM agent_controller.agents`
 	if len(conditions) != 0 {
 		statement += "\nWHERE " + strings.Join(conditions, "\n  AND ")

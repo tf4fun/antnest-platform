@@ -107,8 +107,8 @@ func TestRestartObservationFencesInFlightFirstBinding(t *testing.T) {
 			AgentSpecRevisionID: pending.Spec.ID, RuntimeRevision: base.Agent.RuntimeRevision,
 			RuntimeExecutionID: "old-process", RuntimeMCPEndpoint: "http://old:8091/mcp",
 			RuntimeMCPSourceDigest: strings.Repeat("a", 64), PublishedAt: now},
-		ReadyEvent: ports.AgentEventRecord{EventID: "stale-ready", AgentID: base.Agent.AgentID, AggregateSequence: base.Agent.AggregateSequence + 1,
-			SchemaVersion: 1, EventType: ports.EventAgentReady, OperationRequestID: pending.Operation.RequestID, Data: map[string]any{}, OccurredAt: now},
+		BoundEvent: ports.AgentEventRecord{EventID: "stale-ready", AgentID: base.Agent.AgentID, AggregateSequence: base.Agent.AggregateSequence + 1,
+			SchemaVersion: 2, EventType: ports.EventRuntimeBound, OperationRequestID: pending.Operation.RequestID, Data: map[string]any{}, OccurredAt: now},
 	}
 	// This is the exact interleaving of Inspect(E1), consume restart(E2), publish(E1).
 	if err := repo.ApplyRuntimeObservation(ctx, ports.RuntimeObservation{Sequence: 1, AgentID: base.Agent.AgentID,
@@ -176,9 +176,9 @@ func runtimeBindingInput(t *testing.T, ctx context.Context, repository *Reposito
 			RuntimeMCPSourceDigest: strings.Repeat("b", 64), ChangeSummary: map[string]any{"kind": operation.Kind},
 			PublishedAt: now,
 		},
-		ReadyEvent: ports.AgentEventRecord{
+		BoundEvent: ports.AgentEventRecord{
 			EventID: "ready-" + id, AgentID: agent.AgentID, AggregateSequence: agent.AggregateSequence + 1,
-			SchemaVersion: 1, EventType: ports.EventAgentReady, OperationRequestID: operation.RequestID,
+			SchemaVersion: 2, EventType: ports.EventRuntimeBound, OperationRequestID: operation.RequestID,
 			Data: map[string]any{"execution_revision_id": id}, OccurredAt: now,
 		},
 	}

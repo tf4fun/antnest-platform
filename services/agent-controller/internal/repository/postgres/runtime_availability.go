@@ -134,19 +134,30 @@ SET runtime_state = 'available', runtime_reason = '', runtime_detail = '', runti
     runtime_mcp_endpoint = $4, aggregate_sequence = $5, updated_at = $6,
     failure_stage = '', failure_code = '', failure_detail = ''
 WHERE id = $1`, agent.AgentID, input.Execution.ID, input.Execution.RuntimeExecutionID,
-		input.Execution.RuntimeMCPEndpoint, input.ReadyEvent.AggregateSequence, input.Execution.PublishedAt); err != nil {
+		input.Execution.RuntimeMCPEndpoint, input.BoundEvent.AggregateSequence, input.Execution.PublishedAt); err != nil {
 		return false, fmt.Errorf("publish observed Runtime binding: %w", err)
 	}
-	if err := repository.insertAgentEvent(ctx, tx, input.ReadyEvent); err != nil {
+	if err := repository.advanceExecutionRevision(ctx, tx, agent.OrganizationID); err != nil {
 		return false, err
 	}
-	if err := repository.advanceExecutionRevision(ctx, tx, agent.OrganizationID); err != nil {
+	var threshold int64
+	if err := tx.QueryRow(ctx, executionRevisionQuery, agent.OrganizationID).Scan(&threshold); err != nil {
+		return false, fmt.Errorf("read binding publication revision: %w", err)
+	}
+	agent.ExecutionRevisionID = input.Execution.ID
+	agent.RuntimeExecutionID = input.Execution.RuntimeExecutionID
+	if err := insertRuntimeReadiness(ctx, tx, agent, threshold, input.Execution.PublishedAt); err != nil {
+		return false, err
+	}
+	bound := input.BoundEvent
+	bound.Data = runtimeReadinessData(agent, threshold, 0)
+	if err := repository.insertAgentEvent(ctx, tx, bound); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit Runtime binding: %w", err)
 	}
-	repository.recordEventAppend(ctx, input.ReadyEvent.EventType)
+	repository.recordEventAppend(ctx, bound.EventType)
 	return true, nil
 }
 
@@ -160,5 +171,11 @@ func validObservedPublication(agent ports.AgentRecord, operation ports.Lifecycle
 	return execution.ID != "" && execution.Revision == next &&
 		execution.AgentSpecRevisionID == agent.AgentSpecRevisionID && execution.RuntimeRevision == agent.RuntimeRevision &&
 		execution.RuntimeExecutionID != "" && execution.RuntimeMCPEndpoint != "" && !execution.PublishedAt.IsZero() &&
-		validEnableEvent(input.ReadyEvent, operation, ports.EventAgentReady, agent.AggregateSequence+1)
+		validRuntimeBoundEvent(input.BoundEvent, operation, agent.AggregateSequence+1)
+}
+
+func validRuntimeBoundEvent(event ports.AgentEventRecord, operation ports.LifecycleOperationRecord, sequence int64) bool {
+	return event.EventID != "" && event.AgentID == operation.AgentID && event.AggregateSequence == sequence &&
+		event.SchemaVersion == 2 && event.EventType == ports.EventRuntimeBound &&
+		event.OperationRequestID == operation.RequestID && !event.OccurredAt.IsZero()
 }

@@ -112,7 +112,34 @@ func (repository *Repository) RecordExecutionApplied(ctx context.Context, acknow
 	if acknowledgement.OrganizationID == "" || acknowledgement.AppliedRevision < 1 || acknowledgement.AppliedRevision > ports.MaximumExecutionRevision {
 		return ports.ErrInvalidExecutionConfiguration
 	}
-	result, err := repository.pool.Exec(ctx, `UPDATE agent_controller.execution_configuration_sync
+	tx, err := repository.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin execution acknowledgement: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockIdentityAdmission(ctx, tx); err != nil {
+		return err
+	}
+	if err := lockExecutionOrganization(ctx, tx, acknowledgement.OrganizationID); err != nil {
+		return err
+	}
+	var revision int64
+	if err := tx.QueryRow(ctx, executionRevisionQuery, acknowledgement.OrganizationID).Scan(&revision); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ports.ErrConcurrentChange
+		}
+		return fmt.Errorf("read acknowledgement publication revision: %w", err)
+	}
+	// Validate before bootstrap advances this revision; otherwise a future ACK
+	// could acknowledge a publication that has never left this transaction.
+	if acknowledgement.AppliedRevision > revision {
+		return ports.ErrConcurrentChange
+	}
+	candidates, err := lockRuntimeReadinessCandidates(ctx, tx, acknowledgement.OrganizationID)
+	if err != nil {
+		return err
+	}
+	result, err := tx.Exec(ctx, `UPDATE agent_controller.execution_configuration_sync
 SET applied_revision=GREATEST(applied_revision, $2),
     applied_at=CASE WHEN $2 >= applied_revision THEN NOW() ELSE applied_at END
 WHERE organization_id=$1 AND revision >= $2`, acknowledgement.OrganizationID, acknowledgement.AppliedRevision)
@@ -121,6 +148,16 @@ WHERE organization_id=$1 AND revision >= $2`, acknowledgement.OrganizationID, ac
 	}
 	if result.RowsAffected() != 1 {
 		return ports.ErrConcurrentChange
+	}
+	events, err := repository.applyRuntimeReadiness(ctx, tx, acknowledgement, candidates)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit execution acknowledgement: %w", err)
+	}
+	for _, event := range events {
+		repository.recordEventAppend(ctx, event)
 	}
 	return nil
 }

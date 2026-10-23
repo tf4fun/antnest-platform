@@ -10,6 +10,8 @@ complete intended configuration, coordinates idempotent child operations, and
 completes resource creation separately from executable availability. Lifecycle
 operations commit configured Runtime ownership after platform creation; the
 independent observation worker publishes execution only after healthy inspection.
+That binding commits a v2 `runtime_bound` fact; only an ACP acknowledgement
+covering the still-eligible current binding can commit v2 `agent_ready`.
 See [Runtime availability](runtime-availability.md) for the two-stage contract.
 
 It depends on language-neutral HTTP contracts. It does not import another
@@ -50,7 +52,7 @@ retains execution facts. Observation never manufactures an execution result.
 Initial/expired-cursor reconciliation treats a `provisioned` Runtime with `absent`
 health as missing. Unknown/unhealthy status or a failed RPC is not proof of
 container deletion. Old Runtime revisions, disabled Agents and active lifecycle
-operations are not overwritten. Observation never rebuilds compute. It publishes first readiness only for a
+operations are not overwritten. Observation never rebuilds compute. It publishes the first binding only for a
 configured never-bound target; an invalidated execution still needs
 explicit lifecycle recovery.
 
@@ -170,6 +172,7 @@ Agent
   lifecycle_state   not_created | created | deleted
   activation_state  enabled | disabled (only when created)
   runtime_state     waiting | available | unhealthy | exited | absent | unknown
+  readiness?        preparing | ready | unavailable
   access_revision
   agent_spec_revision?
   executable_execution_revision?
@@ -187,6 +190,14 @@ the active LifecycleOperation, so there is one source of truth for process
 state. A failed replacement clears `executable_execution_revision` once the old
 Runtime is absent while retaining `last_successful_execution_revision` for
 audit.
+
+Current `readiness` is a derived Get/List projection, separate from Runtime
+health and lifecycle completion. It is `preparing` while an otherwise eligible
+Agent awaits its binding or the ACP ACK covering that binding, `ready` only
+with matching applied proof, and `unavailable` when current access, lifecycle
+work or Runtime condition blocks execution. Current blockers take precedence
+over historical ready facts. Legacy views without private readiness evidence
+omit the optional field; a missing field never means ready.
 
 `owner_user_id` is immutable ownership, not a copied user profile. Before first
 creation, Agent Controller resolves the opaque `(organization_id,
@@ -248,6 +259,13 @@ healthy Runtime. It binds one AgentSpecRevision to an opaque Runtime revision,
 MCP endpoint, and Runtime execution identity. Agent Controller never stores
 physical generation, container, Pod, volume, or workspace identifiers.
 
+The same transaction advances the organization's execution-configuration
+revision, stores that revision as `ready_after_revision`, and appends v2
+`runtime_bound`. The threshold is an organization revision, not the Agent-local
+execution counter. Private binding/access/owner proof stays in Controller
+storage; the event contains only the five public proof fields defined by the
+[readiness contract](../../../contracts/agent-controller/readiness.md).
+
 ### LifecycleOperation
 
 A lifecycle command checks organization ownership before source-state or busy
@@ -295,9 +313,37 @@ occupancy; Controller does not reserve or release Runs.
 An organization snapshot carries current model choices, current credentials,
 Agent defaults, access scope and execution permission. It is not a Run snapshot.
 The publisher performs HTTP outside transactions and records the applied revision.
+The ACK transaction rechecks the current binding and its authorization,
+lifecycle and Runtime eligibility. Once the ACK covers its threshold, the
+applied proof, Agent aggregate and unique v2 `agent_ready` event commit with
+the applied watermark. Ordinary ACKs do not advance
+the desired publication revision. Legacy proof bootstrap is the exception:
+an equal-revision resend can expose an old binding without proof, causing a
+new `runtime_bound` threshold at R+1; only an ACK covering that new publication
+can mark it ready. Historical v1 `agent_ready` events remain unchanged.
+
+A retained binding reopened after fresh Runtime health records a private
+`reopen_after_revision` in the same configuration transaction. Its current
+readiness waits for that new executable snapshot's ACK, without duplicating
+the binding's historical ready event or waiting for unrelated organization
+changes. The preparing/unavailable reason also participates in snapshot
+revision changes. Historical failed-operation diagnostics are not current
+execution fences.
+
+Complete executable bindings publish `accepting_runs: true` before their ACK;
+readiness must not create a closed-snapshot/ACK dependency cycle. An authorized,
+otherwise eligible unbound Agent retains its owner grant with
+`unavailable_reason: agent_preparing` and closed admission. Source failures,
+revocation and other execution barriers retain their existing behavior.
 During lifecycle changes it first confirms closed configuration, then requests
 Agent-level settlement. ACP alone determines whether execution has settled.
 See [Execution publication](execution-publication.md).
+
+This candidate implements the Controller producer/API and ACP preparing
+boundary. Agent UI preparing presentation, Admin Console readiness consumption
+and the real two-second delayed-publication test over 100 create/ready/Prompt
+iterations remain pending. Focused checks do not complete #44; PostgreSQL
+verification and the exact-candidate remote merge gates remain required.
 
 ### AgentEvent
 
@@ -323,6 +369,7 @@ not_created -> created -> deleted
 not_created -> deleted
 created: enabled <-> disabled
 created/enabled: waiting | available | unhealthy | exited | absent | unknown
+current readiness: preparing -> ready; current blockers -> unavailable
 ```
 
 Only created/enabled/available with a valid execution binding, desired enabled,
@@ -365,11 +412,16 @@ candidate Runtime.
    state `created`, activation `enabled`, Runtime condition `unknown`, and all executable-binding fields empty.
 9. Independently inspect pending Runtimes and confirm their current Egress peer
    binding without reopening a closed attachment. Healthy matching observations append
-   an immutable ExecutionRevision, set Runtime condition `available`, and append `agent_ready`.
+   an immutable ExecutionRevision, set Runtime condition `available`, advance
+   the organization revision, and atomically append v2 `runtime_bound` with its
+   `ready_after_revision`. Current readiness remains `preparing` pending ACP ACK.
    Publication checks current aggregate/configuration, owner authorization and
    absence of another lifecycle operation. Lost or early events cannot strand
-   readiness because the worker also reconciles pending intent.
-10. Initial creation failure retains `not_created`, records exact phase/class,
+   binding publication because the worker also reconciles pending intent.
+10. Publish that executable snapshot without waiting for readiness. Persist a
+    matching ACP ACK, recheck current eligibility, and atomically append unique
+    v2 `agent_ready` once the organization ACK covers the binding threshold.
+11. Initial creation failure retains `not_created`, records exact phase/class,
     and appends `agent_build_failed`. Later failures never erase established creation.
 
 The request thread commits intent and returns `202 Accepted`; it does not
@@ -546,6 +598,7 @@ The schema owns:
 - `agent_lifecycle_operations`;
 - `agent_skill_preparation_intents`;
 - `execution_configuration_sync`;
+- `agent_runtime_readiness` (private per-binding threshold and applied proof);
 - `runtime_observation_cursor`;
 - `identity_revocation_cursor`, `owner_revocations`;
 - `skill_learning_policies`, `skill_learning_policy_requests`;
@@ -579,8 +632,10 @@ fans wake-up hints out in process; SSE clients never reserve business-pool
 connections. The journal remains authoritative if notifications are delayed,
 duplicated, or missed during listener reconnection.
 
-Event payload `data` is retained audit detail rather than a cross-service patch
-format. The stable event contract is its envelope and enumerated type. Consumers
+Historical v1 event payload `data` remains retained audit detail rather than a
+cross-service patch format. The two v2 binding/readiness events additionally
+have strict five/six-field public proof schemas; private Runtime execution,
+access and owner evidence is not added to those wire payloads. Consumers
 react idempotently by `event_id` and reload the authoritative Agent projection
 when they require current state. This keeps producer-internal Saga details from
 becoming an accidental distributed data model.
