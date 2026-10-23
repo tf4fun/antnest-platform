@@ -13,6 +13,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/acpincarnation"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/instanceauth"
 	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
@@ -49,6 +50,7 @@ type Config struct {
 	SSEHeartbeat              time.Duration
 	RuntimeOTEL               map[string]string
 	MaintenanceVerifiers      deployment.MaintenanceVerifiers
+	ACPMembers                []acpincarnation.Member
 }
 
 func Load(environment serviceauth.LookupEnv) (Config, error) {
@@ -113,6 +115,10 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	acpMembers, err := loadACPMembers(lookup("ANTNEST_RUNTIME_ACP_MEMBERS_FILE"))
+	if err != nil {
+		return Config{}, err
+	}
 	config := Config{
 		ListenAddress:       valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_LISTEN", "127.0.0.1:8080"),
 		HealthListenAddress: valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_HEALTH_LISTEN", "127.0.0.1:8082"),
@@ -140,6 +146,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		SSEHeartbeat:             heartbeat,
 		RuntimeOTEL:              runtimeTelemetryEnvironment(lookup),
 		MaintenanceVerifiers:     maintenanceVerifiers,
+		ACPMembers:               acpMembers,
 	}
 	if capture := config.RuntimeOTEL["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"]; capture != "true" && capture != "false" {
 		return Config{}, fmt.Errorf("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT must be true or false")

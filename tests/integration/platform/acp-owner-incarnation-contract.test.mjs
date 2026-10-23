@@ -13,6 +13,17 @@ const schemaID =
   "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json";
 const schemaPath = "contracts/agent-acp/owner-incarnation.schema.json";
 const manifestPath = "contracts/agent-acp/owner-incarnation-contract.json";
+const controlSchemaPath =
+  "services/runtime-controller/api/control-api.schema.json";
+const controlContractPath =
+  "services/runtime-controller/api/control-contract.json";
+const controlAliases = {
+  acp_register_request: "register_request",
+  acp_registration: "registration",
+  acp_inspection: "inspection",
+  acp_registration_id: "registration_id",
+  acp_incarnation_error: "error",
+};
 const memberID = "acp-a";
 const incarnationID = "01234567-89ab-4cde-8fab-0123456789ab";
 const registrationID = "12345678-9abc-4def-9abc-123456789abc";
@@ -125,6 +136,35 @@ function validators() {
     definitions.map((name) => [
       name,
       ajv.compile({ $ref: `${schemaID}#/$defs/${name}` }),
+    ]),
+  );
+}
+
+function controlValidators() {
+  const schema = read(controlSchemaPath);
+  const ajv = new Ajv2020({
+    strict: false,
+    allErrors: true,
+    coerceTypes: false,
+    useDefaults: false,
+    removeAdditional: false,
+    validateFormats: false,
+  });
+  for (const path of [
+    schemaPath,
+    "contracts/runtime/tunnel-bootstrap.schema.json",
+    "contracts/runtime/instance-connection.schema.json",
+    "contracts/runtime/managed-mcp.schema.json",
+    "contracts/runtime/runtime-spec.schema.json",
+    "contracts/skill-registry/runtime-delivery.schema.json",
+    "services/runtime-controller/api/runtime-deployment.schema.json",
+  ])
+    ajv.addSchema(read(path));
+  ajv.addSchema(schema);
+  return Object.fromEntries(
+    Object.keys(controlAliases).map((alias) => [
+      alias,
+      ajv.compile({ $ref: `${schema.$id}#/$defs/${alias}` }),
     ]),
   );
 }
@@ -498,24 +538,202 @@ test("the planned manifest freezes three narrow operations and the error HTTP ma
       assert.equal(manifest.errors[code][field], value, `${code}.${field}`);
 });
 
-test("planned operations do not expand either current active caller catalog", () => {
+test("RC activates only the two ACP grants while the private ACP probe remains planned", () => {
+  const catalog = read("services/runtime-controller/api/callers.json");
+  for (const [method, path, body] of [
+    ["POST", "/internal/acp-incarnations/register", "json"],
+    ["GET", "/internal/acp-incarnations/{registration_id}", "none"],
+  ]) {
+    assert.deepEqual(catalog.routes[`${method} ${path}`], {
+      callers: ["agent-acp-service"],
+      authentication: "workload",
+      caller_context: { "agent-acp-service": "none" },
+      request_body: body,
+    });
+    assert.deepEqual(catalog.routes[`* ${path}`], {
+      callers: [],
+      authentication: "deny",
+      caller_context: {},
+      request_body: "none",
+    });
+  }
   const routes = [
     "POST /internal/acp-incarnations/register",
     "GET /internal/acp-incarnations/{registration_id}",
     "POST /internal/acp-owner/incarnation/probe",
   ];
-  for (const path of [
-    "services/runtime-controller/api/callers.json",
-    "contracts/agent-acp/callers.json",
+  const acp = read("contracts/agent-acp/callers.json");
+  for (const route of routes)
+    assert.equal(Object.hasOwn(acp.routes, route), false, `ACP: ${route}`);
+  assert.equal(Object.hasOwn(catalog.routes, routes[2]), false);
+  assert.equal(read(manifestPath).status, "planned");
+});
+
+test("RC revision 20 binds registration and inspection to the frozen shared wire", () => {
+  const contract = read(controlContractPath);
+  const manifest = read(manifestPath);
+  assert.equal(contract.revision, 20);
+  for (const [name, operationID, responseAlias] of [
+    ["register", "registerAcpIncarnation", "acp_registration"],
+    ["inspect", "inspectAcpIncarnation", "acp_inspection"],
   ]) {
-    const catalog = read(path);
-    for (const route of routes)
+    const wire = manifest.operations[name];
+    const matches = contract.routes.filter(
+      (route) => route.method === wire.method && route.path === wire.path,
+    );
+    assert.equal(matches.length, 1, `${name}: one exact active route`);
+    const [route] = matches;
+    assert.equal(route.operation_id, operationID);
+    assert.deepEqual(route.required_headers, ["Antnest-Service-Authorization"]);
+    assert.equal(route.cache_control, "no-store");
+    assert.equal(route.cache_control, wire.cache_control);
+    assert.equal(route.response_bytes_max, 8192);
+    assert.equal(route.response_bytes_max, wire.response_bytes_max);
+    assert.equal(route.deadline_ms, 10000);
+    assert.equal(route.deadline_ms, wire.deadline_ms);
+    assert.deepEqual(Object.keys(route.query_parameters ?? {}), []);
+    assert.deepEqual(route.responses, {
+      200: {
+        content_type: "application/json",
+        body: `control-api.schema.json#/$defs/${responseAlias}`,
+      },
+    });
+    assert.deepEqual([...route.errors].sort(), [...wire.errors].sort());
+    for (const code of wire.errors) {
       assert.equal(
-        Object.hasOwn(catalog.routes, route),
-        false,
-        `${path}: ${route}`,
+        contract.errors[code]?.status,
+        manifest.errors[code].http_status,
       );
+      assert.equal(
+        contract.errors[code]?.retryable,
+        manifest.errors[code].retryable,
+      );
+    }
+    if (name === "register") {
+      assert.equal(
+        route.request_body,
+        "control-api.schema.json#/$defs/acp_register_request",
+      );
+      assert.equal(route.request_bytes_max, 4096);
+      assert.equal(route.request_bytes_max, wire.request_bytes_max);
+      assert.deepEqual(Object.keys(route.path_parameters ?? {}), []);
+    } else {
+      assert.equal(Object.hasOwn(route, "request_body"), false);
+      assert.deepEqual(route.path_parameters, {
+        registration_id: "control-api.schema.json#/$defs/acp_registration_id",
+      });
+    }
   }
+});
+
+test("RC local aliases execute the shared closed DTO grammar without coercion or defaults", () => {
+  const schema = read(controlSchemaPath);
+  for (const [alias, definition] of Object.entries(controlAliases))
+    assert.deepEqual(schema.$defs[alias], {
+      $ref: `${schemaID}#/$defs/${definition}`,
+    });
+  const v = controlValidators();
+  for (const { name, definition, make, wrap } of objectCases) {
+    const alias = Object.keys(controlAliases).find(
+      (key) => controlAliases[key] === definition,
+    );
+    if (!alias) continue;
+    check(v, alias, wrap(make()), true, `${alias}: ${name}`);
+    for (const invalid of [null, false, 1, "object", []])
+      check(
+        v,
+        alias,
+        wrap(invalid),
+        false,
+        `${alias}: ${name} object required`,
+      );
+    for (const field of Object.keys(make())) {
+      const missing = make();
+      delete missing[field];
+      check(v, alias, wrap(missing), false, `${alias}: missing ${field}`);
+      const original = make()[field];
+      const invalidTypes =
+        typeof original === "boolean"
+          ? [null, "false", 0, {}, []]
+          : typeof original === "object"
+            ? [null, false, 1, "object", []]
+            : [null, false, 1, {}, []];
+      for (const invalid of invalidTypes)
+        check(
+          v,
+          alias,
+          wrap({ ...make(), [field]: invalid }),
+          false,
+          `${alias}: invalid ${field}`,
+        );
+      check(
+        v,
+        alias,
+        wrap({ ...make(), [field.toUpperCase()]: make()[field] }),
+        false,
+        `${alias}: case alias for ${field}`,
+      );
+    }
+    check(
+      v,
+      alias,
+      wrap({ ...make(), private_selector: "untrusted-container" }),
+      false,
+      `${alias}: extra private field`,
+    );
+  }
+  check(v, "acp_registration_id", registrationID, true, "registration UUIDv4");
+  for (const invalid of [
+    null,
+    false,
+    1,
+    {},
+    [],
+    "",
+    registrationID.toUpperCase(),
+    "12345678-9abc-1def-9abc-123456789abc",
+    `${registrationID}\n`,
+  ])
+    check(
+      v,
+      "acp_registration_id",
+      invalid,
+      false,
+      "invalid registration UUIDv4",
+    );
+  for (const invalid of [
+    { ...samples.unknown(), stop_receipt: stopped().stop_receipt },
+    { ...samples.running(), state: "stopped" },
+    {
+      ...stopped(),
+      stop_receipt: { ...stopped().stop_receipt, reason: "unknown" },
+    },
+  ])
+    check(
+      v,
+      "acp_inspection",
+      invalid,
+      false,
+      "inspection states stay distinct",
+    );
+  check(
+    v,
+    "acp_incarnation_error",
+    {
+      code: "acp_registry_unavailable",
+      message: "Registry unavailable",
+      retryable: true,
+    },
+    true,
+    "retryable registry failure",
+  );
+  check(
+    v,
+    "acp_incarnation_error",
+    { ...samples.error(), retryable: true },
+    false,
+    "error retryability remains bound to its code",
+  );
 });
 
 test("scalar identities and actual DTO fields reject trailing line terminators", () => {

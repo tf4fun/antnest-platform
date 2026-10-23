@@ -49,7 +49,8 @@
       "members": {
         "runtime-controller": 50,
         "agent-controller": 51,
-        "diagnostic-relay": 52
+        "diagnostic-relay": 52,
+        "agent-acp-service": 53
       }
     },
     "identity-clients": {
@@ -368,6 +369,10 @@
       },
       "skill-registry": {
         "receiver": "skill-registry",
+        "listener": "primary"
+      },
+      "runtime-controller": {
+        "receiver": "runtime-controller",
         "listener": "primary"
       }
     },

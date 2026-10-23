@@ -12,11 +12,12 @@ private to this service. Docker is the only implemented platform adapter; a
 Kubernetes adapter is planned and would be added in-process, not as a separate
 service.
 
-
 Workload authentication and configured Registry transport use the
 [shared Go module](../../modules/service-authentication/README.md), with the
-caller-context forwarding policy. RC retains its Controller-only route grants,
-Docker boundary and separate Runtime instance credential lifecycle.
+caller-context forwarding policy for existing dependencies. The private ACP
+incarnation probe sends workload identity only. Existing lifecycle routes remain
+Controller-only; the two [incarnation routes](api/control-api.md#acp-incarnation-registration-and-inspection)
+admit ACP. The Docker boundary and separate Runtime instance credential lifecycle remain unchanged.
 
 Startup rejects published PostgreSQL passwords under the [development secret policy](../../contracts/platform/development-secrets.md). The exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits a variable-only WARN; it never restores the retired Registry token.
 
@@ -197,7 +198,7 @@ thresholds. See [operations](docs/operations.md#observation-dependency-recovery)
 
 ## Build and test
 
-All control routes require verified Controller workload identity; RC never calls its own API. The [workload boundary](api/service-authentication.md) specifies exact token/mTLS, JSON, listening addresses, Registry transport and Docker socket limitations. The retired `ANTNEST_SKILL_REGISTRY_API_TOKEN` must be removed; any nonempty value fails startup. Deployment wiring and complete token-profile cross-service E2E passed the final integration batch, recorded in the [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
+Existing lifecycle, Runtime inspection, image, observation and Skill routes require verified Controller workload identity; incarnation registration and inspection require ACP. RC never calls its own API. The [workload boundary](api/service-authentication.md) specifies exact token/mTLS, JSON, listening addresses, Registry transport and Docker socket limitations. The retired `ANTNEST_SKILL_REGISTRY_API_TOKEN` must be removed; any nonempty value fails startup. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json) records the earlier token-profile integration. ACP owner consumers and two-replica integration remain pending.
 
 Service-local checks, from `services/runtime-controller`:
 

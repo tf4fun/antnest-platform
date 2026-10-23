@@ -3,6 +3,21 @@
   "$id": "https://antnest.local/runtime-controller/api/control-api.schema.json",
   "title": "Antnest Runtime Controller HTTP Messages",
   "$defs": {
+    "acp_register_request": {
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/register_request"
+    },
+    "acp_registration": {
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/registration"
+    },
+    "acp_inspection": {
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/inspection"
+    },
+    "acp_registration_id": {
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/registration_id"
+    },
+    "acp_incarnation_error": {
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/error"
+    },
     "tagged_image_reference": {
       "type": "string",
       "minLength": 1,

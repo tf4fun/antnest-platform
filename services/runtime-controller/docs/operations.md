@@ -12,8 +12,10 @@ The service requires:
 - network reachability to managed Runtime `/status` endpoints;
 - a prebuilt Antnest Runtime image.
 
-It does not depend on Runtime Egress, Agent ACP Service, or another Runtime
-Provider service. Agent Controller supplies lifecycle commands and complete
+Lifecycle execution does not depend on Runtime Egress, Agent ACP Service, or
+another Runtime Provider service. Optional ACP incarnation registration calls
+the configured private ACP probe; that dependency does not gate ordinary
+lifecycle readiness. Agent Controller supplies lifecycle commands and complete
 Runtime configuration for Initialize, Update, and Enable, including the Egress
 attachment already allocated for the Agent. It never supplies platform resource
 identity or physical generation.
@@ -29,6 +31,7 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_PLATFORM`                           | no       | `docker`; default and only current adapter                                                                     |
 | `ANTNEST_DOCKER_HOST`                                | no       | Unix Docker Engine URL; default `unix:///var/run/docker.sock`; TCP is rejected                                 |
 | `ANTNEST_RUNTIME_CONTROLLER_SCOPE`                   | no       | Stable ownership scope written to every managed Runtime and workspace; defaults to the management-network name |
+| `ANTNEST_RUNTIME_ACP_MEMBERS_FILE`                   | no       | Private regular JSON file loaded once at startup; unset means no configured ACP members                        |
 | `ANTNEST_RUNTIME_MANAGEMENT_NETWORK`                 | yes      | Existing outbound private Docker network shared with Runtime; control binds a separate purpose address         |
 | `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME`               | no       | Existing read-only system-Skill volume name; defaults to `antnest-system-skills`                               |
 | `ANTNEST_RUNTIME_STATUS_TIMEOUT`                     | no       | Go duration; one `/status` bound; default `5s`                                                                 |
@@ -36,14 +39,66 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_RPC_TIMEOUT`                        | no       | Go duration; finite internal RPC execution bound; default `3m` and must exceed mutation timeout                |
 | `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT`             | no       | Go duration; complete physical/logical inventory reconciliation bound; default `2m`                            |
 | `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no       | Go duration; observation retry cap including jitter; default `30s`, minimum `1s`                               |
-| `ANTNEST_OBSERVATION_RETENTION`                      | no       | Positive Go duration; asynchronous journal age target; default `168h`                                           |
-| `ANTNEST_OBSERVATION_MAX_ROWS`                       | no       | Positive int64; asynchronous journal row-count target; default `1,000,000`                                      |
-| `ANTNEST_OBSERVATION_PRUNE_INTERVAL`                 | no       | Positive Go duration; interval between cleanup cycles; default `1m`                                           |
+| `ANTNEST_OBSERVATION_RETENTION`                      | no       | Positive Go duration; asynchronous journal age target; default `168h`                                          |
+| `ANTNEST_OBSERVATION_MAX_ROWS`                       | no       | Positive int64; asynchronous journal row-count target; default `1,000,000`                                     |
+| `ANTNEST_OBSERVATION_PRUNE_INTERVAL`                 | no       | Positive Go duration; interval between cleanup cycles; default `1m`                                            |
 | `ANTNEST_RUNTIME_SSE_HEARTBEAT`                      | no       | Go duration; internal SSE heartbeat; default `15s`                                                             |
 
-Workload configuration is mandatory: follow the [exact authentication and listening profile](../api/service-authentication.md) and shared [token/mTLS contract](../../../contracts/platform/service-authentication.md). Only Controller workload identity may reach control routes, including all three Skill preparation routes; raw user/CCT headers do not authorize them. Registry downloads use receiver-specific sender files and no environment proxy or redirects. Remove the retired `ANTNEST_SKILL_REGISTRY_API_TOKEN`, which now fails startup when nonempty.
+Workload configuration is mandatory: follow the [exact authentication and listening profile](../api/service-authentication.md) and shared [token/mTLS contract](../../../contracts/platform/service-authentication.md). Existing lifecycle, Runtime inspection, image, observation/SSE and all three Skill preparation routes remain Controller-only. Only incarnation registration and inspection admit the ACP workload, without CCT; raw user/CCT headers authorize neither surface. Registry downloads use receiver-specific sender files and no environment proxy or redirects. Remove the retired `ANTNEST_SKILL_REGISTRY_API_TOKEN`, which now fails startup when nonempty.
 
 Readiness and `--healthcheck` use the separate loopback port. It exposes no control API, requires trusted TLS/mTLS when configured, and needs no application token. Remote `/status` access is not admitted. The final deployment batch removes the default host-published control port; attaching multiple networks alone does not isolate a listener.
+
+### ACP Incarnation Members
+
+`ANTNEST_RUNTIME_ACP_MEMBERS_FILE` is an optional operator-owned startup
+snapshot, not a reloadable discovery feed. The regular file is limited to
+64 KiB and 128 members. Its closed JSON shape requires `version: 1` and a
+non-null `members` array; an empty array is allowed. Unknown, duplicate or
+case-aliased fields, duplicate member IDs, invalid values and unreadable or
+oversized files fail startup.
+
+```json
+{
+  "version": 1,
+  "members": [
+    {
+      "member_id": "acp-a",
+      "container_selector": "antnest-acp-a",
+      "network": "antnest-owner",
+      "probe_origin": "http://acp-a:8085"
+    }
+  ]
+}
+```
+
+Every member requires those four fields. `member_id` follows the shared
+lowercase catalog-label grammar. The selector, network and origin are private
+operator configuration, never request fields or public inventory. The member
+network is explicit and is not derived from the Runtime management network.
+`probe_origin` is an HTTP(S) origin with a nonempty hostname or literal IP;
+an explicit port must be 1–65535, and omission selects the scheme's normal
+80/443 port. Userinfo, query and fragment are forbidden; the path is empty or
+`/`. The logical hostname is retained for HTTP/authentication identity and is
+not resolved through DNS: the probe dials only the literal address returned by
+Docker Inspect for that member's configured network. Proxy and redirect
+fallbacks are disabled.
+
+Configure RC's inbound receiver to authenticate the ACP workload, and configure
+the existing outbound sender credential for receiver `agent-acp-service` before
+using registration. In the current token profile this is the receiver-specific
+file under `ANTNEST_SERVICE_AUTH_TOKEN_DIR`; it is read for each probe. Keep
+credentials and the member catalog out of payload capture and public evidence.
+This uses the existing RC process, private PostgreSQL migration 14, Docker
+connection and authenticated probe client, with no additional service or image.
+
+The two RC routes are documented in the [control API](../api/control-api.md).
+ACP's private probe implementation and registration consumer, lease coordinator,
+fenced writers, scoped recovery, configuration/revocation ACKs, peers, deployment
+and two-replica acceptance remain pending. The ACP global worker lock remains;
+this producer alone does not make multiple ACP replicas usable or claim passed
+component or remote-CI admission.
+
+### Runtime Images And Telemetry
 
 The image allowlist is operator configuration, never a lifecycle request field. Future Resolve/Initialize/Update/Enable selections outside the exact repository or manifest get `422 image_not_allowed` before Docker inspection and operation acceptance. Accepted recovery keeps its frozen immutable image ID. RC never pulls. Raw Docker-socket access remains host-equivalent authority; the workload boundary explains why a generic method/path proxy is insufficient.
 
@@ -60,7 +115,7 @@ Finite RPC spans retain the matched method/route through the request-deadline
 wrapper. Inspect and Disable must remain distinguishable in Jaeger; matching
 only the service name or an `unmatched` route is not lifecycle trace evidence.
 
-`ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` is the shared boolean content switch. Enabling it records complete RPC parameters and results, including credentials. New Runtime processes inherit the same value; there is no per-runtime override or custom body budget. Ordinary HTTP and streams never capture content. See [observability](observability.md).
+`ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` is the shared boolean content switch. Enabling it records complete RPC parameters and results, including credentials. The two ACP incarnation routes and private Runtime connection resolution always suppress content capture, even when this switch is enabled. New Runtime processes inherit the same value; there is no per-runtime override or custom body budget. Ordinary HTTP and streams never capture content. See [observability](observability.md).
 
 The same supported keys prefixed with `ANTNEST_RUNTIME_` override values passed
 to managed Runtime containers. This is required when the Controller can reach a
@@ -81,14 +136,17 @@ that supports this API version.
 
 ## Ports And Networks
 
-Runtime Controller exposes one trusted internal listener for health and RPC.
-It does not bind a public host port outside an explicit development profile.
+Runtime Controller serves RPC on its private control listener and health on a
+separate loopback listener. The control listener admits the two ACP incarnation
+routes as well as the existing Controller-only routes. It does not bind a public
+host port outside an explicit development profile.
 
 It must reach:
 
 1. its private PostgreSQL database;
 2. the Docker socket or Kubernetes API selected by its platform adapter;
-3. managed Runtime `/status` endpoints.
+3. managed Runtime `/status` endpoints;
+4. configured ACP private owner-probe addresses when registering an incarnation.
 
 It does not need to reach Runtime MCP, Runtime Egress control, or Egress packet
 listeners.

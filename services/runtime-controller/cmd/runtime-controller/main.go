@@ -20,6 +20,8 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/devsecrets"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/acpincarnation"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/acpincarnationprobe"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/config"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
@@ -161,6 +163,18 @@ func run(ctx context.Context) (resultErr error) {
 	dockerClient, err := platformdocker.NewUnixClient(configuration.DockerSocketPath)
 	if err != nil {
 		return classified("platform", "docker_client_initialization_failed", err)
+	}
+	acpPlatform, err := platformdocker.NewAcpIncarnationPlatform(dockerClient)
+	if err != nil {
+		return classified("acp_incarnation", "acp_platform_initialization_failed", err)
+	}
+	acpProbe, err := acpincarnationprobe.New(os.LookupEnv)
+	if err != nil {
+		return classified("acp_incarnation", "acp_probe_initialization_failed", err)
+	}
+	acpIncarnations, err := acpincarnation.New(configuration.ControllerScope, configuration.ACPMembers, baseRepository, acpPlatform, acpProbe)
+	if err != nil {
+		return classified("acp_incarnation", "acp_service_initialization_failed", err)
 	}
 	skillVolumes, err := platformdocker.NewSkillVolumeWriter(dockerClient, configuration.SkillPreparerImage)
 	if err != nil {
@@ -352,8 +366,8 @@ func run(ctx context.Context) (resultErr error) {
 	if skillService != nil {
 		skillHandler = append(skillHandler, skillService)
 	}
-	handler, err := rpc.NewHandler(
-		service, hub, configuration.SSEHeartbeat, configuration.RPCRequestTimeout, rpc.Security{Authentication: configuration.Authentication.Config.Receiver}, skillHandler...,
+	handler, err := rpc.NewHandlerWithAcpIncarnations(
+		service, hub, configuration.SSEHeartbeat, configuration.RPCRequestTimeout, rpc.Security{Authentication: configuration.Authentication.Config.Receiver}, acpIncarnations, skillHandler...,
 	)
 	if err != nil {
 		return classified("rpc", "rpc_handler_initialization_failed", err)

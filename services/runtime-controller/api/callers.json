@@ -9,6 +9,18 @@
       "caller_context": {},
       "request_body": "none"
     },
+    "* /internal/acp-incarnations/register": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
+    "* /internal/acp-incarnations/{registration_id}": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
+    },
     "* /internal/runtime-images/resolve": {
       "callers": [],
       "authentication": "deny",
@@ -105,6 +117,14 @@
       "caller_context": {},
       "request_body": "none"
     },
+    "GET /internal/acp-incarnations/{registration_id}": {
+      "callers": ["agent-acp-service"],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-acp-service": "none"
+      },
+      "request_body": "none"
+    },
     "GET /internal/runtime-images/resolve": {
       "callers": ["agent-controller"],
       "authentication": "workload",
@@ -168,6 +188,14 @@
         "local-healthcheck": "none"
       },
       "request_body": "none"
+    },
+    "POST /internal/acp-incarnations/register": {
+      "callers": ["agent-acp-service"],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-acp-service": "none"
+      },
+      "request_body": "json"
     },
     "POST /internal/runtimes/{agent_id}/connection": {
       "callers": ["agent-controller"],

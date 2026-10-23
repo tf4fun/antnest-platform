@@ -67,7 +67,7 @@ never disconnect or remove another project's network to make room.
 | `edge`                 | Gateway, Console, UI, ACP workspace, Registry source client and optional diagnostics |
 | `controller-clients`   | Controller, Console, UI, ACP, RC bootstrap and optional diagnostics                  |
 | `controller-acp`       | Controller and ACP's separate control listener                                       |
-| `controller-runtime`   | Controller, RC and optional diagnostics                                              |
+| `controller-runtime`   | Controller, ACP (incarnation RPC), RC and optional diagnostics                       |
 | `identity-clients`     | Identity and its authenticated consumers, plus optional diagnostics                  |
 | `registry-clients`     | Registry, Console, Controller, RC and ACP                                            |
 | `temporal-clients`     | Temporal, Controller, namespace initialization and optional diagnostics              |
@@ -93,7 +93,7 @@ multihomed peer must not select its observation, database or outbound interface.
 ACP uses the already declared `agent-acp-workspace` and `agent-acp-control`
 aliases. `apply-execution-snapshot`, `settle-agent` and `get-runtime-barrier` use
 the control alias.
-The contract tests derive all 23 current caller/receiver pairs from the owning
+The contract tests derive all 24 current caller/receiver pairs from the owning
 catalogs, and verify both network membership and destination selection.
 Version 2 adds RC at suffix 24 so its authenticated secret resolver reaches
 Controller's primary listener at suffix 18. It does not expose Controller on

@@ -67,6 +67,9 @@ type Handler struct {
 	heartbeat        time.Duration
 	requestTimeout   time.Duration
 	mux              *http.ServeMux
+	incarnations     AcpIncarnationService
+	acpRegisterMux   *http.ServeMux
+	acpInspectMux    *http.ServeMux
 }
 
 type SkillPreparationService interface {
@@ -141,6 +144,14 @@ func NewHandler(
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if strings.HasPrefix(request.URL.Path, "/internal/acp-incarnations") {
+		response.Header().Set("Cache-Control", "no-store")
+		telemetry.SuppressRPCContent(request.Context())
+	}
+	if register, matched := acpIncarnationRoute(request); matched && h.incarnations != nil {
+		h.serveAcpIncarnation(response, request, register)
+		return
+	}
 	if strings.HasSuffix(request.URL.Path, "/connection") {
 		response.Header().Set("Cache-Control", "no-store")
 		telemetry.SuppressRPCContent(request.Context())

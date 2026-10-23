@@ -13,6 +13,65 @@ workspace, generation, and platform identity stay private. Agent Controller
 decides when each command is issued; network policy and Tool execution stay
 outside this service.
 
+## ACP owner incarnation producer
+
+The private `acpincarnation` package implements the decision rules in the
+[ACP owner handoff contract](../../../contracts/agent-acp/owner-handoff.md).
+Registration binds an authenticated process challenge to one configured member,
+Docker engine, full container ID and start instant. The nonce is stored only as
+a digest. Repeated registration preserves the original identity and receipt.
+An inspection may report stopped only after a positive platform observation and
+the first stop receipt have been persisted; an unavailable platform remains
+unknown. A previously persisted stop receipt survives later platform outages.
+
+The Docker observer waits for the response body and its close operation before
+using a result, including container absence. It retains the full nanosecond
+start instant and selects the probe address only from the configured network.
+Cancellation waits for the original operation to finish before returning.
+
+PostgreSQL migration 14 persists registrations by Controller scope and original
+member/incarnation tuple. It keeps the Docker start identity as canonical UTC
+text with full nanoseconds, and never replaces an existing binding. A row lock
+serializes the first stop receipt; both its initial response and retries use
+the database's stored receipt and timestamp. Transaction cleanup retains an
+owned connection until the original driver operation has returned. Component
+checks independently confirm server locks and activity have cleared, without
+treating a single cross-connection statistics snapshot as a join receipt.
+
+The authenticated probe client creates a private transport for each inspected
+address. It retains the configured logical Host and workload identity while
+dialing only that literal IP, with no proxy, redirect or DNS fallback. It sends
+only the four challenge fields, strictly decodes the bounded reply, and awaits
+the response body and close. Its 1900ms exchange budget leaves room for cleanup
+within the shared two-second limit and respects an earlier parent deadline.
+
+Production composition loads the optional startup snapshot named by
+`ANTNEST_RUNTIME_ACP_MEMBERS_FILE` and connects this service to the existing
+PostgreSQL repository, Docker observer and authenticated probe client. Revision
+20 exposes only `POST /internal/acp-incarnations/register` and
+`GET /internal/acp-incarnations/{registration_id}` to the verified
+`agent-acp-service` workload, without CCT. Existing lifecycle, Runtime inspection,
+image, observation and Skill routes remain Controller-only. The closed messages
+come from the [shared incarnation wire](../../../contracts/agent-acp/owner-incarnation.schema.json).
+Registration accepts at most 4 KiB, replies at most 8 KiB, and both operations
+have a ten-second total budget, shortened by an earlier request bound. Work
+reserves at most 100ms of that budget for response and cleanup. Both routes use
+`no-store` and suppress payload capture, including debug capture.
+
+The member catalog supplies each member's private container selector, network
+and logical probe origin; no request chooses them and the member network is not
+inferred from the Runtime management network. Registration uses its original
+member/incarnation/nonce tuple rather than an `Idempotency-Key`. The existing RC
+process, migration 14, Docker connection and probe client provide this producer;
+it adds no service or image.
+
+ACP's private probe implementation and registration consumer, lease coordination,
+fenced writers, scoped recovery, configuration/revocation ACKs, peer forwarding,
+deployment and integration with two replicas remain subsequent delivery batches.
+The existing ACP global worker lock remains enabled until those consumers and
+integration checks pass; this RC producer does not enable multiple active ACP
+replicas. Its wiring does not establish completed component or remote-CI admission.
+
 ## Core Model
 
 ```text
@@ -735,7 +794,20 @@ capture, and forwarding to Runtimes.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [caller catalog](../api/callers.json) require verified Controller workload identity on every control route. Missing/malformed/duplicate authority gets 401 and a known different workload gets 403 before decoding, journal writes or Docker effects. RC acts on Controller-owned accepted operations and strips unsigned user/CCT hints. It never authorizes itself on Skill preparation routes. The [RC profile](../api/service-authentication.md) also requires strict UTF-8 JSON, an explicit Controller-purpose listen IP, a separate loopback health port, and authenticated Registry downloads without proxies or redirects. RC now owns sealed generation credentials and verified receiver volumes (#30), with a Controller-only, uncaptured private resolve endpoint. Native Runtime admission, Controller relay, ACP consumer adoption and deployment topology remain the designated next batches. Follow the [rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
+and this service's [caller catalog](../api/callers.json) require verified
+Controller workload identity on the existing lifecycle, Runtime inspection,
+image, observation/SSE and Skill routes. Only the two incarnation registration
+and inspection routes admit the ACP workload, without CCT. Missing, malformed
+or duplicate authority gets 401 and a known disallowed workload gets 403 before
+decoding, journal writes or Docker effects. RC strips unsigned user/CCT hints
+and never authorizes itself on Skill preparation routes. The
+[RC profile](../api/service-authentication.md) also requires strict UTF-8 JSON,
+an explicit private listen IP, a separate loopback health port, and authenticated
+Registry downloads without proxies or redirects. RC owns sealed generation
+credentials and verified receiver volumes (#30), with a Controller-only,
+uncaptured private resolve endpoint. ACP owner-probe consumers, ownership and
+deployment topology remain separate batches. Follow the
+[rollout ledger](../../../contracts/platform/service-authentication-rollout.json)
 and run the shared route/media-type checks in the owning-service batch before
 the cross-service Docker security acceptance.
 
