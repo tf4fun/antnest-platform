@@ -187,6 +187,10 @@ describe.skipIf(databaseUrl === undefined)("Session modification time", () => {
 
       await app.publishConfiguration();
       await expect.poll(heldOutputRead, { timeout: 5_000 }).toBe(true);
+      let applicationClosed = false;
+      void appClosed.promise.then(() => {
+        applicationClosed = true;
+      });
       let cleanupCompleted = false;
       cleanup = closeCase();
       void cleanup.then(
@@ -197,9 +201,12 @@ describe.skipIf(databaseUrl === undefined)("Session modification time", () => {
           cleanupCompleted = true;
         },
       );
-      await appClosed.promise;
+      // The socket can close while the application still owns the locked read.
+      // Release the SQL lock before awaiting application cleanup below.
+      await client.close();
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(await heldOutputRead()).toBe(true);
+      expect(applicationClosed).toBe(false);
       expect(cleanupCompleted).toBe(false);
     } catch (error) {
       failures.push(error);
