@@ -210,6 +210,63 @@ including terminal persistence and creation of the stable Runtime barrier in
 one transaction. Runtime reconciliation remains separate from executor stop
 proof; no proof authorizes replay of an uncertain effect.
 
+### Durable Proof Consumption
+
+The authenticated inspection happens outside the database transaction. The
+consumer captures its inputs before waiting, then rechecks the current Agent
+fence and the original target on the same transaction connection. A stopped
+inspection must match all three original registration fields; the original
+epoch comes from the immutable Run or claim, not from the inspection timestamp.
+Running, unknown, malformed or mismatched inspections authorize no recovery.
+The current incarnation cannot present its own stop receipt as a predecessor.
+
+Persist the complete stopped response and its first acceptance without changing
+it on retry. One registration cannot acquire a different receipt or binding,
+and a receipt cannot be reused for another registration. Associate the receipt
+with the exact original Run or claim and record the recovering authority
+separately. Ordinary writers retain their original-owner checks. This dedicated
+recovery path is not a new authority mode available to ordinary repositories.
+
+Run recovery locks organization, current lease, Session, Run and child records
+in that order. Proof association, permission cancellation, interrupted Tool
+events, terminal persistence and any stable Runtime barrier commit atomically.
+An admitting Run is rejected without accepting its Prompt; a running Run uses
+the existing restart outcome rules. Historical owner, execution snapshot and
+unknown Runtime effects remain unchanged. Retrying a committed recovery does
+not append events, charge usage or recreate a retired barrier. A stale current
+fence or any failed child write rolls back the entire recovery transaction.
+
+### Predecessor Learning Reviews
+
+For a claimed running or paused review, valid stop proof permits a dedicated
+recovery transaction to set `cancelled` with `cancel_reason=worker_lost`.
+This closes the local review permanently; it does not resume the old claim or
+requeue the same source. Preserve the original claim, generation, owner tuple,
+policy, review attempts, evidence, candidate and maintenance history.
+
+Change only `reserved` model-call records to `unknown`. Keep settled usage,
+reservation amounts and their original accounting dates. Unknown costs continue
+to count against the existing daily budget; recovery cannot refund them, invent
+usage or replay the original inference. Lock the organization barrier, current
+lease, the same global review-admission lock, task and child records in that
+order. Only the committed
+cancellation releases the global running slot. New completed sources may then
+be reviewed under the existing quiet-period, cooldown and budget rules.
+
+Cancelling a review is not a maintenance receipt. Pending or unknown installs
+retain their exact request body, candidate and original Runtime binding. The
+same recovery transaction creates protection for that intent's own Runtime,
+which may differ from the source Run's Runtime. Other scope cleanup cannot
+retire a barrier while that protection remains. Only a valid replacement
+publication after Runtime isolation can admit new work on a new binding; Agent
+closure, a same-revision publication or a model-cost record cannot stand in for
+that isolation. Pure unknown model cost does not itself keep a stopped local
+executor or an unrelated Agent busy.
+
+These are consumer requirements. Run recovery, Learning recovery, startup
+availability, Runtime barrier consumers and real handoff integration are
+separate delivery evidence; one completed storage writer is not the workflow.
+
 ## Delivery And Admission
 
 1. Freeze this shared stop-proof contract and the exact producer wire contract.
