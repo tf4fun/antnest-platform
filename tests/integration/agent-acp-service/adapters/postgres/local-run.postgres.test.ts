@@ -5,10 +5,8 @@ import { PostgresKernel } from "../../../../../services/agent-acp-service/src/ad
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
-import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import { publicExecutionConfiguration } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import {
@@ -24,10 +22,19 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
     kernel,
     new SecretBox(randomBytes(32)),
   );
-  const runs = new PostgresRunRepository(kernel);
+  const runs = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).runs;
   const permissions = new PostgresToolPermissions(kernel);
-  const events = new PostgresRunEventRepository(kernel);
-  const executions = new PostgresExecutionRepository(kernel);
+  const events = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).events;
+  const executions = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).executions;
   beforeEach(async () => {
     await pool.query("DROP SCHEMA public CASCADE");
     await pool.query("CREATE SCHEMA public");
@@ -191,7 +198,10 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
           runtimeRevision: null,
         }),
       ).toBe(!runtimeCallStopped);
-      const restartedReader = new PostgresExecutionRepository(kernel);
+      const restartedReader = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).executions;
       expect(await restartedReader.hasUnstoppedRuntimeCalls(scope)).toBe(
         !runtimeCallStopped,
       );

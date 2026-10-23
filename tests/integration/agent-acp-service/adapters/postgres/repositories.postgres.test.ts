@@ -7,11 +7,8 @@ import { SecretBox } from "../../../../../services/agent-acp-service/src/adapter
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresBridgeObservationRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
-import { PostgresContextRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
-import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
 import type { RunExecutionSnapshot } from "../../../../../services/agent-acp-service/src/domain/types.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -23,11 +20,23 @@ describe.skipIf(databaseUrl === undefined)(
     const kernel = new PostgresKernel(pool);
     const secretBox = new SecretBox(randomBytes(32));
     const sessions = new PostgresSessionRepository(kernel, secretBox);
-    const runs = new PostgresRunRepository(kernel);
+    const runs = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).runs;
     const bridgeObservations = new PostgresBridgeObservationRepository(kernel);
-    const contexts = new PostgresContextRepository(kernel);
-    const executions = new PostgresExecutionRepository(kernel);
-    const events = new PostgresRunEventRepository(kernel);
+    const contexts = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).contexts;
+    const executions = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).executions;
+    const events = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).events;
 
     beforeAll(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
@@ -486,6 +495,15 @@ describe.skipIf(databaseUrl === undefined)(
           createdAt: new Date("2026-08-30T00:20:02Z"),
         }),
       ).rejects.toMatchObject({ code: "session_busy" });
+      await contexts.saveCheckpoint({
+        runId,
+        id: randomUUID(),
+        sessionId: sourceSessionId,
+        throughSequence: 1,
+        summary: "remember this",
+        tokenCount: 3,
+        createdAt: new Date("2026-08-30T00:20:02.500Z"),
+      });
       await executions.finish({
         runId,
         terminalClass: "completed",
@@ -495,14 +513,6 @@ describe.skipIf(databaseUrl === undefined)(
         finishedAt: new Date("2026-08-30T00:20:03Z"),
       });
 
-      await contexts.saveCheckpoint({
-        id: randomUUID(),
-        sessionId: sourceSessionId,
-        throughSequence: 1,
-        summary: "remember this",
-        tokenCount: 3,
-        createdAt: new Date("2026-08-30T00:20:04Z"),
-      });
       const forkSessionId = randomUUID();
       const forkMcpRevisionId = randomUUID();
       await sessions.fork({
@@ -763,6 +773,7 @@ describe.skipIf(databaseUrl === undefined)(
         ],
       });
       await contexts.saveCheckpoint({
+        runId,
         id: randomUUID(),
         sessionId,
         throughSequence: 1,

@@ -11,7 +11,7 @@ import {
 } from "vitest";
 
 import { OpenAICompatibleModel } from "../../../../services/agent-acp-service/src/adapters/model/openai-compatible.js";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
@@ -90,9 +90,10 @@ describe.skipIf(databaseUrl === undefined)(
               "hello world",
             ),
           );
-          const context = await new PostgresContextRepository(
+          const context = await createLegacyRunRepositories(
             new PostgresKernel(pool),
-          ).load(sessionId);
+            new AbortController().signal,
+          ).contexts.load(sessionId);
           const assistant = context.messages.filter(
             (message) => message.kind === "agent_message",
           );
@@ -229,9 +230,10 @@ describe.skipIf(databaseUrl === undefined)(
           expect(text(client.frames, "agent_message_chunk")).toBe(
             "I will read.done",
           );
-          const context = await new PostgresContextRepository(
+          const context = await createLegacyRunRepositories(
             new PostgresKernel(pool),
-          ).load(sessionId);
+            new AbortController().signal,
+          ).contexts.load(sessionId);
           expect(
             context.messages.filter(
               (message) => message.kind === "agent_message",

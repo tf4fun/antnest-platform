@@ -3,8 +3,7 @@ import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
-import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import type { ModelResult } from "../../../../services/agent-acp-service/src/ports/model.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
 import type { AcpWireClient } from "../support/acp-wire-client.js";
@@ -50,7 +49,10 @@ describe.skipIf(databaseUrl === undefined)(
   () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 4 });
     const kernel = new PostgresKernel(pool);
-    const contexts = new PostgresContextRepository(kernel);
+    const contexts = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).contexts;
     let app: Awaited<ReturnType<typeof startBoundaryApplication>>;
     beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
@@ -79,14 +81,18 @@ describe.skipIf(databaseUrl === undefined)(
         ).toBeUndefined();
         const throughSequence = (await app.sessions.readOutput(sessionId))
           .sequence;
-        await contexts.saveCheckpoint({
-          id: randomUUID(),
-          sessionId,
-          throughSequence,
-          summary: "safe-user safe-answer",
-          tokenCount: 4,
-          createdAt: new Date(),
-        });
+        // Seed historical compaction after the completed first turn; production
+        // checkpoint writers now require an actively running original Run.
+        await pool.query(
+          "INSERT INTO context_checkpoints(id,session_id,through_sequence,summary,token_count,created_at) VALUES($1,$2,$3,$4,4,$5)",
+          [
+            randomUUID(),
+            sessionId,
+            throughSequence,
+            "safe-user safe-answer",
+            new Date(),
+          ],
+        );
         app.model.complete
           .mockResolvedValueOnce(plan("refused-plan-marker"))
           .mockResolvedValueOnce({
@@ -310,9 +316,10 @@ describe.skipIf(databaseUrl === undefined)(
           },
         ]);
         expect(
-          await new PostgresExecutionRepository(
+          await createLegacyRunRepositories(
             kernel,
-          ).hasUnstoppedRuntimeCalls({
+            new AbortController().signal,
+          ).executions.hasUnstoppedRuntimeCalls({
             organizationId: "organization-1",
             agentId: "agent-1",
             runtimeRevision: null,

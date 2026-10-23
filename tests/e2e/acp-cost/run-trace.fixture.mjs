@@ -10,6 +10,14 @@ const source = (name) =>
     ),
     "utf8",
   );
+const normalize = (sql) => sql.replace(/\s+/gu, " ").trim();
+const actualQuery = (name, prefix) => {
+  const matches = [...source(name).matchAll(/`([^`]+)`|"([^"\n]+)"/gu)]
+    .map((match) => match[1] ?? match[2])
+    .filter((sql) => normalize(sql).startsWith(prefix));
+  assert.equal(matches.length, 1, `${name}: ${prefix}`);
+  return matches[0];
+};
 const events = source("run-event-repository");
 const sessions = source("session-repository");
 const quoted = [...events.matchAll(/"((?:SELECT|UPDATE) [^"\n]+)"/gu)].map(
@@ -23,7 +31,10 @@ const query = (prefix) => {
 const lock = [
   query("SELECT session_id FROM runs"),
   query("SELECT last_message_sequence"),
-  query("SELECT session_id, state FROM runs"),
+  actualQuery(
+    "run-event-repository",
+    "SELECT session_id, state, organization_id, agent_id, execution_owner_registration_id,",
+  ),
 ];
 const insert = events.match(
   /`(INSERT INTO session_messages\([\s\S]*?\$8\))`/u,
@@ -42,14 +53,6 @@ const outputRead = sessions.match(
 const configurationRead = source("session-configuration").match(
   /"(SELECT configuration,[^"]+)"/u,
 )[1];
-const normalize = (sql) => sql.replace(/\s+/gu, " ").trim();
-const actualQuery = (name, prefix) => {
-  const matches = [...source(name).matchAll(/`([^`]+)`|"([^"\n]+)"/gu)]
-    .map((match) => match[1] ?? match[2])
-    .filter((sql) => normalize(sql).startsWith(prefix));
-  assert.equal(matches.length, 1, `${name}: ${prefix}`);
-  return matches[0];
-};
 const mcpRevisionRead = actualQuery(
   "session-repository",
   "SELECT encrypted_sources, nonce",
@@ -93,11 +96,11 @@ const acceptanceQueries = [
   actualQuery("run-repository", "SELECT session_id FROM runs WHERE id"),
   actualQuery(
     "run-repository",
-    "SELECT state, last_message_sequence FROM acp_sessions",
+    "SELECT organization_id, agent_id, state, last_message_sequence",
   ),
   actualQuery(
     "run-repository",
-    "SELECT session_id, client_mcp_revision_id, state, cancel_requested_at",
+    "SELECT session_id, organization_id, agent_id, client_mcp_revision_id, state, cancel_requested_at",
   ),
   actualQuery(
     "run-repository",

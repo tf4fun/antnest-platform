@@ -18,6 +18,7 @@ const errorCodes = [
   "invalid_request",
   "acp_probe_intent_mismatch",
   "acp_registration_unavailable",
+  "acp_registry_unavailable",
   "deadline_exceeded",
 ] as const;
 

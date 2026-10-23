@@ -7,7 +7,7 @@ import {
   PostgresKernel,
   postgresPoolOptions,
 } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { AgentSettlement } from "../../../../../services/agent-acp-service/src/application/agent-settlement.js";
 import { RunSupervisor } from "../../../../../services/agent-acp-service/src/application/run-supervisor.js";
@@ -262,7 +262,10 @@ describe.skipIf(url === undefined)("cancellable PostgreSQL reads", () => {
       directory: local.directory,
       supervisor,
       learning: { closeForLifecycle: () => Promise.resolve(true) },
-      protection: new PostgresExecutionRepository(kernel),
+      protection: createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).executions,
       now: () => new Date(),
     });
     const blocker = await observer.connect();

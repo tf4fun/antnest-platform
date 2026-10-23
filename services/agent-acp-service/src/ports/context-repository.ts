@@ -42,6 +42,7 @@ export type ContextSource = {
 export type SaveCheckpointInput = ContextCheckpoint & {
   id: string;
   sessionId: string;
+  runId: string;
   tokenCount: number;
   createdAt: Date;
 };

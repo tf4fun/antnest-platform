@@ -1,11 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
-import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import type { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
@@ -41,9 +40,18 @@ describe.skipIf(databaseUrl === undefined)(
       kernel,
       new SecretBox(randomBytes(32)),
     );
-    const runs = new PostgresRunRepository(kernel);
-    const events = new PostgresRunEventRepository(kernel);
-    const executions = new PostgresExecutionRepository(kernel);
+    const runs = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).runs;
+    const events = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).events;
+    const executions = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).executions;
     const temporarySkills = new PostgresTemporarySkills(kernel);
 
     beforeEach(async () => {
@@ -192,7 +200,10 @@ describe.skipIf(databaseUrl === undefined)(
         const input = simpleInput(runId);
         const original = await writeSimple(events, kind, input);
         const before = await stored(sessionId);
-        const reopened = new PostgresRunEventRepository(kernel);
+        const reopened = createLegacyRunRepositories(
+          kernel,
+          new AbortController().signal,
+        ).events;
         await expect(writeSimple(reopened, kind, input)).resolves.toEqual(
           original,
         );
@@ -750,7 +761,10 @@ describe.skipIf(databaseUrl === undefined)(
         throw new Error("Expected usage receipt");
       expect(originalSecond.cost?.amount).toBeCloseTo(0.07, 12);
       const before = await stored(sessionId);
-      const reopened = new PostgresRunEventRepository(kernel);
+      const reopened = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).events;
 
       await expect(reopened.appendUsage(first)).resolves.toEqual(originalFirst);
       expect(await stored(sessionId)).toEqual(before);

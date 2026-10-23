@@ -39,7 +39,12 @@ describe("Plan context", () => {
       const execution = snapshot();
       execution.executionSpec.model.contextWindow = 2048;
       execution.executionSpec.model.maxOutputTokens = 128;
-      const context = await builder.build("session", execution, new AbortController().signal);
+      const context = await builder.build(
+        "session",
+        execution,
+        new AbortController().signal,
+        "run-1",
+      );
       expect(saveCheckpoint).toHaveBeenCalledOnce();
       expect(context.messages[1]).toMatchObject({ role: "assistant" });
       expect(JSON.stringify(context.messages[1])).toContain("plan at Run start");

@@ -17,9 +17,34 @@ import type {
   RunRepository,
 } from "../../ports/run-repository.js";
 import type { PostgresKernel } from "./kernel.js";
+import { RunWriteAuthority, type RunOwnerColumns } from "./run-write-authority.js";
+
+type LockedSession = {
+  organization_id: string;
+  agent_id: string;
+  state: string;
+  last_message_sequence: string;
+};
+type LockedRun = RunOwnerColumns & {
+  session_id: string;
+  client_mcp_revision_id: string;
+  state: string;
+  cancel_requested_at: Date | null;
+  pending_user_message_id: string | null;
+  prompt_is_array: boolean | null;
+};
 
 export class PostgresRunRepository implements RunRepository {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: RunWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: RunWriteAuthority,
+  ) {
+    if (!(authority instanceof RunWriteAuthority))
+      throw new TypeError("Run writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async getSession(sessionId: string): Promise<SessionRecord | null> {
     const result = await this.kernel.query<{
@@ -91,7 +116,7 @@ export class PostgresRunRepository implements RunRepository {
         ? null
         : await bridgeIntentDigestFromJson(bridgeIntent.expectedAppendVersion, promptJson);
     try {
-      return await this.kernel.transaction(async (client) => {
+      return await this.#authority.transaction(this.kernel, async (client) => {
         const session = await client.query<{
           organization_id: string;
           agent_id: string;
@@ -105,16 +130,21 @@ export class PostgresRunRepository implements RunRepository {
           [request.sessionId],
         );
         const sessionRow = requireRow(session.rows[0], "Session does not exist");
+        this.#authority.assertSession(sessionRow);
         if (sessionRow.state !== "active") {
           throw new DomainError("session_not_active", "Session is not active");
         }
         if (bridgeIntent !== undefined) {
-          const existing = await client.query<{ intent_digest: string }>(
-            `SELECT intent_digest FROM runs
+          const existing = await client.query<RunOwnerColumns & { intent_digest: string }>(
+            `SELECT intent_digest, organization_id, agent_id,
+                    execution_owner_registration_id, execution_owner_member_id,
+                    execution_owner_incarnation_id, execution_owner_epoch::text
+               FROM runs
               WHERE session_id = $1 AND bridge_intent_id = $2`,
             [request.sessionId, bridgeIntent.intentId],
           );
           if (existing.rows[0] !== undefined) {
+            this.#authority.assertRun(existing.rows[0]);
             if (existing.rows[0].intent_digest !== digest)
               throw new DomainError(
                 "idempotency_conflict",
@@ -156,9 +186,11 @@ export class PostgresRunRepository implements RunRepository {
              pending_user_message_id, input_prompt,
              created_at, updated_at, session_configuration,
              bridge_intent_id, intent_digest, expected_append_version, append_version,
-             organization_id, agent_id
+             organization_id, agent_id,
+             execution_owner_registration_id, execution_owner_member_id,
+             execution_owner_incarnation_id, execution_owner_epoch
            ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8, $9::jsonb,
-                     $10, $11, $12, $13, $14, $15)
+                     $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::bigint)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
                      pending_user_message_id, session_configuration`,
@@ -178,6 +210,7 @@ export class PostgresRunRepository implements RunRepository {
             nextAppendVersion,
             sessionRow.organization_id,
             sessionRow.agent_id,
+            ...this.#authority.origin(),
           ],
         );
         await client.query("UPDATE acp_sessions SET append_version = $2 WHERE id = $1", [
@@ -209,44 +242,25 @@ export class PostgresRunRepository implements RunRepository {
   }
 
   public async requestCancellation(runId: string, requestedAt: Date): Promise<void> {
-    await this.kernel.query(
-      `UPDATE runs
+    const capturedAt = new Date(requestedAt.getTime());
+    await this.#authority.transaction(this.kernel, async (client) => {
+      if ((await this.lockRun(client, runId)) === undefined) return;
+      await client.query(
+        `UPDATE runs
           SET cancel_requested_at = COALESCE(cancel_requested_at, $2), updated_at = $2
         WHERE id = $1 AND state IN ('admitting', 'running')`,
-      [runId, requestedAt],
-    );
+        [runId, capturedAt],
+      );
+    });
   }
 
-  public async acceptRun(input: AcceptRunInput): Promise<"accepted" | "cancelled"> {
-    return this.kernel.transaction(async (client) => {
-      const identity = await client.query<{ session_id: string }>(
-        "SELECT session_id FROM runs WHERE id = $1",
-        [input.runId],
+  public async acceptRun(request: AcceptRunInput): Promise<"accepted" | "cancelled"> {
+    const input = structuredClone(request);
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const { session: sessionRow, run: runRow } = requireRow(
+        await this.lockRun(client, input.runId),
+        "Run intent does not exist",
       );
-      const sessionId = requireRow(identity.rows[0], "Run intent does not exist").session_id;
-      const session = await client.query<{ state: string; last_message_sequence: string }>(
-        "SELECT state, last_message_sequence FROM acp_sessions WHERE id = $1 FOR UPDATE",
-        [sessionId],
-      );
-      const sessionRow = requireRow(session.rows[0], "Session does not exist");
-      const run = await client.query<{
-        session_id: string;
-        client_mcp_revision_id: string;
-        state: string;
-        cancel_requested_at: Date | null;
-        pending_user_message_id: string | null;
-        prompt_is_array: boolean | null;
-      }>(
-        `SELECT session_id, client_mcp_revision_id, state,
-                cancel_requested_at, pending_user_message_id,
-                jsonb_typeof(input_prompt) = 'array' AS prompt_is_array
-           FROM runs WHERE id = $1 FOR UPDATE`,
-        [input.runId],
-      );
-      const runRow = requireRow(run.rows[0], "Run intent does not exist");
-      if (runRow.session_id !== sessionId) {
-        throw new Error("Run intent changed Session identity");
-      }
       if (runRow.state !== "admitting") {
         throw new Error("Run intent is no longer admitting");
       }
@@ -320,8 +334,11 @@ export class PostgresRunRepository implements RunRepository {
     errorClass: string,
     rejectedAt: Date,
   ): Promise<"failed" | "cancelled"> {
-    const result = await this.kernel.query<{ state: "failed" | "cancelled" }>(
-      `UPDATE runs
+    const capturedAt = new Date(rejectedAt.getTime());
+    return this.#authority.transaction(this.kernel, async (client) => {
+      requireRow(await this.lockRun(client, runId), "Run intent is no longer admitting");
+      const result = await client.query<{ state: "failed" | "cancelled" }>(
+        `UPDATE runs
           SET state = CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
               pending_user_message_id = NULL,
               terminal_class = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'cancelled' END,
@@ -331,12 +348,51 @@ export class PostgresRunRepository implements RunRepository {
               updated_at = $3
         WHERE id = $1 AND state = 'admitting'
         RETURNING state`,
-      [runId, errorClass, rejectedAt],
+        [runId, errorClass, capturedAt],
+      );
+      if (result.rowCount !== 1) {
+        throw new Error("Run intent is no longer admitting");
+      }
+      return requireRow(result.rows[0], "Run rejection did not return state").state;
+    });
+  }
+
+  private async lockRun(
+    client: PoolClient,
+    runId: string,
+  ): Promise<{ session: LockedSession; run: LockedRun } | undefined> {
+    const identity = await client.query<{ session_id: string }>(
+      "SELECT session_id FROM runs WHERE id = $1",
+      [runId],
     );
-    if (result.rowCount !== 1) {
-      throw new Error("Run intent is no longer admitting");
-    }
-    return requireRow(result.rows[0], "Run rejection did not return state").state;
+    const sessionId = identity.rows[0]?.session_id;
+    if (sessionId === undefined) return undefined;
+    const session = await client.query<LockedSession>(
+      `SELECT organization_id, agent_id, state, last_message_sequence
+         FROM acp_sessions WHERE id = $1 FOR UPDATE`,
+      [sessionId],
+    );
+    const sessionRow = requireRow(session.rows[0], "Session does not exist");
+    this.#authority.assertSession(sessionRow);
+    const run = await client.query<LockedRun>(
+      `SELECT session_id, organization_id, agent_id, client_mcp_revision_id, state,
+              cancel_requested_at, pending_user_message_id,
+              jsonb_typeof(input_prompt) = 'array' AS prompt_is_array,
+              execution_owner_registration_id, execution_owner_member_id,
+              execution_owner_incarnation_id, execution_owner_epoch::text
+         FROM runs WHERE id = $1 FOR UPDATE`,
+      [runId],
+    );
+    const runRow = run.rows[0];
+    if (runRow === undefined) return undefined;
+    if (
+      runRow.session_id !== sessionId ||
+      runRow.organization_id !== sessionRow.organization_id ||
+      runRow.agent_id !== sessionRow.agent_id
+    )
+      throw new Error("Run intent changed Session identity");
+    this.#authority.assertRun(runRow);
+    return { session: sessionRow, run: runRow };
   }
 }
 

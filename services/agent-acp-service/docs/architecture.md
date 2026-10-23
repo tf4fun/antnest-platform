@@ -92,6 +92,24 @@ configured probe addresses are not log content. The
 registration boundary, and [operations](operations.md#optional-acp-incarnation-bootstrap)
 documents its configuration.
 
+`RuntimeControllerIncarnations.inspect` consumes the registered process's
+complete inspection response over the same authenticated fixed origin. It
+snapshots the expected registration/member/incarnation before sending one
+body-free GET, then validates the closed response shape. Running and stopped
+responses must match all three identities. An explicit unknown response only
+binds its registration identifier and diagnostic reason; transport errors,
+HTTP errors and malformed data never create unknown or stopped facts. A stopped
+result retains and freezes both its outer binding and nested receipt. UTC
+timestamps are calendar-validated diagnostics and never authorize recovery by
+age. The ten-second attempt includes the original response read, cancellation
+and cleanup joins, shared with the registration adapter.
+
+The inspection adapter is a prerequisite for scoped recovery. Production
+recovery does not consume these receipts yet; it must later persist accepted
+stop proof under the current Agent fence while retaining the Run's original
+execution identity. An ACP stop fact does not prove remote Runtime effects
+have stopped and never authorizes replay.
+
 Bootstrap is optional and does not attach this identity to production Agent
 lease ownership or fenced writers. The global worker lock, single-instance
 restriction and ownership-loss fail-stop channel remain. Production owner

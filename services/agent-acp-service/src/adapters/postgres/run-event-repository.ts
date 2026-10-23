@@ -16,6 +16,7 @@ import type {
   StartToolAttemptInput,
 } from "../../ports/run-event-repository.js";
 import type { PostgresKernel } from "./kernel.js";
+import { RunWriteAuthority, type RunOwnerColumns } from "./run-write-authority.js";
 import {
   decodeSessionEvent,
   encodeSessionEvent,
@@ -23,11 +24,20 @@ import {
 } from "./session-event-codec.js";
 
 export class PostgresRunEventRepository implements RunEventRepository {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: RunWriteAuthority;
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: RunWriteAuthority,
+  ) {
+    if (!(authority instanceof RunWriteAuthority))
+      throw new TypeError("Run event writers require explicit authority");
+    this.#authority = authority;
+  }
 
-  public appendPlan(input: Parameters<RunEventRepository["appendPlan"]>[0]): Promise<boolean> {
-    return this.kernel.transaction(async (client) => {
-      const locked = await lockSessionRun(client, input.runId);
+  public appendPlan(request: Parameters<RunEventRepository["appendPlan"]>[0]): Promise<boolean> {
+    const input = structuredClone(request);
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockSessionRun(client, input.runId, this.#authority);
       const receipts: Array<SessionEvent | undefined> = [];
       for (const [index, event] of input.events.entries()) {
         receipts.push(
@@ -64,7 +74,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
     });
   }
 
-  public async appendToolProgress(input: AppendToolProgressInput): Promise<SessionEvent> {
+  public async appendToolProgress(request: AppendToolProgressInput): Promise<SessionEvent> {
+    const input = structuredClone(request);
     const event: SessionEvent = {
       kind: "tool_call",
       initial: false,
@@ -72,8 +83,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
       status: "in_progress",
       content: input.content,
     };
-    return this.kernel.transaction(async (client) => {
-      const locked = await lockSessionRun(client, input.runId);
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockSessionRun(client, input.runId, this.#authority);
       const receipt = await storedEventReceipt(client, locked, {
         id: input.id,
         kind: "tool_call",
@@ -92,7 +103,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
     });
   }
 
-  public async appendAgentMessage(input: AppendAgentMessageInput): Promise<SessionEvent> {
+  public async appendAgentMessage(request: AppendAgentMessageInput): Promise<SessionEvent> {
+    const input = structuredClone(request);
     const event: SessionEvent = {
       kind: "agent_message",
       messageId: input.id,
@@ -110,7 +122,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
     );
   }
 
-  public async appendAgentThought(input: AppendAgentMessageInput): Promise<SessionEvent> {
+  public async appendAgentThought(request: AppendAgentMessageInput): Promise<SessionEvent> {
+    const input = structuredClone(request);
     const event: SessionEvent = {
       kind: "agent_thought",
       messageId: input.id,
@@ -121,10 +134,11 @@ export class PostgresRunEventRepository implements RunEventRepository {
   }
 
   public appendUsage(
-    input: Parameters<RunEventRepository["appendUsage"]>[0],
+    request: Parameters<RunEventRepository["appendUsage"]>[0],
   ): Promise<SessionEvent> {
-    return this.kernel.transaction(async (client) => {
-      const locked = await lockSessionRun(client, input.runId);
+    const input = structuredClone(request);
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockSessionRun(client, input.runId, this.#authority);
       const receipt = await storedUsage(client, locked, input);
       if (receipt !== undefined) return receipt;
       requireRunning(locked.state);
@@ -147,7 +161,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
     });
   }
 
-  public async startToolAttempt(input: StartToolAttemptInput): Promise<SessionEvent> {
+  public async startToolAttempt(request: StartToolAttemptInput): Promise<SessionEvent> {
+    const input = structuredClone(request);
     const event: SessionEvent = {
       kind: "tool_call",
       initial: true,
@@ -158,8 +173,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
       arguments: input.arguments,
       status: "in_progress",
     };
-    return this.kernel.transaction(async (client) => {
-      const locked = await lockSessionRun(client, input.runId);
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockSessionRun(client, input.runId, this.#authority);
       const receipt = await storedEventReceipt(client, locked, {
         id: input.id,
         kind: "tool_call",
@@ -192,7 +207,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
     });
   }
 
-  public async appendRejectedToolCall(input: AppendRejectedToolCallInput): Promise<SessionEvent> {
+  public async appendRejectedToolCall(request: AppendRejectedToolCallInput): Promise<SessionEvent> {
+    const input = structuredClone(request);
     const event: SessionEvent = {
       kind: "tool_call",
       initial: true,
@@ -206,7 +222,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
     return this.append(input.runId, input.id, "tool_call", event, input.createdAt);
   }
 
-  public async finishToolAttempt(input: FinishToolAttemptInput): Promise<SessionEvent> {
+  public async finishToolAttempt(request: FinishToolAttemptInput): Promise<SessionEvent> {
+    const input = structuredClone(request);
     const event: SessionEvent = {
       kind: "tool_call",
       initial: false,
@@ -216,8 +233,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
       ...(input.rawOutput === undefined ? {} : { rawOutput: input.rawOutput }),
       ...(input.file === undefined ? {} : { file: input.file }),
     };
-    return this.kernel.transaction(async (client) => {
-      const locked = await lockSessionRun(client, input.runId);
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockSessionRun(client, input.runId, this.#authority);
       const receipt = await storedEventReceipt(client, locked, {
         id: input.id,
         kind: "tool_call",
@@ -255,11 +272,12 @@ export class PostgresRunEventRepository implements RunEventRepository {
 
   public async interruptToolAttempts(
     runId: string,
-    interruptedAt: Date,
+    requestedAt: Date,
     reason: "service_restart" | "persistence_failure" = "service_restart",
   ): Promise<InterruptedToolEffects> {
-    return this.kernel.transaction(async (client) => {
-      const locked = await lockRunAndSession(client, runId);
+    const interruptedAt = new Date(requestedAt.getTime());
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockRunAndSession(client, runId, this.#authority);
       const attempts = await client.query<{
         id: string;
         tool_call_id: string;
@@ -368,8 +386,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
     createdAt: Date,
     visible = true,
   ): Promise<SessionEvent> {
-    return this.kernel.transaction(async (client) => {
-      const locked = await lockSessionRun(client, runId);
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockSessionRun(client, runId, this.#authority);
       const receipt = await storedEventReceipt(client, locked, {
         id,
         kind,
@@ -537,8 +555,12 @@ async function requireToolFinishReceipt(
     throw new Error("Tool finish receipt identity conflict");
 }
 
-async function lockRunAndSession(client: PoolClient, runId: string): Promise<LockedRun> {
-  const locked = await lockSessionRun(client, runId);
+async function lockRunAndSession(
+  client: PoolClient,
+  runId: string,
+  authority: RunWriteAuthority,
+): Promise<LockedRun> {
+  const locked = await lockSessionRun(client, runId, authority);
   requireRunning(locked.state);
   return locked;
 }
@@ -550,25 +572,38 @@ function requireRunning(state: string): void {
 async function lockSessionRun(
   client: PoolClient,
   runId: string,
+  authority: RunWriteAuthority,
 ): Promise<LockedRun & { state: string }> {
   const identity = await client.query<{ session_id: string }>(
     "SELECT session_id FROM runs WHERE id = $1",
     [runId],
   );
   const sessionId = requireRow(identity.rows[0], "Run does not exist").session_id;
-  const session = await client.query<{ last_message_sequence: string }>(
-    "SELECT last_message_sequence FROM acp_sessions WHERE id = $1 FOR UPDATE",
+  const session = await client.query<{
+    last_message_sequence: string;
+    organization_id: string;
+    agent_id: string;
+  }>(
+    "SELECT last_message_sequence, organization_id, agent_id FROM acp_sessions WHERE id = $1 FOR UPDATE",
     [sessionId],
   );
   const sessionRow = requireRow(session.rows[0], "Session does not exist");
-  const run = await client.query<{ session_id: string; state: string }>(
-    "SELECT session_id, state FROM runs WHERE id = $1 FOR UPDATE",
+  authority.assertSession(sessionRow);
+  const run = await client.query<RunOwnerColumns & { session_id: string; state: string }>(
+    `SELECT session_id, state, organization_id, agent_id, execution_owner_registration_id,
+      execution_owner_member_id, execution_owner_incarnation_id, execution_owner_epoch::text
+     FROM runs WHERE id = $1 FOR UPDATE`,
     [runId],
   );
   const runRow = requireRow(run.rows[0], "Run does not exist");
-  if (runRow.session_id !== sessionId) {
+  if (
+    runRow.session_id !== sessionId ||
+    runRow.organization_id !== sessionRow.organization_id ||
+    runRow.agent_id !== sessionRow.agent_id
+  ) {
     throw new Error("Run changed Session identity");
   }
+  authority.assertRun(runRow);
   return {
     runId,
     sessionId,

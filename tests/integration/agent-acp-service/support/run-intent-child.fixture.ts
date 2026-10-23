@@ -1,7 +1,8 @@
 import { createRequire } from "node:module";
 import type * as pg from "pg";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import type { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import type {
   CreateRunIntentInput,
   RunIntent,
@@ -215,7 +216,10 @@ async function start(
     query_timeout: BUDGET_MS,
   });
   pool.on("error", () => fail("Run intent fixture Pool failed"));
-  repository = new PostgresRunRepository(new PostgresKernel(pool));
+  repository = createLegacyRunRepositories(
+    new PostgresKernel(pool),
+    new AbortController().signal,
+  ).runs;
   const result = await pool.query<{ pid: number }>(
     "SELECT pg_backend_pid() AS pid",
   );

@@ -13,7 +13,7 @@ import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: 
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { applyPatch } from "diff";
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { OfficialMcpDialer } from "../../../../services/agent-acp-service/src/adapters/mcp/official-client.js";
 import { McpToolCatalog } from "../../../../services/agent-acp-service/src/adapters/mcp/tool-catalog.js";
@@ -174,9 +174,10 @@ describe.skipIf(databaseUrl === undefined)(
           expect(history).not.toContain("owner-only-after");
           expect(history).not.toContain("owner-before");
           expect(history).toContain("final result");
-          const loaded = await new PostgresContextRepository(
+          const loaded = await createLegacyRunRepositories(
             new PostgresKernel(pool),
-          ).load(sessionId);
+            new AbortController().signal,
+          ).contexts.load(sessionId);
           expect(JSON.stringify(loaded)).not.toContain("owner-only-after");
           const summary = await pool.query<{ result_summary: unknown }>(
             "SELECT result_summary FROM tool_attempts",

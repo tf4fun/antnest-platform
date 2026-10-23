@@ -12,7 +12,6 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
 import type {
@@ -25,7 +24,7 @@ import {
   binding,
   snapshot,
 } from "../../../../services/agent-acp-service/test/support/fixtures.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import {
   DurableRunEvents,
   RunEventPersistenceError,
@@ -136,9 +135,10 @@ describe.skipIf(databaseUrl === undefined)(
           (await client.request("session/fork", { ...setup, sessionId })).result
             ?.sessionId,
         );
-        const repository = new PostgresContextRepository(
+        const repository = createLegacyRunRepositories(
           new PostgresKernel(pool),
-        );
+          new AbortController().signal,
+        ).contexts;
         const sequence = Number(
           (
             await pool.query<{ sequence: string }>(
@@ -147,14 +147,12 @@ describe.skipIf(databaseUrl === undefined)(
             )
           ).rows[0]?.sequence,
         );
-        await repository.saveCheckpoint({
-          id: "checkpoint",
-          sessionId,
-          throughSequence: sequence,
-          summary: "older work",
-          tokenCount: 3,
-          createdAt: new Date(),
-        });
+        // This is historical checkpoint input for reload/fork behavior, not a
+        // new write authorized by an already completed Run.
+        await pool.query(
+          "INSERT INTO context_checkpoints(id,session_id,through_sequence,summary,token_count,created_at) VALUES('checkpoint',$1,$2,'older work',3,$3)",
+          [sessionId, sequence, new Date()],
+        );
         expect((await repository.load(sessionId)).plan).toEqual(updated);
         submit([]);
         await prompt(client, version, sessionId);
@@ -207,9 +205,10 @@ describe.skipIf(databaseUrl === undefined)(
         expect(planUpdates(client.frames)).toHaveLength(2);
         expect(
           (
-            await new PostgresContextRepository(new PostgresKernel(pool)).load(
-              sessionId,
-            )
+            await createLegacyRunRepositories(
+              new PostgresKernel(pool),
+              new AbortController().signal,
+            ).contexts.load(sessionId)
           ).plan,
         ).toEqual(updated);
         expect(app.tools.call).not.toHaveBeenCalled();
@@ -224,7 +223,10 @@ describe.skipIf(databaseUrl === undefined)(
         mcpRevisionId: "client-mcp-1",
         mcpSources: [],
       });
-      const runs = new PostgresRunRepository(new PostgresKernel(pool));
+      const runs = createLegacyRunRepositories(
+        new PostgresKernel(pool),
+        new AbortController().signal,
+      ).runs;
       await runs.createRunIntent({
         runId,
         requestId: "request",
@@ -268,9 +270,10 @@ describe.skipIf(databaseUrl === undefined)(
       submit(special);
       expect((await prompt(client, 1, sessionId)).error).toBeUndefined();
       expect(entries(planUpdates(client.frames).at(-1)!)).toEqual(special);
-      const repository = new PostgresContextRepository(
+      const repository = createLegacyRunRepositories(
         new PostgresKernel(pool),
-      );
+        new AbortController().signal,
+      ).contexts;
       expect((await repository.load(sessionId)).plan).toEqual(special);
       expect(
         JSON.stringify((await repository.load(sessionId)).messages),
@@ -376,9 +379,10 @@ describe.skipIf(databaseUrl === undefined)(
         ).toEqual({
           toolEffectState: "none",
         });
-        const stored = await new PostgresContextRepository(
+        const stored = await createLegacyRunRepositories(
           new PostgresKernel(pool),
-        ).load("local-session");
+          new AbortController().signal,
+        ).contexts.load("local-session");
         expect(stored.plan).toEqual(committed ? first : undefined);
         const terminal = (
           await app.sessions.readOutput("local-session", 0)

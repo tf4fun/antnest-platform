@@ -11,10 +11,8 @@ import {
   loadConfig,
   type AgentAcpConfig,
 } from "../../../../services/agent-acp-service/src/config.js";
-import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresRunEventRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { publicExecutionConfiguration } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
@@ -205,8 +203,14 @@ describe.skipIf(databaseUrl === undefined)(
         kernel,
         new SecretBox(config.clientMcpKey),
       );
-      const runs = new PostgresRunRepository(kernel);
-      const events = new PostgresRunEventRepository(kernel);
+      const runs = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).runs;
+      const events = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).events;
       const sessionId = randomUUID();
       const runId = randomUUID();
       const mcpRevisionId = randomUUID();
@@ -269,7 +273,10 @@ describe.skipIf(databaseUrl === undefined)(
         runtimeCallStopped: false,
         createdAt: new Date(),
       });
-      await new PostgresExecutionRepository(kernel).finish({
+      await createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).executions.finish({
         runId,
         terminalClass: "failed",
         executorState: "quiescent",

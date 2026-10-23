@@ -3,10 +3,8 @@ import { Pool } from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { snapshot } from "../../../../../services/agent-acp-service/test/support/fixtures.js";
@@ -43,7 +41,10 @@ describe.skipIf(!databaseUrl)(
         mcpRevisionId: revision,
         mcpSources: [],
       });
-      const runs = new PostgresRunRepository(kernel);
+      const runs = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).runs;
       await runs.createRunIntent({
         runId,
         requestId: randomUUID(),
@@ -138,7 +139,10 @@ describe.skipIf(!databaseUrl)(
     it("pending scopes fence the same Runtime but not another Agent or replacement revision", async () => {
       const value = await input(),
         scope = await store.reserve(value),
-        protection = new PostgresExecutionRepository(kernel);
+        protection = createLegacyRunRepositories(
+          kernel,
+          new AbortController().signal,
+        ).executions;
       expect(
         await protection.hasUnstoppedRuntimeCalls({
           organizationId: scope.organizationId,
@@ -196,10 +200,10 @@ describe.skipIf(!databaseUrl)(
       await store.reserve(value);
       const id = await attempt(value.runId);
       expect(
-        await new PostgresRunEventRepository(kernel).interruptToolAttempts(
-          value.runId,
-          new Date(),
-        ),
+        await createLegacyRunRepositories(
+          kernel,
+          new AbortController().signal,
+        ).events.interruptToolAttempts(value.runId, new Date()),
       ).toEqual({
         toolEffectState: "unknown",
         unknownEffectSource: "runtime_mcp",
@@ -220,20 +224,20 @@ describe.skipIf(!databaseUrl)(
       const text = await input();
       await attempt(text.runId);
       expect(
-        await new PostgresRunEventRepository(kernel).interruptToolAttempts(
-          text.runId,
-          new Date(),
-        ),
+        await createLegacyRunRepositories(
+          kernel,
+          new AbortController().signal,
+        ).events.interruptToolAttempts(text.runId, new Date()),
       ).toEqual({ toolEffectState: "none" });
       const files = await input("independent-files-agent");
       const scope = await store.reserve(files);
       await attempt(files.runId);
       await store.released(scope);
       expect(
-        await new PostgresRunEventRepository(kernel).interruptToolAttempts(
-          files.runId,
-          new Date(),
-        ),
+        await createLegacyRunRepositories(
+          kernel,
+          new AbortController().signal,
+        ).events.interruptToolAttempts(files.runId, new Date()),
       ).toEqual({ toolEffectState: "settled" });
     });
     it("cleanup paging selects ended pending scopes and never an active foreground Run", async () => {
@@ -250,7 +254,10 @@ describe.skipIf(!databaseUrl)(
           signal,
         ),
       ).toEqual([]);
-      await new PostgresExecutionRepository(kernel).finish({
+      await createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).executions.finish({
         runId: value.runId,
         terminalClass: "failed",
         executorState: "quiescent",

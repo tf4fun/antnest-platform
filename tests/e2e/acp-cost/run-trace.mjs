@@ -17,8 +17,10 @@ const appendQueries = new Map(
     "BEGIN",
     "COMMIT",
     "SELECT session_id FROM runs WHERE id = $1",
-    "SELECT last_message_sequence FROM acp_sessions WHERE id = $1 FOR UPDATE",
-    "SELECT session_id, state FROM runs WHERE id = $1 FOR UPDATE",
+    "SELECT last_message_sequence, organization_id, agent_id FROM acp_sessions WHERE id = $1 FOR UPDATE",
+    `SELECT session_id, state, organization_id, agent_id, execution_owner_registration_id,
+      execution_owner_member_id, execution_owner_incarnation_id, execution_owner_epoch::text
+     FROM runs WHERE id = $1 FOR UPDATE`,
     "SELECT run_id, session_id, kind, visible, payload, created_at FROM session_messages WHERE id = $1",
     `INSERT INTO session_messages(
        id, session_id, run_id, sequence, kind, visible, payload, created_at
@@ -124,9 +126,11 @@ const intentQueries = [
              pending_user_message_id, input_prompt,
              created_at, updated_at, session_configuration,
              bridge_intent_id, intent_digest, expected_append_version, append_version,
-             organization_id, agent_id
+             organization_id, agent_id,
+             execution_owner_registration_id, execution_owner_member_id,
+             execution_owner_incarnation_id, execution_owner_epoch
            ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8, $9::jsonb,
-                     $10, $11, $12, $13, $14, $15)
+                     $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::bigint)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
                      pending_user_message_id, session_configuration`,
@@ -141,11 +145,14 @@ const environmentInsert = normalize(`INSERT INTO session_messages(
 const acceptanceQueries = [
   "BEGIN",
   "SELECT session_id FROM runs WHERE id = $1",
-  "SELECT state, last_message_sequence FROM acp_sessions WHERE id = $1 FOR UPDATE",
-  `SELECT session_id, client_mcp_revision_id, state,
-                cancel_requested_at, pending_user_message_id,
-                jsonb_typeof(input_prompt) = 'array' AS prompt_is_array
-           FROM runs WHERE id = $1 FOR UPDATE`,
+  `SELECT organization_id, agent_id, state, last_message_sequence
+         FROM acp_sessions WHERE id = $1 FOR UPDATE`,
+  `SELECT session_id, organization_id, agent_id, client_mcp_revision_id, state,
+              cancel_requested_at, pending_user_message_id,
+              jsonb_typeof(input_prompt) = 'array' AS prompt_is_array,
+              execution_owner_registration_id, execution_owner_member_id,
+              execution_owner_incarnation_id, execution_owner_epoch::text
+         FROM runs WHERE id = $1 FOR UPDATE`,
   `INSERT INTO session_messages(
            id, session_id, run_id, sequence, kind, visible, payload, created_at
          ) SELECT pending_user_message_id, session_id, id, $2, 'user_message', true,

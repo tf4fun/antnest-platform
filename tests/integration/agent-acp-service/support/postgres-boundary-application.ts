@@ -13,11 +13,8 @@ import { newResourceId } from "../../../../services/agent-acp-service/src/domain
 import type { Pool } from "pg";
 import { vi } from "vitest";
 
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
-import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresRunEventRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { AcpApplication } from "../../../../services/agent-acp-service/src/application/application.js";
@@ -63,10 +60,16 @@ export async function startBoundaryApplication(
     kernel,
     new SecretBox(encryptionKey),
   );
-  const executions = new PostgresExecutionRepository(kernel);
+  const executions = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).executions;
   const persistRun = executions.finish.bind(executions);
   const finish = vi.spyOn(executions, "finish");
-  const runs = new PostgresRunRepository(kernel);
+  const runs = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).runs;
   const createIntent = vi.spyOn(runs, "createRunIntent");
   const acceptRun = vi.spyOn(runs, "acceptRun");
   const identities = new Map<string, ExecutionIdentity>([
@@ -119,7 +122,10 @@ export async function startBoundaryApplication(
     ),
   };
   const recoveryRequired = vi.fn();
-  const events = new PostgresRunEventRepository(kernel);
+  const events = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).events;
   const providers = new ProviderClients(model);
   const acquireClient = vi.spyOn(providers, "acquire");
   const permissions = new PermissionConnections();
@@ -192,7 +198,10 @@ export async function startBoundaryApplication(
       contextBuilder: new ContextBuilder({
         runtimeInformation: { read: () => Promise.resolve(information) },
         tools,
-        repository: new PostgresContextRepository(kernel),
+        repository: createLegacyRunRepositories(
+          kernel,
+          new AbortController().signal,
+        ).contexts,
         id: newResourceId,
         now: () => new Date(),
       }),

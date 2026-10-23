@@ -1,6 +1,6 @@
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
-import { PostgresRunRepository } from "../../../src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../src/adapters/postgres/run-repositories.js";
 import { bridgeIntentDigest } from "../../../src/domain/bridge-intent.js";
 import type { CreateRunIntentInput } from "../../../src/ports/run-repository.js";
 
@@ -73,17 +73,20 @@ function fixture() {
     if (sql.includes("UPDATE acp_sessions")) return { rows: [] };
     throw new Error("Unexpected repository query");
   };
-  const repository = new PostgresRunRepository({
-    transaction: async (operation: (client: { query: typeof query }) => Promise<unknown>) => {
-      order.push("transaction");
-      transactionOpen = true;
-      try {
-        return await operation({ query });
-      } finally {
-        transactionOpen = false;
-      }
-    },
-  } as never);
+  const repository = createLegacyRunRepositories(
+    {
+      transaction: async (operation: (client: { query: typeof query }) => Promise<unknown>) => {
+        order.push("transaction");
+        transactionOpen = true;
+        try {
+          return await operation({ query });
+        } finally {
+          transactionOpen = false;
+        }
+      },
+    } as never,
+    new AbortController().signal,
+  ).runs;
   return {
     repository,
     input,
@@ -192,6 +195,10 @@ describe("Run intent preparation outside the Session transaction", () => {
         1,
         "organization-1",
         "agent-1",
+        null,
+        null,
+        null,
+        null,
       ]);
       expect(test.stored()).toEqual({ prompt: original, digest: bridgeIntentDigest(0, original) });
     } finally {

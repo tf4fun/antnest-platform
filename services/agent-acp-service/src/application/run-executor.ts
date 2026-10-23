@@ -182,6 +182,7 @@ export class RunExecutor implements RunExecutionPort {
       input.accepted.sessionId,
       input.accepted.snapshot,
       input.signal,
+      input.accepted.runId,
     );
     const events = new DurableRunEvents({
       repository: this.dependencies.events,

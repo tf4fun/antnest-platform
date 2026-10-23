@@ -6,9 +6,7 @@ import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" w
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresSessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
 import { PostgresBridgeObservationRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
-import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
-import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { configurationView } from "../../../../services/agent-acp-service/src/domain/session-configuration.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
@@ -317,9 +315,10 @@ describe.skipIf(databaseUrl === undefined)(
         ).toBeUndefined();
         expect(
           (
-            await new PostgresContextRepository(new PostgresKernel(pool)).load(
-              sessionId,
-            )
+            await createLegacyRunRepositories(
+              new PostgresKernel(pool),
+              new AbortController().signal,
+            ).contexts.load(sessionId)
           ).messages,
         ).toEqual([]);
       });
@@ -457,7 +456,10 @@ describe.skipIf(databaseUrl === undefined)(
       );
       await set(client, 1, sessionId, "mode", "chat");
       const kernel = new PostgresKernel(pool);
-      const runs = new PostgresRunRepository(kernel);
+      const runs = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).runs;
       const intent = await runs.createRunIntent({
         runId: "run-1",
         requestId: "request-1",
@@ -471,7 +473,10 @@ describe.skipIf(databaseUrl === undefined)(
       expect(intent.sessionConfiguration).toEqual({
         authorizationMode: "chat",
       });
-      const executions = new PostgresExecutionRepository(kernel);
+      const executions = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).executions;
       expect((await executions.listRecoveryWork())[0]).toEqual({
         kind: "admitting",
         id: intent.id,

@@ -87,6 +87,14 @@ The owner wire uses `no-store` and suppresses request, response and error payloa
 capture even when RPC content capture is enabled. Logs do not include nonces,
 credentials or configured private probe addresses.
 
+The internal inspection adapter accepts only authenticated, fully bound
+Runtime Controller inspection results. `unknown`, HTTP 404, transport failure,
+an expired lease or a missing heartbeat is not an executor stop proof. The
+adapter issues one bounded request without retry or redirect and joins its
+original work before returning or rejecting. A returned stop receipt still
+requires the future scoped recovery consumer to persist it under the current
+Agent fence; this batch does not connect it to production Run recovery.
+
 This optional wiring does not provide multi-replica execution. The global
 worker lock and its independent ownership-loss fail-stop behavior remain.
 Production owner coordination, fenced writers, scoped recovery, cross-owner
@@ -123,6 +131,30 @@ ownership. It creates an initially empty lease table and does not switch the
 service to multiple replicas. Composition still acquires the global worker
 lock; no lease coordinator, peer listener or lease tuning environment variable
 is enabled in this batch. Do not remove the global lock to use these primitives.
+
+Migration `0026_run_execution_owner.sql` records the original registration,
+member, incarnation and epoch on each newly owned Run intent. The four private
+columns are either all null for legacy execution or a complete validated tuple.
+Existing Runs stay all null, even when their Agent has a current lease. A
+database trigger rejects later backfill, replacement or clearing of that tuple.
+
+The owned Run repository factory captures one immutable registration and fence.
+Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
+Session/Run scope in the same transaction; existing Runs must also match their
+original execution tuple before mutations or duplicate receipt returns. Terminal
+transactions take the organization barrier before the lease, Session and Run;
+refusal exclusions, checkpoint deletion, permission cancellation and barrier
+creation remain atomic. Legacy startup recovery rejects a scan containing owned
+active Runs before returning any work. Legacy Run writers reject owned rows. Composition
+still selects the explicit legacy factory with the held worker signal: the
+production Agent coordinator, other writers and scoped recovery are pending.
+Registration bootstrap does not enable this execution mode or additional replicas.
+
+Context checkpoint writes now receive their original Run ID through the real
+RunExecutor/ContextBuilder path. The same bound factory checks lease, Session,
+origin and running state before insertion or duplicate handling. Completed Runs
+cannot recreate checkpoints removed by refusal. Production still uses the held
+legacy worker authority until all foreground consumers support Agent ownership.
 
 Lease epochs are positive decimal strings, retained after release and bounded
 by PostgreSQL's signed bigint maximum. The repository accepts durations from
