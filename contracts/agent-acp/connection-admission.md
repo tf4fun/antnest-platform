@@ -112,7 +112,9 @@ Phase 1 or multi-replica acceptance.
 3. ACP Phase 2: enforce the durable one-active-Run-per-Agent invariant. A real
    PostgreSQL component test must submit concurrently from two processes for
    the same Agent and observe exactly one success and one canonical
-   `agent_busy`. This does not by itself prove full multi-replica operation.
+   `agent_busy`. The [durable Run admission contract](run-admission.md) defines
+   the Session-derived scope, conflict precedence and reservation lifetime.
+   This does not by itself prove full multi-replica operation.
 4. ACP Phase 3: implement leases and epochs, fence every owned write, make
    publication consistent across replicas, scope recovery to the owned or
    expired Agent, and provide internal owner forwarding. The detailed peer
