@@ -619,7 +619,7 @@ test("ACP authentication runs in the required auth shard with its CI-built image
 
 test("tier C platform scenarios get every local image and no rebuilding target", () => {
   const tierC = suites.filter((suite) => suite.tier === "c");
-  assert.equal(tierC.length, 49);
+  assert.equal(tierC.length, 50);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   const primary = Object.keys(images).filter(
     (name) => typeof images[name] === "string",

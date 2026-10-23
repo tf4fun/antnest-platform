@@ -6,8 +6,10 @@ Control contract revision 41 defines the shared wire representation for
 [shared fixtures](readiness-fixtures.json). The formal Controller wire contract
 and strict readers are delivered. The current service candidate implements
 Controller binding/ACK transactions and current Agent projection, plus ACP
-preparing admission and read/watch consumption. Agent UI preparing presentation,
-Admin Console readiness consumption, and cross-service integration remain pending.
+preparing admission and read/watch consumption. Agent UI preserves drafts and
+attachments while preparing and blocks dispatch until current readiness allows it.
+Admin Console projects current readiness and refreshes Preparing without relying
+on historical ready events. Cross-service Docker acceptance remains pending.
 The ACP and Workspace state schemas now admit an authorized offline preparing
 reason; Console contract 57 defines its optional current readiness projection.
 These shared definitions do not grant new routes or caller permissions.
@@ -113,6 +115,13 @@ The existing ID schema restricts values to 1–200 ASCII ID characters, beginnin
 with an alphanumeric character. Unknown schema versions and event types remain
 invalid.
 
+The organization ACK does not carry the lifecycle operation ID. Its ready event
+may therefore omit `operation_request_id`; consumers associate it with the
+original `runtime_bound` using the Agent, binding proof and ordered sequences.
+Console omits the private event Data, so its public event consumer additionally
+rejects a ready event after a subsequent binding. Current execution admission
+uses the current readiness projection, not a historical event.
+
 Schema validation proves shape and bounds only. The owning Controller transaction
 must prove `ready_after_revision <= applied_revision <= committed revision`,
 organization identity, current binding identity, and continuing eligibility.
@@ -178,9 +187,9 @@ The ACP get/watch execution-state contract represents an authorized
 preparing Agent using the existing `availability: "offline"` with
 `unavailable_reason: "agent_preparing"`. It does not add a new availability enum.
 Existing busy/active-Session visibility, revocation sanitization, storage failure,
-and Runtime barrier rules remain intact. ACP service consumption is implemented
-in the current candidate; Agent UI presentation/consumption remains pending.
-Formal schema support alone does not complete that consumer or integration.
+and Runtime barrier rules remain intact. ACP service consumption and Agent UI
+presentation/consumption are implemented in the current candidate. Their local
+service checks do not replace cross-service Docker acceptance.
 
 ## Compatibility and Delivery
 
@@ -223,17 +232,19 @@ Delivery remains split into owning-service batches:
    enable preparing admission or certify readiness.
 3. Controller binding facts, organization thresholds, transactional ACK gating,
    idempotent ready events and management projection are implemented in the
-   current service candidate; PostgreSQL verification remains in progress.
+   current service candidate, with focused PostgreSQL verification completed.
 4. ACP preparing admission and get/watch state consumption are implemented in
    the candidate, preserving unknown-Agent privacy and existing authorization
    and execution barriers; this does not complete the UI consumers.
-5. Pending: Agent UI preparing presentation/state observation and Admin Console
-   consumption of meaningful current readiness. Accepted or uncertain Prompts
+5. Agent UI preparing presentation/state observation and Admin Console
+   consumption of meaningful current readiness are implemented. Accepted or uncertain Prompts
    are not replayed because a readiness state or event arrives.
-6. Pending: explicit cross-service integration after the owning-service gates.
+6. The explicit cross-service integration is implemented in the
+   [readiness profile](../../tests/e2e/agent-readiness/run.mjs); its real Docker
+   execution and final remote merge gate remain pending.
 
 The formal wire contract and candidate service code do not complete the pending
-consumer or integration stages. Controller component evidence must cover interleavings of binding,
+integration stage. Controller component evidence must cover interleavings of binding,
 publication and acknowledgement, including stale, duplicate and cross-organization
 acknowledgements and concurrent revocation or lifecycle closure. ACP evidence
 must distinguish listed preparing Agents from denied or unlisted Agents.

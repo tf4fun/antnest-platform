@@ -622,6 +622,7 @@ function tierC() {
           "ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_RESTART_REBUILD=true",
         ],
         ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
+        ["agent-readiness", "ANTNEST_E2E_AGENT_READINESS=true"],
         ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
         ["slash-commands", "ANTNEST_E2E_SLASH_COMMANDS=true"],
         ["structured-plan", "ANTNEST_E2E_STRUCTURED_PLAN=true"],
@@ -1185,6 +1186,11 @@ export const shards = [
       "c-acp-restart-notify-ui",
       "c-rpc-response-loss",
     ],
+  },
+  {
+    id: "c-agent-readiness",
+    name: "Acknowledged Agent readiness (100 first Prompts)",
+    suites: ["c-agent-readiness"],
   },
   {
     id: "c-skill-delivery",

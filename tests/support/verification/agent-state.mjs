@@ -7,6 +7,7 @@ export function agentReady(agent) {
     agent.activation_state === "enabled" &&
     agent.desired_state === "enabled" &&
     agent.runtime_state === "available" &&
+    agent.readiness === "ready" &&
     Boolean(
       agent.executable_execution_revision && agent.runtime?.runtime_revision,
     ) &&
@@ -17,7 +18,7 @@ export function agentReady(agent) {
 export function assertAgentReady(agent) {
   assert(
     agentReady(agent),
-    "Agent has no currently executable Runtime binding",
+    "Agent has no acknowledged current executable Runtime binding",
   );
 }
 

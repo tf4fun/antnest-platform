@@ -88,6 +88,7 @@ export async function lossPrivateEvidenceFixture(t) {
     };
     const replacement = structuredClone(initial);
     Object.assign(replacement.agent, {
+      readiness: "ready",
       executable_execution_revision: mode + "-e2",
       last_successful_execution_revision: mode + "-e2",
       aggregate_sequence: 4,

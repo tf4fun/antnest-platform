@@ -385,6 +385,7 @@ export function lossBusinessFixture() {
   for (const [caseIndex, mode] of ["live", "cold"].entries()) {
     const initial = ready(mode, 1),
       replacement = ready(mode, 2);
+    replacement.agent.readiness = "ready";
     const before = execution(mode, "before", initial);
     const after = execution(mode, "after", replacement);
     const id = initial.agent.agent_id,

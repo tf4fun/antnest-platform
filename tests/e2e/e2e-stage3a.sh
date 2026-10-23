@@ -365,6 +365,18 @@ if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
   export ANTNEST_IDENTITY_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
+agent_readiness=${ANTNEST_E2E_AGENT_READINESS:-false}
+case "$agent_readiness" in true|false) ;; *) echo 'Invalid Agent readiness profile' >&2; exit 1 ;; esac
+if [ "$agent_readiness" = true ]; then
+  [ -z "$tool_profile" ] || { echo 'Agent readiness requires a separate disposable profile' >&2; exit 1; }
+  for incompatible in "$keep_stack" "$identity_access" "$identity_core" "$agent_access" "$acp_session" "${ANTNEST_E2E_SKILL_DELIVERY:-false}" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
+    [ "$incompatible" = false ] || { echo 'Agent readiness requires a separate disposable profile' >&2; exit 1; }
+  done
+  tool_profile=agent-readiness
+  export ANTNEST_READINESS_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_READINESS_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 base_profile=false
 if [ -z "$tool_profile" ] && [ "$keep_stack" = false ] && [ "$identity_access" = false ] && [ "$acp_session" = false ] && [ "$agent_access" = false ] && [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = false ] && [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = false ]; then
   base_profile=true
@@ -381,7 +393,9 @@ if [ "${ANTNEST_E2E_SKILL_FENCED_INVALIDATION:-false}" = true ] || [ "${ANTNEST_
   export ANTNEST_E2E_CONTROLLER_RUNTIME_URL=http://stage3-rc-proxy:8080
 fi
 if [ -n "$tool_profile" ]; then
-  export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
+  profile_budget_ms=900000
+  [ "$tool_profile" != agent-readiness ] || profile_budget_ms=2700000
+  export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+Number(process.argv[1])))' "$profile_budget_ms")
   docker() { node "$repository_root/tests/e2e/acp-closeout/docker.mjs" "$@"; }
 fi
 # Runtime Controller policy admits repository references, never bare image IDs.
@@ -514,6 +528,14 @@ compose() {
       docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-restart/compose.yaml --profile stage3 --profile observability "$@"
     else
       docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/acp-restart/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$agent_readiness" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/agent-readiness/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.debug.yaml -f compose.stage3.yaml -f tests/support/compose.public-development-secrets.yaml -f tests/e2e/stage3a.compose.yaml -f tests/e2e/agent-readiness/compose.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi

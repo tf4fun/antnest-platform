@@ -23,6 +23,7 @@ function fixture() {
       activation_state: "enabled",
       desired_state: "enabled",
       runtime_state: "available",
+      readiness: "ready",
       executable_execution_revision: "execution-1",
       runtime: { runtime_revision: "runtime-1" },
     },

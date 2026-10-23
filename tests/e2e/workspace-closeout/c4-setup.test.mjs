@@ -51,6 +51,7 @@ test("C4 state reads retain the original member session, Principal and complete 
           activation_state: "enabled",
           desired_state: "enabled",
           runtime_state: "available",
+          readiness: "ready",
           executable_execution_revision: "execution",
           runtime: { runtime_revision: "runtime" },
         };

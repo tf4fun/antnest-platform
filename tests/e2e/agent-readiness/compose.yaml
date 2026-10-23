@@ -1,0 +1,38 @@
+services:
+  publication-delay-proxy:
+    image: antnest/agent-acp-service:local
+    command: ["node", "/fixtures/publication-proxy.mjs"]
+    environment:
+      ANTNEST_READINESS_UPSTREAM: http://agent-acp-control:8081
+    volumes:
+      - ./tests/e2e/agent-readiness:/fixtures:ro
+    depends_on:
+      agent-acp-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 30s
+      start_interval: 1s
+      start_period: 10s
+      timeout: 3s
+      retries: 3
+    networks: [controller-acp]
+    extra_hosts:
+      agent-acp-control: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.34
+  agent-controller:
+    environment:
+      ANTNEST_AGENT_ACP_CONTROL_URL: http://publication-delay-proxy:8080
+    depends_on:
+      publication-delay-proxy:
+        condition: service_healthy
+networks:
+  control:
+    ipam:
+      config: !override
+        - subnet: ${ANTNEST_EGRESS_CONTROL_SUBNET}
+          ip_range: ${ANTNEST_READINESS_CONTROL_DYNAMIC_RANGE}
+  runtime-management:
+    ipam:
+      config: !override
+        - subnet: ${ANTNEST_RUNTIME_MANAGEMENT_SUBNET}
+          ip_range: ${ANTNEST_READINESS_RUNTIME_DYNAMIC_RANGE}
