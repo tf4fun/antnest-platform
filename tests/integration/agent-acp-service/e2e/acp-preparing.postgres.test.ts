@@ -117,14 +117,15 @@ describe.skipIf(databaseUrl === undefined)(
       const current = application();
       const controller = new AbortController();
       const frames: EventSourceMessage[] = [];
-      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      const holder: { reader?: ReadableStreamDefaultReader<Uint8Array> } = {};
       let joined = Promise.resolve();
       let ended = false;
       let failure: unknown;
       streams.push(async () => {
         const errors: unknown[] = [];
         try {
-          if (!ended && reader !== undefined) await reader.cancel();
+          if (!ended && holder.reader !== undefined)
+            await holder.reader.cancel();
         } catch (error) {
           errors.push(error);
         } finally {
@@ -157,8 +158,8 @@ describe.skipIf(databaseUrl === undefined)(
         clearTimeout(headersDeadline);
       }
       if (response.body === null) throw new Error("Missing state stream");
-      reader = response.body.getReader();
-      const source = reader;
+      holder.reader = response.body.getReader();
+      const source = holder.reader;
       const parser = createParser({ onEvent: (event) => frames.push(event) });
       const decoder = new TextDecoder();
       const task = (async () => {
@@ -194,7 +195,10 @@ describe.skipIf(databaseUrl === undefined)(
         },
         async join() {
           await joined;
-          if (failure !== undefined) throw failure;
+          if (failure !== undefined)
+            throw failure instanceof Error
+              ? failure
+              : new Error("Preparing state stream failed", { cause: failure });
         },
       };
     }
@@ -203,7 +207,9 @@ describe.skipIf(databaseUrl === undefined)(
       return {
         agent_id: "agent-1",
         access_allowed: true,
-        configuration_revision: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        configuration_revision: expect.stringMatching(
+          /^[a-f0-9]{64}$/u,
+        ) as unknown,
         availability,
         active_session_id: null,
         unavailable_reason: availability === "ready" ? null : "agent_preparing",
@@ -276,8 +282,8 @@ describe.skipIf(databaseUrl === undefined)(
         const rejected = await client.request("session/prompt", prompt);
         expect(rejected.result).toBeUndefined();
         assertAdmissionError(rejected.error, "agent_preparing");
-        expect(rejected.error?.code).toBe(-32033);
-        expect(rejected.error?.data).toMatchObject({
+        expect(rejected.error.code).toBe(-32033);
+        expect(rejected.error.data).toMatchObject({
           code: "agent_preparing",
           retryable: true,
           retry_after_ms: 1000,
@@ -293,7 +299,7 @@ describe.skipIf(databaseUrl === undefined)(
         await current.publishConfiguration();
         expect(await state()).toEqual(authorized("ready"));
         await expect
-          .poll(() => JSON.parse(stream.frames.at(-1)!.data), {
+          .poll(() => JSON.parse(stream.frames.at(-1)!.data) as unknown, {
             timeout: 5_000,
           })
           .toEqual(authorized("ready"));
@@ -305,7 +311,7 @@ describe.skipIf(databaseUrl === undefined)(
           expect(completed.result).toEqual({ stopReason: "end_turn" });
         } else {
           expect(completed.result).toEqual({
-            messageId: expect.stringMatching(/.+/u),
+            messageId: expect.stringMatching(/.+/u) as unknown,
           });
           await expect
             .poll(
@@ -327,7 +333,7 @@ describe.skipIf(databaseUrl === undefined)(
           .poll(
             async () =>
               (
-                await pool.query(
+                await pool.query<Record<string, unknown>>(
                   `SELECT session_id, bridge_intent_id, state, stop_reason,
                     execution_snapshot->>'configurationRevision' AS revision
                FROM runs`,
@@ -383,7 +389,7 @@ describe.skipIf(databaseUrl === undefined)(
             prompt: [{ type: "text", text: "must remain denied" }],
           });
           assertAdmissionError(rejected.error, "session_access_denied");
-          expect(rejected.error?.code).toBe(-32011);
+          expect(rejected.error.code).toBe(-32011);
           expect(rejected.result).toBeUndefined();
           const deniedCreation = await client.request("session/new", setup);
           assertAdmissionError(deniedCreation.error, "access_denied");
