@@ -6,15 +6,19 @@ import { GatewayClient } from "../identity-closeout/support.mjs";
 import { createAccessCatalog } from "../identity-closeout/catalog.mjs";
 import { serviceClient } from "../../support/service-grants.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
+import { summarizeFailure } from "../../support/verification/failure.mjs";
 import { openStage3Connection } from "../stage3-base/connection.mjs";
 import { withPrivateCommandResources } from "../acp-commands/connection.mjs";
 import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
 import { readinessProof, publicationProof } from "./readiness-proof.mjs";
+import { snapshotSession, resumeSession } from "./browser-session.mjs";
 
 const directory = "/tmp/agent-readiness";
 const save = (name, value) =>
   writeEvidenceFile(directory, name, JSON.stringify(value, null, 2) + "\n");
 const load = (name) => JSON.parse(readFileSync(`${directory}/${name}`, "utf8"));
+const loadSessions = () =>
+  JSON.parse(readFileSync("/tmp/agent-readiness-session.private.json", "utf8"));
 const account = {
   organization_slug: "stage3",
   email: "stage3-admin@example.com",
@@ -88,11 +92,20 @@ async function seed() {
     principal: ownerLogin.principal,
     template: catalog.template,
   });
+  writeEvidenceFile(
+    "/tmp",
+    "agent-readiness-session.private.json",
+    JSON.stringify({
+      admin: snapshotSession(admin, login.principal),
+      member: snapshotSession(member, ownerLogin.principal),
+    }) + "\n",
+  );
   assert.equal((await proxy()).delayMs, 2000);
   assert.deepEqual((await model()).requests, []);
 }
 async function round(index) {
   const context = load("context.json"),
+    sessions = loadSessions(),
     phase = `readiness-${index}`;
   const row = {
     index,
@@ -110,10 +123,8 @@ async function round(index) {
       clients,
       telemetry,
       async () => {
-        await api("/api/session/login", { body: account });
-        const principal = (
-          await member.request("/api/session/login", { body: memberAccount })
-        ).body.principal;
+        await resumeSession(admin, sessions.admin);
+        const principal = await resumeSession(member, sessions.member);
         assert.equal(principal.user_id, row.principalId);
         const created = await api("/api/admin/agents", {
           status: 202,
@@ -269,7 +280,7 @@ async function remove(index) {
   const row = load(`round-${index}.json`);
   assert(row.agentId);
   try {
-    await api("/api/session/login", { body: account });
+    await resumeSession(admin, loadSessions().admin);
     const accepted = await api(`/api/admin/agents/${row.agentId}/delete`, {
       status: 202,
       body: {},
@@ -297,9 +308,9 @@ async function remove(index) {
   }
 }
 
+const [command, value] = process.argv.slice(2),
+  index = Number(value);
 try {
-  const [command, value] = process.argv.slice(2),
-    index = Number(value);
   if (command === "seed") await seed();
   else {
     assert(Number.isSafeInteger(index) && index >= 1 && index <= 100);
@@ -308,6 +319,11 @@ try {
     else assert.fail("unknown readiness client command");
   }
 } catch (error) {
+  save("command-failure.private.json", {
+    command,
+    index: Number.isSafeInteger(index) ? index : null,
+    ...summarizeFailure(error),
+  });
   // Full details stay in private files; fixture passwords never enter CI logs.
   console.error("Agent readiness client failed:", error.name);
   process.exitCode = 1;

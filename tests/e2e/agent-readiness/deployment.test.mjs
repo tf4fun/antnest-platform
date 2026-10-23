@@ -5,6 +5,18 @@ import { selectSuites, shards, suites } from "../../support/ci-changes.mjs";
 
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
+test("repeated readiness rounds and deletion reuse authenticated browser sessions", async () => {
+  const client = await source("./client.mjs");
+  const repeatedCommands = client.slice(
+    client.indexOf("async function round("),
+  );
+  assert.doesNotMatch(
+    repeatedCommands,
+    /\/api\/session\/login/,
+    "100 rounds must not exhaust the real password-login allowance",
+  );
+});
+
 function serviceBlock(compose, name) {
   const match = compose.match(
     new RegExp(`^  ${name}:\\r?\\n((?:[ \\t]{4}[^\\n]*\\n|[ \\t]*\\n)*)`, "m"),
