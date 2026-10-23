@@ -712,19 +712,20 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     setOperation((current) => selectOperationSnapshot(current, next));
   }, []);
 
-  const refreshAgent = useCallback(async (reportStateError = false) => {
+  const refreshAgent = useCallback(async (reportStateError = false, signal?: AbortSignal) => {
     const request = agentReadRequest.current + 1;
     agentReadRequest.current = request;
     try {
-      const next = await api.agent(agentID);
-      if (next.agent_id !== renderedAgentID.current) return undefined;
+      const next = await api.agent(agentID, signal);
+      if (signal?.aborted || agentReadRequest.current !== request ||
+        next.agent_id !== renderedAgentID.current) return undefined;
       const hadSnapshot = agentSnapshot.current !== undefined;
       applyAgentSnapshot(next);
       if (agentReadRequest.current === request) setAgentStateFailure(undefined);
       if (!hadSnapshot) setLoadFailure(undefined);
       return agentSnapshot.current ?? next;
     } catch (cause) {
-      if (reportStateError && agentReadRequest.current === request) {
+      if (!signal?.aborted && reportStateError && agentReadRequest.current === request) {
         if (agentSnapshot.current) {
           setAgentStateFailure(agentDetailFailure("agent_state", cause));
         }
@@ -736,6 +737,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     const request = agentReadRequest.current + 1;
     agentReadRequest.current = request;
     operationRequest.current += 1;
@@ -754,9 +756,9 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     setError("");
     setAcknowledgement("");
     setAgentStateFailure(undefined);
-    api.agent(agentID)
+    api.agent(agentID, controller.signal)
       .then((nextAgent) => {
-        if (cancelled) return;
+        if (cancelled || agentReadRequest.current !== request) return;
         applyAgentSnapshot(nextAgent);
         if (nextAgent.aggregate_sequence < observedAgentSequence.current) {
           void refreshAgent(true).catch(() => undefined);
@@ -768,10 +770,52 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     void loadTemplates();
     return () => {
       cancelled = true;
-      if (agentReadRequest.current === request) agentReadRequest.current += 1;
+      controller.abort();
+      agentReadRequest.current += 1;
       operationRequest.current += 1;
     };
   }, [agentID, applyAgentSnapshot, loadTemplates, refreshAgent]);
+
+  useEffect(() => {
+    if (agent?.readiness !== "preparing" || agent.lifecycle_state !== "created" ||
+      agent.activation_state !== "enabled" || agentStateFailure?.retryable === false) return;
+    let request;
+    try { request = captureSessionRequest(); } catch { return; }
+    const controller = new AbortController();
+    let disposed = false;
+    let timer: number | undefined;
+    const stop = () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      controller.abort();
+    };
+    const current = () => !disposed && sessionRequestCurrent(request);
+    const unbind = onSessionRequestCancelled(request, stop);
+    const schedule = () => {
+      if (current()) timer = window.setTimeout(() => void poll(), 1000);
+    };
+    async function poll() {
+      timer = undefined;
+      if (!current()) return;
+      try {
+        await refreshAgent(true, controller.signal);
+      } catch (cause) {
+        if (!current()) return;
+        if (!agentDetailFailure("agent_state", cause).retryable) {
+          stop();
+          return;
+        }
+      }
+      // Reopening an existing binding can become ready without a second event.
+      // Schedule only after the actual read settles; a held read never overlaps itself.
+      if (current() && agentSnapshot.current?.readiness === "preparing") schedule();
+    }
+    schedule();
+    return () => {
+      unbind();
+      stop();
+    };
+  }, [agentID, agent?.readiness, agent?.lifecycle_state, agent?.activation_state, agentStateFailure?.retryable, refreshAgent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1166,6 +1210,13 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
         </div>
         <Badge className="w-fit" value={status.lifecycle} />
       </div>
+      {agent.lifecycle_state === "created" && agent.activation_state === "enabled" && agent.readiness !== "ready" ? (
+        <div role="status" aria-label="Agent readiness" className="border-l-2 border-amber-400 px-4 py-2 text-sm">
+          <p>{agent.readiness === "preparing"
+            ? agentStateFailure?.retryable === false ? "Last known state: Preparing." : "Agent is preparing. Readiness refreshes automatically."
+            : agent.readiness === "unavailable" ? "Agent is unavailable." : "Agent readiness is unknown."}</p>
+        </div>
+      ) : null}
       {agent.activation_state === "enabled" && (agent.runtime_reason || agent.runtime_detail) ? (
         <div role="status" className="border-l-2 border-amber-400 px-4 py-2 text-sm">
           <p className="font-medium">{agent.runtime_reason?.replaceAll("_", " ") ?? "Runtime status"}</p>

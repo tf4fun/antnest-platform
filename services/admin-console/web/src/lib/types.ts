@@ -315,6 +315,7 @@ export type Agent = {
   desired_state: string;
   lifecycle_state: string;
   activation_state?: string;
+  readiness?: "preparing" | "ready" | "unavailable";
   runtime_state: string;
   runtime_reason?: string;
   runtime_detail?: string;

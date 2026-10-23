@@ -16,7 +16,8 @@ test("all never-ready conditions permit management without execution history", (
     assert.deepEqual(agentActionAvailability(agent, false), {
       retained: false, canRebuild: true, canEnable: false, canDisable: true, canDelete: true,
     });
-    assert.equal(agentStatusPresentation(agent).lifecycle, runtime_state);
+    assert.equal(agentStatusPresentation(agent).lifecycle, "unknown");
+    assert.equal(agent.runtime_state, runtime_state);
   }
 });
 
@@ -30,11 +31,11 @@ test("disabled confirmation overrides stale health while disable intent is separ
 });
 
 test("fleet counts do not invent a failed lifecycle or count unbound health as ready", () => {
-  const ready = { ...configured, runtime_state: "available", executable_execution_revision: "e1" };
-  const records = [ready, configured, { ...configured, runtime_state: "exited" },
+  const ready: Agent = { ...configured, readiness: "ready", runtime_state: "available", executable_execution_revision: "e1" };
+  const records: Agent[] = [ready, configured, { ...configured, readiness: "unavailable", runtime_state: "exited" },
     { ...ready, desired_state: "disabled", activation_state: "disabled" },
     { ...ready, active_operation_request_id: "rebuild-1" },
-    { ...ready, executable_execution_revision: undefined },
+    { ...ready, readiness: undefined, executable_execution_revision: undefined },
     { ...configured, lifecycle_state: "not_created", activation_state: undefined, failure_code: "image_missing" }];
-  assert.deepEqual(agentFleetCounts(records), { available: 1, disabled: 1, attention: 3, pending: 2 });
+  assert.deepEqual(agentFleetCounts(records), { available: 1, disabled: 1, attention: 2, pending: 3 });
 });
