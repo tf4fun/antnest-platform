@@ -290,7 +290,13 @@ SET active=false,updated_at=clock_timestamp() WHERE agent_id=$1 AND principal_id
 			require.EqualValues(t, 1, changed.RowsAffected())
 			current, err := fixture.store.GetAgent(ctx, fixture.base.Agent.AgentID)
 			require.NoError(t, err)
-			require.Equal(t, fixture.base.Agent, current)
+			expected := fixture.base.Agent
+			require.NotNil(t, expected.Readiness)
+			readiness := *expected.Readiness
+			readiness.Access.Active = false
+			expected.Readiness = &readiness
+			require.Equal(t, expected, current)
+			require.Equal(t, "unavailable", current.CurrentReadiness())
 		}, true},
 		{"actual-policy-change", func(t *testing.T, ctx context.Context, fixture runtimeBarrierAdmissionFixture, _ *ports.RecordRuntimeBarrierObservation) {
 			_, err := fixture.store.SetRuntimeBarrierRecoveryPolicy(ctx, runtimeBarrierPolicyTestInput(

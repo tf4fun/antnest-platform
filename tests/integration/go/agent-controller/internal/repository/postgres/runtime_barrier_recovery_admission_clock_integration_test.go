@@ -24,6 +24,9 @@ func TestRuntimeBarrierRecoveryAdmissionClockFollowsHeldLocks(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := runtimeBarrierPolicyTestContext(t)
 			fixture := runtimeBarrierAdmissionSeed(t, ctx, "clock-barrier-"+test.name, "original-clock-execution")
+			var activityQuerySize string
+			require.NoError(t, fixture.store.pool.QueryRow(ctx, "SHOW track_activity_query_size").Scan(&activityQuerySize))
+			t.Logf("lock evidence uses pg_locks; activity query text limit is %s", activityQuerySize)
 			worker := runtimeBarrierPolicySingleConnectionTestRepository(t, ctx)
 			holder := openRuntimeBarrierPolicyTestRepository(t, ctx)
 			const applicationName = "antnest-runtime-barrier-policy-cancel-test"
@@ -169,6 +172,8 @@ WHERE singleton FOR UPDATE`).Scan(&sequence)
 				} else {
 					// Row-lock contention waits on the holder's transaction ID. A
 					// relation-only lock check would not prove this row was blocked.
+					// Activity SQL may be truncated; exact worker/holder PIDs,
+					// transaction ID, blocking PIDs and relation locks prove the wait.
 					failure = fixture.store.pool.QueryRow(queryContext, `SELECT EXISTS (
  SELECT 1 FROM pg_stat_activity activity JOIN pg_locks waiting_lock ON waiting_lock.pid=activity.pid
  WHERE activity.pid=$1 AND activity.datname=current_database()
@@ -176,7 +181,6 @@ WHERE singleton FOR UPDATE`).Scan(&sequence)
    AND activity.xact_start IS NOT NULL AND activity.wait_event_type='Lock'
    AND waiting_lock.locktype='transactionid' AND NOT waiting_lock.granted
    AND waiting_lock.transactionid::text=$3 AND $4=ANY(pg_blocking_pids(activity.pid))
-   AND strpos(activity.query,$5)>0
    AND EXISTS (SELECT 1 FROM pg_locks held_lock WHERE held_lock.pid=$4
      AND held_lock.locktype='transactionid' AND held_lock.granted
      AND held_lock.transactionid=waiting_lock.transactionid)

@@ -92,6 +92,11 @@ UPDATE agent_controller.agent_access_bindings SET access_revision=$2 WHERE agent
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			repository, base := identityTestRepository(t)
+			if test.name == "organization" {
+				// A created Agent can change organizations before it has an
+				// immutable Runtime binding. Keep the binding's composite FK intact.
+				base, _ = seedConfiguredAgentForTest(t, t.Context(), repository, false)
+			}
 			command := agentAuthorizationCommand(base.Agent)
 			_, err := repository.pool.Exec(t.Context(), test.query, base.Agent.AgentID, test.value)
 			require.NoError(t, err)
