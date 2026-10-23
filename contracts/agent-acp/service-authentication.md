@@ -43,7 +43,8 @@ workload identity, without user CCT or Identity/PostgreSQL dependencies. Its
 exact route grant and deny fallback are in [the caller catalog](callers.json).
 Authentication precedes body parsing; unknown credentials return 401 and a
 verified different workload returns 403. The existing workspace and control
-listeners do not serve this route. Request and response bodies follow the
+listeners return 404 for this path, including all methods, query variants and
+WebSocket upgrades, before authentication or body reads. Request and response bodies follow the
 [incarnation wire contract](owner-handoff.md#trusted-incarnation-registration), including its
 size bounds, deadlines, closed DTOs, `no-store` and payload-capture prohibition.
 Outbound registration uses the fixed `ANTNEST_ACP_RUNTIME_CONTROLLER_URL` with
