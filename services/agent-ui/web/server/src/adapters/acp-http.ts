@@ -150,6 +150,7 @@ const agentStateSchema = z.union([
     active_session_id: z.null(),
     unavailable_reason: z.enum([
       "agent_unavailable",
+      "agent_preparing",
       "runtime_barrier_required",
     ]),
   }),
@@ -160,7 +161,7 @@ export type ExecutionObservation = z.infer<typeof observationSchema>;
 export type AgentExecutionState = {
   availability: "ready" | "busy" | "offline";
   activeSessionId: string | null;
-  unavailableReason?: "agent_unavailable" | "runtime_barrier_required" | null;
+  unavailableReason?: "agent_unavailable" | "agent_preparing" | "runtime_barrier_required" | null;
 };
 
 export class BridgeCapabilityError extends Error {

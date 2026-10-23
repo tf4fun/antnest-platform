@@ -53,7 +53,18 @@ export class BridgeAgentController {
     this.permissionStore = new BridgePermissionStore(input.agentId, input.api);
     this.tracker = new BridgeOperationTracker({
       agentId: input.agentId,
-      api: input.api,
+      api: {
+        sessionCurrent: () => input.api.sessionCurrent(),
+        operation: (...args) => input.api.operation(...args),
+        cancel: (...args) => input.api.cancel(...args),
+        prompt: (...args) => {
+          // Query/adopt existing receipts remains available while preparing.
+          // Fence only the actual dispatch, including a late SSE during retry.
+          if (this.current.view?.unavailableReason === "agent_preparing")
+            return Promise.reject(new Error("Agent is preparing. Wait until it becomes available before sending."));
+          return input.api.prompt(...args);
+        },
+      },
       changed: () => {
         if (!this.closed)
           this.publish({ ...this.current, operations: this.tracker.snapshot });
@@ -222,6 +233,8 @@ export class BridgeAgentController {
       !Number.isSafeInteger(selected.appendVersion) || (selected.appendVersion as number) < 0 ||
       typeof selected.historyToken !== "string" || !selected.historyToken)
       return Promise.reject(new Error("A current Bridge Session View is required before Prompt submission"));
+    if (view.availability !== "ready")
+      return Promise.reject(new Error("Agent is not ready. Wait until it becomes available before sending."));
     return this.tracker.submit(view.selectedSessionId, {
       intentId,
       expectedAppendVersion: selected.appendVersion as number,
@@ -266,6 +279,8 @@ export class BridgeAgentController {
       this.tracker.observe(fresh.operations);
       this.tracker.observe(fresh.selectedView.operations);
       currentScope();
+      if (fresh.unavailableReason === "agent_preparing" || this.current.view?.unavailableReason === "agent_preparing")
+        throw new Error("Agent is preparing. Wait until it becomes available before retrying the original message.");
       // The HTTP View supplies only fresh authorization; SSE owns the displayed projection.
       return fresh.selectedView.historyToken;
     }, scopedSignal).catch((cause: unknown) => {

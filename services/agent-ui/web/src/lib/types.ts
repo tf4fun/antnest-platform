@@ -17,7 +17,7 @@ export type AgentSummary = {
   description: string;
   modelLabel: string;
   status: AgentStatus;
-  unavailableReason?: "agent_unavailable" | "runtime_barrier_required" | null;
+  unavailableReason?: "agent_unavailable" | "agent_preparing" | "runtime_barrier_required" | null;
   managementState: AgentManagementState;
 };
 

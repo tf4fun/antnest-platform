@@ -9,9 +9,11 @@ const labels: Record<AgentStatus, string> = {
 
 export function AgentPresence({
   status,
+  preparing = false,
   announce = false,
 }: {
   status: AgentStatus;
+  preparing?: boolean;
   announce?: boolean;
 }) {
   return (
@@ -19,7 +21,7 @@ export function AgentPresence({
       className={`presence presence-${status}`}
       role={announce ? "status" : undefined}
     >
-      {labels[status]}
+      {status === "offline" && preparing ? "Preparing" : labels[status]}
     </span>
   );
 }

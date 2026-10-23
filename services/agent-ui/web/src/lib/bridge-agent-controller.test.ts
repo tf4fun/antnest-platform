@@ -197,7 +197,7 @@ test("Prompt acceptance and Run terminal are distinct controller states", async 
     },
     openObserver: async (input) => {
       push = input.onView;
-      input.onView({ ...view("session"), selectedView: {
+      input.onView({ ...view("session"), availability: "ready", selectedView: {
         ...view("session").selectedView, appendVersion: 4, historyToken: "token-4", operations: [],
       } });
       return () => {};
