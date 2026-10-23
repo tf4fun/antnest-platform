@@ -389,12 +389,30 @@ describe.skipIf(databaseUrl === undefined)(
       const before = await historyFacts();
 
       // Real repositories wrote the historical protection facts. Reconstruct
-      // the pre-0023 schema, including removal of the later 0024 scope fields
-      // and 0025 Agent leases,
+      // the pre-0023 schema, including removal of later scope, lease and
+      // Run/Learning owner fields,
       // before testing the real forward migrations and their journal prefix.
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query(
+          "DROP TRIGGER learning_review_attempts_preserve_owner ON learning_review_attempts",
+        );
+        await client.query("DROP FUNCTION preserve_learning_review_owner()");
+        await client.query(
+          `ALTER TABLE learning_review_attempts DROP COLUMN authority_mode, DROP COLUMN claim_id,
+           DROP COLUMN claim_owner_registration_id, DROP COLUMN claim_owner_member_id,
+           DROP COLUMN claim_owner_incarnation_id, DROP COLUMN claim_owner_epoch`,
+        );
+        await client.query(
+          "DROP TRIGGER learning_tasks_preserve_claim_owner ON learning_tasks",
+        );
+        await client.query("DROP FUNCTION preserve_learning_claim_owner()");
+        await client.query(
+          `ALTER TABLE learning_tasks DROP COLUMN authority_mode,
+           DROP COLUMN claim_owner_registration_id, DROP COLUMN claim_owner_member_id,
+           DROP COLUMN claim_owner_incarnation_id, DROP COLUMN claim_owner_epoch`,
+        );
         await client.query(
           "ALTER TABLE runs DROP CONSTRAINT runs_session_scope_fk",
         );
@@ -417,15 +435,16 @@ describe.skipIf(databaseUrl === undefined)(
            DROP COLUMN execution_owner_epoch`,
         );
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4)",
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5)",
           [
             "0023_runtime_barrier_cycles.sql",
             "0024_agent_run_admission.sql",
             "0025_agent_leases.sql",
             "0026_run_execution_owner.sql",
+            "0027_learning_claim_owner.sql",
           ],
         );
-        expect(removed.rowCount).toBe(4);
+        expect(removed.rowCount).toBe(5);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
