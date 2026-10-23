@@ -93,12 +93,14 @@ export class PostgresRunRepository implements RunRepository {
     try {
       return await this.kernel.transaction(async (client) => {
         const session = await client.query<{
+          organization_id: string;
+          agent_id: string;
           state: string;
           client_mcp_revision_id: string;
           configuration: unknown;
           append_version: string;
         }>(
-          `SELECT state, client_mcp_revision_id, configuration, append_version
+          `SELECT organization_id, agent_id, state, client_mcp_revision_id, configuration, append_version
              FROM acp_sessions WHERE id = $1 FOR UPDATE`,
           [request.sessionId],
         );
@@ -129,6 +131,14 @@ export class PostgresRunRepository implements RunRepository {
           currentAppendVersion >= Number.MAX_SAFE_INTEGER
         )
           throw new DomainError("session_append_conflict", "Session append version is exhausted");
+        // Both Session and Agent unique indexes protect this insert. Preserve
+        // Session error priority under its lock, independent of index order.
+        const active = await client.query<{ id: string }>(
+          "SELECT id FROM runs WHERE session_id = $1 AND state IN ('admitting', 'running') LIMIT 1",
+          [request.sessionId],
+        );
+        if (active.rows[0] !== undefined)
+          throw new DomainError("session_busy", "Session already has a non-terminal Run");
         const nextAppendVersion = currentAppendVersion + 1;
         const result = await client.query<{
           id: string;
@@ -145,9 +155,10 @@ export class PostgresRunRepository implements RunRepository {
              expected_access_revision, state,
              pending_user_message_id, input_prompt,
              created_at, updated_at, session_configuration,
-             bridge_intent_id, intent_digest, expected_append_version, append_version
+             bridge_intent_id, intent_digest, expected_append_version, append_version,
+             organization_id, agent_id
            ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8, $9::jsonb,
-                     $10, $11, $12, $13)
+                     $10, $11, $12, $13, $14, $15)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
                      pending_user_message_id, session_configuration`,
@@ -165,6 +176,8 @@ export class PostgresRunRepository implements RunRepository {
             digest,
             bridgeIntent?.expectedAppendVersion ?? null,
             nextAppendVersion,
+            sessionRow.organization_id,
+            sessionRow.agent_id,
           ],
         );
         await client.query("UPDATE acp_sessions SET append_version = $2 WHERE id = $1", [
@@ -187,6 +200,9 @@ export class PostgresRunRepository implements RunRepository {
     } catch (error) {
       if (isConstraint(error, "runs_session_nonterminal_unique")) {
         throw new DomainError("session_busy", "Session already has a non-terminal Run");
+      }
+      if (isConstraint(error, "runs_agent_nonterminal_unique")) {
+        throw new DomainError("agent_busy", "Agent already has an active Run");
       }
       throw error;
     }

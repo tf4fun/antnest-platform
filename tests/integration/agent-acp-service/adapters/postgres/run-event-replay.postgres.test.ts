@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
@@ -46,7 +46,7 @@ describe.skipIf(databaseUrl === undefined)(
     const executions = new PostgresExecutionRepository(kernel);
     const temporarySkills = new PostgresTemporarySkills(kernel);
 
-    beforeAll(async () => {
+    beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
       await migrate(pool);
@@ -55,13 +55,16 @@ describe.skipIf(databaseUrl === undefined)(
       await pool.end();
     });
 
-    async function accept(runtimeRevision?: string) {
+    async function accept(
+      runtimeRevision?: string,
+      agentId = binding().agentId,
+    ) {
       const sessionId = randomUUID();
       const runId = randomUUID();
       const revisionId = randomUUID();
       await sessions.create({
         sessionId,
-        binding: binding(),
+        binding: { ...binding(), agentId },
         cwd: "/workspace",
         mcpRevisionId: revisionId,
         mcpSources: [],
@@ -236,7 +239,7 @@ describe.skipIf(databaseUrl === undefined)(
       "rejects a %s receipt ID belonging to another Run without changing either Run",
       async (kind) => {
         const originalRun = await accept();
-        const otherRun = await accept();
+        const otherRun = await accept(undefined, "independent-receipt-agent");
         const input = simpleInput(originalRun.runId);
         await writeSimple(events, kind, input);
         const originalState = await stored(originalRun.sessionId);

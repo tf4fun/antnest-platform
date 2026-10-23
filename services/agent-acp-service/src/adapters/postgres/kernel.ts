@@ -1,6 +1,14 @@
 import type { Pool, PoolClient, PoolConfig, QueryResult, QueryResultRow } from "pg";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
 import { observePostgresTransaction } from "../../telemetry/postgres.js";
+import {
+  AgentOwnershipLostError,
+  ownershipFence,
+  transactionBudget,
+  type AgentOwnershipFence,
+} from "../../domain/agent-ownership.js";
+
+type TransactionOptions = { timeoutMs?: number };
 
 export function postgresPoolOptions(connectionString: string, timeoutMs: number): PoolConfig {
   return {
@@ -25,7 +33,40 @@ export class PostgresKernel {
     return this.observe(sqlOperation(text), () => this.pool.query<Row>(text, [...values]));
   }
 
-  public transaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+  public agentTransaction<T>(
+    input: AgentOwnershipFence,
+    operation: (client: PoolClient) => Promise<T>,
+    options: TransactionOptions = {},
+  ): Promise<T> {
+    const fence = ownershipFence(input);
+    const timeoutMs = transactionBudget(options.timeoutMs ?? 10_000);
+    return this.transaction(
+      async (client) => {
+        const values = [fence.organizationId, fence.agentId, fence.ownerInstanceId, fence.epoch];
+        const locked = await client.query(
+          "SELECT organization_id FROM agent_leases WHERE organization_id=$1 AND agent_id=$2 FOR SHARE",
+          values.slice(0, 2),
+        );
+        if (locked.rowCount !== 1) throw new AgentOwnershipLostError();
+        // The clock check must run after any wait for the lease row lock.
+        const current = await client.query<{ owned: boolean }>(
+          `SELECT owner_instance_id=$3 AND epoch=$4::bigint AND expires_at>clock_timestamp() AS owned
+         FROM agent_leases WHERE organization_id=$1 AND agent_id=$2`,
+          values,
+        );
+        if (current.rows[0]?.owned !== true) throw new AgentOwnershipLostError();
+        return operation(client);
+      },
+      { timeoutMs },
+    );
+  }
+
+  public transaction<T>(
+    operation: (client: PoolClient) => Promise<T>,
+    options: TransactionOptions = {},
+  ): Promise<T> {
+    const timeoutMs =
+      options.timeoutMs === undefined ? undefined : transactionBudget(options.timeoutMs);
     return this.observe("transaction", () =>
       observePostgresTransaction(async (finish) => {
         const client = await this.pool.connect();
@@ -38,10 +79,17 @@ export class PostgresKernel {
         try {
           await client.query("BEGIN");
           executing = true;
+          if (timeoutMs !== undefined) {
+            await client.query("SELECT set_config('transaction_timeout',$1,true)", [
+              `${timeoutMs}ms`,
+            ]);
+          }
           const result = await operation(client);
           executing = false;
           const committed = await client.query("COMMIT");
           finish(committed.command === "ROLLBACK" ? "rolled_back" : "committed");
+          if (committed.command !== "COMMIT")
+            throw new Error("PostgreSQL transaction did not commit");
           return result;
         } catch (error) {
           try {

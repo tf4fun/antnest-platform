@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
@@ -18,13 +18,13 @@ describe.skipIf(!databaseUrl)(
       kernel = new PostgresKernel(pool),
       store = new PostgresTemporarySkills(kernel);
     const signal = new AbortController().signal;
-    beforeAll(async () => {
+    beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
       await migrate(pool);
     });
     afterAll(() => pool.end());
-    async function input() {
+    async function input(agentId = "agent_1") {
       const runId = randomUUID(),
         sessionId = randomUUID(),
         revision = randomUUID();
@@ -36,7 +36,7 @@ describe.skipIf(!databaseUrl)(
         binding: {
           connectionId: randomUUID(),
           organizationId: "org_1",
-          agentId: "agent_1",
+          agentId,
           principalId: "user_1",
         },
         cwd: "/workspace",
@@ -225,7 +225,7 @@ describe.skipIf(!databaseUrl)(
           new Date(),
         ),
       ).toEqual({ toolEffectState: "none" });
-      const files = await input();
+      const files = await input("independent-files-agent");
       const scope = await store.reserve(files);
       await attempt(files.runId);
       await store.released(scope);
@@ -250,8 +250,6 @@ describe.skipIf(!databaseUrl)(
           signal,
         ),
       ).toEqual([]);
-      const active = await input();
-      await store.reserve(active);
       await new PostgresExecutionRepository(kernel).finish({
         runId: value.runId,
         terminalClass: "failed",
@@ -260,6 +258,8 @@ describe.skipIf(!databaseUrl)(
         errorClass: "fixture_failure",
         finishedAt: new Date(),
       });
+      const active = await input();
+      await store.reserve(active);
       const rows = [];
       let cursor: null | string = null;
       for (;;) {

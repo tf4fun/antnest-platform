@@ -181,6 +181,7 @@ describe.skipIf(url === undefined)(
     });
 
     it("decodes tool details and permissions, retaining per-call usage without copied fork messages", async () => {
+      const copied = await create();
       const run = await create(admin.organizationId, true);
       const toolEvent = {
         kind: "tool_call" as const,
@@ -217,7 +218,6 @@ describe.skipIf(url === undefined)(
           }),
         ],
       );
-      const copied = await create();
       await pool.query(
         "INSERT INTO session_messages(id,session_id,run_id,sequence,kind,visible,payload,created_at) VALUES ($1,$2,$3,1,'agent_message',true,$4::jsonb,now())",
         [

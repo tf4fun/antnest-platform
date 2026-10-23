@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
@@ -40,7 +40,7 @@ describe.skipIf(databaseUrl === undefined)(
         now: () => recoveredAt,
       }).recover();
 
-    beforeAll(async () => {
+    beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
       await migrate(pool);
@@ -84,7 +84,7 @@ describe.skipIf(databaseUrl === undefined)(
 
     it("point-reads recovery state without changing either pending Run", async () => {
       const pending = await intent();
-      const running = await intent(true);
+      const running = await intent(true, "independent-running-agent");
       const ids = [pending.runId, running.runId];
       const rows = () =>
         pool.query(
@@ -256,7 +256,7 @@ describe.skipIf(databaseUrl === undefined)(
 
     it("terminates pending intents without executing their prompts and respects cancellation", async () => {
       const pending = await intent();
-      const cancelled = await intent();
+      const cancelled = await intent(false, "independent-cancelled-agent");
       await runs.requestCancellation(cancelled.runId, recoveredAt);
       await recover();
       const stored = await pool.query<{
@@ -283,7 +283,7 @@ describe.skipIf(databaseUrl === undefined)(
 
     it("does not need a replayable prompt or snapshot to finish interrupted records", async () => {
       const pending = await intent();
-      const running = await intent(true);
+      const running = await intent(true, "independent-running-agent");
       await pool.query(
         "UPDATE runs SET input_prompt = '{}'::jsonb WHERE id = $1",
         [pending.runId],

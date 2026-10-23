@@ -186,10 +186,10 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
     await pool.query(`INSERT INTO runs
       (id,request_id,session_id,client_mcp_revision_id,expected_access_revision,state,
        deadline_at,execution_snapshot,terminal_class,executor_state,tool_effect_state,
-       stop_reason,input_prompt,created_at,updated_at)
+       stop_reason,input_prompt,created_at,updated_at,organization_id,agent_id)
       VALUES ('learning-run','run-request','learning-session','learning-mcp','access-1',
        'completed',now() + interval '1 hour','{}'::jsonb,'completed','quiescent','none',
-       'end_turn','[]'::jsonb,now(),now())`);
+       'end_turn','[]'::jsonb,now(),now(),'org-learning','agent-learning')`);
     await pool.query(
       `INSERT INTO learning_tasks
       (id,organization_id,agent_id,owner_principal_id,source_run_id,trigger_kind,
