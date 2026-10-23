@@ -3,9 +3,14 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash, X509Certificate } from "node:crypto";
+import { isIP } from "node:net";
 
-export function certificates(directory, { dnsNames = [] } = {}) {
+export function certificates(
+  directory,
+  { dnsNames = [], ipAddresses = [] } = {},
+) {
   assert(dnsNames.every((name) => /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u.test(name)));
+  assert(ipAddresses.every((address) => isIP(address) !== 0));
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const openssl = (args) => {
     const result = spawnSync("openssl", args, {
@@ -67,6 +72,7 @@ export function certificates(directory, { dnsNames = [] } = {}) {
         "subjectAltName=IP:127.0.0.1",
         "DNS:tls-proxy",
         ...dnsNames.map((name) => `DNS:${name}`),
+        ...ipAddresses.map((address) => `IP:${address}`),
       ].join(","),
     ].join("\n"),
   );
