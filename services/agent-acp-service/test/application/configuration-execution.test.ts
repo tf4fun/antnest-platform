@@ -109,7 +109,7 @@ describe("Admitted execution authorization", () => {
       authorizationRevision: 1,
       digest: "c".repeat(64),
     };
-    const result = await builder.build("session-1", frozen, new AbortController().signal);
+    const result = await builder.build("session-1", frozen, new AbortController().signal, "run-1");
     expect(result.tools).toEqual([]);
     expect(list).not.toHaveBeenCalled();
     expect(

@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { PostgresKernel } from "../../../src/adapters/postgres/kernel.js";
-import { PostgresContextRepository } from "../../../src/adapters/postgres/context-repository.js";
+import { createLegacyRunRepositories } from "../../../src/adapters/postgres/run-repositories.js";
 
 describe("Context reasoning projection", () => {
   it("keeps streamed reasoning with its assistant response and never the next user", async () => {
@@ -62,7 +62,10 @@ describe("Context reasoning projection", () => {
       .mockResolvedValueOnce(result(rows))
       .mockResolvedValueOnce(result([]));
     try {
-      const context = await new PostgresContextRepository(kernel).load("session");
+      const context = await createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).contexts.load("session");
       expect(query.mock.calls[1]?.[0]).toContain("'agent_thought'");
       expect(context.messages).toHaveLength(4);
       expect(context.messages[1]).toMatchObject({

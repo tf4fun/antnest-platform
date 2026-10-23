@@ -13,7 +13,6 @@ import { newResourceId } from "../../../../services/agent-acp-service/src/domain
 import type { Pool } from "pg";
 import { vi } from "vitest";
 
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
@@ -199,7 +198,10 @@ export async function startBoundaryApplication(
       contextBuilder: new ContextBuilder({
         runtimeInformation: { read: () => Promise.resolve(information) },
         tools,
-        repository: new PostgresContextRepository(kernel),
+        repository: createLegacyRunRepositories(
+          kernel,
+          new AbortController().signal,
+        ).contexts,
         id: newResourceId,
         now: () => new Date(),
       }),

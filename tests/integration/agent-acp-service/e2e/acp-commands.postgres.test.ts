@@ -4,7 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import type { ContentBlock } from "../../../../services/agent-acp-service/src/domain/types.js";
 import type { ModelResult } from "../../../../services/agent-acp-service/src/ports/model.js";
@@ -42,7 +42,10 @@ describe.skipIf(databaseUrl === undefined)(
   () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 4 });
     let app: Awaited<ReturnType<typeof startBoundaryApplication>>;
-    const history = new PostgresContextRepository(new PostgresKernel(pool));
+    const history = createLegacyRunRepositories(
+      new PostgresKernel(pool),
+      new AbortController().signal,
+    ).contexts;
     beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");

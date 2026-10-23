@@ -39,7 +39,6 @@ import { SessionOutputStreams } from "./transport/acp/session-output.js";
 import { OfficialMcpDialer } from "./adapters/mcp/official-client.js";
 import { McpToolCatalog } from "./adapters/mcp/tool-catalog.js";
 import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
-import { PostgresContextRepository } from "./adapters/postgres/context-repository.js";
 import { PostgresRuntimeBarrierReader } from "./adapters/postgres/runtime-barrier.js";
 import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
@@ -414,8 +413,10 @@ export function buildComponents(
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
   const sessions = new PostgresSessionRepository(kernel, new SecretBox(config.clientMcpKey));
-  const { runs, events, executions } = createLegacyRunRepositories(kernel, ownershipSignal);
-  const contexts = new PostgresContextRepository(kernel);
+  const { runs, events, executions, contexts } = createLegacyRunRepositories(
+    kernel,
+    ownershipSignal,
+  );
 
   const model = new InstrumentedModel(
     new OpenAICompatibleModel({

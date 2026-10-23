@@ -46,6 +46,7 @@ export class ContextBuilder {
     sessionId: string,
     snapshot: RunExecutionSnapshot,
     ownershipSignal: AbortSignal,
+    runId: string,
   ): Promise<PreparedRunContext> {
     if (snapshot.executionSpec.skillInstructions.length !== 0) {
       throw new DomainError(
@@ -147,6 +148,7 @@ export class ContextBuilder {
         this.dependencies.repository.saveCheckpoint({
           id: this.dependencies.id("checkpoint"),
           sessionId,
+          runId,
           throughSequence,
           summary,
           tokenCount: estimateText(summary),

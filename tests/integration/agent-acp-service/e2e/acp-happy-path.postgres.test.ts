@@ -4,7 +4,7 @@ import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
@@ -143,9 +143,10 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     expect(
       JSON.stringify(model.complete.mock.calls[0]?.[0].messages),
     ).toContain("documents/SKILL.md");
-    const contextSource = await new PostgresContextRepository(
+    const contextSource = await createLegacyRunRepositories(
       new PostgresKernel(pool),
-    ).load(created.sessionId);
+      new AbortController().signal,
+    ).contexts.load(created.sessionId);
     expect(JSON.stringify(contextSource)).not.toContain(
       "Use the company style guide",
     );

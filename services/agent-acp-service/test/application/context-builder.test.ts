@@ -29,7 +29,12 @@ describe("ContextBuilder", () => {
       id: () => "checkpoint-1",
       now: () => new Date(),
     });
-    const result = await builder.build("session-1", snapshot(), new AbortController().signal);
+    const result = await builder.build(
+      "session-1",
+      snapshot(),
+      new AbortController().signal,
+      "run-1",
+    );
     expect(readSkill).toHaveBeenCalledWith(
       snapshot().runtime,
       information.skills[0]!.path,
@@ -70,7 +75,7 @@ describe("ContextBuilder", () => {
       now: () => new Date(),
     });
     await expect(
-      builder.build("session-1", snapshot(), new AbortController().signal),
+      builder.build("session-1", snapshot(), new AbortController().signal, "run-1"),
     ).rejects.toThrow("no longer available");
     expect(readSkill).not.toHaveBeenCalled();
   });
@@ -103,7 +108,12 @@ describe("ContextBuilder", () => {
     const constrained = snapshot();
     constrained.executionSpec.model.contextWindow = 1536;
     constrained.executionSpec.model.maxOutputTokens = 128;
-    const result = await builder.build("session-1", constrained, new AbortController().signal);
+    const result = await builder.build(
+      "session-1",
+      constrained,
+      new AbortController().signal,
+      "run-1",
+    );
     expect(readSkill).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(result.messages.at(-1))).toContain("PRIVATE SKILL BODY");
     expect(saveCheckpoint).toHaveBeenCalled();
@@ -113,7 +123,7 @@ describe("ContextBuilder", () => {
       kind: "user_message",
       content: [{ type: "text", text: "Another task" }],
     };
-    await builder.build("session-1", constrained, new AbortController().signal);
+    await builder.build("session-1", constrained, new AbortController().signal, "run-1");
     expect(readSkill).toHaveBeenCalledTimes(1);
   });
   it("builds system, environment, and conversation context in order", async () => {
@@ -142,7 +152,12 @@ describe("ContextBuilder", () => {
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
 
-    const { messages } = await builder.build("session-1", snapshot(), new AbortController().signal);
+    const { messages } = await builder.build(
+      "session-1",
+      snapshot(),
+      new AbortController().signal,
+      "run-1",
+    );
 
     expect(messages.map((message) => message.role)).toEqual([
       "system",
@@ -172,9 +187,9 @@ describe("ContextBuilder", () => {
     legacy.executionSpec.skillInstructions = [
       { skillKey: "example", version: "1", instructions: "hidden body" },
     ];
-    await expect(builder.build("session-1", legacy, new AbortController().signal)).rejects.toThrow(
-      "Legacy Skill instructions are unsupported",
-    );
+    await expect(
+      builder.build("session-1", legacy, new AbortController().signal, "run-1"),
+    ).rejects.toThrow("Legacy Skill instructions are unsupported");
     expect(read).not.toHaveBeenCalled();
   });
 
@@ -219,6 +234,7 @@ describe("ContextBuilder", () => {
       "session-1",
       constrained,
       new AbortController().signal,
+      "original-run",
     );
 
     expect(JSON.stringify(messages.at(-1))).toContain("latest request");
@@ -226,6 +242,7 @@ describe("ContextBuilder", () => {
       expect.objectContaining({
         id: "checkpoint-2",
         sessionId: "session-1",
+        runId: "original-run",
         throughSequence: 2,
       }),
     );
@@ -275,7 +292,12 @@ describe("ContextBuilder", () => {
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
 
-    const { messages } = await builder.build("session-1", snapshot(), new AbortController().signal);
+    const { messages } = await builder.build(
+      "session-1",
+      snapshot(),
+      new AbortController().signal,
+      "run-1",
+    );
 
     expect(messages.slice(1)).toEqual([
       { role: "user", content: [{ type: "text", text: "read" }] },
@@ -324,9 +346,9 @@ describe("ContextBuilder", () => {
     constrained.executionSpec.model.contextWindow = 1_024;
     constrained.executionSpec.model.maxOutputTokens = 128;
 
-    await expect(builder.build("session-1", constrained, ownership.signal)).rejects.toThrow(
-      "worker lock lost",
-    );
+    await expect(
+      builder.build("session-1", constrained, ownership.signal, "run-1"),
+    ).rejects.toThrow("worker lock lost");
     expect(saveCheckpoint).not.toHaveBeenCalled();
   });
 
@@ -365,9 +387,9 @@ describe("ContextBuilder", () => {
     constrained.executionSpec.model.contextWindow = 1_536;
     constrained.executionSpec.model.maxOutputTokens = 128;
 
-    await expect(builder.build("session-1", constrained, ownership.signal)).rejects.toThrow(
-      "worker lock lost",
-    );
+    await expect(
+      builder.build("session-1", constrained, ownership.signal, "run-1"),
+    ).rejects.toThrow("worker lock lost");
   });
 });
 

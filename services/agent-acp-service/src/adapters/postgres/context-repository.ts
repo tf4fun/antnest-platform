@@ -8,9 +8,19 @@ import type {
   StoredContextMessage,
 } from "../../ports/context-repository.js";
 import type { PostgresKernel } from "./kernel.js";
+import { RunWriteAuthority, type RunOwnerColumns } from "./run-write-authority.js";
+import { AgentOwnershipLostError } from "../../domain/agent-ownership.js";
 
 export class PostgresContextRepository implements ContextRepository {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: RunWriteAuthority;
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: RunWriteAuthority,
+  ) {
+    if (!(authority instanceof RunWriteAuthority))
+      throw new TypeError("Context writers require explicit Run authority");
+    this.#authority = authority;
+  }
 
   public async load(sessionId: string): Promise<ContextSource> {
     const checkpointResult = await this.kernel.query<{
@@ -60,21 +70,47 @@ export class PostgresContextRepository implements ContextRepository {
     };
   }
 
-  public async saveCheckpoint(input: SaveCheckpointInput): Promise<void> {
-    await this.kernel.query(
-      `INSERT INTO context_checkpoints(
+  public async saveCheckpoint(request: SaveCheckpointInput): Promise<void> {
+    const input = structuredClone(request);
+    await this.#authority.transaction(this.kernel, async (client) => {
+      const session = await client.query<{ organization_id: string; agent_id: string }>(
+        "SELECT organization_id,agent_id FROM acp_sessions WHERE id=$1 FOR UPDATE",
+        [input.sessionId],
+      );
+      const sessionRow = session.rows[0];
+      if (!sessionRow) throw new AgentOwnershipLostError();
+      this.#authority.assertSession(sessionRow);
+      const run = await client.query<RunOwnerColumns & { session_id: string; state: string }>(
+        `SELECT session_id,state,organization_id,agent_id,execution_owner_registration_id,
+          execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text
+         FROM runs WHERE id=$1 FOR UPDATE`,
+        [input.runId],
+      );
+      const runRow = run.rows[0];
+      if (
+        !runRow ||
+        runRow.session_id !== input.sessionId ||
+        runRow.organization_id !== sessionRow.organization_id ||
+        runRow.agent_id !== sessionRow.agent_id
+      )
+        throw new AgentOwnershipLostError();
+      this.#authority.assertRun(runRow);
+      if (runRow.state !== "running") throw new Error("Run is not running");
+      await client.query(
+        `INSERT INTO context_checkpoints(
          id, session_id, through_sequence, summary, token_count, created_at
        ) VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (session_id, through_sequence) DO NOTHING`,
-      [
-        input.id,
-        input.sessionId,
-        input.throughSequence,
-        input.summary,
-        input.tokenCount,
-        input.createdAt,
-      ],
-    );
+        [
+          input.id,
+          input.sessionId,
+          input.throughSequence,
+          input.summary,
+          input.tokenCount,
+          input.createdAt,
+        ],
+      );
+    });
   }
 }
 

@@ -6,7 +6,6 @@ import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" w
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresSessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
 import { PostgresBridgeObservationRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
 import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { configurationView } from "../../../../services/agent-acp-service/src/domain/session-configuration.js";
@@ -316,9 +315,10 @@ describe.skipIf(databaseUrl === undefined)(
         ).toBeUndefined();
         expect(
           (
-            await new PostgresContextRepository(new PostgresKernel(pool)).load(
-              sessionId,
-            )
+            await createLegacyRunRepositories(
+              new PostgresKernel(pool),
+              new AbortController().signal,
+            ).contexts.load(sessionId)
           ).messages,
         ).toEqual([]);
       });

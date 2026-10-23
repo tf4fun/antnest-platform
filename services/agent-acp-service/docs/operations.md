@@ -150,6 +150,12 @@ still selects the explicit legacy factory with the held worker signal: the
 production Agent coordinator, other writers and scoped recovery are pending.
 Registration bootstrap does not enable this execution mode or additional replicas.
 
+Context checkpoint writes now receive their original Run ID through the real
+RunExecutor/ContextBuilder path. The same bound factory checks lease, Session,
+origin and running state before insertion or duplicate handling. Completed Runs
+cannot recreate checkpoints removed by refusal. Production still uses the held
+legacy worker authority until all foreground consumers support Agent ownership.
+
 Lease epochs are positive decimal strings, retained after release and bounded
 by PostgreSQL's signed bigint maximum. The repository accepts durations from
 1 to 300 seconds; it samples database time after acquiring each lease row lock.

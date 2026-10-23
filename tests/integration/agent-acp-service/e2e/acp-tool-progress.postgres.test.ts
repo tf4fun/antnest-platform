@@ -12,7 +12,7 @@ import {
 
 import { OfficialMcpDialer } from "../../../../services/agent-acp-service/src/adapters/mcp/official-client.js";
 import { McpToolCatalog } from "../../../../services/agent-acp-service/src/adapters/mcp/tool-catalog.js";
-import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import type { ModelResult } from "../../../../services/agent-acp-service/src/ports/model.js";
@@ -118,9 +118,10 @@ describe.skipIf(databaseUrl === undefined)("ACP durable Tool progress", () => {
         const offset = client.frames.length;
         await replay(client, version, sessionId);
         expect(toolUpdates(client.frames.slice(offset))).toEqual(updates);
-        const context = await new PostgresContextRepository(
+        const context = await createLegacyRunRepositories(
           new PostgresKernel(pool),
-        ).load(sessionId);
+          new AbortController().signal,
+        ).contexts.load(sessionId);
         expect(JSON.stringify(context.messages)).not.toContain(
           "owner-only partial",
         );

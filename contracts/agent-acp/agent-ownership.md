@@ -142,6 +142,11 @@ Session cancellation, close and other lifecycle paths that mutate Runs must
 apply the same guard; a fenced Run repository cannot leave those bypasses
 unfenced. Context checkpoints must carry their original Run binding. Looking up
 the Session's latest Run cannot authorize a delayed checkpoint write.
+The actual ContextBuilder receives that original Run ID from RunExecutor and
+passes it with every saved checkpoint. The guarded transaction validates its
+Session and original owner before conflict handling, and only a running Run may
+save a checkpoint. A late write after refusal must not recreate invalidated
+context, even while the same owner still holds a valid lease.
 
 The actual Prompt path must pass the captured owner through admission,
 Supervisor, Coordinator and Executor into event, context and recovery writers.

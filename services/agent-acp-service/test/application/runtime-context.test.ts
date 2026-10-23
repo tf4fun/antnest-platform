@@ -58,7 +58,12 @@ describe("Runtime context preparation", () => {
       id: () => "checkpoint",
       now: () => new Date(),
     });
-    const first = await builder.build("session", runtimeSnapshot(), new AbortController().signal);
+    const first = await builder.build(
+      "session",
+      runtimeSnapshot(),
+      new AbortController().signal,
+      "run-1",
+    );
     expect(JSON.stringify(first.messages)).toContain("Workspace guidance");
     expect(JSON.stringify(first.messages)).toContain("Use the company style guide");
     expect(JSON.stringify(first.messages)).toContain("documents/SKILL.md");
@@ -68,7 +73,12 @@ describe("Runtime context preparation", () => {
       content: "Updated guidance",
       truncated: false,
     };
-    const second = await builder.build("session", runtimeSnapshot(), new AbortController().signal);
+    const second = await builder.build(
+      "session",
+      runtimeSnapshot(),
+      new AbortController().signal,
+      "run-1",
+    );
     expect(JSON.stringify(second.messages)).toContain("Updated guidance");
     expect(read).toHaveBeenCalledTimes(2);
     expect(list).toHaveBeenCalledTimes(2);
@@ -100,7 +110,7 @@ describe("Runtime context preparation", () => {
       id: () => "checkpoint",
       now: () => new Date(),
     });
-    const result = await builder.build("session", snapshot, new AbortController().signal);
+    const result = await builder.build("session", snapshot, new AbortController().signal, "run-1");
     expect(JSON.stringify(result.messages)).toContain("Runtime information truncated");
     expect(JSON.stringify(result.messages.at(-1))).toContain("Keep this question");
     expect(JSON.stringify(result.messages).length).toBeLessThan(6000);
@@ -131,7 +141,7 @@ describe("Runtime context preparation", () => {
       now: () => new Date(),
     });
     await expect(
-      builder.build("session", snapshot, new AbortController().signal),
+      builder.build("session", snapshot, new AbortController().signal, "run-1"),
     ).rejects.toMatchObject({ code: "context_budget_exhausted" });
   });
 });

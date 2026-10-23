@@ -9,7 +9,6 @@ import { PostgresKernel } from "../../../../../services/agent-acp-service/src/ad
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresBridgeObservationRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
-import { PostgresContextRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
 import type { RunExecutionSnapshot } from "../../../../../services/agent-acp-service/src/domain/types.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -26,7 +25,10 @@ describe.skipIf(databaseUrl === undefined)(
       new AbortController().signal,
     ).runs;
     const bridgeObservations = new PostgresBridgeObservationRepository(kernel);
-    const contexts = new PostgresContextRepository(kernel);
+    const contexts = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).contexts;
     const executions = createLegacyRunRepositories(
       kernel,
       new AbortController().signal,
@@ -493,6 +495,15 @@ describe.skipIf(databaseUrl === undefined)(
           createdAt: new Date("2026-08-30T00:20:02Z"),
         }),
       ).rejects.toMatchObject({ code: "session_busy" });
+      await contexts.saveCheckpoint({
+        runId,
+        id: randomUUID(),
+        sessionId: sourceSessionId,
+        throughSequence: 1,
+        summary: "remember this",
+        tokenCount: 3,
+        createdAt: new Date("2026-08-30T00:20:02.500Z"),
+      });
       await executions.finish({
         runId,
         terminalClass: "completed",
@@ -502,14 +513,6 @@ describe.skipIf(databaseUrl === undefined)(
         finishedAt: new Date("2026-08-30T00:20:03Z"),
       });
 
-      await contexts.saveCheckpoint({
-        id: randomUUID(),
-        sessionId: sourceSessionId,
-        throughSequence: 1,
-        summary: "remember this",
-        tokenCount: 3,
-        createdAt: new Date("2026-08-30T00:20:04Z"),
-      });
       const forkSessionId = randomUUID();
       const forkMcpRevisionId = randomUUID();
       await sessions.fork({
@@ -770,6 +773,7 @@ describe.skipIf(databaseUrl === undefined)(
         ],
       });
       await contexts.saveCheckpoint({
+        runId,
         id: randomUUID(),
         sessionId,
         throughSequence: 1,
