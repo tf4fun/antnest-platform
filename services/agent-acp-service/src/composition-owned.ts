@@ -38,6 +38,7 @@ import type { AcpApplicationPort } from "./ports/acp-application.js";
 import type { AgentSettlementPort } from "./ports/agent-settlement.js";
 import type { AgentExecutionStatePort } from "./ports/agent-execution-state.js";
 import type { SkillCommandsPort } from "./ports/skill-commands.js";
+import { ModelTransportCleanupError } from "./ports/model.js";
 
 type Graph = ReturnType<typeof buildAgentComponents>;
 type Options = Omit<
@@ -247,7 +248,11 @@ export class OwnedAgentComponents {
   public shutdown(): Promise<void> {
     this.shutdownPromise ??= (async () => {
       this.stop(new Error("Agent service is shutting down"));
-      await this.generations.drain();
+      try {
+        await this.generations.drain();
+      } catch (error) {
+        this.cleanupFailures.push(error);
+      }
       if (this.cleanupFailures.length > 0)
         throw new AggregateError(this.cleanupFailures, "Owned Agent cleanup failed");
     })();
@@ -358,7 +363,14 @@ export class OwnedAgentComponents {
       if (entry?.generation === generation) this.retire(entry, error);
       else void this.generations.closeScope(scope, error);
     };
-    const retainModelRequest = (original: Promise<unknown>) => generation.retainRun(original);
+    const retainModelRequest = (original: Promise<unknown>): void => {
+      // Observe the original result before generation tracking deletes it.
+      // Business errors and expected cancellation are owned by the caller.
+      void original.catch((error: unknown) => {
+        if (error instanceof ModelTransportCleanupError) this.cleanupFailures.push(error);
+      });
+      generation.retainRun(original);
+    };
     const graph = buildAgentComponents({
       ...this.options,
       repositories,

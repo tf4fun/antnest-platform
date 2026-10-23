@@ -791,7 +791,11 @@ In legacy mode, Learning cancellation may finish the review worker before its
 original model call settles. The service retains those calls and joins their
 transport cleanup after the workers stop, before closing Runtime connections,
 releasing the worker lock or ending the database pool. Registered-owner mode
-keeps this retention within each Agent generation.
+keeps this retention within each Agent generation. An internal transport-close
+failure is retained separately from expected cancellation and model business
+errors. Shutdown reports it after attempting all shared resource cleanup; a
+preceding model failure and known usage are preserved. An Agent's late cleanup
+failure does not abort another Agent's generation.
 
 ## Connection Identity
 

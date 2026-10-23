@@ -532,6 +532,9 @@ Collector retention. This service adds no retention service.
   holds real Provider transport cleanup during legacy/owned shutdown and Agent A
   lease loss while B completes a foreground Run. It does not establish B's
   background claim recovery, predecessor stop-proof handling or two replicas.
+  Injected internal transport-close failures remain visible in the shutdown
+  result, including after cancellation or an HTTP 503. Shared resource cleanup
+  still completes; another Agent can run before and after the failed close.
 - Session cancellation, close, or delete: persist a cancellation latch before
   waiting for in-memory execution. A late acceptance commit reaches an already
   aborted executor and is closed without starting model or Tool work.

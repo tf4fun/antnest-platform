@@ -240,6 +240,8 @@ lock; work cancellation uses the entry signal, and Learning retains and joins
 its original model work.
 With owner settings disabled, the service also joins original Learning model
 calls after worker cancellation and before shared connection and lock cleanup.
+Internal model transport-close failures are retained through cancellation and
+reported by shutdown after the remaining resources have been closed.
 
 The global worker lock and single-instance restriction remain. Production
 predecessor stop-proof and Learning claim/global review-slot recovery,

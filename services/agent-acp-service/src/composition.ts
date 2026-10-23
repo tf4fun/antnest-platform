@@ -26,6 +26,7 @@ import { PostgresExecutionAudits } from "./adapters/postgres/execution-audit.js"
 import type { ExecutionAccessSnapshot } from "./domain/execution-configuration.js";
 import { SessionOutputStreams } from "./transport/acp/session-output.js";
 import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
+import { ModelTransportCleanupError } from "./ports/model.js";
 import { PostgresRuntimeBarrierReader } from "./adapters/postgres/runtime-barrier.js";
 import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
@@ -294,7 +295,7 @@ export async function startAgentAcpService(
         ]);
         // Review cancellation can settle the worker before the original
         // inference's finally/transport close. Join it before shared resources.
-        await built.joinLegacyModelRequests();
+        results.push(await settle(built.joinLegacyModelRequests()));
         results.push(
           await settle(ownedRuntimeConnections.close()),
           await settle(acquiredWorkerLock.release()),
@@ -396,11 +397,15 @@ export function buildComponents(
   );
   const providers = new ProviderClients(model);
   const legacyModelRequests = new Set<Promise<unknown>>();
+  const legacyModelCleanupFailures: ModelTransportCleanupError[] = [];
   const retainLegacyModelRequest = (original: Promise<unknown>): void => {
     legacyModelRequests.add(original);
     void original.then(
       () => legacyModelRequests.delete(original),
-      () => legacyModelRequests.delete(original),
+      (error: unknown) => {
+        if (error instanceof ModelTransportCleanupError) legacyModelCleanupFailures.push(error);
+        legacyModelRequests.delete(original);
+      },
     );
   };
   const permissionConnections = new PermissionConnections();
@@ -617,6 +622,8 @@ export function buildComponents(
       // Business cancellation and errors remain owned by the review worker;
       // this is the lifetime barrier for its original model calls.
       while (legacyModelRequests.size > 0) await Promise.allSettled([...legacyModelRequests]);
+      if (legacyModelCleanupFailures.length > 0)
+        throw new AggregateError(legacyModelCleanupFailures, "Model transport cleanup failed");
     },
   };
 }

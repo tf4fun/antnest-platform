@@ -333,6 +333,9 @@ ACP legacy shutdown now waits for original background Learning model calls,
 including their native transport cleanup, before releasing Runtime connections,
 the global worker lock and PostgreSQL pool (#49). Registered-owner generations
 retain the same per-Agent lifetime boundary; multi-instance delivery remains pending.
+Internal model transport-close failures remain observable after cancellation,
+preserve preceding model errors and known usage, and fail shutdown after all
+shared cleanup has been attempted without aborting another Agent's generation.
 
 Workspace cancellation stays responsive while another Agent prepares a large
 upload. `/stop` authorizes and checks its durable target without waiting for

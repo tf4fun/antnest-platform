@@ -27,6 +27,10 @@ import {
 import { loadConfig } from "../../../../services/agent-acp-service/src/config.js";
 import { learningPolicySchema } from "../../../../services/agent-acp-service/src/domain/learning-policy.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
+import {
+  ModelError,
+  ModelTransportCleanupError,
+} from "../../../../services/agent-acp-service/src/ports/model.js";
 import { OwnerProbeServer } from "../../../../services/agent-acp-service/src/transport/owner-probe-server.js";
 import { RequestAuthentication } from "../../../../services/agent-acp-service/src/transport/request-authentication.js";
 import {
@@ -56,12 +60,20 @@ describe.skipIf(databaseUrl === undefined)(
   "production Learning original model lifecycle",
   () => {
     it.each([
-      { ownership: "legacy", action: "shutdown" },
-      { ownership: "owned", action: "shutdown" },
-      { ownership: "owned", action: "loss" },
+      { ownership: "legacy", action: "shutdown", closeFailure: "none" },
+      { ownership: "owned", action: "shutdown", closeFailure: "none" },
+      { ownership: "owned", action: "loss", closeFailure: "none" },
+      { ownership: "legacy", action: "shutdown", closeFailure: "close" },
+      { ownership: "owned", action: "shutdown", closeFailure: "close" },
+      { ownership: "owned", action: "loss", closeFailure: "close" },
+      {
+        ownership: "owned",
+        action: "shutdown",
+        closeFailure: "http-and-close",
+      },
     ] as const)(
-      "$ownership $action joins the original model and preserves independent Agent execution",
-      async ({ ownership, action }) => {
+      "$ownership $action cleanup=$closeFailure joins the original model and preserves independent Agent execution",
+      async ({ ownership, action, closeFailure }) => {
         expect(new URL(databaseUrl!).pathname).toMatch(/_test$/u);
         const schema = `learning_lifecycle_${randomUUID().replaceAll("-", "")}`;
         const applicationName = `learning-service-${randomUUID()}`;
@@ -91,6 +103,10 @@ describe.skipIf(databaseUrl === undefined)(
         const held = Promise.withResolvers<void>();
         const release = Promise.withResolvers<void>();
         const originalClosed = Promise.withResolvers<void>();
+        const cleanupError = new Error(
+          "Synthetic internal transport cleanup failure",
+        );
+        const expectedShutdownFailure = { value: undefined as unknown };
         const ownershipLost = vi.fn();
         const probeListen = vi.spyOn(OwnerProbeServer.prototype, "listen");
         const leaseRelease = vi.spyOn(PostgresAgentLeases.prototype, "release");
@@ -112,6 +128,7 @@ describe.skipIf(databaseUrl === undefined)(
               try {
                 await originalClose.call(this);
                 nativeClosed = true;
+                if (closeFailure !== "none") throw cleanupError;
               } finally {
                 originalClosed.resolve();
               }
@@ -348,6 +365,10 @@ describe.skipIf(databaseUrl === undefined)(
               "You are reviewing one completed Agent run",
             );
             requests.push({ review, messages: body.messages });
+            if (review && closeFailure === "http-and-close") {
+              response.writeHead(503).end();
+              return;
+            }
             response.writeHead(200, { "content-type": "application/json" }).end(
               JSON.stringify({
                 choices: [
@@ -711,10 +732,55 @@ describe.skipIf(databaseUrl === undefined)(
                 )
               ).rows[0]!.value,
             ).toBe(source);
+            // A late cleanup failure must stay scoped after its original
+            // inference settles, not only while the close barrier is held.
+            await prompt("agent-2");
+            expect(requests).toHaveLength(4);
+            expect(failures).toEqual([]);
             await Promise.all(clients.map((client) => client.close()));
             shutdown = track(service!.shutdown());
           }
-          await within(shutdown!, "original service shutdown", 10000);
+          let shutdownError: unknown;
+          try {
+            await within(shutdown!, "original service shutdown", 10000);
+          } catch (error) {
+            shutdownError = error;
+          }
+          if (closeFailure === "none") {
+            expect(shutdownError).toBeUndefined();
+          } else {
+            const errors = errorTree(shutdownError);
+            expect(errors).toContain(cleanupError);
+            const modelCleanup = errors.find(
+              (error) => error instanceof ModelTransportCleanupError,
+            );
+            expect(modelCleanup).toMatchObject({
+              code: "model_unavailable",
+              retryable: false,
+            });
+            expect(Object.keys(modelCleanup!)).not.toContain("cause");
+            if (closeFailure === "close")
+              expect(
+                (modelCleanup as ModelTransportCleanupError).usage,
+              ).toMatchObject({ inputTokens: 3, outputTokens: 2 });
+            const causes = errors.filter(
+              (error) =>
+                !(error instanceof AggregateError) &&
+                !(error instanceof ModelTransportCleanupError),
+            );
+            if (closeFailure === "http-and-close") {
+              expect(causes).toHaveLength(2);
+              expect(
+                causes.some(
+                  (error) =>
+                    error instanceof ModelError &&
+                    error.code === "model_http_error" &&
+                    error.status === 503,
+                ),
+              ).toBe(true);
+            } else expect(causes).toEqual([cleanupError]);
+            expectedShutdownFailure.value = shutdownError;
+          }
           expect(workerRelease).toHaveBeenCalledTimes(1);
           if (ownership === "owned")
             expect(
@@ -722,14 +788,20 @@ describe.skipIf(databaseUrl === undefined)(
                 ([fence]) => fence.agentId === "agent-1",
               ),
             ).toHaveLength(1);
-          expect(
-            (
-              await pool.query(
-                "SELECT pid FROM pg_stat_activity WHERE application_name=$1",
-                [applicationName],
-              )
-            ).rowCount,
-          ).toBe(0);
+          // The client close completes before PostgreSQL necessarily retires
+          // the backend. Require its actual disappearance within a fixed budget.
+          await expect
+            .poll(
+              async () =>
+                (
+                  await pool.query(
+                    "SELECT pid FROM pg_stat_activity WHERE application_name=$1",
+                    [applicationName],
+                  )
+                ).rowCount,
+              { timeout: 2000, interval: 20 },
+            )
+            .toBe(0);
           expect(ownershipLost).not.toHaveBeenCalled();
         } catch (error) {
           failures.push(error);
@@ -747,7 +819,14 @@ describe.skipIf(databaseUrl === undefined)(
           await settle(() =>
             Promise.all(clients.map((client) => client.close())),
           );
-          if (service !== undefined) await settle(() => service!.shutdown());
+          if (service !== undefined)
+            await settle(async () => {
+              try {
+                await service!.shutdown();
+              } catch (error) {
+                if (error !== expectedShutdownFailure.value) throw error;
+              }
+            });
           if (hold.active) await settle(() => originalClosed.promise);
           await Promise.allSettled(pending);
           for (const handler of handlers.toReversed())
@@ -783,3 +862,16 @@ describe.skipIf(databaseUrl === undefined)(
     );
   },
 );
+
+function errorTree(error: unknown): unknown[] {
+  const found = new Set<unknown>();
+  const visit = (value: unknown): void => {
+    if (found.has(value)) return;
+    found.add(value);
+    if (value instanceof AggregateError)
+      for (const nested of value.errors as unknown[]) visit(nested);
+    if (value instanceof Error && value.cause !== undefined) visit(value.cause);
+  };
+  visit(error);
+  return [...found];
+}
