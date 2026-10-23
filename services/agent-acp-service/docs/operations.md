@@ -87,6 +87,14 @@ The owner wire uses `no-store` and suppresses request, response and error payloa
 capture even when RPC content capture is enabled. Logs do not include nonces,
 credentials or configured private probe addresses.
 
+The internal inspection adapter accepts only authenticated, fully bound
+Runtime Controller inspection results. `unknown`, HTTP 404, transport failure,
+an expired lease or a missing heartbeat is not an executor stop proof. The
+adapter issues one bounded request without retry or redirect and joins its
+original work before returning or rejecting. A returned stop receipt still
+requires the future scoped recovery consumer to persist it under the current
+Agent fence; this batch does not connect it to production Run recovery.
+
 This optional wiring does not provide multi-replica execution. The global
 worker lock and its independent ownership-loss fail-stop behavior remain.
 Production owner coordination, fenced writers, scoped recovery, cross-owner

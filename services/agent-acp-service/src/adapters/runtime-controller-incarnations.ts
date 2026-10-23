@@ -4,6 +4,7 @@ import {
   type OwnerRegistration,
   type OwnerRegistrationRequest,
 } from "../application/owner-incarnation.js";
+import { parseOwnerInspection, type OwnerInspection } from "../application/owner-inspection.js";
 import type { ServiceAuthentication } from "./service-authentication.js";
 import { strictObject } from "./strict-json.js";
 
@@ -24,6 +25,15 @@ export class OwnerRegistrationAttemptError extends OwnerIncarnationError {
     public readonly cleanupFailed = false,
   ) {
     super("acp_registration_unavailable");
+  }
+}
+
+export class OwnerInspectionAttemptError extends OwnerIncarnationError {
+  public constructor(
+    public readonly retryable: boolean,
+    public readonly cleanupFailed = false,
+  ) {
+    super("acp_registry_unavailable");
   }
 }
 
@@ -60,13 +70,53 @@ export class RuntimeControllerIncarnations {
     input: OwnerRegistrationRequest,
     signal: AbortSignal,
   ): Promise<OwnerRegistration> {
+    return this.exchange("register", signal, () => {
+      const original = registrationRequest(input);
+      return {
+        endpoint: this.endpoint,
+        method: "POST",
+        body: JSON.stringify(original),
+        parse: (value) => {
+          const receipt = parseOwnerRegistration(value);
+          if (
+            receipt.member_id !== original.member_id ||
+            receipt.incarnation_id !== original.incarnation_id
+          )
+            throw new OwnerIncarnationError("acp_registration_unavailable");
+          return receipt;
+        },
+      };
+    });
+  }
+
+  public async inspect(expected: OwnerRegistration, signal: AbortSignal): Promise<OwnerInspection> {
+    return this.exchange("inspect", signal, () => {
+      const original = parseOwnerRegistration(expected);
+      return {
+        endpoint: new URL(original.registration_id, this.endpoint).toString(),
+        method: "GET",
+        parse: (value) => parseOwnerInspection(value, original),
+      };
+    });
+  }
+
+  private async exchange<T>(
+    operation: "register" | "inspect",
+    signal: AbortSignal,
+    prepare: () => {
+      endpoint: string;
+      method: "POST" | "GET";
+      body?: string;
+      parse(value: Record<string, unknown>): T;
+    },
+  ): Promise<T> {
     const controller = new AbortController();
     const requestSignal = AbortSignal.any([signal, controller.signal]);
     const completion = { timedOut: false, bodyFailed: false, cancellationFailed: false };
     let failed = false;
     let cleanupFailed = false;
     let rejected = false;
-    let result: OwnerRegistration | undefined;
+    let result: T | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let reading: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
     let cancelling: Promise<void> | undefined;
@@ -93,18 +143,20 @@ export class RuntimeControllerIncarnations {
     }, this.timeoutMs);
     try {
       requestSignal.throwIfAborted();
-      const original = registrationRequest(input);
-      const body = JSON.stringify(original);
-      if (Buffer.byteLength(body, "utf8") > MAX_REQUEST_BYTES)
+      const request = prepare();
+      if (request.body !== undefined && Buffer.byteLength(request.body, "utf8") > MAX_REQUEST_BYTES)
         throw new OwnerIncarnationError("acp_registration_unavailable");
       requestSignal.throwIfAborted();
-      const response = await this.send(this.endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      const response = await this.send(request.endpoint, {
+        method: request.method,
+        headers: {
+          ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
+          "Cache-Control": "no-store",
+        },
         credentials: "omit",
         redirect: "error",
         cache: "no-store",
-        body,
+        ...(request.body === undefined ? {} : { body: request.body }),
         signal: requestSignal,
       });
       if (response.body !== null) {
@@ -142,13 +194,7 @@ export class RuntimeControllerIncarnations {
           throw new OwnerIncarnationError("acp_registration_unavailable");
         chunks.push(chunk.value);
       }
-      const receipt = parseOwnerRegistration(strictObject(Buffer.concat(chunks)));
-      if (
-        receipt.member_id !== original.member_id ||
-        receipt.incarnation_id !== original.incarnation_id
-      )
-        throw new OwnerIncarnationError("acp_registration_unavailable");
-      result = receipt;
+      result = request.parse(strictObject(Buffer.concat(chunks)));
     } catch {
       failed = true;
     } finally {
@@ -183,10 +229,14 @@ export class RuntimeControllerIncarnations {
       requestSignal.removeEventListener("abort", cancelBody);
       clearTimeout(timer);
     }
-    if (cleanupFailed) throw new OwnerRegistrationAttemptError(false, true);
-    if (rejected) throw new OwnerRegistrationAttemptError(false);
+    const unavailable = (retryable: boolean, incompleteCleanup = false): OwnerIncarnationError =>
+      operation === "register"
+        ? new OwnerRegistrationAttemptError(retryable, incompleteCleanup)
+        : new OwnerInspectionAttemptError(retryable, incompleteCleanup);
+    if (cleanupFailed) throw unavailable(false, true);
+    if (rejected) throw unavailable(false);
     if (signal.aborted || completion.timedOut) throw new OwnerIncarnationError("deadline_exceeded");
-    if (failed || result === undefined) throw new OwnerRegistrationAttemptError(true);
+    if (failed || result === undefined) throw unavailable(true);
     return result;
   }
 }
