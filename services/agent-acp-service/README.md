@@ -230,6 +230,13 @@ recovers only approved legacy scopes; `loadOwnedAuthority` revalidates sealed
 configuration under the fixed fence. With owner settings disabled, the original
 legacy path remains.
 
+The dedicated PostgreSQL predecessor-recovery entrypoint stores the complete
+stop response and its original Run association without changing either on retry.
+It validates the current fence and atomically records interrupted Tool events,
+permission cancellation, terminal facts and any Runtime barrier. Production
+startup does not consume this entrypoint yet. Runtime and Temporary protection
+remain independent of proof that the ACP process stopped.
+
 The complete accepting-Agent ACK runs outside configuration publication. ACK
 failure retains healthy applied configuration, but the organization-wide ACK
 does not guarantee that Controller independently marks a healthy new Agent ready.

@@ -140,12 +140,20 @@ timestamps are calendar-validated diagnostics and never authorize recovery by
 age. The ten-second attempt includes the original response read, cancellation
 and cleanup joins, shared with the registration adapter.
 
-The inspection adapter is a prerequisite for owned-predecessor stop-proof
-recovery. Production recovery does not consume these receipts yet; it must later
-persist accepted stop proof under the current Agent fence while retaining the
-Run's original execution identity. Scoped legacy recovery does not consume such
-receipts. An ACP stop fact does not prove remote Runtime effects have stopped
-and never authorizes replay.
+`PostgresOwnerRecovery.recoverRun` is the dedicated storage consumer of a complete
+stopped inspection. It locks organization, current lease, Session, Run and child
+records, validates the predecessor binding, and atomically saves immutable proof
+and recovery association with interrupted Tool events, permission cancellation,
+terminal facts and Runtime protection. The original owner and snapshot remain
+unchanged. An unaccepted intent is rejected without accepting its Prompt; any
+execution child on that intent rejects recovery. Retries retain the first audit
+and cannot append events or recreate retired barriers. Temporary scope bindings
+must still match the original Run, and pending scopes remain protected.
+
+Production startup does not consume this storage entrypoint yet. Scoped legacy
+recovery does not consume stop receipts. An ACP stop fact does not prove remote
+Runtime effects have stopped and never authorizes replay. Predecessor Learning
+claims and production handoff remain separate pending consumers.
 
 Bootstrap is optional. Its validated identity now binds production Agent leases,
 fenced writers and scoped background work. Without owner settings, startup
@@ -471,6 +479,8 @@ runs
 tool_attempts
 tool_permissions
 execution_configurations
+owner_stop_receipts
+run_owner_recoveries
 ```
 
 There are no cross-service foreign keys, views, triggers, or SQL queries.

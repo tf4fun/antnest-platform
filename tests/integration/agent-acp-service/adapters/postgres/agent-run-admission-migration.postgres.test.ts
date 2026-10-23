@@ -368,6 +368,7 @@ describe.skipIf(databaseUrl === undefined)(
           "0025_agent_leases.sql",
           "0026_run_execution_owner.sql",
           "0027_learning_claim_owner.sql",
+          "0028_owner_stop_recovery.sql",
         ]);
         const index = await pool.query<{ indexdef: string }>(
           "SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='runs_agent_nonterminal_unique'",

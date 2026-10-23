@@ -164,6 +164,16 @@ columns are either all null for legacy execution or a complete validated tuple.
 Existing Runs stay all null, even when their Agent has a current lease. A
 database trigger rejects later backfill, replacement or clearing of that tuple.
 
+Migration `0028_owner_stop_recovery.sql` adds immutable `owner_stop_receipts` and
+`run_owner_recoveries`. The full stopped response keeps its diagnostic timestamp
+string; neither a different receipt for that registration nor a changed response
+can replace it. The recovery association records the original Run identity and
+the first recovering authority separately. A dedicated current-fence transaction
+records these facts with Run recovery; ordinary writers still reject another
+owner's Run. ACP stop proof cannot mark a Runtime stopped or release Temporary
+resources. Production startup and predecessor Learning recovery do not consume
+these tables yet; the global worker lock remains required.
+
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
 Session/Run scope in the same transaction; existing Runs must also match their

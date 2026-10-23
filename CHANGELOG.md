@@ -108,6 +108,13 @@ separate from the subsequent online key rotation. See
 
 ### Changed
 
+ACP adds a dedicated PostgreSQL transaction for recovering a stopped predecessor's
+Run from an authenticated, exactly bound stop receipt. Proof, immutable audit,
+Tool interruption, permission cancellation, terminal outcome and Runtime barrier
+commit together. Original execution identity, unknown effects and pending
+Temporary resources remain intact. Production startup consumption, Learning
+predecessor recovery and two-replica handoff are still pending (#49).
+
 Normal ACP shutdown lets existing authenticated HTTP connections complete their
 cleanup acknowledgement after readiness stops. HTTP and WebSocket peers share
 one five-second shutdown window; remaining responses are then aborted and cleanup

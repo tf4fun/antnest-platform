@@ -395,6 +395,10 @@ describe.skipIf(databaseUrl === undefined)(
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query("DROP TABLE run_owner_recoveries");
+        await client.query("DROP TABLE owner_stop_receipts");
+        await client.query("DROP FUNCTION preserve_owner_recovery_evidence()");
+        await client.query("DROP FUNCTION validate_run_owner_recovery()");
         await client.query(
           "DROP TRIGGER learning_review_attempts_preserve_owner ON learning_review_attempts",
         );
@@ -435,16 +439,17 @@ describe.skipIf(databaseUrl === undefined)(
            DROP COLUMN execution_owner_epoch`,
         );
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5)",
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6)",
           [
             "0023_runtime_barrier_cycles.sql",
             "0024_agent_run_admission.sql",
             "0025_agent_leases.sql",
             "0026_run_execution_owner.sql",
             "0027_learning_claim_owner.sql",
+            "0028_owner_stop_recovery.sql",
           ],
         );
-        expect(removed.rowCount).toBe(5);
+        expect(removed.rowCount).toBe(6);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
