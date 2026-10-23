@@ -246,6 +246,14 @@
         "address_suffix": 34,
         "port": 8081,
         "dns_name": "agent-acp-control"
+      },
+      "owner": {
+        "network": "controller-runtime",
+        "address_suffix": 53,
+        "port": 8085,
+        "dns_name": "agent-acp-service",
+        "profile": "acp-owner-bootstrap",
+        "authentication_before_routing": true
       }
     },
     "runtime-controller": {
@@ -388,6 +396,11 @@
       "runtime-egress": {
         "receiver": "runtime-egress",
         "listener": "primary"
+      },
+      "agent-acp-service": {
+        "receiver": "agent-acp-service",
+        "listener": "owner",
+        "resolution": "docker-inspect"
       }
     },
     "skill-registry": {
@@ -516,5 +529,8 @@
       "gid": 65532,
       "capabilities": []
     }
+  },
+  "owner_routes": {
+    "agent-acp-service": ["POST /internal/acp-owner/incarnation/probe"]
   }
 }

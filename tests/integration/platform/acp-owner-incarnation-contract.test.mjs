@@ -538,7 +538,7 @@ test("the planned manifest freezes three narrow operations and the error HTTP ma
       assert.equal(manifest.errors[code][field], value, `${code}.${field}`);
 });
 
-test("RC activates only the two ACP grants while the private ACP probe remains planned", () => {
+test("RC grants and the private ACP probe allow only their owning workload callers", () => {
   const catalog = read("services/runtime-controller/api/callers.json");
   for (const [method, path, body] of [
     ["POST", "/internal/acp-incarnations/register", "json"],
@@ -557,15 +557,33 @@ test("RC activates only the two ACP grants while the private ACP probe remains p
       request_body: "none",
     });
   }
-  const routes = [
-    "POST /internal/acp-incarnations/register",
-    "GET /internal/acp-incarnations/{registration_id}",
-    "POST /internal/acp-owner/incarnation/probe",
-  ];
   const acp = read("contracts/agent-acp/callers.json");
-  for (const route of routes)
-    assert.equal(Object.hasOwn(acp.routes, route), false, `ACP: ${route}`);
-  assert.equal(Object.hasOwn(catalog.routes, routes[2]), false);
+  const probePath = "/internal/acp-owner/incarnation/probe";
+  const probeRoute = `POST ${probePath}`;
+  const deny = {
+    callers: [],
+    authentication: "deny",
+    caller_context: {},
+    request_body: "none",
+  };
+  assert.deepEqual(acp.routes[probeRoute], {
+    callers: ["runtime-controller"],
+    authentication: "workload",
+    caller_context: { "runtime-controller": "none" },
+    request_body: "json",
+  });
+  assert.deepEqual(acp.routes[`* ${probePath}`], deny);
+  for (const [route, policy] of Object.entries(acp.routes)) {
+    if (route.endsWith(` ${probePath}`) && route !== probeRoute)
+      assert.deepEqual(policy, deny, `ACP: ${route}`);
+    for (const path of [
+      "/internal/acp-incarnations/register",
+      "/internal/acp-incarnations/{registration_id}",
+    ])
+      assert.equal(route.endsWith(` ${path}`), false, `ACP: ${route}`);
+  }
+  for (const route of Object.keys(catalog.routes))
+    assert.equal(route.endsWith(` ${probePath}`), false, `RC: ${route}`);
   assert.equal(read(manifestPath).status, "planned");
 });
 

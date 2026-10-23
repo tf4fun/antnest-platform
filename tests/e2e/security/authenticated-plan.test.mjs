@@ -87,3 +87,43 @@ test("authenticated peers reject unknown modes, retained scopes and nonfixture s
     assert.throws(() => authenticatedPlan(input));
   }
 });
+
+test("owner admission mounts the exact RC grant only for the explicit owner profile", () => {
+  const input = fixture();
+  input.config.ownerProfiles = ["acp-owner-bootstrap"];
+  const plan = authenticatedPlan({ ...input, mode: "admission" });
+  assert.equal(plan.endpoints.owner, "http://10.244.45.53:8085");
+  assert(
+    plan.networks.includes("antnest-lifecycle-1234abcd_controller-runtime"),
+  );
+  assert.deepEqual(
+    plan.mounts.find((m) => m.destination === "/run/auth/rc-acp"),
+    {
+      source:
+        "/private/disposable-credentials/runtime-controller/tokens/agent-acp-service",
+      destination: "/run/auth/rc-acp",
+    },
+  );
+  assert.equal(plan.mounts.length, 8);
+  for (const mode of ["admission", "policy-off"]) {
+    const ordinary = authenticatedPlan({ ...fixture(), mode });
+    assert.equal(ordinary.endpoints.owner, undefined);
+    assert(!ordinary.mounts.some((m) => m.destination === "/run/auth/rc-acp"));
+  }
+  const policy = authenticatedPlan({ ...input, mode: "policy-off" });
+  assert.equal(policy.endpoints.owner, undefined);
+  assert(!policy.mounts.some((m) => m.destination === "/run/auth/rc-acp"));
+});
+
+test("owner admission rejects a misspelled or malformed profile", () => {
+  for (const profiles of [
+    ["acp-owner-bootstrp"],
+    ["acp-owner-bootstrap", "unknown"],
+    "acp-owner-bootstrap",
+    null,
+  ]) {
+    const input = fixture();
+    input.config.ownerProfiles = profiles;
+    assert.throws(() => authenticatedPlan({ ...input, mode: "admission" }));
+  }
+});

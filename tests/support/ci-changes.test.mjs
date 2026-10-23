@@ -580,6 +580,81 @@ test("the network and signed-context matrix is a required production-stack suite
   ]);
 });
 
+test("ACP owner bootstrap is a separate required suite with the production matrix images", () => {
+  const baseline = suites.find((item) => item.id === "auth-network-matrix");
+  const suite = suites.find((item) => item.id === "acp-owner-bootstrap");
+  assert(baseline, "the default authentication matrix must remain available");
+  assert(suite, "missing blocking ACP owner bootstrap suite");
+  assert(!baseline.disabled);
+  assert(!suite.disabled);
+  assert.equal(suite.tier, "b");
+  assert.deepEqual(suite.setup, baseline.setup);
+  assert.deepEqual(suite.run, ["node tests/e2e/security/owner-run.mjs"]);
+  assert.deepEqual(baseline.run, ["make e2e-service-authentication-matrix"]);
+  assert.deepEqual(suite.images, baseline.images);
+  assert.deepEqual(suite.pull, baseline.pull);
+});
+
+test("ACP owner bootstrap changes select both optional-profile and default authentication admission", () => {
+  for (const file of [
+    "services/agent-acp-service/src/composition.ts",
+    "services/agent-acp-service/src/config.ts",
+    "services/runtime-controller/internal/acpincarnation/service.go",
+    "services/runtime-controller/internal/platform/docker/acp_incarnation.go",
+    "tests/e2e/security/owner-run.mjs",
+    "tests/e2e/security/owner-profile.mjs",
+    "tests/e2e/security/owner-registration.mjs",
+    "tests/e2e/security/network-matrix.mjs",
+    "tests/e2e/security/run.mjs",
+    "tests/e2e/security/owner.compose.yaml",
+    "compose.yaml",
+    "compose.debug.yaml",
+    "compose.stage3.yaml",
+    "compose.native-tls.yaml",
+    "compose.tls.yaml",
+    ".env.example",
+    "scripts/dev-service-tokens.mjs",
+    "tests/e2e/lifecycle-closeout/compose.yaml",
+  ]) {
+    const selected = ids(selectSuites([file]));
+    for (const id of ["auth-network-matrix", "acp-owner-bootstrap"])
+      assert(selected.includes(id), `${file} must select ${id}`);
+  }
+});
+
+test("ACP owner bootstrap shares the required auth matrix shard without replacing the default suite", () => {
+  const baseline = suites.find((item) => item.id === "auth-network-matrix");
+  const suite = suites.find((item) => item.id === "acp-owner-bootstrap");
+  const shard = shards.find((item) => item.id === "b-auth-matrix");
+  assert(baseline, "the default authentication matrix must remain available");
+  assert(suite, "missing blocking ACP owner bootstrap suite");
+  assert(shard, "missing required authentication matrix shard");
+  for (const id of [baseline.id, suite.id]) {
+    assert(shard.suites.includes(id), `${id} must run in b-auth-matrix`);
+    assert.equal(
+      shards.filter((item) => item.suites.includes(id)).length,
+      1,
+      `${id} must belong to exactly one shard`,
+    );
+  }
+  for (const selected of [[suite], [baseline, suite]]) {
+    const { plain, imaged, optional } = matrices(selected);
+    assert.deepEqual(plain.include, []);
+    assert.deepEqual(optional.include, []);
+    assert.equal(imaged.include.length, 1);
+    const [entry] = imaged.include;
+    assert.equal(entry.id, "b-auth-matrix");
+    assert.equal(entry.tier, "B");
+    assert.equal(entry.images, [...baseline.images].sort().join(","));
+    assert.deepEqual(
+      JSON.parse(entry.suites)
+        .map(({ id }) => id)
+        .sort(),
+      ids(selected).sort(),
+    );
+  }
+});
+
 test("ACP authentication runs in the required auth shard with its CI-built image", () => {
   const suite = suites.find((item) => item.id === "auth-acp");
   assert(suite, "missing ACP authentication suite");

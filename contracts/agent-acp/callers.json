@@ -1,7 +1,7 @@
 {
   "service": "agent-acp-service",
   "status": "enforced",
-  "implementation_issues": [26, 27],
+  "implementation_issues": [26, 27, 49],
   "routes": {
     "DELETE /v1/acp": {
       "callers": ["agent-ui"],
@@ -162,6 +162,20 @@
         "agent-ui": "required"
       },
       "request_body": "none"
+    },
+    "POST /internal/acp-owner/incarnation/probe": {
+      "callers": ["runtime-controller"],
+      "authentication": "workload",
+      "caller_context": {
+        "runtime-controller": "none"
+      },
+      "request_body": "json"
+    },
+    "* /internal/acp-owner/incarnation/probe": {
+      "callers": [],
+      "authentication": "deny",
+      "caller_context": {},
+      "request_body": "none"
     }
   },
   "guarded_sources": {
@@ -200,7 +214,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "3d0ebe2a2f22436d8b4790efdc69c9a7bba86410f436386dcde89c5773e21ab3",
+      "sha256": "9b44b047117d6fea97cb336391ca75c9196e2c7f7cdff41d79f3afc09e2a37d0",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -262,6 +276,13 @@
     "services/agent-acp-service/src/transport/runtime-barrier-query.ts": {
       "sha256": "c31e853a6692cb11b67617663b619c0b4a5adfed4dca92d273f30d429ccfe460",
       "routes": ["POST /rpc/agent-acp/get-runtime-barrier"]
+    },
+    "services/agent-acp-service/src/transport/owner-probe-server.ts": {
+      "sha256": "170738f7ac39044221c7a9dfc078986941bd032be31b8e67de86bab0fe492d85",
+      "routes": [
+        "POST /internal/acp-owner/incarnation/probe",
+        "* /internal/acp-owner/incarnation/probe"
+      ]
     }
   }
 }

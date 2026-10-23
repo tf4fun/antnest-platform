@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runAuthenticationMatrix } from "./run.mjs";
 import * as matrix from "./run.mjs";
 import { scopeLabel } from "../lifecycle-closeout/docker.mjs";
+import { productionOverlay } from "./stack.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -353,3 +354,451 @@ test("retained resource changes fail the suite after cleanup", async () => {
     rmSync(output, { recursive: true, force: true });
   }
 });
+
+const ownerOverlay = "tests/e2e/security/owner.compose.yaml";
+
+function ownerFixture({
+  enabled = true,
+  held = false,
+  failAt,
+  cleanupError,
+} = {}) {
+  const f = fixture();
+  const gates = Object.fromEntries(
+    ["prepare-owner", "registration", "owner-business"].map((name) => {
+      const entered = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      if (!held) release.resolve();
+      return [name, { entered, release }];
+    }),
+  );
+  const hookTasks = [];
+  const compose = [];
+  const overlayBefore = [...productionOverlay];
+  let signal;
+  let primaryDocker;
+  let prepared;
+  const originalConfigure = f.dependencies.configure;
+  const originalDocker = f.dependencies.createDocker;
+  const originalPrepare = f.dependencies.prepareAgent;
+  const originalClean = f.dependencies.clean;
+  f.dependencies.configure = async (...args) => {
+    f.calls.push("configure");
+    signal = args[0];
+    return originalConfigure(...args);
+  };
+  f.dependencies.createDocker = (...options) => {
+    const docker = originalDocker(...options);
+    const tracked = async (args, ...rest) => {
+      if (
+        args[0] === "compose" &&
+        (args.includes("up") || args.includes("ps"))
+      ) {
+        compose.push([...args]);
+        if (args.includes("up")) {
+          if (enabled)
+            assert.deepEqual(f.config.ownerProfiles, ["acp-owner-bootstrap"]);
+          else assert.equal(f.config.ownerProfiles, undefined);
+        } else f.calls.push("inspect-images");
+      }
+      return docker(args, ...rest);
+    };
+    primaryDocker ??= tracked;
+    return tracked;
+  };
+  f.dependencies.prepareAgent = async (...args) => {
+    prepared = await originalPrepare(...args);
+    return prepared;
+  };
+  const hook =
+    (name, work) =>
+    (...args) => {
+      const task = (async () => {
+        f.calls.push(name);
+        gates[name].entered.resolve();
+        await gates[name].release.promise;
+        if (failAt?.name === name) throw failAt.error;
+        const result = work(...args);
+        f.calls.push(`${name}-complete`);
+        return result;
+      })();
+      hookTasks.push(task);
+      void task.catch(() => {});
+      return task;
+    };
+  const assertInput = (input) => {
+    assert.equal(input.config, f.config);
+    assert.equal(input.docker, primaryDocker);
+    assert.equal(input.root, root);
+    assert.equal(input.output, f.output);
+    assert.equal(input.signal, signal);
+    assert.equal(input.signal.aborted, false);
+  };
+  f.dependencies.prepareOwner = hook("prepare-owner", (config) => {
+    assert.equal(config, f.config);
+    config.ownerProfiles = ["acp-owner-bootstrap"];
+  });
+  f.dependencies.ownerRegistration = hook("registration", (input) => {
+    assertInput(input);
+    return { status: "passed", checks: ["original owner registration"] };
+  });
+  f.dependencies.ownerBusiness = hook("owner-business", (input) => {
+    assertInput(input);
+    assert.equal(input.fixture, prepared);
+    assert.equal(input.fixture.agentID, `agent_${"1".repeat(32)}`);
+    return { status: "passed", checks: ["owner business"] };
+  });
+  f.dependencies.clean = async (config) => {
+    await originalClean(config);
+    if (cleanupError) throw cleanupError;
+  };
+  return {
+    ...f,
+    gates,
+    compose,
+    overlayBefore,
+    async joinHooks() {
+      for (const gate of Object.values(gates)) gate.release.resolve();
+      await Promise.allSettled(hookTasks);
+    },
+  };
+}
+
+function composeFiles(args) {
+  return args.flatMap((value, index) =>
+    value === "-f" ? [args[index + 1]] : [],
+  );
+}
+
+async function enteredBeforeCompletion(entered, operation, label) {
+  let timer;
+  try {
+    await Promise.race([
+      entered,
+      operation.then(() => {
+        throw new Error(`${label} was not entered before matrix completion`);
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} was not entered`)),
+          3000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+for (const selected of [undefined, false]) {
+  test(`matrix leaves owner hooks and overlay unused when ownerProfile is ${selected === undefined ? "omitted" : "false"}`, async () => {
+    const f = ownerFixture({ enabled: false });
+    try {
+      const result = await runAuthenticationMatrix({
+        ...f.dependencies,
+        ...(selected === undefined ? {} : { ownerProfile: selected }),
+      });
+      assert.equal(result.status, "passed");
+      assert.deepEqual(f.calls, [
+        "configure",
+        "boot",
+        "network",
+        "agent",
+        "inspect-images",
+        "authenticated",
+        "cleanup",
+      ]);
+      assert.equal(f.config.ownerProfiles, undefined);
+      assert(f.compose.length > 0);
+      assert(f.compose.every((args) => !args.includes(ownerOverlay)));
+      assert.deepEqual(productionOverlay, f.overlayBefore);
+    } finally {
+      await f.joinHooks();
+      rmSync(f.output, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const ownerProfile of [null, "true", 1, {}]) {
+  test(`matrix rejects nonboolean ownerProfile ${JSON.stringify(ownerProfile)} before configuration`, async () => {
+    const f = ownerFixture();
+    try {
+      await assert.rejects(
+        runAuthenticationMatrix({ ...f.dependencies, ownerProfile }),
+      );
+      assert.deepEqual(f.calls, []);
+      assert.equal(existsSync(resolve(f.output, "result.json")), false);
+    } finally {
+      await f.joinHooks();
+      rmSync(f.output, { recursive: true, force: true });
+    }
+  });
+}
+
+test("owner matrix awaits preparation, registration and business in the original admission sequence", async () => {
+  const f = ownerFixture({ held: true });
+  const operation = runAuthenticationMatrix({
+    ...f.dependencies,
+    ownerProfile: true,
+  }).then(
+    (value) => ({ ok: true, value }),
+    (error) => ({ ok: false, error }),
+  );
+  try {
+    await enteredBeforeCompletion(
+      f.gates["prepare-owner"].entered.promise,
+      operation,
+      "owner preparation",
+    );
+    assert.deepEqual(f.calls, ["configure", "prepare-owner"]);
+    assert.equal(
+      f.compose.length,
+      0,
+      "Compose started before owner preparation completed",
+    );
+    f.gates["prepare-owner"].release.resolve();
+    await enteredBeforeCompletion(
+      f.gates.registration.entered.promise,
+      operation,
+      "owner registration",
+    );
+    assert.deepEqual(f.calls, [
+      "configure",
+      "prepare-owner",
+      "prepare-owner-complete",
+      "boot",
+      "registration",
+    ]);
+    assert.equal(f.compose.filter((args) => args.includes("up")).length, 1);
+    f.gates.registration.release.resolve();
+    await enteredBeforeCompletion(
+      f.gates["owner-business"].entered.promise,
+      operation,
+      "owner business",
+    );
+    assert.deepEqual(f.calls, [
+      "configure",
+      "prepare-owner",
+      "prepare-owner-complete",
+      "boot",
+      "registration",
+      "registration-complete",
+      "network",
+      "agent",
+      "inspect-images",
+      "authenticated",
+      "owner-business",
+    ]);
+    assert.equal(existsSync(resolve(f.output, "result.json")), false);
+    f.gates["owner-business"].release.resolve();
+    const outcome = await operation;
+    if (!outcome.ok) throw outcome.error;
+    assert.equal(outcome.value.status, "passed");
+    assert.deepEqual(f.calls, [
+      "configure",
+      "prepare-owner",
+      "prepare-owner-complete",
+      "boot",
+      "registration",
+      "registration-complete",
+      "network",
+      "agent",
+      "inspect-images",
+      "authenticated",
+      "owner-business",
+      "owner-business-complete",
+      "cleanup",
+    ]);
+    const up = f.compose.filter((args) => args.includes("up"));
+    const inspect = f.compose.filter((args) => args.includes("ps"));
+    assert.equal(up.length, 1);
+    assert.equal(inspect.length, 1);
+    assert.deepEqual(
+      composeFiles(inspect[0]),
+      composeFiles(up[0]),
+      "image inspection omitted the selected owner overlay",
+    );
+    assert.equal(composeFiles(up[0]).at(-1), ownerOverlay);
+    assert.equal(
+      composeFiles(up[0]).filter((file) => file === ownerOverlay).length,
+      1,
+    );
+    assert.deepEqual(
+      productionOverlay,
+      f.overlayBefore,
+      "owner mode mutated the default production overlay",
+    );
+  } finally {
+    for (const gate of Object.values(f.gates)) gate.release.resolve();
+    await operation;
+    await f.joinHooks();
+    rmSync(f.output, { recursive: true, force: true });
+  }
+});
+
+test("SIGTERM during the last owner business await joins late success and cleanup without passing", async () => {
+  const f = ownerFixture();
+  const businessEntered = Promise.withResolvers(),
+    businessRelease = Promise.withResolvers(),
+    cleanupEntered = Promise.withResolvers(),
+    cleanupRelease = Promise.withResolvers();
+  let businessTask,
+    cleanupTask,
+    signal,
+    businessCompleted = false,
+    cleanupStarted = false,
+    cleanupCompleted = false,
+    settled = false;
+  f.dependencies.ownerBusiness = (input) => {
+    signal = input.signal;
+    assert.equal(signal.aborted, false);
+    assert.equal(input.config, f.config);
+    assert.equal(input.output, f.output);
+    assert.equal(input.fixture.agentID, `agent_${"1".repeat(32)}`);
+    f.calls.push("owner-business");
+    businessTask = (async () => {
+      businessEntered.resolve();
+      await businessRelease.promise;
+      businessCompleted = true;
+      f.calls.push("owner-business-complete");
+      return {
+        status: "passed",
+        agent_id: input.fixture.agentID,
+        session_id: `session_${"2".repeat(32)}`,
+        run_id: `run_${"3".repeat(32)}`,
+        executor_state: "quiescent",
+      };
+    })();
+    return businessTask;
+  };
+  const originalClean = f.dependencies.clean;
+  f.dependencies.clean = (config) => {
+    cleanupTask = (async () => {
+      cleanupStarted = true;
+      cleanupEntered.resolve();
+      await cleanupRelease.promise;
+      await originalClean(config);
+      cleanupCompleted = true;
+    })();
+    return cleanupTask;
+  };
+  const operation = runAuthenticationMatrix({
+    ...f.dependencies,
+    ownerProfile: true,
+  }).then(
+    (value) => {
+      settled = true;
+      return { ok: true, value };
+    },
+    (error) => {
+      settled = true;
+      return { ok: false, error };
+    },
+  );
+  try {
+    await enteredBeforeCompletion(
+      businessEntered.promise,
+      operation,
+      "last owner business await",
+    );
+    assert.equal(process.emit("SIGTERM"), true);
+    assert.equal(signal.aborted, true);
+    const primary = signal.reason;
+    assert(primary instanceof Error);
+    assert.equal(primary.message, "Authentication matrix interrupted");
+    await new Promise((complete) => setImmediate(complete));
+    assert.equal(
+      settled,
+      false,
+      "SIGTERM discarded the original business task",
+    );
+    assert.equal(businessCompleted, false);
+    assert.equal(cleanupStarted, false);
+    assert.equal(existsSync(resolve(f.output, "result.json")), false);
+    businessRelease.resolve();
+    await enteredBeforeCompletion(
+      cleanupEntered.promise,
+      operation,
+      "interrupted owner cleanup",
+    );
+    assert.equal(businessCompleted, true);
+    assert.equal(settled, false, "matrix completed before cleanup joined");
+    assert.equal(cleanupCompleted, false);
+    assert.equal(existsSync(resolve(f.output, "result.json")), false);
+    cleanupRelease.resolve();
+    const outcome = await operation;
+    assert.equal(cleanupCompleted, true);
+    assert.equal(f.calls.filter((call) => call === "cleanup").length, 1);
+    assert.equal(outcome.ok, false, "late owner success swallowed SIGTERM");
+    assert(outcome.error instanceof AggregateError);
+    assert(outcome.error.errors.includes(primary));
+    assert.equal(
+      existsSync(resolve(f.output, "result.json")),
+      false,
+      "interrupted owner admission wrote a passing matrix result",
+    );
+  } finally {
+    businessRelease.resolve();
+    cleanupRelease.resolve();
+    await operation;
+    await businessTask;
+    await cleanupTask;
+    await f.joinHooks();
+    rmSync(f.output, { recursive: true, force: true });
+  }
+});
+
+for (const name of ["prepare-owner", "registration", "owner-business"]) {
+  for (const cleanupFails of [false, true]) {
+    test(`owner ${name} failure still cleans and preserves ${cleanupFails ? "both errors" : "the original error"}`, async () => {
+      const primary = new Error(`${name} failed`);
+      const cleanupError = cleanupFails
+        ? new Error("owner matrix cleanup failed")
+        : undefined;
+      const f = ownerFixture({
+        failAt: { name, error: primary },
+        cleanupError,
+      });
+      try {
+        await assert.rejects(
+          runAuthenticationMatrix({ ...f.dependencies, ownerProfile: true }),
+          (error) => {
+            assert(error instanceof AggregateError);
+            assert.deepEqual(
+              error.errors,
+              cleanupFails ? [primary, cleanupError] : [primary],
+            );
+            return true;
+          },
+        );
+        const expected = ["configure", "prepare-owner"];
+        if (name !== "prepare-owner")
+          expected.push("prepare-owner-complete", "boot", "registration");
+        if (name === "owner-business")
+          expected.push(
+            "registration-complete",
+            "network",
+            "agent",
+            "inspect-images",
+            "authenticated",
+            "owner-business",
+          );
+        expected.push("cleanup");
+        assert.deepEqual(
+          f.calls,
+          expected,
+          "a failed or unvisited owner step was counted as executed",
+        );
+        assert.equal(
+          existsSync(resolve(f.output, "result.json")),
+          false,
+          "failed owner admission wrote a passing matrix result",
+        );
+        assert.deepEqual(productionOverlay, f.overlayBefore);
+      } finally {
+        await f.joinHooks();
+        rmSync(f.output, { recursive: true, force: true });
+      }
+    });
+  }
+}

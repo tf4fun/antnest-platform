@@ -13,6 +13,8 @@ import {
 import { setup } from "../workspace-closeout/c4-setup.mjs";
 import { runNetworkMatrix } from "./network-flow.mjs";
 import { runAuthenticatedPeer } from "./authenticated-flow.mjs";
+import { prepareOwnerProfile } from "./owner-profile.mjs";
+import { readOwnerRegistration } from "./owner-registration.mjs";
 import {
   productionOverlay,
   configureWorkspaceNetworks,
@@ -107,11 +109,10 @@ export async function inspectMatrixImages({
   config,
   expected,
   agentId,
+  overlay = productionOverlay,
 }) {
   const ids = (
-    await docker(
-      composeArgs(config.project, [...productionOverlay, "ps", "-q"]),
-    )
+    await docker(composeArgs(config.project, [...overlay, "ps", "-q"]))
   )
     .split(/\s+/u)
     .filter(Boolean);
@@ -197,7 +198,16 @@ export async function runAuthenticationMatrix({
   networkMatrix = runNetworkMatrix,
   authenticatedPeer = runAuthenticatedPeer,
   clean = cleanup,
+  ownerProfile = false,
+  prepareOwner = prepareOwnerProfile,
+  ownerRegistration = readOwnerRegistration,
+  ownerBusiness = async (input) =>
+    (await import("./owner-business.mjs")).runOwnerBusiness(input),
 } = {}) {
+  assert.equal(typeof ownerProfile, "boolean");
+  const overlay = ownerProfile
+    ? [...productionOverlay, "-f", "tests/e2e/security/owner.compose.yaml"]
+    : productionOverlay;
   const selected = matrixImageSelection(environment);
   const abort = new AbortController();
   const interrupt = () =>
@@ -215,6 +225,7 @@ export async function runAuthenticationMatrix({
       },
       selected.runtime,
     );
+    if (ownerProfile) await prepareOwner(config);
     output = resolve(
       root,
       "artifacts/verification/authentication-matrix",
@@ -234,7 +245,7 @@ export async function runAuthenticationMatrix({
     );
     await docker(
       composeArgs(config.project, [
-        ...productionOverlay,
+        ...overlay,
         "up",
         "-d",
         "--wait",
@@ -252,7 +263,17 @@ export async function runAuthenticationMatrix({
       root,
       image: config.env.ANTNEST_C4_AGENT_ACP_IMAGE,
       output,
+      signal: abort.signal,
     };
+    let registration, business;
+    if (ownerProfile) {
+      registration = await ownerRegistration(input);
+      await writeFile(
+        resolve(output, "owner-registration.json"),
+        JSON.stringify(registration),
+        { flag: "wx", mode: 0o600 },
+      );
+    }
     const networks = await networkMatrix(input);
     const fixture = await prepareAgent(config, abort.signal);
     const imageReceipts = await inspectMatrixImages({
@@ -260,6 +281,7 @@ export async function runAuthenticationMatrix({
       config,
       expected: expectedImages,
       agentId: fixture.agentID,
+      overlay,
     });
     await writeFile(
       resolve(output, "actual-images.json"),
@@ -271,8 +293,21 @@ export async function runAuthenticationMatrix({
       agentId: fixture.agentID,
       mode: "admission",
     });
+    if (ownerProfile) {
+      business = await ownerBusiness({ ...input, fixture });
+      abort.signal.throwIfAborted();
+      await writeFile(
+        resolve(output, "owner-business.json"),
+        JSON.stringify(business),
+        { flag: "wx", mode: 0o600 },
+      );
+    }
+    abort.signal.throwIfAborted();
     result = {
       status: "passed",
+      ...(ownerProfile
+        ? { owner_registration: registration, owner_business: business }
+        : {}),
       project: config.project,
       networks: networks.length,
       network_checks: networks.reduce((sum, row) => sum + row.checks, 0),

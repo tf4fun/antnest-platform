@@ -8,6 +8,34 @@ and native Runtime through the shared workspace setup, and runs
 `runAuthenticatedPeer` in admission mode. It needs no browser or Skill workflow
 flags. Failures block the required `Integration checks` status.
 
+The additional Tier B suite `acp-owner-bootstrap` runs
+`node tests/e2e/security/owner-run.mjs` in the same shard. It keeps the default
+matrix gate and adds a separate disposable deployment with the optional owner
+listener enabled. It uses the same selected service images and does not create a
+new service or Runtime image.
+
+Before Compose starts, the owner runner writes a private mode-0600 member catalog
+for the exact project ACP container and `controller-runtime` network. The last
+overlay, `owner.compose.yaml`, mounts that file read-only into RC, preserves the
+credential UID/GID, and binds ACP's separate owner listener to suffix 53, port 8085. Default Compose leaves that listener disabled. The enabled matrix still
+checks every other interface and cross-network address is closed.
+
+After startup, the owner gate reads RC's registration through its own read-only
+PostgreSQL role and matches it to the actual Docker engine, container and process
+start identity. It then performs the ordinary network and authenticated checks,
+including RC-only owner probe authority. A private ACP v1 client creates one
+Session and completes a fixed foreground Prompt against the existing controlled
+model. The client joins its original connection and logs out before exiting.
+The host verifies one completed, quiescent Run, the matching audit and durable
+messages, and the model's exact request inventory. It independently removes the
+owned client container, then requires the complete deployment cleanup to restore
+the original Docker inventory. Trace diagnostics remain auxiliary.
+
+The owner suite proves initial incarnation bootstrap and ordinary business under
+that optional profile. It does not admit multi-replica leasing, stale-writer
+fencing, peer forwarding or failover. Those remain separate delivery gates, and
+the global ACP worker lock stays in place until they pass.
+
 Build the current checkout's local production images and pull the dependencies
 before running locally; the gate starts Compose with `--no-build --pull never`:
 

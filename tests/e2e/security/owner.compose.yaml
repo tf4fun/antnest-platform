@@ -1,0 +1,19 @@
+services:
+  runtime-controller:
+    environment:
+      ANTNEST_RUNTIME_ACP_MEMBERS_FILE: /etc/antnest/acp-members.json
+    volumes:
+      - type: bind
+        source: ${ANTNEST_E2E_ACP_MEMBERS_FILE:?prepare the private owner member catalog before startup}
+        target: /etc/antnest/acp-members.json
+        read_only: true
+        bind:
+          create_host_path: false
+  agent-acp-service:
+    environment:
+      ANTNEST_ACP_OWNER_MEMBER_ID: acp-a
+      ANTNEST_ACP_OWNER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.53:8085
+      ANTNEST_ACP_RUNTIME_CONTROLLER_URL: http://runtime-controller:8080
+    depends_on:
+      runtime-controller:
+        condition: service_healthy

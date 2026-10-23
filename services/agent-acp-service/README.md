@@ -87,7 +87,9 @@ Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP ke
 | Inbound   | `GET /rpc/agent-acp/workspace/…` routes                                         | Principal-scoped Bridge recovery receipts, Session watermarks and learning status      |
 | Inbound   | Administrative audit RPCs                                                       | Organization-scoped retained Run, input and event queries                              |
 | Inbound   | `POST /internal/skill-sources/inspect`, `POST /internal/skill-sources/artifact` | Source reads for authenticated Skill Registry workload                                 |
+| Inbound   | `POST /internal/acp-owner/incarnation/probe` on the optional owner listener     | Match the local pending registration intent for Runtime Controller workload only       |
 | Outbound  | MCP `2026-07-28` over HTTP                                                      | Platform Runtime Tool execution and Skill maintenance                                  |
+| Outbound  | Runtime Controller `POST /internal/acp-incarnations/register`                   | Register the current process before ordinary startup, when configured                  |
 | Outbound  | ACP `session/request_permission`                                                | User confirmation on the existing ACP connection                                       |
 | Outbound  | OpenAI-compatible Chat Completions API                                          | Model calls through logical Provider clients                                           |
 | Outbound  | Agent Controller learning policy route                                          | Skill learning policy reads, when configured                                           |
@@ -161,39 +163,70 @@ HTTP token opt-in, and unsupported Runtime TLS/mTLS composition fails closed.
 See [Runtime instance authority](docs/operations.md#runtime-instance-authority)
 for startup, republishing and cleanup requirements.
 
-| Variable                                                                                          | Required | Default             | Description                                                                                                    |
-| ------------------------------------------------------------------------------------------------- | -------- | ------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `ANTNEST_ACP_DATABASE_URL`                                                                        | yes      | -                   | `postgres://` or `postgresql://` URL of the service-owned database                                             |
-| `ANTNEST_ACP_CLIENT_MCP_KEY`                                                                      | yes      | -                   | Canonical base64 encoding of a random 32-byte encryption key for retained MCP revision records                 |
-| `ANTNEST_ACP_LISTEN`                                                                              | no       | `:8080`             | Listen address: `:port`, `host:port` or `[ipv6]:port`                                                          |
-| `ANTNEST_ACP_CONTROL_LISTEN`                                                                      | no       | `:8081`             | Separate Controller-only publication/settlement listener; bind to its caller network                           |
-| `ANTNEST_ACP_IDENTITY_URL`                                                                        | yes      | -                   | Fixed authenticated Identity origin for public JWKS                                                            |
-| `ANTNEST_SERVICE_AUTH_MODE`                                                                       | yes      | -                   | Exact `token` or `mtls`; no default or fallback                                                                |
-| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT`                                                   | no       | `false`             | Exact boolean; token HTTP only with explicit disposable development opt-in                                     |
-| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`                                                               | token    | -                   | Read-only receiver JSON containing per-caller hashes, loaded once at startup                                   |
-| `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                                                                  | token    | -                   | Read-only per-receiver secret files; configured dependencies validated at startup, reread per request          |
-| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS      | -                   | Complete trust, service identity and DNS configuration; TLS 1.3, no partial configuration                      |
-| `ANTNEST_ACP_DATABASE_TIMEOUT`                                                                    | no       | `10s`               | Connection, statement and read timeout for PostgreSQL                                                          |
-| `ANTNEST_ACP_STATE_DELIVERY_TIMEOUT`                                                              | no       | `10000ms`           | Bound for delivering execution state to watchers                                                               |
-| `ANTNEST_ACP_MAX_CONNECTIONS`                                                                     | no       | `1024`              | Shared HTTP/WebSocket connection limit in this process                                                         |
-| `ANTNEST_ACP_MAX_CONNECTIONS_PER_ORG`                                                             | no       | `256`               | Connection limit for one authenticated organization in this process                                            |
-| `ANTNEST_ACP_MAX_CONNECTIONS_PER_PRINCIPAL`                                                       | no       | `64`                | Connection limit for one authenticated organization/principal pair                                             |
-| `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS`                                                        | no       | `false`             | Exact operator-only boolean; unsafe private/local LLM and metadata access; malformed values fail startup       |
-| `ANTNEST_ACP_RUN_TIMEOUT`                                                                         | no       | `30m`               | Maximum Run duration                                                                                           |
-| `ANTNEST_ACP_MAX_PROMPT_BYTES`                                                                    | no       | `16777216`          | Maximum WebSocket and prompt payload size (1024 to 67108864)                                                   |
-| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES`                                                             | no       | `16777216`          | Maximum execution snapshot body size (1024 to 67108864)                                                        |
-| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`                                                                    | no       | `15s`               | Graceful shutdown deadline                                                                                     |
-| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`                                                       | paired   | unset               | Key ID of the Ed25519 Runtime Skill maintenance signing key; set together with the key                         |
-| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`                                                       | paired   | unset               | Canonical base64 Ed25519 PKCS8 DER private key                                                                 |
-| `ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL`                                                       | no       | unset               | Agent Controller origin for learning policy reads. Learning starts only when this and the signing pair are set |
-| `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS`                                                          | no       | `false`             | Accepts exactly `true` or `false`; explicitly permits development-only settings                                |
-| `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID`                                                       | no       | unset               | Development only. Requires the gate; forces review for one Agent and warns at startup; never use in production |
-| `ANTNEST_ACP_SKILL_REGISTRY_URL`                                                                  | no       | unset               | Fixed Registry origin; discovery requires the maintenance signing pair and service credentials                 |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`                                                           | no       | `false`             | Record bounded RPC content in spans for diagnosis                                                              |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                     | no       | unset               | OTLP HTTP endpoint. Traces and metrics export by default when set                                              |
-| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`                                                   | no       | derived             | Enable or disable individual signals                                                                           |
-| `OTEL_SERVICE_NAME`                                                                               | no       | `agent-acp-service` | Service name in telemetry                                                                                      |
-| `OTEL_SDK_DISABLED`                                                                               | no       | `false`             | Disable the OpenTelemetry SDK                                                                                  |
+| Variable                                                                                          | Required | Default             | Description                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------------------- | -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_ACP_DATABASE_URL`                                                                        | yes      | -                   | `postgres://` or `postgresql://` URL of the service-owned database                                                                                                                      |
+| `ANTNEST_ACP_CLIENT_MCP_KEY`                                                                      | yes      | -                   | Canonical base64 encoding of a random 32-byte encryption key for retained MCP revision records                                                                                          |
+| `ANTNEST_ACP_LISTEN`                                                                              | no       | `:8080`             | Listen address: `:port`, `host:port` or `[ipv6]:port`                                                                                                                                   |
+| `ANTNEST_ACP_CONTROL_LISTEN`                                                                      | no       | `:8081`             | Separate Controller-only publication/settlement listener; bind to its caller network                                                                                                    |
+| `ANTNEST_ACP_OWNER_MEMBER_ID`                                                                     | group    | unset               | Exact operator catalog member: 1–64 lowercase ASCII letters, digits or hyphens, beginning and ending with a letter or digit                                                             |
+| `ANTNEST_ACP_OWNER_LISTEN`                                                                        | group    | unset               | Independent numeric IPv4 or bracketed IPv6 address and port 1–65535; no wildcard, multicast, broadcast or ordinary-listener overlap                                                     |
+| `ANTNEST_ACP_RUNTIME_CONTROLLER_URL`                                                              | group    | unset               | Fixed HTTP(S) origin for incarnation registration; no credentials, non-root path, query, fragment or port zero; distinct from configured Identity, Registry and learning-policy origins |
+| `ANTNEST_ACP_OWNER_REGISTRATION_TIMEOUT`                                                          | no       | `30s`               | Shared bootstrap budget, positive duration up to `120s`; setting it requires the complete owner group                                                                                   |
+| `ANTNEST_ACP_IDENTITY_URL`                                                                        | yes      | -                   | Fixed authenticated Identity origin for public JWKS                                                                                                                                     |
+| `ANTNEST_SERVICE_AUTH_MODE`                                                                       | yes      | -                   | Exact `token` or `mtls`; no default or fallback                                                                                                                                         |
+| `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT`                                                   | no       | `false`             | Exact boolean; token HTTP only with explicit disposable development opt-in                                                                                                              |
+| `ANTNEST_SERVICE_AUTH_CALLERS_FILE`                                                               | token    | -                   | Read-only receiver JSON containing per-caller hashes, loaded once at startup                                                                                                            |
+| `ANTNEST_SERVICE_AUTH_TOKEN_DIR`                                                                  | token    | -                   | Read-only per-receiver secret files; configured dependencies validated at startup, reread per request                                                                                   |
+| `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS      | -                   | Complete trust, service identity and DNS configuration; TLS 1.3, no partial configuration                                                                                               |
+| `ANTNEST_ACP_DATABASE_TIMEOUT`                                                                    | no       | `10s`               | Connection, statement and read timeout for PostgreSQL                                                                                                                                   |
+| `ANTNEST_ACP_STATE_DELIVERY_TIMEOUT`                                                              | no       | `10000ms`           | Bound for delivering execution state to watchers                                                                                                                                        |
+| `ANTNEST_ACP_MAX_CONNECTIONS`                                                                     | no       | `1024`              | Shared HTTP/WebSocket connection limit in this process                                                                                                                                  |
+| `ANTNEST_ACP_MAX_CONNECTIONS_PER_ORG`                                                             | no       | `256`               | Connection limit for one authenticated organization in this process                                                                                                                     |
+| `ANTNEST_ACP_MAX_CONNECTIONS_PER_PRINCIPAL`                                                       | no       | `64`                | Connection limit for one authenticated organization/principal pair                                                                                                                      |
+| `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS`                                                        | no       | `false`             | Exact operator-only boolean; unsafe private/local LLM and metadata access; malformed values fail startup                                                                                |
+| `ANTNEST_ACP_RUN_TIMEOUT`                                                                         | no       | `30m`               | Maximum Run duration                                                                                                                                                                    |
+| `ANTNEST_ACP_MAX_PROMPT_BYTES`                                                                    | no       | `16777216`          | Maximum WebSocket and prompt payload size (1024 to 67108864)                                                                                                                            |
+| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES`                                                             | no       | `16777216`          | Maximum execution snapshot body size (1024 to 67108864)                                                                                                                                 |
+| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`                                                                    | no       | `15s`               | Graceful shutdown deadline                                                                                                                                                              |
+| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KID`                                                       | paired   | unset               | Key ID of the Ed25519 Runtime Skill maintenance signing key; set together with the key                                                                                                  |
+| `ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY`                                                       | paired   | unset               | Canonical base64 Ed25519 PKCS8 DER private key                                                                                                                                          |
+| `ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL`                                                       | no       | unset               | Agent Controller origin for learning policy reads. Learning starts only when this and the signing pair are set                                                                          |
+| `ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS`                                                          | no       | `false`             | Accepts exactly `true` or `false`; explicitly permits development-only settings                                                                                                         |
+| `ANTNEST_ACP_SKILL_LEARNING_DEBUG_AGENT_ID`                                                       | no       | unset               | Development only. Requires the gate; forces review for one Agent and warns at startup; never use in production                                                                          |
+| `ANTNEST_ACP_SKILL_REGISTRY_URL`                                                                  | no       | unset               | Fixed Registry origin; discovery requires the maintenance signing pair and service credentials                                                                                          |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`                                                           | no       | `false`             | Record bounded RPC content in spans for diagnosis                                                                                                                                       |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                     | no       | unset               | OTLP HTTP endpoint. Traces and metrics export by default when set                                                                                                                       |
+| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`                                                   | no       | derived             | Enable or disable individual signals                                                                                                                                                    |
+| `OTEL_SERVICE_NAME`                                                                               | no       | `agent-acp-service` | Service name in telemetry                                                                                                                                                               |
+| `OTEL_SDK_DISABLED`                                                                               | no       | `false`             | Disable the OpenTelemetry SDK                                                                                                                                                           |
+
+Incarnation bootstrap is disabled when all four owner settings are unset.
+The member, owner listener and Runtime Controller origin must be configured
+together; a partial group fails startup. Member values are exact, and owner
+listener/origin values must have no surrounding whitespace. The owner listener
+accepts only a literal unicast IP, with brackets around IPv6, and never shares
+the workspace or control listener.
+
+When enabled, startup opens the independent Runtime Controller-only probe,
+validates the registration receipt, then starts database migration, the global
+worker lock, recovery and the ordinary listeners. The probe depends only on
+local pending intent and workload authentication, not Identity, PostgreSQL or
+Controller publication. Unknown outcomes are reconciled with at most three
+registration attempts using the same member/incarnation/nonce tuple, with
+250ms and 500ms delays. Each attempt is bounded by ten seconds and the shared
+startup budget. HTTP 4xx
+responses other than 408 and 429 are not retried. Each attempt's actual request
+and cancellation cleanup must finish before the next attempt starts. Startup
+SIGTERM cancels registration and joins cleanup. See
+[incarnation bootstrap operations](docs/operations.md#optional-acp-incarnation-bootstrap).
+
+This optional startup gate does not enable multiple ACP replicas. The global
+worker lock and single-instance restriction remain. Production owner
+coordination, fenced writers, scoped recovery, cross-owner configuration and
+revocation acknowledgements, peer routing, deployment membership and explicit
+two-replica integration remain pending under the
+[owner handoff contract](../../contracts/agent-acp/owner-handoff.md).
 
 The debug Agent ID retains the existing `optional()` normalization: leading and
 trailing whitespace is removed; empty or whitespace-only values mean unset.
@@ -220,6 +253,9 @@ are rejected by default. See
 - Optional: Agent Controller for learning policy and Skill Registry for
   discovery. Their outages pause learning or discovery and never fail a
   completed Run.
+- Optional incarnation bootstrap: Runtime Controller registration and its
+  authenticated private probe must complete before database startup. Runtime
+  Controller is not polled by ordinary readiness.
 - Readiness checks only local initialization, worker ownership and PostgreSQL.
   It does not probe Controller or aggregate downstream health.
 

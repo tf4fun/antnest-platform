@@ -37,6 +37,21 @@ a wildcard listener to several networks. That wiring, authenticated Controller
 client adoption and final token-profile integration are admitted in the
 [rollout ledger](../platform/service-authentication-rollout.json).
 
+The optional `ANTNEST_ACP_OWNER_LISTEN` is a third, independent listener for
+`POST /internal/acp-owner/incarnation/probe`. It admits only Runtime Controller
+workload identity, without user CCT or Identity/PostgreSQL dependencies. Its
+exact route grant and deny fallback are in [the caller catalog](callers.json).
+Authentication precedes body parsing; unknown credentials return 401 and a
+verified different workload returns 403. The existing workspace and control
+listeners return 404 for this path, including all methods, query variants and
+WebSocket upgrades, before authentication or body reads. Request and response bodies follow the
+[incarnation wire contract](owner-handoff.md#trusted-incarnation-registration), including its
+size bounds, deadlines, closed DTOs, `no-store` and payload-capture prohibition.
+Outbound registration uses the fixed `ANTNEST_ACP_RUNTIME_CONTROLLER_URL` with
+Runtime Controller's receiver-specific workload credential only. This startup
+gate preserves the global worker lock; peer forwarding and multi-replica
+deployment remain separate admission work.
+
 ACP and workspace routes require exactly one Identity-signed CCT with ACP
 audience and `agt`, then repeat current local Agent and Session authorization.
 Audit calls additionally require Console workload and a signed organization-scoped

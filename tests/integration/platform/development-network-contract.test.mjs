@@ -58,9 +58,11 @@ test("every current workload pair shares the receiver's explicitly bound purpose
     for (const [routeName, route] of Object.entries(catalog.routes)) {
       if (route.authentication !== "workload") continue;
       for (const caller of route.callers) {
-        const purpose = contract.control_routes[receiver]?.includes(routeName)
-          ? "control"
-          : "primary";
+        const purpose = contract.owner_routes?.[receiver]?.includes(routeName)
+          ? "owner"
+          : contract.control_routes[receiver]?.includes(routeName)
+            ? "control"
+            : "primary";
         const listener = contract.listeners[receiver][purpose];
         assert(listener, `${receiver} listener`);
         const network = contract.networks[listener.network];
@@ -74,7 +76,7 @@ test("every current workload pair shares the receiver's explicitly bound purpose
       }
     }
   }
-  assert.equal(pairs.size, 24);
+  assert.equal(pairs.size, 25);
   assert.deepEqual(contract.control_routes, {
     "agent-acp-service": [
       "POST /rpc/agent-acp/apply-execution-snapshot",
@@ -215,9 +217,11 @@ test("canonical workload destinations select receiver purpose addresses instead 
     const catalog = JSON.parse(readFileSync(new URL(path, root), "utf8"));
     for (const [routeName, route] of Object.entries(catalog.routes)) {
       if (route.authentication !== "workload") continue;
-      const purpose = contract.control_routes[receiver]?.includes(routeName)
-        ? "control"
-        : "primary";
+      const purpose = contract.owner_routes?.[receiver]?.includes(routeName)
+        ? "owner"
+        : contract.control_routes[receiver]?.includes(routeName)
+          ? "control"
+          : "primary";
       const listener = contract.listeners[receiver][purpose];
       for (const caller of route.callers) {
         const destination = contract.destinations[caller][listener.dns_name];
@@ -276,4 +280,57 @@ test("fixed network peers name actual Compose services or the two declared trans
     for (const service of Object.keys(network.members))
       assert(known.has(service), `${name} names missing service ${service}`);
   }
+});
+
+test("the owner probe has an opt-in, RC-reachable listener and an Inspect-pinned destination", () => {
+  const contract = readContract();
+  const owner = contract.listeners["agent-acp-service"].owner;
+  assert.deepEqual(owner, {
+    network: "controller-runtime",
+    address_suffix: 53,
+    port: 8085,
+    dns_name: "agent-acp-service",
+    profile: "acp-owner-bootstrap",
+    authentication_before_routing: true,
+  });
+  assert.deepEqual(contract.owner_routes, {
+    "agent-acp-service": ["POST /internal/acp-owner/incarnation/probe"],
+  });
+  assert.deepEqual(
+    contract.destinations["runtime-controller"][owner.dns_name],
+    {
+      receiver: "agent-acp-service",
+      listener: "owner",
+      resolution: "docker-inspect",
+    },
+  );
+  assert.equal(contract.networks.edge.members["runtime-controller"], undefined);
+  assert.equal(
+    contract.networks[owner.network].members["runtime-controller"],
+    50,
+  );
+  assert.equal(
+    contract.networks[owner.network].members["agent-acp-service"],
+    owner.address_suffix,
+  );
+  assert(
+    !Object.values(contract.infrastructure.diagnostics.listener_ports).includes(
+      owner.port,
+    ),
+  );
+  const compose = parse(readFileSync(new URL("compose.yaml", root), "utf8"));
+  for (const key of [
+    "ANTNEST_ACP_OWNER_MEMBER_ID",
+    "ANTNEST_ACP_OWNER_LISTEN",
+    "ANTNEST_ACP_RUNTIME_CONTROLLER_URL",
+  ])
+    assert.equal(
+      compose.services["agent-acp-service"].environment[key],
+      undefined,
+    );
+  assert.equal(
+    compose.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_ACP_MEMBERS_FILE,
+    undefined,
+  );
 });

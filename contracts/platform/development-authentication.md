@@ -35,8 +35,11 @@ share that pair's credential; public, health, fallback and delegate records do
 not create grants. Unknown callers, catalog/service mismatches and self-calls
 without an explicit workload grant fail before writing credentials.
 
-The nine current static workloads produce 24 pairs. The count is a reviewed
-result of the catalogs, not a hardcoded authorization table. No static
+The nine current static workloads produce 25 pairs, including the new
+`runtime-controller->agent-acp-service` pair for the private owner incarnation
+probe. This credential pair does not complete owner deployment or multi-replica
+acceptance. The count is a reviewed result of the catalogs, not a hardcoded
+authorization table. No static
 `antnest-runtime` token is produced: RC owns its separate per-Agent/generation
 issuance under the [instance connection contract](../runtime/instance-connection.md).
 

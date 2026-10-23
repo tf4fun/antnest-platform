@@ -1,13 +1,21 @@
 import { loadConfig } from "./config.js";
 import { WorkerOwnershipLostError } from "./adapters/postgres/worker-lock.js";
 import { startTelemetry } from "./telemetry/telemetry.js";
-import { flushBeforeFailStop, raceWithOwnershipLoss, withShutdownDeadline } from "./shutdown.js";
+import {
+  createShutdownReason,
+  isShutdownReason,
+  flushBeforeFailStop,
+  raceWithOwnershipLoss,
+  withShutdownDeadline,
+} from "./shutdown.js";
 
 const FAIL_STOP_TELEMETRY_TIMEOUT_MS = 500;
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const telemetryRuntime = await startTelemetry(config.telemetry);
+  const startupController = new AbortController();
+  const stopping = shutdownSignal(startupController);
   const ownershipLoss = Promise.withResolvers<WorkerOwnershipLostError>();
   let telemetryShutdown: Promise<void> | undefined;
   const shutdownTelemetry = (): Promise<void> => {
@@ -21,14 +29,41 @@ async function main(): Promise<void> {
   try {
     // The driver must load after its standard instrumentation is registered.
     const { startAgentAcpService } = await import("./composition.js");
-    const service = await raceWithOwnershipLoss(
-      startAgentAcpService(config, telemetryRuntime.telemetry, (error) => {
-        ownershipLoss.resolve(error);
-      }),
+    const startup = raceWithOwnershipLoss(
+      startAgentAcpService(
+        config,
+        telemetryRuntime.telemetry,
+        (error) => ownershipLoss.resolve(error),
+        startupController.signal,
+      ),
       ownershipLoss.promise,
     );
+    const started = await Promise.race([
+      startup.then((service) => ({ kind: "started" as const, service })),
+      stopping.signal.then((signal) => ({ kind: "signal" as const, signal })),
+    ]);
+    if (started.kind === "signal") {
+      telemetryRuntime.telemetry.log("info", "shutdown_requested", { signal: started.signal });
+      // Keep the original startup task owned until cancellation and cleanup
+      // finish, including the case where startup won the race to return.
+      await raceWithOwnershipLoss(
+        withShutdownDeadline(
+          startup.then(
+            (service) => service.shutdown(),
+            (error: unknown) => {
+              if (!isShutdownReason(error)) throw error;
+            },
+          ),
+          config.shutdownTimeoutMs,
+          forceExit,
+        ),
+        ownershipLoss.promise,
+      );
+      return;
+    }
+    const service = started.service;
     const outcome = await Promise.race([
-      shutdownSignal().then((signal) => ({ kind: "signal" as const, signal })),
+      stopping.signal.then((signal) => ({ kind: "signal" as const, signal })),
       service.failure.then((error) => ({ kind: "failure" as const, error })),
       ownershipLoss.promise.then((error) => ({ kind: "ownership_loss" as const, error })),
     ]);
@@ -56,9 +91,12 @@ async function main(): Promise<void> {
     if (error instanceof WorkerOwnershipLostError) {
       await failStop();
     }
-    telemetryRuntime.telemetry.log("error", "service_failed", {}, error);
-    process.exitCode = 1;
+    if (!isShutdownReason(error)) {
+      telemetryRuntime.telemetry.log("error", "service_failed", {}, error);
+      process.exitCode = 1;
+    }
   } finally {
+    stopping.dispose();
     await withShutdownDeadline(shutdownTelemetry(), config.shutdownTimeoutMs, forceExit).catch(
       () => {
         process.exitCode = 1;
@@ -67,11 +105,26 @@ async function main(): Promise<void> {
   }
 }
 
-function shutdownSignal(): Promise<"SIGINT" | "SIGTERM"> {
-  return new Promise((resolve) => {
-    process.once("SIGINT", () => resolve("SIGINT"));
-    process.once("SIGTERM", () => resolve("SIGTERM"));
-  });
+function shutdownSignal(startup: AbortController): {
+  signal: Promise<"SIGINT" | "SIGTERM">;
+  dispose(): void;
+} {
+  const signal = Promise.withResolvers<"SIGINT" | "SIGTERM">();
+  const stop = (name: "SIGINT" | "SIGTERM"): void => {
+    signal.resolve(name);
+    startup.abort(createShutdownReason());
+  };
+  const interrupt = (): void => stop("SIGINT");
+  const terminate = (): void => stop("SIGTERM");
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", terminate);
+  return {
+    signal: signal.promise,
+    dispose() {
+      process.removeListener("SIGINT", interrupt);
+      process.removeListener("SIGTERM", terminate);
+    },
+  };
 }
 
 function forceExit(): never {

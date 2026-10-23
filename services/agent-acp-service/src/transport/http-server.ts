@@ -56,6 +56,9 @@ import {
   EXECUTION_CONFIGURATION_PATH,
 } from "./execution-configuration.js";
 
+// This route belongs only to the independent, early owner listener.
+const OWNER_PROBE_PATH = "/internal/acp-owner/incarnation/probe";
+
 export type AgentAcpHttpServerOptions = {
   authentication: RequestAuthentication;
   skillSources?: Parameters<typeof serveSkillSource>[3];
@@ -258,6 +261,7 @@ export class AgentAcpHttpServer {
       path === EXECUTION_CONFIGURATION_PATH ||
       path === RUNTIME_BARRIER_QUERY_PATH;
     if (
+      path === OWNER_PROBE_PATH ||
       (listener === "workspace" && control) ||
       (listener === "control" &&
         !control &&
@@ -395,6 +399,8 @@ export class AgentAcpHttpServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<number> {
+    if ((request.url ?? "").split("?", 1)[0] === OWNER_PROBE_PATH)
+      return rejectUpgrade(socket, 404, "Not Found");
     if (this.isClosing()) return rejectUpgrade(socket, 503, "Service Unavailable");
     const admission = await this.options.authentication.admit(request, true);
     if ("status" in admission) return rejectAuthenticatedUpgrade(socket, admission);

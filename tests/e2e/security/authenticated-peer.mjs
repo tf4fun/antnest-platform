@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createPublicKey, randomUUID, verify } from "node:crypto";
+import { createPublicKey, randomBytes, randomUUID, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { serviceClient } from "../../support/service-grants.mjs";
@@ -378,6 +378,39 @@ export async function authenticatePeer(
         method: "GET",
       });
       assert.deepEqual(live, { status: "ready" });
+      if (plan.endpoints.owner) {
+        const ownerPath = "/internal/acp-owner/incarnation/probe";
+        const ownerInput = {
+          member_id: "acp-a",
+          incarnation_id: randomUUID(),
+          registration_nonce: randomBytes(32).toString("hex"),
+          challenge: randomBytes(32).toString("hex"),
+        };
+        step = "owner probe rejects anonymous callers";
+        await call("owner", ownerPath, null, {
+          body: ownerInput,
+          status: 401,
+          code: "service_unauthenticated",
+        });
+        step = "owner probe rejects a different authenticated workload";
+        await call("owner", ownerPath, "agent-ui-acp", {
+          body: ownerInput,
+          status: 403,
+          code: "caller_not_allowed",
+        });
+        step = "owner probe rejects an intent outside pending registration";
+        await call("owner", ownerPath, "rc-acp", {
+          body: ownerInput,
+          status: 409,
+          code: "acp_probe_intent_mismatch",
+        });
+        step = "owner listener has no ordinary health route";
+        await call("owner", "/status", "rc-acp", {
+          method: "GET",
+          status: 404,
+          code: "route_not_found",
+        });
+      }
       step = "revoke actual administrator session";
       await revoke(admin);
       step = "revoked session rejects still-unexpired CCT";
