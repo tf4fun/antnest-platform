@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { AccessService } from "../../src/application/access-service.js";
 import { DomainError } from "../../src/domain/errors.js";
+import { AgentOwnershipLostError } from "../../src/domain/agent-ownership.js";
 
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
 import { bridgeIntentDigest } from "../../src/domain/bridge-intent.js";
@@ -51,6 +52,7 @@ async function setup(initialize = true) {
     rejectRun: vi.fn<RunRepository["rejectRun"]>().mockResolvedValue("failed"),
   };
   const recoveryRequired = vi.fn();
+  const ownershipLost = vi.fn();
   let nextId = 0;
   const id = vi.fn<(kind: string) => string>(() => `id-${++nextId}`);
   const coordinator = new PromptCoordinator({
@@ -59,6 +61,7 @@ async function setup(initialize = true) {
     protection: { hasUnstoppedRuntimeCalls: () => Promise.resolve(false) },
     runTimeoutMs: 600_000,
     recoveryRequired,
+    ownershipLost,
     id,
     now: () => now,
   });
@@ -67,10 +70,35 @@ async function setup(initialize = true) {
     sessionId: session.id,
     prompt: [{ type: "text", text: "hello" }],
   };
-  return { ...local, configuration, repository, recoveryRequired, coordinator, input, id };
+  return {
+    ...local,
+    configuration,
+    repository,
+    recoveryRequired,
+    ownershipLost,
+    coordinator,
+    input,
+    id,
+  };
 }
 
 describe("PromptCoordinator", () => {
+  it.each(["createRunIntent", "acceptRun"] as const)(
+    "%s ownership loss closes only the captured Agent and preserves unknown admission",
+    async (boundary) => {
+      const test = await setup();
+      const failure = new AgentOwnershipLostError();
+      test.repository[boundary].mockRejectedValueOnce(failure);
+      await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+        name: RunRecoveryRequiredError.name,
+        cause: failure,
+      });
+      expect(test.ownershipLost).toHaveBeenCalledExactlyOnceWith(failure);
+      expect(test.recoveryRequired).not.toHaveBeenCalled();
+      expect(test.repository.rejectRun).not.toHaveBeenCalled();
+    },
+  );
+
   async function closeAgent(test: Awaited<ReturnType<typeof setup>>) {
     const closed = structuredClone(test.configuration);
     closed.revision++;

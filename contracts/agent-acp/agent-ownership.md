@@ -88,6 +88,15 @@ Retaining a completion only joins work already dispatched and never authorizes a
 new effect. The admitting operation must retain accepted completion before it
 returns, including when its response arrives after ownership loss.
 
+The application router captures request data before awaits, authorizes the trusted
+connection binding, then captures a prepared generation by organization and Agent.
+It never acquires a new lease on behalf of an individual request. Loss before the
+application callback starts is `agent_unavailable`; after invocation, a write may
+already be committed and the public result must retain the non-retryable
+`database_error` / query-intent recovery classification. A captured Agent's loss
+closes only that scope. Prompt persistence must not send it to the global database
+failure channel. Closure is requested without awaiting the admission's own join.
+
 Normal draining forbids new dispatch but continues renewal while original tasks
 remain. After all original work has settled, stop renewal, join its in-flight
 request and release the original fence. A non-cooperative task prevents completion

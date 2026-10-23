@@ -57,6 +57,15 @@ when timer callbacks are delayed. Normal drain keeps renewing until original
 work finishes. Local task diagnostics retain only the latest 16 failures; callers
 still receive their original operation failures. This component is not yet connected to production configuration,
 Prompt or startup recovery; its isolated admission is not a multi-replica claim.
+`AgentApplicationRouter` implements the existing application port against those
+prepared graphs. It copies request data before authorization, routes by the trusted
+organization/Agent binding and retains each accepted Run's original completion.
+Before invocation, missing ownership returns retryable `agent_unavailable`; after
+invocation, ownership loss preserves the non-retryable recovery classification and
+closes only that Agent. `PromptCoordinator` has a scope-bound loss notification
+separate from the global persistence-failure callback; it does not await its own
+generation's close. Router composition with real Session/Prompt repositories is a
+component boundary, not the production startup/publication activation gate.
 Connecting every owned write and scoped recovery, covering configuration ACKs
 across owners, forwarding connections and the final two-replica integration
 remain required before removing the global worker lock.

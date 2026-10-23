@@ -1,5 +1,6 @@
 import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DomainError } from "../domain/errors.js";
+import { AgentOwnershipLostError } from "../domain/agent-ownership.js";
 import { normalizePromptResources } from "../domain/embedded-resource.js";
 import { bridgeIntentDigestFromJson, canonicalPromptJson } from "../domain/bridge-intent.js";
 import { matchCommand, type SessionCommand } from "../domain/slash-commands.js";
@@ -27,6 +28,8 @@ export type PromptCoordinatorDependencies = {
   protection: RuntimeProtectionRepository;
   runTimeoutMs: number;
   recoveryRequired: (error: Error) => void;
+  /** Closes the fixed Agent generation without waiting for this admission to join. */
+  ownershipLost?: (error: AgentOwnershipLostError) => void | Promise<void>;
   id: ResourceIdGenerator;
   now: () => Date;
 };
@@ -195,6 +198,12 @@ export class PromptCoordinator {
     try {
       return await operation();
     } catch (error) {
+      if (error instanceof AgentOwnershipLostError) {
+        void this.dependencies.ownershipLost?.(error);
+        // This may be a committed write with a lost receipt. Never advertise a
+        // retryable admission error or stop unrelated Agent generations.
+        throw new RunRecoveryRequiredError("Run acceptance requires recovery", error);
+      }
       if (!(error instanceof DomainError)) {
         this.dependencies.recoveryRequired(
           new Error("Run acceptance could not be persisted locally", { cause: error }),
