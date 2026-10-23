@@ -116,7 +116,8 @@ Phase 1 or multi-replica acceptance.
    `agent_busy`. The [durable Run admission contract](run-admission.md) defines
    the Session-derived scope, conflict precedence and reservation lifetime.
    This does not by itself prove full multi-replica operation.
-4. ACP Phase 3: implement leases and epochs, fence every owned write, make
+4. ACP Phase 3: follow the [Agent ownership contract](agent-ownership.md) for
+   leases and epochs, fence every owned write, make
    publication consistent across replicas, scope recovery to the owned or
    expired Agent, and provide internal owner forwarding. The detailed peer
    protocol and its authorization are to be frozen in a separate contract
