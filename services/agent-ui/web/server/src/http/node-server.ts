@@ -14,7 +14,7 @@ import { parseWorkspaceDocumentPath, type WorkspaceRoute } from "../protocol/wor
 import { readWorkspacePrincipal } from "./workspace-principal.ts";
 import type { RequestAuthentication } from "./request-authentication.ts";
 import { bindAuthenticatedRequest, copyAuthenticatedRequest } from "./trusted-identity.ts";
-import { HttpInputError, requireJsonMedia, validateJsonRequest } from "./json-request.ts";
+import { bindPromptUploadLease, HttpInputError, requireJsonMedia, validateJsonRequest } from "./json-request.ts";
 import { recordEventStreamCompletion } from "./event-routes.ts";
 import { UploadAdmission, maximumControlRequestBytes, maximumJsonRequestBytes } from "./upload-admission.ts";
 
@@ -201,12 +201,18 @@ async function serve(
         handle: async (request: Request) => {
           // A client deadline may finish the HTTP response while authorization is
           // still unwinding. The dispatch, not that response, owns the reservation.
-          const release = releaseUpload;
+          let release = releaseUpload;
           releaseUpload = undefined;
           try {
-            return await runtime.handle(await validateJsonRequest(request,
+            const validated = await validateJsonRequest(request,
               promptUpload ? maximumJsonRequestBytes : maximumControlRequestBytes,
-              promptUpload ? capturePromptInput() : undefined));
+              promptUpload ? capturePromptInput() : undefined);
+            if (promptUpload) bindPromptUploadLease(validated, () => {
+              const transferred = release;
+              release = undefined;
+              return transferred;
+            });
+            return await runtime.handle(validated);
           } finally { release?.(); }
         },
       } : runtime;

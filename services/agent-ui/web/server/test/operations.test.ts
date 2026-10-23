@@ -443,7 +443,9 @@ type PromptPublicError = {
   recovery: "query_operation";
 };
 
-function promptFailure(code = "agent_busy"): AcpPromptError {
+// Explicit-only recovery uses a refusal outside the two automatic admission
+// codes. Their original-intent backoff is covered in admission-backoff.test.ts.
+function promptFailure(code = "database_error"): AcpPromptError {
   const entry = promptErrorCatalog.errors[code]!;
   const cause = Object.assign(new RequestError(entry.json_rpc_code, entry.message, {
     code,
@@ -463,7 +465,7 @@ function promptPublicError(value: unknown): PromptPublicError {
 }
 
 const promptFailureCases = [
-  ...["agent_busy", "access_denied", "runtime_barrier_required", "database_error",
+  ...["session_busy", "access_denied", "runtime_barrier_required", "database_error",
     "idempotency_conflict", "intent_already_recorded"].map((code) => ({
     name: code, failure: promptFailure(code), code, message: promptErrorCatalog.errors[code]!.message,
   })),

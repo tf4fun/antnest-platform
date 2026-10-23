@@ -222,7 +222,7 @@
       "routes": ["GET /api/app/workspace/v1/bootstrap"]
     },
     "services/agent-ui/web/server/src/http/command-routes.ts": {
-      "sha256": "342220843f7e9eccf9b6e26cea4e14a5af6ba4005743ebdd97554c8c55a3abaa",
+      "sha256": "0eef19eba8f4aa2fb64080909d3c37e25c12f307f7071ad8dfc4a9e1a7a4eb1f",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
@@ -253,7 +253,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/node-server.ts": {
-      "sha256": "0eee0b0fd07f70133b6547997553b19bc018bb1a980751b42ab2e3555baafa37",
+      "sha256": "d4cdad57d09393b02c3f9367b1f4406f6fa712e3e7e10633872c87a72f3c272f",
       "routes": [
         "GET /status",
         "GET /live",
@@ -324,7 +324,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/json-request.ts": {
-      "sha256": "00db37052dff5538cf8b5c0bc741e4fdf2dbb1f259813dd33a22114e008481a0",
+      "sha256": "274a0c080dd690930cb208d9ab90d4b1ce07a7a6c1e07e6cecf72e9d0aa941de",
       "routes": []
     }
   }

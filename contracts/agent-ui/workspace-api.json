@@ -170,7 +170,7 @@
   "sse_subscriber_queue_max_bytes": 1048576,
   "process_page_max_bytes": 262144,
   "prompt_admission_backoff": {
-    "status": "pending",
+    "status": "implemented",
     "owner": "agent-ui-node",
     "codes": ["agent_busy", "configuration_not_ready"],
     "required_capabilities": {

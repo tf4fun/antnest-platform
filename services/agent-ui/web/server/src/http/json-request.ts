@@ -7,6 +7,19 @@ import { largeInputBytes, runInputWork } from "./input-work.ts";
 
 type ValidatedJson = { value: Record<string, unknown>; byteLength: number };
 const validatedBodies = new WeakMap<Request, ValidatedJson>();
+const promptUploadLeases = new WeakMap<Request, () => (() => void) | undefined>();
+
+// Only the native server can bind its actual byte/count reservation. A clone,
+// header or request body cannot supply or copy ownership of this private lease.
+export function bindPromptUploadLease(request: Request, take: () => (() => void) | undefined): void {
+  promptUploadLeases.set(request, take);
+}
+
+export function takePromptUploadLease(request: Request): (() => void) | undefined {
+  const take = promptUploadLeases.get(request);
+  promptUploadLeases.delete(request);
+  return take?.();
+}
 
 // This record is attached only to the exact Request created after strict native
 // HTTP validation. Clones and direct handler requests take the strict read path.

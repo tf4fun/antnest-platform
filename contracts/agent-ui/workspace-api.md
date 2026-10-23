@@ -332,7 +332,7 @@ A new scope denied because every Bridge owner slot is busy receives
 `bridge_capacity_exceeded`; a cold owner may be retired to admit it.
 A missing/expired durable
 receipt stays unknown. `retryable` alone never authorizes automatic Prompt replay;
-the pending admission-backoff exception below additionally requires a settled
+the bounded admission-backoff exception below additionally requires a settled
 canonical refusal and a current authorized intent-unknown lookup.
 When the producer confirms that a selected Session is absent or invisible, its
 Agent/Session View, event stream, history, operation and configuration routes
@@ -430,9 +430,9 @@ fault, revocation and Resolve evidence.
 ## Explicit original Prompt retry (#53)
 
 Node and browser explicit retry are implemented. The schema and fixtures
-define their wire contract; fixtures alone are not execution evidence. The
-separate automatic-backoff and real original-Prompt Docker criteria for #53
-remain pending.
+define their wire contract; fixtures alone are not execution evidence. Node's
+bounded admission backoff below is also implemented. Real original-Prompt
+ACP Docker acceptance for #53 remains pending.
 Ordinary Prompt submission, its existing route, body and Bridge ACK remain
 unchanged.
 
@@ -495,11 +495,11 @@ their existing ownership. This action must not use the 16 KiB control-body
 path or bypass upload accounting. The existing cancel paths retain their small
 body limits and independent admission.
 
-## Pending bounded Prompt admission backoff (#53)
+## Bounded Prompt admission backoff (#53)
 
-`prompt_admission_backoff` defines the next Agent UI service batch. It does
-not enable automatic retries in the current consumer. Workspace API v1, ACP
-methods, Prompt bodies, intent metadata, error capability v1 and Bridge
+`prompt_admission_backoff` is implemented by the Agent UI Node consumer.
+Real ACP original-Prompt Docker acceptance remains pending. Workspace API v1,
+ACP methods, Prompt bodies, intent metadata, error capability v1 and Bridge
 `intentReceipt: 1` remain unchanged. The manifest's
 `antnest.dev/bridge.intentReceipt` denotes that existing nested capability;
 it is not a new capability name on the wire.
@@ -541,8 +541,8 @@ Explicit and automatic retries share the same single-flight decision and
 retained entry. An explicit action cannot reset the count, wait budget or
 retry index, and a concurrent click cannot enqueue another cycle. Once the
 four-dispatch limit is exhausted, explicit actions can only query/adopt the
-original operation. This limit is a new requirement for the pending consumer;
-it is not a claim about the already implemented explicit-only behavior.
+original operation. The implemented Node consumer applies this shared limit
+to explicit and automatic retries.
 Do not evict an entry while its decision, wait or actual call is owned.
 
 Preserve the original scope, intent ID, append condition and every ordered

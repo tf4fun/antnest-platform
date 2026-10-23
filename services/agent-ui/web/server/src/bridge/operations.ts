@@ -13,6 +13,7 @@ export type PromptIntent = {
 
 export type PreparedPrompt = Readonly<{ requestBytes: number }>;
 export type RetryTicket = Readonly<{ release(): void }>;
+export type TakePromptResources = () => (() => void) | undefined;
 type BridgeAcceptance = { operationId: string; acceptance: "bridge"; phase: "dispatching" };
 
 export type Operation = {
@@ -54,8 +55,17 @@ type Dependencies = {
 type LocalOperation = {
   digest: string;
   inFlight: boolean;
+  active: boolean;
+  abort: AbortController;
+  automaticDecision?: Promise<boolean>;
+  automaticAllowed: boolean;
+  dispatches: number;
+  waitedMs: number;
+  retryIndex: number;
+  exhausted: boolean;
   retired: boolean;
   releaseWork: () => void;
+  releaseResources?: () => void;
   settled: Promise<void>;
   sessionId: string;
   operation: Operation;
@@ -129,6 +139,10 @@ export class OperationCoordinator {
     entry.uncertainSince = operation.phase === "uncertain"
       ? entry.uncertainSince ?? this.now() : null;
     entry.operation = operation;
+    if (operation.acceptance === "acp") {
+      entry.automaticAllowed = false;
+      entry.abort.abort(new Error("A durable receipt already exists"));
+    }
   }
 
   public async prepare(input: PromptIntent, signal?: AbortSignal): Promise<PreparedPrompt> {
@@ -157,12 +171,12 @@ export class OperationCoordinator {
     return prepared;
   }
 
-  public submitPrepared(prepared: PreparedPrompt): BridgeAcceptance {
+  public submitPrepared(prepared: PreparedPrompt, takeResources?: TakePromptResources): BridgeAcceptance {
     const captured = this.prepared.get(prepared);
     if (captured === undefined) throw new Error("Invalid or consumed prepared Prompt");
     this.prepared.delete(prepared);
     captured.signal?.throwIfAborted();
-    return this.commit(captured.input, captured.digest);
+    return this.commit(captured.input, captured.digest, takeResources);
   }
 
   public beginRetry(sessionId: string, intentId: string): RetryTicket {
@@ -175,7 +189,7 @@ export class OperationCoordinator {
       const entry = this.local.get(key);
       attempt = {
         key, sessionId, intentId, entry,
-        inFlightAtEntry: entry?.inFlight === true,
+        inFlightAtEntry: entry?.active === true,
         tickets: 0, completed: false, abort: new AbortController(),
         releaseWork: this.retainWork(),
       };
@@ -192,7 +206,8 @@ export class OperationCoordinator {
     return ticket;
   }
 
-  public async retryPrepared(prepared: PreparedPrompt, ticket?: RetryTicket): Promise<BridgeAcceptance> {
+  public async retryPrepared(prepared: PreparedPrompt, ticket?: RetryTicket,
+    takeResources?: TakePromptResources): Promise<BridgeAcceptance> {
     const captured = this.prepared.get(prepared);
     if (captured === undefined) throw new Error("Invalid or consumed prepared Prompt");
     this.prepared.delete(prepared);
@@ -212,7 +227,7 @@ export class OperationCoordinator {
         if (this.draining) throw new Error("Bridge operations are draining");
         const signal = captured.signal === undefined ? attempt.abort.signal :
           AbortSignal.any([captured.signal, attempt.abort.signal]);
-        attempt.decision = this.decideRetry(attempt, captured.input, signal);
+        attempt.decision = this.decideRetry(attempt, captured.input, signal, takeResources);
         const completed = () => {
           attempt.completed = true;
           this.retireRetry(attempt);
@@ -231,6 +246,10 @@ export class OperationCoordinator {
 
   public beginDrain(): void {
     this.draining = true;
+    for (const entry of this.local.values()) {
+      entry.automaticAllowed = false;
+      entry.abort.abort(new Error("Bridge operations are draining"));
+    }
     for (const attempt of this.retries.values())
       attempt.abort.abort(new Error("Bridge operations are draining"));
   }
@@ -239,8 +258,12 @@ export class OperationCoordinator {
     while (true) {
       const pending = [...this.retries.values()].filter((attempt) =>
         attempt.decision !== undefined && !attempt.completed);
-      if (pending.length === 0) return;
-      await Promise.allSettled(pending.map((attempt) => attempt.decision!));
+      const active = [...this.local.values()].filter((entry) => entry.active);
+      if (pending.length === 0 && active.length === 0) return;
+      await Promise.allSettled([
+        ...pending.map((attempt) => attempt.decision!),
+        ...active.map((entry) => entry.settled),
+      ]);
     }
   }
 
@@ -251,14 +274,21 @@ export class OperationCoordinator {
     attempt.releaseWork();
   }
 
-  private async decideRetry(attempt: RetryAttempt, input: PromptIntent, signal: AbortSignal): Promise<BridgeAcceptance> {
+  private async decideRetry(attempt: RetryAttempt, input: PromptIntent, signal: AbortSignal,
+    takeResources?: TakePromptResources): Promise<BridgeAcceptance> {
     const accepted: BridgeAcceptance = {
       operationId: input.intentId, acceptance: "bridge", phase: "dispatching",
     };
     const entry = attempt.entry;
     const hasReceipt = () => entry?.operation.acceptance === "acp";
     signal.throwIfAborted();
-    if (hasReceipt() || attempt.inFlightAtEntry) return accepted;
+    if (hasReceipt()) return accepted;
+    if (attempt.inFlightAtEntry) {
+      // A click during the automatic decision joins it; it never skips its
+      // delay/query or schedules an additional dispatch after the active call.
+      await entry?.automaticDecision;
+      return accepted;
+    }
     let result: Awaited<ReturnType<Dependencies["readIntent"]>>;
     try {
       result = await this.dependencies.readIntent(input.sessionId, input.intentId, signal);
@@ -277,30 +307,34 @@ export class OperationCoordinator {
         this.setOperation(entry, operationFromReceipt(result.receipt));
         if (terminal(entry.operation.phase)) {
           entry.retired = true;
-          entry.releaseWork();
+          if (!entry.active) entry.releaseWork();
         }
         this.dependencies.changed?.(input.sessionId);
       }
       return accepted;
     }
     signal.throwIfAborted();
-    if (entry === undefined || this.local.get(attempt.key) !== entry || entry.inFlight)
+    if (entry === undefined || this.local.get(attempt.key) !== entry || entry.active ||
+      entry.exhausted || entry.dispatches >= 4)
       return accepted;
     if (this.draining) throw new Error("Bridge operations are draining");
     // Reacquire work for this actual call. Its prior uncertain observation is
     // retained until a durable receipt arrives; another ACK proves no progress.
     entry.releaseWork = this.retainWork();
+    entry.releaseResources = takeResources?.();
     entry.inFlight = true;
     entry.retired = false;
+    entry.abort = new AbortController();
     this.dispatch(input, entry);
     return accepted;
   }
 
   public submit(input: PromptIntent): BridgeAcceptance {
-    return this.commit(input, promptDigest(input));
+    const captured = { ...input, prompt: canonical(input.prompt) as ContentBlock[] };
+    return this.commit(captured, promptDigest(captured));
   }
 
-  private commit(input: PromptIntent, digest: string): BridgeAcceptance {
+  private commit(input: PromptIntent, digest: string, takeResources?: TakePromptResources): BridgeAcceptance {
     if (this.draining) throw new Error("Bridge operations are draining");
     const key = operationKey(input.sessionId, input.intentId);
     const existing = this.local.get(key);
@@ -320,7 +354,7 @@ export class OperationCoordinator {
     }
     if (this.local.size >= 256) {
       const retired = [...this.local].find(([key, entry]) =>
-        entry.retired && !entry.inFlight && !this.retries.has(key));
+        entry.retired && !entry.active && !this.retries.has(key));
       if (retired === undefined)
         throw new OperationConflictError(
           "Bridge operation capacity is exhausted",
@@ -331,8 +365,16 @@ export class OperationCoordinator {
     const entry: LocalOperation = {
       digest,
       inFlight: true,
+      active: false,
+      abort: new AbortController(),
+      automaticAllowed: true,
+      dispatches: 0,
+      waitedMs: 0,
+      retryIndex: 0,
+      exhausted: false,
       retired: false,
       releaseWork,
+      releaseResources: takeResources?.(),
       settled: Promise.resolve(),
       sessionId: input.sessionId,
       uncertainSince: null,
@@ -365,51 +407,101 @@ export class OperationCoordinator {
   }
 
   private dispatch(input: PromptIntent, entry: LocalOperation): void {
-    entry.settled = Promise.resolve()
-      .then(() => {
-        if (this.draining) throw new Error("Bridge operations are draining");
-        return this.dependencies.prompt(input);
-      })
-      .then(
-        () => {
-          entry.inFlight = false;
-          entry.retired = true;
-          entry.releaseWork();
+    entry.active = true;
+    entry.settled = Promise.resolve().then(async () => {
+      for (;;) {
+        if (this.draining || entry.abort.signal.aborted) {
           if (entry.operation.acceptance === "bridge") {
-            this.setOperation(entry, {
-              ...entry.operation,
-              acceptance: "unknown",
-              phase: "uncertain",
-            });
+            this.setOperation(entry, { ...entry.operation, acceptance: "unknown", phase: "uncertain" });
             this.dependencies.changed?.(input.sessionId);
           }
-        },
-        (cause: unknown) => {
+          return;
+        }
+        entry.dispatches++;
+        entry.inFlight = true;
+        let classification: AcpPromptError["classification"] | undefined;
+        try {
+          await this.dependencies.prompt(input);
+        } catch (cause) {
+          classification = cause instanceof AcpPromptError ? cause.classification : undefined;
+        } finally {
           entry.inFlight = false;
-          entry.retired = true;
-          entry.releaseWork();
-          if (entry.operation.acceptance !== "acp") {
-            // A refusal cannot prove that this intent was never accepted.
-            // Keep querying the original intent; never turn retry guidance
-            // into another Prompt dispatch or a synthetic durable outcome.
-            const classification = cause instanceof AcpPromptError ? cause.classification : undefined;
-            this.setOperation(entry, {
-              ...entry.operation,
-              acceptance: "unknown",
-              phase: "uncertain",
-              ...(classification === undefined ? {} : { error: {
-                code: classification.code,
-                message: classification.message,
-                requestId: randomUUID(),
-                operationId: input.intentId,
-                retryable: false,
-                recovery: "query_operation" as const,
-              } }),
-            });
-            this.dependencies.changed?.(input.sessionId);
-          }
-        },
-      );
+        }
+        if (entry.operation.acceptance === "acp") return;
+        this.setOperation(entry, {
+          ...entry.operation,
+          acceptance: "unknown",
+          phase: "uncertain",
+          ...(classification === undefined ? {} : { error: {
+            code: classification.code,
+            message: classification.message,
+            requestId: randomUUID(),
+            operationId: input.intentId,
+            retryable: false,
+            recovery: "query_operation" as const,
+          } }),
+        });
+        this.dependencies.changed?.(input.sessionId);
+        // A successful transport ACK without a durable receipt is also an
+        // unknown delivery outcome. No later explicit action can re-enable
+        // automation for that retained original operation.
+        const eligible = classification?.kind === "admission" &&
+          classification.retryable && classification.retryDirective === "backoff" &&
+          classification.retryAfterMs !== undefined &&
+          (classification.code === "agent_busy" || classification.code === "configuration_not_ready");
+        if (!eligible) entry.automaticAllowed = false;
+        if (!entry.automaticAllowed || this.draining || entry.abort.signal.aborted) return;
+        if (entry.dispatches >= 4) { entry.exhausted = true; return; }
+        entry.automaticDecision = this.admitAutomatic(input, entry, classification!.retryAfterMs!);
+        const retry = await entry.automaticDecision;
+        entry.automaticDecision = undefined;
+        if (!retry) return;
+      }
+    }).finally(() => {
+      entry.inFlight = false;
+      entry.active = false;
+      entry.automaticDecision = undefined;
+      entry.retired = true;
+      try { entry.releaseResources?.(); }
+      finally { entry.releaseResources = undefined; entry.releaseWork(); }
+    });
+  }
+
+  private async admitAutomatic(input: PromptIntent, entry: LocalOperation, wireDelay: number): Promise<boolean> {
+    const signal = entry.abort.signal;
+    const stopped = () => this.draining || signal.aborted ||
+      !entry.automaticAllowed || entry.operation.acceptance === "acp";
+    const delay = Math.max(1000 * 2 ** entry.retryIndex, wireDelay);
+    if (delay > 30_000 - entry.waitedMs) { entry.exhausted = true; return false; }
+    entry.retryIndex++;
+    const started = this.now();
+    try {
+      await waitForBackoff(delay, signal);
+      entry.waitedMs += Math.max(0, this.now() - started);
+      if (entry.waitedMs > 30_000) { entry.exhausted = true; return false; }
+      if (stopped()) return false;
+      // Query after the wait, using current authorization. A visible uncertain
+      // projection or a historical absence is never an admission permit.
+      const result = await this.dependencies.readIntent(input.sessionId, input.intentId, signal);
+      // A joined, authorized lookup can still establish a durable outcome
+      // during drain/cancel. Preserve an already observed receipt; owner-level
+      // post-read authorization rejects results after known access revocation.
+      if (entry.operation.acceptance === "acp") return false;
+      if (result.kind === "receipt") {
+        if (result.receipt.sessionId !== input.sessionId || result.receipt.intentId !== input.intentId)
+          throw new OperationConflictError("ACP returned a receipt for another operation");
+        entry.acceptedAppendVersion = result.receipt.appendVersion;
+        this.setOperation(entry, operationFromReceipt(result.receipt));
+        this.dependencies.changed?.(input.sessionId);
+        return false;
+      }
+      return !stopped();
+    } catch {
+      // Query failure or cancellation stops this chain. Always await the actual
+      // dependency above, even when it does not cooperate with AbortSignal.
+      entry.automaticAllowed = false;
+      return false;
+    }
   }
 
   public settled(sessionId: string, intentId: string): Promise<void> {
@@ -487,7 +579,7 @@ export class OperationCoordinator {
       this.setOperation(local, operationFromReceipt(receipt));
       if (terminal(local.operation.phase)) {
         local.retired = true;
-        local.releaseWork();
+        if (!local.active) local.releaseWork();
       }
     }
   }
@@ -539,7 +631,7 @@ export class OperationCoordinator {
         this.dependencies.changed?.(sessionId);
       }
       if (local !== undefined && terminal(operation.phase)) {
-        local.releaseWork();
+        if (!local.active) local.releaseWork();
         local.retired = true;
       }
       return operation;
@@ -570,6 +662,12 @@ export class OperationCoordinator {
     intentId: string,
     expectedRunId: string,
   ): Promise<Operation> {
+    const original = this.local.get(operationKey(sessionId, intentId));
+    if (original !== undefined) {
+      original.automaticAllowed = false;
+      original.abort.abort(new Error("Operation cancellation requested"));
+      await original.automaticDecision;
+    }
     const operation = await this.read(sessionId, intentId);
     if (
       operation.acceptance !== "acp" ||
@@ -591,6 +689,18 @@ export class OperationCoordinator {
     }
     return cancelling;
   }
+}
+
+function waitForBackoff(milliseconds: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 async function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

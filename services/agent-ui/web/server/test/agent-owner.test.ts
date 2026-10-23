@@ -1409,16 +1409,31 @@ test("transient permissions do not retain per-Session revisions after their inbo
   }
 });
 
-test("a durable terminal receipt releases prompt work even if the ACP call never resolves", async () => {
+test("a durable terminal receipt preserves prompt work until its actual ACP call joins", async () => {
   const f = fixture();
+  const started = Promise.withResolvers<void>();
+  const held = Promise.withResolvers<void>();
+  let releases = 0, promptJoined = false, closed = false, joinedAtClose = false;
+  let promptTask: Promise<unknown> | undefined;
+  let closing: ReturnType<typeof outcome> | undefined;
   const owner = await AgentBridgeOwner.open({
     scope,
-    retainWork: f.retainWork,
+    retainWork: () => {
+      const release = f.retainWork();
+      return () => { releases++; release(); };
+    },
     connect: async (identity, callbacks) => {
       const port = await f.connect(identity, callbacks);
       return {
         ...port,
-        prompt: () => new Promise<never>(() => {}),
+        prompt: () => {
+          started.resolve();
+          promptTask = held.promise.then(() => {
+            promptJoined = true;
+            return { stopReason: "end_turn" };
+          });
+          return promptTask;
+        },
         async readExecution(sessionId: string) {
           return {
             ...(await port.readExecution(sessionId)),
@@ -1438,39 +1453,78 @@ test("a durable terminal receipt releases prompt work even if the ACP call never
       };
     },
   });
-  owner.operations.submit({
-    sessionId: "session-1",
-    intentId: "intent-1",
-    expectedAppendVersion: 3,
-    prompt: [{ type: "text", text: "go" }],
-  });
-  assert.equal(f.work(), 1);
-  await owner.authorizeExecution("session-1");
-  assert.equal(f.work(), 0);
-  assert.deepEqual(owner.operations.snapshot("session-1", [])[0], {
-    operationId: "intent-1",
-    sessionId: "session-1",
-    acceptance: "acp",
-    phase: "completed",
-    runId: "run-1",
-    outputWatermark: 0,
-    stopReason: "end_turn", errorClass: null,
-  });
-  owner.close();
+  try {
+    owner.operations.submit({
+      sessionId: "session-1",
+      intentId: "intent-1",
+      expectedAppendVersion: 3,
+      prompt: [{ type: "text", text: "go" }],
+    });
+    assert.equal(f.work(), 1);
+    await started.promise;
+    await owner.authorizeExecution("session-1");
+    assert.deepEqual(owner.operations.snapshot("session-1", [])[0], {
+      operationId: "intent-1",
+      sessionId: "session-1",
+      acceptance: "acp",
+      phase: "completed",
+      runId: "run-1",
+      outputWatermark: 0,
+      stopReason: "end_turn", errorClass: null,
+    });
+    assert.equal(promptJoined, false);
+    assert.equal(f.work(), 1, "a terminal receipt cannot release an actual held Prompt call");
+    assert.equal(releases, 0);
+    closing = outcome(owner.close().then(() => {
+      closed = true;
+      joinedAtClose = promptJoined;
+    }));
+    await nextEventTurn();
+    assert.equal(closed, false, "owner close must wait for the actual Prompt call");
+    assert.equal(promptJoined, false);
+    assert.equal(f.work(), 1);
+    assert.equal(releases, 0);
+    held.resolve();
+    await promptTask;
+    await owner.operations.settled("session-1", "intent-1");
+    assert.equal((await closing).status, "fulfilled");
+    assert.equal(promptJoined, true);
+    assert.equal(joinedAtClose, true);
+    assert.equal(f.work(), 0);
+    assert.equal(releases, 1);
+  } finally {
+    held.resolve();
+    await Promise.allSettled([
+      ...(promptTask ? [promptTask] : []),
+      owner.operations.settled("session-1", "intent-1"),
+      ...(closing ? [closing] : []), owner.close(),
+    ]);
+  }
 });
 
 test("execution read reconciles a local intent omitted from the recent receipt window", async () => {
   const f = fixture();
-  let releases = 0;
+  const started = Promise.withResolvers<void>();
+  const held = Promise.withResolvers<void>();
+  const intentReads: string[][] = [];
+  let releases = 0, promptJoined = false, closed = false, joinedAtClose = false;
+  let promptTask: Promise<unknown> | undefined;
+  let closing: ReturnType<typeof outcome> | undefined;
   const owner = await AgentBridgeOwner.open({
     scope,
-    retainWork: () => () => {
-      releases += 1;
+    retainWork: () => {
+      const release = f.retainWork();
+      return () => { releases++; release(); };
     },
     connect: async (identity, callbacks) => ({
       ...(await f.connect(identity, callbacks)),
-      async prompt() {
-        return new Promise(() => {});
+      prompt() {
+        started.resolve();
+        promptTask = held.promise.then(() => {
+          promptJoined = true;
+          return { stopReason: "end_turn" };
+        });
+        return promptTask;
       },
       async readExecution(sessionId) {
         return {
@@ -1483,6 +1537,7 @@ test("execution read reconciles a local intent omitted from the recent receipt w
         };
       },
       async readIntent(sessionId, intentId) {
+        intentReads.push([sessionId, intentId]);
         return {
           kind: "receipt" as const,
           receipt: {
@@ -1505,15 +1560,41 @@ test("execution read reconciles a local intent omitted from the recent receipt w
       expectedAppendVersion: 2,
       prompt: [{ type: "text", text: "go" }],
     });
+    await started.promise;
     await owner.authorizeExecution("session-1");
     assert.equal(
       owner.operations.snapshot("session-1", [])[0]?.phase,
       "completed",
     );
     assert.deepEqual(owner.trackedOperationSessionIds(), []);
+    assert.deepEqual(intentReads, [["session-1", "intent-1"]]);
+    assert.equal(promptJoined, false);
+    assert.equal(f.work(), 1, "receipt reconciliation cannot release the held original call");
+    assert.equal(releases, 0);
+    closing = outcome(owner.close().then(() => {
+      closed = true;
+      joinedAtClose = promptJoined;
+    }));
+    await nextEventTurn();
+    assert.equal(closed, false, "owner close must join the reconciled Prompt's actual call");
+    assert.equal(promptJoined, false);
+    assert.equal(f.work(), 1);
+    assert.equal(releases, 0);
+    held.resolve();
+    await promptTask;
+    await owner.operations.settled("session-1", "intent-1");
+    assert.equal((await closing).status, "fulfilled");
+    assert.equal(promptJoined, true);
+    assert.equal(joinedAtClose, true);
+    assert.equal(f.work(), 0);
     assert.equal(releases, 1);
   } finally {
-    owner.close();
+    held.resolve();
+    await Promise.allSettled([
+      ...(promptTask ? [promptTask] : []),
+      owner.operations.settled("session-1", "intent-1"),
+      ...(closing ? [closing] : []), owner.close(),
+    ]);
   }
 });
 
@@ -2092,7 +2173,8 @@ test("owner retirement joins the actual held retry query before completing", { t
     };
     const queryResult: QueryResult = answer === "receipt"
       ? { kind: "receipt", receipt } : { kind: "unknown" };
-    const busy = new acpHttp.AcpPromptError(loadReceipt("agent_busy"), 1);
+    // This test owns an explicit query, independently of admission backoff.
+    const busy = new acpHttp.AcpPromptError(loadReceipt("database_error"), 1);
     const promptInputs: Parameters<AcpBridgePort["prompt"]>[0][] = [];
     const promptTasks: Promise<unknown>[] = [];
     const queryTasks: Promise<QueryResult>[] = [];

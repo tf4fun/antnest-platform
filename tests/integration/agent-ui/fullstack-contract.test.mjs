@@ -364,14 +364,14 @@ test("explicit Prompt retry publishes implemented metadata without changing ordi
   assert.ok(Object.hasOwn(contract, contract.prompt_retry.upload_admission));
 });
 
-test("pending Prompt admission backoff freezes the original operation budget and evidence requirements", () => {
+test("implemented Prompt admission backoff freezes the original operation budget and evidence requirements", () => {
   const contract = json("../../../contracts/agent-ui/workspace-api.json");
   assert.ok(
     Object.hasOwn(contract, "prompt_admission_backoff"),
-    "Workspace API must define the pending Prompt admission backoff contract",
+    "Workspace API must define the implemented Prompt admission backoff contract",
   );
   assert.deepEqual(contract.prompt_admission_backoff, {
-    status: "pending",
+    status: "implemented",
     owner: "agent-ui-node",
     codes: ["agent_busy", "configuration_not_ready"],
     required_capabilities: {
@@ -421,11 +421,11 @@ test("pending Prompt admission backoff freezes the original operation budget and
   assert.equal(contract.prompt_retry.automatic_prompt_replay, false);
 });
 
-test("pending admission backoff uses canonical retryable admission errors and existing capability versions", () => {
+test("implemented admission backoff uses canonical retryable admission errors and existing capability versions", () => {
   const contract = json("../../../contracts/agent-ui/workspace-api.json");
   assert.ok(
     Object.hasOwn(contract, "prompt_admission_backoff"),
-    "Workspace API must define the pending Prompt admission backoff contract",
+    "Workspace API must define the implemented Prompt admission backoff contract",
   );
   const backoff = contract.prompt_admission_backoff;
   const catalog = json("../../../contracts/agent-acp/errors.json");
@@ -527,7 +527,7 @@ test("explicit retry wire fixtures retain the strict original Prompt body and re
 test("Prompt retry scenarios contain valid wire values without treating fixtures as production evidence", () => {
   const fixtures = json(promptRetryFixtures);
   assert.equal(fixtures.implementation_status, "implemented");
-  assert.equal(fixtures.automatic_backoff_status, "pending_separate_delivery");
+  assert.equal(fixtures.automatic_backoff_status, "implemented");
   assert.deepEqual(
     fixtures.scenarios.map((scenario) => scenario.name),
     [
