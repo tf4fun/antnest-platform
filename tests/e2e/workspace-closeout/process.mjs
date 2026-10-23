@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 export function processStat(line) {
-  const match = line.trim().match(/^(\d+) \(.*\) ([A-Za-z]) (\d+) (\d+) /);
+  const match = line.trim().match(/^(\d+) \(.*\) ([A-Za-z]) (\d+) (-?\d+) /);
   assert(match, "invalid Linux process stat");
   return { pid: Number(match[1]), state: match[2], group: Number(match[4]) };
 }
