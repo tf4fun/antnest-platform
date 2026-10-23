@@ -35,7 +35,7 @@ describe("worker ownership dispatch", () => {
     }
   });
 
-  it("preserves ownership loss while already-dispatched work settles later", async () => {
+  it("joins already-dispatched work before returning its ownership-loss result", async () => {
     const owner = new AbortController();
     const lost = new WorkerOwnershipLostError();
     const entered = Promise.withResolvers<void>();
@@ -58,15 +58,15 @@ describe("worker ownership dispatch", () => {
       await within(entered.promise, "operation entry");
       expect(operation).toHaveBeenCalledOnce();
       owner.abort(lost);
-      await within(settled, "ownership rejection during dispatched work");
-      expect(rejected).toHaveBeenCalledOnce();
-      expect(rejected.mock.calls[0]?.[0]).toBe(lost);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(rejected).not.toHaveBeenCalled();
       expect(resolved).not.toHaveBeenCalled();
 
       // Already-dispatched work can produce a receipt after ownership loss.
       // That receipt must not replace the wrapper's ownership-loss result.
       gate.resolve(lateReceipt);
       await within(operationDone.promise, "late dispatched operation completion");
+      await within(settled, "ownership rejection after original work joined");
       await within(
         Promise.allSettled([pending, operation.mock.results[0]!.value]),
         "join late receipt",

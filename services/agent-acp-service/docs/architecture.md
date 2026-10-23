@@ -47,6 +47,16 @@ A missed locking lookup cannot be authorized by a later inserted row, and a
 COMMIT response reporting ROLLBACK cannot return a successful business result.
 
 No production writer or startup coordinator uses these lease primitives yet.
+The `AgentGenerations` lifecycle component can prepare a fixed authority and
+component graph, reject dispatch after loss, and join original work before
+release. It single-flights acquisition per scope and retains a retirement
+barrier through acquire/renew/initialization, Run completion and release. Unknown
+release results keep that scope closed. Monotonic local deadlines count from
+request dispatch; expiry and request budgets are rechecked synchronously even
+when timer callbacks are delayed. Normal drain keeps renewing until original
+work finishes. Local task diagnostics retain only the latest 16 failures; callers
+still receive their original operation failures. This component is not yet connected to production configuration,
+Prompt or startup recovery; its isolated admission is not a multi-replica claim.
 Connecting every owned write and scoped recovery, covering configuration ACKs
 across owners, forwarding connections and the final two-replica integration
 remain required before removing the global worker lock.
@@ -580,8 +590,10 @@ through an ownership-loss channel that is independent from ordinary service
 failures. The same channel preempts startup, recovery, and graceful cleanup;
 an earlier database or component error cannot hide lock loss behind a slower
 cleanup path. Every external or durable effect is wrapped by one ownership
-fence that checks before the call and after either success or failure, and can
-interrupt a pending wait. Context loading and checkpoint persistence use the
+fence that checks before the call and after either success or failure. Loss
+closes dispatch immediately, while the wrapper still awaits the original
+operation and its cleanup before settling; cancellation does not prove that a
+pending runner or SQL operation has stopped. Context loading and checkpoint persistence use the
 same fence. A completed effect may be recovered idempotently after replacement,
 but the stale worker cannot begin the next transition. Active-active execution requires a durable
 per-Run claim design and is not implied by stateless HTTP adapters.

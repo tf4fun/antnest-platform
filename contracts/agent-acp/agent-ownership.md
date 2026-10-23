@@ -64,6 +64,43 @@ snapshot is not permission to write or dispatch an effect. An unknown outcome
 from acquire/renew is not proof of continued ownership; the coordinator must
 reconcile with the database before resuming admission.
 
+## Production Generation Lifetime
+
+Each process captures its accepted registration before acquiring an Agent lease.
+Acquisition is single-flight per scope. A generation owns one immutable registration
+and fence, one component graph and the original asynchronous work dispatched through
+that graph. Initialization must load and revalidate sealed configuration and the
+durable revision under that fence before opening admission. An acquired lease or
+constructed repository factory alone does not open an Agent.
+
+Local lease deadlines are conservative monotonic deadlines: subtract the full
+request/response duration from the database-observed remaining lifetime. Neither
+wall-clock changes nor a delayed successful response may extend that bound. The
+coordinator closes admission on expiry or an unknown acquire/renew outcome; it
+continues to own and join the original operation. A late success cannot reopen the
+closed generation or replace its fence. Only that exact, validated scope and
+incarnation may be released after its work settles.
+
+Register original initialization, admission, accepted Run completion, model/Runtime
+and cleanup Promises before yielding their lifetime to another owner. Loss aborts
+that Agent's dispatch signal immediately; it does not abort unrelated Agents.
+Retaining a completion only joins work already dispatched and never authorizes a
+new effect. The admitting operation must retain accepted completion before it
+returns, including when its response arrives after ownership loss.
+
+Normal draining forbids new dispatch but continues renewal while original tasks
+remain. After all original work has settled, stop renewal, join its in-flight
+request and release the original fence. A non-cooperative task prevents completion
+of drain; an AbortSignal race or elapsed grace period is not stopping proof.
+Predecessor recovery still requires the separate stop-proof protocol. Production
+startup must inventory and isolate protected owned scopes before scoped legacy
+recovery; it must not pass those rows to global legacy recovery.
+
+These lifetime requirements do not remove the global worker lock. Production
+configuration/Prompt/permission/Learning consumers, scoped startup and stopping
+recovery, and explicit multi-replica integration must all be admitted before that
+lock can be retired.
+
 ## Transaction Fence And Linearization
 
 Every Agent-owned durable mutation must carry an explicit fence. The database
