@@ -533,7 +533,11 @@ model request, Tool dispatch or accepted prompt.
 - Connection loss: does not delete Session state. In-flight work may continue;
   updates are durable and can be replayed after resume. Resume/load attaches the
   new connection to subsequent durable output even if execution began on another
-  connection. V2 also projects the latest durable Run as `running` or `idle`,
+  connection. The v2 initiating connection may close before its first output
+  attachment; that does not disable subsequent Session-wide change notifications.
+  Initial replay ordering is retained for a live connection, while a closed
+  connection only enables durable hints for other authorized subscribers.
+  V2 also projects the latest durable Run as `running` or `idle`,
   even when historical replay was not requested; v1 adds no private state update.
 - Cancellation: the process-level Run supervisor indexes active work by durable
   organization/Agent identity from acceptance through terminal completion, not by WebSocket

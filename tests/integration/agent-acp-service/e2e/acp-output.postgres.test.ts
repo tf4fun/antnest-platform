@@ -38,7 +38,10 @@ describe.skipIf(databaseUrl === undefined)(
     let app: Awaited<ReturnType<typeof startBoundaryApplication>>;
     let releaseModel = () => {};
     let releaseFinish = () => {};
+    let releaseAttachment = () => {};
+    let joinAttachment = Promise.resolve();
     beforeEach(async () => {
+      joinAttachment = Promise.resolve();
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
       await migrate(pool);
@@ -46,6 +49,8 @@ describe.skipIf(databaseUrl === undefined)(
       app.model.complete.mockReset().mockResolvedValue(answer);
     });
     afterEach(async () => {
+      releaseAttachment();
+      await joinAttachment;
       releaseModel();
       releaseFinish();
       await app.close();
@@ -209,12 +214,15 @@ describe.skipIf(databaseUrl === undefined)(
     });
 
     it.each([
-      { version: 1, method: "session/load" },
-      { version: 1, method: "session/resume" },
-      { version: 2, method: "session/resume" },
+      { version: 1, method: "session/load", delayed: false },
+      { version: 1, method: "session/resume", delayed: false },
+      { version: 2, method: "session/resume", delayed: false },
+      { version: 1, method: "session/load", delayed: true },
+      { version: 1, method: "session/resume", delayed: true },
+      { version: 2, method: "session/resume", delayed: true },
     ] as const)(
-      "continues active output after reconnect using v$version $method, without early idle",
-      async ({ version, method }) => {
+      "continues active output after reconnect using v$version $method, without early idle (delayed observer: $delayed)",
+      async ({ version, method, delayed }) => {
         const model = Promise.withResolvers<ModelResult>();
         const finish = Promise.withResolvers<void>();
         releaseModel = () => model.resolve(answer);
@@ -227,13 +235,36 @@ describe.skipIf(databaseUrl === undefined)(
         const original = await app.connect(2);
         const created = await original.request("session/new", setup);
         const sessionId = String(created.result?.sessionId);
+        const entered = Promise.withResolvers<AbortSignal>();
+        const attachment = Promise.withResolvers<void>();
+        const attached = Promise.withResolvers<void>();
+        releaseAttachment = () => attachment.resolve();
+        if (delayed) {
+          const attach = app.outputs.attach.bind(app.outputs);
+          let held = false;
+          vi.spyOn(app.outputs, "attach").mockImplementation(async (input) => {
+            if (held || input.beforeFirst === undefined) return attach(input);
+            held = true;
+            joinAttachment = attached.promise;
+            entered.resolve(input.signal);
+            try {
+              await attachment.promise;
+              return await attach(input);
+            } finally {
+              attached.resolve();
+            }
+          });
+        }
         const accepted = await original.request("session/prompt", {
           sessionId,
           prompt: [{ type: "text", text: "hello" }],
         });
         expect(accepted.result?.messageId).toMatch(/\S/);
         await expect.poll(() => app.model.complete.mock.calls.length).toBe(1);
+        const originalSignal = delayed ? await entered.promise : undefined;
         await original.close();
+        if (originalSignal !== undefined)
+          await expect.poll(() => originalSignal.aborted).toBe(true);
 
         const replacement = await app.connect(version);
         const restored = await replacement.request(method, {
@@ -252,8 +283,17 @@ describe.skipIf(databaseUrl === undefined)(
             ?.code,
         ).toBe("session_access_denied");
         const offset = replacement.frames.length;
+        if (delayed) {
+          releaseAttachment();
+          await attached.promise;
+        }
         releaseModel();
         await expect.poll(() => app.finish.mock.calls.length).toBe(1);
+        expect(
+          (await app.sessions.readOutput(sessionId, 0)).events.filter(
+            (event) => event.kind === "agent_message",
+          ),
+        ).toHaveLength(1);
         await expect
           .poll(() => JSON.stringify(replacement.frames.slice(offset)))
           .toContain("second-block");

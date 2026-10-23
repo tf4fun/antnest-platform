@@ -285,6 +285,7 @@ export async function startBoundaryApplication(
     const url = `ws://127.0.0.1:${address.port}`;
     return {
       url,
+      outputs,
       readOutput,
       httpUrl: `http://127.0.0.1:${address.port}/v1/acp`,
       sessions,
