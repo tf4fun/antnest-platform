@@ -13,6 +13,29 @@ workspace, generation, and platform identity stay private. Agent Controller
 decides when each command is issued; network policy and Tool execution stay
 outside this service.
 
+## ACP owner incarnation foundation
+
+The private `acpincarnation` package implements the decision rules in the
+[ACP owner handoff contract](../../../contracts/agent-acp/owner-handoff.md).
+Registration binds an authenticated process challenge to one configured member,
+Docker engine, full container ID and start instant. The nonce is stored only as
+a digest. Repeated registration preserves the original identity and receipt.
+An inspection may report stopped only after a positive platform observation and
+the first stop receipt have been persisted; an unavailable platform remains
+unknown. A previously persisted stop receipt survives later platform outages.
+
+The Docker observer waits for the response body and its close operation before
+using a result, including container absence. It retains the full nanosecond
+start instant and selects the probe address only from the configured network.
+Cancellation waits for the original operation to finish before returning.
+
+This foundation is not connected to production routes. PostgreSQL persistence,
+the authenticated probe client, configuration and RPC wiring remain pending.
+ACP registration, lease coordination, fenced writers, recovery, peer forwarding
+and integration with two replicas are subsequent delivery batches. The existing
+ACP global worker lock remains enabled until those consumers and integration
+checks pass; these modules alone do not enable multiple active ACP replicas.
+
 ## Core Model
 
 ```text
