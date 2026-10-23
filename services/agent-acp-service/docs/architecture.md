@@ -366,8 +366,15 @@ revision and the durable barrier ID, reason and original Runtime execution ID.
 It never copies Run/Tool identifiers, content, endpoints or authority. Reading
 does not mutate protection or dispatch work. Repeated reads, publication of the
 same binding and ACP restart retain the stored cycle identity. A null receipt
-does not prove readiness, idleness or permission to dispatch. Controller policy,
-automatic Rebuild, UI recovery and their integration remain separate batches.
+does not prove readiness, idleness or permission to dispatch. Controller owns
+the organization policy and recovery Rebuild: `auto` admits the original recovery
+without user action, `notify` records a durable notification, and `manual` waits
+for an explicit administrator action. Neither of the latter modes automatically
+rebuilds. Agent UI projects the safe reason and directs authorized administrators
+to Console; ordinary owners must contact an administrator. Replacing the original
+Runtime clears only its barrier and never replays the unresolved Tool or Prompt.
+See the [recovery E2E profiles](../../../tests/e2e/acp-restart/README.md) for the
+separate automatic, manual API and real browser acceptance paths.
 
 Run-event repositories confirm an already committed request before checking
 whether the Run or Tool is still running. Confirmation checks the original

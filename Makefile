@@ -651,6 +651,13 @@ e2e-acp-restart:
 e2e-acp-restart-auto:
 	ANTNEST_E2E_ACP_RESTART=true ANTNEST_RESTART_RECOVERY_MODE=auto sh tests/e2e/e2e-stage3a.sh
 
+.PHONY: e2e-acp-restart-manual-ui e2e-acp-restart-notify-ui
+e2e-acp-restart-manual-ui:
+	ANTNEST_E2E_ACP_RESTART=true ANTNEST_RESTART_RECOVERY_MODE=manual-ui sh tests/e2e/e2e-stage3a.sh
+
+e2e-acp-restart-notify-ui:
+	ANTNEST_E2E_ACP_RESTART=true ANTNEST_RESTART_RECOVERY_MODE=notify-ui sh tests/e2e/e2e-stage3a.sh
+
 # Explicit abnormal-exit diagnostic; excluded from stable lifecycle targets.
 .PHONY: e2e-lifecycle-crash
 e2e-lifecycle-crash:

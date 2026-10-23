@@ -272,6 +272,20 @@ also documents loss/network/crash subcases, which run separately.
 - An unknown Tool side effect: do not infer failure from a missing reply or
   replay a write automatically. The conservative admission fence remains a
   distinct state; follow the documented lifecycle recovery.
+- Workspace reports Runtime recovery required: with the default `manual` policy,
+  an organization administrator follows **Recover workspace** to Console and
+  confirms **Recover Runtime** using the displayed configured Template. A member
+  owner contacts an administrator. `notify` also retains a lifecycle notification
+  and waits for the same explicit action; `auto` starts the original recovery
+  without a click. Recovery replaces the protected Runtime and preserves the
+  old unresolved history; it does not replay the unknown Tool effect.
+- An uncertain recovery response: use **Check recovery request** to read the
+  original operation. Only an explicit missing-operation result enables
+  **Retry same recovery**, which preserves the original request and binding.
+  Refreshing or reopening a page must not create another operation. After
+  completion, wait for executable readiness before sending new work. The
+  [restart browser profiles](../tests/e2e/acp-restart/README.md) document the
+  disposable manual/notify fault-injection commands.
 - Jaeger: administrative calls start at Gateway and reach Console/Controller;
   asynchronous worker spans link to the admission. Prompt traces reach ACP and
   Runtime. Egress packets have no per-packet traces. Runtime telemetry uses its

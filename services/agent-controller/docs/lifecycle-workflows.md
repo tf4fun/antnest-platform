@@ -118,6 +118,26 @@ loaded snapshots avoids three snapshot SELECTs in each of the three advance
 calls; initial stage recovery and final publication still load their required
 snapshots.
 
+## Runtime barrier recovery
+
+The observation worker reads ACP's current durable barrier under the Agent's
+current binding and organization policy. `auto` admits a deterministic Rebuild
+for that barrier; `notify` records one durable `agent_runtime_barrier_required`
+event without admitting a lifecycle operation; `manual` records the current
+recovery projection without a notification or automatic Rebuild. Policy defaults
+to manual. Observation and start workers are bounded and stop with the service.
+
+An administrator confirms manual recovery through the existing Console Rebuild
+endpoint with the configured Template and expected original Runtime revision.
+Admission revalidates the binding and policy and freezes the original actor,
+request fingerprint, receipt and cooldown. Repeated queries or explicit retries
+retain that identity. The pending start is confirmed only against the matching
+Temporal command; operation completion still follows the ordinary Rebuild plan.
+Runtime replacement does not re-execute the interrupted Prompt or Tool, and its
+unresolved audit history remains unchanged. The
+[restart profiles](../../../tests/e2e/acp-restart/README.md) require actual fault,
+browser, persistence and cleanup evidence for the whole recovery workflow.
+
 ## Verification
 
 Tests must cover all five plans, early admission, request conflicts, retries,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { assertManualRecoveryEvidence } from "./manual-recovery-evidence.mjs";
 import { assertAutomaticRecoveryEvidence } from "./automatic-recovery-evidence.mjs";
 import { assertV2PromptAcknowledged } from "../../support/acp-v2-prompt.mjs";
 import { mkdir, writeFile, access, readFile } from "node:fs/promises";
@@ -53,9 +54,14 @@ import { archiveCompleted } from "./archive.mjs";
 import { collectInterruptedTrace } from "./collection.mjs";
 import { asciiJSON } from "../../support/ascii-json.mjs";
 const recoveryMode = process.env.ANTNEST_RESTART_RECOVERY_MODE ?? "manual";
-assert(["manual", "auto"].includes(recoveryMode), "unknown recovery profile");
+assert(
+  ["manual", "auto", "manual-ui", "notify-ui"].includes(recoveryMode),
+  "unknown recovery profile",
+);
 const automatic = recoveryMode === "auto";
-let recoveryPolicy;
+const browserRecovery = recoveryMode.endsWith("-ui");
+const singleRecovery = automatic || browserRecovery;
+let recoveryPolicy, adminPrincipal;
 const archive = new Map(),
   runtimeBindings = new Map();
 const diagnostics = createTraceDiagnostics({
@@ -412,7 +418,7 @@ async function exercise(version, kind, template) {
     assert.equal(resolved, false, "interrupted v1 prompt already finished");
   else assertStillRunning(version, c.updates, sessionId);
   let expectedRecovery;
-  if (automatic) {
+  if (singleRecovery) {
     assert.equal(version, 2);
     assert.equal(kind, "inflight");
     const { mcp_endpoint: _endpoint, ...binding } = source;
@@ -421,6 +427,14 @@ async function exercise(version, kind, template) {
       agent_id: agentId,
       source: binding,
       policy: recoveryPolicy,
+      ...(browserRecovery
+        ? {
+            actor_principal_id: adminPrincipal.user_id,
+            owner_user_id: memberPrincipal.user_id,
+            owner_role: memberPrincipal.organization_role,
+            session_id: sessionId,
+          }
+        : {}),
     };
     assert.equal(
       before.run.execution_snapshot.executionRevision,
@@ -482,9 +496,24 @@ async function exercise(version, kind, template) {
     replacement;
   if (kind === "inflight") {
     let rebuildRequestId, rebuildTraceID;
-    if (automatic) {
+    if (singleRecovery) {
       await close(reader);
-      rebuildRequestId = automaticReceipt.request_id;
+      if (browserRecovery) {
+        await publishCheckpoint(
+          `/checkpoints/ui-ready-${restarts}.json`,
+          expectedRecovery,
+        );
+        await checkpoint(`ui-recovery-${restarts}.json`, 240000);
+        const evidence = JSON.parse(
+          await readFile(`/checkpoints/ui-recovery-${restarts}.json`, "utf8"),
+        );
+        const receipt = assertManualRecoveryEvidence(
+          evidence,
+          expectedRecovery,
+        );
+        rebuildRequestId = receipt.request_id;
+        rebuildTraceID = evidence.browser?.trace_id;
+      } else rebuildRequestId = automaticReceipt.request_id;
     } else {
       const beforeOther = await audits(other.sessionId),
         offset = reader.updates.length;
@@ -608,12 +637,13 @@ async function main() {
       password: "stage3-admin-password",
     },
   });
-  organizationId = login.body.principal.organization_id;
+  adminPrincipal = structuredClone(login.body.principal);
+  organizationId = adminPrincipal.organization_id;
   const owner = await api("/api/admin/directory/users", {
     email: "restart-owner@example.com",
     display_name: "Restart owner",
     password: "restart-owner-password",
-    role: "member",
+    role: recoveryMode === "manual-ui" ? "admin" : "member",
   });
   const ownerLogin = await member.request("/api/session/login", {
     body: {
@@ -626,7 +656,7 @@ async function main() {
   assert.equal(memberPrincipal.organization_id, organizationId);
   assert.equal(memberPrincipal.user_id, owner.user.id);
   secrets.push(...admin.cookies.values(), ...member.cookies.values());
-  if (automatic) {
+  if (singleRecovery) {
     const { context, principal } = await services.callerContext({
       organization_slug: "stage3",
       email: "stage3-admin@example.com",
@@ -649,14 +679,22 @@ async function main() {
         organization_id: organizationId,
         actor_principal_id: principal.user_id,
         expected_revision: previous.revision,
-        mode: "auto",
+        mode: automatic
+          ? "auto"
+          : recoveryMode === "notify-ui"
+            ? "notify"
+            : "manual",
         cooldown_ms: 60000,
       },
     });
     assert.deepEqual(recoveryPolicy, {
       organization_id: organizationId,
       revision: previous.revision + 1,
-      mode: "auto",
+      mode: automatic
+        ? "auto"
+        : recoveryMode === "notify-ui"
+          ? "notify"
+          : "manual",
       cooldown_ms: 60000,
     });
   }
@@ -679,13 +717,13 @@ async function main() {
     skillPreparation: true,
   });
   await operation(created.body.operation.request_id, "create");
-  for (const version of automatic ? [2] : [1, 2])
-    for (const kind of automatic
+  for (const version of singleRecovery ? [2] : [1, 2])
+    for (const kind of singleRecovery
       ? ["inflight"]
       : ["completed", "model-held", "tool-held", "inflight"])
       await exercise(version, kind, template);
   const modelResult = await modelState();
-  assert.equal(modelResult.requests.length, automatic ? 3 : 28);
+  assert.equal(modelResult.requests.length, singleRecovery ? 3 : 28);
   const inventory = indexRestartRequests({
     agentId,
     connections: [...connections.values()],
@@ -718,30 +756,30 @@ async function main() {
 
   const business = {
     status: "business_passed",
-    versions: automatic ? [2] : [1, 2],
+    versions: singleRecovery ? [2] : [1, 2],
     recovery_mode: recoveryMode,
     agent_id: agentId,
     deleted,
     cases: faults.length,
-    runs: automatic ? 2 : 16,
-    completed_runs: automatic ? 1 : 10,
-    failed_runs: automatic ? 0 : 4,
-    unresolved_runs: automatic ? 1 : 2,
-    tool_attempts: automatic ? 2 : 14,
-    successful_tools: automatic ? 1 : 12,
+    runs: singleRecovery ? 2 : 16,
+    completed_runs: singleRecovery ? 1 : 10,
+    failed_runs: singleRecovery ? 0 : 4,
+    unresolved_runs: singleRecovery ? 1 : 2,
+    tool_attempts: singleRecovery ? 2 : 14,
+    successful_tools: singleRecovery ? 1 : 12,
     model_requests: modelResult.requests.length,
     restarts,
-    replays: automatic ? 3 : 18,
+    replays: singleRecovery ? 3 : 18,
     connections: connections.size,
     initializations: inventory.initializations.length,
     business_requests: inventory.requests.length,
-    rejections: automatic ? 0 : 2,
-    rebuilds: automatic ? 1 : 2,
+    rejections: singleRecovery ? 0 : 2,
+    rebuilds: singleRecovery ? 1 : 2,
     history_preserved: true,
     runtime_operations: journals,
   };
-  assert.equal(restarts, automatic ? 1 : 8);
-  assert.equal(faults.length, automatic ? 1 : 8);
+  assert.equal(restarts, singleRecovery ? 1 : 8);
+  assert.equal(faults.length, singleRecovery ? 1 : 8);
 
   await mkdir("/tmp/restart-traces", { mode: 0o700, recursive: true });
   const save = (label) => (trace) =>

@@ -264,7 +264,7 @@ acp_restart=${ANTNEST_E2E_ACP_RESTART:-false}
 case "$acp_restart" in true|false) ;; *) echo 'Invalid restart profile' >&2; exit 1 ;; esac
 case "${ANTNEST_RESTART_RECOVERY_MODE:-manual}" in
   manual) ;;
-  auto) [ "$acp_restart" = true ] || { echo 'Auto recovery requires the restart profile' >&2; exit 1; } ;;
+  auto|manual-ui|notify-ui) [ "$acp_restart" = true ] || { echo 'Recovery requires the restart profile' >&2; exit 1; } ;;
   *) echo 'Invalid restart recovery mode' >&2; exit 1 ;;
 esac
 if [ "$acp_restart" = true ]; then

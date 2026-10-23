@@ -60,6 +60,26 @@ test("Controller recovery changes require both real automatic and original manua
   }
 });
 
+test("manual and notify browser recovery are mandatory restart profiles with Chromium setup", () => {
+  for (const path of [
+    "services/agent-controller/cmd/agent-controller/runtime_barrier_recovery.go",
+    "services/agent-ui/web/src/WorkspacePage.tsx",
+    "tests/e2e/acp-restart/browser-recovery.mjs",
+  ]) {
+    const selected = selectSuites([path]);
+    for (const mode of ["manual-ui", "notify-ui"]) {
+      const id = `c-acp-restart-${mode}`;
+      const suite = selected.find((item) => item.id === id);
+      assert(suite && !suite.disabled, `${path} must select ${id}`);
+      assert.deepEqual(suite.setup, ["agent-ui-web", "chromium"]);
+      assert.deepEqual(suite.run, [`make e2e-acp-restart-${mode}`]);
+      assert(
+        shards.find((item) => item.id === "c-acp-recovery").suites.includes(id),
+      );
+    }
+  }
+});
+
 test("observation ordering always admits the real Controller consumer", () => {
   for (const path of [
     "tests/integration/runtime-controller/observation-consumer.mjs",
@@ -599,7 +619,7 @@ test("ACP authentication runs in the required auth shard with its CI-built image
 
 test("tier C platform scenarios get every local image and no rebuilding target", () => {
   const tierC = suites.filter((suite) => suite.tier === "c");
-  assert.equal(tierC.length, 47);
+  assert.equal(tierC.length, 49);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   const primary = Object.keys(images).filter(
     (name) => typeof images[name] === "string",

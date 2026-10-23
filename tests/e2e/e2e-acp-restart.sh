@@ -6,7 +6,7 @@ case "${COMPOSE_PROJECT_NAME:-}" in antnest-stage3-e2e-[0-9]*) ;; *) exit 1 ;; e
 recovery_mode=${ANTNEST_RESTART_RECOVERY_MODE:-manual}
 case "$recovery_mode" in
   manual) steps='1 2 3 4 5 6 7 8'; total=8 ;;
-  auto) steps=1; total=1 ;;
+  auto|manual-ui|notify-ui) steps=1; total=1 ;;
   *) echo 'Invalid restart recovery mode' >&2; exit 1 ;;
 esac
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -93,8 +93,20 @@ for step in $steps; do
     node "$root/tests/e2e/acp-restart/automatic-recovery-capture.mjs" \
       "$temporary/recovery-expected-$step.json" "$temporary/recovery-$step.json" "$evidence"
   fi
+  case "$recovery_mode" in
+    manual-ui|notify-ui)
+      attempt=0
+      until [ -f "$temporary/ui-ready-$step.json" ]; do
+        [ "$(docker_cmd inspect --format '{{.State.Running}}' "$client")" = true ] || { docker_cmd logs "$client"; exit 1; }
+        attempt=$((attempt+1)); [ "$attempt" -le 150 ] || exit 1
+        sleep 1
+      done
+      node "$root/tests/e2e/acp-restart/browser-recovery.mjs" \
+        "$temporary/ui-ready-$step.json" "$temporary/ui-recovery-$step.json" "$evidence"
+      ;;
+  esac
   case "$recovery_mode-$step" in
-    manual-4|manual-8|auto-1)
+    manual-4|manual-8|auto-1|manual-ui-1|notify-ui-1)
       attempt=0
       until [ -f "$temporary/retire-request-$step" ]; do
         [ "$(docker_cmd inspect --format '{{.State.Running}}' "$client")" = true ] || { docker_cmd logs "$client"; exit 1; }
