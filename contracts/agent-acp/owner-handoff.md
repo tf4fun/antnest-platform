@@ -70,7 +70,10 @@ incarnation to a replacement start; it must return the original registration or
 reject an identity conflict. Receipt lookup alone does not establish the
 requesting process's identity.
 
-The proposed private operations are:
+The private wire is frozen in
+[the planned operation manifest](owner-incarnation-contract.json) and
+[the closed JSON schemas](owner-incarnation.schema.json). These files do not
+grant routes in the active service caller catalogs. The operations are:
 
 | Receiver                   | Operation                | Caller and input                                                                                 | Result                                                         |
 | -------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
@@ -78,9 +81,65 @@ The proposed private operations are:
 | Runtime Controller         | `InspectAcpIncarnation`  | ACP workload; opaque registration ID                                                             | `running`, `stopped` with a durable stop receipt, or `unknown` |
 | ACP private owner listener | `ProbeIncarnation`       | Runtime Controller workload; fresh challenge, registration nonce and expected member/incarnation | Exact challenge/member/incarnation response                    |
 
-Producer batches define their exact routes, schemas, limits and caller-catalog
-entries together with rejection tests. Existing Controller-only RPC grants and
-public ACP routes remain unchanged until those explicit batches are delivered.
+Runtime Controller receives `POST /internal/acp-incarnations/register` and
+`GET /internal/acp-incarnations/{registration_id}` from ACP workloads only.
+The separate early ACP owner listener receives
+`POST /internal/acp-owner/incarnation/probe` from Runtime Controller only.
+The existing ACP workspace, control and health listeners do not serve that
+probe. The owner listener must not consult ordinary readiness, the database,
+Identity or execution publication to answer a locally pending intent.
+
+`member_id` is a lowercase catalog label of 1–64 ASCII letters, digits or
+hyphens, beginning and ending with a letter or digit. Incarnation,
+registration and receipt identifiers are lowercase UUIDv4 values. The two
+nonces are independently generated 32-byte CSPRNG values encoded as exactly
+64 lowercase hexadecimal characters. Identifiers are not bearer credentials.
+Register carries only `member_id`, `incarnation_id` and `registration_nonce`;
+its result carries the first two fields and `registration_id`, without a nonce.
+Probe request and response each carry exactly the member, incarnation,
+registration nonce and `challenge`. The receiver compares the nonce without
+content-dependent timing. A successful probe does not consume the pending
+intent: only a validated registration result or local shutdown closes it.
+Absent, closed or mismatched intents share `acp_probe_intent_mismatch` (409).
+
+Registration uses the exact member/incarnation/nonce tuple as its idempotency
+identity; no separate `Idempotency-Key` or new nonce is generated after an
+uncertain result. Runtime Controller retains only a one-way nonce digest in
+its durable registration. An authenticated exact retry may return that original
+receipt without a new probe, including after the original start has stopped.
+This is receipt recovery, not evidence that the caller is that running process.
+A different nonce or platform binding cannot replace the original binding.
+
+Inspection returns HTTP 200 with one closed shape: `running` has the registered
+member/incarnation and `observed_at`; `unknown` has the registration identifier
+and a reason, without any stop receipt; `stopped` has the registered binding and
+one immutable `stop_receipt` containing a receipt identifier, reason and first
+observation time. The outer registration/member/incarnation fields bind that
+receipt, so consumers retain the complete response. Timestamps are UTC RFC3339
+diagnostics and never establish a lease, deadline or proof by age. Consumers
+validate actual calendar dates as well as the schema's lexical form.
+
+Unregistered identifiers return `unknown/unregistered` without querying the
+platform. Platform failure, changed engine or missing membership likewise return
+`unknown`; inability to read the registry is a typed retryable 503. An HTTP
+404, malformed response or transport failure never implies `stopped`.
+Authenticated stop receipts already persisted remain permanent facts, even
+when a later platform observation is unavailable.
+
+Each operation authenticates its exact workload caller before reading a body
+or accessing platform/storage. JSON bodies are limited to 4 KiB and replies to
+8 KiB; registration and inspection have a 10-second total deadline, and a
+single probe has a 2-second total deadline within its caller's remaining budget.
+The deadlines cover response-body reads and actual cancellation/join, not just
+headers. No operation follows redirects or environment proxies. All responses
+use `Cache-Control: no-store`; payload capture is disabled for requests,
+responses and errors, including Trace diagnostics. Logs never include nonces,
+credentials, Docker identities or configured probe addresses.
+
+Producer batches add their exact caller-catalog entries with actual HTTP,
+authorization, platform, persistence and cancellation rejection tests. Existing
+Controller-only RPC grants and public ACP routes remain unchanged until those
+explicit batches are delivered.
 Probe destinations stay inside the trusted membership catalog and authenticated
 transport; no request can choose a URL, redirect, Docker selector or credential.
 
