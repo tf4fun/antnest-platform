@@ -214,6 +214,16 @@ retries pass the authority boundary before local Supervisor cancellation; input
 identity is captured before asynchronous authorization. Production composition
 still uses the worker-lock-backed legacy bundle while Agent coordination and
 remaining writer/recovery consumers are pending.
+Temporary Skill writers use that same bundle authority. Reservation locks the
+actual Session and original Run before inserting a scope; cleanup preflight
+checks its complete stored Runtime binding before calling Runtime. The RPC runs
+outside the transaction. Its eventual receipt rechecks original ownership and
+atomically marks only load-skill attempts stopped, releases the temporary scope
+and retires a barrier only if all protected resources have cleared. A lost owner
+cannot save that receipt, even after successful remote cleanup. Terminal Runs
+and deleted Sessions remain cleanable by their original current owner. Candidate
+reads do not authorize cleanup; generation shutdown and predecessor recovery
+still require separate stopping and original-task join evidence.
 Fork creates a new Session with a point-in-time copy of durable context,
 records the immutable immediate source Session, but never copies Runs or
 admissions and rejects a source Session with active work.

@@ -17,6 +17,7 @@ export class TemporarySkills {
     private readonly telemetry: TelemetryPort = NOOP_TELEMETRY,
   ) {}
   public async install(input: TemporaryInstallInput, loaded: LoadedSkillText) {
+    input = { ...input, snapshot: structuredClone(input.snapshot) };
     input.signal.throwIfAborted();
     const scope = await this.store.reserve(input);
     input.signal.throwIfAborted();
@@ -46,8 +47,11 @@ export class TemporarySkills {
     return this.store.next(after, signal);
   }
   public async release(scope: TemporarySkillScope, signal: AbortSignal): Promise<void> {
+    scope = Object.freeze({ ...scope });
     signal.throwIfAborted();
     await this.telemetry.span("skill.temporary.release", attributes(scope), async () => {
+      await this.store.authorizeCleanup(scope, signal);
+      signal.throwIfAborted();
       await this.runtime.cleanup(scope, signal);
       signal.throwIfAborted();
       await this.store.released(scope);

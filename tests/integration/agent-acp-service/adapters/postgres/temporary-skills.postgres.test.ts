@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
+import { createLegacyTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
@@ -14,7 +14,7 @@ describe.skipIf(!databaseUrl)(
   () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 2 }),
       kernel = new PostgresKernel(pool),
-      store = new PostgresTemporarySkills(kernel);
+      store = createLegacyTemporarySkills(kernel, new AbortController().signal);
     const signal = new AbortController().signal;
     beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");

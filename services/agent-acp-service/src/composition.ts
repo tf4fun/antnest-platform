@@ -13,7 +13,6 @@ import { RegistrySkillDiscoveryClient } from "./adapters/skill-discovery-http.js
 import { SkillDiscoveryTools } from "./application/skill-discovery-tools.js";
 import { TemporarySkills } from "./application/temporary-skills.js";
 import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
-import { PostgresTemporarySkills } from "./adapters/postgres/temporary-skills.js";
 import { RuntimeSkillTemporaryClient } from "./adapters/runtime-skill-temporary-client.js";
 import { DomainError } from "./domain/errors.js";
 import { PermissionConnections } from "./application/permission-connections.js";
@@ -413,6 +412,7 @@ export function buildComponents(
     sessions,
     sessionConfiguration,
     permissions: permissionRepository,
+    temporarySkills: temporaryStore,
     runs,
     events,
     executions,
@@ -462,7 +462,7 @@ export function buildComponents(
       : new RuntimeSkillMaintenanceSigner(signing.kid, signing.privateKey);
   // Cleanup survives configuration disabling discovery; persisted scopes remain authoritative.
   const temporarySkills = new TemporarySkills(
-    new PostgresTemporarySkills(kernel),
+    temporaryStore,
     new RuntimeSkillTemporaryClient(signer, runtimeConnections, undefined, (scope) =>
       directory.runtimeForCleanup(scope),
     ),

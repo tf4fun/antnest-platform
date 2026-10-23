@@ -8,7 +8,7 @@ import { createLegacyRunRepositories } from "../../../../../services/agent-acp-s
 import { PostgresRuntimeBarrierReader } from "../../../../../services/agent-acp-service/src/adapters/postgres/runtime-barrier.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
+import { createLegacyTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import { publicExecutionConfiguration } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import type { RunExecutionSnapshot } from "../../../../../services/agent-acp-service/src/domain/types.js";
@@ -52,7 +52,10 @@ describe.skipIf(databaseUrl === undefined)(
       kernel,
       new AbortController().signal,
     ).executions;
-    const temporary = new PostgresTemporarySkills(kernel);
+    const temporary = createLegacyTemporarySkills(
+      kernel,
+      new AbortController().signal,
+    );
     const reader = new PostgresRuntimeBarrierReader(kernel);
     const signal = new AbortController().signal;
     let configuration = executionConfiguration();
@@ -301,7 +304,10 @@ describe.skipIf(databaseUrl === undefined)(
         ).toBe(true);
         expect(await cycle(value, restartedReader)).toEqual(original);
 
-        await new PostgresTemporarySkills(restartedKernel).released(pending);
+        await createLegacyTemporarySkills(
+          restartedKernel,
+          new AbortController().signal,
+        ).released(pending);
         expect(await temporary.forRun(value.runId, signal)).toBeNull();
         expect(
           (

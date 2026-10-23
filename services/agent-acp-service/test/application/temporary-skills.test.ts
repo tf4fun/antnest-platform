@@ -34,6 +34,10 @@ function fixture() {
     forRun: vi.fn<TemporarySkillStore["forRun"]>(() => Promise.resolve(scope)),
     forAgent: vi.fn<TemporarySkillStore["forAgent"]>(() => Promise.resolve([scope])),
     next: vi.fn<TemporarySkillStore["next"]>(() => Promise.resolve(scope)),
+    authorizeCleanup: vi.fn<TemporarySkillStore["authorizeCleanup"]>(() => {
+      order.push("authorize");
+      return Promise.resolve();
+    }),
     released: vi.fn<TemporarySkillStore["released"]>(() => {
       order.push("released");
       return Promise.resolve();
@@ -57,6 +61,37 @@ function fixture() {
   return { order, store, runtime, service, input };
 }
 describe("durable temporary Skill scope", () => {
+  it("keeps the original install cancellation signal while reservation is pending", async () => {
+    const f = fixture();
+    const original = new AbortController();
+    f.input.signal = original.signal;
+    const reservation = Promise.withResolvers<TemporarySkillScope>();
+    f.store.reserve.mockImplementation(() => reservation.promise);
+    const pending = f.service.install(f.input, pkg).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    try {
+      f.input.signal = new AbortController().signal;
+      const cancelled = new Error("original install cancelled");
+      original.abort(cancelled);
+      reservation.resolve(scope);
+      expect(await pending).toBe(cancelled);
+      expect(f.runtime.install).not.toHaveBeenCalled();
+    } finally {
+      reservation.resolve(scope);
+      await pending;
+    }
+  });
+  it("does not dispatch cleanup after a rejected authority preflight", async () => {
+    const f = fixture();
+    f.store.authorizeCleanup.mockRejectedValue(new Error("ownership lost"));
+    await expect(f.service.release(scope, new AbortController().signal)).rejects.toThrow(
+      "ownership lost",
+    );
+    expect(f.runtime.cleanup).not.toHaveBeenCalled();
+    expect(f.store.released).not.toHaveBeenCalled();
+  });
   it("records intent before any Runtime write and leaves it pending until cleanup", async () => {
     const f = fixture();
     await f.service.install(f.input, pkg);
@@ -83,7 +118,7 @@ describe("durable temporary Skill scope", () => {
     await expect(f.service.install(f.input, pkg)).rejects.toMatchObject({ effectState: "unknown" });
     await f.service.releaseRun(scope.runId, new AbortController().signal);
     expect(f.runtime.install).toHaveBeenCalledTimes(1);
-    expect(f.order).toEqual(["reserve", "install", "cleanup", "released"]);
+    expect(f.order).toEqual(["reserve", "install", "authorize", "cleanup", "released"]);
   });
   it("does not confirm release when cleanup or its durable write fails", async () => {
     const f = fixture();
@@ -99,7 +134,7 @@ describe("durable temporary Skill scope", () => {
       { organizationId: "org_1", agentId: "agent_1" },
       signal,
     );
-    expect(f.order).toEqual(["cleanup", "released"]);
+    expect(f.order).toEqual(["authorize", "cleanup", "released"]);
   });
   it("blocks maintenance before model work while a scope is pending", async () => {
     const f = fixture();

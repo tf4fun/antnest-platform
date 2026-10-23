@@ -8,7 +8,7 @@ import { createLegacyRunRepositories } from "../../../../../services/agent-acp-s
 import { PostgresRuntimeBarrierReader } from "../../../../../services/agent-acp-service/src/adapters/postgres/runtime-barrier.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
+import { createLegacyTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import { publicExecutionConfiguration } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import type { RunExecutionSnapshot } from "../../../../../services/agent-acp-service/src/domain/types.js";
@@ -37,8 +37,9 @@ describe.skipIf(databaseUrl === undefined)(
       const pools = [blockerPool, reservePool, finishPool, observer];
       const kernel = new PostgresKernel(observer);
       const box = new SecretBox(randomBytes(32));
-      const temporary = new PostgresTemporarySkills(
+      const temporary = createLegacyTemporarySkills(
         new PostgresKernel(reservePool),
+        new AbortController().signal,
       );
       const executions = createLegacyRunRepositories(
         new PostgresKernel(finishPool),
@@ -138,21 +139,17 @@ describe.skipIf(databaseUrl === undefined)(
         expect(new Set([reservePid, finishPid, blockerPid]).size).toBe(3);
         await blocker.query("BEGIN");
         transactionOpen = true;
-        // This uncommitted unique key stops the production INSERT after its
-        // statement has observed the Run as running. It is rolled back below,
-        // so the final scope must come from production reserve, not this fixture.
-        await blocker.query(
-          `INSERT INTO temporary_skill_scopes
-         (run_id, organization_id, agent_id, execution_id, mcp_endpoint)
-         VALUES ($1, $2, $3, $4, $5)`,
-          [
-            runId,
-            snapshot.organizationId,
-            identity.agentId,
-            snapshot.runtime.executionId,
-            snapshot.runtime.mcpEndpoint,
-          ],
-        );
+        // Gate the production INSERT without taking the Run foreign-key lock.
+        // An uncommitted fixture scope would now stop the earlier Run ownership
+        // guard instead of the INSERT that this ordering regression exercises.
+        await observer.query(`CREATE FUNCTION hold_scope_insert() RETURNS trigger
+          LANGUAGE plpgsql AS $$ BEGIN
+            PERFORM pg_advisory_xact_lock(2147483647, 17);
+            RETURN NEW;
+          END $$;
+          CREATE TRIGGER hold_scope_insert BEFORE INSERT ON temporary_skill_scopes
+          FOR EACH ROW EXECUTE FUNCTION hold_scope_insert()`);
+        await blocker.query("SELECT pg_advisory_xact_lock(2147483647, 17)");
         const reserving = temporary.reserve({
           runId,
           snapshot,
@@ -175,15 +172,16 @@ describe.skipIf(databaseUrl === undefined)(
                 wait_event_type: string | null;
                 query: string;
                 blockers: number[];
-                transaction_wait: boolean;
+                fixture_gate_wait: boolean;
               }>(
                 `SELECT activity.wait_event_type, activity.query,
              pg_blocking_pids(activity.pid) AS blockers,
              EXISTS (
                SELECT 1 FROM pg_locks AS waiting
-               WHERE waiting.pid = activity.pid AND waiting.locktype = 'transactionid'
+               WHERE waiting.pid = activity.pid AND waiting.locktype = 'advisory'
+                 AND waiting.classid = 2147483647 AND waiting.objid = 17 AND waiting.objsubid = 2
                  AND NOT waiting.granted
-             ) AS transaction_wait
+             ) AS fixture_gate_wait
            FROM pg_stat_activity AS activity
            WHERE activity.datname = current_database()
              AND activity.pid = $1 AND activity.application_name = $2`,
@@ -194,7 +192,7 @@ describe.skipIf(databaseUrl === undefined)(
                 !reserveSettled &&
                 state?.wait_event_type === "Lock" &&
                 state.query.includes("INSERT INTO temporary_skill_scopes") &&
-                state.transaction_wait &&
+                state.fixture_gate_wait &&
                 state.blockers.includes(blockerPid)
               );
             },

@@ -17,6 +17,7 @@ export interface TemporarySkillStore {
   forRun(runId: string, signal: AbortSignal): Promise<TemporarySkillScope | null>;
   forAgent(scope: TemporaryAgentScope, signal: AbortSignal): Promise<TemporarySkillScope[]>;
   next(after: string | null, signal: AbortSignal): Promise<TemporarySkillScope | null>;
+  authorizeCleanup(scope: TemporarySkillScope, signal: AbortSignal): Promise<void>;
   released(scope: TemporarySkillScope): Promise<void>;
 }
 export interface TemporarySkillRuntime {
