@@ -71,11 +71,19 @@ admission entries.
 
 ## Retry and recovery
 
-Only these five entries carry the default `retry_after_ms: 1000` policy:
+The five JSON-RPC admission entries with default `retry_after_ms: 1000` are
 `agent_busy`, `session_busy`, `configuration_not_ready`, `agent_preparing` and
-`recovery_pending`. They use `retryable: true` and `recovery: "backoff"`.
+`recovery_pending`. The HTTP-only `connection_quota_exceeded` entry uses the
+same delay for a rejected connection handshake. These six entries use
+`retryable: true` and `recovery: "backoff"`.
 A delay must be a positive integer no greater than 60000 and cannot accompany
 `retryable: false` or a recovery mode other than `backoff`.
+
+The pending [connection admission contract](connection-admission.md) scopes
+`connection_quota_exceeded` to establishing a new connection, before any ACP
+command is accepted. It has no JSON-RPC admission mapping and does not permit
+replaying an accepted Prompt, model request or Tool effect. Producer quota
+enforcement and consumer integration remain separate delivery batches in #49.
 
 `retryable: true` is not permission to immediately replay every operation.
 `wait_binding` waits for an available binding, `wait_rebuild` requires the
