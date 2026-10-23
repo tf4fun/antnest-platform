@@ -1,24 +1,88 @@
 {
-  "revision": 19,
+  "revision": 20,
   "transport": "json-over-http",
-  "trust_boundary": "authenticated-controller-workload",
+  "trust_boundary": "authenticated-workload-with-route-specific-callers",
   "schemas": {
     "control": "control-api.schema.json",
-    "configuration": "runtime-deployment.schema.json"
+    "configuration": "runtime-deployment.schema.json",
+    "owner_incarnation": "../../../contracts/agent-acp/owner-incarnation.schema.json"
   },
   "headers": {
     "Idempotency-Key": {
       "required": true,
       "schema": "control-api.schema.json#/$defs/request_id",
-      "description": "Stable logical request identity reused for an exact retry"
+      "description": "Stable logical request identity reused for an exact retry on routes listing this header. ACP incarnation registration instead uses its member/incarnation/nonce tuple."
     },
     "Antnest-Service-Authorization": {
       "required": true,
       "schema": "control-api.schema.json#/$defs/service_credential",
-      "description": "Exact dedicated bearer in token mode; mTLS uses the verified Controller service URI instead. Not required by local health."
+      "description": "Exact dedicated bearer in token mode; mTLS verifies the route-specific service URI. Only incarnation registration and inspection admit the ACP workload; existing control routes require the Controller workload. Not required by local health."
     }
   },
   "routes": [
+    {
+      "operation_id": "registerAcpIncarnation",
+      "method": "POST",
+      "path": "/internal/acp-incarnations/register",
+      "required_headers": ["Antnest-Service-Authorization"],
+      "request_body": "control-api.schema.json#/$defs/acp_register_request",
+      "request_bytes_max": 4096,
+      "response_bytes_max": 8192,
+      "deadline_ms": 10000,
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/acp_registration"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "unsupported_media_type",
+        "request_too_large",
+        "acp_member_not_allowed",
+        "acp_incarnation_unverified",
+        "acp_incarnation_conflict",
+        "acp_registration_unavailable",
+        "acp_registry_unavailable",
+        "deadline_exceeded",
+        "internal_error",
+        "route_not_found",
+        "method_not_allowed"
+      ]
+    },
+    {
+      "operation_id": "inspectAcpIncarnation",
+      "method": "GET",
+      "path": "/internal/acp-incarnations/{registration_id}",
+      "path_parameters": {
+        "registration_id": "control-api.schema.json#/$defs/acp_registration_id"
+      },
+      "required_headers": ["Antnest-Service-Authorization"],
+      "response_bytes_max": 8192,
+      "deadline_ms": 10000,
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/acp_inspection"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "acp_registry_unavailable",
+        "deadline_exceeded",
+        "internal_error",
+        "route_not_found",
+        "method_not_allowed"
+      ]
+    },
     {
       "operation_id": "resolveRuntimeImage",
       "method": "GET",
@@ -499,6 +563,36 @@
     }
   ],
   "errors": {
+    "acp_member_not_allowed": {
+      "status": 403,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+    },
+    "acp_incarnation_unverified": {
+      "status": 403,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+    },
+    "acp_incarnation_conflict": {
+      "status": 409,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+    },
+    "acp_registration_unavailable": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+    },
+    "acp_registry_unavailable": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+    },
+    "request_too_large": {
+      "status": 413,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+    },
     "runtime_not_ready": {
       "status": 500,
       "retryable": false,
@@ -752,8 +846,8 @@
   },
   "authentication": {
     "contract": "../../../contracts/platform/service-authentication.md",
-    "allowed_callers": ["agent-controller"],
-    "caller_context": "Controller-owned accepted operation; unsigned identity headers grant nothing",
+    "allowed_callers": ["agent-controller", "agent-acp-service"],
+    "caller_context": "Only incarnation registration and inspection admit agent-acp-service without caller context. Existing control routes require agent-controller and Controller-owned accepted operations; unsigned identity headers grant nothing.",
     "local_health": "GET /status on the separate loopback-only health listener; remote requests are not admitted"
   }
 }

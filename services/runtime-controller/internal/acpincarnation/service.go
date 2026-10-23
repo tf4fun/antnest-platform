@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,27 +38,48 @@ func New(scope string, members []Member, store Store, platform Platform, prober 
 	if scope == "" || len(scope) > 200 || strings.TrimSpace(scope) != scope || store == nil || platform == nil || prober == nil {
 		return nil, fmt.Errorf("invalid ACP incarnation service dependencies")
 	}
+	catalog, err := memberCatalog(members)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{scope: scope, members: catalog, store: store, platform: platform, prober: prober}, nil
+}
+
+// ValidateMembers applies the same operator-catalog rules used by New without
+// allocating platform or authentication resources during configuration loading.
+func ValidateMembers(members []Member) error {
+	_, err := memberCatalog(members)
+	return err
+}
+
+func memberCatalog(members []Member) (map[string]Member, error) {
 	catalog := make(map[string]Member, len(members))
 	for _, member := range members {
 		origin, err := url.Parse(member.Origin)
-		if !validMember(member.ID) || !validPrivateLabel(member.Selector) || !validPrivateLabel(member.Network) ||
-			err != nil || origin.Host == "" || origin.User != nil || origin.Opaque != "" ||
+		if !ValidMemberID(member.ID) || !validPrivateLabel(member.Selector) || !validPrivateLabel(member.Network) ||
+			err != nil || origin.Hostname() == "" || origin.User != nil || origin.Opaque != "" ||
 			(origin.Scheme != "http" && origin.Scheme != "https") ||
 			(origin.Path != "" && origin.Path != "/") || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" {
 			return nil, fmt.Errorf("invalid configured ACP member")
+		}
+		if port := origin.Port(); port != "" {
+			number, err := strconv.Atoi(port)
+			if err != nil || number < 1 || number > 65535 {
+				return nil, fmt.Errorf("invalid configured ACP member")
+			}
 		}
 		if _, exists := catalog[member.ID]; exists {
 			return nil, fmt.Errorf("duplicate configured ACP member")
 		}
 		catalog[member.ID] = member
 	}
-	return &Service{scope: scope, members: catalog, store: store, platform: platform, prober: prober}, nil
+	return catalog, nil
 }
 
 func (s *Service) Register(parent context.Context, request RegisterRequest) (Registration, error) {
 	ctx, cancel := context.WithTimeout(parent, operationTimeout)
 	defer cancel()
-	if !validMember(request.MemberID) || !validUUID(request.IncarnationID) || !validNonce(request.RegistrationNonce) {
+	if !ValidMemberID(request.MemberID) || !ValidUUID(request.IncarnationID) || !ValidNonce(request.RegistrationNonce) {
 		return Registration{}, failure(ctx, "invalid_request", nil)
 	}
 	if err := ctx.Err(); err != nil {
@@ -141,7 +163,7 @@ func (s *Service) Register(parent context.Context, request RegisterRequest) (Reg
 func (s *Service) Inspect(parent context.Context, registrationID string) (Inspection, error) {
 	ctx, cancel := context.WithTimeout(parent, operationTimeout)
 	defer cancel()
-	if !validUUID(registrationID) {
+	if !ValidUUID(registrationID) {
 		return Inspection{}, failure(ctx, "invalid_request", nil)
 	}
 	if err := ctx.Err(); err != nil {
@@ -217,13 +239,13 @@ func (s *Service) Inspect(parent context.Context, registrationID string) (Inspec
 }
 
 func (s *Service) validRecord(record Record) bool {
-	if record.Scope != s.scope || !validUUID(record.Registration.RegistrationID) ||
-		!validMember(record.Registration.MemberID) || !validUUID(record.Registration.IncarnationID) ||
+	if record.Scope != s.scope || !ValidUUID(record.Registration.RegistrationID) ||
+		!ValidMemberID(record.Registration.MemberID) || !ValidUUID(record.Registration.IncarnationID) ||
 		!validPrivateLabel(record.Binding.EngineID) || !validObservation(Observation{ContainerID: record.Binding.ContainerID, StartedAt: record.Binding.StartedAt}) {
 		return false
 	}
 	if receipt := record.Stop; receipt != nil {
-		if !validUUID(receipt.ReceiptID) || receipt.ObservedAt.IsZero() {
+		if !ValidUUID(receipt.ReceiptID) || receipt.ObservedAt.IsZero() {
 			return false
 		}
 		switch receipt.Reason {
@@ -259,11 +281,16 @@ func failure(ctx context.Context, code string, err error) *Failure {
 	return &Failure{Code: code, cause: err}
 }
 
-func validMember(value string) bool {
+// ValidMemberID checks the canonical operator catalog label used on the wire.
+func ValidMemberID(value string) bool {
 	return len(value) >= 1 && len(value) <= 64 && memberPattern.MatchString(value)
 }
-func validUUID(value string) bool  { return len(value) == 36 && uuidPattern.MatchString(value) }
-func validNonce(value string) bool { return len(value) == 64 && noncePattern.MatchString(value) }
+
+// ValidUUID accepts only canonical lowercase UUIDv4 identities.
+func ValidUUID(value string) bool { return len(value) == 36 && uuidPattern.MatchString(value) }
+
+// ValidNonce accepts exactly 32 bytes encoded as lowercase hexadecimal.
+func ValidNonce(value string) bool { return len(value) == 64 && noncePattern.MatchString(value) }
 func validPrivateLabel(value string) bool {
 	return value != "" && len(value) <= 256 && strings.IndexFunc(value, func(r rune) bool { return r <= ' ' || r == 127 }) == -1
 }

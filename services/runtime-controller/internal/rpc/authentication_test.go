@@ -20,11 +20,7 @@ func TestEveryControlRouteRejectsMissingCredentialBeforeEffects(t *testing.T) {
 			continue
 		}
 		t.Run(route.OperationID, func(t *testing.T) {
-			service, preparation := &fakeService{}, &preparationStub{}
-			handler, err := NewHandler(service, observation.NewHub(), time.Millisecond, time.Second, fixtureSecurity(), preparation)
-			if err != nil {
-				t.Fatal(err)
-			}
+			handler, service, preparation, incarnation, _ := contractAuthenticationHandler(t, route)
 			path := strings.NewReplacer("{agent_id}", "agent-1", "{request_id}", "request-1").Replace(route.Path)
 			request := httptest.NewRequest(route.Method, path, strings.NewReader("{}"))
 			request.Header.Set("Content-Type", "application/json")
@@ -37,7 +33,7 @@ func TestEveryControlRouteRejectsMissingCredentialBeforeEffects(t *testing.T) {
 			if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "service_unauthenticated") {
 				t.Fatalf("unauthenticated route admitted: %d %s", response.Code, response.Body.String())
 			}
-			if service.initializeCalls != 0 || service.agentID != "" || service.command != "" || preparation.released || preparation.received.OwnerOperationID != "" {
+			if service.initializeCalls != 0 || service.agentID != "" || service.command != "" || preparation.released || preparation.received.OwnerOperationID != "" || incarnation.registerCalls+incarnation.inspectCalls != 0 {
 				t.Fatal("untrusted request reached business effects")
 			}
 		})
@@ -68,18 +64,14 @@ func TestWrongWorkloadCannotUseControllerOrSkillPreparationRoutes(t *testing.T) 
 			continue
 		}
 		t.Run(route.OperationID, func(t *testing.T) {
-			service, preparation := &fakeService{}, &preparationStub{}
-			handler, err := NewHandler(service, observation.NewHub(), time.Millisecond, time.Second, fixtureSecurity(), preparation)
-			if err != nil {
-				t.Fatal(err)
-			}
+			handler, service, preparation, incarnation, _ := contractAuthenticationHandler(t, route)
 			path := strings.NewReplacer("{agent_id}", "agent-1", "{request_id}", "request-1").Replace(route.Path)
 			request := httptest.NewRequest(route.Method, path, strings.NewReader("{}"))
-			request.Header.Set("Antnest-Service-Authorization", "Bearer "+strings.Repeat("A", 43))
+			request.Header.Set("Antnest-Service-Authorization", "Bearer "+incarnationRPCToken("skill-registry"))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
-			if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "caller_not_allowed") || service.initializeCalls != 0 || preparation.released {
+			if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "caller_not_allowed") || service.initializeCalls != 0 || preparation.released || incarnation.registerCalls+incarnation.inspectCalls != 0 {
 				t.Fatalf("non-Controller workload admitted: %d %s", response.Code, response.Body.String())
 			}
 		})
@@ -95,20 +87,16 @@ func TestEveryControlJSONRouteRejectsAmbiguousMediaAndMalformedJSON(t *testing.T
 		}
 		t.Run(route.OperationID, func(t *testing.T) {
 			for _, media := range []string{"", "text/plain", "application/problem+json", "application/json; charset=latin1", "application/json; charset=\"\"", "application/json; extra=utf-8", "application/json, application/json"} {
-				service, preparation := &fakeService{}, &preparationStub{}
-				handler, err := NewHandler(service, observation.NewHub(), time.Second, time.Second, fixtureSecurity(), preparation)
-				if err != nil {
-					t.Fatal(err)
-				}
+				handler, service, preparation, incarnation, callerToken := contractAuthenticationHandler(t, route)
 				path := strings.NewReplacer("{agent_id}", "agent-1", "{request_id}", "request-1").Replace(route.Path)
 				request := httptest.NewRequest(route.Method, path, strings.NewReader("{}"))
-				request.Header.Set("Antnest-Service-Authorization", "Bearer "+controllerTestToken)
+				request.Header.Set("Antnest-Service-Authorization", "Bearer "+callerToken)
 				if media != "" {
 					request.Header.Set("Content-Type", media)
 				}
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, request)
-				if response.Code != 415 || service.initializeCalls != 0 || preparation.released {
+				if response.Code != 415 || service.initializeCalls != 0 || preparation.released || incarnation.registerCalls+incarnation.inspectCalls != 0 {
 					t.Fatalf("media %q admitted: %d %s", media, response.Code, response.Body.String())
 				}
 			}
@@ -160,4 +148,15 @@ func TestReadinessIsLocalAndHealthListenerHasNoControlRoutes(t *testing.T) {
 	if response.Code != 404 {
 		t.Fatal("health listener exposes control routes")
 	}
+}
+
+func contractAuthenticationHandler(t *testing.T, route contractRoute) (*Handler, *fakeService, *preparationStub, *incarnationRPCStub, string) {
+	t.Helper()
+	incarnation := &incarnationRPCStub{}
+	handler, service, preparation := incarnationRPCHandler(t, incarnation)
+	caller := "agent-controller"
+	if route.OperationID == "registerAcpIncarnation" || route.OperationID == "inspectAcpIncarnation" {
+		caller = "agent-acp-service"
+	}
+	return handler, service, preparation, incarnation, incarnationRPCToken(caller)
 }

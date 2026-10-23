@@ -1,18 +1,26 @@
 # Runtime Controller Control API
 
-Runtime Controller exposes a small JSON-over-HTTP RPC surface to Agent
-Controller with verified workload identity on its purpose-specific private listener. Revision 16 includes private Runtime connection resolution; revision 15 requires the [exact workload profile](service-authentication.md), adds admission errors and operator image allowlists, and separates loopback readiness from the control surface. It performs no end-user authentication. The cross-service aggregate is one Runtime Environment per
+Runtime Controller exposes a small JSON-over-HTTP RPC surface on its
+purpose-specific private listener. Revision 20 adds ACP-only incarnation
+registration and inspection; existing lifecycle, Runtime inspection, image,
+observation/SSE, Skill preparation and private Runtime connection routes remain
+Controller-only under the [exact workload profile](service-authentication.md).
+Loopback readiness is separate. The service performs no end-user authentication.
+The cross-service aggregate is one Runtime Environment per
 Agent. Docker containers, Kubernetes Pods, workspace volumes, physical
 generation numbers, deployment digests, and platform resource identifiers are
 private implementation details.
 
 The complete machine-readable route, header, status, error, and message
-contract is `control-contract.json` plus `control-api.schema.json`.
+contract is `control-contract.json` plus `control-api.schema.json`, whose ACP
+aliases reference the [shared incarnation schema](../../../contracts/agent-acp/owner-incarnation.schema.json).
 
-All JSON decoders reject unknown fields. Agent and request identifiers use
-1-200 deployment-safe ASCII bytes. Every mutation carries `Idempotency-Key`.
-Reusing a key with identical input returns the original result; reuse with
-different input returns `request_id_conflict`. W3C `traceparent` and optional
+All JSON decoders reject unknown fields. Lifecycle Agent and request identifiers
+use 1-200 deployment-safe ASCII bytes. Lifecycle and Skill mutations carry
+`Idempotency-Key`: identical retries return the original result, while different
+input returns `request_id_conflict`. ACP incarnation registration instead uses
+its original tuple and nonce, with no Idempotency-Key; private Runtime connection
+resolution also requires no such header. W3C `traceparent` and optional
 `tracestate` propagate across the boundary.
 
 Legacy shared-volume Skill inventory, backup and migration-only active-set
@@ -34,6 +42,59 @@ stable across retries. It becomes the Environment's current
 Runtime Controller privately allocates a compute generation for Initialize,
 Update, and Enable. That number is supplied to Antnest Runtime and platform
 labels, but never appears in this API.
+
+## ACP Incarnation Registration And Inspection
+
+Revision 20 serves two exact routes for the verified `agent-acp-service`
+workload only:
+
+| Method | Path                                           | Request                                             | HTTP 200 response                                   |
+| ------ | ---------------------------------------------- | --------------------------------------------------- | --------------------------------------------------- |
+| POST   | `/internal/acp-incarnations/register`          | `member_id`, `incarnation_id`, `registration_nonce` | `registration_id`, `member_id`, `incarnation_id`    |
+| GET    | `/internal/acp-incarnations/{registration_id}` | Path identifier only; no body or query              | Closed `running`, `unknown` or `stopped` inspection |
+
+The shared schema defines every field: member IDs are lowercase catalog labels
+of 1–64 characters, incarnation and registration IDs are lowercase UUIDv4, and
+the registration nonce is exactly 64 lowercase hexadecimal characters encoding
+32 random bytes. The register body is a closed object with exactly those three
+required fields. Duplicate decoded fields, case aliases, unknown fields, null,
+wrong types, invalid UTF-8, BOM and extra JSON documents are rejected. No request
+may supply a Docker selector, network, probe origin or credential. Authentication
+precedes body decoding, platform calls and storage. CCT is neither required nor
+forwarded, and the caller's user/organization hints confer no authority.
+
+Register requires `application/json` with optional UTF-8 charset and accepts at
+most 4096 bytes. Responses are JSON and at most 8192 bytes. Both operations have
+a ten-second total bound, shortened by an earlier parent or RPC bound. Work
+reserves at most 100ms of that same budget for the response and actual cleanup;
+it does not receive an extra budget. The handler awaits its original body and
+service work before returning. Both routes always use `Cache-Control: no-store`
+and suppress request, response and error payload capture, including when RPC
+debug content capture is enabled.
+
+There is no `Idempotency-Key`. After an unknown registration outcome the caller
+retries the original member/incarnation/nonce tuple. RC persists only a one-way
+nonce digest, returns the original matching registration before a new probe, and
+never rebinds that incarnation to a replacement process. A different nonce for
+the same original identity is `409 acp_incarnation_conflict`. Returning an old
+registration is receipt recovery, not a new liveness or ownership proof.
+
+Inspection returns `unknown/unregistered` without querying Docker for an unknown
+registration. Platform failure, changed Docker engine or unavailable membership
+remain `unknown`; registry failure is `503 acp_registry_unavailable`. Only an
+authoritative same-engine observation of the registered full container/start
+may create a durable stop receipt. RC returns its first persisted stop receipt
+unchanged before fresh platform work, including during a later outage. Retain
+the complete stopped response with its registration/member/incarnation binding;
+HTTP 404, a failed probe, a transport error or lease expiry is not a stop proof.
+UTC observation timestamps are diagnostics and do not grant authority by age.
+
+The [planned shared manifest](../../../contracts/agent-acp/owner-incarnation-contract.json)
+retains the complete error/status mapping and future ACP probe wire. Only its
+two RC producer routes are active here. ACP's private probe and registration
+consumer, lease coordination, fenced writers, scoped recovery, ACKs, peers,
+deployment and two-replica acceptance remain pending. The ACP global worker lock
+remains in place; this RC producer is not a complete multi-instance workflow.
 
 ## Private Runtime connection
 
