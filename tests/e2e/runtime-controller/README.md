@@ -23,7 +23,9 @@ the candidate Runtime image, with no separate image build or published port.
 Per-probe exit code, HTTP status, body hash, response body and target inventory
 are retained under the shell suite's `https-probe/` evidence directory. The
 disposable TLS directory is removed at cleanup; Runtime receives only the
-public CA. The target receives only individual read-only server certificate and
+public CA. The CA is written through UID 1000's live process mount view, and
+response bodies are read through the same view; Docker archive copy is not used
+for Runtime's tmpfs. The target receives only individual read-only server certificate and
 key binds, readable without DAC capabilities; their host directory remains
 private and the disposable CA signing key is deleted before startup.
 Local HTTPS tests cover wrong CA/hostname, wrong nonce, duplicate

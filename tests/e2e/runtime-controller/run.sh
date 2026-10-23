@@ -103,8 +103,9 @@ probe_allowed_egress() {
   printf '%s' "$opened" | grep -q '"attachment_state":"open"'
   # Only the public CA enters Runtime. Both probes verify TLS and traverse
   # its ordinary UID 1000 packet path; the DNS probe uses its real resolver.
-  docker cp "$fixture_directory/tls/ca.pem" "$runtime_name:/tmp/antnest-egress-probe-ca.pem"
-  docker exec --user 0:0 "$runtime_name" chmod 0644 /tmp/antnest-egress-probe-ca.pem
+  # Use the live process mount view for Runtime's /tmp tmpfs, in both directions.
+  docker exec -i --user 1000:1000 "$runtime_name" sh -c \
+    'umask 077; cat > /tmp/antnest-egress-probe-ca.pem' < "$fixture_directory/tls/ca.pem"
   for kind in ip dns; do
     case "$kind" in ip) target=1.1.1.1 ;; dns) target=egress-fixture.example ;; esac
     docker exec --user 1000:1000 "$runtime_name" rm -f /tmp/antnest-egress-probe-response
@@ -118,7 +119,7 @@ probe_allowed_egress() {
       "https://$target:8443/probe/$ANTNEST_EGRESS_FIXTURE_NONCE/$phase/$kind"); then
       :
     else probe_exit=$?; fi
-    docker cp "$runtime_name:/tmp/antnest-egress-probe-response" "$fixture_directory/$phase-$kind.body" 2>/dev/null \
+    docker exec --user 1000:1000 "$runtime_name" cat /tmp/antnest-egress-probe-response > "$fixture_directory/$phase-$kind.body" \
       || : > "$fixture_directory/$phase-$kind.body"
     node tests/e2e/runtime-controller/https-probe.mjs record "$fixture_directory" "$phase" "$kind" "$probe_exit" "$probe_status"
   done
