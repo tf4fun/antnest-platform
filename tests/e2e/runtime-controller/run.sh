@@ -7,6 +7,11 @@ cd "$repository_root"
 export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml:compose.debug.yaml}:tests/support/compose.public-development-secrets.yaml"
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-antnest-runtime-controller-e2e-$$}"
+case "$COMPOSE_PROJECT_NAME" in
+  ""|*[!a-zA-Z0-9_-]*) echo "Invalid fixture project name" >&2; exit 1 ;;
+esac
+fixture_directory="$repository_root/artifacts/verification/shell-runtime-controller/$COMPOSE_PROJECT_NAME/https-probe"
+export COMPOSE_FILE="$COMPOSE_FILE:tests/e2e/runtime-controller/https.compose.yaml"
 export ANTNEST_POSTGRES_HOST_PORT="${ANTNEST_POSTGRES_HOST_PORT:-$((30000 + ($$ % 5000)))}"
 export ANTNEST_RUNTIME_CONTROLLER_HOST_PORT="${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT:-$((40000 + ($$ % 5000)))}"
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-${COMPOSE_PROJECT_NAME}-runtime-management}"
@@ -36,6 +41,7 @@ cleanup() {
   docker rm -f "$runtime_name" >/dev/null 2>&1 || true
   docker volume rm "$workspace_volume" >/dev/null 2>&1 || true
   docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  rm -rf -- "$fixture_directory/tls"
   exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -81,6 +87,7 @@ wait_for_runtime() {
 }
 
 probe_allowed_egress() {
+  phase=$1
   # This fixture performs the Controller-owned attachment transition using the
   # current generation's public key ID, then restores the closed attachment.
   runtime_endpoint=$(docker inspect --format "{{(index .NetworkSettings.Networks \"$ANTNEST_RUNTIME_MANAGEMENT_NETWORK\").IPAddress}}" "$runtime_name")
@@ -94,8 +101,30 @@ probe_allowed_egress() {
     -d "{\"state\":\"open\",\"expected_resource_version\":${attachment_version},\"runtime_endpoint\":\"${runtime_endpoint}\",\"tunnel_key_id\":\"${tunnel_key_id}\"}" \
     "$egress_url/internal/agent-network-attachments/${agent_id}")
   printf '%s' "$opened" | grep -q '"attachment_state":"open"'
-  docker exec --user 1000:1000 "$runtime_name" curl -kfsS --connect-timeout 5 --max-time 10 https://1.1.1.1 >/dev/null
-  docker exec --user 1000:1000 "$runtime_name" curl -fsS --connect-timeout 5 --max-time 10 https://example.com | grep -q 'Example Domain'
+  # Only the public CA enters Runtime. Both probes verify TLS and traverse
+  # its ordinary UID 1000 packet path; the DNS probe uses its real resolver.
+  docker cp "$fixture_directory/tls/ca.pem" "$runtime_name:/tmp/antnest-egress-probe-ca.pem"
+  docker exec --user 0:0 "$runtime_name" chmod 0644 /tmp/antnest-egress-probe-ca.pem
+  for kind in ip dns; do
+    case "$kind" in ip) target=1.1.1.1 ;; dns) target=egress-fixture.example ;; esac
+    docker exec --user 1000:1000 "$runtime_name" rm -f /tmp/antnest-egress-probe-response
+    # Keep each result even on failure. HTTP success alone cannot substitute
+    # for the exact nonce response and Egress-side hit inventory.
+    probe_exit=0
+    if probe_status=$(docker exec --user 1000:1000 "$runtime_name" curl \
+      --noproxy '*' --cacert /tmp/antnest-egress-probe-ca.pem --silent --show-error \
+      --connect-timeout 5 --max-time 10 --write-out '%{http_code}' \
+      --output /tmp/antnest-egress-probe-response \
+      "https://$target:8443/probe/$ANTNEST_EGRESS_FIXTURE_NONCE/$phase/$kind"); then
+      :
+    else probe_exit=$?; fi
+    docker cp "$runtime_name:/tmp/antnest-egress-probe-response" "$fixture_directory/$phase-$kind.body" 2>/dev/null \
+      || : > "$fixture_directory/$phase-$kind.body"
+    node tests/e2e/runtime-controller/https-probe.mjs record "$fixture_directory" "$phase" "$kind" "$probe_exit" "$probe_status"
+  done
+  docker compose exec -T runtime-egress curl --noproxy '*' -fsS --max-time 3 \
+    "http://$fixture_target_ip:8081/status" > "$fixture_directory/$phase-inventory.json"
+  node tests/e2e/runtime-controller/https-probe.mjs inventory "$fixture_directory" "$phase" "$fixture_egress_ip"
   attachment_version=$(printf '%s' "$opened" | sed -n 's/.*"attachment_resource_version":\([0-9][0-9]*\).*/\1/p')
   test -n "$attachment_version"
   egress_request -X PUT -H 'content-type: application/json' \
@@ -103,8 +132,20 @@ probe_allowed_egress() {
     "$egress_url/internal/agent-network-attachments/${agent_id}" | grep -q '"attachment_state":"closed"'
 }
 
-docker compose up -d --wait postgres runtime-egress runtime-controller
+node tests/e2e/runtime-controller/https-probe.mjs prepare "$fixture_directory"
+export ANTNEST_EGRESS_FIXTURE_TLS_DIRECTORY="$fixture_directory/tls"
+ANTNEST_EGRESS_FIXTURE_NONCE=$(cat "$fixture_directory/nonce")
+export ANTNEST_EGRESS_FIXTURE_NONCE
+docker compose up -d --wait postgres runtime-egress runtime-controller egress-https-target
 docker compose up -d --no-deps --wait diagnostic-relay
+fixture_target=$(docker compose ps -q egress-https-target)
+fixture_egress=$(docker compose ps -q runtime-egress)
+docker inspect "$fixture_target" "$fixture_egress" > "$fixture_directory/network.json"
+fixture_target_ip=$(node tests/e2e/runtime-controller/https-probe.mjs address "$fixture_directory" "$COMPOSE_PROJECT_NAME" target)
+fixture_egress_ip=$(node tests/e2e/runtime-controller/https-probe.mjs address "$fixture_directory" "$COMPOSE_PROJECT_NAME" peer)
+node tests/e2e/runtime-controller/https-probe.mjs guard > "$fixture_directory/guard.nft"
+docker exec -i "$fixture_egress" nft -f - < "$fixture_directory/guard.nft"
+docker exec "$fixture_egress" ip route replace 1.1.1.1/32 via "$fixture_target_ip"
 
 runtime_image=$(docker image inspect --format '{{.Id}}' "${ANTNEST_E2E_RUNTIME_IMAGE:?use make e2e-runtime-controller}")
 case "$runtime_image" in
@@ -165,7 +206,7 @@ runtime_revision=$(printf '%s' "$created" | sed -n 's/.*"target_revision":"\([^"
 test -n "$first_execution"
 test -n "$runtime_revision"
 
-probe_allowed_egress
+probe_allowed_egress created
 
 controller_request "$controller_url/internal/runtimes/${agent_id}" \
   | grep -q "\"runtime_execution_id\":\"${first_execution}\""
@@ -229,7 +270,7 @@ runtime_revision=$(printf '%s' "$updated" | sed -n 's/.*"target_revision":"\([^"
 test -n "$runtime_revision"
 
 wait_for_runtime
-probe_allowed_egress
+probe_allowed_egress updated
 
 revision_payload=$(printf '%s' "{\"expected_revision\":\"${runtime_revision}\"}")
 disabled=$(controller_request -X POST -H 'content-type: application/json' \
