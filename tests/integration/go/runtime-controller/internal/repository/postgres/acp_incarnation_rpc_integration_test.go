@@ -452,9 +452,10 @@ func acpIncarnationRPCStartServer(t *testing.T, handler http.Handler) *acpIncarn
 		handler.ServeHTTP(w, r)
 	}))
 	fixture.server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateNew {
+		switch state {
+		case http.StateNew:
 			fixture.connections.Add(1)
-		} else if state == http.StateClosed {
+		case http.StateClosed:
 			fixture.connections.Add(-1)
 		}
 	}

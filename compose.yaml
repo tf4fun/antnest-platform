@@ -381,6 +381,8 @@ services:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.22
       controller-acp:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.34
+      controller-runtime:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.53
       identity-clients:
         ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.71
       registry-clients:
@@ -416,6 +418,7 @@ services:
     extra_hosts:
       identity-service: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.66
       agent-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.18
+      runtime-controller: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.50
       skill-registry: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.82
       jaeger: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.114
 

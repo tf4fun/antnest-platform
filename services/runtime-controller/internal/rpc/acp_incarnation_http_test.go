@@ -414,7 +414,7 @@ func (f *incarnationHTTPFixture) awaitPeerClosed(t *testing.T, rejectedBody bool
 	var extra [1]byte
 	// A complete 413 can be followed by TCP reset when rejected request bytes
 	// remain unread. Both outcomes still require the original StateClosed event.
-	if n, err := f.connection.Read(extra[:]); n != 0 || !(errors.Is(err, io.EOF) || rejectedBody && errors.Is(err, syscall.ECONNRESET)) {
+	if n, err := f.connection.Read(extra[:]); n != 0 || !errors.Is(err, io.EOF) && (!rejectedBody || !errors.Is(err, syscall.ECONNRESET)) {
 		t.Fatalf("server did not actually close its completed HTTP connection: bytes=%d error=%v", n, err)
 	}
 	incarnationHTTPAwait(t, f.closed, "completed server TCP connection")

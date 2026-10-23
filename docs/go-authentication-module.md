@@ -73,7 +73,7 @@ passes. This extraction adds no full-platform mTLS acceptance claim.
 `make test-go-authentication` runs the shared Go protocol suite independently
 of the workspace. `make test-service-authentication` enforces route ownership
 and the shared module's build/ownership guard. `make test-repo` includes its
-13 positive/negative repository checks. The guard checks every service's Go
+15 positive/negative repository checks. The guard checks every service's Go
 sources for restored private authentication packages, preserves Identity's
 owned authority, and checks the six current consumers' direct dependencies,
 relative replaces, Docker layouts, outbound policy and CI coverage.

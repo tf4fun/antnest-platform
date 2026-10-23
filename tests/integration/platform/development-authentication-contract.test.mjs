@@ -16,7 +16,7 @@ const contract = JSON.parse(
   ),
 );
 
-test("development provisioning derives 23 static pairs from the nine owning catalogs", () => {
+test("development provisioning derives 24 static pairs from the nine owning catalogs", () => {
   assert.equal(contract.version, 1);
   assert.equal(contract.profile, "disposable-development-token-http");
   const services = Object.keys(contract.static_services);
@@ -41,13 +41,14 @@ test("development provisioning derives 23 static pairs from the nine owning cata
       }
     }
   }
-  assert.equal(pairs.size, 23);
+  assert.equal(pairs.size, 24);
   for (const receiver of ["agent-controller", "agent-acp-service"]) {
     assert(!pairs.has(`edge-gateway->${receiver}`));
     assert(pairs.has(`agent-ui->${receiver}`));
   }
   assert(pairs.has("agent-controller->runtime-egress"));
   assert(pairs.has("runtime-controller->skill-registry"));
+  assert(pairs.has("agent-acp-service->runtime-controller"));
   assert(![...pairs].some((pair) => pair.includes("antnest-runtime")));
 });
 

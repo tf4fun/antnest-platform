@@ -9,6 +9,44 @@ test("all Go authentication consumers use the shared module and standalone build
   assert.deepEqual(checkGoAuthenticationModule(), []);
 });
 
+test("rejects caller-context forwarding from the private incarnation probe", () => {
+  const path =
+    "services/runtime-controller/internal/acpincarnationprobe/client.go";
+  const errors = checkGoAuthenticationModule({
+    transform: (file, source) =>
+      file === path
+        ? source.replaceAll(
+            "serviceauth.WorkloadOnlyHeaders",
+            "serviceauth.CallerContextHeaders",
+          )
+        : source,
+  });
+  assert(
+    errors.some(
+      (error) =>
+        error.startsWith(path + ":") &&
+        error.includes("outbound authority policy"),
+    ),
+  );
+});
+
+test("the incarnation probe profile does not relax other Runtime Controller clients", () => {
+  const path = "services/runtime-controller/internal/restored/probe.go";
+  const errors = checkGoAuthenticationModule({
+    additionalSources: {
+      [path]:
+        'package restored\nfunc probe() { serviceauth.LoadOutbound("runtime-controller", serviceauth.WorkloadOnlyHeaders, lookup, origins) }\n',
+    },
+  });
+  assert(
+    errors.some(
+      (error) =>
+        error.startsWith(path + ":") &&
+        error.includes("outbound authority policy"),
+    ),
+  );
+});
+
 for (const [name, path, source, expected] of [
   [
     "private serviceauth package",

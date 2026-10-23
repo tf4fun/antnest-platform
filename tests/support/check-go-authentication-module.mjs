@@ -80,8 +80,15 @@ export function checkGoAuthenticationModule({
     }
     const service = path.split("/")[1];
     if (consumers[service]) {
+      // The private ACP probe never forwards user authority. Keep this exact
+      // owning adapter separate from RC's existing caller-context clients.
+      const profile =
+        path ===
+        "services/runtime-controller/internal/acpincarnationprobe/client.go"
+          ? "WorkloadOnlyHeaders"
+          : consumers[service];
       const expected = new RegExp(
-        `^"${service}"\\s*,\\s*serviceauth\\.${consumers[service]}\\s*,`,
+        `^"${service}"\\s*,\\s*serviceauth\\.${profile}\\s*,`,
         "u",
       );
       for (const call of source.matchAll(

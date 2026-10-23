@@ -100,8 +100,6 @@ func (c *Client) Probe(parent context.Context, member acpincarnation.Member, obs
 	logicalAddress := net.JoinHostPort(origin.Hostname(), port)
 	inspectedAddress := net.JoinHostPort(address.Unmap().String(), port)
 	transport.Proxy = nil
-	transport.Dial = nil
-	transport.DialTLS = nil
 	transport.DialTLSContext = nil
 	transport.DisableKeepAlives = true
 	transport.DialContext = func(dialCtx context.Context, network, target string) (net.Conn, error) {

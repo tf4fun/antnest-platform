@@ -26,7 +26,7 @@ type AcpIncarnationPlatform struct {
 
 func NewAcpIncarnationPlatform(client *Client) (*AcpIncarnationPlatform, error) {
 	if client == nil || client.httpClient == nil {
-		return nil, errors.New("Docker client is required for ACP incarnation observations")
+		return nil, errors.New("docker client is required for ACP incarnation observations")
 	}
 	private := *client.httpClient
 	private.CheckRedirect = func(*http.Request, []*http.Request) error {
@@ -43,7 +43,7 @@ func (p *AcpIncarnationPlatform) EngineID(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if response.ID == "" || len(response.ID) > 256 || strings.TrimSpace(response.ID) != response.ID {
-		return "", errors.New("Docker engine identity is invalid")
+		return "", errors.New("docker engine identity is invalid")
 	}
 	return response.ID, nil
 }
@@ -65,17 +65,17 @@ func (p *AcpIncarnationPlatform) Inspect(ctx context.Context, selector, network 
 		return acpincarnation.Observation{}, err
 	}
 	if !validAcpIncarnationContainerID(response.ID) || response.State.Running == nil {
-		return acpincarnation.Observation{}, errors.New("Docker container process identity is invalid")
+		return acpincarnation.Observation{}, errors.New("docker container process identity is invalid")
 	}
 	started, err := time.Parse(time.RFC3339Nano, response.State.StartedAt)
 	if err != nil || started.IsZero() {
-		return acpincarnation.Observation{}, errors.New("Docker container start identity is invalid")
+		return acpincarnation.Observation{}, errors.New("docker container start identity is invalid")
 	}
 	address := response.NetworkSettings.Networks[network].IPAddress
 	if address != "" {
 		parsed, err := netip.ParseAddr(address)
 		if err != nil || parsed.Unmap().IsUnspecified() || parsed.Unmap().IsMulticast() || parsed.Zone() != "" {
-			return acpincarnation.Observation{}, errors.New("Docker container probe address is invalid")
+			return acpincarnation.Observation{}, errors.New("docker container probe address is invalid")
 		}
 	}
 	return acpincarnation.Observation{
@@ -92,14 +92,14 @@ func (p *AcpIncarnationPlatform) readJSON(ctx context.Context, path string, cont
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("Docker incarnation request is invalid")
+		return errors.New("docker incarnation request is invalid")
 	}
 	response, requestErr := p.httpClient.Do(request)
 	if response == nil || response.Body == nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("Docker incarnation request failed")
+		return errors.New("docker incarnation request failed")
 	}
 
 	// Read and close the actual body before interpreting even an HTTP 404. Error
@@ -111,28 +111,28 @@ func (p *AcpIncarnationPlatform) readJSON(ctx context.Context, path string, cont
 		failures = append(failures, ctx.Err())
 	}
 	if requestErr != nil {
-		failures = append(failures, errors.New("Docker incarnation request failed"))
+		failures = append(failures, errors.New("docker incarnation request failed"))
 	}
 	if readErr != nil {
-		failures = append(failures, errors.New("Docker incarnation response body could not be read"))
+		failures = append(failures, errors.New("docker incarnation response body could not be read"))
 	}
 	if closeErr != nil {
-		failures = append(failures, errors.New("Docker incarnation response body could not be closed"))
+		failures = append(failures, errors.New("docker incarnation response body could not be closed"))
 	}
 	if len(failures) != 0 {
 		return errors.Join(failures...)
 	}
 	if len(raw) > acpIncarnationResponseLimit {
-		return errors.New("Docker incarnation response exceeds the body limit")
+		return errors.New("docker incarnation response exceeds the body limit")
 	}
 	if response.StatusCode == http.StatusNotFound && container {
 		return acpincarnation.ErrContainerNotFound
 	}
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("Docker incarnation request returned HTTP %d", response.StatusCode)
+		return fmt.Errorf("docker incarnation request returned HTTP %d", response.StatusCode)
 	}
 	if err := json.Unmarshal(raw, target); err != nil {
-		return errors.New("Docker incarnation response is invalid JSON")
+		return errors.New("docker incarnation response is invalid JSON")
 	}
 	return nil
 }
