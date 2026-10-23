@@ -81,11 +81,13 @@ read and cancellation cleanup actually settle before the next attempt starts.
 Failed cleanup ends startup. Exhausted attempts or budget leave the service
 unready and fail startup after cleanup.
 
-SIGTERM during startup cancels registration or its backoff and permanently
-closes pending intent immediately. Shutdown joins the original registration,
+SIGTERM/SIGINT during startup cancels registration or its backoff and permanently
+closes pending intent immediately. Shutdown retains the original registration,
 body cancellation and owner listener resources; a late successful receipt
-cannot reopen the intent or continue ordinary startup. The configured process
-shutdown deadline still bounds cleanup, and incomplete cleanup exits non-zero.
+cannot reopen the intent or continue ordinary startup. The first signal or
+global ownership loss establishes one absolute deadline from the configured
+shutdown timeout; repeated signals do not reset it. Deadline expiry forces a
+non-zero exit without claiming that original work or cleanup joined.
 The owner wire uses `no-store` and suppresses request, response and error payload
 capture even when RPC content capture is enabled. Logs do not include nonces,
 credentials or configured private probe addresses.
@@ -118,8 +120,8 @@ work.
 
 The global worker lock, single-instance restriction and independent
 ownership-loss fail-stop channel remain. Production predecessor stop-proof
-recovery, cross-owner ACKs and peers, two-replica integration, and global
-fail-stop original-task joins with main-process acceptance remain pending.
+recovery, cross-owner ACKs and peers, two-replica integration, and background Learning
+shutdown/isolation acceptance remain pending.
 Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
 registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
 it does not establish a real Runtime Controller/Runtime deployment or two replicas.
@@ -195,8 +197,8 @@ effect. These callbacks must contain database work only. Existing transactions
 without this option retain their existing configured statement budgets.
 
 Production predecessor stop-proof recovery, cross-owner configuration/revocation
-ACKs and trusted peers, two-replica integration, and global fail-stop
-original-task joins with main-process acceptance remain required. The
+ACKs and trusted peers, two-replica integration, and background Learning
+shutdown/isolation acceptance remain required. The
 [ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
 those remaining gates. Lease rows must not be deleted to reset an epoch.
 
@@ -306,8 +308,8 @@ original authority for cleanup through closure. A Skill install keeps its
 authority only until its attempt ends; a resend uses the current binding. An authentication failure cannot erase an earlier unknown effect;
 normal stopping and durable settlement rules still apply. Normal shutdown and
 failed startup close the dispatcher and remove owned sender files. Global
-worker-loss cleanup remains subject to the pending fail-stop original-task join
-and main-process acceptance. See [execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission)
+worker-loss cleanup retains the original startup and single shutdown under the
+same absolute deadline; forced exit at expiry proves no completed join. Background Learning shutdown/isolation acceptance remains pending. See [execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission)
 and the [private connection contract](../../../contracts/runtime/instance-connection.md).
 
 ## Provider Model Egress
@@ -505,27 +507,37 @@ Collector retention. This service adds no retention service.
   above; predecessor stop-proof recovery remains pending for protected owned work.
 - Run worker lock unavailable: startup fails because another replica owns Run
   execution. A same-session heartbeat detects loss of the dedicated lock
-  connection; loss makes readiness false, aborts startup recovery and local
-  execution, emits its structured stdout event, gives OTLP trace/metrics at
-  most 500ms to flush, and then exits non-zero for platform replacement. This is
-  a hard fail-stop, not graceful shutdown: the stale worker must not persist
-  terminal Run state after ownership is lost.
-  A dedicated ownership-loss channel races startup, recovery, serving, and
-  graceful cleanup, so an earlier ordinary component or database failure
-  cannot mask lock loss. External and durable operations, including context
-  checkpoint writes, recheck ownership after both success and failure before
-  any next transition. The outer main-process fail-stop race remains separate
-  from generation drain and startup cleanup: global fail-stop joins of original
-  tasks and main-process acceptance are still pending.
+  connection; loss immediately closes admission, clears readiness and cancels
+  startup recovery and local execution. It establishes the same absolute
+  configured shutdown deadline as the first SIGTERM/SIGINT. `main` retains the
+  original startup and one shutdown operation until actual completion;
+  repeated signals neither create another shutdown nor reset the deadline.
+  Service failure notifications remain observed during closure, and late
+  errors from original tasks are retained. Business errors are recorded before
+  telemetry flush. The ownership-loss telemetry flush starts after cleanup,
+  has a 500ms maximum and remains bounded by the overall deadline's remaining
+  time. Actual expiry forces a non-zero exit without claiming successful joins.
+  External and durable operations, including context checkpoint writes,
+  recheck ownership after success or failure before any next transition; a
+  stale worker cannot persist terminal Run state after losing authority.
+  Agent-local ownership loss still closes only that Agent, and the global
+  worker lock remains required. The real PostgreSQL/main startup regression
+  holds the configuration read through lock loss and repeated SIGTERM, then
+  verifies cleanup after release or hard exit at the original deadline. The
+  latter is not proof of successful SQL completion. See
+  [`main-worker-loss.postgres.test.ts`](../../../tests/integration/agent-acp-service/e2e/main-worker-loss.postgres.test.ts).
+  Background Learning shutdown/isolation acceptance remains pending.
 - Session cancellation, close, or delete: persist a cancellation latch before
   waiting for in-memory execution. A late acceptance commit reaches an already
   aborted executor and is closed without starting model or Tool work.
-- SIGTERM: stop accepting connections, cancel active work, wait up to the
-  shutdown timeout, terminate open ACP transports, persist terminal or
-  unresolved facts where the executor can prove them, release the worker lock
-  and database pool, then exit non-zero if cleanup or quiescence was not
-  proven. Exceeding the deadline invokes a hard process exit so a stuck client
-  cannot keep the container indefinitely terminating.
+- SIGTERM/SIGINT: immediately close admission and establish the shared absolute
+  deadline from the configured shutdown timeout. Retain the original startup
+  and single shutdown, cancel active work, terminate ACP transports, persist
+  terminal or unresolved facts only under live authority, and release the
+  worker lock and database pool. Repeated signals do not extend the deadline.
+  Failure notifications and late original-task errors remain recorded before
+  telemetry flush. Incomplete cleanup exits non-zero; actual deadline expiry
+  forces exit without establishing successful joins.
 - ACP reconnect: active Run ownership remains in the process-level supervisor;
   an authorized `session/cancel`, close, or delete from a replacement
   connection still reaches the original Run.

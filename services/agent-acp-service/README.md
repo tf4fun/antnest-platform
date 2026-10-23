@@ -241,8 +241,8 @@ its original model work.
 
 The global worker lock and single-instance restriction remain. Production
 predecessor stop-proof recovery, cross-owner ACKs and peers, two-replica
-integration, and global fail-stop joins of original tasks with main-process
-acceptance remain pending under the
+integration, and production background Learning shutdown/isolation acceptance
+remain pending under the
 [owner handoff contract](../../contracts/agent-acp/owner-handoff.md).
 
 The debug Agent ID retains the existing `optional()` normalization: leading and

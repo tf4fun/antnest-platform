@@ -81,8 +81,8 @@ The ACK checks every accepting Agent outside configuration publication. Failure
 does not withdraw healthy applied configuration, but an organization-wide ACK
 does not guarantee that Controller independently marks a healthy new Agent ready.
 Production predecessor stop-proof recovery, cross-owner ACKs and peers,
-two-replica integration, and global fail-stop joins of original tasks with
-main-process acceptance remain pending. The global worker lock and
+two-replica integration, and background Learning shutdown/isolation acceptance
+remain pending. The global worker lock and
 single-instance restriction stay in place.
 
 ## Optional Incarnation Bootstrap
@@ -152,8 +152,8 @@ fenced writers and scoped background work. Without owner settings, startup
 retains the legacy path. The global worker lock, single-instance restriction and
 independent ownership-loss fail-stop channel remain; connected generations and
 scoped legacy recovery do not complete predecessor stop-proof recovery,
-cross-owner ACKs and peers, two-replica integration or global fail-stop
-original-task joins and main-process acceptance.
+cross-owner ACKs and peers, two-replica integration or production background
+Learning shutdown/isolation acceptance.
 
 ## Mission
 
@@ -262,8 +262,8 @@ and retires a barrier only if all protected resources have cleared. A lost owner
 cannot save that receipt, even after successful remote cleanup. Terminal Runs
 and deleted Sessions remain cleanable by their original current owner. Candidate
 reads do not authorize cleanup. Generation shutdown joins original work;
-predecessor stop-proof recovery and global fail-stop original-task joins remain
-separate pending acceptance.
+predecessor stop-proof recovery and production background Learning
+shutdown/isolation acceptance remain pending.
 Fork creates a new Session with a point-in-time copy of durable context,
 records the immutable immediate source Session, but never copies Runs or
 admissions and rejects a source Session with active work.
@@ -615,25 +615,34 @@ model request, Tool dispatch or accepted prompt.
 The service permits one active Run worker per service database. Startup acquires a
 PostgreSQL session advisory lock on a dedicated connection before recovery and
 holds it until shutdown. A second worker fails startup; lock-connection loss
-is detected by a same-session heartbeat, stops readiness, aborts startup
-recovery and local execution, and immediately fail-stops the process for
-platform replacement. Worker-ownership loss does not enter graceful shutdown:
-the stale worker must not persist a terminal result after
-another worker can acquire the lock. The lock-loss handler is installed before
-recovery can make a storage call; startup recovery races that failure signal
-through an ownership-loss channel that is independent from ordinary service
-failures. The same channel preempts startup, recovery, and graceful cleanup;
-an earlier database or component error cannot hide lock loss behind a slower
-cleanup path. Every external or durable effect is wrapped by one ownership
-fence that checks before the call and after either success or failure. Loss
-closes dispatch immediately, while the wrapper still awaits the original
-operation and its cleanup before settling; cancellation does not prove that a
-pending runner or SQL operation has stopped. Context loading and checkpoint persistence use the
-same fence. A completed effect may be recovered idempotently after replacement,
-but the stale worker cannot begin the next transition. Global fail-stop joins
-of original tasks and main-process acceptance remain pending; normal generation
-drain does not establish that boundary. Active-active execution still requires
-the remaining handoff and two-replica acceptance, independently of HTTP adapters.
+is detected by a same-session heartbeat and immediately closes admission,
+clears readiness and cancels startup recovery and local execution. Agent-local
+ownership loss still closes only the affected Agent. The global worker lock
+remains required, and a stale worker cannot persist a terminal result or start
+another effect after losing its authority.
+
+Global ownership loss or the first SIGTERM/SIGINT establishes one absolute
+deadline using the configured shutdown timeout. `main` retains the original
+startup and one shutdown operation until they actually settle; repeated signals
+reuse that operation and do not reset the deadline. Service failure notifications
+remain observed during closure, and late errors from original tasks are retained.
+Business errors are recorded before telemetry flush. On ownership loss, the
+500ms telemetry budget applies only after cleanup and is also bounded by the
+remaining overall deadline. Actual deadline expiry forces a non-zero exit;
+that path does not establish that original tasks joined successfully. The real PostgreSQL/main regression holds the original startup configuration
+read through worker-lock loss and repeated SIGTERM. Releasing the SQL lock
+allows cleanup and a non-zero exit; the held-through-deadline branch proves
+forced exit and connection removal, not successful SQL completion. See
+[`main-worker-loss.postgres.test.ts`](../../../tests/integration/agent-acp-service/e2e/main-worker-loss.postgres.test.ts).
+Production background Learning shutdown/isolation remains separate acceptance.
+
+The ownership-loss handler is installed before recovery can make a storage call.
+External and durable effects check authority before the call and after either
+success or failure, while retaining the original operation and cleanup until
+settlement. Cancellation alone never proves a pending runner or SQL operation
+has stopped. Context loading and checkpoint persistence use the same fence.
+Active-active execution still requires the remaining handoff and two-replica
+acceptance, independently of HTTP adapters.
 
 The legacy startup adapters additionally support explicit organization/Agent
 selection for abandoned permission cancellation, Run recovery and Learning
@@ -768,11 +777,15 @@ owner mode isolates the affected generation; legacy/global failures retain
 their service-recovery boundary. The service never removes an in-memory executor
 and serves that Agent as though execution had safely finished.
 
-Shutdown first clears readiness, then terminates ACP transports and cancels
-active execution. The optional owner intent closes permanently and its probe
-listener joins shutdown cleanup. Server, supervisor, worker-lock, and PostgreSQL
-cleanup are all attempted even when one cleanup operation fails; an incomplete shutdown
-exits non-zero for platform replacement.
+Global ownership loss or the first SIGTERM/SIGINT closes admission immediately
+and starts the shared absolute shutdown deadline. The retained shutdown closes
+ACP transports and cancels active execution. The optional owner intent closes
+permanently and its probe listener joins cleanup. Server, supervisor, worker-lock
+and PostgreSQL cleanup are all attempted even when another cleanup operation
+fails. Failure notifications and original task errors remain observable through
+closure and are recorded before telemetry flush. Repeated signals do not create
+another shutdown or extend the deadline; expiry forces a non-zero exit without
+claiming successful joins.
 
 ## Connection Identity
 
@@ -822,8 +835,7 @@ fixed generation dispatch and scoped legacy recovery. Legacy compatibility
 writes still use global worker-lock authority, while work cancellation uses
 the entry signal and Learning retains and joins original model work.
 Predecessor stop-proof recovery, cross-owner ACKs and peers, two-replica
-integration, and global fail-stop original-task joins with main-process
-acceptance remain pending.
+integration, and background Learning shutdown/isolation acceptance remain pending.
 
 ## Workspace Bridge Extension
 
@@ -906,8 +918,9 @@ Unsupported surfaces are not stubbed with false success responses.
 9. Session close/delete and Run-intent creation serialize on one Session row.
 10. A cancelled admitting Run cannot progress to model or Tool execution.
 11. Losing the worker-lock session closes dispatch and signals cancellation to
-    recovery and local executors. Global fail-stop original-task joins and
-    main-process acceptance remain pending before multi-replica handoff.
+    recovery and local executors. The original startup and single shutdown are
+    retained under one absolute deadline; forced exit at expiry proves no join.
+    Background Learning shutdown/isolation acceptance remains pending.
 12. Transactions that need both records lock the Session before the Run; this
     canonical order also applies to cancellation and durable event writes.
 13. A Tool-call batch produces no external effect until every call in that
