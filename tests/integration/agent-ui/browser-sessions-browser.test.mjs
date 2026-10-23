@@ -42,6 +42,7 @@ async function withWorkspace(viewport, exercise) {
     bootstraps: 0,
     passwordWrites: 0,
     revocations: [],
+    refreshGate: null,
     activity: [],
     idleEnforced: false,
     lastActivity: Date.now(),
@@ -173,6 +174,18 @@ async function withWorkspace(viewport, exercise) {
         return reply({ bindings: [], notices: [] });
       if (path === "/api/session/sessions") {
         assert.equal(url.searchParams.get("limit"), "50");
+        const gate = state.refreshGate;
+        if (state.othersRevoked && gate && !gate.started) {
+          gate.started = true;
+          gate.entered.resolve();
+          try {
+            await gate.resume.promise;
+            await reply({ sessions: [row("public-current", "org-1", true)] });
+          } finally {
+            gate.finished.resolve();
+          }
+          return;
+        }
         if (url.searchParams.has("after_id")) {
           assert.equal(url.searchParams.get("after_id"), "public-current");
           return reply({ sessions: [row("public-other", "org-2", false)] });
@@ -235,10 +248,36 @@ async function withWorkspace(viewport, exercise) {
     assert.deepEqual(unexpected, []);
     await context.close();
   } finally {
-    await browser?.close();
-    server.closeAllConnections();
-    server.close();
-    await once(server, "close");
+    state.refreshGate?.resume.resolve();
+    try {
+      await browser?.close();
+    } finally {
+      try {
+        if (state.refreshGate?.started)
+          await state.refreshGate.finished.promise;
+      } finally {
+        server.closeAllConnections();
+        server.close();
+        await once(server, "close");
+      }
+    }
+  }
+}
+
+async function waitForRefresh(promise, phase) {
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Session refresh ${phase} did not finish`)),
+          10_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -331,12 +370,31 @@ for (const [label, viewport] of [
             1,
             "503 must not automatically replay revocation",
           );
+          const refresh = {
+            entered: Promise.withResolvers(),
+            resume: Promise.withResolvers(),
+            finished: Promise.withResolvers(),
+            started: false,
+          };
+          state.refreshGate = refresh;
           await dialog
             .getByRole("button", { name: "Confirm sign out other sessions" })
             .click();
           await dialog
             .getByText("1 session was signed out.", { exact: true })
             .waitFor();
+          await waitForRefresh(refresh.entered.promise, "request");
+          // The mutation receipt precedes the separate inventory refresh.
+          // Keep that response held to exercise the real asynchronous boundary.
+          const loadMore = dialog.getByRole("button", {
+            name: "Load more sessions",
+            exact: true,
+          });
+          assert.equal(await loadMore.count(), 1);
+          assert.equal(await loadMore.isDisabled(), true);
+          refresh.resume.resolve();
+          await waitForRefresh(refresh.finished.promise, "response");
+          await loadMore.waitFor({ state: "detached" });
           assert.equal(
             await dialog
               .getByRole("button", { name: "Load more sessions" })
