@@ -38,8 +38,9 @@ Original inputs are immutable in-memory JSON, bounded to four messages and
 64 MiB in total. They are released on durable Run receipt, terminal outcome,
 Agent/Session navigation or close, and are never written to browser storage.
 Reloaded or evicted inputs allow observation only. Node's bounded busy/not-ready
-admission backoff is implemented. Real ACP original-message Docker acceptance
-for #53 remains pending. Existing controlled browser fixtures establish their
+admission backoff is implemented. The [real ACP receipt scenario](../../tests/e2e/agent-ui/receipt-contract.test.mjs)
+requires the original busy-rejected message to complete after the held Run.
+Existing controlled browser fixtures establish their
 HTTP/SSE behavior; they do not prove that a real busy-rejected original Prompt
 retried successfully. Success of a new Session or intent does not satisfy that gate.
 

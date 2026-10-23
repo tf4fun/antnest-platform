@@ -121,6 +121,7 @@ export function assertPromptInventory({
   gateBefore,
   gateAfter,
   expected,
+  expectedDispatches = expected,
 }) {
   assert.ok(
     Array.isArray(browserPrompts),
@@ -150,6 +151,39 @@ export function assertPromptInventory({
     "Browser replayed, changed, reordered or lost an original Prompt",
   );
   for (const request of browserPrompts) validateBrowserRequest(request);
+
+  assert.ok(
+    Array.isArray(expectedDispatches),
+    "Expected ACP dispatch inventory is absent",
+  );
+  const originals = new Map(
+    expectedRequests.map((request) => [request.body.intentId, request]),
+  );
+  const dispatchCounts = new Map();
+  for (const entry of expectedDispatches) {
+    assert.ok(
+      object(entry) &&
+        (entry.forwarded === 0 || entry.forwarded === 1) &&
+        object(entry.request),
+      "Expected ACP dispatch or forwarding count is invalid",
+    );
+    validateBrowserRequest(entry.request);
+    const intent = entry.request.body.intentId;
+    assert.ok(
+      originals.has(intent) &&
+        isDeepStrictEqual(entry.request, originals.get(intent)),
+      "Expected ACP dispatch differs from an original browser request",
+    );
+    const count = (dispatchCounts.get(intent) ?? 0) + 1;
+    assert.ok(count <= 4, "Original intent exceeded its four-dispatch budget");
+    dispatchCounts.set(intent, count);
+  }
+  assert.ok(
+    expectedRequests.every((request) =>
+      dispatchCounts.has(request.body.intentId),
+    ),
+    "Expected ACP dispatch inventory omitted an original browser request",
+  );
 
   const before = gateBefore.records;
   const after = gateAfter.records;
@@ -196,13 +230,13 @@ export function assertPromptInventory({
     if (message.method === "session/prompt") prompts.push({ record, message });
   }
   assert.ok(
-    prompts.length === expected.length,
+    prompts.length === expectedDispatches.length,
     "ACP replayed, added or lost an original Prompt",
   );
   let forwardedPrompts = 0;
   const forwardedByIntent = new Map();
   for (const [index, { record, message }] of prompts.entries()) {
-    const { request, forwarded } = expected[index];
+    const { request, forwarded } = expectedDispatches[index];
     const params = message.params;
     const intent = params._meta["antnest.dev/intent"];
     assert.ok(

@@ -432,7 +432,8 @@ fault, revocation and Resolve evidence.
 Node and browser explicit retry are implemented. The schema and fixtures
 define their wire contract; fixtures alone are not execution evidence. Node's
 bounded admission backoff below is also implemented. Real original-Prompt
-ACP Docker acceptance for #53 remains pending.
+ACP Docker acceptance is an independent required gate in the
+[receipt scenario](../../tests/e2e/agent-ui/receipt-contract.test.mjs).
 Ordinary Prompt submission, its existing route, body and Bridge ACK remain
 unchanged.
 
@@ -498,7 +499,7 @@ body limits and independent admission.
 ## Bounded Prompt admission backoff (#53)
 
 `prompt_admission_backoff` is implemented by the Agent UI Node consumer.
-Real ACP original-Prompt Docker acceptance remains pending. Workspace API v1,
+Real ACP original-Prompt Docker acceptance remains an independent gate. Workspace API v1,
 ACP methods, Prompt bodies, intent metadata, error capability v1 and Bridge
 `intentReceipt: 1` remain unchanged. The manifest's
 `antnest.dev/bridge.intentReceipt` denotes that existing nested capability;

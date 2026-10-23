@@ -60,7 +60,7 @@ const validExecution = validator.compile({
 const ownerLabel = "io.antnest.verification.project";
 
 test(
-  "Gateway preserves failed receipts, typed busy rejection and silent Runs across browser renewal",
+  "Gateway preserves failed receipts, retries the original busy Prompt and retains silent Runs across browser renewal",
   {
     timeout: 900_000,
     skip: process.env.ANTNEST_UI_RECEIPT_E2E !== "1",
@@ -407,7 +407,7 @@ test(
           "node-parsers",
           "workspace-failure-and-reload",
           "unsupported-content-no-model-inference",
-          "typed-busy-rejection-without-original-prompt-replay",
+          "typed-busy-original-prompt-automatic-retry",
           "explicit-new-conversation-after-peer-completion",
           "silent-run-after-browser-delegation-renewal",
           "genuine-input-activity-without-prompt-replay",

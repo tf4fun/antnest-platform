@@ -163,7 +163,7 @@ test-repo:
 	$(MAKE) test-lifecycle-fixtures
 	$(MAKE) test-workspace-fixtures
 	$(MAKE) test-resolve-cache-fixtures
-	node --test --test-concurrency=1 tests/e2e/agent-ui/upload-capacity-*.test.mjs tests/e2e/agent-ui/acp-gate.test.mjs tests/e2e/agent-ui/acp-gate-responses.test.mjs tests/e2e/agent-ui/prompt-dispatch-inventory.test.mjs
+	node --test --test-concurrency=1 tests/e2e/agent-ui/upload-capacity-*.test.mjs tests/e2e/agent-ui/acp-gate.test.mjs tests/e2e/agent-ui/acp-gate-responses.test.mjs tests/e2e/agent-ui/prompt-dispatch-inventory.test.mjs tests/e2e/agent-ui/prompt-admission-retry-evidence.test.mjs
 	node --test --test-concurrency=1 tests/e2e/agent-ui/browser-session-stream.test.mjs tests/e2e/agent-ui/browser-prompt-send.test.mjs
 	node --test --test-concurrency=1 tests/e2e/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/identity-closeout/*.test.mjs
