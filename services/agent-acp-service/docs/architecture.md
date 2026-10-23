@@ -617,8 +617,8 @@ Session privacy; after it settles, the preparing state becomes visible. A new
 executable snapshot changes the view to ready, while revocation sanitizes and
 terminates the subscription even if access is regranted. Generic unavailability,
 Runtime barriers and storage failures retain their existing classifications.
-The Controller's transactional binding/ACK proof and the 100-iteration delayed
-publication acceptance remain separate work under the
+The Controller owns the transactional binding/ACK proof. Cross-service
+acceptance checks 100 first Prompts with delayed publication under the
 [readiness contract](../../../contracts/agent-controller/readiness.md).
 
 ## Resource Identifiers

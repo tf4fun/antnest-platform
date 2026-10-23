@@ -55,22 +55,22 @@ Never-ready Agents remain manageable without successful execution history.
 
 ## Required Scenarios
 
-| Scenario | Expected result |
-| --- | --- |
-| Initial create fails | not_created; retain operation and partial-resource evidence |
-| Create completes without binding | created/enabled; waiting or unknown; readiness preparing; authorized ACP entry stays closed with agent_preparing |
-| Healthy binding before ACP ACK | v2 runtime_bound and organization threshold commit together; complete snapshot is executable; readiness still preparing |
-| ACP ACK covers current eligible binding | atomically record applied proof and unique v2 agent_ready; readiness ready; ordinary ACK does not advance publication revision |
-| Current access or lifecycle closes after ready | readiness unavailable; retain historical proof and events |
-| Process exits later | created/enabled/exited; original operation remains completed |
-| Same execution health recovers | update observation without rewriting history |
-| New process after unexpected loss | do not reuse invalidated execution binding |
-| Rebuild removes old compute | remain created; operation explains absence |
-| Disable requested/succeeds/fails | immediate admission barrier; confirmed disabled only on success |
-| Enable completes | created/enabled; observe readiness independently |
-| Delete succeeds/fails | deleted only after cleanup; failure preserves original lifecycle |
-| Old observation arrives | never overwrite newer target or reopen access |
-| Observation unavailable | unknown with diagnostic reason |
+| Scenario                                       | Expected result                                                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Initial create fails                           | not_created; retain operation and partial-resource evidence                                                                    |
+| Create completes without binding               | created/enabled; waiting or unknown; readiness preparing; authorized ACP entry stays closed with agent_preparing               |
+| Healthy binding before ACP ACK                 | v2 runtime_bound and organization threshold commit together; complete snapshot is executable; readiness still preparing        |
+| ACP ACK covers current eligible binding        | atomically record applied proof and unique v2 agent_ready; readiness ready; ordinary ACK does not advance publication revision |
+| Current access or lifecycle closes after ready | readiness unavailable; retain historical proof and events                                                                      |
+| Process exits later                            | created/enabled/exited; original operation remains completed                                                                   |
+| Same execution health recovers                 | update observation without rewriting history                                                                                   |
+| New process after unexpected loss              | do not reuse invalidated execution binding                                                                                     |
+| Rebuild removes old compute                    | remain created; operation explains absence                                                                                     |
+| Disable requested/succeeds/fails               | immediate admission barrier; confirmed disabled only on success                                                                |
+| Enable completes                               | created/enabled; observe readiness independently                                                                               |
+| Delete succeeds/fails                          | deleted only after cleanup; failure preserves original lifecycle                                                               |
+| Old observation arrives                        | never overwrite newer target or reopen access                                                                                  |
+| Observation unavailable                        | unknown with diagnostic reason                                                                                                 |
 
 ## Creation
 
@@ -189,10 +189,11 @@ eligible legacy binding without proof. That transaction bootstraps a bound
 threshold at R+1; only a new covering ACK can mark the binding ready. This is
 the exception to ordinary ACKs not advancing publication revision.
 
-Controller producer/API and ACP preparing code are implemented in the current
-candidate. Agent UI preparing presentation and Admin Console readiness
-consumption remain pending, as does the real two-second delayed-publication
-test repeating create, wait-for-ready and immediate successful Prompt 100 times.
-This document does not claim final PostgreSQL verification or completion of
-the cross-service readiness workflow. See the
-[readiness contract](../contracts/agent-controller/readiness.md).
+Agent UI watches ACP execution state, presents preparing status and preserves
+unsent input until admission opens. Admin Console consumes current Controller
+readiness instead of inferring it from Runtime health. The
+[readiness profile](../tests/e2e/agent-readiness/run.mjs) delays publication by
+at least two seconds and checks 100 fresh Agents, each prompted immediately
+after acknowledged readiness, including durable Run results and actual cleanup.
+The [readiness contract](../contracts/agent-controller/readiness.md) defines
+the service-owned checks and complete remote integration gate.

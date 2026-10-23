@@ -224,35 +224,34 @@ Schema compatibility for historical events remains explicit, without requiring
 new fields on immutable old records. The shared fixtures cover legacy Agent
 responses, historical events, complete version-2 proofs and invalid wire values.
 
-Delivery remains split into owning-service batches:
+Delivery and verification are split by ownership:
 
 1. Deliver the formal shared schemas, fixtures and historical compatibility.
 2. Update strict Controller event and Agent readers in their owning services.
    Missing readiness remains unknown; accepting a new field or event does not
    enable preparing admission or certify readiness.
-3. Controller binding facts, organization thresholds, transactional ACK gating,
-   idempotent ready events and management projection are implemented in the
-   current service candidate, with focused PostgreSQL verification completed.
-4. ACP preparing admission and get/watch state consumption are implemented in
-   the candidate, preserving unknown-Agent privacy and existing authorization
-   and execution barriers; this does not complete the UI consumers.
+3. Controller owns binding facts, organization thresholds, transactional ACK
+   gating, idempotent ready events and the management projection.
+4. ACP owns preparing admission and get/watch state consumption, preserving
+   unknown-Agent privacy and existing authorization and execution barriers.
 5. Agent UI preparing presentation/state observation and Admin Console
    consumption of meaningful current readiness are implemented. Accepted or uncertain Prompts
    are not replayed because a readiness state or event arrives.
-6. The explicit cross-service integration is implemented in the
-   [readiness profile](../../tests/e2e/agent-readiness/run.mjs); its real Docker
-   execution and final remote merge gate remain pending.
+6. The [readiness profile](../../tests/e2e/agent-readiness/run.mjs) owns the
+   explicit cross-service Docker integration. Its business results and actual
+   cleanup are required parts of the complete remote merge gate.
 
-The formal wire contract and candidate service code do not complete the pending
+Formal wire contracts and individual service checks do not replace the
 integration stage. Controller component evidence must cover interleavings of binding,
 publication and acknowledgement, including stale, duplicate and cross-organization
 acknowledgements and concurrent revocation or lifecycle closure. ACP evidence
 must distinguish listed preparing Agents from denied or unlisted Agents.
 
-The required real Docker E2E remains pending: artificially delay publication by
+The real Docker E2E must artificially delay publication by at least
 two seconds, create an Agent, wait for the new `agent_ready`, then immediately
 Prompt successfully in each of 100 iterations. It must independently verify Run
 persistence, Runtime behavior, authorization, no replay, and actual resource
 cleanup. Span and Trace collection are auxiliary diagnostics and cannot replace
-or block those business checks. Complete merge gates run in remote CI; this
-candidate is not evidence that #44 is complete.
+or block those business checks. Complete merge gates run in remote CI for the
+exact candidate commit; fixture or component results alone do not establish
+cross-service acceptance.
