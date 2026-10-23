@@ -3,9 +3,20 @@ import { sessionConfigurationSchema } from "../../domain/session-configuration.j
 import type { SessionConfigurationRepository } from "../../ports/session-configuration.js";
 import type { PostgresKernel } from "./kernel.js";
 import { encodeSessionEvent } from "./session-event-codec.js";
+import { RunWriteAuthority } from "./run-write-authority.js";
+import { guardSessionRuns } from "./session-write-guard.js";
 
 export class PostgresSessionConfiguration implements SessionConfigurationRepository {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: RunWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: RunWriteAuthority,
+  ) {
+    if (!(authority instanceof RunWriteAuthority))
+      throw new TypeError("Session configuration writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async get(sessionId: string) {
     const result = await this.kernel.query<{
@@ -24,9 +35,21 @@ export class PostgresSessionConfiguration implements SessionConfigurationReposit
   }
 
   public async save(input: Parameters<SessionConfigurationRepository["save"]>[0]) {
-    await this.kernel.transaction(async (client) => {
+    input = structuredClone(input);
+    await this.#authority.transaction(this.kernel, async (client) => {
       await client.query("SET LOCAL lock_timeout = '5s'");
       await client.query("SET LOCAL statement_timeout = '10s'");
+      const locked = await client.query<{ id: string; organization_id: string; agent_id: string }>(
+        "SELECT id, organization_id, agent_id FROM acp_sessions WHERE id=$1 FOR UPDATE",
+        [input.sessionId],
+      );
+      const session = locked.rows[0];
+      if (session === undefined)
+        throw new DomainError(
+          "configuration_conflict",
+          "Session configuration changed; reload and retry",
+        );
+      await guardSessionRuns(client, this.#authority, session);
       const changed = await client.query<{
         last_message_sequence: string;
         configuration_revision: string;
@@ -62,4 +85,11 @@ export class PostgresSessionConfiguration implements SessionConfigurationReposit
       );
     });
   }
+}
+
+export function createLegacySessionConfiguration(
+  kernel: PostgresKernel,
+  workerOwnership: AbortSignal,
+) {
+  return new PostgresSessionConfiguration(kernel, RunWriteAuthority.legacy(workerOwnership));
 }

@@ -7,7 +7,7 @@ import { migrate } from "../../../../../services/agent-acp-service/src/adapters/
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresRuntimeBarrierReader } from "../../../../../services/agent-acp-service/src/adapters/postgres/runtime-barrier.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
-import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import { publicExecutionConfiguration } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
@@ -71,7 +71,11 @@ describe.skipIf(databaseUrl === undefined)(
         const runId = randomUUID();
         const mcpRevisionId = randomUUID();
         const identity = executionIdentity();
-        await new PostgresSessionRepository(kernel, box).create({
+        await createLegacySessionRepository(
+          kernel,
+          box,
+          new AbortController().signal,
+        ).create({
           sessionId,
           binding: { connectionId: randomUUID(), ...identity },
           cwd: "/workspace",

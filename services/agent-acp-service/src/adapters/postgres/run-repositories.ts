@@ -6,14 +6,14 @@ import { PostgresContextRepository } from "./context-repository.js";
 import { RunWriteAuthority, type RunOwnerAuthority } from "./run-write-authority.js";
 
 export function createOwnedRunRepositories(kernel: PostgresKernel, input: RunOwnerAuthority) {
-  return repositories(kernel, RunWriteAuthority.owned(input));
+  return createBoundRunRepositories(kernel, RunWriteAuthority.owned(input));
 }
 
 export function createLegacyRunRepositories(kernel: PostgresKernel, workerOwnership: AbortSignal) {
-  return repositories(kernel, RunWriteAuthority.legacy(workerOwnership));
+  return createBoundRunRepositories(kernel, RunWriteAuthority.legacy(workerOwnership));
 }
 
-function repositories(kernel: PostgresKernel, authority: RunWriteAuthority) {
+export function createBoundRunRepositories(kernel: PostgresKernel, authority: RunWriteAuthority) {
   return Object.freeze({
     runs: new PostgresRunRepository(kernel, authority),
     events: new PostgresRunEventRepository(kernel, authority),

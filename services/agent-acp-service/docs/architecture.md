@@ -203,6 +203,17 @@ before writing state or replaying messages. Prompt admission also checks the
 stored revision after Session ownership, before acquiring a Run slot. A retained
 client revision must be cleared by load/resume with `[]`, not silently reused.
 The first accepted text prompt supplies a bounded default title.
+Session lifecycle and configuration adapters capture the same immutable authority
+as the Run repositories through `createOwnedAgentRepositories` or the explicit
+legacy factory. Their transaction locks the lease before the Session, rechecks
+its durable scope, then validates original ownership on affected Runs before
+writing state, cancellation timestamps or configuration events. A successor
+cannot cancel its predecessor's Run through Session close/delete. Configuration
+revision and its replay event commit atomically. Even missing/deleted delete
+retries pass the authority boundary before local Supervisor cancellation; input
+identity is captured before asynchronous authorization. Production composition
+still uses the worker-lock-backed legacy bundle while Agent coordination and
+remaining writer/recovery consumers are pending.
 Fork creates a new Session with a point-in-time copy of durable context,
 records the immutable immediate source Session, but never copies Runs or
 admissions and rejects a source Session with active work.

@@ -9,7 +9,10 @@ import {
   createOwnedRunRepositories,
 } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
-import { PostgresSessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import {
+  createLegacySessionRepository,
+  type PostgresSessionRepository,
+} from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import type { OwnerRegistration } from "../../../../services/agent-acp-service/src/application/owner-incarnation.js";
 import {
   AgentOwnershipLostError,
@@ -83,6 +86,7 @@ export class FencingFixture {
   public readonly nameA = `run-fencing-a-${randomUUID()}`;
   public readonly nameB = `run-fencing-b-${randomUUID()}`;
   private readonly sessions: PostgresSessionRepository;
+  public readonly secretBox = new SecretBox(randomBytes(32));
 
   public constructor(url: string) {
     const pool = (applicationName: string) =>
@@ -103,9 +107,10 @@ export class FencingFixture {
     this.kernelB = new PostgresKernel(this.b);
     this.leasesA = new PostgresAgentLeases(this.kernelA);
     this.leasesB = new PostgresAgentLeases(this.kernelB);
-    this.sessions = new PostgresSessionRepository(
+    this.sessions = createLegacySessionRepository(
       this.kernelA,
-      new SecretBox(randomBytes(32)),
+      this.secretBox,
+      new AbortController().signal,
     );
   }
 

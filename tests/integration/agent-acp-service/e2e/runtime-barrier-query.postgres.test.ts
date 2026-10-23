@@ -14,7 +14,7 @@ import {
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
-import { PostgresSessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { publicExecutionConfiguration } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
@@ -199,9 +199,10 @@ describe.skipIf(databaseUrl === undefined)(
     // executed. The query must present their durable protection without replay.
     async function protectRun() {
       const kernel = new PostgresKernel(pool);
-      const sessions = new PostgresSessionRepository(
+      const sessions = createLegacySessionRepository(
         kernel,
         new SecretBox(config.clientMcpKey),
+        new AbortController().signal,
       );
       const runs = createLegacyRunRepositories(
         kernel,

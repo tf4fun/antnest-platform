@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresBridgeObservationRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
 import type { RunExecutionSnapshot } from "../../../../../services/agent-acp-service/src/domain/types.js";
@@ -19,7 +19,11 @@ describe.skipIf(databaseUrl === undefined)(
     const pool = new Pool({ connectionString: databaseUrl, max: 4 });
     const kernel = new PostgresKernel(pool);
     const secretBox = new SecretBox(randomBytes(32));
-    const sessions = new PostgresSessionRepository(kernel, secretBox);
+    const sessions = createLegacySessionRepository(
+      kernel,
+      secretBox,
+      new AbortController().signal,
+    );
     const runs = createLegacyRunRepositories(
       kernel,
       new AbortController().signal,

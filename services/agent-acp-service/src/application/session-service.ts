@@ -37,6 +37,7 @@ export class SessionService implements Pick<
   public async createSession(
     input: Parameters<AcpApplicationPort["createSession"]>[0],
   ): Promise<{ sessionId: string }> {
+    input = structuredClone(input);
     requireWorkspace(input.cwd, input.additionalDirectories);
     const sessionId = this.dependencies.id("session");
     await this.dependencies.repository.create({
@@ -77,6 +78,7 @@ export class SessionService implements Pick<
   public async forkSession(
     input: Parameters<AcpApplicationPort["forkSession"]>[0],
   ): Promise<{ sessionId: string }> {
+    input = structuredClone(input);
     requireWorkspace(input.cwd, input.additionalDirectories);
     const source = await this.requireAuthorized(input.sessionId, input.binding);
     if (source.cwd !== input.cwd) {
@@ -96,6 +98,7 @@ export class SessionService implements Pick<
   public async resumeSession(
     input: Parameters<AcpApplicationPort["resumeSession"]>[0],
   ): Promise<Awaited<ReturnType<AcpApplicationPort["resumeSession"]>>> {
+    input = structuredClone(input);
     requireWorkspace(input.cwd, input.additionalDirectories);
     const session = await this.requireAuthorized(input.sessionId, input.binding);
     if (session.cwd !== input.cwd) {
@@ -124,6 +127,7 @@ export class SessionService implements Pick<
   public async closeSession(
     input: Parameters<AcpApplicationPort["closeSession"]>[0],
   ): Promise<void> {
+    input = structuredClone(input);
     const session = await this.requireAuthorized(input.sessionId, input.binding);
     await this.dependencies.repository.close(session.id, this.dependencies.now());
   }
@@ -131,17 +135,19 @@ export class SessionService implements Pick<
   public async deleteSession(
     input: Parameters<AcpApplicationPort["deleteSession"]>[0],
   ): Promise<void> {
+    input = structuredClone(input);
     const session = await this.dependencies.repository.get(input.sessionId);
-    if (session === null) return;
-    authorizeSessionOwner(session, input.binding);
-    if (session.state === "deleted") return;
-    await this.dependencies.repository.delete(session.id, this.dependencies.now());
+    if (session !== null) authorizeSessionOwner(session, input.binding);
+    // Even absent/deleted retries must pass the captured authority before the
+    // Application can dispatch a local supervisor cancellation.
+    await this.dependencies.repository.delete(input.sessionId, this.dependencies.now());
   }
 
   public async requestCancellation(
     sessionId: string,
     binding: Parameters<AcpApplicationPort["createSession"]>[0]["binding"],
   ): Promise<void> {
+    binding = { ...binding };
     const session = await this.requireAuthorized(sessionId, binding);
     await this.dependencies.repository.requestCancellation(session.id, this.dependencies.now());
   }
@@ -151,6 +157,7 @@ export class SessionService implements Pick<
     binding: Parameters<AcpApplicationPort["createSession"]>[0]["binding"],
     runId: string,
   ): Promise<boolean> {
+    binding = { ...binding };
     const session = await this.requireAuthorized(sessionId, binding);
     return this.dependencies.repository.requestTargetCancellation(
       session.id,

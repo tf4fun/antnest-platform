@@ -38,6 +38,7 @@ export class SessionConfigurationService {
     value: string | boolean;
     expectedRevision?: string;
   }) {
+    input = structuredClone(input);
     return this.dependencies.directory.withAccess(
       input.binding,
       async ({ configuration: snapshot, agent }) => {

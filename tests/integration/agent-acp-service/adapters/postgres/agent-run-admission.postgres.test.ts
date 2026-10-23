@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
-import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import {
+  createLegacySessionRepository,
+  type PostgresSessionRepository,
+} from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import type { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import type { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
@@ -40,9 +43,10 @@ class AdmissionFixture {
       query_timeout: 6_000,
     });
     const kernel = new PostgresKernel(this.pool);
-    this.sessions = new PostgresSessionRepository(
+    this.sessions = createLegacySessionRepository(
       kernel,
       new SecretBox(randomBytes(32)),
+      new AbortController().signal,
     );
     this.runs = createLegacyRunRepositories(
       kernel,

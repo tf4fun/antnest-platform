@@ -234,16 +234,19 @@ describe("SessionService", () => {
     expect(repository.delete).toHaveBeenCalledWith("session-1", at);
   });
 
-  it.each(["missing", "deleted"])("deleting a %s Session is an authorized no-op", async (state) => {
-    const repository = createRepository();
-    repository.session.state = "deleted";
-    if (state === "missing") repository.port.get = vi.fn(() => Promise.resolve(null));
+  it.each(["missing", "deleted"])(
+    "deleting a %s Session still reaches the guarded repository",
+    async (state) => {
+      const repository = createRepository();
+      repository.session.state = "deleted";
+      if (state === "missing") repository.port.get = vi.fn(() => Promise.resolve(null));
 
-    await expect(
-      createService(repository.port).deleteSession({ binding, sessionId: "session-1" }),
-    ).resolves.toBeUndefined();
-    expect(repository.delete).not.toHaveBeenCalled();
-  });
+      await expect(
+        createService(repository.port).deleteSession({ binding, sessionId: "session-1" }),
+      ).resolves.toBeUndefined();
+      expect(repository.delete).toHaveBeenCalledWith("session-1", expect.any(Date));
+    },
+  );
 
   it.each(["principalId", "agentId"] as const)(
     "idempotent deletion still checks the deleted Session's %s",
