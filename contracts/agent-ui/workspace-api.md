@@ -103,7 +103,7 @@ Session. Entries retain their `sessionId`, and the Bridge must not hide a
 running operation merely because a different Session was selected.
 
 The optional nullable `unavailableReason` carries only ACP's authorized
-`agent_unavailable` or `runtime_barrier_required` classification, through both
+`agent_unavailable`, `agent_preparing` or `runtime_barrier_required` classification, through both
 the read and watch projection. It contains no barrier, recovery-request or
 Runtime identifiers. Null, omission in a replacement snapshot, scope replacement
 and access revocation clear prior guidance. An available management Runtime does
@@ -113,6 +113,14 @@ without a selected Session. A verified administrator receives a same-origin
 ordinary members receive contact-administrator guidance. Agent UI performs no
 Rebuild mutation and grants no new lifecycle authority. The Console still
 authorizes and confirms recovery using the current original recovery identity.
+
+`agent_preparing` is valid only for an authorized offline Agent with no active
+Session. The browser shows Preparing and observes the existing read/watch state
+until execution becomes available. It retains the user's draft and does not
+submit or replay a Prompt because a readiness event arrives. Busy work retains
+its existing busy state and Session privacy. This reason has no administrator
+recovery action. Its schema and owning-service implementation are separate from
+the final [acknowledged readiness](../agent-controller/readiness.md) integration.
 
 The [Skill learning contract](../skill-learning/learning-api.md) defines the
 optional `systemNotices` Agent View field and corresponding delta path. Node

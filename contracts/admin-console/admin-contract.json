@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 56,
+  "version": 57,
   "scim_lifecycle_policy": "../identity/scim-lifecycle-policy.json",
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
@@ -435,6 +435,12 @@
     ]
   },
   "response_policy": {
+    "agent_readiness": {
+      "schema": "agent-readiness.schema.json",
+      "source": "controller_current_readiness",
+      "missing": "unknown",
+      "runtime_health_fallback": false
+    },
     "catalog_availability": {
       "authority": "agent_controller",
       "authorization": "verified_organization_scoped_administrator",

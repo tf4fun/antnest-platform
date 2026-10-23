@@ -282,11 +282,22 @@ delivery timeout. The sender does not retry frames or maintain a replay journal.
 The state contains `agent_id`, `access_allowed`, `availability`
 (`ready`, `busy`, `offline`), nullable `active_session_id`, nullable
 `configuration_revision`, and nullable `unavailable_reason` (`access_denied`,
-`agent_unavailable`, `runtime_barrier_required`). Busy includes accepted work
+`agent_unavailable`, `agent_preparing`, `runtime_barrier_required`). Busy includes accepted work
 that has not started. It remains busy when new execution is disabled; the owner
 may still locate and cancel its active Session. Other permitted principals see
 busy but no Session identifier. Ready is Agent-level availability, not a promise
 that an individual Session's selected model remains valid.
+
+A listed, authorized Agent whose snapshot explicitly carries
+`accepting_runs: false` and `unavailable_reason: "agent_preparing"` reports
+offline/preparing with no active Session. Its new-execution admission returns
+the existing catalog `agent_preparing` error, including the 1000 ms retry hint.
+Unlisted or unauthorized Agents remain denied, and absent organization
+configuration remains `configuration_not_ready`. Existing busy work takes
+precedence over preparing, retaining the current owner/peer Session visibility
+rules. These wire definitions do not prove the Controller ACK transaction or
+enable automatic replay; owning-service and integration gates are specified in
+the [readiness contract](../agent-controller/readiness.md).
 
 Missing/revoked access returns only a sanitized offline state: no active Session
 or configuration revision. This does not reveal whether the Agent exists.

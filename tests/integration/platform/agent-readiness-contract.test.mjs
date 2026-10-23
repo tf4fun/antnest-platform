@@ -279,3 +279,293 @@ test("runtime_bound has no applied acknowledgement field", () => {
 // These validators freeze wire structure only. Revision ordering, matching
 // organizations/current bindings, authorization and atomic event deduplication
 // remain the responsibility of the later Controller transaction component tests.
+
+function consumerReadinessValidator(file, definition, useDefaults = false) {
+  const document = read(file);
+  const ajv = new Ajv2020({
+    strict: false,
+    allErrors: true,
+    useDefaults,
+    validateFormats: false,
+  });
+  if (definition === undefined) return ajv.compile(document);
+  ajv.addSchema(document);
+  return ajv.compile({ $ref: document.$id + "#/$defs/" + definition });
+}
+
+function preparingExecutionState() {
+  return {
+    agent_id: "agent-preparing",
+    access_allowed: true,
+    configuration_revision: "a".repeat(64),
+    availability: "offline",
+    active_session_id: null,
+    unavailable_reason: "agent_preparing",
+  };
+}
+
+function readinessAgentView() {
+  return {
+    agentId: "agent-preparing",
+    bridgeEpoch: "epoch-1",
+    availability: "offline",
+    promptCapabilities: {},
+    activeSessionId: null,
+    selectedSessionId: null,
+    selectedView: null,
+    operations: [],
+    permissions: [],
+    streamCursor: "cursor-1",
+  };
+}
+
+test("ACP preparing is an authorized offline execution-state reason without an active Session", () => {
+  const validate = consumerReadinessValidator(
+    "agent-acp/agent-execution-state.schema.json",
+  );
+  const value = preparingExecutionState(),
+    original = structuredClone(value);
+  check(validate, value, true, "authorized preparing execution state");
+  assert.deepEqual(value, original);
+});
+
+test("ACP preparing cannot disclose denied configuration or active Session identity", () => {
+  const validate = consumerReadinessValidator(
+    "agent-acp/agent-execution-state.schema.json",
+  );
+  for (const [name, patch] of [
+    [
+      "denied preparing",
+      { access_allowed: false, configuration_revision: null },
+    ],
+    ["ready preparing", { availability: "ready" }],
+    ["busy preparing", { availability: "busy" }],
+    ["active Session", { active_session_id: "session-private" }],
+    ["missing configuration", { configuration_revision: null }],
+    [
+      "invalid configuration",
+      { configuration_revision: "not-a-configuration-digest" },
+    ],
+  ])
+    check(validate, { ...preparingExecutionState(), ...patch }, false, name);
+  for (const field of [
+    "unexpected",
+    "runtime_execution_id",
+    "mcp_endpoint",
+    "credential",
+  ])
+    check(
+      validate,
+      { ...preparingExecutionState(), [field]: "synthetic-private-value" },
+      false,
+      "preparing rejects " + field,
+    );
+  for (const unavailable_reason of [
+    "unknown_preparing_reason",
+    { reason: "agent_preparing" },
+  ])
+    check(
+      validate,
+      { ...preparingExecutionState(), unavailable_reason },
+      false,
+      "unknown preparing reason",
+    );
+});
+
+test("ACP preparing preserves all legacy execution availability and denial shapes", () => {
+  const validate = consumerReadinessValidator(
+    "agent-acp/agent-execution-state.schema.json",
+  );
+  const original = preparingExecutionState();
+  for (const [name, patch] of [
+    ["ready", { availability: "ready", unavailable_reason: null }],
+    [
+      "busy without current Session",
+      { availability: "busy", unavailable_reason: null },
+    ],
+    [
+      "busy with current Session",
+      {
+        availability: "busy",
+        active_session_id: "session-1",
+        unavailable_reason: null,
+      },
+    ],
+    [
+      "busy unavailable",
+      {
+        availability: "busy",
+        active_session_id: "session-1",
+        unavailable_reason: "agent_unavailable",
+      },
+    ],
+    ["agent unavailable", { unavailable_reason: "agent_unavailable" }],
+    ["runtime barrier", { unavailable_reason: "runtime_barrier_required" }],
+    [
+      "denied",
+      {
+        access_allowed: false,
+        configuration_revision: null,
+        unavailable_reason: "access_denied",
+      },
+    ],
+  ])
+    check(validate, { ...original, ...patch }, true, "legacy ACP " + name);
+});
+
+test("Workspace preparing is an optional offline reason with no active Session", () => {
+  const validate = consumerReadinessValidator(
+    "agent-ui/workspace-api.schema.json",
+    "agentView",
+  );
+  const value = {
+    ...readinessAgentView(),
+    unavailableReason: "agent_preparing",
+  };
+  const original = structuredClone(value);
+  check(validate, value, true, "preparing AgentView");
+  assert.deepEqual(value, original);
+  const manifest = read("agent-ui/workspace-api.json");
+  assert(manifest.agent_unavailability.values.includes("agent_preparing"));
+});
+
+test("Workspace preparing cannot accompany ready, busy, active Session or private fields", () => {
+  const validate = consumerReadinessValidator(
+    "agent-ui/workspace-api.schema.json",
+    "agentView",
+  );
+  const original = {
+    ...readinessAgentView(),
+    unavailableReason: "agent_preparing",
+  };
+  for (const [name, patch] of [
+    ["ready", { availability: "ready" }],
+    ["busy", { availability: "busy" }],
+    ["active Session", { activeSessionId: "session-private" }],
+    ["unknown reason", { unavailableReason: "unknown_preparing_reason" }],
+    [
+      "private reason object",
+      {
+        unavailableReason: {
+          reason: "agent_preparing",
+          runtime_execution_id: "private",
+        },
+      },
+    ],
+  ])
+    check(
+      validate,
+      { ...original, ...patch },
+      false,
+      "invalid preparing AgentView " + name,
+    );
+  for (const field of [
+    "unexpected",
+    "runtimeExecutionId",
+    "runtime_execution_id",
+    "mcp_endpoint",
+  ])
+    check(
+      validate,
+      { ...original, [field]: "synthetic-private-value" },
+      false,
+      "AgentView rejects " + field,
+    );
+});
+
+test("legacy AgentViews omit preparing without receiving a default", () => {
+  const validate = consumerReadinessValidator(
+    "agent-ui/workspace-api.schema.json",
+    "agentView",
+    true,
+  );
+  for (const availability of ["ready", "busy", "offline"]) {
+    const value = { ...readinessAgentView(), availability };
+    const original = structuredClone(value);
+    check(validate, value, true, "legacy AgentView " + availability);
+    assert.deepEqual(value, original);
+    assert.equal(Object.hasOwn(value, "unavailableReason"), false);
+  }
+  for (const [availability, unavailableReason] of [
+    ["ready", null],
+    ["busy", null],
+    ["busy", "agent_unavailable"],
+    ["offline", "agent_unavailable"],
+    ["offline", "runtime_barrier_required"],
+  ])
+    check(
+      validate,
+      { ...readinessAgentView(), availability, unavailableReason },
+      true,
+      "legacy AgentView reason " + availability + "/" + unavailableReason,
+    );
+});
+
+test("Console readiness projection accepts only optional preparing, ready and unavailable", () => {
+  // This closed schema describes the readiness projection, not the complete
+  // Admin Agent response containing its existing public fields.
+  const validate = consumerReadinessValidator(
+    "admin-console/agent-readiness.schema.json",
+  );
+  for (const readiness of ["preparing", "ready", "unavailable"])
+    check(validate, { readiness }, true, "Console readiness " + readiness);
+  for (const readiness of [null, "unknown", "Ready", "", 1, false, {}, []])
+    check(
+      validate,
+      { readiness },
+      false,
+      "invalid Console readiness " + JSON.stringify(readiness),
+    );
+  for (const value of [null, [], "ready", 1])
+    check(
+      validate,
+      value,
+      false,
+      "Console readiness requires a projection object",
+    );
+});
+
+test("Console readiness remains absent when unknown even with Ajv defaults enabled", () => {
+  const validate = consumerReadinessValidator(
+    "admin-console/agent-readiness.schema.json",
+    undefined,
+    true,
+  );
+  const value = {};
+  check(validate, value, true, "legacy Console readiness projection");
+  assert.deepEqual(value, {});
+  assert.equal(Object.hasOwn(value, "readiness"), false);
+});
+
+test("Console readiness projection rejects unknown and private fields", () => {
+  const validate = consumerReadinessValidator(
+    "admin-console/agent-readiness.schema.json",
+  );
+  for (const field of [
+    "unexpected",
+    "runtime_state",
+    "runtime_revision",
+    "runtime_execution_id",
+    "mcp_endpoint",
+  ])
+    for (const projection of [{}, { readiness: "preparing" }])
+      check(
+        validate,
+        { ...projection, [field]: "synthetic-private-value" },
+        false,
+        "Console readiness rejects " + field,
+      );
+});
+
+test("Console contract 57 declares Controller current readiness without Runtime health inference", () => {
+  const contract = read("admin-console/admin-contract.json");
+  assert.equal(contract.version, 57);
+  const policy = contract.response_policy.agent_readiness;
+  assert(
+    policy !== null && typeof policy === "object" && !Array.isArray(policy),
+  );
+  assert.equal(policy.schema, "agent-readiness.schema.json");
+  assert.equal(policy.source, "controller_current_readiness");
+  assert.equal(policy.missing, "unknown");
+  assert.equal(policy.runtime_health_fallback, false);
+});

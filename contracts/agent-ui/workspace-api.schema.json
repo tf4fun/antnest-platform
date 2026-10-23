@@ -463,7 +463,7 @@
         "agentId": { "$ref": "#/$defs/id" },
         "bridgeEpoch": { "$ref": "#/$defs/id" },
         "availability": { "enum": ["ready", "busy", "offline"] },
-        "unavailableReason": { "enum": ["agent_unavailable", "runtime_barrier_required", null] },
+        "unavailableReason": { "enum": ["agent_unavailable", "agent_preparing", "runtime_barrier_required", null] },
         "controlCommands": { "$ref": "#/$defs/commandCatalogue" },
         "skillCommands": { "$ref": "#/$defs/commandCatalogue" },
         "promptCapabilities": {
@@ -520,6 +520,17 @@
         },
         "else": {
           "properties": { "selectedView": { "$ref": "#/$defs/sessionView" } }
+        }
+      }, {
+        "if": {
+          "properties": { "unavailableReason": { "const": "agent_preparing" } },
+          "required": ["unavailableReason"]
+        },
+        "then": {
+          "properties": {
+            "availability": { "const": "offline" },
+            "activeSessionId": { "type": "null" }
+          }
         }
       }]
     },

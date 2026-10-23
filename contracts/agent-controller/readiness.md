@@ -3,9 +3,12 @@
 Control contract revision 41 defines the shared wire representation for
 [#44](https://github.com/tf4fun/antnest-platform/issues/44) in the
 [Controller schema](control-api.schema.json) and
-[shared fixtures](readiness-fixtures.json). Controller production, strict-reader
-updates, ACP preparing admission, UI and Console consumption, and cross-service
-integration remain pending. This contract batch does not enable new producer
+[shared fixtures](readiness-fixtures.json). The formal Controller wire contract
+and strict readers are delivered. Controller production, ACP preparing admission,
+UI and Console consumption, and cross-service integration remain pending.
+The ACP and Workspace state schemas now admit an authorized offline preparing
+reason; Console contract 57 defines its optional current readiness projection.
+These shared definitions do not enable new producer
 behavior, routes, or caller permissions. Consumers must accept the new wire
 representation before a later owning-service batch emits it. The
 [ACP execution API](../agent-acp/execution-api.md) retains its existing envelope.
@@ -151,12 +154,13 @@ organization configuration remains `configuration_not_ready`; ACP must not
 invent a listed preparing Agent from an unavailable source. No per-Run Controller
 lookup or removed Controller admission route is introduced.
 
-The pending ACP get/watch execution-state contract can represent an authorized
+The ACP get/watch execution-state contract represents an authorized
 preparing Agent using the existing `availability: "offline"` with
 `unavailable_reason: "agent_preparing"`. It does not add a new availability enum.
 Existing busy/active-Session visibility, revocation sanitization, storage failure,
-and Runtime barrier rules remain intact. Formal schema and UI consumption of
-this reason must precede emission; this document does not implement them.
+and Runtime barrier rules remain intact. Formal schemas are defined; service and
+UI consumption of this reason must precede emission. This document does not
+implement those consumers.
 
 ## Compatibility and Delivery
 
