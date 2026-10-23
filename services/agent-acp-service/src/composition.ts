@@ -1,4 +1,5 @@
 import { buildAgentComponents } from "./composition-agent.js";
+import { OwnedAgentComponents } from "./composition-owned.js";
 import { LearningStatusReader } from "./application/learning-status-reader.js";
 import { SkillSources } from "./application/skill-sources.js";
 import { SkillProjectionWorker } from "./application/skill-projection-worker.js";
@@ -46,7 +47,11 @@ import type { AgentAcpConfig } from "./config.js";
 import type { TelemetryPort } from "./ports/telemetry.js";
 import { InstrumentedModel } from "./telemetry/instrumented-ports.js";
 import { AgentAcpHttpServer } from "./transport/http-server.js";
-import { OwnerIncarnation, OwnerIncarnationError } from "./application/owner-incarnation.js";
+import {
+  OwnerIncarnation,
+  OwnerIncarnationError,
+  type OwnerRegistration,
+} from "./application/owner-incarnation.js";
 import {
   OwnerRegistrationAttemptError,
   RuntimeControllerIncarnations,
@@ -150,6 +155,9 @@ export async function startAgentAcpService(
       }
     }
     ownership.signal.throwIfAborted();
+    const registeredOwner = incarnation?.currentRegistration();
+    if (config.ownerIncarnation !== undefined && registeredOwner === undefined)
+      throw new Error("ACP process registration is unavailable");
     const ownedRuntimeConnections = new RuntimeConnections({
       ...config.authentication.workload.runtimeTransport(),
       reportCleanupFailure: () => telemetry.log("warn", "runtime_connection_cleanup_failed"),
@@ -175,6 +183,7 @@ export async function startAgentAcpService(
       recoveryRequired,
       ownership.signal,
       ownedRuntimeConnections,
+      registeredOwner,
     );
     components = built;
     void acquiredWorkerLock.waitForLoss().then((error) => {
@@ -187,11 +196,14 @@ export async function startAgentAcpService(
 
     await waitForStartupRecovery(
       (async () => {
-        await acquiredWorkerLock.pauseAbandonedLearningTasks();
-        ownership.signal.throwIfAborted();
-        await built.permissionRepository.cancelAbandoned();
-        ownership.signal.throwIfAborted();
-        await built.recovery.recover(ownership.signal);
+        if (built.owned !== undefined) await built.owned.recoverStartup(acquiredWorkerLock);
+        else {
+          await acquiredWorkerLock.pauseAbandonedLearningTasks();
+          ownership.signal.throwIfAborted();
+          await built.permissionRepository.cancelAbandoned();
+          ownership.signal.throwIfAborted();
+          await built.recovery.recover(ownership.signal);
+        }
         ownership.signal.throwIfAborted();
         await built.directory.restore(ownership.signal);
       })(),
@@ -237,16 +249,21 @@ export async function startAgentAcpService(
     ownership.signal.throwIfAborted();
     serving = true;
     built.learningNotices.start();
-    const learningRun = built.learningWorker?.run(ownership.signal).catch((error: unknown) => {
-      if (!ownership.signal.aborted) recoveryRequired(asError(error));
-    });
+    built.owned?.start();
+    const learningRun = (built.owned === undefined ? built.learningWorker : undefined)
+      ?.run(ownership.signal)
+      .catch((error: unknown) => {
+        if (!ownership.signal.aborted) recoveryRequired(asError(error));
+      });
     const projectionRun = built.skillProjectionWorker
       ?.run(ownership.signal)
       .catch((error: unknown) => {
         if (!ownership.signal.aborted) recoveryRequired(asError(error));
       });
-    const temporaryCleanupRun = built.temporarySkillCleanupWorker
-      .run(ownership.signal)
+    const temporaryCleanupRun = (
+      built.owned === undefined ? built.temporarySkillCleanupWorker : undefined
+    )
+      ?.run(ownership.signal)
       .catch((error: unknown) => {
         if (!ownership.signal.aborted) recoveryRequired(asError(error));
       });
@@ -268,9 +285,10 @@ export async function startAgentAcpService(
           server.close(),
           ...(ownerProbe === undefined ? [] : [ownerProbe.close()]),
           built.supervisor.shutdown(),
+          ...(built.owned === undefined ? [] : [built.owned.shutdown()]),
           ...(learningRun === undefined ? [] : [learningRun]),
           ...(projectionRun === undefined ? [] : [projectionRun]),
-          temporaryCleanupRun,
+          ...(temporaryCleanupRun === undefined ? [] : [temporaryCleanupRun]),
         ]);
         results.push(
           await settle(ownedRuntimeConnections.close()),
@@ -299,10 +317,6 @@ export async function startAgentAcpService(
     ownership.abort(startupError);
     incarnation?.close();
     const probeCleanup = ownerProbe === undefined ? undefined : await settle(ownerProbe.close());
-    if (startupError instanceof WorkerOwnershipLostError) {
-      await runtimeConnections?.close().catch(() => undefined);
-      throw startupError;
-    }
     components?.supervisor.stop(startupError);
     components?.learningNotices.stop();
     const cleanupFailures: unknown[] =
@@ -310,6 +324,7 @@ export async function startAgentAcpService(
     for (const cleanup of [
       () => listeningServer?.close(),
       () => components?.supervisor.shutdown(),
+      () => components?.owned?.shutdown(),
       () => runtimeConnections?.close(),
       () => workerLock?.release(),
       () => pool.end(),
@@ -337,7 +352,18 @@ export async function waitForStartupRecovery(
   recovery: Promise<void>,
   failure: Promise<Error>,
 ): Promise<void> {
-  await Promise.race([recovery, failure.then((error) => Promise.reject(error))]);
+  try {
+    await Promise.race([recovery, failure.then((error) => Promise.reject(error))]);
+  } catch (error) {
+    // Loss closes admission immediately, but the original recovery still owns
+    // its SQL and cleanup. Never release dependencies merely because it lost a race.
+    const [joined] = await Promise.allSettled([recovery]);
+    if (joined.status === "rejected" && joined.reason !== error)
+      throw new AggregateError([error, joined.reason], "Startup recovery failed while stopping", {
+        cause: error,
+      });
+    throw error;
+  }
 }
 
 export function buildComponents(
@@ -347,13 +373,12 @@ export function buildComponents(
   recoveryRequired: (error: Error) => void,
   ownershipSignal: AbortSignal,
   runtimeConnections: RuntimeConnectionAuthority,
+  registration?: OwnerRegistration,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
-  const repositories = createLegacyAgentRepositories(
-    kernel,
-    new SecretBox(config.clientMcpKey),
-    ownershipSignal,
-  );
+  const secretBox = new SecretBox(config.clientMcpKey);
+  const configurationRepository = new PostgresExecutionConfiguration(kernel, secretBox);
+  const repositories = createLegacyAgentRepositories(kernel, secretBox, ownershipSignal);
   const { permissions: permissionRepository, executions } = repositories;
 
   const model = new InstrumentedModel(
@@ -365,28 +390,43 @@ export function buildComponents(
   const providers = new ProviderClients(model);
   const permissionConnections = new PermissionConnections();
   const outputs = new SessionOutputStreams();
+  let owned: OwnedAgentComponents | undefined;
   const revokeAccess = (snapshot: ExecutionAccessSnapshot): void => {
-    agent.supervisor.revokeAccess(snapshot);
+    if (owned === undefined) agent.supervisor.revokeAccess(snapshot);
+    else owned.revoke(snapshot);
     permissionConnections.revokeAccess(snapshot);
     outputs.revokeAccess(snapshot);
   };
   const directory = new ExecutionDirectory({
-    repository: new PostgresExecutionConfiguration(kernel, new SecretBox(config.clientMcpKey)),
+    repository: configurationRepository,
     clients: providers,
     runtimeConnections,
-    onPublished: (organizationId) => outputs.invalidateOrganization(organizationId),
+    onPublished: (organizationId) => {
+      outputs.invalidateOrganization(organizationId);
+      owned?.published(organizationId);
+    },
+    ...(registration === undefined
+      ? {}
+      : {
+          beforeAck: (snapshot: Parameters<OwnedAgentComponents["beforeAck"]>[0]) => {
+            if (owned === undefined) throw new Error("Owned Agent components are unavailable");
+            return owned.beforeAck(snapshot);
+          },
+        }),
     onInvalidAuthority: (organizationId) =>
       telemetry.log("warn", "execution_authority_unavailable", {
         organization_id: organizationId,
       }),
     onApplied: (snapshot) => {
       revokeAccess(snapshot);
+      if (owned !== undefined) return owned.prepare(snapshot);
       agent.learningGate.syncOrganization(snapshot.organization_id, snapshot.agents);
       return Promise.resolve();
     },
     onUnavailable: (organizationId) => {
       revokeAccess({ organization_id: organizationId, agents: [] });
       agent.learningGate.syncOrganization(organizationId, []);
+      owned?.withdraw(organizationId);
     },
   });
   const access = new AccessService({ directory });
@@ -425,6 +465,25 @@ export function buildComponents(
     temporarySkillCleanupWorker,
     sessionService,
   } = agent;
+  if (registration !== undefined)
+    owned = new OwnedAgentComponents({
+      config,
+      kernel,
+      directory,
+      providers,
+      permissionConnections,
+      access,
+      runtimeConnections,
+      telemetry,
+      ownershipSignal,
+      recoveryRequired,
+      now,
+      registration,
+      configuration: configurationRepository,
+      legacy: repositories,
+      legacyRecovery: recovery,
+      learningChanged: () => learningNotices.wake(),
+    });
   const signing = config.skillMaintenanceSigning;
   const sourceRepository = new PostgresSkillSourceProjections(kernel);
   const discovery = config.skillDiscovery;
@@ -442,7 +501,7 @@ export function buildComponents(
           service: new SkillSources({
             directory,
             repository: sourceRepository,
-            gate: learningGate,
+            gate: owned ?? learningGate,
             runtime: {
               verify: (record, binding, signal) =>
                 telemetry.span(
@@ -490,25 +549,32 @@ export function buildComponents(
           report: (outcome) => telemetry.count("antnest.acp.skill_projections", { outcome }),
         });
   return {
+    owned,
     skillSources,
     skillProjectionWorker,
     temporarySkillCleanupWorker,
     directory,
-    skillCommands: new RuntimeSkillCommands({
-      directory,
-      gate: learningGate,
-      runtime: rawTools,
-      busy: (binding) => supervisor.occupancy(binding).busy,
-    }),
-    settlement: new AgentSettlement({
-      directory,
-      supervisor,
-      learning: learningGate,
-      protection: executions,
-      temporarySkills,
-      now,
-    }),
-    executionState: new AgentExecutionState({ directory, supervisor, protection: executions }),
+    skillCommands:
+      owned?.skillCommands ??
+      new RuntimeSkillCommands({
+        directory,
+        gate: learningGate,
+        runtime: rawTools,
+        busy: (binding) => supervisor.occupancy(binding).busy,
+      }),
+    settlement:
+      owned?.settlement ??
+      new AgentSettlement({
+        directory,
+        supervisor,
+        learning: learningGate,
+        protection: executions,
+        temporarySkills,
+        now,
+      }),
+    executionState:
+      owned?.executionState ??
+      new AgentExecutionState({ directory, supervisor, protection: executions }),
     executionAudits: new ExecutionAudits(new PostgresExecutionAudits(kernel)),
     runtimeBarriers: new PostgresRuntimeBarrierReader(kernel),
     bridgeObservation: new BridgeObservationService({
@@ -524,7 +590,7 @@ export function buildComponents(
     ),
     learningNotices,
     outputs,
-    application,
+    application: owned?.application ?? application,
     recovery,
     supervisor,
     learningGate,

@@ -27,6 +27,7 @@ import { ToolPermissions } from "./application/tool-permissions.js";
 import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
 import type { AgentAcpConfig } from "./config.js";
 import { DomainError } from "./domain/errors.js";
+import type { AgentOwnershipLostError } from "./domain/agent-ownership.js";
 import { newResourceId } from "./domain/resource-id.js";
 import type { RuntimeConnectionAuthority } from "./ports/runtime-connections.js";
 import type { TelemetryPort } from "./ports/telemetry.js";
@@ -52,6 +53,12 @@ export function buildAgentComponents(input: {
   telemetry: TelemetryPort;
   ownershipSignal: AbortSignal;
   recoveryRequired: (error: Error) => void;
+  ownershipLost?: (error: AgentOwnershipLostError) => void;
+  retainModelRequest?: (original: Promise<unknown>) => void;
+  beforeTemporaryCleanup?: (
+    scope: { organizationId: string; agentId: string },
+    signal: AbortSignal,
+  ) => Promise<void>;
   now: () => Date;
 }) {
   const {
@@ -165,6 +172,7 @@ export function buildAgentComponents(input: {
       await access.assert(binding);
       await learningGate.preempt(binding, signal);
       try {
+        await input.beforeTemporaryCleanup?.(binding, signal);
         await temporarySkills.releaseAgent(binding, signal);
       } catch {
         signal.throwIfAborted();
@@ -189,6 +197,7 @@ export function buildAgentComponents(input: {
         protection: executions,
         runTimeoutMs: config.runTimeoutMs,
         recoveryRequired,
+        ...(input.ownershipLost === undefined ? {} : { ownershipLost: input.ownershipLost }),
         id: newResourceId,
         now,
       }),
@@ -197,6 +206,9 @@ export function buildAgentComponents(input: {
     telemetry,
   );
   const learningWorker = buildLearningWorker({
+    ...(input.retainModelRequest === undefined
+      ? {}
+      : { retainModelRequest: input.retainModelRequest }),
     config,
     kernel,
     learningRepositories: input.learningRepositories,

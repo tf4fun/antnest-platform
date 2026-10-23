@@ -56,20 +56,49 @@ describe("development startup diagnostics", () => {
           "base64",
         ),
       });
+      const workloadCleanup = vi.spyOn(config.authentication.workload, "close");
+      const poolPrototype = Pool.prototype as { end(this: Pool): Promise<void> };
+      const poolCleanup = vi.spyOn(poolPrototype, "end");
+      const failures: unknown[] = [];
       try {
         await expect(startAgentAcpService(config, NOOP_TELEMETRY, vi.fn())).rejects.toBe(failure);
         expect(cleanup).toHaveBeenCalledOnce();
+        expect(workloadCleanup).toHaveBeenCalledOnce();
+        expect(poolCleanup).toHaveBeenCalledOnce();
         const directories = cleanup.mock.contexts.flatMap((instance) =>
           instance instanceof RuntimeConnections ? [instance.directory] : [],
         );
         expect(directories).toHaveLength(1);
         expect(directories.every((directory) => !existsSync(directory))).toBe(true);
+      } catch (error) {
+        failures.push(error);
       } finally {
-        migration.mockRestore();
-        cleanup.mockRestore();
-        if (failure instanceof WorkerOwnershipLostError)
-          await config.authentication.workload.close();
+        try {
+          const pending = [
+            ...workloadCleanup.mock.results.flatMap((result) =>
+              result.type === "return" ? [result.value] : [],
+            ),
+            ...poolCleanup.mock.results.flatMap((result) =>
+              result.type === "return" ? [result.value] : [],
+            ),
+          ];
+          if (workloadCleanup.mock.calls.length === 0)
+            pending.push(config.authentication.workload.close());
+          for (const [pool] of migration.mock.calls)
+            if (!poolCleanup.mock.contexts.includes(pool)) pending.push(pool.end());
+          const results = await Promise.allSettled(pending);
+          for (const result of results)
+            if (result.status === "rejected") failures.push(result.reason as unknown);
+        } finally {
+          poolCleanup.mockRestore();
+          workloadCleanup.mockRestore();
+          migration.mockRestore();
+          cleanup.mockRestore();
+        }
       }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Startup storage cleanup fixture did not close");
     },
   );
   it.each([undefined, "agent-debug"])(
@@ -236,14 +265,68 @@ describe("local readiness", () => {
 });
 
 describe("waitForStartupRecovery", () => {
-  it("surfaces worker ownership loss without waiting for recovery cleanup", async () => {
+  it("joins original recovery cleanup before surfacing worker ownership loss", async () => {
     const recovery = Promise.withResolvers<void>();
     const failure = Promise.withResolvers<Error>();
+    const loss = new WorkerOwnershipLostError();
     const waiting = waitForStartupRecovery(recovery.promise, failure.promise);
+    let settled = false;
+    const joined = waiting.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
 
-    failure.resolve(new WorkerOwnershipLostError());
+    try {
+      failure.resolve(loss);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
 
-    await expect(waiting).rejects.toBeInstanceOf(WorkerOwnershipLostError);
-    recovery.resolve();
+      recovery.resolve();
+      await expect(waiting).rejects.toBe(loss);
+    } finally {
+      failure.resolve(loss);
+      recovery.resolve();
+      await Promise.allSettled([recovery.promise, waiting, joined]);
+    }
+  });
+
+  it("preserves ownership loss and a distinct original recovery failure after joining", async () => {
+    const recovery = Promise.withResolvers<void>();
+    const failure = Promise.withResolvers<Error>();
+    const loss = new WorkerOwnershipLostError();
+    const recoveryError = new Error("Original recovery cleanup failed");
+    const waiting = waitForStartupRecovery(recovery.promise, failure.promise);
+    let settled = false;
+    const outcome = waiting.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      (error: unknown) => {
+        settled = true;
+        return error;
+      },
+    );
+
+    try {
+      failure.resolve(loss);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+
+      recovery.reject(recoveryError);
+      const error = await outcome;
+      expect(error).toBeInstanceOf(AggregateError);
+      if (!(error instanceof AggregateError))
+        throw new Error("Startup recovery discarded its original failure");
+      expect(error.errors).toEqual([loss, recoveryError]);
+    } finally {
+      failure.resolve(loss);
+      recovery.reject(recoveryError);
+      await Promise.allSettled([recovery.promise, waiting, outcome]);
+    }
   });
 });

@@ -340,8 +340,11 @@ describe.skipIf(databaseUrl === undefined)(
           ),
           actual = consumer(legacy.temporarySkills);
         const candidate = await actual.service.next(null, signal());
-        expect(candidate).toEqual(a.record);
-        await denied(f, () => actual.service.release(candidate!, signal()));
+        expect(candidate).toBeNull();
+        expect(
+          await legacy.temporarySkills.forAgent(a.record, signal()),
+        ).toEqual([a.record]);
+        await denied(f, () => actual.service.release(a.record, signal()));
         expect(actual.runtime.cleanup).not.toHaveBeenCalled();
       });
     });

@@ -36,6 +36,7 @@ import { PostgresLearningManagedSkills } from "./adapters/postgres/learning-mana
 import { PostgresLearningInstallRequests } from "./adapters/postgres/learning-install-requests.js";
 import type { AgentAcpConfig } from "./config.js";
 import type { TelemetryPort } from "./ports/telemetry.js";
+import { ownershipScope, type AgentOwnershipScope } from "./domain/agent-ownership.js";
 
 export type LearningPipelineInput = {
   config: AgentAcpConfig;
@@ -48,6 +49,8 @@ export type LearningPipelineInput = {
   telemetry: TelemetryPort;
   temporarySkills: TemporarySkills;
   runtimeConnections: RuntimeConnectionAuthority;
+  recoveryScope?: AgentOwnershipScope;
+  retainModelRequest?: (original: Promise<unknown>) => void;
 };
 
 export function buildLearningWorker(input: LearningPipelineInput): LearningWorker | undefined {
@@ -65,6 +68,8 @@ export function buildLearningPipeline(
     return undefined;
   if (input.learningRepositories === undefined)
     throw new Error("Learning repositories are required when Skill learning is enabled");
+  const recoveryScope =
+    input.recoveryScope === undefined ? undefined : ownershipScope(input.recoveryScope);
   const policy = new ControllerLearningPolicyClient(
     config.skillLearningControllerUrl,
     tracedFetch(config.dependencyFetchers.controller!, "agent_controller"),
@@ -99,6 +104,7 @@ export function buildLearningPipeline(
     budget,
     providers,
     new LearningTelemetry(telemetry),
+    input.retainModelRequest,
   );
   const review = new LearningReviewProcessor(reviewRunner, evidence, candidates, managed, outcomes);
   const apply = new LearningApplyAttempt(
@@ -117,7 +123,12 @@ export function buildLearningPipeline(
     telemetry,
   );
   const paused = new LearningPausedRecovery(
-    outcomes,
+    recoveryScope === undefined
+      ? outcomes
+      : {
+          listPaused: (after, limit) => outcomes.listPaused(after, limit, recoveryScope),
+          resumePaused: (claim, currentPolicy) => outcomes.resumePaused(claim, currentPolicy),
+        },
     guard,
     policy,
     processor,

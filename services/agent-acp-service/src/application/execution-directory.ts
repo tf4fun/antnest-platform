@@ -29,6 +29,7 @@ export type ExecutionDirectoryDependencies = {
   clients: ProviderClients;
   runtimeConnections: RuntimeConnectionAuthority;
   onApplied: (configuration: PublicExecutionConfiguration) => Promise<void>;
+  beforeAck?: (configuration: PublicExecutionConfiguration) => Promise<void>;
   onUnavailable: (organizationId: string) => void;
   onPublished?: (organizationId: string) => void;
   onInvalidAuthority?: (organizationId: string) => void;
@@ -129,9 +130,34 @@ export class ExecutionDirectory {
     input: unknown,
   ): Promise<{ organization_id: string; applied_revision: number }> {
     const configuration = parseExecutionConfiguration(input);
-    return this.authorized(configuration.organization_id, undefined, () =>
-      this.applyCurrent(configuration),
+    const beforeAck = this.dependencies.beforeAck;
+    if (beforeAck === undefined)
+      return this.authorized(configuration.organization_id, undefined, () =>
+        this.applyCurrent(configuration),
+      );
+    const { applied, publication } = await this.authorized(
+      configuration.organization_id,
+      undefined,
+      async () => {
+        const applied = await this.applyCurrent(configuration);
+        const publication = this.configurations.get(applied.organization_id);
+        if (publication === undefined || publication.revision !== applied.applied_revision)
+          throw new DomainError(
+            "configuration_unavailable",
+            "Execution configuration is unavailable",
+          );
+        return { applied, publication };
+      },
     );
+    // Owner proof may await Agent work. Release the publication boundary first
+    // so healthy Agents and later configuration changes can continue.
+    await beforeAck(publication);
+    if (
+      this.configurations.get(applied.organization_id) !== publication ||
+      this.pending.get(applied.organization_id)?.publication !== undefined
+    )
+      throw new DomainError("configuration_unavailable", "Execution configuration is unavailable");
+    return applied;
   }
 
   // Serialize local commits per Agent. A configuration publication waits for
@@ -265,7 +291,7 @@ export class ExecutionDirectory {
         throw error;
       }
       // Equal-revision replay still verifies private identity and sender files.
-      if (applied?.revision === next.revision) {
+      if (applied?.revision === next.revision && this.dependencies.beforeAck === undefined) {
         connections.commit();
         return { organization_id: organizationId, applied_revision: next.revision };
       }

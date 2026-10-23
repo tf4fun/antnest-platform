@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { AgentGenerations } from "../../src/application/agent-generations.js";
 import { LearningReviewRunner } from "../../src/application/learning-review-runner.js";
 import {
   ForegroundLearningPreempted,
@@ -11,6 +12,7 @@ import type { LearningTaskClaim } from "../../src/domain/learning-scan.js";
 import type { ModelCallBudget } from "../../src/domain/learning-budget.js";
 import type { LearningEvidence } from "../../src/domain/learning-evidence.js";
 import type { RunExecutionSnapshot } from "../../src/domain/types.js";
+import type { AgentLease, AgentLeases } from "../../src/ports/agent-leases.js";
 import type { ModelPort } from "../../src/ports/model.js";
 
 const id = `evidence_${"a".repeat(32)}`;
@@ -77,7 +79,10 @@ const proposal = {
   rules: [{ text: "Use the checked sequence", evidenceIds: [id] }],
 };
 
-function harness(responses: Array<ReturnType<ModelPort["complete"]>>) {
+function harness(
+  responses: Array<ReturnType<ModelPort["complete"]>>,
+  retainModelRequest?: (original: Promise<unknown>) => void,
+) {
   const model = { complete: vi.fn<ModelPort["complete"]>() };
   for (const response of responses) model.complete.mockImplementationOnce(() => response);
   let callIndex = 0;
@@ -115,7 +120,16 @@ function harness(responses: Array<ReturnType<ModelPort["complete"]>>) {
     handle,
     providers,
     authority,
-    runner: new LearningReviewRunner(source, snapshots, authority, admission, ledger, providers),
+    runner: new LearningReviewRunner(
+      source,
+      snapshots,
+      authority,
+      admission,
+      ledger,
+      providers,
+      undefined,
+      retainModelRequest,
+    ),
   };
 }
 
@@ -318,6 +332,100 @@ describe("learning review runner", () => {
       pending.reject(new Error("Provider eventually stopped"));
       await result;
     }
+  });
+
+  it("retains ignored model cancellation until the original request joins without blocking another Agent", async () => {
+    const pending = Promise.withResolvers<Awaited<ReturnType<ModelPort["complete"]>>>();
+    const retain = vi.fn<(original: Promise<unknown>) => void>();
+    const app = harness([pending.promise], retain);
+    const controller = new AbortController();
+    const cancelled = new Error("Foreground review cancelled");
+    const registration = {
+      registration_id: "abcdef01-2345-4abc-8abc-1234567890ab",
+      member_id: "acp-a",
+      incarnation_id: "abcdef02-2345-4abc-8abc-1234567890ab",
+    };
+    const lease = (fence: AgentLease["fence"]): AgentLease => ({
+      fence,
+      observedAt: new Date(),
+      expiresAt: new Date(Date.now() + 30_000),
+    });
+    const release = vi.fn<AgentLeases["release"]>().mockResolvedValue(true);
+    const leases: AgentLeases = {
+      tryAcquire: (scope, ownerInstanceId) =>
+        Promise.resolve(lease({ ...scope, ownerInstanceId, epoch: "1" })),
+      renew: (fence) => Promise.resolve(lease(fence)),
+      release,
+      read: () => Promise.resolve(null),
+    };
+    const generations = new AgentGenerations<undefined>({ registration, leases });
+    const scopeA = { organizationId: claim.organizationId, agentId: claim.agentId };
+    const scopeB = { ...scopeA, agentId: "agent-2" };
+    let running: ReturnType<LearningReviewRunner["execute"]> | undefined;
+    let closing: Promise<void> | undefined;
+    let draining: Promise<void> | undefined;
+    try {
+      const a = await generations.prepare(scopeA, () => Promise.resolve(undefined));
+      const b = await generations.prepare(scopeB, () => Promise.resolve(undefined));
+      retain.mockImplementation((original) => a.retainRun(original));
+      let runnerFinished = false;
+      let runnerOutcome: unknown;
+      running = a.dispatch((_components, signal) =>
+        app.runner.execute({
+          claim,
+          signal: AbortSignal.any([signal, controller.signal]),
+        }),
+      );
+      const runnerJoined = running.then(
+        (value) => {
+          runnerFinished = true;
+          runnerOutcome = value;
+        },
+        (error: unknown) => {
+          runnerFinished = true;
+          runnerOutcome = error;
+        },
+      );
+      await vi.waitFor(() => expect(app.model.complete).toHaveBeenCalledOnce());
+      controller.abort(cancelled);
+      await vi.waitFor(() => expect(runnerFinished).toBe(true), { timeout: 250, interval: 5 });
+      await runnerJoined;
+      expect(runnerOutcome).toBe(cancelled);
+      expect(app.model.complete.mock.calls[0]![0].signal.aborted).toBe(true);
+      expect(app.ledger.markUnknown).toHaveBeenCalledOnce();
+      expect(app.ledger.settleReview).not.toHaveBeenCalled();
+      expect(app.handle.release).toHaveBeenCalledOnce();
+
+      let aClosed = false;
+      closing = generations.closeScope(scopeA).then(() => {
+        aClosed = true;
+      });
+      expect(await b.dispatch(() => Promise.resolve("B healthy"))).toBe("B healthy");
+      let drained = false;
+      draining = generations.drain().then(() => {
+        drained = true;
+      });
+      // Let an unblocked close finish; the held original model request must keep A open.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(aClosed).toBe(false);
+      expect(drained).toBe(false);
+      expect(retain).toHaveBeenCalledExactlyOnceWith(pending.promise);
+      expect(release).not.toHaveBeenCalledWith(a.authority.fence);
+    } finally {
+      controller.abort(cancelled);
+      pending.resolve({
+        kind: "message",
+        content: [{ type: "text", text: JSON.stringify(proposal) }],
+        stopReason: "end_turn",
+        usage: { inputTokens: 150, outputTokens: 40 },
+      });
+      await Promise.allSettled([pending.promise, running, closing, draining]);
+      await generations.drain();
+    }
+    expect(release).toHaveBeenCalledTimes(2);
+    expect(app.model.complete).toHaveBeenCalledOnce();
+    expect(app.ledger.settleReview).not.toHaveBeenCalled();
+    expect(app.ledger.settle).not.toHaveBeenCalled();
   });
 
   it.each(["response", "rejection"])(

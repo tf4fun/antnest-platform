@@ -19,9 +19,9 @@ resolution, without cloning or scanning the organization's Agent list.
 Commits for the same Agent remain ordered; a configuration publication waits
 for earlier Agent commits and blocks later commits until publication finishes.
 The [connection admission contract](../../../contracts/agent-acp/connection-admission.md)
-defines the shared HTTP/WebSocket quotas. These changes remain process-local;
-the database worker lock stays in place until durable partitioned ownership is
-delivered.
+defines the shared HTTP/WebSocket quotas. These quotas remain process-local;
+the global database worker lock and single-instance restriction remain with
+registered owner mode.
 
 Run admission also reserves one durable slot per `(organization_id, agent_id)`.
 The intent transaction reads that scope from its locked Session, and PostgreSQL
@@ -33,7 +33,7 @@ no intent, message or append advancement. Cancellation requests and worker exit
 retain the reservation until a terminal state commits. Terminal `unresolved`
 still requires the independent Runtime barrier checks before new effects.
 See the [durable admission contract](../../../contracts/agent-acp/run-admission.md).
-This persistence invariant does not provide leases, stale-owner fencing or
+This persistence invariant alone does not provide leases, stale-owner fencing or
 multi-replica recovery; the exclusive worker lock remains in place.
 
 The [Agent ownership contract](../../../contracts/agent-acp/agent-ownership.md)
@@ -46,17 +46,26 @@ and uses PostgreSQL 17's transaction timeout for a bounded database-only callbac
 A missed locking lookup cannot be authorized by a later inserted row, and a
 COMMIT response reporting ROLLBACK cannot return a successful business result.
 
-No production writer or startup coordinator uses these lease primitives yet.
-The `AgentGenerations` lifecycle component can prepare a fixed authority and
-component graph, reject dispatch after loss, and join original work before
-release. It single-flights acquisition per scope and retains a retirement
+When owner settings are enabled and registration completes, production
+`AgentGenerations` prepares a fixed authority and component graph per Agent.
+Application, settlement, state, commands and source-read routing use that graph;
+Session, Run, Permission, Temporary Skill and Learning writers capture its owned
+authority. Background dispatch uses a fixed scope. With owner settings disabled,
+composition keeps the original legacy path.
+
+The lifecycle component rejects dispatch after loss and joins original work
+before release. It single-flights acquisition per scope and retains a retirement
 barrier through acquire/renew/initialization, Run completion and release. Unknown
 release results keep that scope closed. Monotonic local deadlines count from
 request dispatch; expiry and request budgets are rechecked synchronously even
 when timer callbacks are delayed. Normal drain keeps renewing until original
 work finishes. Local task diagnostics retain only the latest 16 failures; callers
-still receive their original operation failures. This component is not yet connected to production configuration,
-Prompt or startup recovery; its isolated admission is not a multi-replica claim.
+still receive their original operation failures. Production uses a 30-second
+lease, 10-second renewal interval and 10-second operation budget, without
+configuration settings for these values. Legacy compatibility writer authority
+still comes from the held global worker lock; work cancellation uses the entry
+signal, and Learning retains and joins original model work.
+
 `AgentApplicationRouter` implements the existing application port against those
 prepared graphs. It copies request data before authorization, routes by the trusted
 organization/Agent binding and retains each accepted Run's original completion.
@@ -64,11 +73,17 @@ Before invocation, missing ownership returns retryable `agent_unavailable`; afte
 invocation, ownership loss preserves the non-retryable recovery classification and
 closes only that Agent. `PromptCoordinator` has a scope-bound loss notification
 separate from the global persistence-failure callback; it does not await its own
-generation's close. Router composition with real Session/Prompt repositories is a
-component boundary, not the production startup/publication activation gate.
-Connecting every owned write and scoped recovery, covering configuration ACKs
-across owners, forwarding connections and the final two-replica integration
-remain required before removing the global worker lock.
+generation's close. Startup inventory isolates protected owned work and permits
+only approved scoped legacy recovery. `loadOwnedAuthority` rechecks sealed
+configuration under the fixed fence before use.
+
+The ACK checks every accepting Agent outside configuration publication. Failure
+does not withdraw healthy applied configuration, but an organization-wide ACK
+does not guarantee that Controller independently marks a healthy new Agent ready.
+Production predecessor stop-proof recovery, cross-owner ACKs and peers,
+two-replica integration, and global fail-stop joins of original tasks with
+main-process acceptance remain pending. The global worker lock and
+single-instance restriction stay in place.
 
 ## Optional Incarnation Bootstrap
 
@@ -88,8 +103,10 @@ validated optional owner configuration
   -> independent Runtime Controller-only probe listener
   -> Runtime Controller registration and validated matching receipt
   -> PostgreSQL migration and readiness check
-  -> existing global worker lock and startup recovery
-  -> configuration restoration and ordinary control/workspace listeners
+  -> existing global worker lock
+  -> protected-owned inventory and approved scoped legacy recovery
+  -> fixed Agent generations and sealed configuration restoration
+  -> ordinary control/workspace listeners
 ```
 
 `OwnerIncarnation` retains one immutable registration tuple for the process.
@@ -123,18 +140,20 @@ timestamps are calendar-validated diagnostics and never authorize recovery by
 age. The ten-second attempt includes the original response read, cancellation
 and cleanup joins, shared with the registration adapter.
 
-The inspection adapter is a prerequisite for scoped recovery. Production
-recovery does not consume these receipts yet; it must later persist accepted
-stop proof under the current Agent fence while retaining the Run's original
-execution identity. An ACP stop fact does not prove remote Runtime effects
-have stopped and never authorizes replay.
+The inspection adapter is a prerequisite for owned-predecessor stop-proof
+recovery. Production recovery does not consume these receipts yet; it must later
+persist accepted stop proof under the current Agent fence while retaining the
+Run's original execution identity. Scoped legacy recovery does not consume such
+receipts. An ACP stop fact does not prove remote Runtime effects have stopped
+and never authorizes replay.
 
-Bootstrap is optional and does not attach this identity to production Agent
-lease ownership or fenced writers. The global worker lock, single-instance
-restriction and ownership-loss fail-stop channel remain. Production owner
-coordination, fenced writes, scoped recovery, cross-owner configuration and
-revocation ACKs, peer routing, deployment membership and explicit two-replica
-integration remain separate pending work.
+Bootstrap is optional. Its validated identity now binds production Agent leases,
+fenced writers and scoped background work. Without owner settings, startup
+retains the legacy path. The global worker lock, single-instance restriction and
+independent ownership-loss fail-stop channel remain; connected generations and
+scoped legacy recovery do not complete predecessor stop-proof recovery,
+cross-owner ACKs and peers, two-replica integration or global fail-stop
+original-task joins and main-process acceptance.
 
 ## Mission
 
@@ -230,9 +249,10 @@ writing state, cancellation timestamps or configuration events. A successor
 cannot cancel its predecessor's Run through Session close/delete. Configuration
 revision and its replay event commit atomically. Even missing/deleted delete
 retries pass the authority boundary before local Supervisor cancellation; input
-identity is captured before asynchronous authorization. Production composition
-still uses the worker-lock-backed legacy bundle while Agent coordination and
-remaining writer/recovery consumers are pending.
+identity is captured before asynchronous authorization. Registered owner mode
+uses the fixed generation's owned bundle; disabled owner mode keeps the
+worker-lock-backed legacy bundle. Scoped legacy compatibility writes retain
+that worker-lock authority.
 Temporary Skill writers use that same bundle authority. Reservation locks the
 actual Session and original Run before inserting a scope; cleanup preflight
 checks its complete stored Runtime binding before calling Runtime. The RPC runs
@@ -241,8 +261,9 @@ atomically marks only load-skill attempts stopped, releases the temporary scope
 and retires a barrier only if all protected resources have cleared. A lost owner
 cannot save that receipt, even after successful remote cleanup. Terminal Runs
 and deleted Sessions remain cleanable by their original current owner. Candidate
-reads do not authorize cleanup; generation shutdown and predecessor recovery
-still require separate stopping and original-task join evidence.
+reads do not authorize cleanup. Generation shutdown joins original work;
+predecessor stop-proof recovery and global fail-stop original-task joins remain
+separate pending acceptance.
 Fork creates a new Session with a point-in-time copy of durable context,
 records the immutable immediate source Session, but never copies Runs or
 admissions and rejects a source Session with active work.
@@ -470,8 +491,9 @@ or duplicate decisions, and commit an always rule atomically with its decision.
 The original cancellation signals and copied request/decision payload survive
 lock or approval waits. Global startup cancellation remains legacy-only: it
 rejects a selected owned Run and updates only its locked set of pending requests.
-Production generation capture and scoped predecessor recovery are still required
-before owned multi-replica dispatch is enabled.
+Registered owner mode captures the generation in production and cancels abandoned
+legacy permissions only within approved scopes. Predecessor stop-proof recovery,
+cross-owner ACKs and peers, and two-replica integration remain pending.
 
 ## Module Map
 
@@ -537,16 +559,17 @@ Plan updates require both original receipts. A changed request or an incomplete
 receipt is rejected. This persistence contract does not authorize replaying a
 model request, Tool dispatch or accepted prompt.
 
-- `admitting` Run: fail it with `service_restarted_before_execution`, or
-  preserve an already requested cancellation. Do not call Controller or execute
-  its prompt.
-- `running` Run after service restart: do not replay model or Tool work. An
-  in-progress Tool is closed with unknown effect and makes the Run unresolved;
+- Selected legacy `admitting` Run: fail it with
+  `service_restarted_before_execution`, or preserve an already requested
+  cancellation. Do not call Controller or execute its prompt.
+- Selected legacy `running` Run after service restart: do not replay model or
+  Tool work. An in-progress Tool is closed with unknown effect and makes the Run unresolved;
   calls retained in the assistant response but not yet dispatched are closed
   as not executed. A Run with no unknown Tool effect terminates failed and
   quiescent. Results are persisted locally without Controller notification.
 - `completed/cancelled/failed/unresolved`: excluded from startup cleanup and
-  left unchanged, even when a legacy admission receipt is absent.
+  left unchanged, even when a legacy admission receipt is absent. Outstanding
+  owned effects still protect their Agent through startup inventory.
 - Durable Run-event and terminal writes retry at most three times with one
   fixed request identity, payload and timestamp. They never retry a model,
   Tool dispatch or prompt. If acknowledgement remains uncertain, the executor
@@ -562,12 +585,15 @@ model request, Tool dispatch or accepted prompt.
   bounded backoff until persistence recovers or worker ownership ends.
 - A terminal-write retry preserves the original outcome and finish time;
   reading its committed outcome confirms completion without repeating work.
-- A failed local acceptance transaction still requests process replacement
-  when persistence is uncertain. Admission isolation is a separate delivery
-  batch. Startup records interruption, never retries the prompt.
+- An uncertain local acceptance transaction closes the affected generation in
+  registered owner mode. Legacy/global failures retain the service-recovery
+  path. Startup never retries the prompt; protected owned work still requires
+  predecessor stop-proof recovery before reuse.
 - An admission failure handed to startup recovery does not emit a speculative ACP
   `idle/_failed` projection. The failing v2 connection is closed; reconnect/replay
-  exposes the recovered terminal result after service replacement.
+  exposes the authoritative durable result when recovery permits it. Legacy
+  recovery runs after service replacement; protected owned work is not cleared
+  by scoped legacy cleanup.
 - Connection loss: does not delete Session state. In-flight work may continue;
   updates are durable and can be replayed after resume. Resume/load attaches the
   new connection to subsequent durable output even if execution began on another
@@ -604,8 +630,10 @@ closes dispatch immediately, while the wrapper still awaits the original
 operation and its cleanup before settling; cancellation does not prove that a
 pending runner or SQL operation has stopped. Context loading and checkpoint persistence use the
 same fence. A completed effect may be recovered idempotently after replacement,
-but the stale worker cannot begin the next transition. Active-active execution requires a durable
-per-Run claim design and is not implied by stateless HTTP adapters.
+but the stale worker cannot begin the next transition. Global fail-stop joins
+of original tasks and main-process acceptance remain pending; normal generation
+drain does not establish that boundary. Active-active execution still requires
+the remaining handoff and two-replica acceptance, independently of HTTP adapters.
 
 The legacy startup adapters additionally support explicit organization/Agent
 selection for abandoned permission cancellation, Run recovery and Learning
@@ -625,10 +653,10 @@ to authenticate the encrypted configuration on the fenced transaction's own
 connection. It captures the fence before waiting and rejects a lease that
 expired during the wait; public projection alone is never executable authority.
 
-These scoped helpers and inventory are component-tested; production startup
-still uses the global path until fixed Agent components and all background
-dispatch gates are wired together. A successful scoped cleanup does
-not prove that a previous owned executor has stopped.
+Registered owner startup now uses this inventory, approved scoped legacy
+recovery, fixed Agent components and scoped background dispatch. Owner-disabled
+startup keeps the global legacy path. A successful scoped cleanup does not
+prove that a previous owned executor has stopped.
 
 Live ACP delivery uses a per-connection ordered output stream, not a second
 event journal. A single PostgreSQL statement reads visible messages after a
@@ -735,9 +763,10 @@ places them in an attributed user image message after the entire Tool batch;
 for non-vision models it sends an explicit omission note. Local conversion
 errors are not classified as network/provider availability failures.
 
-The same fail-stop rule applies when local Run persistence can no longer prove
-its terminal state. The service never removes an in-memory executor and keeps
-serving as though execution had safely finished.
+When local Run persistence can no longer prove its terminal state, registered
+owner mode isolates the affected generation; legacy/global failures retain
+their service-recovery boundary. The service never removes an in-memory executor
+and serves that Agent as though execution had safely finished.
 
 Shutdown first clears readiness, then terminates ACP transports and cancels
 active execution. The optional owner intent closes permanently and its probe
@@ -788,9 +817,13 @@ claim/effect history forbids adoption. Each owned claim and review attempt keeps
 its original execution identity and frozen policy. Pause/resume preserves that
 claim and budget. A successor cannot resume a predecessor's claim or write its
 late receipts. Global startup recovery locks its selected running tasks, rejects
-owned work, and updates only the validated legacy set. Production still uses
-the global worker lock; Agent generation dispatch, scoped recovery with stopping
-proof, original network-task joins and two-replica integration remain required.
+owned work, and updates only the validated legacy set. Production now connects
+fixed generation dispatch and scoped legacy recovery. Legacy compatibility
+writes still use global worker-lock authority, while work cancellation uses
+the entry signal and Learning retains and joins original model work.
+Predecessor stop-proof recovery, cross-owner ACKs and peers, two-replica
+integration, and global fail-stop original-task joins with main-process
+acceptance remain pending.
 
 ## Workspace Bridge Extension
 
@@ -872,8 +905,9 @@ Unsupported surfaces are not stubbed with false success responses.
 8. No query addresses another service's schema.
 9. Session close/delete and Run-intent creation serialize on one Session row.
 10. A cancelled admitting Run cannot progress to model or Tool execution.
-11. Losing the worker-lock session aborts recovery and every local executor
-    before a replacement worker may take ownership.
+11. Losing the worker-lock session closes dispatch and signals cancellation to
+    recovery and local executors. Global fail-stop original-task joins and
+    main-process acceptance remain pending before multi-replica handoff.
 12. Transactions that need both records lock the Session before the Run; this
     canonical order also applies to cancellation and durable event writes.
 13. A Tool-call batch produces no external effect until every call in that
