@@ -558,7 +558,7 @@ export const api = {
     input,
   ),
   agents: (options: AgentPageOptions = {}) => request<AgentList>(agentPagePath(options)),
-  agent: (agentID: string) => request<Agent>(`/api/admin/agents/${encodeURIComponent(agentID)}`),
+  agent: (agentID: string, signal?: AbortSignal) => request<Agent>(`/api/admin/agents/${encodeURIComponent(agentID)}`, { signal }),
   createAgent: (input: CreateAgentInput) => idempotentRequest<CreateAgentResult>("create-agent", "/api/admin/agents", input),
   agentSkillPreparationForCreate: (input: CreateAgentInput) => {
     const key = pendingLifecycleKey("create-agent", input);

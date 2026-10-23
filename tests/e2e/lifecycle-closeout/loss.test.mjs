@@ -154,6 +154,7 @@ function replacement() {
   return {
     agent: {
       ...initial().agent,
+      readiness: "ready",
       agent_spec_revision: "s2",
       executable_execution_revision: "e2",
       last_successful_execution_revision: "e2",

@@ -72,7 +72,7 @@ const systemNotice = z.strictObject({
   sourceRunId: id.optional(),
 });
 const agent = z.strictObject({ agentId: id, bridgeEpoch: id, availability: z.enum(["ready", "busy", "offline"]),
-  unavailableReason: z.enum(["agent_unavailable", "runtime_barrier_required"]).nullable().optional(),
+  unavailableReason: z.enum(["agent_unavailable", "agent_preparing", "runtime_barrier_required"]).nullable().optional(),
   controlCommands: availableCommandsSchema.optional(),
   skillCommands: availableCommandsSchema.optional(),
   promptCapabilities: z.strictObject({ image: z.boolean().optional(), audio: z.boolean().optional(), embeddedContext: z.boolean().optional() }),
@@ -81,6 +81,8 @@ const agent = z.strictObject({ agentId: id, bridgeEpoch: id, availability: z.enu
   learningStatus: learningStatusSchema.nullable().optional(),
   systemNotices: z.array(systemNotice).max(20).optional(),
 }).refine((value) => value.learningStatus == null || value.learningStatus.agentId === value.agentId)
+.refine((value) => value.unavailableReason !== "agent_preparing" ||
+  (value.availability === "offline" && value.activeSessionId === null))
 .refine((value) => value.selectedSessionId === null ? value.selectedView === null :
   value.selectedView?.sessionId === value.selectedSessionId && value.selectedView?.agentId === value.agentId &&
   value.selectedView?.bridgeEpoch === value.bridgeEpoch);

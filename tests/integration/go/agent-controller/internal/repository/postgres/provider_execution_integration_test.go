@@ -38,5 +38,10 @@ func TestCurrentModelPublicationDoesNotChangeBuildSnapshot(t *testing.T) {
 	require.Equal(t, before.Agents, after.Agents)
 	unchanged, err := repository.GetAgentLifecycleBase(t.Context(), base.Agent.AgentID)
 	require.NoError(t, err)
-	require.Equal(t, base, unchanged)
+	expected := base
+	require.NotNil(t, expected.Agent.Readiness)
+	readiness := *expected.Agent.Readiness
+	readiness.CommittedRevision = after.Revision
+	expected.Agent.Readiness = &readiness
+	require.Equal(t, expected, unchanged)
 }

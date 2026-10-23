@@ -97,6 +97,8 @@ test("Agent state watch parses split SSE frames and fails closed on revocation",
       unavailable_reason: "runtime_barrier_required" },
     { ...state, availability: "offline", active_session_id: null,
       unavailable_reason: "agent_unavailable" },
+    { ...state, availability: "offline", active_session_id: null,
+      unavailable_reason: "agent_preparing" },
     { ...state, availability: "ready", active_session_id: null,
       unavailable_reason: null },
   ];
@@ -118,6 +120,7 @@ test("Agent state watch parses split SSE frames and fails closed on revocation",
     { availability: "busy", activeSessionId: "session-2", unavailableReason: null },
     { availability: "offline", activeSessionId: null, unavailableReason: "runtime_barrier_required" },
     { availability: "offline", activeSessionId: null, unavailableReason: "agent_unavailable" },
+    { availability: "offline", activeSessionId: null, unavailableReason: "agent_preparing" },
     { availability: "ready", activeSessionId: null, unavailableReason: null },
   ]);
   const revoked = { ...state, access_allowed: false, availability: "offline",
@@ -154,7 +157,7 @@ test("Agent execution state rejects denied or mismatched scopes", async () => {
     await parseAgentExecutionState(new Response(JSON.stringify(state)), "agent:1"),
     { availability: "busy", activeSessionId: "session-2", unavailableReason: null },
   );
-  for (const unavailableReason of ["runtime_barrier_required", "agent_unavailable", null]) {
+  for (const unavailableReason of ["runtime_barrier_required", "agent_unavailable", "agent_preparing", null]) {
     const availability = unavailableReason === null ? "ready" : "offline";
     assert.deepEqual(
       await parseAgentExecutionState(new Response(JSON.stringify({
@@ -181,6 +184,55 @@ test("Agent execution state rejects denied or mismatched scopes", async () => {
     })), "agent:1"),
     BridgeCapabilityError,
   );
+});
+
+test("preparing Agent state rejects inconsistent availability, Session identity, scope and revocation over GET and split SSE", async () => {
+  const preparing = {
+    agent_id: "agent:1",
+    access_allowed: true,
+    configuration_revision: "a".repeat(64),
+    availability: "offline",
+    active_session_id: null,
+    unavailable_reason: "agent_preparing",
+  };
+  for (const { name, patch, failure } of [
+    { name: "ready with preparing", patch: { availability: "ready" }, failure: BridgeCapabilityError },
+    { name: "busy with preparing", patch: { availability: "busy" }, failure: BridgeCapabilityError },
+    { name: "preparing leaks an active Session", patch: { active_session_id: "session-private" }, failure: BridgeCapabilityError },
+    { name: "preparing belongs to another Agent", patch: { agent_id: "agent:2" }, failure: BridgeCapabilityError },
+    { name: "revocation remains terminal", patch: {
+      access_allowed: false, configuration_revision: null, unavailable_reason: "access_denied",
+    }, failure: AgentAccessRevokedError },
+    { name: "denied preparing is never delivered", patch: {
+      access_allowed: false, configuration_revision: null,
+    }, failure: AgentAccessRevokedError },
+  ]) {
+    const state = { ...preparing, ...patch };
+    await assert.rejects(
+      parseAgentExecutionState(new Response(JSON.stringify(state)), "agent:1"),
+      failure,
+      "GET: " + name,
+    );
+    const wire = `event: workspace_state\ndata: ${JSON.stringify(state)}\n\n`;
+    const split = Math.floor(wire.length / 2);
+    const encoder = new TextEncoder();
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(wire.slice(0, split)));
+        controller.enqueue(encoder.encode(wire.slice(split)));
+        controller.close();
+      },
+    }), { headers: { "content-type": "text/event-stream" } });
+    const observed: unknown[] = [];
+    await assert.rejects(
+      consumeAgentExecutionStateStream(response, "agent:1", (value) => {
+        observed.push(value);
+      }, new AbortController().signal),
+      failure,
+      "split SSE: " + name,
+    );
+    assert.deepEqual(observed, [], "invalid state reached the observer: " + name);
+  }
 });
 
 test("reliable prompt admission fails closed unless all three producer capabilities are advertised", () => {

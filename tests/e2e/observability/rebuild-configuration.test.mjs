@@ -36,6 +36,7 @@ const agent = (revision) => ({
   activation_state: "enabled",
   desired_state: "enabled",
   runtime_state: "available",
+  readiness: "ready",
   agent_spec_revision: `spec-${revision}`,
   executable_execution_revision: `execution-${revision}`,
   runtime: runtime(revision),

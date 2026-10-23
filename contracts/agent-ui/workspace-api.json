@@ -8,7 +8,7 @@
   "agent_unavailability": {
     "source": "authorized ACP Agent execution-state read/watch",
     "field": "agentView.unavailableReason",
-    "values": ["agent_unavailable", "runtime_barrier_required", null],
+    "values": ["agent_unavailable", "agent_preparing", "runtime_barrier_required", null],
     "optional": true,
     "clear_on": ["null or omitted reason", "scope replacement", "access revocation"],
     "recovery_action": "existing administrator-only Console action",

@@ -66,5 +66,10 @@ func TestCurrentModelPricingPublicationSurvivesReopenWithoutChangingAgent(t *tes
 	require.Equal(t, current, currentExecutionSnapshot(t, reopened, base.Agent.OrganizationID), "receipt replay cannot overwrite current pricing")
 	unchanged, err := reopened.GetAgentLifecycleBase(t.Context(), base.Agent.AgentID)
 	require.NoError(t, err)
-	require.Equal(t, base, unchanged, "pricing does not rebuild Agent or Runtime")
+	expected := base
+	require.NotNil(t, expected.Agent.Readiness)
+	readiness := *expected.Agent.Readiness
+	readiness.CommittedRevision = current.Revision
+	expected.Agent.Readiness = &readiness
+	require.Equal(t, expected, unchanged, "pricing does not rebuild Agent or Runtime")
 }

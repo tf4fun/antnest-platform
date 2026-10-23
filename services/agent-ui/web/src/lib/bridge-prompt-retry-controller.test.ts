@@ -394,3 +394,75 @@ for (const [name, fresh] of invalidFreshViews) {
     assert.strictEqual(shownAfter?.conversation, shownBefore?.conversation);
   });
 }
+
+for (const source of ["fresh-view", "observer-during-view", "fresh-view-with-receipt"] as const) {
+  test(`Controller original Prompt retry respects preparing from ${source}`,
+    { timeout: 2_000 }, async (t) => {
+      const fresh = retryView("session-a", true);
+      const receipt = { operationId: "intent-a", sessionId: "session-a", acceptance: "acp" as const,
+        phase: "completed" as const, runId: "durable-run-a", outputWatermark: 2 };
+      if (source !== "observer-during-view") {
+        fresh.availability = "offline";
+        fresh.unavailableReason = "agent_preparing";
+        fresh.activeSessionId = null;
+      }
+      if (source === "fresh-view-with-receipt") fresh.operations = [receipt];
+      const f = retryControllerFixture(source === "observer-during-view"
+        ? { pause: "view", fresh } : { fresh });
+      let result;
+      let shownBefore;
+      let shownAfter;
+      try {
+        await f.seed();
+        shownBefore = f.controller.snapshot;
+        const pending = f.run(f.controller.retryPrompt("intent-a"));
+        if (source === "observer-during-view") {
+          await actualStageStarted(f.viewStarted.promise, pending, t.signal);
+          const preparing = retryView("session-a");
+          preparing.availability = "offline";
+          preparing.unavailableReason = "agent_preparing";
+          preparing.activeSessionId = null;
+          preparing.operations = [unknownOperation()];
+          preparing.selectedView!.operations = [unknownOperation()];
+          f.observers.at(-1)!.input.onView(preparing);
+          f.releaseView.resolve();
+        }
+        result = await pending;
+        shownAfter = f.controller.snapshot;
+      } finally { await f.finish(); }
+      f.assertJoined();
+      assert.equal(f.promptCalls.length, 1, "preparing must not dispatch another copy of the original Prompt");
+      assert.deepEqual(f.events, ["original-post", "query", "view"]);
+      assert.deepEqual(f.promptCalls[0], {
+        agentId: "agent", sessionId: "session-a", action: undefined,
+        admission: { intentId: "intent-a", expectedAppendVersion: 1,
+          historyToken: "original-token-1", prompt: originalPrompt },
+      });
+      const originalBefore = shownBefore?.operations.find(row => row.operationId === "intent-a");
+      const originalAfter = shownAfter?.operations.find(row => row.operationId === "intent-a");
+      assert.equal(originalBefore?.retryAvailable, true);
+      if (source === "fresh-view-with-receipt") {
+        assert.equal(result?.status, "fulfilled");
+        if (result?.status === "fulfilled") {
+          assert.equal(result.value.acceptance, "acp");
+          assert.equal(result.value.runId, receipt.runId);
+          assert.equal(result.value.phase, receipt.phase);
+          assert.equal(result.value.retryAvailable, undefined);
+        }
+        assert.equal(originalAfter?.runId, receipt.runId);
+        assert.equal(originalAfter?.acceptance, "acp");
+        assert.equal(originalAfter?.retryAvailable, undefined);
+      } else {
+        assert.ok(result, "the actual retry decision must settle");
+        assert.equal(originalAfter?.phase, "uncertain");
+        assert.equal(originalAfter?.acceptance, "unknown");
+        assert.equal(originalAfter?.retryAvailable, true, "preparing retains the immutable original input for a later explicit action");
+      }
+      if (source === "observer-during-view") {
+        assert.equal(shownAfter?.view?.availability, "offline");
+        assert.equal(shownAfter?.view?.unavailableReason, "agent_preparing");
+      } else {
+        assert.strictEqual(shownAfter?.view, shownBefore?.view, "the HTTP candidate must not replace the observed SSE projection");
+      }
+    });
+}

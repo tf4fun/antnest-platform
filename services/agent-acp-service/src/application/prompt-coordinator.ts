@@ -13,6 +13,7 @@ import type {
   AgentConfiguration,
   PublicExecutionConfiguration,
 } from "../domain/execution-configuration.js";
+import { requireAgentAcceptingRuns } from "../domain/execution-configuration.js";
 import { runSnapshot } from "../domain/run-snapshot.js";
 import type { ConnectionBinding, ContentBlock, RunExecutionSnapshot } from "../domain/types.js";
 import type { RunRepository } from "../ports/run-repository.js";
@@ -96,12 +97,7 @@ export class PromptCoordinator {
     authorizeSession(session, input.binding);
     requireActiveSession(session);
     throwIfCancelled(signal);
-    if (!agent.accepting_runs) {
-      throw new DomainError(
-        "agent_unavailable",
-        agent.unavailable_reason ?? "Agent is unavailable",
-      );
-    }
+    requireAgentAcceptingRuns(agent);
     if (
       await this.dependencies.protection.hasUnstoppedRuntimeCalls(
         {

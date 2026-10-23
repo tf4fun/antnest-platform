@@ -385,9 +385,7 @@ export function resolveExecutionConfiguration(
   overrides: SessionConfiguration,
 ) {
   const agent = authorizeConfiguredAgent(snapshot, identity);
-  if (!agent.accepting_runs) {
-    throw new DomainError("agent_unavailable", agent.unavailable_reason ?? "Agent is unavailable");
-  }
+  requireAgentAcceptingRuns(agent);
   const selection = sessionConfigurationSchema.parse(overrides);
   const effective = selectSessionModel(selection, executionConfigurationCatalog(snapshot, agent));
   const model = snapshot.models.find(
@@ -446,6 +444,15 @@ export function resolveExecutionConfiguration(
 }
 
 export type ResolvedExecutionConfiguration = ReturnType<typeof resolveExecutionConfiguration>;
+
+// Call only after ordinary Agent and, where applicable, Session authorization.
+// A listed pending binding is distinct from an unknown or unauthorized Agent.
+export function requireAgentAcceptingRuns(agent: AgentConfiguration): void {
+  if (agent.accepting_runs) return;
+  if (agent.unavailable_reason === "agent_preparing")
+    throw new DomainError("agent_preparing", "Agent execution is preparing");
+  throw new DomainError("agent_unavailable", agent.unavailable_reason ?? "Agent is unavailable");
+}
 
 export function executionConfigurationCatalog(
   snapshot: PublicExecutionConfiguration,

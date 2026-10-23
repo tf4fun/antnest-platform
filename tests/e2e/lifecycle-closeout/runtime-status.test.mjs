@@ -39,6 +39,96 @@ test("Runtime status is read from the live Runtime with a Controller credential"
   }
 });
 
+function stage3Docker({ ids = ["rc-id"], change = (rows) => rows } = {}) {
+  const stage3Project = "antnest-stage3-e2e-3845";
+  const { docker: base, calls } = fakeDocker("sender-two");
+  const discovery = [];
+  const docker = async (args, ...options) => {
+    if (args[0] === "ps") {
+      discovery.push(args);
+      assert.deepEqual(args, [
+        "ps",
+        "-aq",
+        "--no-trunc",
+        "--filter",
+        `label=com.docker.compose.project=${stage3Project}`,
+        "--filter",
+        "label=com.docker.compose.service=runtime-controller",
+      ]);
+      return ids.join("\n");
+    }
+    if (args[0] === "inspect") {
+      discovery.push(args);
+      assert.deepEqual(args, ["inspect", "rc-id"]);
+      return JSON.stringify(
+        change([
+          {
+            Id: "rc-id",
+            Config: {
+              Labels: {
+                "com.docker.compose.project": stage3Project,
+                "com.docker.compose.service": "runtime-controller",
+              },
+            },
+          },
+        ]),
+      );
+    }
+    return base(args, ...options);
+  };
+  return { docker, calls, discovery, project: stage3Project };
+}
+
+test("Stage3 Runtime status discovers exactly its labeled Controller without a lifecycle Compose profile", async () => {
+  const { docker, calls, discovery, project: stage3Project } = stage3Docker();
+  assert.deepEqual(await runtimeStatus(docker, stage3Project, "runtime-id"), {
+    status: "ready",
+    execution_id: "process",
+  });
+  assert.equal(discovery.length, 2);
+  assert.equal(calls.filter((args) => args[1] === "-e").length, 2);
+  assert(!calls.some((args) => args[0] === "compose"));
+});
+
+for (const [name, options] of [
+  ["missing", { ids: [] }],
+  ["ambiguous", { ids: ["rc-id", "other-id"] }],
+  [
+    "foreign project",
+    {
+      change: (rows) => {
+        rows[0].Config.Labels["com.docker.compose.project"] = "another-project";
+        return rows;
+      },
+    },
+  ],
+  [
+    "wrong service",
+    {
+      change: (rows) => {
+        rows[0].Config.Labels["com.docker.compose.service"] =
+          "agent-controller";
+        return rows;
+      },
+    },
+  ],
+  ["replaced identity", { change: (rows) => [{ ...rows[0], Id: "other-id" }] }],
+  ["duplicate inspection", { change: (rows) => [...rows, ...rows] }],
+]) {
+  test(`Stage3 Runtime status rejects ${name} Controller before reading credentials`, async () => {
+    const { docker, calls, project: stage3Project } = stage3Docker(options);
+    await assert.rejects(runtimeStatus(docker, stage3Project, "runtime-id"));
+    assert.equal(calls.length, 0);
+  });
+}
+
+test("Runtime status rejects an arbitrary project before container discovery", async () => {
+  const { docker, calls, discovery } = stage3Docker();
+  await assert.rejects(runtimeStatus(docker, "production", "runtime-id"));
+  assert.equal(discovery.length, 0);
+  assert.equal(calls.length, 0);
+});
+
 test("Runtime status fails without leaking rejected credentials", async () => {
   const { docker } = fakeDocker("none");
   await assert.rejects(

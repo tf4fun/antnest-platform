@@ -137,6 +137,7 @@ func (failure *DependencyError) Error() string {
 }
 
 type AgentRecord struct {
+	Readiness                         *AgentReadinessEvidence
 	ActivationState                   domain.ActivationState
 	RuntimeState                      domain.RuntimeState
 	RuntimeReason                     string

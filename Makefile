@@ -124,6 +124,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/deployment/dependency-secrets.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/e2e-overlays.test.mjs tests/integration/deployment/agent-ui-receipt-gate.test.mjs
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/agent-readiness/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs tests/integration/skill-registry/prepare-auth.test.mjs
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
@@ -271,6 +272,10 @@ e2e-lifecycle-network:
 .PHONY: e2e-lifecycle-loss
 e2e-lifecycle-loss:
 	node tests/support/authenticated-shell-e2e.mjs lifecycle-loss
+
+.PHONY: e2e-agent-readiness
+e2e-agent-readiness:
+	ANTNEST_E2E_AGENT_READINESS=true sh tests/e2e/e2e-stage3a.sh
 
 .PHONY: e2e-rpc-response-loss
 e2e-rpc-response-loss:

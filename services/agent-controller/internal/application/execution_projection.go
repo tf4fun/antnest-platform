@@ -80,6 +80,9 @@ func projectExecutionAgent(source ports.ExecutionAgentSource) ports.ExecutionAge
 	result.AcceptingRuns = len(result.PrincipalIDs) > 0 && agent.ExecutionReady()
 	if !result.AcceptingRuns {
 		reason := "agent_unavailable"
+		if len(result.PrincipalIDs) > 0 && agent.RuntimePreparing() {
+			reason = "agent_preparing"
+		}
 		result.UnavailableReason = &reason
 	}
 	return result

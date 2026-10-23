@@ -128,12 +128,13 @@ test("Agent-only deltas update availability without materializing a Session", ()
 });
 
 test("Agent recovery reason is scoped and clears through nullable and removed deltas", () => {
+  for (const reason of ["runtime_barrier_required", "agent_preparing"]) {
   const snapshot = reset(null, 1);
   const initial = applyBridgeEvent(initialBridgeStream("agent-1", null), {
-    ...snapshot, view: { ...snapshot.view, availability: "offline", unavailableReason: "runtime_barrier_required" },
+    ...snapshot, view: { ...snapshot.view, availability: "offline", activeSessionId: null, unavailableReason: reason },
   });
   assert.equal(initial.action, "view");
-  assert.equal(initial.state.view?.unavailableReason, "runtime_barrier_required");
+  assert.equal(initial.state.view?.unavailableReason, reason);
   const event = { type: "delta", agentId: "agent-1", bridgeEpoch: "epoch-1", projectionId: "projection-1",
     fromStreamRevision: 1, toStreamRevision: 2, fromCursor: "cursor-1", cursor: "cursor-2",
     sessionId: null, incarnation: null, fromSessionViewRevision: null, sessionViewRevision: null };
@@ -143,7 +144,7 @@ test("Agent recovery reason is scoped and clears through nullable and removed de
   ] });
   assert.equal(cleared.action, "view");
   assert.equal(cleared.state.view?.unavailableReason, null);
-  assert.equal(initial.state.view?.unavailableReason, "runtime_barrier_required");
+  assert.equal(initial.state.view?.unavailableReason, reason);
   const removed = applyBridgeEvent(initial.state, { ...event,
     patch: [{ op: "remove", path: "/unavailableReason" }] });
   assert.equal(removed.action, "view");
@@ -156,6 +157,7 @@ test("Agent recovery reason is scoped and clears through nullable and removed de
   }
   assert.equal(applyBridgeEvent(initial.state, { ...event, type: "access_revoked" }).state.view, null);
   assert.equal(applyBridgeEvent(initialBridgeStream("agent-2", null), snapshot).state.view, null);
+  }
 });
 
 test("optional recovery reason roundtrips legacy snapshots through generated wire deltas", () => {
@@ -164,6 +166,9 @@ test("optional recovery reason roundtrips legacy snapshots through generated wir
     { ...base, unavailableReason: "runtime_barrier_required", streamCursor: "cursor-2" },
     { ...base, unavailableReason: null, streamCursor: "cursor-3" },
     { ...base, streamCursor: "cursor-4" },
+    { ...base, activeSessionId: null, unavailableReason: "agent_preparing", streamCursor: "cursor-5" },
+    { ...base, activeSessionId: null, availability: "ready", unavailableReason: null, streamCursor: "cursor-6" },
+    { ...base, streamCursor: "cursor-7" },
   ];
   for (let index = 1; index < snapshots.length; index++) {
     const before = snapshots[index - 1]!; const next = snapshots[index]!;

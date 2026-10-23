@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DomainError } from "../../src/domain/errors.js";
 import {
   parseExecutionConfiguration,
   parsePublicExecutionConfiguration,
@@ -216,6 +217,60 @@ describe("execution configuration", () => {
     expect(() =>
       resolveExecutionConfiguration(snapshot, { ...executionIdentity(), ...change }, {}),
     ).toThrow("access");
+  });
+
+  it.each(["fenced", "unbound"] as const)(
+    "reports the catalog preparing error for a listed %s Agent",
+    (binding) => {
+      const fixture = executionConfiguration();
+      const agent = closedExecutionAgent(fixture.agents[0]!);
+      agent.unavailable_reason = "agent_preparing";
+      if (binding === "unbound") {
+        agent.runtime = null;
+        agent.agent_spec_revision = null;
+        agent.execution_revision = null;
+      }
+      const snapshot = parseExecutionConfiguration({ ...fixture, agents: [agent] });
+      let failure: unknown;
+      try {
+        resolveExecutionConfiguration(snapshot, executionIdentity(), {});
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(DomainError);
+      expect(failure).toMatchObject({
+        code: "agent_preparing",
+        message: "Agent execution is preparing",
+        errorClass: "availability",
+        retryable: true,
+        retryAfterMs: 1000,
+        recovery: "backoff",
+      });
+    },
+  );
+
+  it.each([
+    { organizationId: "other-organization" },
+    { principalId: "other-principal" },
+    { agentId: "other-agent" },
+  ])("does not disclose a listed preparing Agent outside its authorization: %j", (change) => {
+    const fixture = executionConfiguration();
+    const snapshot = parseExecutionConfiguration({
+      ...fixture,
+      agents: fixture.agents.map((agent) => ({
+        ...closedExecutionAgent(agent),
+        unavailable_reason: "agent_preparing",
+      })),
+    });
+    expect(() =>
+      resolveExecutionConfiguration(snapshot, { ...executionIdentity(), ...change }, {}),
+    ).toThrowError(
+      expect.objectContaining({
+        name: DomainError.name,
+        code: "access_denied",
+        message: "Agent access is not allowed",
+      }),
+    );
   });
 
   it("rejects closed Agents and unavailable model selections locally", () => {

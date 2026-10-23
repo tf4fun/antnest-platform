@@ -121,7 +121,7 @@ export function WorkspaceSwitcher({
                   <span className="workspace-copy">
                     <strong>{agent.name}</strong>
                     {current ? (
-                      <AgentPresence status={agent.status} />
+                      <AgentPresence status={agent.status} preparing={agent.unavailableReason === "agent_preparing"} />
                     ) : (
                       <AgentManagementStatus state={agent.managementState} />
                     )}

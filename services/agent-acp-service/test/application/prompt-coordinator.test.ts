@@ -11,6 +11,7 @@ import { bridgeIntentDigest } from "../../src/domain/bridge-intent.js";
 import type { ContentBlock } from "../../src/domain/types.js";
 import type { RunIntent, RunRepository } from "../../src/ports/run-repository.js";
 import {
+  closedExecutionAgent,
   executionConfiguration,
   runtimeConfiguration,
 } from "../fixtures/execution-configuration.js";
@@ -255,6 +256,73 @@ describe("PromptCoordinator", () => {
     expect(test.repository.rejectRun).not.toHaveBeenCalled();
     expect(test.recoveryRequired).not.toHaveBeenCalled();
   });
+
+  it.each(["fenced", "unbound"] as const)(
+    "rejects listed %s preparing admission before allocating any durable intent",
+    async (binding) => {
+      const test = await setup(false);
+      const agent = closedExecutionAgent(test.configuration.agents[0]!);
+      agent.unavailable_reason = "agent_preparing";
+      if (binding === "unbound") {
+        agent.runtime = null;
+        agent.agent_spec_revision = null;
+        agent.execution_revision = null;
+      }
+      await test.directory.apply({ ...test.configuration, agents: [agent] });
+      const accepting = test.coordinator.accept(test.input);
+      await expect(accepting).rejects.toBeInstanceOf(DomainError);
+      await expect(accepting).rejects.toMatchObject({
+        code: "agent_preparing",
+        message: "Agent execution is preparing",
+        errorClass: "availability",
+        retryable: true,
+        retryAfterMs: 1000,
+        recovery: "backoff",
+      });
+      expect(test.id).not.toHaveBeenCalled();
+      expect(test.repository.createRunIntent).not.toHaveBeenCalled();
+      expect(test.repository.acceptRun).not.toHaveBeenCalled();
+      expect(test.repository.rejectRun).not.toHaveBeenCalled();
+      expect(test.recoveryRequired).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["missing configuration", "unknown Agent", "unauthorized principal"] as const)(
+    "does not turn %s into preparing admission",
+    async (condition) => {
+      const test = await setup(false);
+      if (condition !== "missing configuration")
+        await test.directory.apply({
+          ...test.configuration,
+          agents: test.configuration.agents.map((agent) => ({
+            ...closedExecutionAgent(agent),
+            unavailable_reason: "agent_preparing",
+          })),
+        });
+      const input = {
+        ...test.input,
+        binding: {
+          ...test.input.binding,
+          ...(condition === "unknown Agent" ? { agentId: "other-agent" } : {}),
+          ...(condition === "unauthorized principal" ? { principalId: "other-principal" } : {}),
+        },
+      };
+      await expect(test.coordinator.accept(input)).rejects.toMatchObject({
+        name: DomainError.name,
+        code: condition === "missing configuration" ? "configuration_not_ready" : "access_denied",
+        message:
+          condition === "missing configuration"
+            ? "Execution configuration is not ready"
+            : "Agent access is not allowed",
+      });
+      expect(test.repository.getSession).not.toHaveBeenCalled();
+      expect(test.id).not.toHaveBeenCalled();
+      expect(test.repository.createRunIntent).not.toHaveBeenCalled();
+      expect(test.repository.acceptRun).not.toHaveBeenCalled();
+      expect(test.repository.rejectRun).not.toHaveBeenCalled();
+      expect(test.recoveryRequired).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses cold-start execution without manufacturing an uncertain Controller admission", async () => {
     const test = await setup(false);

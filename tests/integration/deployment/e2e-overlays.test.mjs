@@ -29,6 +29,7 @@ const selectors = [
   "file_observations",
   "tool_progress",
   "acp_restart",
+  "agent_readiness",
   "rpc_response_loss",
 ];
 const cases = [

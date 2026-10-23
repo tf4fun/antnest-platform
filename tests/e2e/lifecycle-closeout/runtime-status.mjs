@@ -43,6 +43,35 @@ async function requestStatus({ read, remaining }, runtimeId, token) {
   return output;
 }
 
+async function statusController(read, project) {
+  if (!/^antnest-stage3-e2e-[0-9]+$/u.test(project))
+    return serviceContainer(read, project, "runtime-controller");
+  // Stage3 has its own Compose overlays. Select its existing Controller by
+  // exact ownership labels instead of interpreting it as a lifecycle stack.
+  const ids = lines(
+    await read([
+      "ps",
+      "-aq",
+      "--no-trunc",
+      "--filter",
+      `label=com.docker.compose.project=${project}`,
+      "--filter",
+      "label=com.docker.compose.service=runtime-controller",
+    ]),
+  );
+  assert.equal(ids.length, 1, "expected one owned Stage3 Runtime Controller");
+  const rows = JSON.parse(await read(["inspect", ids[0]]));
+  assert.equal(rows.length, 1);
+  const controller = rows[0];
+  assert.equal(controller.Id, ids[0]);
+  assert.equal(controller.Config.Labels["com.docker.compose.project"], project);
+  assert.equal(
+    controller.Config.Labels["com.docker.compose.service"],
+    "runtime-controller",
+  );
+  return controller;
+}
+
 // Select a credential while Identity is available. Subsequent reads keep that
 // credential private and query the original Runtime afresh, with each caller's
 // current bounded Docker operation. They never reuse a previous /status body
@@ -55,11 +84,7 @@ export async function prepareRuntimeStatus(
 ) {
   const initial = statusBudget(docker, options);
   const { read, remaining } = initial;
-  const controller = await serviceContainer(
-    read,
-    project,
-    "runtime-controller",
-  );
+  const controller = await statusController(read, project);
   const tokens = lines(
     await read(["exec", controller.Id, "sh", "-c", senderFiles]),
   );

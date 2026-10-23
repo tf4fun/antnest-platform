@@ -175,7 +175,13 @@ WHERE agent_id=$1 AND principal_id=$2 AND access_revision=$3 AND active`,
 				require.EqualValues(t, 1, result.RowsAffected())
 				current, err := fixture.store.GetAgentLifecycleBase(ctx, fixture.base.Agent.AgentID)
 				require.NoError(t, err)
-				require.Equal(t, fixture.base.Agent, current.Agent)
+				expected := fixture.base.Agent
+				require.NotNil(t, expected.Readiness)
+				readiness := *expected.Readiness
+				readiness.Access.Active = false
+				expected.Readiness = &readiness
+				require.Equal(t, expected, current.Agent)
+				require.Equal(t, "unavailable", current.Agent.CurrentReadiness())
 			case "other-configured-target":
 				other := runtimeBarrierManualHTTPOtherTemplate(t, ctx, fixture)
 				input.Command.TemplateID = other.TemplateID

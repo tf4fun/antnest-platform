@@ -54,6 +54,7 @@ var (
 		{version: 28, name: "runtime_barrier_recovery_admission", sql: mustMigration("migrations/0028_runtime_barrier_recovery_admission.sql")},
 		{version: 29, name: "runtime_barrier_recovery_management", sql: mustMigration("migrations/0029_runtime_barrier_recovery_management.sql")},
 		{version: 30, name: "runtime_barrier_recovery_projection", sql: mustMigration("migrations/0030_runtime_barrier_recovery_projection.sql")},
+		{version: 31, name: "agent_runtime_readiness", sql: mustMigration("migrations/0031_agent_runtime_readiness.sql")},
 	}
 )
 

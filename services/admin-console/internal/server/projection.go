@@ -261,6 +261,24 @@ type agentConfigurationSource struct {
 	Runtime              agentRuntimeConfigurationSource `json:"runtime"`
 }
 
+// The zero value preserves an omitted extension for older Controller responses.
+// A supplied value, including null, must satisfy the public readiness contract.
+type agentReadinessProjection string
+
+func (r *agentReadinessProjection) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	switch value {
+	case "preparing", "ready", "unavailable":
+		*r = agentReadinessProjection(value)
+		return nil
+	default:
+		return fmt.Errorf("invalid Agent readiness")
+	}
+}
+
 type agentProjectionSource struct {
 	AgentID                         string                     `json:"agent_id"`
 	OwnerUserID                     string                     `json:"owner_user_id"`
@@ -268,6 +286,7 @@ type agentProjectionSource struct {
 	DesiredState                    string                     `json:"desired_state"`
 	LifecycleState                  string                     `json:"lifecycle_state"`
 	ActivationState                 string                     `json:"activation_state,omitempty"`
+	Readiness                       agentReadinessProjection   `json:"readiness,omitempty"`
 	RuntimeState                    string                     `json:"runtime_state"`
 	RuntimeReason                   string                     `json:"runtime_reason,omitempty"`
 	RuntimeDetail                   string                     `json:"runtime_detail,omitempty"`

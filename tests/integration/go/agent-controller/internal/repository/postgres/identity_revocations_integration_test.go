@@ -130,8 +130,12 @@ func TestIdentityRevocationCursorAndAgentFenceRollbackTogether(t *testing.T) {
 	repository, base := identityTestRepository(t)
 	ctx := context.Background()
 	// Duplicate the derived event ID to force failure after the scope/fence writes.
-	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events SET event_id=$1 WHERE event_type='agent_ready'`, domain.DeriveResourceID("event", "identity-revocation", "5\x00"+base.Agent.AgentID)); err != nil {
+	injected, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events SET event_id=$1 WHERE agent_id=$2 AND event_type='runtime_bound'`, domain.DeriveResourceID("event", "identity-revocation", "5\x00"+base.Agent.AgentID), base.Agent.AgentID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if injected.RowsAffected() != 1 {
+		t.Fatalf("expected one owned Runtime bound event for fault injection, got %d", injected.RowsAffected())
 	}
 	event := ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: time.Now().UTC()}
 	var databaseError *pgconn.PgError

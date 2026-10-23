@@ -168,6 +168,7 @@ function fixture() {
     activation_state: "enabled",
     desired_state: "enabled",
     runtime_state: "available",
+    readiness: "ready",
     executable_execution_revision: "execution-new",
     runtime: { runtime_revision: "runtime-new" },
     configuration: { template: { template_id: "template", revision: 3 } },

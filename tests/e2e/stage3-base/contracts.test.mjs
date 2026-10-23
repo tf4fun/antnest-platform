@@ -286,6 +286,57 @@ function findReady(events, requestId = "ready-operation") {
   return contracts.findAgentReadyEvent(events, requestId);
 }
 
+function acknowledgedEvents() {
+  const bound = {
+    ...readyEventFixture(),
+    event_type: "runtime_bound",
+    schema_version: 2,
+  };
+  const ready = {
+    ...bound,
+    event_id: "event_ack",
+    event_type: "agent_ready",
+    global_sequence: 11,
+    aggregate_sequence: 4,
+  };
+  delete ready.operation_request_id;
+  return [bound, ready];
+}
+
+test("public v2 ready associates the organization ACK with its original bound event", () => {
+  const events = acknowledgedEvents();
+  assert.equal(findReady(events), events[1]);
+});
+
+for (const [name, mutate] of [
+  ["another Agent", (events) => (events[1].agent_id = "other")],
+  ["ACK before binding", (events) => (events[1].aggregate_sequence = 2)],
+  ["legacy ready", (events) => (events[1].schema_version = 1)],
+  [
+    "duplicate ACK",
+    (events) => events.push({ ...events[1], event_id: "duplicate" }),
+  ],
+  [
+    "ACK for a later binding",
+    (events) => {
+      events[1].global_sequence = 12;
+      events[1].aggregate_sequence = 5;
+      events.splice(1, 0, {
+        ...events[0],
+        event_id: "next_binding",
+        operation_request_id: "other",
+        global_sequence: 11,
+        aggregate_sequence: 4,
+      });
+    },
+  ],
+])
+  test("public v2 ready rejects " + name, () => {
+    const events = acknowledgedEvents();
+    mutate(events);
+    assert.throws(() => findReady(events));
+  });
+
 test("Agent ready business finds the original event for its lifecycle operation", () => {
   const ready = readyEventFixture();
   const events = [

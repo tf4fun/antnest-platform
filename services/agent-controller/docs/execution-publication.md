@@ -27,10 +27,54 @@ worker and the lifecycle service. It follows these rules:
    volatile credentials. Network waits stay outside database transactions and
    publication is serialized per organization.
 4. Lifecycle operations close execution, publish, and request settlement; Runtime
-   readiness is published independently. Controller has no Run admissions and
+   binding and ACP-acknowledged readiness are published independently of lifecycle
+   completion. Controller has no Run admissions and
    ACP makes no business RPCs back into Controller.
 
 This is the only execution configuration path; there is no compatibility mode.
+
+## Binding Facts And Applied Readiness
+
+Healthy inspection publishes the complete current binding, its immutable
+ExecutionRevision and v2 `runtime_bound` in one PostgreSQL transaction. That
+transaction advances the organization execution-configuration revision and
+freezes the resulting value as `ready_after_revision`. This is not the
+Agent-local execution counter. The private proof also binds current access and
+owner authorization to that exact Runtime execution; private evidence is not
+included in the public event or Agent response.
+
+`RecordExecutionApplied` validates the organization ACK against its committed
+revision and rechecks the current binding, owner/access, lifecycle eligibility,
+active operation and Runtime condition. Only an ACK covering the eligible
+binding's threshold commits ready proof, Agent aggregate and v2 `agent_ready`
+journal event together with the applied watermark.
+Stale, duplicate or concurrent ACKs cannot make a different or blocked binding
+ready or duplicate its ready event. An ordinary ACK does not increase the
+desired configuration revision.
+
+Get/List expose current `readiness` as `preparing`, `ready` or `unavailable`.
+Current blockers override historical ready proof; legacy views without known
+readiness evidence omit the optional field. Storage failures remain errors.
+An authorized, otherwise eligible unbound Agent stays listed with closed
+admission and `agent_preparing`. A complete executable binding instead publishes
+`accepting_runs: true` while Controller is still preparing for its ACK. The ACK
+does not rewrite that snapshot or require another revision just to open it.
+
+Existing v1 `agent_ready` history is never rewritten or accepted as new ACK
+proof. Startup/periodic equal-revision resends also reconcile eligible legacy
+bindings that lack a threshold. An ACK of committed revision R atomically
+records that ACK, bootstraps the missing v2 `runtime_bound` proof at R+1, and
+leaves current readiness preparing. A subsequent publication and ACK covering
+R+1 can emit v2 `agent_ready`. This legacy bootstrap is the explicit exception
+to ordinary ACKs leaving the desired revision unchanged; an ACK cannot claim a
+future revision to bypass it. The ACK and synchronization wire envelopes stay
+unchanged. See the [readiness contract](../../../contracts/agent-controller/readiness.md).
+
+The Controller producer/API and ACP preparing boundary are implemented in this
+candidate. Agent UI and Admin Console consumers, and the real two-second
+delayed-publication acceptance over 100 create/ready/Prompt iterations, remain
+pending. Focused unit evidence is not a final PostgreSQL, integration or remote
+merge result.
 
 ## Management Synchronization Read
 
@@ -653,9 +697,21 @@ are never joined and no database belonging to another service is accessed.
 
 Acknowledgement writes can only advance `applied_revision` up to a currently
 committed revision. Delayed lower acknowledgements cannot regress it, and
-neither acknowledgement nor synchronization reads advance the desired revision.
+ordinary acknowledgements and synchronization reads do not advance the desired
+revision. Bootstrapping a legacy binding without proof republishes it at R+1
+before a subsequent ACK can establish readiness.
 The publisher must still resend equal revisions after restart; an old persisted
 acknowledgement is not proof that ACP currently has its in-memory credentials.
+
+An effective unbound preparing/unavailable transition changes the snapshot
+reason and therefore advances its revision; repeated diagnostic updates do not.
+When fresh Runtime evidence reopens an existing binding, the same transaction
+records its private `reopen_after_revision` after advancing the organization
+revision. Both the current readiness projection and a first ready event require
+an ACK covering that fence. A previously ready binding keeps its original
+bound/ready history and does not append a duplicate ready event. Unrelated
+organization changes do not move its reopening fence. Historical failed
+operation diagnostics remain readable without blocking a recovered binding.
 
 Provider creation/rotation, current Model writes, Agent lifecycle, authorization,
 availability and revocation participate in revision and capacity hooks. The main

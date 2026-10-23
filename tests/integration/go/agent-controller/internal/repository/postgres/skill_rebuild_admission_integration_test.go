@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -87,6 +88,14 @@ func TestInvalidatedSkillRebuildClosesThenRestoresACPSnapshotAdmission(t *testin
 		}
 	})
 	initialPublication := awaitSkillAdmissionPublication(t, publications, base.Agent.AgentID, true)
+	// Receiving the snapshot precedes the worker's durable ACK and Agent aggregate update.
+	require.Eventually(t, func() bool {
+		synchronization, readErr := repository.GetExecutionSynchronization(t.Context(), base.Agent.OrganizationID)
+		return readErr == nil && synchronization.AppliedRevision >= initialPublication.Revision
+	}, 5*time.Second, 10*time.Millisecond, "initial publication ACK must commit before rebuild admission")
+	base, err = repository.GetAgentLifecycleBase(t.Context(), base.Agent.AgentID)
+	require.NoError(t, err)
+	require.Equal(t, "ready", base.Agent.CurrentReadiness())
 	beforeSync, err := repository.GetExecutionSynchronization(ctx, base.Agent.OrganizationID)
 	if err != nil {
 		t.Fatal(err)

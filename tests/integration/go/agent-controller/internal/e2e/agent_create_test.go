@@ -588,10 +588,36 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	}
 	events, err := repository.ListAgentEvents(ctx, ports.AgentEventQuery{AgentID: agentID, Limit: 100})
 	if err != nil || len(events) != 4 || events[1].EventType != ports.EventAgentCreated ||
-		events[2].EventType != ports.EventAgentRuntimeConditionChanged || events[3].EventType != ports.EventAgentReady ||
+		events[2].EventType != ports.EventAgentRuntimeConditionChanged || events[3].EventType != ports.EventRuntimeBound ||
 		float64(events[3].AggregateSequence) != queried["aggregate_sequence"] {
-		t.Fatalf("creation/readiness journal differs from projection: %+v error=%v", events, err)
+		t.Fatalf("creation/binding journal differs from the pre-ACK projection: %+v error=%v", events, err)
 	}
+	for _, event := range events {
+		require.NotEqual(t, ports.EventAgentReady, event.EventType, "Runtime binding alone must not publish readiness")
+	}
+	bound := events[3]
+	require.Equal(t, 2, bound.SchemaVersion)
+	require.Equal(t, agentID, bound.AgentID)
+	require.Equal(t, "agent-e2e-create", bound.OperationRequestID)
+	require.Equal(t, "preparing", queried["readiness"])
+	threshold, ok := bound.Data["ready_after_revision"].(float64)
+	require.True(t, ok, "persisted bound threshold must be a JSON number")
+	require.Greater(t, threshold, float64(0))
+	require.LessOrEqual(t, threshold, float64(ports.MaximumExecutionRevision))
+	require.Equal(t, float64(int64(threshold)), threshold, "bound threshold must be an integer")
+	configuredRuntime, ok := agent["runtime"].(map[string]any)
+	require.True(t, ok)
+	require.NotEmpty(t, agent["agent_spec_revision"])
+	require.NotEmpty(t, agent["executable_execution_revision"])
+	require.NotEmpty(t, configuredRuntime["runtime_revision"])
+	boundData := map[string]any{
+		"organization_id":        "agent-e2e-org",
+		"agent_spec_revision_id": agent["agent_spec_revision"],
+		"execution_revision_id":  agent["executable_execution_revision"],
+		"runtime_revision":       configuredRuntime["runtime_revision"],
+		"ready_after_revision":   threshold,
+	}
+	require.JSONEq(t, mustJSON(t, boundData), mustJSON(t, bound.Data), "bound proof must contain exactly the current public binding")
 	for _, event := range events {
 		if !regexp.MustCompile(`^event_[0-9a-f]{32}$`).MatchString(event.EventID) {
 			t.Errorf("event ID = %q", event.EventID)
@@ -612,7 +638,47 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	}
 	createEgressCalls, createRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
 	connectionReadsBefore := runtimeConnectionReads.Load()
+	beforeAcknowledgement, err := repository.GetExecutionSynchronization(ctx, "agent-e2e-org")
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, beforeAcknowledgement.Revision, int64(threshold))
+	require.Less(t, beforeAcknowledgement.AppliedRevision, int64(threshold), "the current binding must still await its first covering ACK")
+	// The helper first publishes this unchanged organization revision through the
+	// real HTTP peer, then exercises subsequent configuration publications.
 	assertAgentConfigurationHTTP(t, handler, agent, execution, snapshot, spanRecorder)
+	afterAcknowledgement, err := repository.ListAgentEvents(ctx, ports.AgentEventQuery{AgentID: agentID, Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, afterAcknowledgement, len(events)+3, "one readiness ACK and two successful authorization changes must be journaled")
+	require.Equal(t, events, afterAcknowledgement[:len(events)], "ACK must preserve the original creation and bound history")
+	require.Equal(t, ports.EventAgentReady, afterAcknowledgement[len(events)].EventType)
+	for _, event := range afterAcknowledgement[len(events)+1:] {
+		require.Equal(t, ports.EventAgentAuthorizationUpdated, event.EventType)
+	}
+	var readyEvents []ports.AgentEventRecord
+	for _, event := range afterAcknowledgement {
+		if event.EventType == ports.EventAgentReady {
+			readyEvents = append(readyEvents, event)
+		}
+	}
+	require.Len(t, readyEvents, 1)
+	ready := readyEvents[0]
+	require.Equal(t, 2, ready.SchemaVersion)
+	require.Equal(t, agentID, ready.AgentID)
+	require.Regexp(t, `^event_[0-9a-f]{32}$`, ready.EventID)
+	require.NotEqual(t, bound.EventID, ready.EventID)
+	require.Greater(t, ready.GlobalSequence, bound.GlobalSequence)
+	require.Greater(t, ready.AggregateSequence, bound.AggregateSequence)
+	readyData := make(map[string]any, len(boundData)+1)
+	for key, value := range boundData {
+		readyData[key] = value
+	}
+	readyData["applied_revision"] = beforeAcknowledgement.Revision
+	require.JSONEq(t, mustJSON(t, readyData), mustJSON(t, ready.Data), "ready must prove the first actual ACK of the original binding and threshold")
+	// The ACK-owned event may omit OperationRequestID. The original bound event
+	// and exact proof tuple establish its relationship to this creation.
+	readyProjection := serveJSON(t, handler, http.MethodGet,
+		"/internal/agents/"+agentID+"?organization_id=agent-e2e-org", "", http.StatusOK)
+	require.Equal(t, "ready", readyProjection["readiness"])
+	require.Equal(t, float64(afterAcknowledgement[len(afterAcknowledgement)-1].AggregateSequence), readyProjection["aggregate_sequence"])
 	require.Greater(t, runtimeConnectionReads.Load(), connectionReadsBefore, "configuration publication must refresh private authority")
 	if egressCalls.Load() != createEgressCalls || runtimeCalls.Load() != createRuntimeCalls {
 		t.Fatal("Agent defaults or credential publication changed Runtime or Egress")

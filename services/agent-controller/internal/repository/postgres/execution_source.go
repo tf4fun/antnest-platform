@@ -78,7 +78,7 @@ a.desired_state, a.lifecycle_state, a.activation_state, a.runtime_state, a.acces
 a.executable_spec_revision_id, a.executable_execution_revision_id,
 a.runtime_revision, a.runtime_execution_id, a.runtime_mcp_endpoint, a.active_operation_request_id,
 a.owner_authorization_sequence, a.identity_revocation_sequence, a.default_authorization, a.authorization_revision,
-a.last_successful_execution_revision_id,
+a.last_successful_execution_revision_id, a.failure_stage, a.failure_code,
 s.id, s.agent_id, s.revision, s.snapshot,
 r.id, r.agent_id, r.revision, r.snapshot,
 EXISTS (SELECT 1 FROM agent_controller.agent_access_bindings b
@@ -119,7 +119,7 @@ func scanExecutionAgent(scanner catalogRowScanner) (ports.ExecutionAgentSource, 
 		&agent.DesiredState, &agent.LifecycleState, &agent.ActivationState, &agent.RuntimeState, &agent.AccessRevision,
 		&agent.AgentSpecRevisionID, &agent.ExecutionRevisionID, &agent.RuntimeRevision, &agent.RuntimeExecutionID, &agent.RuntimeMCPEndpoint, &agent.ActiveOperationRequestID,
 		&agent.OwnerAuthorizationSequence, &agent.IdentityRevocationSequence, &authorization, &source.AuthorizationRevision,
-		&agent.LastSuccessfulExecutionRevisionID,
+		&agent.LastSuccessfulExecutionRevisionID, &agent.FailureStage, &agent.FailureCode,
 		&source.Spec.ID, &source.Spec.AgentID, &source.Spec.Revision, &spec,
 		&source.RetainedSpec.ID, &source.RetainedSpec.AgentID, &source.RetainedSpec.Revision, &retained, &source.OwnerAccessGranted)
 	if err != nil {

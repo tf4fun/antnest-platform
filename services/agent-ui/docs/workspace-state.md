@@ -42,6 +42,17 @@ Configuration revision is an opaque hash, not a Run sequence or replay cursor.
 There is no browser database, storage of credentials, polling loop or prompt
 resubmission.
 
+An authorized `agent_preparing` reason is accepted only with offline execution
+availability and no active Session. The selected workspace and chooser show
+Preparing even if management reports a healthy Runtime. The browser keeps the
+draft and attachments, disables Send and Enter submission, and observes the
+existing read/watch stream until ready. Readiness alone never creates a Session
+or submits a Prompt; the user sends explicitly. Preparing has no Runtime recovery
+link or administrative action. Null, legacy omission, scope replacement and
+revocation clear the reason. The bounded automatic Prompt retry policy remains
+limited to `agent_busy` and `configuration_not_ready`; it does not use retries to
+hide an early readiness event.
+
 ## Consumer Lifecycle
 
 Native EventSource handles SSE framing. The adapter validates each frame,

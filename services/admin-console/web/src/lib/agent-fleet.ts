@@ -70,8 +70,8 @@ export function agentStatusPresentation(agent: Agent): AgentStatusPresentation {
 function agentDisplayState(agent: Agent): string {
   if (agent.lifecycle_state !== "created") return agent.lifecycle_state;
   if (agent.activation_state === "disabled") return "disabled";
-  if (agent.runtime_state === "available" && !agent.executable_execution_revision) return "not_executable";
-  return agent.runtime_state;
+  if (agent.readiness === "ready") return "available";
+  return agent.readiness ?? "unknown";
 }
 
 export function agentFleetCounts(agents: Agent[]) {
@@ -80,7 +80,8 @@ export function agentFleetCounts(agents: Agent[]) {
     if (agent.active_operation_request_id) counts.pending++;
     else if (agent.activation_state === "disabled") counts.disabled++;
     else if (agent.desired_state === "enabled" && agentDisplayState(agent) === "available") counts.available++;
-    else if (agent.failure_code || ["unhealthy", "exited", "absent", "not_executable"].includes(agentDisplayState(agent))) counts.attention++;
+    else if (agentDisplayState(agent) === "preparing") counts.pending++;
+    else if (agent.failure_code || agentDisplayState(agent) === "unavailable") counts.attention++;
     else counts.pending++;
   }
   return counts;

@@ -293,7 +293,8 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
             </div>
           </div>
           <div className="topbar-actions" role="group" aria-label="Agent actions">
-            <div className="topbar-status"><AgentPresence status={activeAgent.status} announce /></div>
+            <div className="topbar-status"><AgentPresence status={activeAgent.status}
+              preparing={activeAgent.unavailableReason === "agent_preparing"} announce /></div>
             <LearningNotices agentId={activeAgent.id} ready={connected}
               notices={learningNotices}
               loadStatus={preview ? undefined : loadLearningStatus}
@@ -345,6 +346,12 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
               composerHadFocus.current = false;
           }}
         >
+          {activeAgent.unavailableReason === "agent_preparing" ? (
+            <div className="workspace-alert" role="status" aria-label="Agent preparing">
+              <strong>Agent is preparing</strong>
+              <p>Your draft is kept. You can send it when this Agent becomes available.</p>
+            </div>
+          ) : null}
           {activeAgent.unavailableReason === "runtime_barrier_required" ? (
             <div className="workspace-alert" role="status" aria-label="Workspace recovery">
               <strong>Workspace recovery required</strong>
@@ -388,7 +395,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
           ) : null}
           {promptRetry ? (
             <button className="action-button" type="button"
-              disabled={!connected || promptRetry.pending}
+              disabled={!connected || promptRetry.pending || activeAgent.unavailableReason === "agent_preparing"}
               onClick={() => { void promptRetry.retry(); }}>
               {promptRetry.pending ? "Checking original message…" : "Retry original message"}
             </button>
@@ -467,6 +474,7 @@ export function WorkspacePage({ model, onAccount }: { model: WorkspacePageModel;
             openingHistory={openingHistory}
             openingFailure={Boolean(openingFailure)}
             agentStatus={activeAgent.status}
+            agentPreparing={activeAgent.unavailableReason === "agent_preparing"}
             attachments={attachments}
             connected={connected}
             cancelling={cancelling}

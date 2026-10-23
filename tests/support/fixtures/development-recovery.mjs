@@ -18,6 +18,7 @@ export function recoveryAgentState(recovered = false) {
     activation_state: "enabled",
     desired_state: "enabled",
     runtime_state: recovered ? "available" : "unavailable",
+    readiness: recovered ? "ready" : "unavailable",
     active_operation_request_id: null,
     failure_code: recovered ? null : "runtime_execution_changed",
     configuration: {

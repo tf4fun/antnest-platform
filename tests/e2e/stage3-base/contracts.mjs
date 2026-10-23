@@ -4,9 +4,44 @@ import { createHash } from "node:crypto";
 export function findAgentReadyEvent(events, requestId) {
   assert(Array.isArray(events), "Agent event inventory required");
   assert(typeof requestId === "string" && requestId.length > 0);
+  const bindings = events.filter(
+    (row) =>
+      row?.event_type === "runtime_bound" &&
+      row.schema_version === 2 &&
+      row.operation_request_id === requestId,
+  );
+  if (bindings.length) {
+    assert.equal(bindings.length, 1, "one original binding required");
+    const [bound] = bindings;
+    // The Console projection omits private Data. Its ordered bound envelope
+    // supplies operation scope; the organization ACK need not carry that ID.
+    const after = (row) =>
+      row.agent_id === bound.agent_id &&
+      row.global_sequence > bound.global_sequence &&
+      row.aggregate_sequence > bound.aggregate_sequence;
+    const nextBindings = events.filter(
+      (row) => row?.event_type === "runtime_bound" && after(row),
+    );
+    const ready = events.filter(
+      (row) =>
+        row?.event_type === "agent_ready" &&
+        row.schema_version === 2 &&
+        after(row) &&
+        (row.operation_request_id === undefined ||
+          row.operation_request_id === requestId) &&
+        nextBindings.every(
+          (next) =>
+            row.global_sequence < next.global_sequence &&
+            row.aggregate_sequence < next.aggregate_sequence,
+        ),
+    );
+    assert.equal(ready.length, 1, "one ACK for the original binding required");
+    return ready[0];
+  }
   const event = events.find(
     (row) =>
       row?.event_type === "agent_ready" &&
+      row.schema_version !== 2 &&
       row.operation_request_id === requestId,
   );
   assert(event, "Agent ready event for the original operation required");

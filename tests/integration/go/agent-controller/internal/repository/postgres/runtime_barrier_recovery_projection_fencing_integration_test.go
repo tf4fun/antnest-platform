@@ -114,7 +114,13 @@ WHERE user_id=$1 AND organization_id=$2`, current.OwnerUserID, current.Organizat
 	require.Equal(t, revokedSequence, storedSequence)
 	unchanged, err := fixture.store.GetAgent(ctx, current.AgentID)
 	require.NoError(t, err)
-	require.Equal(t, current, unchanged)
+	expected := current
+	require.NotNil(t, expected.Readiness)
+	readiness := *expected.Readiness
+	readiness.OwnerRevocationSequence = revokedSequence
+	expected.Readiness = &readiness
+	require.Equal(t, expected, unchanged)
+	require.Equal(t, "unavailable", unchanged.CurrentReadiness())
 	afterRevocation := runtimeBarrierRecoveryApplicationSnapshot(t, ctx, fixture.store)
 	assertRuntimeBarrierProjectionFencingOnlyTablesChanged(t, beforeRevocation, afterRevocation, "owner_revocations")
 	require.Equal(t, beforeRevocation["agent_access_bindings"], afterRevocation["agent_access_bindings"])

@@ -52,7 +52,7 @@ const token = {
 
 test("Console retains its lifecycle routes with the Identity18 producer", () => {
   const catalog = read("admin-console/admin-contract.json");
-  assert.equal(catalog.version, 56);
+  assert.equal(catalog.version, 57);
   assert.equal(catalog.response_policy.account_security.identity_revision, 18);
   for (const [route, field, definition, valid] of [
     [

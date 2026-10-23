@@ -1,27 +1,41 @@
 # Agent State In The Console
 
 This document describes how Admin Console presents Agent lifecycle, activation
-and Runtime condition, and which actions it offers in each state.
+and current execution readiness, and which actions it offers in each state.
 
 The BFF preserves Agent Controller's lifecycle, confirmed activation, Runtime
-condition, diagnostic reason/detail and observation timestamp. It never derives
-health from a completed lifecycle operation and never probes Runtime directly.
+condition, diagnostic reason/detail, observation timestamp and optional current
+readiness. Supplied readiness must be `preparing`, `ready` or `unavailable`;
+malformed values are rejected, and omission remains unknown. It never derives
+readiness or health from a completed lifecycle operation and never probes Runtime
+directly. Private binding and ACK proof fields remain excluded from the browser.
 
-Lists and detail show the current condition for created/enabled Agents, Disabled
-for created/disabled Agents, and Not created or Deleted for terminal boundaries.
-Detail also shows the underlying lifecycle and activation separately. An active
-operation supplies progress, not another persisted Agent state.
+Lists and detail show current readiness for created/enabled Agents: `ready` is
+displayed as Available, alongside Preparing, Unavailable or Unknown. They show
+Disabled for created/disabled Agents, and Not created or Deleted at those lifecycle
+boundaries. Detail shows lifecycle, activation and Runtime health separately. A
+healthy Runtime and a published execution binding do not supply missing readiness.
+An active operation supplies progress, not another persisted Agent state.
 
 Never-ready configured targets can be rebuilt, disabled or deleted without an
 execution history. Failed initial creation allows cleanup. Disable intent and
 confirmed disable remain distinct; command buttons are conservative hints and
 Agent Controller revalidates every action. Runtime health alone is not Run
-admission. A healthy target without an execution binding is not shown as ready.
+admission. Preparing stays pending in fleet counts even when an earlier failed
+operation's diagnostic is retained. Readiness does not change lifecycle management
+permissions.
 
 Agent events refresh the projection, including runtime condition changes after
-creation completes. Reconnect reads the current projection; it cannot regress a
-newer aggregate or alter a terminal Operation. Runtime diagnostics remain visible
-to authorized administrators. Internal endpoints and credentials stay excluded.
+creation completes. A `runtime_bound` or `agent_ready` event triggers a current
+read; historical events do not set current readiness. While preparing, detail
+refreshes automatically once per second after the previous poll settles, including
+when no additional ready event is emitted. A fresh same-sequence projection can
+change readiness in either direction; an older overlapping response cannot replace
+a newer read. Navigation and session invalidation cancel polling. Transient read
+failures retain the snapshot and retry; forbidden or missing resources stop polling.
+Reconnect reads the current projection; it cannot regress a newer aggregate or
+alter a terminal Operation. Runtime diagnostics remain visible to authorized
+administrators. Internal endpoints and credentials stay excluded.
 
 Tests cover BFF field preservation, state presentation, action eligibility,
 statistics and reconnect ordering. Platform integration verifies the complete

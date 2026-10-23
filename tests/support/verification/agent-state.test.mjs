@@ -13,6 +13,7 @@ const ready = {
   activation_state: "enabled",
   desired_state: "enabled",
   runtime_state: "available",
+  readiness: "ready",
   executable_execution_revision: "execution",
   runtime: { runtime_revision: "runtime" },
 };
@@ -57,6 +58,19 @@ test("Runtime health alone does not imply Agent availability", () => {
     assert.equal(agentReady({ ...ready, ...override }), false);
 });
 
+test("a healthy executable binding requires explicit current ready acknowledgement", () => {
+  const legacy = { ...ready };
+  delete legacy.readiness;
+  for (const agent of [
+    legacy,
+    { ...ready, readiness: "preparing" },
+    { ...ready, readiness: "unavailable" },
+  ]) {
+    assert.equal(agentReady(agent), false);
+    assert.throws(() => assertAgentReady(agent));
+  }
+});
+
 test("disabled is confirmed separately from the request", () => {
   const disabled = {
     ...ready,
@@ -82,6 +96,16 @@ test("readiness wait reads independently after creation and can be cancelled", a
   await assert.rejects(
     waitForAgentReady(async () => ready, AbortSignal.abort()),
   );
+});
+
+test("readiness wait observes preparing then ready for the same healthy executable binding", async () => {
+  const preparing = { ...ready, readiness: "preparing" };
+  let reads = 0;
+  assert.equal(
+    await waitForAgentReady(async () => (++reads === 1 ? preparing : ready)),
+    ready,
+  );
+  assert.equal(reads, 2);
 });
 
 test("enable acceptance waits through unknown and waiting without reusing the old binding", async () => {

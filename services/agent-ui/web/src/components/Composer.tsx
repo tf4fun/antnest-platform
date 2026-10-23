@@ -45,6 +45,7 @@ type Props = {
   value: string;
   attachments: Attachment[];
   agentStatus: AgentStatus;
+  agentPreparing?: boolean;
   connected: boolean;
   sending: boolean;
   cancelling: boolean;
@@ -134,7 +135,9 @@ export function Composer(props: Props) {
           ? "Updating session settings"
           : !props.historyReady && !props.draftMode && props.connected && !props.sending
             ? "Conversation not yet synchronized"
-            : statusCopy(props.agentStatus, props.connected, props.sending);
+            : props.connected && props.agentStatus === "offline" && props.agentPreparing
+              ? "Agent is preparing"
+              : statusCopy(props.agentStatus, props.connected, props.sending);
   const submitEnabled = props.controlInput ? Boolean(props.controlEnabled) :
     canSubmit({
       text: props.value,

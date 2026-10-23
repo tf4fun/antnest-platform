@@ -239,7 +239,7 @@ test("terminal operation snapshots cannot regress on delayed admission or progre
 });
 
 test("Agent status suppresses a desired state that already matches lifecycle", () => {
-  assert.deepEqual(agentStatusPresentation(agent()), {
+  assert.deepEqual(agentStatusPresentation(agent({ readiness: "ready" })), {
     lifecycle: "available",
   });
   assert.deepEqual(
@@ -268,7 +268,7 @@ test("Agent snapshot selection accepts progress and rejects out-of-order regress
 test("Agent status exposes the target only while lifecycle has not converged", () => {
   assert.deepEqual(
     agentStatusPresentation(
-      agent({ desired_state: "disabled", lifecycle_state: "created", activation_state: "enabled", runtime_state: "available" }),
+      agent({ desired_state: "disabled", lifecycle_state: "created", activation_state: "enabled", readiness: "ready", runtime_state: "available" }),
     ),
     { lifecycle: "available", target: "Disabled" },
   );

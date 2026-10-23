@@ -56,6 +56,7 @@ async function fixture(t) {
     if (f.stage !== "enable" || !existsSync(loss)) return row;
     return {
       ...row,
+      readiness: "unavailable",
       failure_code: "runtime_exited",
       executable_execution_revision: null,
       runtime_state:

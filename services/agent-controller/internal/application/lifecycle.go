@@ -100,6 +100,7 @@ type CreateAgentInput struct {
 }
 
 type AgentView struct {
+	Readiness                         string
 	RuntimeRecovery                   *ports.RuntimeBarrierRecoveryProjection
 	ActivationState                   domain.ActivationState
 	RuntimeState                      domain.RuntimeState
@@ -668,6 +669,7 @@ func createAgentResult(state ports.AgentCreateState) CreateAgentResult {
 
 func agentView(agent ports.AgentRecord) AgentView {
 	return AgentView{
+		Readiness:       agent.CurrentReadiness(),
 		ActivationState: agent.ActivationState, RuntimeState: agent.RuntimeState,
 		RuntimeReason: agent.RuntimeReason, RuntimeDetail: agent.RuntimeDetail, RuntimeObservedAt: agent.RuntimeObservedAt,
 		AgentID: agent.AgentID, OrganizationID: agent.OrganizationID,

@@ -60,6 +60,7 @@ function launch(
     Object.assign(current.agent, {
       activation_state: "disabled",
       desired_state: "disabled",
+      readiness: "unavailable",
       executable_execution_revision: null,
     });
   if (kind === "delete")
@@ -68,6 +69,7 @@ function launch(
       lifecycle_state: "deleted",
       desired_state: "deleted",
       runtime_state: "absent",
+      readiness: "unavailable",
     };
   const readiness = JSON.parse(
     JSON.stringify(readinessFixture().trace)

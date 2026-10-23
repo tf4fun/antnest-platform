@@ -119,6 +119,7 @@
           "type": "string",
           "enum": [
             "agent_unavailable",
+            "agent_preparing",
             "runtime_barrier_required"
           ]
         }

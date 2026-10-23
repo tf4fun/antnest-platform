@@ -82,6 +82,7 @@ async function harness(t, deletionFailure) {
           activation_state: "enabled",
           desired_state: "enabled",
           runtime_state: "available",
+          readiness: "ready",
           executable_execution_revision: 1,
           runtime: { runtime_revision: 1 },
         };

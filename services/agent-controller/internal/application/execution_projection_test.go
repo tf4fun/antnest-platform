@@ -65,6 +65,80 @@ func TestExecutionProjectionDisabledProviderStillCarriesCurrentCredential(t *tes
 	require.Equal(t, []string{"owner-1"}, value.Agents[0].PrincipalIDs)
 }
 
+func TestExecutionProjectionPreparingBindingAndBlockingReasons(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		change         func(*ports.ExecutionAgentSource)
+		reason         string
+		historyGranted bool
+	}{
+		{name: "authorized pending binding", reason: "agent_preparing", historyGranted: true},
+		{name: "revoked", reason: "agent_unavailable", change: func(source *ports.ExecutionAgentSource) {
+			source.Agent.IdentityRevocationSequence = source.Agent.OwnerAuthorizationSequence + 1
+		}},
+		{name: "desired disabled", reason: "agent_unavailable", historyGranted: true, change: func(source *ports.ExecutionAgentSource) {
+			source.Agent.DesiredState = domain.DesiredDisabled
+		}},
+		{name: "active operation", reason: "agent_unavailable", historyGranted: true, change: func(source *ports.ExecutionAgentSource) {
+			source.Agent.ActiveOperationRequestID = "operation-rebuild"
+		}},
+		{name: "Runtime unhealthy", reason: "agent_unavailable", historyGranted: true, change: func(source *ports.ExecutionAgentSource) {
+			source.Agent.RuntimeState = domain.RuntimeUnhealthy
+		}},
+		{name: "Runtime observation failure", reason: "agent_unavailable", historyGranted: true, change: func(source *ports.ExecutionAgentSource) {
+			source.Agent.FailureStage = "runtime_observation"
+		}},
+		{name: "owner access inactive", reason: "agent_unavailable", change: func(source *ports.ExecutionAgentSource) {
+			source.OwnerAccessGranted = false
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := executionSource(t)
+			agent := &source.Agents[0].Agent
+			agent.ExecutionRevisionID, agent.RuntimeExecutionID, agent.RuntimeMCPEndpoint = "", "", ""
+			agent.RuntimeState = domain.RuntimeUnknown
+			agent.ActiveOperationRequestID, agent.FailureStage = "", ""
+			if test.change != nil {
+				test.change(&source.Agents[0])
+			}
+			snapshot, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+			require.NoError(t, err)
+			require.Len(t, snapshot.Agents, 1)
+			projection := snapshot.Agents[0]
+			require.False(t, projection.AcceptingRuns)
+			require.NotNil(t, projection.UnavailableReason)
+			require.Equal(t, test.reason, *projection.UnavailableReason)
+			if test.historyGranted {
+				require.Equal(t, []string{agent.OwnerUserID}, projection.PrincipalIDs)
+			} else {
+				require.Empty(t, projection.PrincipalIDs)
+			}
+			require.Equal(t, executionNullable(agent.AgentSpecRevisionID), projection.AgentSpecRevision)
+			require.Nil(t, projection.ExecutionRevision)
+			require.Nil(t, projection.Runtime, "pending bindings must not acquire executable Runtime authority")
+			require.Equal(t, source.Revision, snapshot.Revision)
+		})
+	}
+}
+
+func TestExecutionProjectionCompleteBindingDoesNotWaitForACK(t *testing.T) {
+	// The execution source carries no applied-ACK proof. A complete binding must
+	// already be publishable, so its own ACK cannot be a prerequisite to opening.
+	source := executionSource(t)
+	snapshot, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Agents, 1)
+	projection := snapshot.Agents[0]
+	require.True(t, projection.AcceptingRuns)
+	require.Nil(t, projection.UnavailableReason)
+	require.Equal(t, []string{source.Agents[0].Agent.OwnerUserID}, projection.PrincipalIDs)
+	require.Equal(t, executionNullable(source.Agents[0].Agent.AgentSpecRevisionID), projection.AgentSpecRevision)
+	require.Equal(t, executionNullable(source.Agents[0].Agent.ExecutionRevisionID), projection.ExecutionRevision)
+	require.NotNil(t, projection.Runtime)
+	require.Equal(t, source.Agents[0].Agent.RuntimeExecutionID, projection.Runtime.RuntimeExecutionID)
+	require.Equal(t, source.Revision, snapshot.Revision)
+}
+
 func TestExecutionProjectionUnavailableAgentsRetainHistoryGrant(t *testing.T) {
 	for _, change := range []struct {
 		name  string

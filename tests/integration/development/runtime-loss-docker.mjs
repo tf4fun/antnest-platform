@@ -252,6 +252,7 @@ try {
             return {
               ...row,
               runtime_state: "absent",
+              readiness: "unavailable",
               failure_code: "runtime_exited",
               executable_execution_revision: null,
             };
@@ -270,6 +271,7 @@ try {
             return {
               ...row,
               runtime_state: "unavailable",
+              readiness: "unavailable",
               failure_code: "runtime_exited",
               executable_execution_revision: null,
             };

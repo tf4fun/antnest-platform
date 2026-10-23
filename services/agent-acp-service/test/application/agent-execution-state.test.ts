@@ -5,6 +5,7 @@ import type { AgentExecutionStateView } from "../../src/domain/agent-execution-s
 import type { RuntimeProtectionRepository } from "../../src/ports/execution-repository.js";
 import type { ExecuteRunResult, SubmittedAcpRun } from "../../src/ports/acp-application.js";
 import {
+  closedExecutionAgent,
   executionConfiguration,
   executionIdentity,
   runtimeConfiguration,
@@ -71,6 +72,19 @@ async function read(service: AgentExecutionState, identity = executionIdentity()
   return result;
 }
 
+function preparingConfiguration(binding: "fenced" | "unbound" = "unbound") {
+  const configuration = executionConfiguration();
+  const agent = closedExecutionAgent(configuration.agents[0]!);
+  agent.unavailable_reason = "agent_preparing";
+  if (binding === "unbound") {
+    agent.runtime = null;
+    agent.agent_spec_revision = null;
+    agent.execution_revision = null;
+  }
+  configuration.agents = [agent];
+  return configuration;
+}
+
 describe("ACP-owned workspace execution state", () => {
   it("projects idle availability without exposing Run or credential data", async () => {
     const test = await setup();
@@ -84,6 +98,146 @@ describe("ACP-owned workspace execution state", () => {
       unavailable_reason: null,
     });
     expect(state.configuration_revision).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it.each(["fenced", "unbound"] as const)(
+    "projects a listed %s preparing Agent without Runtime evidence or private binding data",
+    async (binding) => {
+      const test = await setup(false);
+      await test.directory.apply(preparingConfiguration(binding));
+      const state = await read(test.service);
+      expect(state).toEqual({
+        agent_id: "agent-1",
+        availability: "offline",
+        access_allowed: true,
+        active_session_id: null,
+        configuration_revision: state.configuration_revision,
+        unavailable_reason: "agent_preparing",
+      });
+      expect(state.configuration_revision).toMatch(/^[a-f0-9]{64}$/u);
+      expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([{ principalId: "other" }, { agentId: "other" }])(
+    "sanitizes preparing state outside the authorized projection: %j",
+    async (change) => {
+      const test = await setup(false);
+      await test.directory.apply(preparingConfiguration());
+      const identity = { ...executionIdentity(), ...change };
+      expect(await read(test.service, identity)).toEqual({
+        agent_id: identity.agentId,
+        availability: "offline",
+        access_allowed: false,
+        active_session_id: null,
+        configuration_revision: null,
+        unavailable_reason: "access_denied",
+      });
+      expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([executionIdentity().principalId, "another-user"])(
+    "keeps busy precedence and Session privacy when the Agent becomes preparing (%s)",
+    async (owner) => {
+      const test = await setup();
+      const active = await test.start(owner);
+      const preparing = preparingConfiguration("fenced");
+      preparing.revision = 2;
+      await test.directory.apply(preparing);
+      test.protection.hasUnstoppedRuntimeCalls.mockResolvedValue(true);
+      expect(await read(test.service)).toMatchObject({
+        availability: "busy",
+        access_allowed: true,
+        active_session_id: owner === executionIdentity().principalId ? "session-1" : null,
+      });
+      expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+      test.completion.resolve(completed);
+      await active.completion;
+      expect(await read(test.service)).toMatchObject({
+        availability: "offline",
+        active_session_id: null,
+        unavailable_reason: "agent_preparing",
+      });
+      expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["generic unavailable", "Runtime barrier"] as const)(
+    "does not classify %s as preparing",
+    async (condition) => {
+      const test = await setup(false);
+      const configuration = executionConfiguration();
+      if (condition === "generic unavailable")
+        configuration.agents = configuration.agents.map((agent) => ({
+          ...closedExecutionAgent(agent),
+          unavailable_reason: "Agent is rebuilding",
+        }));
+      await test.directory.apply(configuration);
+      test.protection.hasUnstoppedRuntimeCalls.mockResolvedValue(true);
+      expect(await read(test.service)).toMatchObject({
+        availability: "offline",
+        active_session_id: null,
+        unavailable_reason:
+          condition === "generic unavailable" ? "agent_unavailable" : "runtime_barrier_required",
+      });
+      expect(test.protection.hasUnstoppedRuntimeCalls).toHaveBeenCalledTimes(
+        condition === "generic unavailable" ? 0 : 1,
+      );
+    },
+  );
+
+  it("watches preparing become executable and terminates on revocation despite regrant", async () => {
+    const test = await setup(false);
+    await test.directory.apply(preparingConfiguration());
+    const lifetime = new AbortController();
+    const states: AgentExecutionStateView[] = [];
+    const task = test.service
+      .watch(
+        executionIdentity(),
+        (state) => {
+          states.push(state);
+          return Promise.resolve();
+        },
+        lifetime.signal,
+      )
+      .catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(states).toHaveLength(1));
+      expect(states[0]).toMatchObject({
+        availability: "offline",
+        access_allowed: true,
+        active_session_id: null,
+        unavailable_reason: "agent_preparing",
+      });
+      expect(test.protection.hasUnstoppedRuntimeCalls).not.toHaveBeenCalled();
+      await test.directory.apply({ ...executionConfiguration(), revision: 2 });
+      await vi.waitFor(() => expect(states.at(-1)?.availability).toBe("ready"));
+      expect(states.at(-1)).toMatchObject({
+        access_allowed: true,
+        active_session_id: null,
+        unavailable_reason: null,
+      });
+      expect(await read(test.service)).toEqual(states.at(-1));
+      const revoked = executionConfiguration();
+      revoked.revision = 3;
+      revoked.agents[0]!.principal_ids = [];
+      await test.directory.apply(revoked);
+      await test.directory.apply({ ...executionConfiguration(), revision: 4 });
+      expect(await task).toBeUndefined();
+      expect(states.at(-1)).toEqual({
+        agent_id: "agent-1",
+        availability: "offline",
+        access_allowed: false,
+        active_session_id: null,
+        configuration_revision: null,
+        unavailable_reason: "access_denied",
+      });
+      expect(states.filter((state) => !state.access_allowed)).toHaveLength(1);
+    } finally {
+      lifetime.abort();
+      await task;
+    }
   });
 
   it.each([executionIdentity().principalId, "another-user"])(

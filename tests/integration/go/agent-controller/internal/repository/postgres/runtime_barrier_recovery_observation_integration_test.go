@@ -165,8 +165,18 @@ WHERE agent_id=$1 AND principal_id=$2 AND access_revision=$3 AND active`,
 			require.Empty(t, pending)
 			currentBase, readErr := fixture.store.GetAgentLifecycleBase(ctx, fixture.base.Agent.AgentID)
 			require.NoError(t, readErr)
-			require.Equal(t, fixture.base.Agent, currentBase.Agent,
+			expected := fixture.base.Agent
+			if change == "active owner binding becomes inactive" {
+				require.NotNil(t, expected.Readiness)
+				readiness := *expected.Readiness
+				readiness.Access.Active = false
+				expected.Readiness = &readiness
+			}
+			require.Equal(t, expected, currentBase.Agent,
 				"a rejected recovery cannot alter Agent CAS, Runtime binding or lifecycle ownership")
+			if change == "active owner binding becomes inactive" {
+				require.Equal(t, "unavailable", currentBase.Agent.CurrentReadiness())
+			}
 			afterCore := runtimeBarrierAdmissionSnapshot(t, ctx, fixture.store)
 			for table, original := range beforeCore {
 				if change == "auto policy becomes manual" && table == "runtime_barrier_recovery_policies" {

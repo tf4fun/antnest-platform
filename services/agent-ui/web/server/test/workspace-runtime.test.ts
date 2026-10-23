@@ -836,6 +836,8 @@ test("Agent View retains unavailable reasons and clears them when ready", async 
       unavailableReason: "runtime_barrier_required" as const },
     { availability: "offline" as const, activeSessionId: null,
       unavailableReason: "agent_unavailable" as const },
+    { availability: "offline" as const, activeSessionId: null,
+      unavailableReason: "agent_preparing" as const },
     { availability: "ready" as const, activeSessionId: null, unavailableReason: null },
   ];
   let state = states[0]!;
@@ -873,7 +875,7 @@ test("Agent View retains unavailable reasons and clears them when ready", async 
 test("upstream Agent watch pushes external state changes into Agent-only SSE", async () => {
   let state = { availability: "ready" as "ready" | "busy" | "offline",
     activeSessionId: null as string | null,
-    unavailableReason: null as "runtime_barrier_required" | "agent_unavailable" | null };
+    unavailableReason: null as "runtime_barrier_required" | "agent_unavailable" | "agent_preparing" | null };
   let emit!: (value: typeof state) => void | Promise<void>;
   const runtime = createWorkspaceRuntime({
     connect: async () => ({
@@ -919,6 +921,8 @@ test("upstream Agent watch pushes external state changes into Agent-only SSE", a
         unavailableReason: "runtime_barrier_required" as const },
       { availability: "offline" as const, activeSessionId: null,
         unavailableReason: "agent_unavailable" as const },
+      { availability: "offline" as const, activeSessionId: null,
+        unavailableReason: "agent_preparing" as const },
       { availability: "ready" as const, activeSessionId: null, unavailableReason: null },
     ]) {
       state = next;

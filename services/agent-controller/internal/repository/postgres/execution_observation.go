@@ -45,6 +45,7 @@ WHERE id=ANY($1::text[]) OR ($2 AND `+pendingObservationPredicate+`) ORDER BY id
 
 func (repository *Repository) advanceRuntimeExecutionChanges(ctx context.Context, tx *databaseTransaction, before []ports.AgentRecord) error {
 	organizations := []string{}
+	reopened := []ports.AgentRecord{}
 	for _, previous := range before {
 		current, err := loadAgentRecord(ctx, tx, previous.AgentID)
 		if err != nil {
@@ -53,13 +54,31 @@ func (repository *Repository) advanceRuntimeExecutionChanges(ctx context.Context
 		if runtimeExecutionChanged(previous, current) {
 			organizations = append(organizations, current.OrganizationID)
 		}
+		if !previous.ExecutionReady() && current.ExecutionReady() &&
+			previous.ExecutionRevisionID == current.ExecutionRevisionID {
+			reopened = append(reopened, current)
+		}
 	}
-	return repository.advanceExecutionOrganizations(ctx, tx, organizations)
+	if err := repository.advanceExecutionOrganizations(ctx, tx, organizations); err != nil {
+		return err
+	}
+	// Reopening a retained binding requires application of this new snapshot.
+	// Its original bound/ready facts remain history; unrelated organization
+	// changes do not move this per-binding publication fence.
+	for _, agent := range reopened {
+		if _, err := tx.Exec(ctx, `UPDATE agent_controller.agent_runtime_readiness
+SET reopen_after_revision=(SELECT revision FROM agent_controller.execution_configuration_sync WHERE organization_id=$3)
+WHERE agent_id=$1 AND execution_revision_id=$2`, agent.AgentID, agent.ExecutionRevisionID, agent.OrganizationID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runtimeExecutionChanged(before, after ports.AgentRecord) bool {
 	return before.ExecutionRevisionID != after.ExecutionRevisionID ||
 		before.RuntimeExecutionID != after.RuntimeExecutionID ||
 		before.RuntimeMCPEndpoint != after.RuntimeMCPEndpoint ||
-		before.ExecutionReady() != after.ExecutionReady()
+		before.ExecutionReady() != after.ExecutionReady() ||
+		before.RuntimePreparing() != after.RuntimePreparing()
 }
