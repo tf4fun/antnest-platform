@@ -79,11 +79,12 @@ same delay for a rejected connection handshake. These six entries use
 A delay must be a positive integer no greater than 60000 and cannot accompany
 `retryable: false` or a recovery mode other than `backoff`.
 
-The pending [connection admission contract](connection-admission.md) scopes
+The [connection admission contract](connection-admission.md) scopes
 `connection_quota_exceeded` to establishing a new connection, before any ACP
 command is accepted. It has no JSON-RPC admission mapping and does not permit
-replaying an accepted Prompt, model request or Tool effect. Producer quota
-enforcement and consumer integration remain separate delivery batches in #49.
+replaying an accepted Prompt, model request or Tool effect. ACP enforces shared
+HTTP/WebSocket quotas before connection admission. Immutable admission indexing,
+performance and multi-replica ownership remain separate delivery work in #49.
 
 `retryable: true` is not permission to immediately replay every operation.
 `wait_binding` waits for an available binding, `wait_rebuild` requires the

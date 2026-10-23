@@ -32,6 +32,12 @@ import type { AgentSettlementPort } from "../ports/agent-settlement.js";
 import type { AgentExecutionStatePort } from "../ports/agent-execution-state.js";
 import type { ExecutionAuditPort } from "../ports/execution-audit.js";
 import type { RuntimeBarrierReader } from "../ports/runtime-barrier.js";
+import {
+  ConnectionCapacity,
+  type ConnectionCapacityLimits,
+} from "../application/connection-capacity.js";
+import { DomainError } from "../domain/errors.js";
+import { ConnectionTasks } from "./acp/connection-tasks.js";
 import type { BridgeObservationService } from "../application/bridge-observation.js";
 import type { LearningChangeReader } from "../application/learning-change-reader.js";
 import type { LearningNoticePublisher } from "../application/learning-notice-publisher.js";
@@ -71,6 +77,7 @@ export type AgentAcpHttpServerOptions = {
   ready: () => Promise<boolean>;
   id?: () => string;
   maxWebSocketPayloadBytes: number;
+  connectionLimits?: ConnectionCapacityLimits;
   telemetry?: TelemetryPort;
   reportError?: (error: unknown, operation: string) => void;
 };
@@ -81,6 +88,8 @@ export class AgentAcpHttpServer {
   private readonly controlServer: Server;
   private readonly webSockets: WebSocketServer;
   private readonly connections = new Set<WebSocket>();
+  private readonly ownedWebSockets = new Set<Promise<void>>();
+  private readonly capacity: ConnectionCapacity;
   private readonly id: () => string;
   private readonly telemetry: TelemetryPort;
   private readonly httpTransport: AcpHttpTransport;
@@ -93,7 +102,12 @@ export class AgentAcpHttpServer {
     this.outputs = options.outputs ?? new SessionOutputStreams();
     this.id = options.id ?? randomUUID;
     this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
-    this.httpTransport = new AcpHttpTransport({ ...options, outputs: this.outputs });
+    this.capacity = new ConnectionCapacity(options.connectionLimits);
+    this.httpTransport = new AcpHttpTransport({
+      ...options,
+      outputs: this.outputs,
+      capacity: this.capacity,
+    });
     const handler = (request: IncomingMessage, response: ServerResponse) => {
       void observeHttpRequest(request, response, () =>
         this.handleHttp(request, response, "workspace"),
@@ -230,6 +244,7 @@ export class AgentAcpHttpServer {
     await new Promise<void>((resolve) => {
       this.webSockets.close(() => resolve());
     });
+    await Promise.all(this.ownedWebSockets);
   }
 
   private async handleHttp(
@@ -409,8 +424,22 @@ export class AgentAcpHttpServer {
       });
       return rejectUpgrade(socket, 401, "Unauthorized");
     }
-    socket.pause();
+    if (socket.destroyed) return rejectUpgrade(socket, 503, "Service Unavailable");
+    const setup = Promise.withResolvers<void>();
     try {
+      const lease = this.capacity.reserve(identity);
+      const tasks = new ConnectionTasks();
+      const closed = Promise.withResolvers<void>();
+      socket.once("close", () => closed.resolve());
+      // A removed WebSocket or a requested close is not an ownership receipt.
+      // Failed handshakes still retain their lease until the raw socket closes.
+      const owned = Promise.allSettled([closed.promise, setup.promise]).then(async () => {
+        await tasks.close();
+        lease.release();
+        this.ownedWebSockets.delete(owned);
+      });
+      this.ownedWebSockets.add(owned);
+      socket.pause();
       const binding = {
         connectionId: this.id(),
         ...identity,
@@ -429,6 +458,7 @@ export class AgentAcpHttpServer {
           if (protocol === "v1") {
             const connection = createAcpV1Agent({
               binding,
+              tasks,
               promptCapabilities,
               application: this.options.application,
               outputs: this.outputs,
@@ -446,10 +476,12 @@ export class AgentAcpHttpServer {
                   admission.claims === undefined || Date.now() < (admission.claims.exp + 30) * 1000,
               ),
             );
+            setup.resolve(connection.closed);
             this.observeConnection(connection, protocol);
           } else {
             const connection = createAcpV2Agent({
               binding,
+              tasks,
               promptCapabilities,
               application: this.options.application,
               outputs: this.outputs,
@@ -463,6 +495,7 @@ export class AgentAcpHttpServer {
                   admission.claims === undefined || Date.now() < (admission.claims.exp + 30) * 1000,
               ),
             );
+            setup.resolve(connection.closed);
             this.observeConnection(connection, protocol);
           }
           span?.addEvent("antnest.http.upgrade.connection.setup.completed");
@@ -471,7 +504,6 @@ export class AgentAcpHttpServer {
           webSocket.close(1011, "ACP connection setup failed");
         }
       });
-      socket.resume();
       return 101;
     } catch (error) {
       this.telemetry.count("antnest.acp.connections", {
@@ -481,7 +513,15 @@ export class AgentAcpHttpServer {
       this.report(error, "upgrade_authentication");
       const span = activeHttpSpan();
       if (span !== undefined) recordBoundaryError(span, error, "upgrade_authentication");
+      if (error instanceof DomainError && error.code === "connection_quota_exceeded") {
+        return rejectQuotaUpgrade(socket, error.code);
+      }
       return rejectUpgrade(socket, 503, "Service Unavailable");
+    } finally {
+      // handleUpgrade has no asynchronous verifyClient hook. If its synchronous
+      // callback did not adopt connection.closed, setup owns no pending SDK work.
+      setup.resolve();
+      socket.resume();
     }
   }
 
@@ -531,6 +571,17 @@ function rejectUpgrade(socket: Duplex, status: number, reason: string): number {
     socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
   }
   return status;
+}
+
+function rejectQuotaUpgrade(socket: Duplex, code: string): number {
+  const failure = httpFailure(code);
+  if (!socket.destroyed) {
+    const body = JSON.stringify(failure.body);
+    socket.end(
+      `HTTP/1.1 ${failure.status} Too Many Requests\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nRetry-After: 1\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+    );
+  }
+  return failure.status;
 }
 
 function rejectAuthenticatedUpgrade(socket: Duplex, failure: AuthenticationFailure): number {

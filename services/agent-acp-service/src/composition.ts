@@ -223,6 +223,7 @@ export async function startAgentAcpService(
       application: built.application,
       permissions: built.permissionConnections,
       maxWebSocketPayloadBytes: config.maxWebSocketPayloadBytes,
+      connectionLimits: config.connectionLimits,
       maxConfigurationBytes: config.maxConfigurationBytes,
       telemetry,
       ready: async () =>

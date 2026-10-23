@@ -1,5 +1,6 @@
 import type { LearningChangeItem } from "../adapters/postgres/learning-change-read.js";
 import type { ConnectionBinding } from "../domain/types.js";
+import type { ConnectionTaskOwner } from "../ports/connection-tasks.js";
 
 type Identity = Pick<ConnectionBinding, "organizationId" | "agentId" | "principalId">;
 type Scope = { organizationId: string; agentId: string; ownerId: string };
@@ -17,6 +18,7 @@ type Entry = {
   binding: ConnectionBinding;
   send: Send;
   close: (error: unknown) => void;
+  tasks: ConnectionTaskOwner | undefined;
   sessions: Set<string>;
   cursor: string | undefined;
   initializing: Promise<void> | undefined;
@@ -44,6 +46,7 @@ export class LearningNoticePublisher {
     binding: ConnectionBinding,
     send: Send,
     close: (error: unknown) => void,
+    tasks?: ConnectionTaskOwner,
   ): {
     attach(sessionId: string): Promise<void>;
     detach(sessionId: string): void;
@@ -57,6 +60,7 @@ export class LearningNoticePublisher {
       binding,
       send,
       close,
+      tasks,
       sessions: new Set(),
       cursor: undefined,
       initializing: undefined,
@@ -110,13 +114,15 @@ export class LearningNoticePublisher {
     if (entry.closed) return;
     entry.sessions.add(sessionId);
     if (entry.cursor !== undefined) return;
-    entry.initializing ??= this.read(entry, { kind: "latest" }, 1)
-      .then((page) => {
-        if (!entry.closed && entry.sessions.size > 0) entry.cursor = page.sealedSequence;
-      })
-      .finally(() => {
-        entry.initializing = undefined;
-      });
+    entry.initializing ??= this.own(entry, () =>
+      this.read(entry, { kind: "latest" }, 1)
+        .then((page) => {
+          if (!entry.closed && entry.sessions.size > 0) entry.cursor = page.sealedSequence;
+        })
+        .finally(() => {
+          entry.initializing = undefined;
+        }),
+    );
     await entry.initializing;
   }
 
@@ -149,7 +155,12 @@ export class LearningNoticePublisher {
             ? item.sourceSessionId
             : entry.sessions.values().next().value;
         if (sessionId === undefined) return;
-        await withTimeout(entry.send(sessionId, item), SEND_TIMEOUT_MS);
+        await this.own(entry, () =>
+          withTimeout(
+            this.own(entry, () => entry.send(sessionId, item)),
+            SEND_TIMEOUT_MS,
+          ),
+        );
       }
       if (this.isActive(entry)) {
         entry.cursor = page.hasMoreForward
@@ -170,9 +181,15 @@ export class LearningNoticePublisher {
 
   private read(entry: Entry, position: Position, limit: number): Promise<Page> {
     const { organizationId, agentId, principalId } = entry.binding;
-    return this.access.withAccess(entry.binding, () =>
-      this.repository.page({ organizationId, agentId, ownerId: principalId }, position, limit),
+    return this.own(entry, () =>
+      this.access.withAccess(entry.binding, () =>
+        this.repository.page({ organizationId, agentId, ownerId: principalId }, position, limit),
+      ),
     );
+  }
+
+  private own<T>(entry: Entry, operation: () => Promise<T>): Promise<T> {
+    return entry.tasks === undefined ? operation() : entry.tasks.run(operation);
   }
 
   private isActive(entry: Entry): boolean {

@@ -107,16 +107,20 @@ finish, or when the drain expires, forced shutdown aborts any remaining response
 and joins their cleanup before listener retirement. A held DELETE body or a
 nonresponsive peer cannot renew the shutdown window.
 
-## Connection quotas (#49, pending implementation)
+## Connection quotas (#49)
 
-The [connection admission contract](connection-admission.md) defines shared
+ACP implements the [connection admission contract](connection-admission.md) with shared
 HTTP/WebSocket limits for the process, the authenticated organization and its
 principal. Quota identity comes only from the verified workload and signed
 caller context; caller hints cannot select another quota bucket. The contract
 preserves the HTTP cleanup ownership and response-join rules above. Existing
 connection requests do not acquire additional reservations, and retained
-cleanup remains counted until it actually finishes. The current HTTP-only
-1024-entry cap remains implemented until the ACP Phase 1 batch replaces it.
+cleanup remains counted until it actually finishes. HTTP and v1/v2 WebSocket
+connections use the same process-local capacity owner, replacing the old
+HTTP-only 1024-entry cap. Socket/SDK closure and connection-owned raw work must
+settle before release; a cancelled wait or timed-out send is not cleanup proof.
+Supervisor-owned Run completion is independent of connection lifetime. These
+limits do not enable multiple replicas or establish cluster-wide quotas.
 
 ## Provider destinations (#28)
 

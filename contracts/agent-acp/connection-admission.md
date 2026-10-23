@@ -1,8 +1,10 @@
 # ACP Connection Admission And Partitioned Ownership (#49)
 
-This document freezes the shared connection quota requirements and delivery
-order. Implementation and acceptance evidence are pending. It does not enable
-multiple ACP replicas, change the ACP protocol, or complete #49.
+This document defines shared connection quota requirements and the delivery
+order. The ACP transport implements the replica-local quotas and cleanup
+ownership below. Admission indexing/performance and partitioned ownership
+remain separate work; quotas do not enable multiple replicas, change the ACP
+protocol, or complete #49.
 
 ## Scope And Configuration
 
@@ -94,8 +96,9 @@ reservation twice. These quotas count transport ownership, not Sessions or Runs.
 
 ## Delivery Order
 
-Every stage below remains pending; each owning-service batch requires its own
-tests and documentation before the explicit integration batch.
+Each owning-service batch requires its own tests and documentation before the
+explicit integration batch. Local producer checks do not establish complete
+Phase 1 or multi-replica acceptance.
 
 1. Freeze the shared quota contract and error classification before consumers
    or producers implement it.

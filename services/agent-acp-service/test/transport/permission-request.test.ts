@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getEventListeners } from "node:events";
+import { ConnectionTasks } from "../../src/transport/acp/connection-tasks.js";
 import {
   permissionRequest,
   v1Permission,
@@ -7,6 +9,61 @@ import {
 
 describe("ACP permission request lifetime", () => {
   afterEach(() => vi.useRealTimers());
+  it("owns the raw cancelled request through listener and timer cleanup", async () => {
+    vi.useFakeTimers();
+    const tasks = new ConnectionTasks();
+    const cancelled = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const response = Promise.withResolvers<unknown>();
+    const close = vi.fn();
+    const operation = permissionRequest(
+      () => {
+        entered.resolve();
+        return response.promise;
+      },
+      cancelled.signal,
+      close,
+      tasks,
+    );
+    const rejected = expect(operation).rejects.toThrow();
+    let settled = false;
+    let closing: Promise<void> | undefined;
+    try {
+      await entered.promise;
+      cancelled.abort();
+      await rejected;
+      closing = tasks.close().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(250);
+      expect(close).not.toHaveBeenCalled();
+      expect(settled).toBe(false);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      response.resolve({ outcome: { outcome: "cancelled" } });
+      await Promise.allSettled([operation, closing]);
+    }
+    expect(settled).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(getEventListeners(cancelled.signal, "abort")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(close).not.toHaveBeenCalled();
+  });
+  it("does not register request work after the owner has closed", async () => {
+    vi.useFakeTimers();
+    const tasks = new ConnectionTasks();
+    await tasks.close();
+    const cancelled = new AbortController();
+    const registered = vi.spyOn(cancelled.signal, "addEventListener");
+    const send = vi.fn(() => Promise.resolve({ outcome: { outcome: "cancelled" } }));
+    await expect(permissionRequest(send, cancelled.signal, vi.fn(), tasks)).rejects.toThrow(
+      "ACP connection is closed",
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(registered).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(getEventListeners(cancelled.signal, "abort")).toHaveLength(0);
+  });
   it("uses distinct version envelopes", () => {
     const request = {
       runId: "run",
