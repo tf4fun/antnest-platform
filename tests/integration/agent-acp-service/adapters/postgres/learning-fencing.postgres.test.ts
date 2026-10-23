@@ -133,7 +133,7 @@ async function snapshot(f: FencingFixture) {
         await f.observer.query<{ value: string }>(
           `SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text AS value FROM ${tablename} t`,
         )
-      ).rows[0].value,
+      ).rows[0]!.value,
     ]);
   }
   return JSON.stringify(result);
