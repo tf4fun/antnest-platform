@@ -33,6 +33,10 @@ const admissionQueries = [
     SELECT 1 FROM temporary_skill_scopes temporary JOIN runs run ON run.id=temporary.run_id
     WHERE temporary.organization_id=$1 AND temporary.agent_id=$2 AND temporary.released_at IS NULL
       AND ($3::text IS NULL OR run.execution_snapshot->'runtime'->>'revision'=$3)
+  ) OR EXISTS (
+    SELECT 1 FROM learning_runtime_protections protection
+    WHERE protection.organization_id=$1 AND protection.agent_id=$2 AND protection.retired_at IS NULL
+      AND ($3::text IS NULL OR protection.runtime_revision=$3)
   ) AS protected`,
 ].map(normalize);
 const cancellationQueries = [
