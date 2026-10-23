@@ -131,6 +131,13 @@ stop-proof path in [owner handoff](owner-handoff.md).
 Scope derived from a Session or Run must be rechecked on the same connection
 inside the fenced transaction before business mutation. `finish` retains its
 organization barrier and locks in organization, lease, Session, Run order.
+The current lease and original Run identity checks precede all duplicate event,
+tool-attempt and terminal receipt returns. A transaction which waits for the
+organization barrier rechecks the lease only after that wait. Event payloads,
+targets and timestamps are captured before yielding; caller mutation cannot
+redirect an already queued write or change its committed facts. Terminal Run
+facts, refusal exclusions, checkpoint invalidation, permission cancellation and
+Runtime barrier creation share that same guarded transaction.
 Session cancellation, close and other lifecycle paths that mutate Runs must
 apply the same guard; a fenced Run repository cannot leave those bypasses
 unfenced. Context checkpoints must carry their original Run binding. Looking up

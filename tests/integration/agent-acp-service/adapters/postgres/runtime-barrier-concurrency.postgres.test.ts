@@ -2,7 +2,6 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { describe, expect, it } from "vitest";
 import { PostgresExecutionConfiguration } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-configuration.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
@@ -41,9 +40,10 @@ describe.skipIf(databaseUrl === undefined)(
       const temporary = new PostgresTemporarySkills(
         new PostgresKernel(reservePool),
       );
-      const executions = new PostgresExecutionRepository(
+      const executions = createLegacyRunRepositories(
         new PostgresKernel(finishPool),
-      );
+        new AbortController().signal,
+      ).executions;
       const reader = new PostgresRuntimeBarrierReader(kernel);
       const ownership = new AbortController();
       const workers: Promise<unknown>[] = [];

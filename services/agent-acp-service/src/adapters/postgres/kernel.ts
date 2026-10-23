@@ -1,6 +1,7 @@
 import type { Pool, PoolClient, PoolConfig, QueryResult, QueryResultRow } from "pg";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
 import { observePostgresTransaction } from "../../telemetry/postgres.js";
+import { lockRuntimeBarrierOrganization } from "./runtime-barrier.js";
 import {
   AgentOwnershipLostError,
   ownershipFence,
@@ -36,12 +37,14 @@ export class PostgresKernel {
   public agentTransaction<T>(
     input: AgentOwnershipFence,
     operation: (client: PoolClient) => Promise<T>,
-    options: TransactionOptions = {},
+    options: TransactionOptions & { organizationBarrier?: true } = {},
   ): Promise<T> {
     const fence = ownershipFence(input);
     const timeoutMs = transactionBudget(options.timeoutMs ?? 10_000);
+    const organizationBarrier = options.organizationBarrier === true;
     return this.transaction(
       async (client) => {
+        if (organizationBarrier) await lockRuntimeBarrierOrganization(client, fence.organizationId);
         const values = [fence.organizationId, fence.agentId, fence.ownerInstanceId, fence.epoch];
         const locked = await client.query(
           "SELECT organization_id FROM agent_leases WHERE organization_id=$1 AND agent_id=$2 FOR SHARE",

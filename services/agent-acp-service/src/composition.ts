@@ -40,11 +40,9 @@ import { OfficialMcpDialer } from "./adapters/mcp/official-client.js";
 import { McpToolCatalog } from "./adapters/mcp/tool-catalog.js";
 import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
 import { PostgresContextRepository } from "./adapters/postgres/context-repository.js";
-import { PostgresExecutionRepository } from "./adapters/postgres/execution-repository.js";
 import { PostgresRuntimeBarrierReader } from "./adapters/postgres/runtime-barrier.js";
 import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
-import { PostgresRunEventRepository } from "./adapters/postgres/run-event-repository.js";
 import { createLegacyRunRepositories } from "./adapters/postgres/run-repositories.js";
 import { PostgresBridgeObservationRepository } from "./adapters/postgres/bridge-observation-repository.js";
 import { BridgeObservationService } from "./application/bridge-observation.js";
@@ -416,10 +414,8 @@ export function buildComponents(
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
   const sessions = new PostgresSessionRepository(kernel, new SecretBox(config.clientMcpKey));
-  const { runs } = createLegacyRunRepositories(kernel, ownershipSignal);
+  const { runs, events, executions } = createLegacyRunRepositories(kernel, ownershipSignal);
   const contexts = new PostgresContextRepository(kernel);
-  const executions = new PostgresExecutionRepository(kernel);
-  const events = new PostgresRunEventRepository(kernel);
 
   const model = new InstrumentedModel(
     new OpenAICompatibleModel({

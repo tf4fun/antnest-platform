@@ -6,8 +6,6 @@ import { PostgresKernel } from "../../../../../services/agent-acp-service/src/ad
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
-import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
 import {
   binding,
   snapshot,
@@ -33,8 +31,14 @@ describe.skipIf(databaseUrl === undefined)(
       kernel,
       new AbortController().signal,
     ).runs;
-    const executions = new PostgresExecutionRepository(kernel);
-    const events = new PostgresRunEventRepository(kernel);
+    const executions = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).executions;
+    const events = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).events;
     beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
@@ -127,7 +131,10 @@ describe.skipIf(databaseUrl === undefined)(
       );
       expect(stored.rows[0]?.total).toBe(1);
       const before = await sessions.readOutput(source.id, 0);
-      const reopened = new PostgresRunEventRepository(new PostgresKernel(pool));
+      const reopened = createLegacyRunRepositories(
+        new PostgresKernel(pool),
+        new AbortController().signal,
+      ).events;
       await expect(reopened.appendUsage(input)).resolves.toEqual(a);
       expect(await sessions.readOutput(source.id, 0)).toEqual(before);
       const unknown = await reopened.appendUsage(receipt(runId));

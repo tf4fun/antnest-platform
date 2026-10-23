@@ -10,7 +10,7 @@ import { SecretBox } from "../../../../../services/agent-acp-service/src/adapter
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import type { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
+import type { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { publicExecutionConfiguration } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import type { ConnectionBinding } from "../../../../../services/agent-acp-service/src/domain/types.js";
@@ -355,7 +355,10 @@ async function withDatabase(
     kernel,
     new AbortController().signal,
   ).runs;
-  const executions = new PostgresExecutionRepository(kernel);
+  const executions = createLegacyRunRepositories(
+    kernel,
+    new AbortController().signal,
+  ).executions;
   const children: IntentChild[] = [];
   const sessionIds: string[] = [];
   const knownRunIds = new Set<string>();

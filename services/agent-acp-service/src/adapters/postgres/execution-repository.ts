@@ -15,12 +15,22 @@ import type {
   RuntimeProtectionScope,
 } from "../../ports/execution-repository.js";
 import type { PostgresKernel } from "./kernel.js";
-import { createRuntimeBarrierForRun, lockRuntimeBarrierOrganization } from "./runtime-barrier.js";
+import { createRuntimeBarrierForRun } from "./runtime-barrier.js";
+import { RunWriteAuthority, type RunOwnerColumns } from "./run-write-authority.js";
 
 export class PostgresExecutionRepository
   implements ExecutionRepository, RunRecoveryReader, RuntimeProtectionRepository
 {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: RunWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: RunWriteAuthority,
+  ) {
+    if (!(authority instanceof RunWriteAuthority))
+      throw new TypeError("Execution writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async hasUnstoppedRuntimeCalls(
     scope: RuntimeProtectionScope,
@@ -68,22 +78,46 @@ export class PostgresExecutionRepository
     return { kind: "terminal", outcome };
   }
 
-  public async finish(input: FinishLocalRunInput): Promise<void> {
-    await this.kernel.transaction(async (client) => {
-      const scope = await client.query<{ organization_id: string; session_id: string }>(
-        `SELECT session.organization_id, run.session_id FROM runs run
+  public async finish(request: FinishLocalRunInput): Promise<void> {
+    const input = structuredClone(request);
+    // This read chooses the organization lock only. Recheck all identity facts
+    // on the original transaction connection after organization and lease locks.
+    const scope = await this.kernel.query<{ organization_id: string; session_id: string }>(
+      `SELECT session.organization_id, run.session_id FROM runs run
        JOIN acp_sessions session ON session.id=run.session_id WHERE run.id=$1`,
-        [input.runId],
-      );
-      const original = scope.rows[0];
-      if (!original) throw new Error("Run cannot enter the requested terminal state");
-      await lockRuntimeBarrierOrganization(client, original.organization_id);
-      // Keep the established Session -> Run order used by execution writers.
-      await client.query("SELECT id FROM acp_sessions WHERE id=$1 FOR UPDATE", [
-        original.session_id,
-      ]);
-      const result = await client.query(
-        `WITH finished AS (UPDATE runs
+      [input.runId],
+    );
+    const original = scope.rows[0];
+    if (!original) throw new Error("Run cannot enter the requested terminal state");
+    await this.#authority.organizationTransaction(
+      this.kernel,
+      original.organization_id,
+      async (client) => {
+        const session = await client.query<{ organization_id: string; agent_id: string }>(
+          "SELECT organization_id, agent_id FROM acp_sessions WHERE id=$1 FOR UPDATE",
+          [original.session_id],
+        );
+        const sessionRow = session.rows[0];
+        if (!sessionRow || sessionRow.organization_id !== original.organization_id)
+          throw new Error("Run changed Session identity");
+        this.#authority.assertSession(sessionRow);
+        const locked = await client.query<RunOwnerColumns & { session_id: string }>(
+          `SELECT session_id, organization_id, agent_id, execution_owner_registration_id,
+          execution_owner_member_id, execution_owner_incarnation_id, execution_owner_epoch::text
+         FROM runs WHERE id=$1 FOR UPDATE`,
+          [input.runId],
+        );
+        const runRow = locked.rows[0];
+        if (
+          !runRow ||
+          runRow.session_id !== original.session_id ||
+          runRow.organization_id !== sessionRow.organization_id ||
+          runRow.agent_id !== sessionRow.agent_id
+        )
+          throw new Error("Run changed Session identity");
+        this.#authority.assertRun(runRow);
+        const result = await client.query(
+          `WITH finished AS (UPDATE runs
           SET state = $2, terminal_class = $2, executor_state = $3,
               tool_effect_state = $4, unknown_effect_source = $5,
               stop_reason = $6, error_class = $7, updated_at = $8
@@ -103,26 +137,27 @@ export class PostgresExecutionRepository
          UPDATE tool_permissions SET decision = 'cancelled', reason = 'run_finished', decided_at = $8
          FROM finished WHERE tool_permissions.run_id = finished.id AND decision IS NULL
        ) SELECT id FROM finished`,
-        [
-          input.runId,
-          input.terminalClass,
-          input.executorState,
-          input.toolEffectState,
-          input.unknownEffectSource ?? null,
-          input.stopReason ?? null,
-          input.errorClass ?? null,
-          input.finishedAt,
-        ],
-      );
-      if (result.rowCount === 1) {
-        await createRuntimeBarrierForRun(client, input.runId);
-        return;
-      }
-      const stored = await this.loadTerminalOutcome(client, input.runId);
-      if (stored === null || !sameOutcome(stored, input)) {
-        throw new Error("Run cannot enter the requested terminal state");
-      }
-    });
+          [
+            input.runId,
+            input.terminalClass,
+            input.executorState,
+            input.toolEffectState,
+            input.unknownEffectSource ?? null,
+            input.stopReason ?? null,
+            input.errorClass ?? null,
+            input.finishedAt,
+          ],
+        );
+        if (result.rowCount === 1) {
+          await createRuntimeBarrierForRun(client, input.runId);
+          return;
+        }
+        const stored = await this.loadTerminalOutcome(client, input.runId);
+        if (stored === null || !sameOutcome(stored, input)) {
+          throw new Error("Run cannot enter the requested terminal state");
+        }
+      },
+    );
   }
 
   private async loadTerminalOutcome(client: PoolClient, runId: string): Promise<RunOutcome | null> {
@@ -141,13 +176,20 @@ export class PostgresExecutionRepository
   }
 
   public async listRecoveryWork(): Promise<RecoveryWork[]> {
-    const result = await this.kernel.query<RecoveryWork>(
-      `SELECT id, state AS kind
+    this.#authority.assertLegacyRecovery();
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const result = await client.query<RecoveryWork & RunOwnerColumns>(
+        `SELECT id, state AS kind, organization_id, agent_id, execution_owner_registration_id,
+              execution_owner_member_id, execution_owner_incarnation_id, execution_owner_epoch::text
          FROM runs
         WHERE state IN ('admitting', 'running')
         ORDER BY created_at, id`,
-    );
-    return result.rows;
+      );
+      // Do not partially recover a mixed database. Returning only legacy rows
+      // could silently leave owned reservations to an unscoped startup worker.
+      for (const row of result.rows) this.#authority.assertRun(row);
+      return result.rows.map(({ id, kind }) => ({ id, kind }));
+    });
   }
 }
 

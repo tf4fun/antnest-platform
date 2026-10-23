@@ -7,7 +7,6 @@ import { migrate } from "../../../../services/agent-acp-service/src/adapters/pos
 import { PostgresSessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
 import { PostgresBridgeObservationRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
 import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
-import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { configurationView } from "../../../../services/agent-acp-service/src/domain/session-configuration.js";
@@ -474,7 +473,10 @@ describe.skipIf(databaseUrl === undefined)(
       expect(intent.sessionConfiguration).toEqual({
         authorizationMode: "chat",
       });
-      const executions = new PostgresExecutionRepository(kernel);
+      const executions = createLegacyRunRepositories(
+        kernel,
+        new AbortController().signal,
+      ).executions;
       expect((await executions.listRecoveryWork())[0]).toEqual({
         kind: "admitting",
         id: intent.id,

@@ -10,6 +10,7 @@ import {
   type AgentOwnershipFence,
 } from "../../domain/agent-ownership.js";
 import type { PostgresKernel } from "./kernel.js";
+import { lockRuntimeBarrierOrganization } from "./runtime-barrier.js";
 
 export type RunOwnerAuthority = Readonly<{
   registration: Readonly<OwnerRegistration>;
@@ -92,6 +93,27 @@ export class RunWriteAuthority {
     const fence = this.mode.authority.fence;
     if (scope.organization_id !== fence.organizationId || scope.agent_id !== fence.agentId)
       throw new AgentOwnershipLostError();
+  }
+
+  public organizationTransaction<T>(
+    kernel: PostgresKernel,
+    organizationId: string,
+    operation: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.mode.kind === "owned") {
+      const { fence } = this.mode.authority;
+      if (organizationId !== fence.organizationId)
+        return Promise.reject(new AgentOwnershipLostError());
+      return kernel.agentTransaction(fence, operation, { organizationBarrier: true });
+    }
+    return this.transaction(kernel, async (client) => {
+      await lockRuntimeBarrierOrganization(client, organizationId);
+      return operation(client);
+    });
+  }
+
+  public assertLegacyRecovery(): void {
+    if (this.mode.kind !== "legacy") throw new AgentOwnershipLostError();
   }
 
   public assertRun(row: RunOwnerColumns): void {

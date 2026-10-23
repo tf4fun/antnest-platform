@@ -10,8 +10,6 @@ import { PostgresSessionRepository } from "../../../../../services/agent-acp-ser
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresBridgeObservationRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
 import { PostgresContextRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
-import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
 import type { RunExecutionSnapshot } from "../../../../../services/agent-acp-service/src/domain/types.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -29,8 +27,14 @@ describe.skipIf(databaseUrl === undefined)(
     ).runs;
     const bridgeObservations = new PostgresBridgeObservationRepository(kernel);
     const contexts = new PostgresContextRepository(kernel);
-    const executions = new PostgresExecutionRepository(kernel);
-    const events = new PostgresRunEventRepository(kernel);
+    const executions = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).executions;
+    const events = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).events;
 
     beforeAll(async () => {
       await pool.query("DROP SCHEMA public CASCADE");

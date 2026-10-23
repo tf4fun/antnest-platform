@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
-import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
+import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import type { ModelResult } from "../../../../services/agent-acp-service/src/ports/model.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
 import type { AcpWireClient } from "../support/acp-wire-client.js";
@@ -310,9 +310,10 @@ describe.skipIf(databaseUrl === undefined)(
           },
         ]);
         expect(
-          await new PostgresExecutionRepository(
+          await createLegacyRunRepositories(
             kernel,
-          ).hasUnstoppedRuntimeCalls({
+            new AbortController().signal,
+          ).executions.hasUnstoppedRuntimeCalls({
             organizationId: "organization-1",
             agentId: "agent-1",
             runtimeRevision: null,

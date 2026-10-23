@@ -7,7 +7,7 @@ import { SecretBox } from "../../../../../services/agent-acp-service/src/adapter
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import type { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
+import type { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { DomainError } from "../../../../../services/agent-acp-service/src/domain/errors.js";
 import { publicExecutionConfiguration } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
@@ -48,7 +48,10 @@ class AdmissionFixture {
       kernel,
       new AbortController().signal,
     ).runs;
-    this.executions = new PostgresExecutionRepository(kernel);
+    this.executions = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).executions;
   }
 
   public async initialize(): Promise<void> {

@@ -2,10 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresExecutionConfiguration } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-configuration.js";
-import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
-import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresRuntimeBarrierReader } from "../../../../../services/agent-acp-service/src/adapters/postgres/runtime-barrier.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
@@ -42,8 +40,14 @@ describe.skipIf(databaseUrl === undefined)(
       kernel,
       new AbortController().signal,
     ).runs;
-    const events = new PostgresRunEventRepository(kernel);
-    const executions = new PostgresExecutionRepository(kernel);
+    const events = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).events;
+    const executions = createLegacyRunRepositories(
+      kernel,
+      new AbortController().signal,
+    ).executions;
     const temporary = new PostgresTemporarySkills(kernel);
     const reader = new PostgresRuntimeBarrierReader(kernel);
     const signal = new AbortController().signal;
@@ -304,7 +308,10 @@ describe.skipIf(databaseUrl === undefined)(
           ).rows,
         ).toEqual([{ runtime_call_stopped: false }]);
         expect(await cycle(value, restartedReader)).toEqual(original);
-        await new PostgresExecutionRepository(restartedKernel).finish(terminal);
+        await createLegacyRunRepositories(
+          restartedKernel,
+          new AbortController().signal,
+        ).executions.finish(terminal);
         expect(
           await cycle(
             value,

@@ -139,9 +139,13 @@ Existing Runs stay all null, even when their Agent has a current lease. A
 database trigger rejects later backfill, replacement or clearing of that tuple.
 
 The owned Run repository factory captures one immutable registration and fence.
-Intent, accept, reject and cancellation writes verify the live lease and actual
+Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
 Session/Run scope in the same transaction; existing Runs must also match their
-original execution tuple. Legacy Run writers reject owned rows. Composition
+original execution tuple before mutations or duplicate receipt returns. Terminal
+transactions take the organization barrier before the lease, Session and Run;
+refusal exclusions, checkpoint deletion, permission cancellation and barrier
+creation remain atomic. Legacy startup recovery rejects a scan containing owned
+active Runs before returning any work. Legacy Run writers reject owned rows. Composition
 still selects the explicit legacy factory with the held worker signal: the
 production Agent coordinator, other writers and scoped recovery are pending.
 Registration bootstrap does not enable this execution mode or additional replicas.
