@@ -1,6 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
 import { parseOwnerInspection, type OwnerInspection } from "../../application/owner-inspection.js";
+import {
+  parseOwnerRegistration,
+  type OwnerRegistration,
+} from "../../application/owner-incarnation.js";
 import { AgentOwnershipLostError, ownershipFence } from "../../domain/agent-ownership.js";
 import { finishLockedRun } from "./execution-repository.js";
 import type { PostgresKernel } from "./kernel.js";
@@ -28,8 +32,67 @@ export class PostgresOwnerRecovery {
     this.#authority = RunWriteAuthority.owned(authority);
   }
 
-  // Only the authenticated inspection adapter supplies this internal input.
-  // Networking must finish outside this finite, current-fence transaction.
+  public async listPredecessors(): Promise<
+    readonly Readonly<{
+      runId: string;
+      registration: OwnerRegistration;
+      inspection?: Extract<OwnerInspection, { state: "stopped" }>;
+    }>[]
+  > {
+    const scope = this.#authority.scope()!;
+    const current = this.#authority.origin();
+    return this.#authority.organizationTransaction(
+      this.kernel,
+      scope.organizationId,
+      async (client) => {
+        const result = await client.query<
+          RunOwnerColumns & {
+            run_id: string;
+            accepted_inspection: unknown;
+            accepted_receipt_id: string | null;
+          }
+        >(
+          `SELECT r.id AS run_id,r.organization_id,r.agent_id,r.execution_owner_registration_id,
+           r.execution_owner_member_id,r.execution_owner_incarnation_id,r.execution_owner_epoch::text,
+           p.inspection AS accepted_inspection,p.receipt_id AS accepted_receipt_id
+         FROM runs r LEFT JOIN owner_stop_receipts p
+           ON p.registration_id=r.execution_owner_registration_id
+         WHERE r.organization_id=$1 AND r.agent_id=$2
+           AND r.state IN ('admitting','running') AND r.execution_owner_registration_id IS NOT NULL
+           AND r.execution_owner_incarnation_id IS DISTINCT FROM $3 ORDER BY r.created_at,r.id`,
+          [scope.organizationId, scope.agentId, current[2]],
+        );
+        return Object.freeze(
+          result.rows.map((row) => {
+            const [registration_id, member_id, incarnation_id] = originalOwner(row);
+            const registration = parseOwnerRegistration({
+              registration_id,
+              member_id,
+              incarnation_id,
+            });
+            const inspection =
+              row.accepted_receipt_id === null
+                ? undefined
+                : parseOwnerInspection(row.accepted_inspection, registration);
+            if (
+              inspection !== undefined &&
+              (inspection.state !== "stopped" ||
+                inspection.stop_receipt.receipt_id !== row.accepted_receipt_id)
+            )
+              throw new Error("Invalid accepted predecessor stop proof");
+            return Object.freeze({
+              runId: row.run_id,
+              registration,
+              ...(inspection === undefined ? {} : { inspection }),
+            });
+          }),
+        );
+      },
+    );
+  }
+
+  // Input is an authenticated inspection or a complete accepted proof revalidated
+  // from storage. Networking finishes outside this finite current-fence transaction.
   public async recoverRun(request: RecoverPredecessorRun): Promise<"recovered" | "terminal"> {
     const input = structuredClone(request);
     if (!(input.recoveredAt instanceof Date) || !Number.isFinite(input.recoveredAt.getTime()))

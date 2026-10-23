@@ -1,11 +1,27 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { RuntimeConnections } from "../../../../services/agent-acp-service/src/adapters/runtime-connections.js";
+import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
+import { PostgresAgentLeases } from "../../../../services/agent-acp-service/src/adapters/postgres/agent-leases.js";
+import { PostgresOwnerRecovery } from "../../../../services/agent-acp-service/src/adapters/postgres/owner-recovery.js";
+import { PostgresWorkerLock } from "../../../../services/agent-acp-service/src/adapters/postgres/worker-lock.js";
+import type { AgentOwnershipFence } from "../../../../services/agent-acp-service/src/domain/agent-ownership.js";
+import type { ServiceAuthentication } from "../../../../services/agent-acp-service/src/adapters/service-authentication.js";
+import {
+  OwnerInspectionAttemptError,
+  RuntimeControllerIncarnations,
+} from "../../../../services/agent-acp-service/src/adapters/runtime-controller-incarnations.js";
+import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
+import { createOwnedAgentRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/agent-repositories.js";
+import { publicExecutionConfiguration } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
+import { runSnapshot } from "../../../../services/agent-acp-service/src/domain/run-snapshot.js";
+import type { OwnerInspection } from "../../../../services/agent-acp-service/src/application/owner-inspection.js";
 import { OwnerProbeServer } from "../../../../services/agent-acp-service/src/transport/owner-probe-server.js";
 import { CallerContextVerifier } from "../../../../services/agent-acp-service/src/adapters/caller-context.js";
 import { RequestAuthentication } from "../../../../services/agent-acp-service/src/transport/request-authentication.js";
@@ -59,17 +75,86 @@ type StoredRun = {
   execution_owner_epoch: string | null;
 };
 
+function isOnlyInspectionCleanupFailure(error: unknown): boolean {
+  const seen = new Set<unknown>(),
+    leaves: unknown[] = [];
+  const visit = (value: unknown): void => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    if (value instanceof AggregateError && value.errors.length > 0) {
+      for (const item of value.errors as unknown[]) visit(item);
+    } else leaves.push(value);
+    if (value instanceof Error && value.cause !== undefined) visit(value.cause);
+  };
+  visit(error);
+  const only = leaves[0];
+  return (
+    leaves.length === 1 &&
+    only instanceof OwnerInspectionAttemptError &&
+    only.cleanupFailed &&
+    !only.retryable &&
+    only.code === "acp_registry_unavailable"
+  );
+}
+
+it.each(["sibling", "cause"] as const)(
+  "rejects an additional shutdown cleanup failure in the expected error's %s",
+  (position) => {
+    const expected = new OwnerInspectionAttemptError(false, true);
+    const unexpected = new Error("Independent resource cleanup failed");
+    const aggregate =
+      position === "sibling"
+        ? new AggregateError([expected, unexpected], "Shutdown failed")
+        : new AggregateError([expected], "Shutdown failed", {
+            cause: unexpected,
+          });
+    expect(isOnlyInspectionCleanupFailure(aggregate)).toBe(false);
+    expect(
+      isOnlyInspectionCleanupFailure(
+        new AggregateError([expected, expected], "Repeated wrapper"),
+      ),
+    ).toBe(true);
+    expect(
+      isOnlyInspectionCleanupFailure(new AggregateError([], "Empty failure")),
+    ).toBe(false);
+    expect(
+      isOnlyInspectionCleanupFailure(
+        new OwnerInspectionAttemptError(true, true),
+      ),
+    ).toBe(false);
+  },
+);
+
 describe.skipIf(databaseUrl === undefined)(
   "production ACP warm admission",
   () => {
     it.each([
-      { version: 1, ownership: "legacy" },
-      { version: 2, ownership: "legacy" },
-      { version: 1, ownership: "owned" },
-      { version: 2, ownership: "owned" },
+      { version: 1, ownership: "legacy", proofSource: "none" },
+      { version: 2, ownership: "legacy", proofSource: "none" },
+      { version: 1, ownership: "owned", proofSource: "none" },
+      { version: 2, ownership: "owned", proofSource: "none" },
+      { version: 1, ownership: "owned", proofSource: "remote" },
+      { version: 2, ownership: "owned", proofSource: "remote" },
+      { version: 1, ownership: "owned", proofSource: "stored" },
+      { version: 2, ownership: "owned", proofSource: "stored" },
+      { version: 2, ownership: "owned", proofSource: "held" },
+      { version: 2, ownership: "owned", proofSource: "held-error" },
+      { version: 2, ownership: "owned", proofSource: "running" },
+      { version: 2, ownership: "owned", proofSource: "unknown" },
+      { version: 2, ownership: "owned", proofSource: "http-error" },
     ] as const)(
-      "$ownership v$version admits a persisted new Run before republication and uses a newer revision in the same restarted instance",
-      async ({ version, ownership }) => {
+      "$ownership v$version admits before republication and uses a newer revision (predecessor proof=$proofSource)",
+      async ({ version, ownership, proofSource }) => {
+        const predecessor = proofSource !== "none";
+        const heldInspection =
+          proofSource === "held" || proofSource === "held-error";
+        const unavailablePredecessor = [
+          "held",
+          "held-error",
+          "running",
+          "unknown",
+          "http-error",
+        ].includes(proofSource);
         expect(new URL(databaseUrl!).pathname).toMatch(/_test$/u);
         const pool = new Pool({
           connectionString: databaseUrl,
@@ -79,11 +164,30 @@ describe.skipIf(databaseUrl === undefined)(
           query_timeout: 5000,
         });
         const key = randomBytes(32).toString("base64");
+        const witnessLeases = new PostgresAgentLeases(new PostgresKernel(pool));
+        const witnessFences = new Set<AgentOwnershipFence>();
+        const auxiliaryAuthentication: ServiceAuthentication[] = [];
+        let witness: { runId: string; fence: AgentOwnershipFence } | undefined;
+        let storedProof: unknown;
+        let witnessAudit: unknown;
+        let inspectionUnavailable = false;
+        let inspectionRequests = 0;
         const providerSecret = randomBytes(32).toString("base64url");
         const runtimeToken = randomBytes(32).toString("base64url");
         const runtimeExecutionId =
           "warm-execution-" + randomBytes(8).toString("hex");
         const connectionId = "rci_" + randomBytes(16).toString("hex");
+        const otherRuntimeToken = randomBytes(32).toString("base64url");
+        const otherRuntimeExecutionId =
+          "independent-execution-" + randomBytes(8).toString("hex");
+        const otherConnectionId = "rci_" + randomBytes(16).toString("hex");
+        const cancellationStarted = Promise.withResolvers<void>();
+        const cancellationRelease = Promise.withResolvers<void>();
+        const cancellationJoined = Promise.withResolvers<void>();
+        let nativeCancellationJoined = false;
+        let expectedShutdownFailure:
+          { service: RunningAgentAcpService; error: unknown } | undefined;
+        const restoreFetch: Array<() => void> = [];
         const services: RunningAgentAcpService[] = [];
         const clients: AcpWireClient[] = [];
         const pending: Promise<unknown>[] = [];
@@ -94,7 +198,19 @@ describe.skipIf(databaseUrl === undefined)(
         const prepare = vi.spyOn(RuntimeConnections.prototype, "prepare");
         const close = vi.spyOn(RuntimeConnections.prototype, "close");
         const probeListen = vi.spyOn(OwnerProbeServer.prototype, "listen");
+        const releaseLease = vi.spyOn(PostgresAgentLeases.prototype, "release");
+        const releaseWorker = vi.spyOn(PostgresWorkerLock.prototype, "release");
+        const endPool = vi.spyOn(Pool.prototype, "end");
         const registrations: OwnerRegistration[] = [];
+        const inspections: OwnerInspection[] = [];
+        const stopReceipt = {
+          receipt_id: randomUUID(),
+          reason: "container_stopped" as const,
+          observed_at: new Date().toISOString(),
+        };
+        let originalStopped = false;
+        let predecessorSessionId: string | undefined;
+        let predecessorRun: StoredRun | undefined;
         let registrationOrigin: string | undefined;
         const modelRequests: Array<{
           boot: Boot;
@@ -159,6 +275,54 @@ describe.skipIf(databaseUrl === undefined)(
               Promise.resolve(Response.json(testJwks())),
             ),
           );
+          if (heldInspection && originalStopped) {
+            const originalFetchFor = authentication.workload.fetchFor.bind(
+              authentication.workload,
+            );
+            const spy = vi
+              .spyOn(authentication.workload, "fetchFor")
+              .mockImplementation((target, origin) => {
+                const send = originalFetchFor(target, origin);
+                return (input, init) => {
+                  const originalResponse = send(input, init);
+                  if (
+                    target === "runtime-controller" &&
+                    init?.method === "GET"
+                  ) {
+                    void originalResponse
+                      .then((response) => {
+                        if (response.body === null)
+                          throw new Error("Missing original inspection body");
+                        const originalReader = response.body.getReader.bind(
+                          response.body,
+                        );
+                        Object.defineProperty(response.body, "getReader", {
+                          value: () => {
+                            const reader = originalReader();
+                            const originalCancel = reader.cancel.bind(reader);
+                            reader.cancel = async (reason) => {
+                              cancellationStarted.resolve();
+                              await originalCancel(reason);
+                              nativeCancellationJoined = true;
+                              await cancellationRelease.promise;
+                              cancellationJoined.resolve();
+                              if (proofSource === "held-error")
+                                throw new Error(
+                                  "Injected original inspection cleanup failure",
+                                );
+                            };
+                            return reader;
+                          },
+                        });
+                      })
+                      .catch((error: unknown) => failures.push(error));
+                  }
+                  // Return the exact original authenticated response Promise.
+                  return originalResponse;
+                };
+              });
+            restoreFetch.push(() => spy.mockRestore());
+          }
           return within(
             track(
               startAgentAcpService(
@@ -241,12 +405,19 @@ describe.skipIf(databaseUrl === undefined)(
             model: "test-model",
             modelRequestCount: 1,
           },
+          agentId = "agent-1",
         ) {
+          const expectedExecutionId =
+            agentId === "agent-1"
+              ? runtimeExecutionId
+              : otherRuntimeExecutionId;
+          const expectedConnectionId =
+            agentId === "agent-1" ? connectionId : otherConnectionId;
           const connected = track(
             AcpWireClient.connect(
               serviceOrigin(service).replace("http:", "ws:") +
                 `/v${version}/acp`,
-              executionIdentity(),
+              { ...executionIdentity(), agentId },
             ).then(async (client) => {
               clients.push(client);
               if (closing) await client.close();
@@ -295,12 +466,15 @@ describe.skipIf(databaseUrl === undefined)(
             stop_reason: "end_turn",
             error_class: null,
             organization_id: "organization-1",
-            agent_id: "agent-1",
+            agent_id: agentId,
             principal_id: "principal-1",
             execution_snapshot: {
               configurationRevision: expected.configurationRevision,
               providerConnectionId: "provider-1",
-              runtime: { executionId: runtimeExecutionId, connectionId },
+              runtime: {
+                executionId: expectedExecutionId,
+                connectionId: expectedConnectionId,
+              },
             },
           });
           const messages = await pool.query<{ kind: string; content: unknown }>(
@@ -323,14 +497,16 @@ describe.skipIf(databaseUrl === undefined)(
           });
           expect(JSON.stringify(latestModel.messages)).toContain(text);
           const runtimes = runtimeRequests.filter(
-            (request) => request.boot === boot,
+            (request) =>
+              request.boot === boot &&
+              request.executionId === expectedExecutionId,
           );
           expect(runtimes.length).toBeGreaterThan(0);
           expect(
             runtimes.every(
               (request) =>
                 request.authorized &&
-                request.executionId === runtimeExecutionId,
+                request.executionId === expectedExecutionId,
             ),
           ).toBe(true);
           expect(resourceReads).toContain(boot);
@@ -352,7 +528,7 @@ describe.skipIf(databaseUrl === undefined)(
                 current: boolean;
               }>(
                 "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS current FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
-                ["organization-1", "agent-1"],
+                ["organization-1", agentId],
               )
             ).rows;
             expect(lease).toEqual([
@@ -373,61 +549,66 @@ describe.skipIf(databaseUrl === undefined)(
           return { sessionId, rows };
         }
 
-        const handler = createMcpHandler(
-          () => {
-            const server = new McpServer({
-              name: "warm-runtime-peer",
-              version: "1.0.0",
-            });
-            server.registerResource(
-              "runtime-info",
-              "antnest://runtime/info",
-              { mimeType: "application/json" },
-              (uri) => {
-                resourceReads.push(boot);
-                const { executionId: _executionId, ...information } =
-                  runtimeInformation();
-                void _executionId;
-                return {
-                  contents: [
-                    {
-                      uri: uri.toString(),
-                      mimeType: "application/json",
-                      text: JSON.stringify({
-                        ...information,
-                        execution_id: runtimeExecutionId,
-                        instructions: null,
-                        skills: [],
-                      }),
-                    },
-                  ],
-                };
-              },
-            );
-            server.registerTool(
-              "echo",
-              {
-                description: "Unused warm-admission fixture Tool",
-                inputSchema: z.object({ text: z.string() }),
-              },
-              () => {
-                throw new Error("Warm admission must not execute a Tool");
-              },
-            );
-            return server;
-          },
-          { legacy: "reject" },
-        );
+        function runtimeHandler(runtimeExecutionId: string) {
+          return createMcpHandler(
+            () => {
+              const server = new McpServer({
+                name: "warm-runtime-peer",
+                version: "1.0.0",
+              });
+              server.registerResource(
+                "runtime-info",
+                "antnest://runtime/info",
+                { mimeType: "application/json" },
+                (uri) => {
+                  resourceReads.push(boot);
+                  const { executionId: _executionId, ...information } =
+                    runtimeInformation();
+                  void _executionId;
+                  return {
+                    contents: [
+                      {
+                        uri: uri.toString(),
+                        mimeType: "application/json",
+                        text: JSON.stringify({
+                          ...information,
+                          execution_id: runtimeExecutionId,
+                          instructions: null,
+                          skills: [],
+                        }),
+                      },
+                    ],
+                  };
+                },
+              );
+              server.registerTool(
+                "echo",
+                {
+                  description: "Unused warm-admission fixture Tool",
+                  inputSchema: z.object({ text: z.string() }),
+                },
+                () => {
+                  throw new Error("Warm admission must not execute a Tool");
+                },
+              );
+              return server;
+            },
+            { legacy: "reject" },
+          );
+        }
+        const handler = runtimeHandler(runtimeExecutionId);
+        const otherHandler = unavailablePredecessor
+          ? runtimeHandler(otherRuntimeExecutionId)
+          : undefined;
 
         try {
           await pool.query("DROP SCHEMA public CASCADE");
           await pool.query("CREATE SCHEMA public");
           if (ownership === "owned") {
-            // This peer supplies only registration. Prompt, persistence, warm
+            // This peer supplies registration and authoritative process-stop facts.
+            // Prompt, persistence, warm
             // restoration, provider calls and the probe remain actual service paths.
             const registration = await startPeer(async (request, response) => {
-              expect(request.method).toBe("POST");
-              expect(request.url).toBe("/internal/acp-incarnations/register");
               const expectedToken = readFileSync(
                 join(
                   testSecurityEnvironment().ANTNEST_SERVICE_AUTH_TOKEN_DIR,
@@ -439,6 +620,63 @@ describe.skipIf(databaseUrl === undefined)(
                 request.headers["antnest-service-authorization"] ===
                   `Bearer ${expectedToken}`,
               ).toBe(true);
+              if (request.method === "GET") {
+                inspectionRequests++;
+                expect(predecessor).toBe(true);
+                expect(originalStopped).toBe(true);
+                expect(request.url).toBe(
+                  `/internal/acp-incarnations/${registrations[0]!.registration_id}`,
+                );
+                if (inspectionUnavailable) {
+                  response.writeHead(503).end();
+                  return;
+                }
+                if (heldInspection) {
+                  response.writeHead(200, {
+                    "content-type": "application/json",
+                  });
+                  response.write('{"state":');
+                  return;
+                }
+                if (proofSource === "http-error") {
+                  response.writeHead(503).end();
+                  return;
+                }
+                if (proofSource === "running" || proofSource === "unknown") {
+                  const inspection: OwnerInspection =
+                    proofSource === "running"
+                      ? {
+                          state: "running",
+                          ...registrations[0]!,
+                          observed_at: new Date().toISOString(),
+                        }
+                      : {
+                          state: "unknown",
+                          registration_id: registrations[0]!.registration_id,
+                          reason: "platform_unavailable",
+                        };
+                  inspections.push(inspection);
+                  response
+                    .writeHead(200, { "content-type": "application/json" })
+                    .end(JSON.stringify(inspection));
+                  return;
+                }
+                const inspection: OwnerInspection = {
+                  state: "stopped",
+                  ...registrations[0]!,
+                  stop_receipt: stopReceipt,
+                };
+                inspections.push(inspection);
+                response
+                  .writeHead(200, {
+                    "content-type": "application/json",
+                    "cache-control": "no-store",
+                  })
+                  .end(JSON.stringify(inspection));
+                return;
+              }
+              expect(request.method).toBe("POST");
+              expect(request.url).toBe("/internal/acp-incarnations/register");
               const input: unknown = JSON.parse(
                 (await readBody(request)).toString("utf8"),
               );
@@ -526,45 +764,58 @@ describe.skipIf(databaseUrl === undefined)(
             );
           });
           peers.push(model);
-          const runtime = await startPeer(async (request, response) => {
-            const executionId =
-              request.headers["x-antnest-expected-execution-id"];
-            const authorized =
-              request.headers["antnest-service-authorization"] ===
-                "Bearer " + runtimeToken && executionId === runtimeExecutionId;
-            runtimeRequests.push({ boot, authorized, executionId });
-            if (!authorized) {
-              response.writeHead(401).end();
-              return;
-            }
-            const body = await readBody(request);
-            const headers = new Headers();
-            for (const [name, value] of Object.entries(request.headers)) {
-              if (Array.isArray(value))
-                for (const item of value) headers.append(name, item);
-              else if (value !== undefined) headers.set(name, value);
-            }
-            const init: RequestInit & { duplex?: "half" } = {
-              method: request.method ?? "GET",
-              headers,
-            };
-            if (body.length > 0) {
-              init.body = new Uint8Array(body);
-              init.duplex = "half";
-            }
-            const result = await handler.fetch(
-              new Request(
-                `http://${request.headers.host}${request.url ?? "/"}`,
-                init,
-              ),
-            );
-            response.statusCode = result.status;
-            result.headers.forEach((value, name) =>
-              response.setHeader(name, value),
-            );
-            response.end(Buffer.from(await result.arrayBuffer()));
-          });
-          peers.push(runtime);
+          async function startRuntime(
+            handler: ReturnType<typeof createMcpHandler>,
+            runtimeExecutionId: string,
+            runtimeToken: string,
+          ) {
+            const runtime = await startPeer(async (request, response) => {
+              const executionId =
+                request.headers["x-antnest-expected-execution-id"];
+              const authorized =
+                request.headers["antnest-service-authorization"] ===
+                  "Bearer " + runtimeToken &&
+                executionId === runtimeExecutionId;
+              runtimeRequests.push({ boot, authorized, executionId });
+              if (!authorized) {
+                response.writeHead(401).end();
+                return;
+              }
+              const body = await readBody(request);
+              const headers = new Headers();
+              for (const [name, value] of Object.entries(request.headers)) {
+                if (Array.isArray(value))
+                  for (const item of value) headers.append(name, item);
+                else if (value !== undefined) headers.set(name, value);
+              }
+              const init: RequestInit & { duplex?: "half" } = {
+                method: request.method ?? "GET",
+                headers,
+              };
+              if (body.length > 0) {
+                init.body = new Uint8Array(body);
+                init.duplex = "half";
+              }
+              const result = await handler.fetch(
+                new Request(
+                  `http://${request.headers.host}${request.url ?? "/"}`,
+                  init,
+                ),
+              );
+              response.statusCode = result.status;
+              result.headers.forEach((value, name) =>
+                response.setHeader(name, value),
+              );
+              response.end(Buffer.from(await result.arrayBuffer()));
+            });
+            peers.push(runtime);
+            return runtime;
+          }
+          const runtime = await startRuntime(
+            handler,
+            runtimeExecutionId,
+            runtimeToken,
+          );
           const configuration = executionConfiguration();
           configuration.providers[0]!.base_url = model.origin + "/v1";
           configuration.providers[0]!.credential.secret = providerSecret;
@@ -575,6 +826,27 @@ describe.skipIf(databaseUrl === undefined)(
             connection_id: connectionId,
             credential: { caller: "agent-acp-service", token: runtimeToken },
           };
+          if (otherHandler !== undefined) {
+            const otherRuntime = await startRuntime(
+              otherHandler,
+              otherRuntimeExecutionId,
+              otherRuntimeToken,
+            );
+            configuration.agents.push({
+              ...structuredClone(configuration.agents[0]!),
+              agent_id: "agent-2",
+              runtime: {
+                runtime_revision: "rtv_" + randomBytes(16).toString("hex"),
+                runtime_execution_id: otherRuntimeExecutionId,
+                mcp_endpoint: otherRuntime.origin + "/mcp",
+                connection_id: otherConnectionId,
+                credential: {
+                  caller: "agent-acp-service",
+                  token: otherRuntimeToken,
+                },
+              },
+            });
+          }
           const first = await start();
           publicationCount++;
           expect(
@@ -596,60 +868,278 @@ describe.skipIf(databaseUrl === undefined)(
             body: { organization_id: "organization-1", applied_revision: 1 },
           });
           const before = await exercise(first);
+          if (predecessor) {
+            // Seed a durable accepted reservation through the real owned writers.
+            // No executor dispatch occurs for this fixture; the test proves startup
+            // proof consumption, not a physical two-replica crash/handoff.
+            const identity = {
+              ...executionIdentity(),
+              connectionId: randomUUID(),
+            };
+            const lease = (
+              await pool.query<{ epoch: string }>(
+                "SELECT epoch::text FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                [identity.organizationId, identity.agentId],
+              )
+            ).rows[0]!;
+            const original = registrations[0]!;
+            const repositories = createOwnedAgentRepositories(
+              new PostgresKernel(pool),
+              new SecretBox(Buffer.from(key, "base64")),
+              {
+                registration: original,
+                fence: {
+                  organizationId: identity.organizationId,
+                  agentId: identity.agentId,
+                  ownerInstanceId: original.incarnation_id,
+                  epoch: lease.epoch,
+                },
+              },
+            );
+            predecessorSessionId = randomUUID();
+            const mcpRevisionId = randomUUID(),
+              runId = randomUUID();
+            await repositories.sessions.create({
+              sessionId: predecessorSessionId,
+              binding: identity,
+              cwd: "/workspace",
+              mcpRevisionId,
+              mcpSources: [],
+            });
+            const accessRevision = (
+              before.rows[0]!.execution_snapshot as { accessRevision: string }
+            ).accessRevision;
+            await repositories.runs.createRunIntent({
+              runId,
+              requestId: randomUUID(),
+              sessionId: predecessorSessionId,
+              expectedAccessRevision: accessRevision,
+              userMessageId: randomUUID(),
+              prompt: [
+                {
+                  type: "text",
+                  text: "This predecessor Prompt must never be replayed",
+                },
+              ],
+              createdAt: new Date(),
+            });
+            await repositories.runs.acceptRun({
+              runId,
+              snapshot: runSnapshot({
+                configuration: publicExecutionConfiguration(configuration),
+                identity,
+                overrides: {},
+                accessRevision,
+                clientMcpRevisionId: mcpRevisionId,
+                deadlineAt: new Date(Date.now() + 60_000),
+              }),
+              environmentFact: null,
+              acceptedAt: new Date(),
+            });
+            predecessorRun = (await stored(predecessorSessionId))[0]!;
+            expect(predecessorRun.state).toBe("running");
+            expect(modelRequests).toHaveLength(1);
+            if (proofSource === "stored") {
+              // A separate admitting Agent can persist the same process-stop
+              // fact first. It needs no Runtime or dispatched model work.
+              const binding = {
+                ...identity,
+                agentId: "proof-witness",
+                connectionId: randomUUID(),
+              };
+              const lease = await witnessLeases.tryAcquire(
+                binding,
+                original.incarnation_id,
+                30_000,
+              );
+              if (lease === null) throw new Error("Missing witness lease");
+              witnessFences.add(lease.fence);
+              const repositories = createOwnedAgentRepositories(
+                new PostgresKernel(pool),
+                new SecretBox(Buffer.from(key, "base64")),
+                { registration: original, fence: lease.fence },
+              );
+              const sessionId = randomUUID(),
+                runId = randomUUID();
+              await repositories.sessions.create({
+                sessionId,
+                binding,
+                cwd: "/workspace",
+                mcpRevisionId: randomUUID(),
+                mcpSources: [],
+              });
+              await repositories.runs.createRunIntent({
+                runId,
+                requestId: randomUUID(),
+                sessionId,
+                expectedAccessRevision: accessRevision,
+                userMessageId: randomUUID(),
+                prompt: [{ type: "text", text: "Unaccepted proof witness" }],
+                createdAt: new Date(),
+              });
+              witness = { runId, fence: lease.fence };
+            }
+          }
           expect(senderDirectories()).toHaveLength(1);
-          const firstDirectory = senderDirectories()[0]!;
+          const firstDirectory = senderDirectories().find((directory) =>
+            existsSync(join(directory, connectionId)),
+          )!;
           assertSender(firstDirectory);
+          if (unavailablePredecessor)
+            expect(
+              readFileSync(
+                join(firstDirectory, otherConnectionId, "antnest-runtime"),
+                "utf8",
+              ) === otherRuntimeToken,
+            ).toBe(true);
           await first.shutdown();
+          originalStopped = true;
           expect(existsSync(firstDirectory)).toBe(false);
+
+          if (witness !== undefined) {
+            expect(await witnessLeases.release(witness.fence)).toBe(true);
+            witnessFences.delete(witness.fence);
+            const successor = {
+              registration_id: randomUUID(),
+              member_id: "proof-successor",
+              incarnation_id: randomUUID(),
+            };
+            const lease = await witnessLeases.tryAcquire(
+              witness.fence,
+              successor.incarnation_id,
+              30_000,
+            );
+            if (lease === null)
+              throw new Error("Missing successor witness lease");
+            witnessFences.add(lease.fence);
+            const auth = loadConfig({
+              ...testSecurityEnvironment(),
+              ANTNEST_ACP_DATABASE_URL: databaseUrl!,
+              ANTNEST_ACP_CLIENT_MCP_KEY: key,
+            }).authentication.workload;
+            auxiliaryAuthentication.push(auth);
+            const inspection = await new RuntimeControllerIncarnations({
+              origin: registrationOrigin!,
+              authentication: auth,
+            }).inspect(registrations[0]!, requestAbort.signal);
+            await new PostgresOwnerRecovery(new PostgresKernel(pool), {
+              registration: successor,
+              fence: lease.fence,
+            }).recoverRun({
+              runId: witness.runId,
+              inspection,
+              recoveredAt: new Date(),
+            });
+            storedProof = (
+              await pool.query("SELECT * FROM owner_stop_receipts")
+            ).rows;
+            witnessAudit = (
+              await pool.query(
+                "SELECT * FROM run_owner_recoveries WHERE run_id=$1",
+                [witness.runId],
+              )
+            ).rows;
+            expect(witnessAudit).toEqual([
+              expect.objectContaining({
+                organization_id: witness.fence.organizationId,
+                agent_id: witness.fence.agentId,
+                original_registration_id: registrations[0]!.registration_id,
+                original_member_id: registrations[0]!.member_id,
+                original_incarnation_id: registrations[0]!.incarnation_id,
+                original_epoch: witness.fence.epoch,
+                recovering_registration_id: successor.registration_id,
+                recovering_member_id: successor.member_id,
+                recovering_incarnation_id: successor.incarnation_id,
+                recovering_epoch: lease.fence.epoch,
+                receipt_id: stopReceipt.receipt_id,
+              }),
+            ]);
+            expect(await witnessLeases.release(lease.fence)).toBe(true);
+            witnessFences.delete(lease.fence);
+            inspectionUnavailable = true;
+          }
 
           boot = "restored";
-          const second = await start();
-          expect((await http(second, "/status")).status).toBe(200);
-          // Capture at readiness, before any ACP request could trigger lazy restore.
-          const directoriesAtReadiness = senderDirectories();
-          const privateFilesAtReadiness = directoriesAtReadiness
-            .filter((directory) => directory !== firstDirectory)
-            .map((directory) => {
-              const sender = join(directory, connectionId);
-              const file = join(sender, "antnest-runtime");
-              return (
-                existsSync(file) &&
-                (lstatSync(directory).mode & 0o777) === 0o700 &&
-                (lstatSync(sender).mode & 0o777) === 0o700 &&
-                (lstatSync(file).mode & 0o777) === 0o600 &&
-                readFileSync(file, "utf8") === runtimeToken
-              );
-            });
-          expect(await stored(before.sessionId)).toEqual(before.rows);
-          expect(modelRequests).toHaveLength(1);
-          // Deliberately no apply(), control publication or Controller resync here.
-          const after = await exercise(second);
-          expect(after.sessionId).not.toBe(before.sessionId);
-          expect(after.rows[0]!.id).not.toBe(before.rows[0]!.id);
-          expect(await stored(before.sessionId)).toEqual(before.rows);
-          expect(publicationCount).toBe(1);
-          expect(directoriesAtReadiness).toHaveLength(2);
-          expect(privateFilesAtReadiness).toEqual([true]);
-          const secondDirectory = directoriesAtReadiness.find(
-            (directory) => directory !== firstDirectory,
+          const aReleases = () =>
+            releaseLease.mock.calls.filter(
+              ([fence]) => fence.agentId === "agent-1",
+            ).length;
+          const initialAReleases = aReleases(),
+            workerReleases = releaseWorker.mock.calls.length,
+            poolEnds = endPool.mock.calls.length;
+          const second = await within(
+            start(),
+            "independent Agent warm readiness",
+            15_000,
           );
-          expect(secondDirectory).toBeDefined();
-          if (secondDirectory === undefined)
-            throw new Error("Missing restored sender directory");
-          assertSender(secondDirectory);
-          expect(existsSync(firstDirectory)).toBe(false);
-          expect(ownershipLost).not.toHaveBeenCalled();
-
-          // This same warm instance must accept the next real control
-          // publication and use it for new work, without replaying either Run.
-          expect(modelRequests).toHaveLength(2);
-          const replacement = structuredClone(configuration);
-          replacement.revision = configuration.revision + 1;
-          const replacementModel = "test-model-after-warm-publication";
-          replacement.models[0]!.model = replacementModel;
-          publicationCount++;
-          expect(
-            await http(
+          expect((await http(second, "/status")).status).toBe(200);
+          if (unavailablePredecessor) {
+            if (heldInspection)
+              await within(
+                cancellationStarted.promise,
+                "original inspection cancellation",
+                2000,
+              );
+            if (heldInspection) {
+              expect(aReleases()).toBe(initialAReleases);
+              expect(releaseWorker).toHaveBeenCalledTimes(workerReleases);
+              expect(endPool).toHaveBeenCalledTimes(poolEnds);
+            }
+            expect(inspectionRequests).toBe(1);
+            expect(await stored(predecessorSessionId!)).toEqual([
+              predecessorRun!,
+            ]);
+            expect(
+              (await pool.query("SELECT * FROM owner_stop_receipts")).rows,
+            ).toEqual([]);
+            expect(
+              (await pool.query("SELECT * FROM run_owner_recoveries")).rows,
+            ).toEqual([]);
+            const b = await exercise(
+              second,
+              {
+                configurationRevision: 1,
+                model: "test-model",
+                modelRequestCount: 1,
+              },
+              "agent-2",
+            );
+            const blocked = await within(
+              track(
+                AcpWireClient.connect(
+                  serviceOrigin(second).replace("http:", "ws:") + "/v2/acp",
+                  executionIdentity(),
+                ).then(async (client) => {
+                  clients.push(client);
+                  if (closing) await client.close();
+                  return client;
+                }),
+              ),
+              "unavailable Agent connect",
+              5000,
+            );
+            await within(
+              track(blocked.initialize(2)),
+              "unavailable Agent initialize",
+              5000,
+            );
+            const denied = await within(
+              track(
+                blocked.request("session/new", {
+                  cwd: "/workspace",
+                  mcpServers: [],
+                }),
+              ),
+              "unavailable Agent session",
+              5000,
+            );
+            expect(denied.error).toMatchObject({
+              data: { code: "agent_unavailable" },
+            });
+            await blocked.close();
+            // A missing owner cannot be acknowledged, but that rejection must
+            // leave the already healthy B's published configuration usable.
+            const ack = await http(
               second,
               "/rpc/agent-acp/apply-execution-snapshot",
               {
@@ -658,56 +1148,266 @@ describe.skipIf(databaseUrl === undefined)(
                   ...workloadHeaders("agent-controller"),
                   "content-type": "application/json",
                 },
-                body: JSON.stringify(replacement),
+                body: JSON.stringify(configuration),
               },
               true,
-            ),
-          ).toEqual({
-            status: 200,
-            body: {
-              organization_id: configuration.organization_id,
-              applied_revision: replacement.revision,
-            },
-          });
-          expect(modelRequests).toHaveLength(2);
-          expect(await stored(before.sessionId)).toEqual(before.rows);
-          expect(await stored(after.sessionId)).toEqual(after.rows);
-
-          const republished = await exercise(second, {
-            configurationRevision: replacement.revision,
-            model: replacementModel,
-            modelRequestCount: 2,
-          });
-          expect([before.sessionId, after.sessionId]).not.toContain(
-            republished.sessionId,
-          );
-          expect([before.rows[0]!.id, after.rows[0]!.id]).not.toContain(
-            republished.rows[0]!.id,
-          );
-          expect(modelRequests.map((request) => request.model)).toEqual([
-            "test-model",
-            "test-model",
-            replacementModel,
-          ]);
-          expect(await stored(before.sessionId)).toEqual(before.rows);
-          expect(await stored(after.sessionId)).toEqual(after.rows);
-          expect(publicationCount).toBe(2);
-          expect(services).toHaveLength(2);
-          expect(services[0]).toBe(first);
-          expect(services[1]).toBe(second);
-          if (ownership === "owned") {
-            expect(registrations).toHaveLength(2);
-            expect(registrations[0]!.incarnation_id).not.toBe(
-              registrations[1]!.incarnation_id,
             );
+            expect(ack.status).toBe(503);
+            await exercise(
+              second,
+              {
+                configurationRevision: 1,
+                model: "test-model",
+                modelRequestCount: 2,
+              },
+              "agent-2",
+            );
+            expect(await stored(b.sessionId)).toEqual(b.rows);
+            expect(await stored(predecessorSessionId!)).toEqual([
+              predecessorRun!,
+            ]);
+            expect(ownershipLost).not.toHaveBeenCalled();
+            expect(failures).toEqual([]);
+            expect(JSON.stringify(modelRequests)).not.toContain(
+              "This predecessor Prompt must never be replayed",
+            );
+            if (heldInspection) {
+              expect(aReleases()).toBe(initialAReleases);
+              expect(releaseWorker).toHaveBeenCalledTimes(workerReleases);
+              expect(endPool).toHaveBeenCalledTimes(poolEnds);
+              let finished = false;
+              const shutdown = track(second.shutdown()).then(
+                () => {
+                  finished = true;
+                  return undefined;
+                },
+                (error: unknown) => {
+                  finished = true;
+                  return error;
+                },
+              );
+              await delay(100);
+              expect(finished).toBe(false);
+              expect(aReleases()).toBe(initialAReleases);
+              expect(releaseWorker).toHaveBeenCalledTimes(workerReleases);
+              expect(endPool).toHaveBeenCalledTimes(poolEnds);
+              expect(nativeCancellationJoined).toBe(true);
+              cancellationRelease.resolve();
+              const shutdownFailure = await within(
+                shutdown,
+                "shutdown joins original inspection cancellation",
+                10_000,
+              );
+              if (proofSource === "held-error") {
+                expect(isOnlyInspectionCleanupFailure(shutdownFailure)).toBe(
+                  true,
+                );
+                expectedShutdownFailure = {
+                  service: second,
+                  error: shutdownFailure,
+                };
+              } else expect(shutdownFailure).toBeUndefined();
+              await cancellationJoined.promise;
+              expect(aReleases()).toBe(initialAReleases + 1);
+              expect(releaseWorker).toHaveBeenCalledTimes(workerReleases + 1);
+              expect(endPool).toHaveBeenCalledTimes(poolEnds + 1);
+            }
+          } else {
+            if (predecessor) {
+              expect(inspectionRequests).toBe(1);
+              expect(inspections).toHaveLength(1);
+              expect(await stored(predecessorSessionId!)).toEqual([
+                {
+                  ...predecessorRun!,
+                  state: "failed",
+                  terminal_class: "failed",
+                  executor_state: "quiescent",
+                  tool_effect_state: "none",
+                  unknown_effect_source: null,
+                  error_class: "service_restarted_during_run",
+                },
+              ]);
+              expect(
+                (await pool.query("SELECT inspection FROM owner_stop_receipts"))
+                  .rows,
+              ).toEqual([{ inspection: inspections[0] }]);
+              expect(
+                (await pool.query("SELECT run_id FROM run_owner_recoveries"))
+                  .rows,
+              ).toEqual(
+                expect.arrayContaining([
+                  { run_id: predecessorRun!.id },
+                  ...(witness === undefined ? [] : [{ run_id: witness.runId }]),
+                ]),
+              );
+              expect(
+                (await pool.query("SELECT * FROM run_owner_recoveries")).rows,
+              ).toHaveLength(witness === undefined ? 1 : 2);
+              if (witness !== undefined) {
+                expect(
+                  (await pool.query("SELECT * FROM owner_stop_receipts")).rows,
+                ).toEqual(storedProof);
+                expect(
+                  (
+                    await pool.query(
+                      "SELECT * FROM run_owner_recoveries WHERE run_id=$1",
+                      [witness.runId],
+                    )
+                  ).rows,
+                ).toEqual(witnessAudit);
+                const currentLease = (
+                  await pool.query<{ epoch: string }>(
+                    "SELECT epoch::text FROM agent_leases WHERE organization_id=$1 AND agent_id=$2 AND owner_instance_id=$3",
+                    [
+                      "organization-1",
+                      "agent-1",
+                      registrations[1]!.incarnation_id,
+                    ],
+                  )
+                ).rows[0]!;
+                expect(
+                  (
+                    await pool.query(
+                      "SELECT organization_id,agent_id,original_registration_id,original_member_id,original_incarnation_id,original_epoch::text,recovering_registration_id,recovering_member_id,recovering_incarnation_id,recovering_epoch::text,receipt_id FROM run_owner_recoveries WHERE run_id=$1",
+                      [predecessorRun!.id],
+                    )
+                  ).rows,
+                ).toEqual([
+                  {
+                    organization_id: "organization-1",
+                    agent_id: "agent-1",
+                    original_registration_id: registrations[0]!.registration_id,
+                    original_member_id: registrations[0]!.member_id,
+                    original_incarnation_id: registrations[0]!.incarnation_id,
+                    original_epoch: predecessorRun!.execution_owner_epoch,
+                    recovering_registration_id:
+                      registrations[1]!.registration_id,
+                    recovering_member_id: registrations[1]!.member_id,
+                    recovering_incarnation_id: registrations[1]!.incarnation_id,
+                    recovering_epoch: currentLease.epoch,
+                    receipt_id: stopReceipt.receipt_id,
+                  },
+                ]);
+              }
+            }
+            // Capture at readiness, before any ACP request could trigger lazy restore.
+            const directoriesAtReadiness = senderDirectories();
+            const privateFilesAtReadiness = directoriesAtReadiness
+              .filter((directory) => directory !== firstDirectory)
+              .map((directory) => {
+                const sender = join(directory, connectionId);
+                const file = join(sender, "antnest-runtime");
+                return (
+                  existsSync(file) &&
+                  (lstatSync(directory).mode & 0o777) === 0o700 &&
+                  (lstatSync(sender).mode & 0o777) === 0o700 &&
+                  (lstatSync(file).mode & 0o777) === 0o600 &&
+                  readFileSync(file, "utf8") === runtimeToken
+                );
+              });
+            expect(await stored(before.sessionId)).toEqual(before.rows);
+            expect(modelRequests).toHaveLength(1);
+            // Deliberately no apply(), control publication or Controller resync here.
+            const after = await exercise(second);
+            expect(after.sessionId).not.toBe(before.sessionId);
+            expect(after.rows[0]!.id).not.toBe(before.rows[0]!.id);
+            expect(await stored(before.sessionId)).toEqual(before.rows);
+            expect(publicationCount).toBe(1);
+            expect(directoriesAtReadiness).toHaveLength(2);
+            expect(privateFilesAtReadiness).toEqual([true]);
+            const secondDirectory = directoriesAtReadiness.find(
+              (directory) => directory !== firstDirectory,
+            );
+            expect(secondDirectory).toBeDefined();
+            if (secondDirectory === undefined)
+              throw new Error("Missing restored sender directory");
+            assertSender(secondDirectory);
+            expect(existsSync(firstDirectory)).toBe(false);
+            expect(ownershipLost).not.toHaveBeenCalled();
+
+            // This same warm instance must accept the next real control
+            // publication and use it for new work, without replaying either Run.
+            expect(modelRequests).toHaveLength(2);
+            const replacement = structuredClone(configuration);
+            replacement.revision = configuration.revision + 1;
+            const replacementModel = "test-model-after-warm-publication";
+            replacement.models[0]!.model = replacementModel;
+            publicationCount++;
+            expect(
+              await http(
+                second,
+                "/rpc/agent-acp/apply-execution-snapshot",
+                {
+                  method: "POST",
+                  headers: {
+                    ...workloadHeaders("agent-controller"),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify(replacement),
+                },
+                true,
+              ),
+            ).toEqual({
+              status: 200,
+              body: {
+                organization_id: configuration.organization_id,
+                applied_revision: replacement.revision,
+              },
+            });
+            expect(modelRequests).toHaveLength(2);
+            expect(await stored(before.sessionId)).toEqual(before.rows);
+            expect(await stored(after.sessionId)).toEqual(after.rows);
+
+            const republished = await exercise(second, {
+              configurationRevision: replacement.revision,
+              model: replacementModel,
+              modelRequestCount: 2,
+            });
+            expect([before.sessionId, after.sessionId]).not.toContain(
+              republished.sessionId,
+            );
+            expect([before.rows[0]!.id, after.rows[0]!.id]).not.toContain(
+              republished.rows[0]!.id,
+            );
+            expect(modelRequests.map((request) => request.model)).toEqual([
+              "test-model",
+              "test-model",
+              replacementModel,
+            ]);
+            if (predecessor) {
+              expect(inspectionRequests).toBe(1);
+              expect(inspections).toHaveLength(1);
+              expect(JSON.stringify(modelRequests)).not.toContain(
+                "This predecessor Prompt must never be replayed",
+              );
+            }
+            expect(await stored(before.sessionId)).toEqual(before.rows);
+            expect(await stored(after.sessionId)).toEqual(after.rows);
+            expect(publicationCount).toBe(2);
+            expect(services).toHaveLength(2);
+            expect(services[0]).toBe(first);
+            expect(services[1]).toBe(second);
+            if (ownership === "owned") {
+              expect(registrations).toHaveLength(2);
+              expect(registrations[0]!.incarnation_id).not.toBe(
+                registrations[1]!.incarnation_id,
+              );
+            }
+            assertSender(secondDirectory);
+            expect(existsSync(firstDirectory)).toBe(false);
+            expect(ownershipLost).not.toHaveBeenCalled();
           }
-          assertSender(secondDirectory);
-          expect(existsSync(firstDirectory)).toBe(false);
-          expect(ownershipLost).not.toHaveBeenCalled();
+          expect(JSON.stringify(modelRequests)).not.toContain(
+            "Unaccepted proof witness",
+          );
+          expect(runtimeRequests.every((request) => request.authorized)).toBe(
+            true,
+          );
         } catch (error) {
           failures.push(error);
         } finally {
           closing = true;
+          cancellationRelease.resolve();
           requestAbort.abort(new Error("Warm admission fixture is closing"));
           const settle = async (operation: () => Promise<unknown>) => {
             try {
@@ -724,9 +1424,26 @@ describe.skipIf(databaseUrl === undefined)(
               if (result.status === "rejected") failures.push(result.reason);
           });
           for (const service of services.toReversed())
-            await settle(() => service.shutdown());
+            await settle(async () => {
+              try {
+                await service.shutdown();
+              } catch (error) {
+                if (
+                  expectedShutdownFailure === undefined ||
+                  service !== expectedShutdownFailure.service ||
+                  error !== expectedShutdownFailure.error
+                )
+                  throw error;
+              }
+            });
           await Promise.allSettled(pending);
           await settle(() => handler.close());
+          if (otherHandler !== undefined)
+            await settle(() => otherHandler.close());
+          for (const auth of auxiliaryAuthentication)
+            await settle(() => auth.close());
+          for (const fence of witnessFences)
+            await settle(() => witnessLeases.release(fence));
           for (const peer of peers.toReversed())
             await settle(() => peer.close());
           await settle(() => pool.end());
@@ -739,6 +1456,10 @@ describe.skipIf(databaseUrl === undefined)(
           prepare.mockRestore();
           close.mockRestore();
           probeListen.mockRestore();
+          releaseLease.mockRestore();
+          releaseWorker.mockRestore();
+          endPool.mockRestore();
+          for (const restore of restoreFetch) restore();
           for (const directory of directories) {
             if (existsSync(directory))
               failures.push(

@@ -98,17 +98,30 @@ class ManagedGeneration<T> implements AgentGeneration<T> {
   public async initialize(initialize: GenerationInitializer<T>): Promise<void> {
     this.assertLease();
     this.assertPreparing();
+    const expiresAt = performance.now() + this.timing.operationTimeoutMs;
+    const budget = setTimeout(() => {
+      if (this.phase === "preparing") this.lose(new AgentOwnershipLostError());
+    }, this.timing.operationTimeoutMs);
+    budget.unref();
     const original = this.track(
       Promise.resolve().then(() => {
         this.assertLease();
         return initialize(this);
       }),
     );
-    const value = await original;
-    this.assertLease();
-    this.assertPreparing();
-    this.value = value;
-    this.phase = "open";
+    try {
+      // Expiry closes readiness through onLoss without abandoning the original
+      // initializer. Retirement and drain continue to join this exact task.
+      const value = await original;
+      if (this.phase === "preparing" && performance.now() >= expiresAt)
+        this.lose(new AgentOwnershipLostError());
+      this.assertLease();
+      this.assertPreparing();
+      this.value = value;
+      this.phase = "open";
+    } finally {
+      clearTimeout(budget);
+    }
   }
   public assertDispatch(): void {
     this.assertLease();

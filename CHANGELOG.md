@@ -112,8 +112,11 @@ ACP adds a dedicated PostgreSQL transaction for recovering a stopped predecessor
 Run from an authenticated, exactly bound stop receipt. Proof, immutable audit,
 Tool interruption, permission cancellation, terminal outcome and Runtime barrier
 commit together. Original execution identity, unknown effects and pending
-Temporary resources remain intact. Production startup consumption, Learning
-predecessor recovery and two-replica handoff are still pending (#49).
+Temporary resources remain intact. Owned generation startup consumes this path
+and reuses previously accepted complete stop proofs without another Controller
+query. Initialization expiry isolates one Agent while its original inspection
+cleanup remains tracked for shutdown; healthy Agents continue. Learning predecessor recovery,
+independent Runtime isolation and two-replica handoff are still pending (#49).
 
 Normal ACP shutdown lets existing authenticated HTTP connections complete their
 cleanup acknowledgement after readiness stops. HTTP and WebSocket peers share

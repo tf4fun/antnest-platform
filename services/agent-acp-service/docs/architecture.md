@@ -80,8 +80,8 @@ configuration under the fixed fence before use.
 The ACK checks every accepting Agent outside configuration publication. Failure
 does not withdraw healthy applied configuration, but an organization-wide ACK
 does not guarantee that Controller independently marks a healthy new Agent ready.
-Production predecessor stop-proof recovery, cross-owner ACKs and peers,
-two-replica integration, and background Learning shutdown/isolation acceptance
+Predecessor Learning claim/global review-slot recovery, independent Runtime
+isolation, cross-owner ACKs and peers, and two-replica integration
 remain pending. The global worker lock and
 single-instance restriction stay in place.
 
@@ -150,18 +150,29 @@ execution child on that intent rejects recovery. Retries retain the first audit
 and cannot append events or recreate retired barriers. Temporary scope bindings
 must still match the original Run, and pending scopes remain protected.
 
-Production startup does not consume this storage entrypoint yet. Scoped legacy
-recovery does not consume stop receipts. An ACP stop fact does not prove remote
-Runtime effects have stopped and never authorizes replay. Predecessor Learning
-claims and production handoff remain separate pending consumers.
+Owned generation preparation calls `listPredecessors` under the current scope
+fence, revalidates any complete persisted stop proof against the original Run
+binding, and otherwise makes one authenticated inspection outside SQL. Each
+`recoverRun` transaction rechecks the fence and target. A proof first accepted
+for another Agent is the same permanent process-stop fact; Controller availability
+is not a new condition for using it. Scoped legacy recovery does not consume
+these receipts. ACP stop proof neither proves remote Runtime effects stopped
+nor authorizes replay. Predecessor Learning claims and independent Runtime
+isolation remain separate pending consumers.
+
+Generation initialization has its own monotonic 10-second admission deadline.
+Expiry closes that Agent's ready/dispatch path and permits other Agents to prepare.
+The original initializer, inspection body and cancellation remain registered;
+retirement and shutdown join them before lease release and shared cleanup. A
+late success cannot reopen the generation even if timer delivery is delayed.
+Normal drain closes readiness but retains renewal while joining original work.
 
 Bootstrap is optional. Its validated identity now binds production Agent leases,
 fenced writers and scoped background work. Without owner settings, startup
 retains the legacy path. The global worker lock, single-instance restriction and
 independent ownership-loss fail-stop channel remain; connected generations and
-scoped legacy recovery do not complete predecessor stop-proof recovery,
-cross-owner ACKs and peers, two-replica integration or production background
-Learning shutdown/isolation acceptance.
+scoped recovery do not complete predecessor Learning recovery, independent Runtime
+isolation, cross-owner ACKs and peers, or two-replica integration.
 
 ## Mission
 
@@ -270,8 +281,7 @@ and retires a barrier only if all protected resources have cleared. A lost owner
 cannot save that receipt, even after successful remote cleanup. Terminal Runs
 and deleted Sessions remain cleanable by their original current owner. Candidate
 reads do not authorize cleanup. Generation shutdown joins original work;
-predecessor stop-proof recovery and production background Learning
-shutdown/isolation acceptance remain pending.
+predecessor Runtime cleanup and Learning claim recovery remain pending.
 Fork creates a new Session with a point-in-time copy of durable context,
 records the immutable immediate source Session, but never copies Runs or
 admissions and rejects a source Session with active work.
@@ -502,7 +512,8 @@ The original cancellation signals and copied request/decision payload survive
 lock or approval waits. Global startup cancellation remains legacy-only: it
 rejects a selected owned Run and updates only its locked set of pending requests.
 Registered owner mode captures the generation in production and cancels abandoned
-legacy permissions only within approved scopes. Predecessor stop-proof recovery,
+legacy permissions only within approved scopes. Predecessor Run recovery uses the
+dedicated stopped-proof transaction. Independent Runtime/Learning recovery,
 cross-owner ACKs and peers, and two-replica integration remain pending.
 
 ## Module Map
@@ -856,7 +867,7 @@ writes still use global worker-lock authority, while work cancellation uses
 the entry signal and Learning retains and joins original model work.
 Production component tests hold a real Provider transport close during legacy
 and owned shutdown, and expire Agent A's lease while Agent B completes a real
-foreground Run. Predecessor stop-proof and Learning claim/global review-slot
+foreground Run. Predecessor Learning claim/global review-slot
 recovery, cross-owner ACKs and peers, and two-replica integration remain pending.
 Foreground isolation does not establish another Agent's background claim recovery.
 

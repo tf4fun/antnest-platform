@@ -95,11 +95,11 @@ async function unchanged(f: FencingFixture, operation: () => Promise<unknown>) {
 }
 async function state(f: FencingFixture, runId: string) {
   return (
-    await f.observer.query(
+    await f.observer.query<Record<string, unknown>>(
       "SELECT state, terminal_class, executor_state, tool_effect_state, unknown_effect_source, error_class, execution_snapshot FROM runs WHERE id=$1",
       [runId],
     )
-  ).rows[0];
+  ).rows[0]!;
 }
 async function runtimeWork(value: Awaited<ReturnType<typeof setup>>) {
   const call = {
@@ -147,6 +147,90 @@ async function runtimeWork(value: Awaited<ReturnType<typeof setup>>) {
 describe.skipIf(databaseUrl === undefined)(
   "stopped predecessor Run recovery",
   () => {
+    it("lists only the captured scope's predecessor and rechecks the current lease before discovery", async () => {
+      await withDatabase(async (f) => {
+        const value = await setup(f);
+        await setup(f, true, "other");
+        const original = new PostgresOwnerRecovery(
+          f.kernelA,
+          value.owner.authority,
+        );
+        expect(await original.listPredecessors()).toEqual([]);
+        const { successor, recovery } = await takeover(f, value.owner);
+        expect(await recovery.listPredecessors()).toEqual([
+          {
+            runId: value.runId,
+            registration: value.owner.authority.registration,
+          },
+        ]);
+        await f.leasesB.release(successor.authority.fence);
+        await expect(recovery.listPredecessors()).rejects.toBeInstanceOf(
+          AgentOwnershipLostError,
+        );
+      });
+    });
+
+    it.each([false, true])(
+      "discovers the accepted permanent proof from another Agent (cross organization=%s)",
+      async (crossOrganization) => {
+        await withDatabase(async (f) => {
+          const a = await setup(f, false, "a");
+          const b = await setup(
+            f,
+            false,
+            "b",
+            a.owner.authority.registration,
+            crossOrganization ? "another-organization" : undefined,
+          );
+          const proof = stopped(a.owner);
+          const sa = await takeover(f, a.owner),
+            sb = await takeover(f, b.owner);
+          await sa.recovery.recoverRun({
+            runId: a.runId,
+            inspection: proof,
+            recoveredAt,
+          });
+          const before = await facts(f);
+          expect(await sb.recovery.listPredecessors()).toEqual([
+            {
+              runId: b.runId,
+              registration: b.owner.authority.registration,
+              inspection: proof,
+            },
+          ]);
+          expect(await facts(f)).toBe(before);
+          await f.leasesB.release(sb.successor.authority.fence);
+          await expect(sb.recovery.listPredecessors()).rejects.toBeInstanceOf(
+            AgentOwnershipLostError,
+          );
+        });
+      },
+    );
+
+    it.each(["member_id", "incarnation_id"] as const)(
+      "rejects a persisted proof with a mismatched original %s before returning it",
+      async (field) => {
+        await withDatabase(async (f) => {
+          const value = await setup(f, false);
+          const proof = {
+            ...stopped(value.owner),
+            [field]: field === "member_id" ? "another-member" : randomUUID(),
+          };
+          await f.observer.query(
+            "INSERT INTO owner_stop_receipts(receipt_id,registration_id,inspection,accepted_at) VALUES($1,$2,$3::jsonb,$4)",
+            [
+              proof.stop_receipt.receipt_id,
+              proof.registration_id,
+              JSON.stringify(proof),
+              recoveredAt,
+            ],
+          );
+          const { recovery } = await takeover(f, value.owner);
+          await unchanged(f, () => recovery.listPredecessors());
+        });
+      },
+    );
+
     it.each([false, true])(
       "valid stopped admitting recovery preserves the unaccepted intent (cancelled=%s)",
       async (cancelled) => {
@@ -265,7 +349,7 @@ describe.skipIf(databaseUrl === undefined)(
           },
         ]);
         const events = (
-          await f.observer.query(
+          await f.observer.query<{ payload: unknown }>(
             "SELECT payload FROM session_messages WHERE run_id=$1 AND kind='tool_call' AND payload->>'status'='failed' ORDER BY sequence",
             [value.runId],
           )

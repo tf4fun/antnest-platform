@@ -227,6 +227,13 @@ with the exact original Run or claim and record the recovering authority
 separately. Ordinary writers retain their original-owner checks. This dedicated
 recovery path is not a new authority mode available to ordinary repositories.
 
+A current owner may reuse the complete immutable stopped response already
+accepted for the same original registration, including one first accepted while
+recovering another Agent. Revalidate its full original binding under the current
+scope fence; do not make another Controller inspection a condition of using that
+permanent fact. Each target still needs its own fenced recovery transaction and
+original-work association.
+
 Run recovery locks organization, current lease, Session, Run and child records
 in that order. Proof association, permission cancellation, interrupted Tool
 events, terminal persistence and any stable Runtime barrier commit atomically.

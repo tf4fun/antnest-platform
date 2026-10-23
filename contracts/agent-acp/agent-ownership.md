@@ -73,6 +73,14 @@ that graph. Initialization must load and revalidate sealed configuration and the
 durable revision under that fence before opening admission. An acquired lease or
 constructed repository factory alone does not open an Agent.
 
+Initialization has its own finite monotonic admission deadline, using the
+generation operation budget (10 seconds by default). Renewal cannot extend that
+deadline. On expiry, close only that scope's readiness and dispatch so other
+Agents can prepare, while retaining and joining the original initializer and
+cleanup before releasing its lease. Recheck the deadline before opening even
+when timer delivery is late. Normal drain already closes readiness and continues
+renewal while joining; the initialization timer does not turn it into lease loss.
+
 Local lease deadlines are conservative monotonic deadlines: subtract the full
 request/response duration from the database-observed remaining lifetime. Neither
 wall-clock changes nor a delayed successful response may extend that bound. The
