@@ -2,6 +2,8 @@ import type { PostgresKernel } from "./kernel.js";
 import type { SecretBox } from "./secret-box.js";
 import { PostgresSessionRepository } from "./session-repository.js";
 import { PostgresSessionConfiguration } from "./session-configuration.js";
+import { PostgresToolPermissions } from "./tool-permissions.js";
+import { PostgresTemporarySkills } from "./temporary-skills.js";
 import { createBoundRunRepositories } from "./run-repositories.js";
 import { RunWriteAuthority, type RunOwnerAuthority } from "./run-write-authority.js";
 
@@ -26,5 +28,7 @@ function repositories(kernel: PostgresKernel, box: SecretBox, authority: RunWrit
     ...createBoundRunRepositories(kernel, authority),
     sessions: new PostgresSessionRepository(kernel, box, authority),
     sessionConfiguration: new PostgresSessionConfiguration(kernel, authority),
+    permissions: new PostgresToolPermissions(kernel, authority),
+    temporarySkills: new PostgresTemporarySkills(kernel, authority),
   });
 }

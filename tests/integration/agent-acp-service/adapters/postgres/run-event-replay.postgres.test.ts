@@ -7,7 +7,7 @@ import type { PostgresRunEventRepository } from "../../../../../services/agent-a
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
+import { createLegacyTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import type { ContentBlock } from "../../../../../services/agent-acp-service/src/domain/types.js";
 import type { ModelUsage } from "../../../../../services/agent-acp-service/src/domain/usage.js";
 import type {
@@ -53,7 +53,10 @@ describe.skipIf(databaseUrl === undefined)(
       kernel,
       new AbortController().signal,
     ).executions;
-    const temporarySkills = new PostgresTemporarySkills(kernel);
+    const temporarySkills = createLegacyTemporarySkills(
+      kernel,
+      new AbortController().signal,
+    );
 
     beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");

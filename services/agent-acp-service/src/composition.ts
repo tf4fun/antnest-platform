@@ -8,13 +8,11 @@ import {
 } from "./adapters/skill-source-http.js";
 import { PostgresLearningStatusRead } from "./adapters/postgres/learning-status-read.js";
 import { SessionConfigurationService } from "./application/session-configuration.js";
-import { PostgresToolPermissions } from "./adapters/postgres/tool-permissions.js";
 import { PostgresSkillDiscoveryAuthority } from "./adapters/postgres/skill-discovery-authority.js";
 import { RegistrySkillDiscoveryClient } from "./adapters/skill-discovery-http.js";
 import { SkillDiscoveryTools } from "./application/skill-discovery-tools.js";
 import { TemporarySkills } from "./application/temporary-skills.js";
 import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
-import { PostgresTemporarySkills } from "./adapters/postgres/temporary-skills.js";
 import { RuntimeSkillTemporaryClient } from "./adapters/runtime-skill-temporary-client.js";
 import { DomainError } from "./domain/errors.js";
 import { PermissionConnections } from "./application/permission-connections.js";
@@ -410,8 +408,16 @@ export function buildComponents(
   runtimeConnections: RuntimeConnectionAuthority,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
-  const { sessions, sessionConfiguration, runs, events, executions, contexts } =
-    createLegacyAgentRepositories(kernel, new SecretBox(config.clientMcpKey), ownershipSignal);
+  const {
+    sessions,
+    sessionConfiguration,
+    permissions: permissionRepository,
+    temporarySkills: temporaryStore,
+    runs,
+    events,
+    executions,
+    contexts,
+  } = createLegacyAgentRepositories(kernel, new SecretBox(config.clientMcpKey), ownershipSignal);
 
   const model = new InstrumentedModel(
     new OpenAICompatibleModel({
@@ -456,7 +462,7 @@ export function buildComponents(
       : new RuntimeSkillMaintenanceSigner(signing.kid, signing.privateKey);
   // Cleanup survives configuration disabling discovery; persisted scopes remain authoritative.
   const temporarySkills = new TemporarySkills(
-    new PostgresTemporarySkills(kernel),
+    temporaryStore,
     new RuntimeSkillTemporaryClient(signer, runtimeConnections, undefined, (scope) =>
       directory.runtimeForCleanup(scope),
     ),
@@ -497,7 +503,6 @@ export function buildComponents(
   );
   const information = new InstrumentedRuntimeInformation(rawTools, telemetry);
   const access = new AccessService({ directory });
-  const permissionRepository = new PostgresToolPermissions(kernel);
   const permissions = new InstrumentedToolPermissions(
     new ToolPermissions(permissionRepository, permissionConnections, access),
     telemetry,

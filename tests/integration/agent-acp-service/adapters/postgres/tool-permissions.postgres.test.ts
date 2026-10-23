@@ -2,7 +2,7 @@ import { Pool } from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
+import { createLegacyToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { permissionRule } from "../../../../../services/agent-acp-service/src/domain/tool-permissions.js";
 import type { PermissionRequest } from "../../../../../services/agent-acp-service/src/ports/tool-permissions.js";
@@ -36,7 +36,10 @@ describe.skipIf(databaseUrl === undefined)(
   () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 4 });
     const kernel = new PostgresKernel(pool);
-    const permissions = new PostgresToolPermissions(kernel);
+    const permissions = createLegacyToolPermissions(
+      kernel,
+      new AbortController().signal,
+    );
     const executions = createLegacyRunRepositories(
       kernel,
       new AbortController().signal,

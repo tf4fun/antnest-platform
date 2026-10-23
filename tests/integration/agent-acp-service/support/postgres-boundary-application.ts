@@ -3,7 +3,7 @@ import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports
 import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { runtimeConnections } from "../../../../services/agent-acp-service/test/support/runtime-connections.js";
 import { SessionConfigurationService } from "../../../../services/agent-acp-service/src/application/session-configuration.js";
-import { PostgresToolPermissions } from "../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
+import { createLegacyToolPermissions } from "../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { ToolPermissions } from "../../../../services/agent-acp-service/src/application/tool-permissions.js";
 import { PermissionConnections } from "../../../../services/agent-acp-service/src/application/permission-connections.js";
 import { createLegacySessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
@@ -185,7 +185,10 @@ export async function startBoundaryApplication(
             })),
           };
   const access = new AccessService({ directory });
-  const permissionRepository = new PostgresToolPermissions(kernel);
+  const permissionRepository = createLegacyToolPermissions(
+    kernel,
+    new AbortController().signal,
+  );
   const ownership = new AbortController();
   const supervisor = new RunSupervisor(
     new RunExecutor({

@@ -6,7 +6,7 @@ import { migrate } from "../../../../../services/agent-acp-service/src/adapters/
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
-import { PostgresToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
+import { createLegacyToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import { publicExecutionConfiguration } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import {
@@ -27,7 +27,10 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
     kernel,
     new AbortController().signal,
   ).runs;
-  const permissions = new PostgresToolPermissions(kernel);
+  const permissions = createLegacyToolPermissions(
+    kernel,
+    new AbortController().signal,
+  );
   const events = createLegacyRunRepositories(
     kernel,
     new AbortController().signal,

@@ -153,6 +153,9 @@ describe("production execution configuration composition", () => {
       mcpEndpoint: "http://runtime:8093/mcp",
     };
     vi.spyOn(PostgresTemporarySkills.prototype, "forAgent").mockResolvedValue([scope]);
+    const authorize = vi
+      .spyOn(PostgresTemporarySkills.prototype, "authorizeCleanup")
+      .mockResolvedValue(undefined);
     const cleanup = vi
       .spyOn(RuntimeSkillTemporaryClient.prototype, "cleanup")
       .mockRejectedValue(new Error("not-confirmed"));
@@ -182,7 +185,11 @@ describe("production execution configuration composition", () => {
           accept,
         ),
       ).rejects.toMatchObject({ code: "runtime_barrier_required" });
+      expect(authorize).toHaveBeenCalledWith(scope, expect.any(AbortSignal));
       expect(cleanup).toHaveBeenCalledWith(scope, expect.any(AbortSignal));
+      expect(authorize.mock.invocationCallOrder[0]).toBeLessThan(
+        cleanup.mock.invocationCallOrder[0]!,
+      );
       expect(accept).not.toHaveBeenCalled();
     } finally {
       await components.supervisor.shutdown();

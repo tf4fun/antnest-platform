@@ -20,7 +20,9 @@ export class ToolPermissions implements ToolPermissionPort {
   public async request(
     input: Parameters<ToolPermissionPort["request"]>[0],
   ): Promise<PermissionResult> {
+    input = { ...input };
     input.signal.throwIfAborted();
+    input.authoritySignal.throwIfAborted();
     const request = structuredClone({
       runId: input.runId,
       sessionId: input.sessionId,
@@ -28,6 +30,7 @@ export class ToolPermissions implements ToolPermissionPort {
       tool: input.tool,
     });
     const owner = await this.repository.open(request);
+    input.authoritySignal.throwIfAborted();
     const result = await (async () => {
       try {
         input.signal.throwIfAborted();

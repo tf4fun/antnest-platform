@@ -6,7 +6,7 @@ import { PostgresKernel } from "../../../../../services/agent-acp-service/src/ad
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
-import { PostgresToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
+import { createLegacyToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { encodeSessionEvent } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-event-codec.js";
 import { ExecutionAudits } from "../../../../../services/agent-acp-service/src/application/execution-audit.js";
@@ -234,7 +234,10 @@ describe.skipIf(url === undefined)(
           }),
         ],
       );
-      const permission = new PostgresToolPermissions(kernel);
+      const permission = createLegacyToolPermissions(
+        kernel,
+        new AbortController().signal,
+      );
       const request = {
         runId: run.id,
         sessionId: run.sessionId,

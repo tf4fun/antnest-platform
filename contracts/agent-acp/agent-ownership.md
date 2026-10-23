@@ -182,8 +182,43 @@ the supervised task; it is not evidence of whole-generation or remote quiescence
 
 Configuration compare-and-set remains atomic with its revision and replay event.
 These adapter and Application boundaries do not enable production multi-replica
-execution: coordinator lifetime capture, remaining permission/temporary/learning
-writers, scoped recovery and cross-replica integration are separate requirements.
+execution: coordinator lifetime capture, remaining learning writers, scoped
+recovery and cross-replica integration are separate requirements.
+
+### Permission Mutation Boundary
+
+Permission open and decision use the same captured authority as the original
+Run. In a lease-fenced transaction, lock the actual Session and Run and verify
+scope and original execution identity before stale/deadline, terminal or duplicate
+response handling. An always rule and its permission decision are atomic; losing
+authority cannot persist either side. Request payload, decision and rule are
+captured before awaits. Run cancellation and authority signals retain their
+original references, so replacing caller input cannot bypass cancellation.
+
+Global startup permission cancellation is legacy-only. It locks and validates
+the selected pending records before cancelling that exact set. Any selected
+owned Run makes the whole transaction fail closed; later rows are not borrowed
+into the original cleanup. Scoped predecessor recovery is a separate API and
+requires its independent stopping proof.
+
+### Temporary Skill Mutation Boundary
+
+Reservation and cleanup receipts use the captured Agent authority and original
+Run identity, including on duplicate and terminal paths. Lock organization,
+lease, actual Session and Run in that order before changing temporary scopes,
+load-skill stopping facts or Runtime barriers. Candidate reads are not authority.
+Before dispatching cleanup, validate the exact stored scope and original Runtime
+binding under the same authority. Cleanup remains valid for a terminal Run and
+a deleted Session while its original owner still holds the lease.
+
+Capture cleanup scope and install input before awaits. Never keep a database
+transaction open across a Runtime call. A preflight is not atomic fencing of
+the remote effect: ownership can change during that call. In that case join the
+original call, reject the late database receipt and retain all pending cleanup
+and barrier facts. Updating released_at, load-skill stopping facts and barrier
+retirement is one transaction. It must not stop ordinary Runtime tool attempts.
+Generation dispatch closure, original network-task joins and predecessor
+stop-proof recovery remain separate requirements before multi-replica rollout.
 
 ## Configuration And Recovery Boundaries
 
