@@ -1,4 +1,4 @@
-import { createLegacyLearningRepositories } from "./adapters/postgres/learning-repositories.js";
+import { buildLearningWorker } from "./composition-learning.js";
 import { LearningStatusReader } from "./application/learning-status-reader.js";
 import { SkillSources } from "./application/skill-sources.js";
 import { SkillProjectionWorker } from "./application/skill-projection-worker.js";
@@ -54,37 +54,11 @@ import { RunExecutor } from "./application/run-executor.js";
 import { RunRecovery } from "./application/run-recovery.js";
 import { RunSupervisor } from "./application/run-supervisor.js";
 import { LearningForegroundGate } from "./application/learning-foreground-gate.js";
-import { LearningMaintenanceGuard } from "./application/learning-maintenance-guard.js";
-import { LearningPausedRecovery } from "./application/learning-paused-recovery.js";
-import { LearningWorker } from "./application/learning-worker.js";
-import { LearningScanSweep } from "./application/learning-scan-sweep.js";
-import {
-  LearningScanCoordinator,
-  PersistedLearningReviewCue,
-} from "./application/learning-scan-coordinator.js";
-import { LearningClaimAdmission } from "./application/learning-claim-admission.js";
-import { LearningModelAdmission } from "./application/learning-model-admission.js";
-import { LearningModelAuthority } from "./application/learning-model-authority.js";
-import { LearningReviewRunner } from "./application/learning-review-runner.js";
-import {
-  LearningTelemetry,
-  InstrumentedLearningTaskProcessor,
-  InstrumentedLearningApply,
-} from "./telemetry/learning.js";
-import { LearningReviewProcessor } from "./application/learning-review-processor.js";
-import { LearningApplyAttempt } from "./application/learning-apply-attempt.js";
-import { LearningTaskProcessor } from "./application/learning-task-processor.js";
 import { LearningChangeReader } from "./application/learning-change-reader.js";
 import { LearningNoticePublisher } from "./application/learning-notice-publisher.js";
 import { LearningChangeCursor } from "./domain/learning-change-cursor.js";
-import { ControllerLearningPolicyClient } from "./adapters/controller-learning-policy.js";
 import { tracedFetch } from "./telemetry/http.js";
-import { DirectoryLearningRuntimeBinding } from "./adapters/learning-runtime-binding.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
-import { RuntimeSkillMaintenanceClient } from "./adapters/runtime-skill-maintenance-client.js";
-import { PostgresLearningReviewSource } from "./adapters/postgres/learning-review-source.js";
-import { PostgresLearningManagedSkills } from "./adapters/postgres/learning-managed-skills.js";
-import { PostgresLearningInstallRequests } from "./adapters/postgres/learning-install-requests.js";
 import { PostgresLearningChangeRead } from "./adapters/postgres/learning-change-read.js";
 import { SessionService } from "./application/session-service.js";
 import type { AgentAcpConfig } from "./config.js";
@@ -686,134 +660,6 @@ export function buildComponents(
     permissionConnections,
     permissionRepository,
   };
-}
-
-function buildLearningWorker(input: {
-  config: AgentAcpConfig;
-  ownershipSignal: AbortSignal;
-  kernel: PostgresKernel;
-  directory: ExecutionDirectory;
-  providers: ProviderClients;
-  rawTools: McpToolCatalog;
-  gate: LearningForegroundGate;
-  telemetry: TelemetryPort;
-  onCommitted: () => void;
-  temporarySkills: TemporarySkills;
-  runtimeConnections: RuntimeConnectionAuthority;
-}): LearningWorker | undefined {
-  const { config, kernel, directory, providers, rawTools, gate, telemetry, onCommitted } = input;
-  if (
-    config.skillLearningControllerUrl === undefined ||
-    config.skillMaintenanceSigning === undefined
-  )
-    return undefined;
-  const policy = new ControllerLearningPolicyClient(
-    config.skillLearningControllerUrl,
-    tracedFetch(config.dependencyFetchers.controller!, "agent_controller"),
-  );
-  const {
-    scan: scanStore,
-    evidence,
-    budget,
-    candidates,
-    outcomes,
-    intents,
-    bases,
-    changes,
-  } = createLegacyLearningRepositories(kernel, input.ownershipSignal, {
-    onSettled: (requestId) => input.runtimeConnections.releaseOperation(requestId),
-    onCommitted,
-  });
-  const managed = new PostgresLearningManagedSkills(kernel);
-  const installRequests = new PostgresLearningInstallRequests(kernel);
-  const binding = new DirectoryLearningRuntimeBinding(directory);
-  const signer = new RuntimeSkillMaintenanceSigner(
-    config.skillMaintenanceSigning.kid,
-    config.skillMaintenanceSigning.privateKey,
-  );
-  const runtime = new RuntimeSkillMaintenanceClient(signer, intents, input.runtimeConnections);
-  const guard = new LearningMaintenanceGuard(gate, (scope, signal) =>
-    input.temporarySkills.assertClearAgent(scope, signal),
-  );
-  const modelAdmission = new LearningModelAdmission(policy, budget);
-  const reviewRunner = new LearningReviewRunner(
-    evidence,
-    new PostgresLearningReviewSource(kernel),
-    new LearningModelAuthority(directory),
-    modelAdmission,
-    budget,
-    providers,
-    new LearningTelemetry(telemetry),
-  );
-  const review = new LearningReviewProcessor(reviewRunner, evidence, candidates, managed, outcomes);
-  const apply = new LearningApplyAttempt(
-    candidates,
-    binding,
-    policy,
-    rawTools,
-    managed,
-    runtime,
-    bases,
-    installRequests,
-    changes,
-  );
-  const processor = new InstrumentedLearningTaskProcessor(
-    new LearningTaskProcessor(review, new InstrumentedLearningApply(apply, telemetry), outcomes),
-    telemetry,
-  );
-  const paused = new LearningPausedRecovery(
-    outcomes,
-    guard,
-    policy,
-    processor,
-    gate,
-    (claim, error) =>
-      telemetry.log(
-        "warn",
-        "skill_learning_recovery_failed",
-        {
-          task_id: claim.taskId,
-          agent_id: claim.agentId,
-        },
-        error,
-      ),
-  );
-  const coordinator = new LearningScanCoordinator(
-    policy,
-    scanStore,
-    new PersistedLearningReviewCue(scanStore),
-    config.skillLearningDebugAgentId,
-  );
-  const scan = new LearningScanSweep(scanStore, coordinator, (scope, error) =>
-    telemetry.log(
-      "warn",
-      "skill_learning_scan_failed",
-      {
-        agent_id: scope.agentId,
-      },
-      error,
-    ),
-  );
-  return new LearningWorker(
-    paused,
-    scan,
-    new LearningClaimAdmission(policy, scanStore),
-    guard,
-    processor,
-    outcomes,
-    (claim, error) =>
-      telemetry.log(
-        "warn",
-        "skill_learning_task_failed",
-        {
-          task_id: claim.taskId,
-          agent_id: claim.agentId,
-        },
-        error,
-      ),
-    undefined,
-    (error) => telemetry.log("warn", "skill_learning_cycle_failed", {}, error),
-  );
 }
 
 async function requireDependenciesReady(pool: Pool, telemetry: TelemetryPort): Promise<void> {
