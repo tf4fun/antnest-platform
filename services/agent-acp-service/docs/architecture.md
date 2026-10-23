@@ -435,6 +435,15 @@ rules. Fork excludes these rules. Connection registration and user interaction
 are ACP application/transport concerns, never Runtime or Controller tables.
 See [Tool permissions](tool-permissions.md) for cancellation and restart boundaries.
 
+Permission repositories share the captured Agent authority with Session and Run
+writers. They lock the lease, Session and original Run before checking deadlines
+or duplicate decisions, and commit an always rule atomically with its decision.
+The original cancellation signals and copied request/decision payload survive
+lock or approval waits. Global startup cancellation remains legacy-only: it
+rejects a selected owned Run and updates only its locked set of pending requests.
+Production generation capture and scoped predecessor recovery are still required
+before owned multi-replica dispatch is enabled.
+
 ## Module Map
 
 ```text

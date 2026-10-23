@@ -3,6 +3,8 @@ import { DomainError } from "../../domain/errors.js";
 import { sessionConfigurationSchema } from "../../domain/session-configuration.js";
 import type { PermissionRepository, PermissionRequest } from "../../ports/tool-permissions.js";
 import type { PostgresKernel } from "./kernel.js";
+import { RunWriteAuthority, type RunOwnerColumns } from "./run-write-authority.js";
+import { guardSessionRuns } from "./session-write-guard.js";
 
 type OwnerRow = {
   organization_id: string;
@@ -14,11 +16,21 @@ type OwnerRow = {
 type RunRow = { expected_access_revision: string; usable: boolean };
 
 export class PostgresToolPermissions implements PermissionRepository {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: RunWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: RunWriteAuthority,
+  ) {
+    if (!(authority instanceof RunWriteAuthority))
+      throw new TypeError("Permission writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async open(request: PermissionRequest) {
-    return this.kernel.transaction(async (client) => {
-      const { owner, run } = await lockRequest(client, request);
+    request = structuredClone(request);
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const { owner, run } = await lockRequest(client, request, this.#authority);
       if (!run.usable) throw new DomainError("permission_stale", "Run cannot request permission");
       await client.query(
         `INSERT INTO tool_permissions(run_id, tool_call_id, request_payload) VALUES ($1, $2, $3::jsonb)`,
@@ -34,8 +46,17 @@ export class PostgresToolPermissions implements PermissionRepository {
   }
 
   public async decide(input: Parameters<PermissionRepository["decide"]>[0]): Promise<boolean> {
-    return this.kernel.transaction(async (client) => {
-      const { owner, run } = await lockRequest(client, input.request);
+    // AbortSignals retain their original identities; payloads retain their
+    // original values. A caller cannot replace either while the SQL waits.
+    input = {
+      ...input,
+      request: structuredClone(input.request),
+      result: structuredClone(input.result),
+      ...(input.rule === undefined ? {} : { rule: structuredClone(input.rule) }),
+    };
+    input.authoritySignal?.throwIfAborted();
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const { owner, run } = await lockRequest(client, input.request, this.#authority);
       input.authoritySignal?.throwIfAborted();
       const usable = run.usable && input.signal?.aborted !== true;
       const result = usable ? input.result : { decision: "cancelled", reason: "permission_stale" };
@@ -77,22 +98,50 @@ export class PostgresToolPermissions implements PermissionRepository {
   }
 
   public async cancelAbandoned(): Promise<void> {
-    await this.kernel.query(`UPDATE tool_permissions SET decision = 'cancelled',
-      reason = 'service_restarted', decided_at = now() WHERE decision IS NULL`);
+    this.#authority.assertLegacyRecovery();
+    await this.#authority.transaction(this.kernel, async (client) => {
+      const pending = await client.query<
+        RunOwnerColumns & { run_id: string; tool_call_id: string }
+      >(
+        `SELECT p.run_id, p.tool_call_id, r.organization_id, r.agent_id,
+                r.execution_owner_registration_id, r.execution_owner_member_id,
+                r.execution_owner_incarnation_id, r.execution_owner_epoch::text
+           FROM tool_permissions p JOIN runs r ON r.id=p.run_id
+          WHERE p.decision IS NULL ORDER BY p.run_id, p.tool_call_id FOR UPDATE OF p`,
+      );
+      for (const row of pending.rows) this.#authority.assertRun(row);
+      if (pending.rows.length === 0) return;
+      // Only the selected, locked and validated records belong to this recovery
+      // transaction. A later insert must never join its global cancellation.
+      await client.query(
+        `UPDATE tool_permissions p SET decision='cancelled', reason='service_restarted', decided_at=now()
+           FROM jsonb_to_recordset($1::jsonb) AS selected(run_id text, tool_call_id text)
+          WHERE p.run_id=selected.run_id AND p.tool_call_id=selected.tool_call_id AND p.decision IS NULL`,
+        [
+          JSON.stringify(
+            pending.rows.map(({ run_id, tool_call_id }) => ({ run_id, tool_call_id })),
+          ),
+        ],
+      );
+    });
   }
 }
 
-async function lockRequest(client: PoolClient, request: PermissionRequest) {
+async function lockRequest(
+  client: PoolClient,
+  request: PermissionRequest,
+  authority: RunWriteAuthority,
+) {
   await client.query("SET LOCAL lock_timeout = '5s'");
   await client.query("SET LOCAL statement_timeout = '10s'");
   const sessions = await client.query<OwnerRow>(
     "SELECT organization_id, principal_id, agent_id, configuration, state FROM acp_sessions WHERE id = $1 FOR UPDATE",
     [request.sessionId],
   );
-  await client.query("SELECT id FROM runs WHERE id = $1 AND session_id = $2 FOR UPDATE", [
-    request.runId,
-    request.sessionId,
-  ]);
+  const owner = sessions.rows[0];
+  if (owner === undefined)
+    throw new DomainError("permission_stale", "Permission Run or Session no longer exists");
+  await guardSessionRuns(client, authority, { ...owner, id: request.sessionId }, request.runId);
   // Check wall-clock time after both locks; transaction now() predates lock waits.
   const runs = await client.query<RunRow>(
     `SELECT expected_access_revision, (state = 'running' AND cancel_requested_at IS NULL AND
@@ -100,11 +149,14 @@ async function lockRequest(client: PoolClient, request: PermissionRequest) {
      FROM runs WHERE id = $1 AND session_id = $2`,
     [request.runId, request.sessionId],
   );
-  const owner = sessions.rows[0];
   const run = runs.rows[0];
-  if (owner === undefined || run === undefined)
+  if (run === undefined)
     throw new DomainError("permission_stale", "Permission Run or Session no longer exists");
   return { owner, run: { ...run, usable: run.usable && owner.state === "active" } };
+}
+
+export function createLegacyToolPermissions(kernel: PostgresKernel, workerOwnership: AbortSignal) {
+  return new PostgresToolPermissions(kernel, RunWriteAuthority.legacy(workerOwnership));
 }
 
 function encodedRequest(request: PermissionRequest): string {

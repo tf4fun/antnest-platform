@@ -185,6 +185,22 @@ These adapter and Application boundaries do not enable production multi-replica
 execution: coordinator lifetime capture, remaining permission/temporary/learning
 writers, scoped recovery and cross-replica integration are separate requirements.
 
+### Permission Mutation Boundary
+
+Permission open and decision use the same captured authority as the original
+Run. In a lease-fenced transaction, lock the actual Session and Run and verify
+scope and original execution identity before stale/deadline, terminal or duplicate
+response handling. An always rule and its permission decision are atomic; losing
+authority cannot persist either side. Request payload, decision and rule are
+captured before awaits. Run cancellation and authority signals retain their
+original references, so replacing caller input cannot bypass cancellation.
+
+Global startup permission cancellation is legacy-only. It locks and validates
+the selected pending records before cancelling that exact set. Any selected
+owned Run makes the whole transaction fail closed; later rows are not borrowed
+into the original cleanup. Scoped predecessor recovery is a separate API and
+requires its independent stopping proof.
+
 ## Configuration And Recovery Boundaries
 
 Controller configuration revision and Agent ownership epoch are independent.
