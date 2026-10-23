@@ -786,18 +786,15 @@ func (h *handler) getAgent(response http.ResponseWriter, request *http.Request, 
 func (h *handler) lifecycle(action string) adminHandler {
 	return func(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
 		agentID := request.PathValue("agent_id")
-		requestID, ok := lifecycleRequestID(response, request, actor.OrganizationID)
-		if !ok {
-			return
-		}
 		payload := map[string]any{
-			"request_id": requestID, "organization_id": actor.OrganizationID,
+			"organization_id":    actor.OrganizationID,
 			"actor_principal_id": actor.UserID,
 		}
 		if action == "rebuild" {
 			var input struct {
-				TemplateID       string `json:"template_id"`
-				TemplateRevision int64  `json:"template_revision"`
+				TemplateID       string          `json:"template_id"`
+				TemplateRevision int64           `json:"template_revision"`
+				Recovery         json.RawMessage `json:"recovery,omitempty"`
 			}
 			if !decodeJSON(response, request, &input) {
 				return
@@ -808,8 +805,27 @@ func (h *handler) lifecycle(action string) adminHandler {
 			}
 			payload["template_id"] = input.TemplateID
 			payload["template_revision"] = input.TemplateRevision
+			if len(input.Recovery) != 0 {
+				recovery, requestID, ok := decodeRuntimeRecoveryRequest(response, request, input.Recovery)
+				if !ok {
+					return
+				}
+				if !runtimeRecoveryIdentifier.MatchString(input.TemplateID) {
+					writeError(response, http.StatusBadRequest, "invalid_request", "Template identifier is invalid")
+					return
+				}
+				payload["recovery"] = recovery
+				payload["request_id"] = requestID
+			}
 		} else if !decodeEmptyObject(response, request) {
 			return
+		}
+		if _, recovery := payload["request_id"]; !recovery {
+			requestID, ok := lifecycleRequestID(response, request, actor.OrganizationID)
+			if !ok {
+				return
+			}
+			payload["request_id"] = requestID
 		}
 		h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 			"/internal/agents/"+url.PathEscape(agentID)+"/"+action, "", payload, projectOperation)

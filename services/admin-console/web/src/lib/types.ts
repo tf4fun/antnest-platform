@@ -290,6 +290,24 @@ export type TemplateDefaults = {
   runtime_image_ref: string;
 };
 
+export type RuntimeRecovery = {
+  barrier_id: string;
+  reason: "runtime_barrier_required";
+  runtime_revision: string;
+  policy_revision: number;
+  mode: "manual" | "notify" | "auto";
+  cooldown_ms: number;
+  rebuild_request_id: string;
+  notification_id: string;
+  cooldown_until: string | null;
+};
+
+export type RuntimeRecoveryInput = {
+  template_id: string;
+  template_revision: number;
+  recovery: { barrier_id: string; expected_runtime_revision: string };
+};
+
 export type Agent = {
   agent_id: string;
   owner_user_id: string;
@@ -301,6 +319,7 @@ export type Agent = {
   runtime_reason?: string;
   runtime_detail?: string;
   runtime_observed_at?: string;
+  runtime_recovery?: RuntimeRecovery;
   agent_spec_revision?: string;
   last_successful_execution_revision?: string;
   executable_execution_revision?: string;
