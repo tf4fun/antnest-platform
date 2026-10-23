@@ -285,7 +285,20 @@ test("every workload destination maps to its receiving interface and owns an all
     for (const [host, destination] of Object.entries(destinations)) {
       const receiver =
         topology.listeners[destination.receiver][destination.listener];
-      assert.equal(hosts[host], address(receiver), `${caller}->${host}`);
+      if (destination.resolution === "docker-inspect") {
+        assert.equal(caller, "runtime-controller");
+        assert.equal(destination.receiver, "agent-acp-service");
+        assert.equal(destination.listener, "owner");
+        assert.equal(receiver.profile, "acp-owner-bootstrap");
+        assert.equal(
+          hosts[host],
+          undefined,
+          "owner uses the verified Docker address",
+        );
+      } else {
+        assert.equal(destination.resolution, undefined);
+        assert.equal(hosts[host], address(receiver), `${caller}->${host}`);
+      }
     }
   }
   for (const [name, variable] of [
@@ -510,4 +523,62 @@ test("Skill discovery/source capabilities are enabled by maintenance keys withou
       .ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS,
     "false",
   );
+});
+
+test("owner bootstrap is opt-in and inherits the credential UID without exposing another network", () => {
+  const file = "tests/e2e/security/owner.compose.yaml";
+  const candidate = composeConfig(["compose.yaml", file], {
+    ANTNEST_SERVICE_NETWORK_PREFIX: "10.244.45",
+    ANTNEST_E2E_ACP_MEMBERS_FILE:
+      "/never-mounted-deployment-credentials/acp-members.json",
+    ANTNEST_SERVICE_AUTH_UID: "12345",
+    ANTNEST_SERVICE_AUTH_GID: "23456",
+  });
+  const acp = candidate.services["agent-acp-service"];
+  const rc = candidate.services["runtime-controller"];
+  assert.equal(acp.environment.ANTNEST_ACP_OWNER_MEMBER_ID, "acp-a");
+  assert.equal(acp.environment.ANTNEST_ACP_OWNER_LISTEN, "10.244.45.53:8085");
+  assert.equal(
+    acp.environment.ANTNEST_ACP_RUNTIME_CONTROLLER_URL,
+    "http://runtime-controller:8080",
+  );
+  assert.equal(
+    acp.depends_on["runtime-controller"].condition,
+    "service_healthy",
+  );
+  assert.equal(rc.user, "12345:23456");
+  assert.equal(
+    rc.environment.ANTNEST_RUNTIME_ACP_MEMBERS_FILE,
+    "/etc/antnest/acp-members.json",
+  );
+  assert.deepEqual(
+    rc.volumes.find((v) => v.target === "/etc/antnest/acp-members.json"),
+    {
+      type: "bind",
+      source: "/never-mounted-deployment-credentials/acp-members.json",
+      target: "/etc/antnest/acp-members.json",
+      read_only: true,
+      bind: { create_host_path: false },
+    },
+  );
+  for (const service of ["agent-acp-service", "runtime-controller"]) {
+    assert.deepEqual(
+      Object.keys(candidate.services[service].networks).sort(),
+      Object.keys(base.services[service].networks).sort(),
+    );
+    assert.deepEqual(
+      candidate.services[service].ports,
+      base.services[service].ports,
+    );
+  }
+  assert.equal(
+    base.services["agent-acp-service"].environment.ANTNEST_ACP_OWNER_LISTEN,
+    undefined,
+  );
+  assert.equal(
+    base.services["runtime-controller"].environment
+      .ANTNEST_RUNTIME_ACP_MEMBERS_FILE,
+    undefined,
+  );
+  assert.equal(rc.networks.edge, undefined);
 });

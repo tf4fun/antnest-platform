@@ -4,6 +4,8 @@ import { CallerContextVerifier } from "./adapters/caller-context.js";
 import { RequestAuthentication } from "./transport/request-authentication.js";
 import { parse as parsePostgresConnection } from "pg-connection-string";
 import type { ConnectionCapacityLimits } from "./application/connection-capacity.js";
+import { isIP } from "node:net";
+import ipaddr from "ipaddr.js";
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_STATE_DELIVERY_TIMEOUT_MS = 10_000;
 export const MAINTENANCE_KID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
@@ -25,6 +27,12 @@ export type AgentAcpConfig = {
   dependencyFetchers: { controller?: typeof fetch; registry?: typeof fetch };
   listen: { host: string; port: number };
   controlListen: { host: string; port: number };
+  ownerIncarnation?: {
+    memberId: string;
+    listen: { host: string; port: number };
+    runtimeControllerUrl: string;
+    registrationTimeoutMs: number;
+  };
   databaseUrl: string;
   databaseTimeoutMs: number;
   stateDeliveryTimeoutMs: number;
@@ -91,18 +99,33 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     "ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS",
   );
   const connectionLimits = parseConnectionLimits(environment);
-  const workload = new ServiceAuthentication(environment);
+  const listen = parseListen(environment.ANTNEST_ACP_LISTEN ?? ":8080");
+  const controlListen = parseListen(environment.ANTNEST_ACP_CONTROL_LISTEN ?? ":8081");
   const identityUrl = normalizedHttpUrl(
     required(environment, "ANTNEST_ACP_IDENTITY_URL"),
     "ANTNEST_ACP_IDENTITY_URL",
   );
+  const discovery = parseSkillDiscovery(environment);
+  const learningController = parseSkillLearningControllerUrl(environment);
+  const ownerIncarnation = parseOwnerIncarnation(
+    environment,
+    [listen, controlListen],
+    [
+      identityUrl.origin,
+      ...(discovery.skillDiscovery === undefined
+        ? []
+        : [new URL(discovery.skillDiscovery.registryUrl).origin]),
+      ...(learningController.skillLearningControllerUrl === undefined
+        ? []
+        : [new URL(learningController.skillLearningControllerUrl).origin]),
+    ],
+  );
+  const workload = new ServiceAuthentication(environment);
   const identityFetch = workload.fetchFor("identity-service", identityUrl.toString());
   const authentication = new RequestAuthentication(
     workload,
     new CallerContextVerifier(identityUrl.toString(), identityFetch),
   );
-  const discovery = parseSkillDiscovery(environment);
-  const learningController = parseSkillLearningControllerUrl(environment);
   const dependencyFetchers: AgentAcpConfig["dependencyFetchers"] = {};
   const origins = new Set([identityUrl.origin]);
   if (discovery.skillDiscovery !== undefined) {
@@ -131,8 +154,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
       environment.ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS ?? "false",
       "ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS",
     ),
-    listen: parseListen(environment.ANTNEST_ACP_LISTEN ?? ":8080"),
-    controlListen: parseListen(environment.ANTNEST_ACP_CONTROL_LISTEN ?? ":8081"),
+    listen,
+    controlListen,
+    ...ownerIncarnation,
     databaseUrl,
     databaseTimeoutMs: parseDuration(
       environment.ANTNEST_ACP_DATABASE_TIMEOUT ?? "10s",
@@ -171,6 +195,77 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     ),
     telemetry: telemetryConfig(environment),
   };
+}
+
+function parseOwnerIncarnation(
+  environment: NodeJS.ProcessEnv,
+  ordinaryListeners: readonly { host: string; port: number }[],
+  dependencyOrigins: readonly string[],
+): Pick<AgentAcpConfig, "ownerIncarnation"> {
+  const memberId = environment.ANTNEST_ACP_OWNER_MEMBER_ID;
+  const rawListen = environment.ANTNEST_ACP_OWNER_LISTEN;
+  const rawOrigin = environment.ANTNEST_ACP_RUNTIME_CONTROLLER_URL;
+  const rawTimeout = environment.ANTNEST_ACP_OWNER_REGISTRATION_TIMEOUT;
+  if ([memberId, rawListen, rawOrigin, rawTimeout].every((value) => value === undefined)) return {};
+  // Parse before creating workload dispatchers. Errors retain configuration key
+  // names only: the private member address and supplied URL never enter logs.
+  const invalid = () =>
+    new ConfigError(
+      "ACP owner member, private listener, RC origin and registration budget must be valid",
+    );
+  if (
+    memberId === undefined ||
+    memberId.length > 64 ||
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(memberId) ||
+    rawListen === undefined ||
+    rawListen !== rawListen.trim() ||
+    rawOrigin === undefined ||
+    rawOrigin !== rawOrigin.trim()
+  )
+    throw invalid();
+  try {
+    const match = /^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/u.exec(rawListen);
+    if (match === null) throw invalid();
+    const host = match[1] ?? match[2]!;
+    const port = Number(match[3]);
+    if (!isIP(host) || !Number.isInteger(port) || port < 1 || port > 65_535) throw invalid();
+    const address = ipaddr.process(host);
+    if (["unspecified", "broadcast", "multicast"].includes(address.range())) throw invalid();
+    if (
+      ordinaryListeners.some(
+        (listener) =>
+          listener.port === port &&
+          (listener.host === host || ["0.0.0.0", "::"].includes(listener.host)),
+      )
+    )
+      throw invalid();
+    const origin = new URL(rawOrigin);
+    if (
+      !["http:", "https:"].includes(origin.protocol) ||
+      origin.hostname === "" ||
+      origin.username !== "" ||
+      origin.password !== "" ||
+      (origin.port !== "" && Number(origin.port) === 0) ||
+      origin.href !== `${origin.origin}/` ||
+      dependencyOrigins.includes(origin.origin)
+    )
+      throw invalid();
+    const registrationTimeoutMs = parseDuration(
+      rawTimeout ?? "30s",
+      "ANTNEST_ACP_OWNER_REGISTRATION_TIMEOUT",
+    );
+    if (registrationTimeoutMs > 120_000) throw invalid();
+    return {
+      ownerIncarnation: {
+        memberId,
+        listen: { host, port },
+        runtimeControllerUrl: origin.href,
+        registrationTimeoutMs,
+      },
+    };
+  } catch {
+    throw invalid();
+  }
 }
 
 function parseConnectionLimits(environment: NodeJS.ProcessEnv): ConnectionCapacityLimits {

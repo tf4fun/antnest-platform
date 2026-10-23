@@ -21,6 +21,7 @@ import { PermissionConnections } from "./application/permission-connections.js";
 import { ToolPermissions } from "./application/tool-permissions.js";
 import { PostgresSessionConfiguration } from "./adapters/postgres/session-configuration.js";
 import { newResourceId } from "./domain/resource-id.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { Pool } from "pg";
 import { RuntimeConnections } from "./adapters/runtime-connections.js";
@@ -111,6 +112,12 @@ import {
 } from "./telemetry/instrumented-ports.js";
 import { AgentAcpHttpServer } from "./transport/http-server.js";
 import { InstrumentedToolPermissions } from "./telemetry/instrumented-permissions.js";
+import { OwnerIncarnation, OwnerIncarnationError } from "./application/owner-incarnation.js";
+import {
+  OwnerRegistrationAttemptError,
+  RuntimeControllerIncarnations,
+} from "./adapters/runtime-controller-incarnations.js";
+import { OwnerProbeServer } from "./transport/owner-probe-server.js";
 
 export type RunningAgentAcpService = {
   failure: Promise<Error>;
@@ -123,6 +130,7 @@ export async function startAgentAcpService(
   config: AgentAcpConfig,
   telemetry: TelemetryPort,
   reportOwnershipLoss: (error: WorkerOwnershipLostError) => void,
+  startupSignal?: AbortSignal,
 ): Promise<RunningAgentAcpService> {
   for (const variable of config.developmentSecretWarnings)
     telemetry.log("warn", "published_development_secret_enabled", { variable });
@@ -141,7 +149,12 @@ export async function startAgentAcpService(
   let requestedFailure: Error | undefined;
   let components: ReturnType<typeof buildComponents> | undefined;
   let listeningServer: AgentAcpHttpServer | undefined;
+  let incarnation: OwnerIncarnation | undefined;
+  let ownerProbe: OwnerProbeServer | undefined;
   const ownership = new AbortController();
+  const cancelStartup = (): void => ownership.abort(startupSignal?.reason);
+  startupSignal?.addEventListener("abort", cancelStartup, { once: true });
+  if (startupSignal?.aborted) cancelStartup();
   const recoveryRequired = (error: Error): void => {
     requestedFailure ??= error;
     serving = false;
@@ -152,6 +165,57 @@ export async function startAgentAcpService(
   };
 
   try {
+    ownership.signal.throwIfAborted();
+    if (config.ownerIncarnation !== undefined) {
+      const owner = config.ownerIncarnation;
+      incarnation = new OwnerIncarnation(owner.memberId);
+      ownerProbe = new OwnerProbeServer({
+        incarnation,
+        authentication: config.authentication.workload,
+      });
+      const registration = new RuntimeControllerIncarnations({
+        origin: owner.runtimeControllerUrl,
+        authentication: config.authentication.workload,
+      });
+      const deadline = new AbortController();
+      const registrationSignal = AbortSignal.any([ownership.signal, deadline.signal]);
+      const closeIntent = (): void => incarnation?.close();
+      registrationSignal.addEventListener("abort", closeIntent, { once: true });
+      if (registrationSignal.aborted) closeIntent();
+      const timer = setTimeout(
+        () => deadline.abort(new OwnerIncarnationError("deadline_exceeded")),
+        owner.registrationTimeoutMs,
+      );
+      try {
+        registrationSignal.throwIfAborted();
+        await ownerProbe.listen(owner.listen.host, owner.listen.port);
+        registrationSignal.throwIfAborted();
+        const original = incarnation.registrationRequest();
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const receipt = await registration.register(original, registrationSignal);
+            registrationSignal.throwIfAborted();
+            incarnation.acceptRegistration(receipt);
+            break;
+          } catch (error) {
+            if (error instanceof OwnerRegistrationAttemptError && !error.retryable) throw error;
+            registrationSignal.throwIfAborted();
+            if (attempt === 2 || !(error instanceof OwnerIncarnationError)) throw error;
+            // register has joined its original request and body cancellation.
+            // The next attempt retains the same pending tuple and total budget.
+            await delay(250 * 2 ** attempt, undefined, { signal: registrationSignal });
+          }
+        }
+      } catch (error) {
+        if (error instanceof OwnerRegistrationAttemptError && !error.retryable) throw error;
+        registrationSignal.throwIfAborted();
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        registrationSignal.removeEventListener("abort", closeIntent);
+      }
+    }
+    ownership.signal.throwIfAborted();
     const ownedRuntimeConnections = new RuntimeConnections({
       ...config.authentication.workload.runtimeTransport(),
       reportCleanupFailure: () => telemetry.log("warn", "runtime_connection_cleanup_failed"),
@@ -160,13 +224,16 @@ export async function startAgentAcpService(
     await telemetry.span("postgres.migrate", { "db.system.name": "postgresql" }, () =>
       migrate(pool),
     );
+    ownership.signal.throwIfAborted();
     await requireDependenciesReady(pool, telemetry);
+    ownership.signal.throwIfAborted();
     const acquiredWorkerLock = await telemetry.span(
       "postgres.worker_lock.acquire",
       { "db.system.name": "postgresql" },
       () => PostgresWorkerLock.acquire(pool),
     );
     workerLock = acquiredWorkerLock;
+    ownership.signal.throwIfAborted();
     const built = buildComponents(
       pool,
       config,
@@ -231,7 +298,9 @@ export async function startAgentAcpService(
     });
     listeningServer = server;
     await server.listenControl(config.controlListen.host, config.controlListen.port);
+    ownership.signal.throwIfAborted();
     await server.listen(config.listen.host, config.listen.port);
+    ownership.signal.throwIfAborted();
     serving = true;
     built.learningNotices.start();
     const learningRun = built.learningWorker?.run(ownership.signal).catch((error: unknown) => {
@@ -259,9 +328,11 @@ export async function startAgentAcpService(
       shutdownPromise ??= (async () => {
         serving = false;
         ownership.abort(new Error("Agent ACP Service is shutting down"));
+        incarnation?.close();
         built.learningNotices.stop();
         const results = await Promise.allSettled([
           server.close(),
+          ...(ownerProbe === undefined ? [] : [ownerProbe.close()]),
           built.supervisor.shutdown(),
           ...(learningRun === undefined ? [] : [learningRun]),
           ...(projectionRun === undefined ? [] : [projectionRun]),
@@ -292,19 +363,39 @@ export async function startAgentAcpService(
   } catch (error) {
     const startupError = asError(error);
     ownership.abort(startupError);
+    incarnation?.close();
+    const probeCleanup = ownerProbe === undefined ? undefined : await settle(ownerProbe.close());
     if (startupError instanceof WorkerOwnershipLostError) {
       await runtimeConnections?.close().catch(() => undefined);
       throw startupError;
     }
     components?.supervisor.stop(startupError);
     components?.learningNotices.stop();
-    await listeningServer?.close().catch(() => undefined);
-    await components?.supervisor.shutdown().catch(() => undefined);
-    await runtimeConnections?.close().catch(() => undefined);
-    await workerLock?.release().catch(() => undefined);
-    await pool.end().catch(() => undefined);
-    await config.authentication.workload.close().catch(() => undefined);
+    const cleanupFailures: unknown[] =
+      probeCleanup?.status === "rejected" ? [probeCleanup.reason as unknown] : [];
+    for (const cleanup of [
+      () => listeningServer?.close(),
+      () => components?.supervisor.shutdown(),
+      () => runtimeConnections?.close(),
+      () => workerLock?.release(),
+      () => pool.end(),
+      () => config.authentication.workload.close(),
+    ]) {
+      try {
+        await cleanup();
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+    }
+    if (cleanupFailures.length !== 0)
+      throw new AggregateError(
+        [startupError, ...cleanupFailures],
+        "Agent ACP Service startup cleanup was incomplete",
+        { cause: error },
+      );
     throw startupError;
+  } finally {
+    startupSignal?.removeEventListener("abort", cancelStartup);
   }
 }
 

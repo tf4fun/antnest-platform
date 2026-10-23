@@ -93,8 +93,33 @@ multihomed peer must not select its observation, database or outbound interface.
 ACP uses the already declared `agent-acp-workspace` and `agent-acp-control`
 aliases. `apply-execution-snapshot`, `settle-agent` and `get-runtime-barrier` use
 the control alias.
-The contract tests derive all 24 current caller/receiver pairs from the owning
+The contract tests derive all 25 current caller/receiver pairs from the owning
 catalogs, and verify both network membership and destination selection.
+The new `runtime-controller->agent-acp-service` credential pair is for the private
+owner incarnation probe; owner deployment and multi-replica acceptance remain
+pending.
+
+The optional test profile `acp-owner-bootstrap` gives ACP an independent owner
+listener on `controller-runtime`, at suffix 53 and port 8085. Base Compose leaves
+all owner settings unset. The network matrix keeps port 8085 in its negative
+checks even when the profile is disabled; when enabled, it must be unreachable
+through every other interface and network. This listener authenticates the RC
+workload before routing, including unknown paths and `/status`.
+
+RC's owner destination uses `docker-inspect` resolution: its private member
+catalog names the exact Compose container and network, and RC pins the callback
+to the address read from Docker. The existing `agent-acp-service` hostname is the
+logical authority, not a new DNS-selected workspace destination. No base
+`extra_hosts` mapping or RC membership of the edge network is added.
+
+The test-only `tests/e2e/security/owner.compose.yaml` mounts a prewritten member
+catalog read-only with `create_host_path: false`. Its file stays mode 0600; RC
+inherits the same generated UID/GID as the host credential owner. The overlay
+waits for healthy RC before starting ACP's registration handshake. These fixture
+contracts do not admit production deployment or multi-replica ownership; actual
+registration, ordinary Run persistence and resource cleanup still need the
+explicit owner-profile E2E gate.
+
 Version 2 adds RC at suffix 24 so its authenticated secret resolver reaches
 Controller's primary listener at suffix 18. It does not expose Controller on
 Runtime management or add a circular startup dependency.

@@ -51,6 +51,54 @@ Connecting every owned write and scoped recovery, covering configuration ACKs
 across owners, forwarding connections and the final two-replica integration
 remain required before removing the global worker lock.
 
+## Optional Incarnation Bootstrap
+
+The optional owner configuration adds a startup gate before database access or
+ordinary listeners. A process first creates a fresh CSPRNG UUIDv4 incarnation
+and a 32-byte hexadecimal registration nonce, then opens a separate private
+owner listener. Only the verified Runtime Controller workload may call
+`POST /internal/acp-owner/incarnation/probe` there. The workspace, control and
+health listeners do not serve this route. A probe matches the original local
+pending member/incarnation/nonce and echoes Runtime Controller's challenge;
+success does not consume that intent. Identity, PostgreSQL, ordinary readiness
+and Controller publication are not probe dependencies.
+
+```text
+validated optional owner configuration
+  -> fresh local incarnation and pending registration nonce
+  -> independent Runtime Controller-only probe listener
+  -> Runtime Controller registration and validated matching receipt
+  -> PostgreSQL migration and readiness check
+  -> existing global worker lock and startup recovery
+  -> configuration restoration and ordinary control/workspace listeners
+```
+
+`OwnerIncarnation` retains one immutable registration tuple for the process.
+Unknown outcomes retry that exact tuple and nonce, without recreating the
+incarnation or replaying execution. Registration makes at most three attempts,
+with 250ms and 500ms delays and a ten-second maximum per attempt. All attempts
+share the configured total budget, default 30 seconds and maximum 120 seconds.
+HTTP 4xx responses other than 408 and 429 end registration without retry. The
+original request, response read and cancellation cleanup actually settle before
+another attempt starts; cleanup failure is not permission to retry.
+
+A validated receipt consumes the pending intent. Startup cancellation,
+including SIGTERM or total-budget expiry, permanently closes it while joining
+the original registration and probe resources. A late receipt cannot reopen the
+intent or start database work and ordinary listeners. Request, response and
+error payload capture remains disabled for this private wire; nonces and
+configured probe addresses are not log content. The
+[handoff contract](../../../contracts/agent-acp/owner-handoff.md) defines the
+registration boundary, and [operations](operations.md#optional-acp-incarnation-bootstrap)
+documents its configuration.
+
+Bootstrap is optional and does not attach this identity to production Agent
+lease ownership or fenced writers. The global worker lock, single-instance
+restriction and ownership-loss fail-stop channel remain. Production owner
+coordination, fenced writes, scoped recovery, cross-owner configuration and
+revocation ACKs, peer routing, deployment membership and explicit two-replica
+integration remain separate pending work.
+
 ## Mission
 
 Turn one authenticated ACP connection into durable Session work while keeping
@@ -596,8 +644,9 @@ its terminal state. The service never removes an in-memory executor and keeps
 serving as though execution had safely finished.
 
 Shutdown first clears readiness, then terminates ACP transports and cancels
-active execution. Server, supervisor, worker-lock, and PostgreSQL cleanup are
-all attempted even when one cleanup operation fails; an incomplete shutdown
+active execution. The optional owner intent closes permanently and its probe
+listener joins shutdown cleanup. Server, supervisor, worker-lock, and PostgreSQL
+cleanup are all attempted even when one cleanup operation fails; an incomplete shutdown
 exits non-zero for platform replacement.
 
 ## Connection Identity

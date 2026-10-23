@@ -277,6 +277,27 @@ export const suites = [
     run: ["make e2e-service-authentication-matrix"],
   },
   {
+    id: "acp-owner-bootstrap",
+    name: "ACP owner registration and ordinary Run admission",
+    tier: "b",
+    setup: [],
+    images: platformImages,
+    pull: observed,
+    paths: [
+      "services/**",
+      ...runtime,
+      "tests/e2e/security/**",
+      "tests/e2e/acp-closeout/**",
+      "tests/e2e/workspace-closeout/c4-*",
+      "tests/e2e/identity-closeout/**",
+      "tests/e2e/observability/**",
+      "tests/e2e/skill-learning/**",
+      ...go,
+      ...compose,
+    ],
+    run: ["node tests/e2e/security/owner-run.mjs"],
+  },
+  {
     id: "deployment-docker",
     name: "Deployment credentials, PKI and ports",
     tier: "b",
@@ -1105,7 +1126,7 @@ export const shards = [
   {
     id: "b-auth-matrix",
     name: "Production authentication matrix",
-    suites: ["auth-network-matrix"],
+    suites: ["auth-network-matrix", "acp-owner-bootstrap"],
   },
   {
     id: "b-deployment",

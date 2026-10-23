@@ -57,6 +57,7 @@ export async function runNetworkMatrix({
   );
   const plans = planNetworkMatrix({
     project: config.project,
+    profiles: config.ownerProfiles,
     topology,
     catalogs,
     rows,

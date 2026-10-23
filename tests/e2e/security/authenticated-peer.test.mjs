@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
+import { inspect } from "node:util";
 import { authenticatePeer } from "./authenticated-peer.mjs";
 
 const agentId = `agent_${"1".repeat(32)}`;
@@ -25,6 +26,7 @@ const tokens = Object.fromEntries(
     "gateway-acp",
     "acp-registry",
     "rc-registry",
+    "rc-acp",
   ].map((name, index) => [name, String.fromCharCode(65 + index).repeat(43)]),
 );
 
@@ -52,6 +54,7 @@ function fixture(options = {}) {
       ].map((name) => [name, `http://${name}.fixture:8080`]),
     ),
   };
+  if (options.owner) plan.endpoints.owner = "http://owner.fixture:8085";
   const json = (body, status = 200) =>
     new Response(JSON.stringify(body), { status });
   const failure = (code, status) => json({ code }, status);
@@ -107,6 +110,77 @@ function fixture(options = {}) {
         method: init.method,
       };
       requests.push(request);
+      if (hostname === "owner.fixture") {
+        assert(options.owner, "owner endpoint was not selected");
+        assert.equal(
+          context,
+          undefined,
+          "owner probe must use only workload authority",
+        );
+        for (const header of ["Authorization", "Cookie"])
+          assert.equal(init.headers[header], undefined);
+        let check;
+        if (pathname === "/internal/acp-owner/incarnation/probe") {
+          assert.equal(init.method, "POST");
+          if (grant === undefined) check = "anonymous";
+          else if (grant === "agent-ui-acp") check = "wrong-caller";
+          else {
+            assert.equal(grant, "rc-acp");
+            check = "pending-intent";
+            assert(body && typeof body === "object" && !Array.isArray(body));
+            assert.deepEqual(Object.keys(body).sort(), [
+              "challenge",
+              "incarnation_id",
+              "member_id",
+              "registration_nonce",
+            ]);
+            assert.equal(body.member_id, "acp-a");
+            assert(
+              /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+                body.incarnation_id,
+              ),
+              "owner probe requires a canonical UUIDv4",
+            );
+            for (const key of ["registration_nonce", "challenge"])
+              assert(
+                typeof body[key] === "string" &&
+                  /^[a-f0-9]{64}$/u.test(body[key]),
+                "owner probe requires a lower-hex nonce and challenge",
+              );
+          }
+        } else {
+          assert.equal(pathname, "/status");
+          assert.equal(init.method, "GET");
+          assert.equal(grant, "rc-acp");
+          assert.equal(body, undefined);
+          check = "private-status";
+        }
+        const [status, code] = {
+          anonymous: [401, "service_unauthenticated"],
+          "wrong-caller": [403, "caller_not_allowed"],
+          "pending-intent": [409, "acp_probe_intent_mismatch"],
+          "private-status": [404, "route_not_found"],
+        }[check];
+        request.ownerCheck = check;
+        const fault =
+          options.ownerFault?.check === check
+            ? options.ownerFault.kind
+            : undefined;
+        const actualStatus = fault === "status" ? 200 : status;
+        const actualCode =
+          fault === "code" ? "PRIVATE_OWNER_PROBE_RAW_PAYLOAD" : code;
+        request.ownerResponse = { status: actualStatus, code: actualCode };
+        return json(
+          {
+            code: actualCode,
+            message: fault
+              ? `PRIVATE_OWNER_PROBE_RAW_PAYLOAD:${tokens["rc-acp"]}:${body?.registration_nonce ?? "absent"}`
+              : "ACP incarnation request did not complete",
+            retryable: false,
+          },
+          actualStatus,
+        );
+      }
       if (hostname === "identity.fixture") {
         if (pathname.endsWith("/local-login")) {
           const session =
@@ -322,3 +396,126 @@ test("policy setup keeps the Console context and independent ACP reader", async 
   );
   assert.deepEqual(f.revoked, ["owner"]);
 });
+
+test("matrix exercises all four private owner authentication gates when its endpoint is selected", async () => {
+  const f = fixture({ owner: true });
+  const result = await authenticatePeer(f.plan, f.dependencies);
+  assert.equal(result.status, "passed");
+  const owner = f.requests.filter(
+    (request) => request.hostname === "owner.fixture",
+  );
+  assert.equal(
+    owner.length,
+    4,
+    "selected owner admission checks must actually run",
+  );
+  for (const [check, method, path, grant, status, code] of [
+    [
+      "anonymous",
+      "POST",
+      "/internal/acp-owner/incarnation/probe",
+      undefined,
+      401,
+      "service_unauthenticated",
+    ],
+    [
+      "wrong-caller",
+      "POST",
+      "/internal/acp-owner/incarnation/probe",
+      "agent-ui-acp",
+      403,
+      "caller_not_allowed",
+    ],
+    [
+      "pending-intent",
+      "POST",
+      "/internal/acp-owner/incarnation/probe",
+      "rc-acp",
+      409,
+      "acp_probe_intent_mismatch",
+    ],
+    ["private-status", "GET", "/status", "rc-acp", 404, "route_not_found"],
+  ]) {
+    const matching = owner.filter((request) => request.ownerCheck === check);
+    assert.equal(
+      matching.length,
+      1,
+      `${check}: missing or duplicate owner check`,
+    );
+    const [request] = matching;
+    assert.equal(request.method, method);
+    assert.equal(request.pathname, path);
+    assert.equal(request.grant, grant);
+    assert.deepEqual(request.ownerResponse, { status, code });
+    assert.equal(request.context, undefined);
+  }
+  for (const session of ["owner", "admin"])
+    assert(
+      f.revoked.includes(session),
+      "owner checks must release both disposable identities",
+    );
+  assert.equal(f.reports.at(-1).status, "passed");
+});
+
+for (const check of [
+  "anonymous",
+  "wrong-caller",
+  "pending-intent",
+  "private-status",
+]) {
+  for (const kind of ["status", "code"]) {
+    test(`matrix rejects owner ${check} with the wrong ${kind} and still revokes both identities`, async () => {
+      const f = fixture({ owner: true, ownerFault: { check, kind } });
+      const outcome = await authenticatePeer(f.plan, f.dependencies).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      );
+      // These are actual revocation requests, observed even when the baseline
+      // incorrectly skips the selected owner checks and returns success.
+      const revocations = f.requests.filter(
+        (request) =>
+          request.hostname === "identity.fixture" &&
+          request.pathname.endsWith("/revoke-access-token"),
+      );
+      for (const session of ["owner", "admin"]) {
+        assert(
+          f.revoked.includes(session),
+          "owner gate failure skipped identity cleanup",
+        );
+        assert(
+          revocations.some((request) => request.body.access_token === session),
+          "identity cleanup was not actually requested",
+        );
+      }
+      assert.equal(
+        outcome.ok,
+        false,
+        "matrix accepted an unverified private owner endpoint",
+      );
+      if (outcome.ok) assert.fail("owner gate failure became a passing matrix");
+      assert.equal(
+        f.requests.filter((request) => request.ownerCheck === check).length,
+        1,
+        "the failing owner gate must actually execute",
+      );
+      assert.equal(f.reports.at(-1).status, "failed");
+      const rendered = `${inspect(outcome.error, { depth: 8 })}\n${JSON.stringify(f.reports)}`;
+      const opaque = f.requests
+        .flatMap((request) =>
+          request.hostname === "owner.fixture"
+            ? [request.body?.registration_nonce, request.body?.challenge]
+            : [],
+        )
+        .filter((value) => typeof value === "string" && value.length !== 0);
+      for (const secret of [
+        ...Object.values(tokens),
+        ...opaque,
+        "PRIVATE_OWNER_PROBE_RAW_PAYLOAD",
+      ])
+        assert(
+          !rendered.includes(secret),
+          "owner failure/report disclosed private response material",
+        );
+    });
+  }
+}

@@ -220,3 +220,222 @@ test("missing, foreign and unclassified networks cannot silently disappear from 
     assert.throws(() => planNetworkMatrix(value));
   }
 });
+
+const ownerProbePath = "/internal/acp-owner/incarnation/probe";
+const ownerProfile = "acp-owner-bootstrap";
+
+function ownerFixture() {
+  const value = fixture();
+  value.topology.networks["controller-runtime"] = {};
+  value.topology.listeners["agent-acp-service"].owner = {
+    network: "controller-runtime",
+    port: 8085,
+    profile: ownerProfile,
+    authentication_before_routing: true,
+  };
+  value.topology.owner_routes = {
+    "agent-acp-service": [`POST ${ownerProbePath}`],
+  };
+  value.catalogs["agent-acp-service"].routes[`POST ${ownerProbePath}`] = {
+    callers: ["runtime-controller"],
+    authentication: "workload",
+    caller_context: { "runtime-controller": "none" },
+    request_body: "json",
+  };
+  value.networks.push({
+    Id: "controller-runtime-id",
+    Name: "fixture_controller-runtime",
+    Internal: true,
+    Labels: {
+      "com.docker.compose.project": value.project,
+      "com.docker.compose.network": "controller-runtime",
+    },
+  });
+  value.rows[0].NetworkSettings.Networks["fixture_controller-runtime"] = {
+    IPAddress: "10.244.49.5",
+  };
+  return value;
+}
+
+function assertOrdinaryACPListeners(plan) {
+  for (const [key, port, method, path, status] of [
+    ["edge", 8080, "POST", "/rpc/apply", 404],
+    ["edge", 8080, "GET", "/rpc/agents/security-probe", 401],
+    ["controller-acp", 8081, "POST", "/rpc/apply", 401],
+    ["controller-acp", 8081, "GET", "/rpc/agents/security-probe", 404],
+    ["edge", 8080, "POST", ownerProbePath, 404],
+    ["controller-acp", 8081, "POST", ownerProbePath, 404],
+  ]) {
+    const network = plan.find((entry) => entry.key === key);
+    assert(network, `missing ordinary ACP network ${key}`);
+    assert(
+      network.probes.some(
+        (probe) =>
+          probe.service === "agent-acp-service" &&
+          probe.port === port &&
+          probe.method === method &&
+          probe.path === path &&
+          probe.status === status &&
+          !probe.closed,
+      ),
+      `${key}:${port} ${method} ${path} must remain ${status}`,
+    );
+  }
+}
+
+test("the optional ACP owner port stays closed on every interface unless its exact profile is enabled", () => {
+  for (const profiles of [undefined, []]) {
+    const value = ownerFixture();
+    const plan = planNetworkMatrix({
+      ...value,
+      ...(profiles === undefined ? {} : { profiles }),
+    });
+    assert.equal(plan.length, 5);
+    for (const network of plan) {
+      const address =
+        value.rows[0].NetworkSettings.Networks[network.name].IPAddress;
+      const ownInterface = network.probes.filter(
+        (probe) =>
+          probe.service === "agent-acp-service" &&
+          probe.address === address &&
+          probe.port === 8085,
+      );
+      assert(
+        ownInterface.length > 0,
+        `${network.key}: owner port disappeared from the matrix`,
+      );
+      assert(
+        ownInterface.every((probe) => probe.closed),
+        `${network.key}: disabled owner port is open`,
+      );
+      assert(
+        network.probes
+          .filter(
+            (probe) =>
+              probe.service === "agent-acp-service" && probe.port === 8085,
+          )
+          .every((probe) => probe.closed),
+        `${network.key}: disabled owner profile granted a route`,
+      );
+    }
+    assertOrdinaryACPListeners(plan);
+  }
+});
+
+test("the ACP owner profile opens only its purpose interface, authenticates before routing and keeps its address unreachable from other networks", () => {
+  const value = ownerFixture();
+  const plan = planNetworkMatrix({ ...value, profiles: [ownerProfile] });
+  assert.equal(plan.length, 5);
+  const ownerAddress =
+    value.rows[0].NetworkSettings.Networks["fixture_controller-runtime"]
+      .IPAddress;
+  const owner = plan.find((network) => network.key === "controller-runtime");
+  assert(owner, "missing owner purpose network");
+  const ownerProbes = owner.probes.filter(
+    (probe) =>
+      probe.service === "agent-acp-service" &&
+      probe.address === ownerAddress &&
+      probe.port === 8085,
+  );
+  assert(
+    ownerProbes.length > 0,
+    "enabled owner listener has no anonymous probes",
+  );
+  assert(ownerProbes.every((probe) => !probe.closed && probe.status === 401));
+  for (const [method, path] of [
+    ["POST", ownerProbePath],
+    ["POST", "/rpc/apply"],
+    ["GET", "/rpc/agents/security-probe"],
+    ["GET", "/status"],
+  ]) {
+    assert(
+      ownerProbes.some(
+        (probe) =>
+          probe.method === method &&
+          probe.path === path &&
+          probe.status === 401,
+      ),
+      `owner listener must authenticate anonymous ${method} ${path} before routing`,
+    );
+  }
+  assert(
+    ownerProbes.some(
+      (probe) =>
+        probe.method === "POST" &&
+        probe.path === ownerProbePath &&
+        probe.body === true,
+    ),
+  );
+  for (const network of plan) {
+    if (network.key === "controller-runtime") continue;
+    const address =
+      value.rows[0].NetworkSettings.Networks[network.name].IPAddress;
+    for (const destination of new Set([address, ownerAddress])) {
+      const probes = network.probes.filter(
+        (probe) =>
+          probe.service === "agent-acp-service" &&
+          probe.address === destination &&
+          probe.port === 8085,
+      );
+      assert(
+        probes.length > 0,
+        `${network.key}: missing closed owner destination`,
+      );
+      assert(
+        probes.every((probe) => probe.closed),
+        `${network.key}: owner destination is reachable`,
+      );
+    }
+  }
+  assertOrdinaryACPListeners(plan);
+  const control = plan.find((network) => network.key === "controller-acp");
+  const controlProbe = control.probes.find(
+    (probe) =>
+      probe.port === 8081 &&
+      probe.path === "/rpc/apply" &&
+      probe.status === 401,
+  );
+  assert(controlProbe);
+  for (const network of plan) {
+    if (network.key === "controller-acp") continue;
+    assert(
+      network.probes.some(
+        (probe) =>
+          probe.service === "agent-acp-service" &&
+          probe.address === controlProbe.address &&
+          probe.port === 8081 &&
+          probe.closed,
+      ),
+      `${network.key}: original ACP control isolation disappeared`,
+    );
+  }
+});
+
+test("unknown and malformed profile selections fail closed instead of silently skipping owner admission", () => {
+  for (const profiles of [
+    ["unknown-profile"],
+    ["acp-owner-bootstrp"],
+    [ownerProfile, "unknown-profile"],
+    [""],
+    [1],
+    [null],
+    ownerProfile,
+    null,
+    {},
+    true,
+    1,
+  ]) {
+    assert.throws(
+      () => planNetworkMatrix({ ...ownerFixture(), profiles }),
+      `invalid profiles ${JSON.stringify(profiles)} did not reject`,
+    );
+  }
+});
+
+test("enabled owner admission cannot pass when its interface is missing from actual inventory", () => {
+  const input = ownerFixture();
+  delete input.rows[0].NetworkSettings.Networks["fixture_controller-runtime"];
+  assert.throws(() =>
+    planNetworkMatrix({ ...input, profiles: [ownerProfile] }),
+  );
+});

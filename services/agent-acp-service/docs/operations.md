@@ -8,13 +8,17 @@ endpoints, telemetry, failure handling and the network deployment boundary.
 The process starts accepting ACP connections only after:
 
 1. configuration validates;
-2. private PostgreSQL migrations succeed;
-3. the private PostgreSQL database answers the local storage check;
-4. the process exclusively owns the database-scoped Run worker lock;
-5. startup recovery has classified all non-terminal Runs.
+2. optional incarnation bootstrap opens its independent private probe and
+   validates the Runtime Controller registration receipt;
+3. private PostgreSQL migrations succeed;
+4. the private PostgreSQL database answers the local storage check;
+5. the process exclusively owns the database-scoped Run worker lock;
+6. startup recovery has classified all non-terminal Runs and configuration
+   restoration completes.
 
 `GET /status` returns `ready` only after those gates and while the worker lock
-is held and shutdown has not started. Each probe checks only private PostgreSQL.
+is held and shutdown has not started. Each readiness probe checks only private
+PostgreSQL.
 Agent Controller, model APIs and Runtime MCP are business dependencies and are
 not recursively probed for readiness. Startup interruption cleanup uses only
 this service's storage, never Controller RPCs or model/Tool execution.
@@ -22,6 +26,75 @@ Serving the protocol is not permission to execute: the current-process organizat
 snapshot and volatile credentials must also have been applied. Production composition
 wires that directory to access, execution and revocation; see
 [local execution configuration](execution-configuration.md).
+
+### Optional ACP Incarnation Bootstrap
+
+Leave all four owner settings unset to keep bootstrap disabled. To enable it,
+configure `ANTNEST_ACP_OWNER_MEMBER_ID`, `ANTNEST_ACP_OWNER_LISTEN` and
+`ANTNEST_ACP_RUNTIME_CONTROLLER_URL` together. There is no default member,
+owner address or Runtime Controller origin. A partial group, including a
+registration timeout configured alone, fails configuration before database or
+network access.
+
+- `ANTNEST_ACP_OWNER_MEMBER_ID` is an exact 1–64-character catalog label using
+  lowercase ASCII letters, digits and hyphens, beginning and ending with a
+  letter or digit. It is not trimmed or derived from a container selector.
+- `ANTNEST_ACP_OWNER_LISTEN` requires a literal IPv4 `address:port` or bracketed
+  IPv6 `[address]:port`, with port 1–65535 and no surrounding whitespace.
+  Hostnames, unspecified addresses, multicast, broadcast and overlap with an
+  ordinary workspace/control listener are rejected. Bind it to the private
+  address configured in Runtime Controller's operator-owned member catalog.
+- `ANTNEST_ACP_RUNTIME_CONTROLLER_URL` is a fixed `http://` or `https://` origin,
+  with no credentials, non-root path, query, fragment, port zero or surrounding
+  whitespace. It must differ from the configured Identity, Registry and
+  learning-policy Controller origins. Runtime Controller requires its own
+  receiver-specific service sender credential and trusted transport.
+- `ANTNEST_ACP_OWNER_REGISTRATION_TIMEOUT` defaults to `30s`. It accepts a
+  positive integer duration in `ms`, `s` or `m`, up to `120s`, shared by private
+  listener startup, registration attempts and retry delays.
+
+The process creates one fresh random incarnation and registration nonce before
+opening `POST /internal/acp-owner/incarnation/probe` on the independent owner
+listener. Only authenticated Runtime Controller workload calls are admitted;
+the route does not use user CCT, Identity, PostgreSQL, Controller publication or
+ordinary readiness. Existing workspace, control and health listeners do not
+serve it. A successful challenge matches the still-pending local intent and
+does not consume it. Configure Runtime Controller's matching member catalog and
+the service workload credentials separately; ACP receives no Docker authority.
+
+Startup then registers that original member/incarnation/nonce tuple with
+Runtime Controller and validates the returned member/incarnation and opaque
+registration identifier. Only a validated receipt allows database migration,
+worker-lock acquisition, recovery, restoration and ordinary listening to begin.
+The registration gate is not a recurring Runtime Controller health check.
+
+Unknown or retryable registration outcomes make at most three attempts, with
+250ms before the second and 500ms before the third. Each attempt has a
+ten-second maximum within the remaining total budget. HTTP 4xx responses other
+than 408 and 429 terminate registration without retry. Retries preserve the
+same tuple and nonce; they do not start a new incarnation, choose a new member
+or replay a Prompt, Model call or Tool call. Each original request, response
+read and cancellation cleanup actually settle before the next attempt starts.
+Failed cleanup ends startup. Exhausted attempts or budget leave the service
+unready and fail startup after cleanup.
+
+SIGTERM during startup cancels registration or its backoff and permanently
+closes pending intent immediately. Shutdown joins the original registration,
+body cancellation and owner listener resources; a late successful receipt
+cannot reopen the intent or continue ordinary startup. The configured process
+shutdown deadline still bounds cleanup, and incomplete cleanup exits non-zero.
+The owner wire uses `no-store` and suppresses request, response and error payload
+capture even when RPC content capture is enabled. Logs do not include nonces,
+credentials or configured private probe addresses.
+
+This optional wiring does not provide multi-replica execution. The global
+worker lock and its independent ownership-loss fail-stop behavior remain.
+Production owner coordination, fenced writers, scoped recovery, cross-owner
+configuration/revocation ACKs, peers, deployment membership and explicit
+two-replica integration remain pending. Do not remove the single-instance
+restriction. See the [owner handoff contract](../../../contracts/agent-acp/owner-handoff.md).
+
+### PostgreSQL Migration And Recovery
 
 The migration journal must be an exact prefix of the ordered migration catalog
 embedded in the running release. A changed checksum, gap, or unknown future
