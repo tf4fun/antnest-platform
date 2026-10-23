@@ -787,6 +787,12 @@ closure and are recorded before telemetry flush. Repeated signals do not create
 another shutdown or extend the deadline; expiry forces a non-zero exit without
 claiming successful joins.
 
+In legacy mode, Learning cancellation may finish the review worker before its
+original model call settles. The service retains those calls and joins their
+transport cleanup after the workers stop, before closing Runtime connections,
+releasing the worker lock or ending the database pool. Registered-owner mode
+keeps this retention within each Agent generation.
+
 ## Connection Identity
 
 Agent UI forwards the unchanged Identity-signed CCT with its own workload
@@ -834,8 +840,11 @@ owned work, and updates only the validated legacy set. Production now connects
 fixed generation dispatch and scoped legacy recovery. Legacy compatibility
 writes still use global worker-lock authority, while work cancellation uses
 the entry signal and Learning retains and joins original model work.
-Predecessor stop-proof recovery, cross-owner ACKs and peers, two-replica
-integration, and background Learning shutdown/isolation acceptance remain pending.
+Production component tests hold a real Provider transport close during legacy
+and owned shutdown, and expire Agent A's lease while Agent B completes a real
+foreground Run. Predecessor stop-proof and Learning claim/global review-slot
+recovery, cross-owner ACKs and peers, and two-replica integration remain pending.
+Foreground isolation does not establish another Agent's background claim recovery.
 
 ## Workspace Bridge Extension
 
@@ -920,7 +929,8 @@ Unsupported surfaces are not stubbed with false success responses.
 11. Losing the worker-lock session closes dispatch and signals cancellation to
     recovery and local executors. The original startup and single shutdown are
     retained under one absolute deadline; forced exit at expiry proves no join.
-    Background Learning shutdown/isolation acceptance remains pending.
+    Learning retains original inference through transport cleanup before shared
+    worker-lock and database resources are released.
 12. Transactions that need both records lock the Session before the Run; this
     canonical order also applies to cancellation and durable event writes.
 13. A Tool-call batch produces no external effect until every call in that

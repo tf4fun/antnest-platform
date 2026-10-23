@@ -120,8 +120,8 @@ work.
 
 The global worker lock, single-instance restriction and independent
 ownership-loss fail-stop channel remain. Production predecessor stop-proof
-recovery, cross-owner ACKs and peers, two-replica integration, and background Learning
-shutdown/isolation acceptance remain pending.
+and Learning claim/global review-slot recovery, cross-owner ACKs and peers,
+and two-replica integration remain pending.
 Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
 registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
 it does not establish a real Runtime Controller/Runtime deployment or two replicas.
@@ -197,8 +197,8 @@ effect. These callbacks must contain database work only. Existing transactions
 without this option retain their existing configured statement budgets.
 
 Production predecessor stop-proof recovery, cross-owner configuration/revocation
-ACKs and trusted peers, two-replica integration, and background Learning
-shutdown/isolation acceptance remain required. The
+ACKs and trusted peers, two-replica integration, and predecessor Learning
+claim/global review-slot recovery remain required. The
 [ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
 those remaining gates. Lease rows must not be deleted to reset an epoch.
 
@@ -309,7 +309,9 @@ authority only until its attempt ends; a resend uses the current binding. An aut
 normal stopping and durable settlement rules still apply. Normal shutdown and
 failed startup close the dispatcher and remove owned sender files. Global
 worker-loss cleanup retains the original startup and single shutdown under the
-same absolute deadline; forced exit at expiry proves no completed join. Background Learning shutdown/isolation acceptance remains pending. See [execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission)
+same absolute deadline; forced exit at expiry proves no completed join. Both
+legacy service shutdown and owned generation retirement retain original Learning
+inference through its native transport close. See [execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission)
 and the [private connection contract](../../../contracts/runtime/instance-connection.md).
 
 ## Provider Model Egress
@@ -526,7 +528,10 @@ Collector retention. This service adds no retention service.
   verifies cleanup after release or hard exit at the original deadline. The
   latter is not proof of successful SQL completion. See
   [`main-worker-loss.postgres.test.ts`](../../../tests/integration/agent-acp-service/e2e/main-worker-loss.postgres.test.ts).
-  Background Learning shutdown/isolation acceptance remains pending.
+  The separate [Learning lifecycle component test](../../../tests/integration/agent-acp-service/e2e/learning-lifecycle.postgres.test.ts)
+  holds real Provider transport cleanup during legacy/owned shutdown and Agent A
+  lease loss while B completes a foreground Run. It does not establish B's
+  background claim recovery, predecessor stop-proof handling or two replicas.
 - Session cancellation, close, or delete: persist a cancellation latch before
   waiting for in-memory execution. A late acceptance commit reaches an already
   aborted executor and is closed without starting model or Tool work.

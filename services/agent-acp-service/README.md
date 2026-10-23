@@ -238,10 +238,12 @@ The generation manager uses a 30-second lease, 10-second renewal interval and
 Legacy compatibility writes still derive authority from the held global worker
 lock; work cancellation uses the entry signal, and Learning retains and joins
 its original model work.
+With owner settings disabled, the service also joins original Learning model
+calls after worker cancellation and before shared connection and lock cleanup.
 
 The global worker lock and single-instance restriction remain. Production
-predecessor stop-proof recovery, cross-owner ACKs and peers, two-replica
-integration, and production background Learning shutdown/isolation acceptance
+predecessor stop-proof and Learning claim/global review-slot recovery,
+cross-owner ACKs and peers, and two-replica integration
 remain pending under the
 [owner handoff contract](../../contracts/agent-acp/owner-handoff.md).
 

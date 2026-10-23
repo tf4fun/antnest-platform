@@ -90,6 +90,7 @@ export async function startAgentAcpService(
   let listeningServer: AgentAcpHttpServer | undefined;
   let incarnation: OwnerIncarnation | undefined;
   let ownerProbe: OwnerProbeServer | undefined;
+  const background: Promise<void>[] = [];
   const ownership = new AbortController();
   const cancelStartup = (): void => ownership.abort(startupSignal?.reason);
   startupSignal?.addEventListener("abort", cancelStartup, { once: true });
@@ -255,11 +256,13 @@ export async function startAgentAcpService(
       .catch((error: unknown) => {
         if (!ownership.signal.aborted) recoveryRequired(asError(error));
       });
+    if (learningRun !== undefined) background.push(learningRun);
     const projectionRun = built.skillProjectionWorker
       ?.run(ownership.signal)
       .catch((error: unknown) => {
         if (!ownership.signal.aborted) recoveryRequired(asError(error));
       });
+    if (projectionRun !== undefined) background.push(projectionRun);
     const temporaryCleanupRun = (
       built.owned === undefined ? built.temporarySkillCleanupWorker : undefined
     )
@@ -267,6 +270,7 @@ export async function startAgentAcpService(
       .catch((error: unknown) => {
         if (!ownership.signal.aborted) recoveryRequired(asError(error));
       });
+    if (temporaryCleanupRun !== undefined) background.push(temporaryCleanupRun);
     telemetry.log("info", "service_started", {
       listen_host: config.listen.host,
       listen_port: config.listen.port,
@@ -286,10 +290,11 @@ export async function startAgentAcpService(
           ...(ownerProbe === undefined ? [] : [ownerProbe.close()]),
           built.supervisor.shutdown(),
           ...(built.owned === undefined ? [] : [built.owned.shutdown()]),
-          ...(learningRun === undefined ? [] : [learningRun]),
-          ...(projectionRun === undefined ? [] : [projectionRun]),
-          ...(temporaryCleanupRun === undefined ? [] : [temporaryCleanupRun]),
+          ...background,
         ]);
+        // Review cancellation can settle the worker before the original
+        // inference's finally/transport close. Join it before shared resources.
+        await built.joinLegacyModelRequests();
         results.push(
           await settle(ownedRuntimeConnections.close()),
           await settle(acquiredWorkerLock.release()),
@@ -325,6 +330,8 @@ export async function startAgentAcpService(
       () => listeningServer?.close(),
       () => components?.supervisor.shutdown(),
       () => components?.owned?.shutdown(),
+      () => Promise.allSettled(background),
+      () => components?.joinLegacyModelRequests(),
       () => runtimeConnections?.close(),
       () => workerLock?.release(),
       () => pool.end(),
@@ -388,6 +395,14 @@ export function buildComponents(
     telemetry,
   );
   const providers = new ProviderClients(model);
+  const legacyModelRequests = new Set<Promise<unknown>>();
+  const retainLegacyModelRequest = (original: Promise<unknown>): void => {
+    legacyModelRequests.add(original);
+    void original.then(
+      () => legacyModelRequests.delete(original),
+      () => legacyModelRequests.delete(original),
+    );
+  };
   const permissionConnections = new PermissionConnections();
   const outputs = new SessionOutputStreams();
   let owned: OwnedAgentComponents | undefined;
@@ -452,6 +467,7 @@ export function buildComponents(
     telemetry,
     ownershipSignal,
     recoveryRequired,
+    ...(registration === undefined ? { retainModelRequest: retainLegacyModelRequest } : {}),
     now,
   });
   const {
@@ -597,6 +613,11 @@ export function buildComponents(
     learningWorker,
     permissionConnections,
     permissionRepository,
+    async joinLegacyModelRequests(): Promise<void> {
+      // Business cancellation and errors remain owned by the review worker;
+      // this is the lifetime barrier for its original model calls.
+      while (legacyModelRequests.size > 0) await Promise.allSettled([...legacyModelRequests]);
+    },
   };
 }
 
