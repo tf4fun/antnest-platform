@@ -23,6 +23,7 @@ const backoffCodes = [
   "configuration_not_ready",
   "agent_preparing",
   "recovery_pending",
+  "connection_quota_exceeded",
 ];
 const fallback = {
   code: "internal_error",
@@ -48,8 +49,8 @@ function expectedDefinition(code: string, entry: CatalogEntry) {
 }
 
 describe("the canonical ACP error catalog", () => {
-  it("covers all 71 registered codes and exports the canonical capability version", () => {
-    expect(definitions).toHaveLength(71);
+  it("covers all 72 registered codes and exports the canonical capability version", () => {
+    expect(definitions).toHaveLength(72);
     expect(catalog.capability.name).toBe("antnest.dev/errors");
     expect(errorCapability).toStrictEqual({ version: catalog.capability.version });
     expect(errorCapability).toStrictEqual({ version: 1 });
@@ -112,6 +113,22 @@ describe("the canonical ACP error catalog", () => {
     expect(Object.hasOwn(definition, "retryAfterMs")).toBe(false);
   });
 
+  it("keeps connection_quota_exceeded HTTP-only with a canonical 1000ms backoff", () => {
+    expect(resolveErrorDefinition("connection_quota_exceeded", "http")).toStrictEqual({
+      code: "connection_quota_exceeded",
+      errorClass: "resource",
+      jsonRpcCode: null,
+      httpStatus: 429,
+      retryable: true,
+      retryAfterMs: 1000,
+      recovery: "backoff",
+      message: "Connection capacity is exhausted",
+    });
+    expect(resolveErrorDefinition("connection_quota_exceeded", "admission")).toStrictEqual(
+      fallback,
+    );
+  });
+
   it("keeps database_error at -32603 without suggesting replay", () => {
     const definition = resolveErrorDefinition("database_error", "admission");
     expect(definition).toMatchObject({
@@ -125,7 +142,7 @@ describe("the canonical ACP error catalog", () => {
     expect(Object.hasOwn(definition, "retryAfterMs")).toBe(false);
   });
 
-  it("only supplies the five canonical backoff defaults and never invents another delay", () => {
+  it("only supplies the six canonical backoff defaults and never invents another delay", () => {
     const delayed = definitions
       .filter(([code]) => Object.hasOwn(resolveErrorDefinition(code), "retryAfterMs"))
       .map(([code]) => code)

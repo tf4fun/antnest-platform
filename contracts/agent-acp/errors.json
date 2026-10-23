@@ -603,6 +603,16 @@
       "message": "Execution configuration exceeds the body limit",
       "surfaces": ["http"]
     },
+    "connection_quota_exceeded": {
+      "class": "resource",
+      "json_rpc_code": null,
+      "http_status": 429,
+      "retryable": true,
+      "retry_after_ms": 1000,
+      "recovery": "backoff",
+      "message": "Connection capacity is exhausted",
+      "surfaces": ["http"]
+    },
     "agent_not_found": {
       "class": "resource",
       "json_rpc_code": null,

@@ -61,11 +61,19 @@ export class PermissionConnections implements PermissionConnectionsPort {
       signal.throwIfAborted();
       const attached = await this.connection(request.sessionId, owner, signal);
       const active = AbortSignal.any([signal, attached.lifetime.signal]);
+      const checkAccess = () => {
+        const check = () => assertAccess(attached.connection);
+        return attached.connection.tasks === undefined
+          ? check()
+          : attached.connection.tasks.run(check);
+      };
       try {
-        await untilAborted(assertAccess(attached.connection), active);
+        active.throwIfAborted();
+        await untilAborted(checkAccess(), active);
         active.throwIfAborted();
         const response = await untilAborted(attached.connection.request(request, active), active);
-        await untilAborted(assertAccess(attached.connection), active);
+        active.throwIfAborted();
+        await untilAborted(checkAccess(), active);
         active.throwIfAborted();
         return response;
       } catch (error) {

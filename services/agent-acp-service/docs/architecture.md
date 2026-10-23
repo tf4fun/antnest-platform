@@ -13,6 +13,16 @@ published by Controller. Execution publications and persisted Run snapshots
 with nonempty legacy `skill_instructions` are rejected. Runtime remains the
 source for Skill summaries and on-demand content.
 
+Each published public configuration is deeply frozen and has a private Agent
+index. Admission reuses those immutable references through Run snapshot
+resolution, without cloning or scanning the organization's Agent list.
+Commits for the same Agent remain ordered; a configuration publication waits
+for earlier Agent commits and blocks later commits until publication finishes.
+The [connection admission contract](../../../contracts/agent-acp/connection-admission.md)
+defines the shared HTTP/WebSocket quotas. These changes remain process-local;
+the database worker lock stays in place until durable partitioned ownership is
+delivered.
+
 ## Mission
 
 Turn one authenticated ACP connection into durable Session work while keeping

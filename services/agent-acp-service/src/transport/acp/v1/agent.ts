@@ -23,6 +23,7 @@ import type {
   SessionEvent,
 } from "../../../ports/acp-application.js";
 import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
+import { ConnectionTasks } from "../connection-tasks.js";
 import type { LearningNoticePublisher } from "../../../application/learning-notice-publisher.js";
 import type { LearningChangeItem } from "../../../adapters/postgres/learning-change-read.js";
 import type { AcpConnectionFailureSource } from "../../../telemetry/acp-http.js";
@@ -35,25 +36,30 @@ export type CreateAcpV1AgentInput = {
   permissions?: PermissionConnectionsPort;
   notices?: Pick<LearningNoticePublisher, "subscribe">;
   skillCommands?: SkillCommandsPort;
+  tasks?: ConnectionTasks;
   onConnectionFailure?: (error: unknown, source: AcpConnectionFailureSource) => void;
 };
 
 export function createAcpV1Agent({
   binding,
   promptCapabilities,
-  application,
+  application: rawApplication,
   outputs = new SessionOutputStreams(),
   permissions,
   notices,
-  skillCommands,
+  skillCommands: rawSkillCommands,
+  tasks = new ConnectionTasks(),
   onConnectionFailure,
 }: CreateAcpV1AgentInput): acp.AgentApp {
+  const application = tasks.wrap(rawApplication);
+  const skillCommands = rawSkillCommands === undefined ? undefined : tasks.wrap(rawSkillCommands);
   const dispatch = createAcpDispatcher("v1", binding);
   let initialized = false;
   let bridgeDelivery = false;
   let bridgeLearningNotices = false;
   let noticeSubscription: ReturnType<LearningNoticePublisher["subscribe"]> | undefined;
   let connection: acp.AgentConnection;
+  let client: acp.AgentContext;
   const closeFailed = (error: unknown, source: AcpConnectionFailureSource) => {
     // Capture only the first live close cause, before the SDK can finish GET.
     if (!connection.signal.aborted) {
@@ -84,7 +90,7 @@ export function createAcpV1Agent({
     }
   };
   const notifyCommands = (sessionId: string) =>
-    connection.client.notify(acp.methods.client.session.update, {
+    client.notify(acp.methods.client.session.update, {
       sessionId,
       update: { sessionUpdate: "available_commands_update", availableCommands: commandCatalog() },
     });
@@ -115,11 +121,11 @@ export function createAcpV1Agent({
       send: (event) =>
         !bridgeDelivery && event.kind === "user_message" && event.messageId === skipMessageId
           ? Promise.resolve()
-          : replay(connection.client, sessionId, [event], bridgeDelivery, commandCatalog),
+          : replay(client, sessionId, [event], bridgeDelivery, commandCatalog),
       ...(bridgeDelivery
         ? {
             checkpoint: (sequence: number) =>
-              deliveryCheckpoint(connection.client, sessionId, sequence, commandCatalog()),
+              deliveryCheckpoint(client, sessionId, sequence, commandCatalog()),
           }
         : {}),
       onFailure: (error) => closeFailed(error, "session-output"),
@@ -134,16 +140,16 @@ export function createAcpV1Agent({
       binding,
       sessionId,
       signal: connection.signal,
+      tasks,
       request: (request, signal) =>
         permissionRequest(
           () =>
-            connection.client.request(
-              acp.methods.client.session.requestPermission,
-              v1Permission(request),
-              { cancellationSignal: signal },
-            ),
+            client.request(acp.methods.client.session.requestPermission, v1Permission(request), {
+              cancellationSignal: signal,
+            }),
           signal,
           (error) => closeFailed(error, "permission"),
+          tasks,
         ),
     });
   };
@@ -181,10 +187,18 @@ export function createAcpV1Agent({
     .agent({ name: "antnest-agent-acp-service-v1" })
     .onConnect((opened) => {
       connection = opened;
-      void opened.closed.then(() => {
+      client = tasks.wrap(opened.client);
+      const closeTasks = () => {
+        void tasks.close().catch(() => undefined);
+      };
+      if (opened.signal.aborted) closeTasks();
+      else opened.signal.addEventListener("abort", closeTasks, { once: true });
+      const disconnected = () => {
         outputs.disconnect(binding.connectionId);
         noticeSubscription?.disconnect();
-      });
+        return tasks.close();
+      };
+      void opened.closed.then(disconnected, disconnected).catch(() => undefined);
     })
     .onRequest(acp.methods.agent.initialize, ({ params, requestId, signal }) => {
       return dispatch("initialize", params, requestId, async () => {
@@ -205,7 +219,7 @@ export function createAcpV1Agent({
           noticeSubscription = notices.subscribe(
             binding,
             async (sessionId, item) => {
-              await connection.client.notify(acp.methods.client.session.update, {
+              await client.notify(acp.methods.client.session.update, {
                 sessionId,
                 update: learningNotice(item),
               });
@@ -215,6 +229,7 @@ export function createAcpV1Agent({
               }
             },
             (error) => closeFailed(error, "learning-notice"),
+            tasks,
           );
         }
         await refreshSkills(signal);
@@ -276,7 +291,7 @@ export function createAcpV1Agent({
         return { ...result, ...(await sessionSetup(result.sessionId)) };
       });
     })
-    .onRequest(acp.methods.agent.session.load, ({ params, client, requestId }) => {
+    .onRequest(acp.methods.agent.session.load, ({ params, requestId }) => {
       return dispatch("session/load", params, requestId, async () => {
         requireInitialized(initialized, "session/load");
         const result = await resume(application, binding, params, true, bridgeDelivery);
@@ -429,11 +444,13 @@ export function createAcpV1Agent({
           return promptResponse(result);
         } finally {
           observing = true;
-          outputs.invalidate(key);
-          await outputs.flush(key, binding.connectionId);
-          if (skillCommands !== undefined) {
-            await refreshSkills();
-            await notifyCommands(params.sessionId);
+          if (!connection.signal.aborted) {
+            outputs.invalidate(key);
+            await outputs.flush(key, binding.connectionId);
+            if (skillCommands !== undefined) {
+              await refreshSkills();
+              await notifyCommands(params.sessionId);
+            }
           }
         }
       });

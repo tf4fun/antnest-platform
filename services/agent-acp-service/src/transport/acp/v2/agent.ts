@@ -16,46 +16,51 @@ import type {
   SessionEvent,
 } from "../../../ports/acp-application.js";
 import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
+import { ConnectionTasks } from "../connection-tasks.js";
 
 export type CreateAcpAgentInput = {
   binding: ConnectionBinding;
   promptCapabilities: { image: boolean; embeddedContext: boolean; audio?: boolean };
   application: AcpApplicationPort;
   outputs?: SessionOutputStreams;
+  tasks?: ConnectionTasks;
   permissions?: PermissionConnectionsPort;
 };
 
 export function createAcpV2Agent({
   binding,
   promptCapabilities,
-  application,
+  application: originalApplication,
   outputs = new SessionOutputStreams(),
+  tasks = new ConnectionTasks(),
   permissions,
 }: CreateAcpAgentInput): acp.AgentApp {
+  const application = tasks.wrap(originalApplication);
   const dispatch = createAcpDispatcher("v2", binding);
   let connection: acp.AgentConnection;
+  let client: acp.AgentConnection["client"];
   const attachPermission = (sessionId: string) =>
     permissions?.attach({
       binding,
       sessionId,
       signal: connection.signal,
+      tasks,
       request: (request, signal) =>
         permissionRequest(
           () =>
-            connection.client.request(
-              acp.methods.client.session.requestPermission,
-              v2Permission(request),
-              { cancellationSignal: signal },
-            ),
+            client.request(acp.methods.client.session.requestPermission, v2Permission(request), {
+              cancellationSignal: signal,
+            }),
           signal,
           (error) => connection.close(error),
+          tasks,
         ),
     });
   const sessionSetup = async (sessionId: string) => {
     const result = v2Configuration(
       await mapError(() => application.getSessionConfiguration({ binding, sessionId })),
     );
-    await connection.client.notify(acp.methods.client.session.update, {
+    await client.notify(acp.methods.client.session.update, {
       sessionId,
       update: {
         sessionUpdate: "available_commands_update",
@@ -84,7 +89,7 @@ export function createAcpV2Agent({
         }),
       send: (event) =>
         sendEvent(event, (update) =>
-          connection.client.notify(acp.methods.client.session.update, { sessionId, update }),
+          client.notify(acp.methods.client.session.update, { sessionId, update }),
         ),
     });
     if (attached) attachPermission(sessionId);
@@ -93,7 +98,15 @@ export function createAcpV2Agent({
     .agent({ name: "antnest-agent-acp-service" })
     .onConnect((opened) => {
       connection = opened;
-      void opened.closed.then(() => outputs.disconnect(binding.connectionId));
+      client = tasks.wrap(opened.client);
+      const stop = () => void tasks.close();
+      if (opened.signal.aborted) stop();
+      else opened.signal.addEventListener("abort", stop, { once: true });
+      const disconnected = () => {
+        outputs.disconnect(binding.connectionId);
+        return tasks.close();
+      };
+      void opened.closed.then(disconnected, disconnected).catch(() => undefined);
     })
     .onRequest(acp.methods.agent.initialize, ({ params, requestId }) =>
       dispatch("initialize", params, requestId, () => ({
@@ -176,7 +189,7 @@ export function createAcpV2Agent({
         return { ...result, ...(await sessionSetup(result.sessionId)) };
       }),
     )
-    .onRequest(acp.methods.agent.session.resume, ({ params, client, requestId }) =>
+    .onRequest(acp.methods.agent.session.resume, ({ params, requestId }) =>
       dispatch("session/resume", params, requestId, async () => {
         if (
           params.replayFrom !== null &&
@@ -292,6 +305,7 @@ export function createAcpV2Agent({
             sessionId: params.sessionId,
             prompt: params.prompt,
             connection,
+            client,
             outputs,
             binding,
             onAttached: () => {
@@ -316,6 +330,7 @@ async function observeRun({
   sessionId,
   prompt,
   connection,
+  client,
   outputs,
   binding,
   onAttached,
@@ -325,57 +340,60 @@ async function observeRun({
   sessionId: string;
   prompt: acp.ContentBlock[];
   connection: acp.AgentConnection;
+  client: acp.AgentConnection["client"];
   outputs: SessionOutputStreams;
   binding: ConnectionBinding;
   onAttached: () => void;
 }): Promise<void> {
   const key = sessionOutputKey(binding, sessionId);
-  const client = connection.client;
   try {
-    await outputs.attach({
-      key,
-      afterSequence: accepted.outputSequence,
-      identity: binding,
-      initialState: { kind: "state", state: "running" },
-      connectionId: binding.connectionId,
-      signal: connection.signal,
-      onFailure: (error) => connection.close(error),
-      waitForDelivery: false,
-      read: (cursor) =>
-        application.readSessionOutput({
-          binding,
-          sessionId,
-          ...(cursor === undefined ? {} : { afterSequence: cursor }),
-        }),
-      send: (event) =>
-        event.kind === "user_message" && event.messageId === accepted.userMessageId
-          ? Promise.resolve()
-          : sendEvent(event, (update) =>
-              client.notify(acp.methods.client.session.update, { sessionId, update }),
-            ),
-      beforeFirst: async () => {
-        await client.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: toAcpUpdate({
-            kind: "user_message",
-            messageId: accepted.userMessageId,
-            content: toDomainContent(prompt),
+    if (!connection.signal.aborted)
+      await outputs.attach({
+        key,
+        afterSequence: accepted.outputSequence,
+        identity: binding,
+        initialState: { kind: "state", state: "running" },
+        connectionId: binding.connectionId,
+        signal: connection.signal,
+        onFailure: (error) => connection.close(error),
+        waitForDelivery: false,
+        read: (cursor) =>
+          application.readSessionOutput({
+            binding,
+            sessionId,
+            ...(cursor === undefined ? {} : { afterSequence: cursor }),
           }),
-        });
-        await client.notify(acp.methods.client.session.update, {
-          sessionId,
-          update: toAcpUpdate({ kind: "state", state: "running" }),
-        });
-      },
-    });
-    onAttached();
+        send: (event) =>
+          event.kind === "user_message" && event.messageId === accepted.userMessageId
+            ? Promise.resolve()
+            : sendEvent(event, (update) =>
+                client.notify(acp.methods.client.session.update, { sessionId, update }),
+              ),
+        beforeFirst: async () => {
+          await client.notify(acp.methods.client.session.update, {
+            sessionId,
+            update: toAcpUpdate({
+              kind: "user_message",
+              messageId: accepted.userMessageId,
+              content: toDomainContent(prompt),
+            }),
+          });
+          await client.notify(acp.methods.client.session.update, {
+            sessionId,
+            update: toAcpUpdate({ kind: "state", state: "running" }),
+          });
+        },
+      });
+    if (!connection.signal.aborted) onAttached();
     await accepted.completion;
   } catch (error) {
     connection.close(error);
   } finally {
-    onAttached();
-    outputs.invalidate(key);
-    await outputs.flush(key, binding.connectionId);
+    if (!connection.signal.aborted) {
+      onAttached();
+      outputs.invalidate(key);
+      await outputs.flush(key, binding.connectionId);
+    }
   }
 }
 

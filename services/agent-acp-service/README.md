@@ -105,6 +105,22 @@ After workload admission, a required but absent CCT returns
 `401 caller_context_required`; an empty, duplicate or invalid CCT returns
 `401 caller_context_invalid`. Both are rejected before business effects.
 
+New ACP HTTP connections and v1/v2 WebSocket upgrades share one process-local
+capacity owner. The default limits are 1024 total, 256 per authenticated
+organization and 64 per organization/principal pair. All configured limits
+must be positive safe integers with `principal <= organization <= global`;
+invalid settings fail startup. A full bucket returns the fixed HTTP 429
+`connection_quota_exceeded` response before connection creation or upgrade.
+Existing authenticated HTTP connection requests do not reserve another slot.
+
+A reservation lasts through the actual socket/SDK closure, connection-owned
+raw reads and sends, permission/notice cleanup and admitted response cleanup.
+Caller cancellation or a send timeout alone does not release it. An accepted
+Run is owned by the Supervisor and does not retain a closed connection's slot.
+These quotas are replica-local; the database-wide worker lock and current
+single-process restriction remain until partitioned ownership is delivered.
+See the [connection admission contract](../../contracts/agent-acp/connection-admission.md).
+
 The [execution configuration contract](../../contracts/agent-acp/execution-api.md)
 defines how Controller publishes into ACP. Normal ACP operation makes no
 reverse access, admission, credential or finish requests to Controller. Local authorization commits
@@ -159,6 +175,9 @@ for startup, republishing and cleanup requirements.
 | `ANTNEST_TLS_CA_FILE`, `ANTNEST_TLS_CERT_FILE`, `ANTNEST_TLS_KEY_FILE`, `ANTNEST_TLS_SERVER_NAME` | TLS      | -                   | Complete trust, service identity and DNS configuration; TLS 1.3, no partial configuration                      |
 | `ANTNEST_ACP_DATABASE_TIMEOUT`                                                                    | no       | `10s`               | Connection, statement and read timeout for PostgreSQL                                                          |
 | `ANTNEST_ACP_STATE_DELIVERY_TIMEOUT`                                                              | no       | `10000ms`           | Bound for delivering execution state to watchers                                                               |
+| `ANTNEST_ACP_MAX_CONNECTIONS`                                                                     | no       | `1024`              | Shared HTTP/WebSocket connection limit in this process                                                         |
+| `ANTNEST_ACP_MAX_CONNECTIONS_PER_ORG`                                                             | no       | `256`               | Connection limit for one authenticated organization in this process                                            |
+| `ANTNEST_ACP_MAX_CONNECTIONS_PER_PRINCIPAL`                                                       | no       | `64`                | Connection limit for one authenticated organization/principal pair                                             |
 | `ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS`                                                        | no       | `false`             | Exact operator-only boolean; unsafe private/local LLM and metadata access; malformed values fail startup       |
 | `ANTNEST_ACP_RUN_TIMEOUT`                                                                         | no       | `30m`               | Maximum Run duration                                                                                           |
 | `ANTNEST_ACP_MAX_PROMPT_BYTES`                                                                    | no       | `16777216`          | Maximum WebSocket and prompt payload size (1024 to 67108864)                                                   |

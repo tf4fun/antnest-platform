@@ -2,6 +2,7 @@ import type { ConnectionBinding, ModelToolDefinition } from "../domain/types.js"
 import type { ModelToolCall } from "./model.js";
 import type { PermissionDecision } from "../domain/tool-permissions.js";
 import type { Authorization } from "../domain/session-configuration.js";
+import type { ConnectionTaskOwner } from "./connection-tasks.js";
 
 export type PermissionRequest = {
   runId: string;
@@ -37,6 +38,7 @@ export type PermissionConnection = {
   binding: ConnectionBinding;
   sessionId: string;
   signal: AbortSignal;
+  tasks?: ConnectionTaskOwner;
   request(request: PermissionRequest, signal: AbortSignal): Promise<unknown>;
 };
 export interface PermissionConnectionsPort {

@@ -7,6 +7,9 @@ import { TracedAcpHttpServer, recordAcpAccessDenial } from "../../telemetry/acp-
 import type { Span } from "@opentelemetry/api";
 
 import type { ConnectionBinding } from "../../domain/types.js";
+import { DomainError } from "../../domain/errors.js";
+import { ConnectionCapacity } from "../../application/connection-capacity.js";
+import { ConnectionTasks } from "./connection-tasks.js";
 import type { AcpApplicationPort } from "../../ports/acp-application.js";
 import type { SkillCommandsPort } from "../../ports/skill-commands.js";
 import type { ExecutionIdentity } from "../../domain/execution-configuration.js";
@@ -19,6 +22,7 @@ import type { PermissionConnectionsPort } from "../../ports/tool-permissions.js"
 import type { LearningNoticePublisher } from "../../application/learning-notice-publisher.js";
 import { activeHttpSpan } from "../../telemetry/http.js";
 import { recordBoundaryError } from "../../telemetry/diagnostics.js";
+import { httpFailure } from "../public-error.js";
 
 type Options = {
   permissions?: PermissionConnectionsPort;
@@ -29,7 +33,7 @@ type Options = {
   ready: () => Promise<boolean>;
   maxWebSocketPayloadBytes: number;
   telemetry?: TelemetryPort;
-  maxConnections?: number;
+  capacity?: ConnectionCapacity;
   idleTimeoutMs?: number;
   closeReceiptTimeoutMs?: number;
 };
@@ -40,6 +44,8 @@ type Options = {
 export class AcpHttpTransport {
   private readonly entries = new Set<HttpConnection>();
   private readonly byId = new Map<string, HttpConnection>();
+  private readonly capacityLeases = new Map<HttpConnection, { release(): void }>();
+  private readonly capacity: ConnectionCapacity;
   private readonly closing = new Set<Promise<void>>();
   private readonly telemetry: TelemetryPort;
   private stopped = false;
@@ -49,6 +55,7 @@ export class AcpHttpTransport {
 
   public constructor(private readonly options: Options) {
     this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
+    this.capacity = options.capacity ?? new ConnectionCapacity();
   }
 
   public async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -68,6 +75,17 @@ export class AcpHttpTransport {
       const span = activeHttpSpan();
       if (span !== undefined) recordBoundaryError(span, error, "acp.http.admission");
       this.telemetry.log("error", "acp_http_failed", { protocol: "v1" }, error);
+      if (error instanceof DomainError && error.code === "connection_quota_exceeded") {
+        if (response.destroyed || response.writableEnded) return;
+        const failure = httpFailure(error.code);
+        response.writeHead(failure.status, {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+          "retry-after": "1",
+        });
+        response.end(JSON.stringify(failure.body));
+        return;
+      }
       reply(response, 503);
     }
   }
@@ -158,31 +176,37 @@ export class AcpHttpTransport {
       reply(response, 400);
       return;
     }
-    if (this.entries.size >= (this.options.maxConnections ?? 1024)) {
-      reply(response, 503);
-      return;
+    const lease = this.capacity.reserve(identity);
+    let entry: HttpConnection;
+    try {
+      const binding: ConnectionBinding = {
+        connectionId: randomUUID(),
+        ...identity,
+      };
+      entry = new HttpConnection(binding, {
+        application: this.options.application,
+        outputs: this.options.outputs,
+        ...(this.options.permissions === undefined
+          ? {}
+          : { permissions: this.options.permissions }),
+        ...(this.options.notices === undefined ? {} : { notices: this.options.notices }),
+        ...(this.options.skillCommands === undefined
+          ? {}
+          : { skillCommands: this.options.skillCommands }),
+        promptCapabilities,
+        maxPayloadBytes: this.options.maxWebSocketPayloadBytes,
+        idleTimeoutMs: this.options.idleTimeoutMs ?? 300_000,
+        closeReceiptTimeoutMs: this.options.closeReceiptTimeoutMs ?? 300_000,
+        register: (id) => this.byId.set(id, entry),
+        retire: () => this.retire(entry),
+        release: (acknowledged) => this.release(entry, acknowledged),
+      });
+    } catch (error) {
+      lease.release();
+      throw error;
     }
-    const binding: ConnectionBinding = {
-      connectionId: randomUUID(),
-      ...identity,
-    };
-    const entry: HttpConnection = new HttpConnection(binding, {
-      application: this.options.application,
-      outputs: this.options.outputs,
-      ...(this.options.permissions === undefined ? {} : { permissions: this.options.permissions }),
-      ...(this.options.notices === undefined ? {} : { notices: this.options.notices }),
-      ...(this.options.skillCommands === undefined
-        ? {}
-        : { skillCommands: this.options.skillCommands }),
-      promptCapabilities,
-      maxPayloadBytes: this.options.maxWebSocketPayloadBytes,
-      idleTimeoutMs: this.options.idleTimeoutMs ?? 300_000,
-      closeReceiptTimeoutMs: this.options.closeReceiptTimeoutMs ?? 300_000,
-      register: (id) => this.byId.set(id, entry),
-      retire: () => this.retire(entry),
-      release: (acknowledged) => this.release(entry, acknowledged),
-    });
     this.entries.add(entry);
+    this.capacityLeases.set(entry, lease);
     this.telemetry.count("antnest.acp.connections", {
       result: "accepted",
       protocol: "v1",
@@ -209,7 +233,10 @@ export class AcpHttpTransport {
     // Removing the addressable ID cannot free capacity or shutdown ownership
     // while SDK cleanup or an already admitted response is still outstanding.
     const forget = () => {
-      this.entries.delete(entry);
+      if (this.entries.delete(entry)) {
+        this.capacityLeases.get(entry)?.release();
+        this.capacityLeases.delete(entry);
+      }
       this.closing.delete(closed);
       if (this.draining && this.entries.size === 0) this.drained.resolve();
     };
@@ -252,6 +279,7 @@ type ConnectionOptions = {
 
 class HttpConnection {
   public id: string | undefined;
+  private readonly tasks = new ConnectionTasks();
   private readonly server: AcpServer;
   private readonly requests = new Set<ServerResponse>();
   private readonly deletes = new Set<ServerResponse>();
@@ -273,6 +301,7 @@ class HttpConnection {
       agent: createAcpV1Agent({
         binding,
         ...options,
+        tasks: this.tasks,
         onConnectionFailure: (error, source) => {
           for (const [response, span] of this.getSpans) {
             if (
@@ -361,7 +390,10 @@ class HttpConnection {
     if (this.cleanup !== undefined) return this.cleanup;
     clearTimeout(this.timer);
     this.closeResponses(true);
-    this.cleanup = this.server.close();
+    const tasks = this.tasks.close();
+    this.cleanup = Promise.allSettled([this.server.close(), tasks]).then(([closed]) => {
+      if (closed.status === "rejected") throw closed.reason;
+    });
     if (!this.released && this.id !== undefined) {
       this.expiresAt = performance.now() + this.options.closeReceiptTimeoutMs;
       this.timer = setTimeout(this.options.release, this.options.closeReceiptTimeoutMs);

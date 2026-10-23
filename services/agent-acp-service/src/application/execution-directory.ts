@@ -2,6 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import { DomainError } from "../domain/errors.js";
 import {
   authorizeConfiguredAgent,
+  findConfiguredAgent,
+  freezeExecutionConfiguration,
   parseExecutionConfiguration,
   publicExecutionConfiguration,
   requireSameProviderRouting,
@@ -155,7 +157,7 @@ export class ExecutionDirectory {
     if (configuration === undefined)
       throw new DomainError("configuration_not_ready", "Execution configuration is not ready");
     const agent = authorizeConfiguredAgent(configuration, identity);
-    return structuredClone({ agent, configuration });
+    return { agent, configuration };
   }
 
   public subscribe(organizationId: string, changed: () => void): () => void {
@@ -176,9 +178,11 @@ export class ExecutionDirectory {
     organizationId: string;
     agentId: string;
   }): RuntimeBinding | null {
-    const runtime = this.configurations
-      .get(scope.organizationId)
-      ?.agents.find((agent) => agent.agent_id === scope.agentId)?.runtime;
+    const configuration = this.configurations.get(scope.organizationId);
+    const runtime =
+      configuration === undefined
+        ? undefined
+        : findConfiguredAgent(configuration, scope.agentId)?.runtime;
     return runtime
       ? this.dependencies.runtimeConnections.findForCleanup({
           ...scope,
@@ -203,7 +207,7 @@ export class ExecutionDirectory {
     ) {
       throw new DomainError("configuration_not_ready", "Execution configuration is not ready");
     }
-    const agent = configuration.agents.find((item) => item.agent_id === operation.agentId);
+    const agent = findConfiguredAgent(configuration, operation.agentId);
     if (
       configuration.revision < operation.minimumRevision ||
       agent === undefined ||
@@ -278,7 +282,7 @@ export class ExecutionDirectory {
     beforeCommit?: () => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const next = publicExecutionConfiguration(incoming);
+    const next = freezeExecutionConfiguration(publicExecutionConfiguration(incoming));
     const organizationId = incoming.organization_id;
     try {
       this.dependencies.clients.apply(incoming);

@@ -30,6 +30,19 @@ test("the shared ACP error catalog satisfies its complete schema", () => {
   );
 });
 
+test("connection quota rejection is an HTTP-only retryable handshake error", () => {
+  assert.deepEqual(catalog.errors.connection_quota_exceeded, {
+    class: "resource",
+    json_rpc_code: null,
+    http_status: 429,
+    retryable: true,
+    retry_after_ms: 1000,
+    recovery: "backoff",
+    message: "Connection capacity is exhausted",
+    surfaces: ["http"],
+  });
+});
+
 test("not_found is a generic HTTP and Skill-source resource error without admission semantics", () => {
   const definition = catalog.errors.not_found;
   assert.deepEqual(

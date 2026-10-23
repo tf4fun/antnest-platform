@@ -30,6 +30,7 @@ const backoffCodes = new Set([
   "configuration_not_ready",
   "agent_preparing",
   "recovery_pending",
+  "connection_quota_exceeded",
 ]);
 
 function expectedPublicError(code: string, entry: CatalogEntry) {

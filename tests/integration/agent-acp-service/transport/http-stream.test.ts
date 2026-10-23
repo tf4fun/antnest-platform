@@ -32,6 +32,7 @@ import { configureBoundaries } from "../../../../services/agent-acp-service/src/
 
 import { AgentAcpHttpServer } from "../../../../services/agent-acp-service/src/transport/http-server.js";
 import { AcpHttpTransport } from "../../../../services/agent-acp-service/src/transport/acp/http-transport.js";
+import { ConnectionCapacity } from "../../../../services/agent-acp-service/src/application/connection-capacity.js";
 import { SessionOutputStreams } from "../../../../services/agent-acp-service/src/transport/acp/session-output.js";
 import type { AcpApplicationPort } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import { DomainError } from "../../../../services/agent-acp-service/src/domain/errors.js";
@@ -573,6 +574,20 @@ describe("ACP v1 Streamable HTTP", () => {
     return id;
   }
 
+  async function quotaRejected(response: Response): Promise<void> {
+    expect(response.status).toBe(429);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("retry-after")).toBe("1");
+    const body: unknown = await response.json();
+    expect(body).toStrictEqual({
+      code: "connection_quota_exceeded",
+      message: "Connection capacity is exhausted",
+      retryable: true,
+      retry_after_ms: 1000,
+    });
+  }
+
   async function startBounded(
     idleTimeoutMs = 300_000,
     overrides: Partial<ConstructorParameters<typeof AcpHttpTransport>[0]> = {},
@@ -585,7 +600,11 @@ describe("ACP v1 Streamable HTTP", () => {
       outputs: new SessionOutputStreams(),
       ready: () => Promise.resolve(true),
       maxWebSocketPayloadBytes: 4096,
-      maxConnections: 1,
+      capacity: new ConnectionCapacity({
+        global: 1,
+        organization: 1,
+        principal: 1,
+      }),
       idleTimeoutMs,
       ...overrides,
     });
@@ -848,7 +867,11 @@ describe("ACP v1 Streamable HTTP", () => {
     async (field) => {
       let serving = true;
       const transport = await startBounded(300_000, {
-        maxConnections: 2,
+        capacity: new ConnectionCapacity({
+          global: 2,
+          organization: 2,
+          principal: 2,
+        }),
         ready: () => Promise.resolve(serving),
       });
       const id = await open();
@@ -932,7 +955,11 @@ describe("ACP v1 Streamable HTTP", () => {
       const entered = Promise.withResolvers<void>();
       let hold = false;
       const transport = await startBounded(300_000, {
-        maxConnections: 2,
+        capacity: new ConnectionCapacity({
+          global: 2,
+          organization: 2,
+          principal: 2,
+        }),
         ready: () => {
           if (!hold) return Promise.resolve(true);
           entered.resolve();
@@ -1099,9 +1126,9 @@ describe("ACP v1 Streamable HTTP", () => {
       const rejected = await request("DELETE", "owner", id, body);
       expect(rejected.status).toBe(status);
       await rejected.text();
-      expect(
-        (await request("POST", "owner", undefined, initialize)).status,
-      ).toBe(503);
+      await quotaRejected(
+        await request("POST", "owner", undefined, initialize),
+      );
       const accepted = await request("DELETE", "owner", id);
       expect(accepted.status).toBe(202);
       await accepted.text();
@@ -1175,9 +1202,9 @@ describe("ACP v1 Streamable HTTP", () => {
         await cleanup.entered;
         expect((await request("GET", "owner", id)).status).toBe(404);
         expect(settled).toBe(false);
-        expect(
-          (await request("POST", "owner", undefined, initialize)).status,
-        ).toBe(503);
+        await quotaRejected(
+          await request("POST", "owner", undefined, initialize),
+        );
         cleanup.release();
         const result = await pending;
         expect(result.status).toBe(failure ? 503 : 202);
@@ -1185,9 +1212,9 @@ describe("ACP v1 Streamable HTTP", () => {
         expect(cleanup.close).toHaveBeenCalledOnce();
         if (failure) {
           expect((await request("DELETE", "owner", id)).status).toBe(503);
-          expect(
-            (await request("POST", "owner", undefined, initialize)).status,
-          ).toBe(503);
+          await quotaRejected(
+            await request("POST", "owner", undefined, initialize),
+          );
         } else await open();
       } finally {
         cleanup.release();
@@ -1201,9 +1228,7 @@ describe("ACP v1 Streamable HTTP", () => {
       closeReceiptTimeoutMs: 100,
     });
     await retire();
-    expect((await request("POST", "owner", undefined, initialize)).status).toBe(
-      503,
-    );
+    await quotaRejected(await request("POST", "owner", undefined, initialize));
     const invalid = async () => {
       const response = await request("DELETE", "owner", id, { invalid: true });
       await response.text();
@@ -1235,9 +1260,9 @@ describe("ACP v1 Streamable HTTP", () => {
           { interval: 20, timeout: 2000 },
         )
         .toBe(404);
-      expect(
-        (await request("POST", "owner", undefined, initialize)).status,
-      ).toBe(503);
+      await quotaRejected(
+        await request("POST", "owner", undefined, initialize),
+      );
       cleanup.release();
       await open();
     } finally {
@@ -1317,9 +1342,9 @@ describe("ACP v1 Streamable HTTP", () => {
       const accepted = await request("DELETE", "owner", id);
       expect(accepted.status).toBe(202);
       await accepted.text();
-      expect(
-        (await request("POST", "owner", undefined, initialize)).status,
-      ).toBe(503);
+      await quotaRejected(
+        await request("POST", "owner", undefined, initialize),
+      );
       const outcome = pending.completed.then(
         () => "acknowledged",
         () => "aborted",
@@ -1371,9 +1396,7 @@ describe("ACP v1 Streamable HTTP", () => {
     expect(invalid.status).toBe(400);
     await invalid.text();
     const id = await open();
-    expect((await request("POST", "owner", undefined, initialize)).status).toBe(
-      503,
-    );
+    await quotaRejected(await request("POST", "owner", undefined, initialize));
     expect((await request("DELETE", "owner", id)).status).toBe(202);
     await open();
   });

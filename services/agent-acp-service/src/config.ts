@@ -3,6 +3,7 @@ import { ServiceAuthentication } from "./adapters/service-authentication.js";
 import { CallerContextVerifier } from "./adapters/caller-context.js";
 import { RequestAuthentication } from "./transport/request-authentication.js";
 import { parse as parsePostgresConnection } from "pg-connection-string";
+import type { ConnectionCapacityLimits } from "./application/connection-capacity.js";
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_STATE_DELIVERY_TIMEOUT_MS = 10_000;
 export const MAINTENANCE_KID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
@@ -38,6 +39,7 @@ export type AgentAcpConfig = {
   providerAllowPrivateEndpoints: boolean;
   maxWebSocketPayloadBytes: number;
   maxConfigurationBytes: number;
+  connectionLimits: ConnectionCapacityLimits;
   shutdownTimeoutMs: number;
   telemetry: {
     captureRpcContent?: boolean;
@@ -88,6 +90,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     environment.ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS ?? "false",
     "ANTNEST_ACP_ALLOW_DEVELOPMENT_SETTINGS",
   );
+  const connectionLimits = parseConnectionLimits(environment);
   const workload = new ServiceAuthentication(environment);
   const identityUrl = normalizedHttpUrl(
     required(environment, "ANTNEST_ACP_IDENTITY_URL"),
@@ -123,6 +126,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
   return {
     authentication,
     dependencyFetchers,
+    connectionLimits,
     providerAllowPrivateEndpoints: parseBoolean(
       environment.ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS ?? "false",
       "ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS",
@@ -167,6 +171,32 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     ),
     telemetry: telemetryConfig(environment),
   };
+}
+
+function parseConnectionLimits(environment: NodeJS.ProcessEnv): ConnectionCapacityLimits {
+  const limits = {
+    global: parseInteger(
+      environment.ANTNEST_ACP_MAX_CONNECTIONS ?? "1024",
+      "ANTNEST_ACP_MAX_CONNECTIONS",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    organization: parseInteger(
+      environment.ANTNEST_ACP_MAX_CONNECTIONS_PER_ORG ?? "256",
+      "ANTNEST_ACP_MAX_CONNECTIONS_PER_ORG",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    principal: parseInteger(
+      environment.ANTNEST_ACP_MAX_CONNECTIONS_PER_PRINCIPAL ?? "64",
+      "ANTNEST_ACP_MAX_CONNECTIONS_PER_PRINCIPAL",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
+  };
+  if (limits.principal > limits.organization || limits.organization > limits.global)
+    throw new ConfigError("Connection limits must satisfy principal <= organization <= global");
+  return limits;
 }
 
 function parseSkillDiscovery(

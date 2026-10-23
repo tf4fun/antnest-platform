@@ -1,6 +1,7 @@
 import { permissionChoices } from "../../domain/tool-permissions.js";
 import type { PermissionRequest } from "../../ports/tool-permissions.js";
 import { untilAborted } from "../../application/permission-connections.js";
+import type { ConnectionTaskOwner } from "../../ports/connection-tasks.js";
 
 export function v1Permission(request: PermissionRequest) {
   return {
@@ -29,25 +30,33 @@ export async function permissionRequest(
   send: () => Promise<unknown>,
   signal: AbortSignal,
   close: (error: Error) => void,
+  tasks?: ConnectionTaskOwner,
 ): Promise<unknown> {
   signal.throwIfAborted();
-  let cleanup: ReturnType<typeof setTimeout> | undefined;
-  const abort = () => {
-    cleanup = setTimeout(
-      () => close(new Error("Permission cancellation was not acknowledged")),
-      1000,
-    );
-    cleanup.unref();
+  const response = Promise.withResolvers<unknown>();
+  const start = () => {
+    let cleanup: ReturnType<typeof setTimeout> | undefined;
+    const abort = () => {
+      cleanup = setTimeout(
+        () => close(new Error("Permission cancellation was not acknowledged")),
+        1000,
+      );
+      cleanup.unref();
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    const operation = Promise.resolve()
+      .then(() => {
+        signal.throwIfAborted();
+        return send();
+      })
+      .finally(() => {
+        signal.removeEventListener("abort", abort);
+        clearTimeout(cleanup);
+      });
+    void untilAborted(operation, signal).then(response.resolve, response.reject);
+    return operation;
   };
-  signal.addEventListener("abort", abort, { once: true });
-  const operation = Promise.resolve()
-    .then(() => {
-      signal.throwIfAborted();
-      return send();
-    })
-    .finally(() => {
-      signal.removeEventListener("abort", abort);
-      clearTimeout(cleanup);
-    });
-  return untilAborted(operation, signal);
+  const owned = tasks === undefined ? start() : tasks.run(start);
+  void owned.catch(response.reject);
+  return response.promise;
 }
