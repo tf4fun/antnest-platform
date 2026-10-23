@@ -23,6 +23,19 @@ defines the shared HTTP/WebSocket quotas. These changes remain process-local;
 the database worker lock stays in place until durable partitioned ownership is
 delivered.
 
+Run admission also reserves one durable slot per `(organization_id, agent_id)`.
+The intent transaction reads that scope from its locked Session, and PostgreSQL
+enforces uniqueness across all `admitting` and `running` Runs. A composite
+foreign key keeps the Run scope tied to the Session. Bridge idempotency and
+append-version checks retain priority, followed by `session_busy`; only the
+named Agent unique-index conflict becomes `agent_busy`. Failed admission leaves
+no intent, message or append advancement. Cancellation requests and worker exit
+retain the reservation until a terminal state commits. Terminal `unresolved`
+still requires the independent Runtime barrier checks before new effects.
+See the [durable admission contract](../../../contracts/agent-acp/run-admission.md).
+This persistence invariant does not provide leases, stale-owner fencing or
+multi-replica recovery; the exclusive worker lock remains in place.
+
 ## Mission
 
 Turn one authenticated ACP connection into durable Session work while keeping

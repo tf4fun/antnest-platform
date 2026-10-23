@@ -77,8 +77,8 @@ describe.skipIf(url === undefined)("Skill learning completed-Run scan", () => {
       await pool.query(
         `INSERT INTO runs(id,request_id,session_id,client_mcp_revision_id,expected_access_revision,
         state,deadline_at,execution_snapshot,terminal_class,executor_state,tool_effect_state,stop_reason,
-        input_prompt,created_at,updated_at)
-        VALUES ($1,$2,'learning-session','learning-mcp','access-1',$3,$4,'{}'::jsonb,$5,$6,$7,$8,'[]'::jsonb,$9,$9)`,
+        input_prompt,created_at,updated_at,organization_id,agent_id)
+        VALUES ($1,$2,'learning-session','learning-mcp','access-1',$3,$4,'{}'::jsonb,$5,$6,$7,$8,'[]'::jsonb,$9,$9,'org-learning','agent-learning')`,
         [
           id,
           `request-${id}`,

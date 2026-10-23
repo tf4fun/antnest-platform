@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
@@ -32,7 +32,7 @@ describe.skipIf(databaseUrl === undefined)(
     const runs = new PostgresRunRepository(kernel);
     const executions = new PostgresExecutionRepository(kernel);
     const events = new PostgresRunEventRepository(kernel);
-    beforeAll(async () => {
+    beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
       await migrate(pool);

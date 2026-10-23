@@ -1,6 +1,9 @@
-import { RunRecoveryRequiredError } from "../../src/ports/acp-application.js";
+import { RunRecoveryRequiredError, type SubmittedAcpRun } from "../../src/ports/acp-application.js";
 import { describe, expect, it, vi } from "vitest";
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
+import { RunSupervisor } from "../../src/application/run-supervisor.js";
+import type { RunExecutionPort } from "../../src/application/run-executor.js";
+import { DomainError } from "../../src/domain/errors.js";
 import type { ExecutionConfiguration } from "../../src/domain/execution-configuration.js";
 import type { SessionConfiguration } from "../../src/domain/session-configuration.js";
 import type { SessionRecord } from "../../src/domain/types.js";
@@ -74,6 +77,80 @@ async function setup(overrides: SessionConfiguration = {}) {
 }
 
 describe("local prompt configuration", () => {
+  it("releases the local slot after durable Agent busy rejection without pinning or executing", async () => {
+    const test = await setup();
+    const busy = new DomainError("agent_busy", "Agent already has an active Run");
+    test.repository.createRunIntent.mockRejectedValueOnce(busy);
+    const retainRun = vi.spyOn(test.connections, "retainRun");
+    const completed = {
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+    } as const;
+    const execute = vi.fn<RunExecutionPort["execute"]>(({ accepted }) => {
+      test.directory.releaseRuntimeRun(accepted.runId);
+      return Promise.resolve(completed);
+    });
+    const supervisor = new RunSupervisor({ execute });
+    const submission = {
+      binding: test.input.binding,
+      sessionId: test.input.sessionId,
+      outputChanged: () => undefined,
+    };
+    const first = supervisor.submit(submission, (signal) =>
+      test.coordinator.accept(test.input, signal),
+    );
+    let second: Promise<SubmittedAcpRun> | undefined;
+    try {
+      await expect(first).rejects.toBe(busy);
+      expect(supervisor.occupancy(test.input.binding)).toEqual({
+        busy: false,
+        activeSessionId: null,
+      });
+      expect(retainRun).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(test.repository.createRunIntent).toHaveBeenCalledOnce();
+      expect(test.repository.acceptRun).not.toHaveBeenCalled();
+      expect(test.repository.rejectRun).not.toHaveBeenCalled();
+      expect(test.repository.requestCancellation).not.toHaveBeenCalled();
+      expect(test.recoveryRequired).not.toHaveBeenCalled();
+
+      second = supervisor.submit(submission, (signal) =>
+        test.coordinator.accept(test.input, signal),
+      );
+      const accepted = await second;
+      await expect(accepted.completion).resolves.toEqual(completed);
+      expect(retainRun).toHaveBeenCalledExactlyOnceWith(accepted.runId, accepted.snapshot.runtime);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(test.repository.createRunIntent).toHaveBeenCalledTimes(2);
+      expect(test.repository.acceptRun).toHaveBeenCalledOnce();
+      expect(test.repository.rejectRun).not.toHaveBeenCalled();
+      expect(test.repository.requestCancellation).not.toHaveBeenCalled();
+      expect(test.recoveryRequired).not.toHaveBeenCalled();
+      expect(supervisor.occupancy(test.input.binding)).toEqual({
+        busy: false,
+        activeSessionId: null,
+      });
+    } finally {
+      const settled = await Promise.allSettled([first, ...(second === undefined ? [] : [second])]);
+      await Promise.allSettled(
+        settled.flatMap((result) =>
+          result.status === "fulfilled" ? [result.value.completion] : [],
+        ),
+      );
+      try {
+        await supervisor.shutdown();
+      } finally {
+        try {
+          await test.connections.close();
+        } finally {
+          retainRun.mockRestore();
+        }
+      }
+    }
+  });
+
   it.each(["same binding", "changed endpoint", "restarted process"])(
     "rejects new input on protected Runtime with %s",
     async (change) => {

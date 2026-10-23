@@ -38,6 +38,8 @@ function fixture() {
       return {
         rows: [
           {
+            organization_id: "organization-1",
+            agent_id: "agent-1",
             state: "active",
             client_mcp_revision_id: "revision",
             configuration: {},
@@ -46,6 +48,7 @@ function fixture() {
         ],
       };
     if (sql.includes("SELECT intent_digest")) return { rows: [] };
+    if (sql.includes("SELECT id FROM runs WHERE session_id")) return { rows: [] };
     if (sql.includes("INSERT INTO runs")) {
       insertValues = values;
       insertJson = values[6] as string;
@@ -187,6 +190,8 @@ describe("Run intent preparation outside the Session transaction", () => {
         bridgeIntentDigest(0, original),
         0,
         1,
+        "organization-1",
+        "agent-1",
       ]);
       expect(test.stored()).toEqual({ prompt: original, digest: bridgeIntentDigest(0, original) });
     } finally {

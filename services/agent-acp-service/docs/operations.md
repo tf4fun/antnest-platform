@@ -29,6 +29,22 @@ version fails startup. Database migrations are forward-only; rolling the
 service binary back requires restoring a database backup whose migration
 journal matches that older release.
 
+Migration `0024_agent_run_admission.sql` backfills each Run's organization and
+Agent from its Session and enforces one `admitting` or `running` Run per Agent
+scope. All historical input, messages and terminal facts are retained. Existing
+duplicate active reservations make this migration fail atomically, including
+its journal entry; startup stays unready. Diagnose the original Runs and their
+recovery facts before retrying the upgrade. Do not delete history, disable the
+constraint or invent terminal outcomes to bypass the conflict.
+
+The resulting `agent_busy` rejection is retryable under the existing error
+contract, but does not authorize replay of a recorded or uncertain Prompt.
+Cancellation requests and worker exit do not release a durable reservation;
+only a committed terminal transition does. Runtime stopping and unknown-effect
+barriers remain independent. The database-wide worker lock is still required:
+durable admission alone does not enable additional ACP replicas or define lease
+ownership and handoff.
+
 Migration `0021_tool_finish_receipts.sql` retains the original Tool finish
 stopping-evidence input separately from the current `runtime_call_stopped`
 value, which temporary Skill cleanup can later advance. Historical rows retain

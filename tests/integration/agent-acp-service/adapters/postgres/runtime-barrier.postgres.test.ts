@@ -368,17 +368,28 @@ describe.skipIf(databaseUrl === undefined)(
       await executions.finish(terminal);
       const before = await historyFacts();
 
-      // Real repositories wrote the historical protection facts. Remove only
-      // the new projection and its migration receipt to model a pre-0023 store.
+      // Real repositories wrote the historical protection facts. Reconstruct
+      // the pre-0023 schema, including removal of the later 0024 scope fields,
+      // before testing the real forward migrations and their journal prefix.
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query(
+          "ALTER TABLE runs DROP CONSTRAINT runs_session_scope_fk",
+        );
+        await client.query("DROP INDEX runs_agent_nonterminal_unique");
+        await client.query(
+          "ALTER TABLE runs DROP COLUMN organization_id, DROP COLUMN agent_id",
+        );
+        await client.query(
+          "ALTER TABLE acp_sessions DROP CONSTRAINT acp_sessions_run_scope_unique",
+        );
         await client.query("DROP TABLE runtime_barrier_cycles");
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version=$1",
-          ["0023_runtime_barrier_cycles.sql"],
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2)",
+          ["0023_runtime_barrier_cycles.sql", "0024_agent_run_admission.sql"],
         );
-        expect(removed.rowCount).toBe(1);
+        expect(removed.rowCount).toBe(2);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
@@ -589,26 +600,26 @@ describe.skipIf(databaseUrl === undefined)(
     });
 
     it("coalesces legacy protected Run history into one cycle until its last pending scope is cleared", async () => {
-      // The storage repository permits independent Sessions for this fixture.
-      // This models pre-existing history, not a claim that normal service
-      // admission may bypass Agent occupancy or an existing Runtime barrier.
+      // Preserve legacy protected history across sequential Runs on one binding.
+      // Repository-only setup does not claim that normal service admission can
+      // bypass the independent Runtime barrier left by pending cleanup.
       const first = await accept();
-      const second = await accept();
-      expect(second.sessionId).not.toBe(first.sessionId);
-      expect(second.snapshot.runtime).toEqual(first.snapshot.runtime);
       const firstPending = await temporary.reserve({
         runId: first.runId,
         snapshot: first.snapshot,
         signal,
       });
+      const firstTerminal = finishInput(first, "none");
+      await executions.finish(firstTerminal);
+      const second = await accept();
+      expect(second.sessionId).not.toBe(first.sessionId);
+      expect(second.snapshot.runtime).toEqual(first.snapshot.runtime);
       const secondPending = await temporary.reserve({
         runId: second.runId,
         snapshot: second.snapshot,
         signal,
       });
-      const firstTerminal = finishInput(first, "none");
       const secondTerminal = finishInput(second, "none");
-      await executions.finish(firstTerminal);
       expect(await executions.getState(second.runId)).toBe("running");
       expect(await reader.readCurrentBarrier(scope(first), signal)).toEqual({
         runtimeRevision: first.snapshot.runtime.revision,

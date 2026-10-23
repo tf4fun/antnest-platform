@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresSkillDiscoveryAuthority } from "../../../../../services/agent-acp-service/src/adapters/postgres/skill-discovery-authority.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
@@ -29,7 +29,7 @@ describe.skipIf(databaseUrl === undefined)(
     const authority = new PostgresSkillDiscoveryAuthority(kernel, {
       inspect: () => ({ agent, configuration: config }),
     });
-    beforeAll(async () => {
+    beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
       await migrate(pool);

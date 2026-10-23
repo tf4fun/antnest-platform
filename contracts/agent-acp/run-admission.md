@@ -1,7 +1,8 @@
 # Durable Agent Run Admission (#49 Phase 2)
 
-This contract specifies the next ACP persistence batch after the
+This contract defines the ACP persistence invariant following the
 [connection and indexed admission batch](connection-admission.md).
+The ACP schema and Run repository enforce the reservation described below.
 It does not claim that multiple ACP service replicas can start or recover Runs.
 The database-wide worker lock remains until leases, fencing, forwarding and
 two-replica recovery have their own implementation and acceptance evidence.

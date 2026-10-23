@@ -50,9 +50,9 @@ describe.skipIf(databaseUrl === undefined)(
       const snap = { ...snapshot(), deadlineAt: new Date(Date.now() + 60_000) };
       await pool.query(
         `INSERT INTO runs(id,request_id,session_id,client_mcp_revision_id,expected_access_revision,
-      state,execution_snapshot,deadline_at,created_at,updated_at,input_prompt)
+      state,execution_snapshot,deadline_at,created_at,updated_at,input_prompt,organization_id,agent_id)
       VALUES ('r','req','s','m','access-1','running',$1::jsonb,$2,now(),now(),
-        '[{"type":"text","text":"permission trigger"}]'::jsonb)`,
+        '[{"type":"text","text":"permission trigger"}]'::jsonb,'organization-1','a')`,
         [JSON.stringify(snap), snap.deadlineAt],
       );
     });
