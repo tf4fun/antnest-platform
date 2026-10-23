@@ -29,8 +29,24 @@ using a result, including container absence. It retains the full nanosecond
 start instant and selects the probe address only from the configured network.
 Cancellation waits for the original operation to finish before returning.
 
-This foundation is not connected to production routes. PostgreSQL persistence,
-the authenticated probe client, configuration and RPC wiring remain pending.
+PostgreSQL migration 14 persists registrations by Controller scope and original
+member/incarnation tuple. It keeps the Docker start identity as canonical UTC
+text with full nanoseconds, and never replaces an existing binding. A row lock
+serializes the first stop receipt; both its initial response and retries use
+the database's stored receipt and timestamp. Transaction cleanup retains an
+owned connection until the original driver operation has returned. Component
+checks independently confirm server locks and activity have cleared, without
+treating a single cross-connection statistics snapshot as a join receipt.
+
+The authenticated probe client creates a private transport for each inspected
+address. It retains the configured logical Host and workload identity while
+dialing only that literal IP, with no proxy, redirect or DNS fallback. It sends
+only the four challenge fields, strictly decodes the bounded reply, and awaits
+the response body and close. Its 1900ms exchange budget leaves room for cleanup
+within the shared two-second limit and respects an earlier parent deadline.
+
+This foundation is not connected to production routes. Configuration and RPC
+wiring remain pending.
 ACP registration, lease coordination, fenced writers, recovery, peer forwarding
 and integration with two replicas are subsequent delivery batches. The existing
 ACP global worker lock remains enabled until those consumers and integration

@@ -340,6 +340,11 @@ var schemaMigrations = []migration{
 		checksum: "b344ea651d08e30e0ea8f8d7ce84c804691252d9ea352c7597ebba0600e61803",
 		sql:      observationRetentionSQL,
 	},
+	{
+		version: 14, name: "record_acp_owner_incarnations",
+		checksum: "7633deb989892120fd097eed8484404228722280a8f81c2f3372251e953a21c7",
+		sql:      acpIncarnationSQL,
+	},
 }
 
 func Migrate(ctx context.Context, database *sql.DB) error {
