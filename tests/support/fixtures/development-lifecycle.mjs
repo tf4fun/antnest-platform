@@ -142,6 +142,7 @@ export function lifecycleAgent(kind = "create", agentId = temporaryAgent) {
       activation_state: "disabled",
       desired_state: "disabled",
       runtime_state: "stopped",
+      readiness: "unavailable",
       executable_execution_revision: null,
     });
   if (kind === "delete")
@@ -149,6 +150,7 @@ export function lifecycleAgent(kind = "create", agentId = temporaryAgent) {
       lifecycle_state: "deleted",
       desired_state: "deleted",
       runtime_state: "absent",
+      readiness: "unavailable",
       activation_state: null,
       configuration: null,
       agent_spec_revision: null,
