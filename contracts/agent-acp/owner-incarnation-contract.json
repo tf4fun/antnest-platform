@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "status": "planned",
+  "issue": 49,
+  "schema": "owner-incarnation.schema.json",
+  "semantics": "owner-handoff.md",
+  "activation": "Owning-service implementation and admission add the exact routes to active caller catalogs; this manifest grants no current access.",
+  "workload_header": "Antnest-Service-Authorization",
+  "operations": {
+    "register": {
+      "authentication": "workload",
+      "caller_context": "none",
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "response_bytes_max": 8192,
+      "success_status": 200,
+      "error": "error",
+      "query_parameters": [],
+      "receiver": "runtime-controller",
+      "method": "POST",
+      "path": "/internal/acp-incarnations/register",
+      "callers": ["agent-acp-service"],
+      "request": "register_request",
+      "response": "registration",
+      "request_bytes_max": 4096,
+      "deadline_ms": 10000,
+      "idempotency": ["member_id", "incarnation_id", "registration_nonce"],
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "unsupported_media_type",
+        "request_too_large",
+        "acp_member_not_allowed",
+        "acp_incarnation_unverified",
+        "acp_incarnation_conflict",
+        "acp_registration_unavailable",
+        "acp_registry_unavailable",
+        "deadline_exceeded",
+        "internal_error",
+        "route_not_found",
+        "method_not_allowed"
+      ]
+    },
+    "inspect": {
+      "authentication": "workload",
+      "caller_context": "none",
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "response_bytes_max": 8192,
+      "success_status": 200,
+      "error": "error",
+      "query_parameters": [],
+      "receiver": "runtime-controller",
+      "method": "GET",
+      "path": "/internal/acp-incarnations/{registration_id}",
+      "callers": ["agent-acp-service"],
+      "path_parameters": {
+        "registration_id": "registration_id"
+      },
+      "response": "inspection",
+      "request_body": "none",
+      "deadline_ms": 10000,
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "acp_registry_unavailable",
+        "deadline_exceeded",
+        "internal_error",
+        "route_not_found",
+        "method_not_allowed"
+      ]
+    },
+    "probe": {
+      "authentication": "workload",
+      "caller_context": "none",
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "response_bytes_max": 8192,
+      "success_status": 200,
+      "error": "error",
+      "query_parameters": [],
+      "receiver": "agent-acp-service",
+      "listener": "owner-private",
+      "method": "POST",
+      "path": "/internal/acp-owner/incarnation/probe",
+      "callers": ["runtime-controller"],
+      "request": "probe_request",
+      "response": "probe_response",
+      "request_bytes_max": 4096,
+      "deadline_ms": 2000,
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "unsupported_media_type",
+        "request_too_large",
+        "acp_probe_intent_mismatch",
+        "deadline_exceeded",
+        "internal_error",
+        "route_not_found",
+        "method_not_allowed"
+      ]
+    }
+  },
+  "errors": {
+    "service_unauthenticated": {
+      "http_status": 401,
+      "retryable": false
+    },
+    "caller_not_allowed": {
+      "http_status": 403,
+      "retryable": false
+    },
+    "invalid_request": {
+      "http_status": 400,
+      "retryable": false
+    },
+    "unsupported_media_type": {
+      "http_status": 415,
+      "retryable": false
+    },
+    "request_too_large": {
+      "http_status": 413,
+      "retryable": false
+    },
+    "acp_member_not_allowed": {
+      "http_status": 403,
+      "retryable": false
+    },
+    "acp_incarnation_unverified": {
+      "http_status": 403,
+      "retryable": false
+    },
+    "acp_incarnation_conflict": {
+      "http_status": 409,
+      "retryable": false
+    },
+    "acp_probe_intent_mismatch": {
+      "http_status": 409,
+      "retryable": false
+    },
+    "route_not_found": {
+      "http_status": 404,
+      "retryable": false
+    },
+    "method_not_allowed": {
+      "http_status": 405,
+      "retryable": false
+    },
+    "acp_registration_unavailable": {
+      "http_status": 503,
+      "retryable": true
+    },
+    "acp_registry_unavailable": {
+      "http_status": 503,
+      "retryable": true
+    },
+    "deadline_exceeded": {
+      "http_status": 504,
+      "retryable": true
+    },
+    "internal_error": {
+      "http_status": 500,
+      "retryable": true
+    }
+  },
+  "registration": {
+    "identity_source": "locally initiated pending intent before outbound registration",
+    "nonce_storage": "one-way digest only",
+    "same_tuple_retry": "original receipt before new platform/probe work; never rebind",
+    "unknown_outcome": "reconcile same tuple and nonce; no new unrelated registration",
+    "scope": "Runtime Controller configured scope; not caller-provided",
+    "binding": [
+      "docker_engine_id",
+      "full_container_id",
+      "container_started_at",
+      "member_id",
+      "incarnation_id"
+    ],
+    "platform_selectors": "operator catalog only",
+    "probe_destination": "exact inspected container; no requester URL, proxy or redirect",
+    "probe_consumes_intent": false,
+    "before_execution": "registration completes before lease acquisition and dispatch"
+  },
+  "inspection": {
+    "unregistered": "unknown/unregistered; no platform query",
+    "registry_failure": "503 acp_registry_unavailable",
+    "durable_stop_receipt": "return first persisted fact before fresh platform observations",
+    "running": "successful current observation of exact registered engine/container/start",
+    "unknown": [
+      "platform_unavailable",
+      "engine_changed",
+      "membership_unavailable"
+    ],
+    "stop_facts": {
+      "container_stopped": "registered exact container start authoritatively stopped",
+      "container_restarted": "registered full container ID now has a different StartedAt",
+      "container_removed": "registered full container ID authoritatively absent on the same engine"
+    },
+    "timestamps": "UTC lexical form in schema; producer/consumer validate calendar dates; observation only, never authority by age",
+    "receipt_binding": "retain entire stopped response with outer registration/member/incarnation binding",
+    "runtime_effects": "ACP process stop does not prove remote Runtime effects stopped"
+  },
+  "request_boundary": {
+    "authenticate_before": ["body", "platform", "storage"],
+    "strict_json": [
+      "no duplicate fields",
+      "no case aliases",
+      "no unknown fields",
+      "no coercion",
+      "no trimming",
+      "no multiple values"
+    ],
+    "probe_listener_excludes": ["workspace", "control", "health"],
+    "probe_dependencies": ["local pending intent", "workload authentication"],
+    "capture_payload": false,
+    "deadline_includes": ["response body", "cancellation", "actual join"]
+  },
+  "delivery_batches": [
+    "shared-contract",
+    "runtime-controller",
+    "agent-acp-service",
+    "peer-and-deployment",
+    "two-replica-integration"
+  ],
+  "pending_acceptance": [
+    "actual caller matrix before body/platform/DB",
+    "all original lifecycle route grants unchanged",
+    "private probe independent of readiness/Identity/DB",
+    "original pending intent and both nonces matched",
+    "register response loss retries original tuple without rebind",
+    "same-engine registered 404 distinct from unregistered 404",
+    "container replacement and engine change",
+    "concurrent registration and immutable first stop receipt in PostgreSQL",
+    "actual HTTP body deadline/cancellation/join and credential redaction",
+    "two replicas crash/takeover with no Prompt or Tool replay",
+    "Runtime-effect protections and actual resource cleanup preserved"
+  ]
+}

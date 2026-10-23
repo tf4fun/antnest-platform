@@ -123,6 +123,9 @@ Controller `ready`; the [readiness contract](../agent-controller/readiness.md)
 forbids that acknowledgement cycle.
 
 Recovery may mutate only the Agent scope acquired under the current fence.
+The [owner handoff contract](owner-handoff.md) defines the original incarnation
+binding and positive executor stop proof required before recovery can release a
+predecessor's durable Run reservation.
 Global startup Run recovery, abandoned permissions and learning recovery cannot
 remain unchanged when the worker lock is removed. The current owner may recover
 a predecessor's Run under the new fence while preserving its historical facts.
