@@ -2,9 +2,10 @@
 
 This document defines shared connection quota requirements and the delivery
 order. The ACP transport implements the replica-local quotas and cleanup
-ownership below. Admission indexing/performance and partitioned ownership
-remain separate work; quotas do not enable multiple replicas, change the ACP
-protocol, or complete #49.
+ownership below. The execution directory uses immutable Agent-indexed snapshots,
+with a recorded application admission benchmark. Complete Phase 1 remote
+acceptance and durable partitioned ownership remain separate gates; these
+changes do not enable multiple replicas, change the ACP protocol, or complete #49.
 
 ## Scope And Configuration
 
@@ -129,12 +130,13 @@ Phase 1 or multi-replica acceptance.
 
 ## Original #49 Acceptance Status
 
-All five original criteria remain pending. Defining this contract is not
-acceptance evidence for any row.
+All five original criteria remain pending until their complete delivery gates
+pass. Local application benchmark and quota evidence do not replace the final
+candidate's complete remote checks.
 
 | Original criterion                                                                                                       | Status  | Evidence still required                                                            |
 | ------------------------------------------------------------------------------------------------------------------------ | ------- | ---------------------------------------------------------------------------------- |
-| Phase 1 flat admission latency at 1/100/1000 Agents and a typed per-organization quota rejection                         | Pending | Recorded actual admission benchmark and real quota admission/release evidence      |
+| Phase 1 flat admission latency at 1/100/1000 Agents and a typed per-organization quota rejection                         | Pending | Final remote admission of the recorded application benchmark and transport quotas  |
 | Phase 2 two-process, same-Agent PostgreSQL admission gives one success and one `agent_busy`                              | Pending | Real concurrent PostgreSQL component evidence from two processes                   |
 | Phase 3 two ACP replicas distribute Agents and survive a replica kill through lease expiry, following #50 recovery rules | Pending | Explicit two-replica Docker kill/handoff, Run/effect and actual cleanup evidence   |
 | Stale-epoch writes are rejected                                                                                          | Pending | Component evidence for the owned write fences                                      |

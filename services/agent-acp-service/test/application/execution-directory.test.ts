@@ -1165,3 +1165,129 @@ describe("execution directory", () => {
     ).resolves.toHaveProperty("applied_revision", 2);
   });
 });
+
+describe("immutable execution directory snapshots", () => {
+  function expectFrozenTree(value: unknown): void {
+    if (value === null || typeof value !== "object") return;
+    const prototype: unknown = Object.getPrototypeOf(value);
+    if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return;
+    expect(Object.isFrozen(value)).toBe(true);
+    for (const nested of Object.values(value as Record<string, unknown>)) expectFrozenTree(nested);
+  }
+
+  it("shares deeply frozen configuration and Agent members across inspect and withAccess", async () => {
+    const { directory } = setup();
+    const input = executionConfiguration();
+    input.models[0]!.pricing = { currency: "USD", input_per_million: 1, output_per_million: 2 };
+    input.agents[0]!.default_authorization.tool_rules.push({
+      source: "runtime",
+      source_id: "runtime-tools",
+      tool_name: "inspect",
+      decision: "allow",
+    });
+    const expected = structuredClone(
+      publicExecutionConfiguration(parseExecutionConfiguration(input)),
+    );
+    const identity = executionIdentity();
+    await directory.apply(input);
+    const first = directory.inspect(identity);
+    const second = directory.inspect(identity);
+    const accessed = await directory.withAccess(identity, (snapshot) => Promise.resolve(snapshot));
+    expect(second.configuration).toBe(first.configuration);
+    expect(second.agent).toBe(first.agent);
+    expect(accessed.configuration).toBe(first.configuration);
+    expect(accessed.agent).toBe(first.agent);
+    expectFrozenTree(first.configuration);
+    expectFrozenTree(first.agent);
+    expect(Reflect.set(first.configuration, "revision", 99)).toBe(false);
+    expect(
+      Reflect.set(first.configuration.providers[0]!, "base_url", "https://changed.example/v1"),
+    ).toBe(false);
+    expect(Reflect.set(first.configuration.models[0]!.pricing!, "input_per_million", 99)).toBe(
+      false,
+    );
+    expect(Reflect.set(first.agent, "system_prompt", "changed snapshot")).toBe(false);
+    expect(Reflect.set(first.agent.default_authorization.tool_rules[0]!, "decision", "deny")).toBe(
+      false,
+    );
+    expect(
+      Reflect.set(first.agent.runtime!, "mcp_endpoint", "http://changed-runtime:8080/mcp"),
+    ).toBe(false);
+    expect(() => first.agent.principal_ids.push("snapshot-intruder")).toThrow(TypeError);
+    expect(() => first.configuration.agents.push(first.agent)).toThrow(TypeError);
+    expect(first.configuration).toEqual(expected);
+
+    expect(Object.isFrozen(input)).toBe(false);
+    input.revision = 99;
+    input.providers[0]!.base_url = "https://input-changed.example/v1";
+    input.models[0]!.pricing.input_per_million = 99;
+    input.agents[0]!.system_prompt = "changed original input";
+    input.agents[0]!.principal_ids.push("input-only-principal");
+    expect(input.revision).toBe(99);
+    expect(input.agents[0]!.principal_ids).toContain("input-only-principal");
+    const unchanged = directory.inspect(identity);
+    expect(unchanged.configuration).toBe(first.configuration);
+    expect(unchanged.agent).toBe(first.agent);
+    expect(unchanged.configuration).toEqual(expected);
+  });
+
+  it("replaces members at a newer revision while isolating callback copies and preserving replay references", async () => {
+    const { directory, onApplied } = setup();
+    const initial = executionConfiguration();
+    const identity = executionIdentity();
+    await directory.apply(initial);
+    const previous = directory.inspect(identity);
+    const previousConfiguration = structuredClone(previous.configuration);
+    const previousAgent = structuredClone(previous.agent);
+    const next = executionConfiguration();
+    next.revision = 2;
+    next.agents[0]!.system_prompt = "revision two prompt";
+    const expected = structuredClone(
+      publicExecutionConfiguration(parseExecutionConfiguration(next)),
+    );
+    onApplied.mockImplementationOnce((candidate) => {
+      candidate.revision = 99;
+      candidate.providers[0]!.base_url = "https://callback-changed.example/v1";
+      candidate.models[0]!.display_name = "callback-only model";
+      candidate.agents[0]!.system_prompt = "callback-only prompt";
+      candidate.agents[0]!.principal_ids.push("callback-only-principal");
+      return Promise.resolve();
+    });
+    await expect(directory.apply(next)).resolves.toEqual({
+      organization_id: next.organization_id,
+      applied_revision: 2,
+    });
+    const current = directory.inspect(identity);
+    expect(current.configuration).not.toBe(previous.configuration);
+    expect(current.agent).not.toBe(previous.agent);
+    expect(current.configuration).toEqual(expected);
+    expectFrozenTree(current.configuration);
+    expectFrozenTree(current.agent);
+    expect(previous.configuration).toEqual(previousConfiguration);
+    expect(previous.agent).toEqual(previousAgent);
+    expect(previous.configuration.revision).toBe(1);
+    expect(previous.agent.system_prompt).toBe(initial.agents[0]!.system_prompt);
+    expect(onApplied).toHaveBeenCalledTimes(2);
+    const callbackCopy = onApplied.mock.calls[1]![0];
+    expect(callbackCopy).not.toBe(current.configuration);
+    expect(callbackCopy.agents[0]).not.toBe(current.agent);
+    expect(callbackCopy.models[0]).not.toBe(current.configuration.models[0]);
+    expect(callbackCopy.providers[0]).not.toBe(current.configuration.providers[0]);
+    expect(callbackCopy.agents[0]!.principal_ids).not.toBe(current.agent.principal_ids);
+    expect(callbackCopy.revision).toBe(99);
+
+    await expect(directory.apply(structuredClone(next))).resolves.toEqual({
+      organization_id: next.organization_id,
+      applied_revision: 2,
+    });
+    const replayed = directory.inspect(identity);
+    const accessed = await directory.withAccess(identity, (snapshot) => Promise.resolve(snapshot));
+    expect(replayed.configuration).toBe(current.configuration);
+    expect(replayed.agent).toBe(current.agent);
+    expect(accessed.configuration).toBe(current.configuration);
+    expect(accessed.agent).toBe(current.agent);
+    expect(onApplied).toHaveBeenCalledTimes(2);
+    expect(previous.configuration).toEqual(previousConfiguration);
+    expect(previous.agent).toEqual(previousAgent);
+  });
+});

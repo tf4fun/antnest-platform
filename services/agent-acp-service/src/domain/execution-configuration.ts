@@ -246,6 +246,40 @@ export function requireSameProviderRouting(previous: ProviderRouting, next: Prov
 }
 
 export type PublicExecutionConfiguration = z.infer<typeof publicExecutionConfigurationSchema>;
+const indexedAgents = new WeakMap<
+  PublicExecutionConfiguration,
+  ReadonlyMap<string, AgentConfiguration>
+>();
+
+/** Freeze one normalized public publication and keep its index outside the wire DTO. */
+export function freezeExecutionConfiguration(
+  snapshot: PublicExecutionConfiguration,
+): PublicExecutionConfiguration {
+  if (indexedAgents.has(snapshot)) return snapshot;
+  const agents = new Map(snapshot.agents.map((agent) => [agent.agent_id, agent]));
+  const visited = new WeakSet<object>();
+  const freeze = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  };
+  freeze(snapshot);
+  indexedAgents.set(snapshot, agents);
+  return snapshot;
+}
+
+export function findConfiguredAgent(
+  snapshot: PublicExecutionConfiguration,
+  agentId: string,
+): AgentConfiguration | undefined {
+  const agents = indexedAgents.get(snapshot);
+  // Mutable DTOs used by parsing and callers never receive a cached index.
+  return agents === undefined
+    ? snapshot.agents.find((agent) => agent.agent_id === agentId)
+    : agents.get(agentId);
+}
+
 export type ExecutionIdentity = {
   organizationId: string;
   principalId: string;
@@ -368,7 +402,7 @@ export function authorizeConfiguredAgent(
   snapshot: PublicExecutionConfiguration,
   identity: ExecutionIdentity,
 ): AgentConfiguration {
-  const agent = snapshot.agents.find((candidate) => candidate.agent_id === identity.agentId);
+  const agent = findConfiguredAgent(snapshot, identity.agentId);
   if (
     snapshot.organization_id !== identity.organizationId ||
     agent === undefined ||

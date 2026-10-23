@@ -107,6 +107,33 @@ remain unusable after re-enabling a Provider; re-enabling creates a fresh client
 Lifecycle settlement rejects a pending publication without waiting, so an old
 closure cannot authorize settlement while its replacement is being applied.
 
+Published public configurations are recursively frozen after normalization.
+An index keyed by Agent ID is retained privately for each immutable snapshot;
+it is not serialized or added to the publication contract. `inspect` and
+`withAccess` return shared frozen members, and Run snapshot resolution uses the
+same index for its subsequent authorization check. Mutable input DTOs are not
+indexed. A new publication replaces the whole view atomically; references to an
+older view remain immutable, but never replace a fresh authorization check.
+The publication callback and lifecycle settlement retain their existing copy
+boundaries. Private Provider and Runtime credentials are absent from these views.
+
+Agent commits use separate queues, so another Agent's pending storage receipt
+does not block admission. Publication still waits for all earlier Agent commits
+and blocks all later commits in its organization. This ordering preserves
+revocation and acknowledgement fences; it is never held for model execution,
+Run completion or a user approval.
+
+`test/application/admission-scaling.test.ts` records application admission at
+1, 100 and 1000 configured Agents with equal measured work in each case. It
+uses the real supervisor, Prompt coordinator, directory, Run snapshot and
+Runtime connection ownership. Its stateful in-memory persistence and finite
+executor isolate the configuration cost; the result is not a PostgreSQL or
+model throughput benchmark. Configuration publication and sender preparation
+are outside the timed interval, which runs from submission through accepted
+receipt. Warmup, alternating size order and all raw samples are retained.
+Run terminal facts, same-Agent rejection and actual ownership cleanup remain
+independent assertions.
+
 ### Runtime instance authentication: #30 owning-service admission
 
 The [private Runtime connection contract](../../../contracts/runtime/instance-connection.md)
