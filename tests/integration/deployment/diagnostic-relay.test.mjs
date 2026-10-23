@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { createServer, createConnection } from "node:net";
+import { createServer, createConnection, Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -12,7 +12,11 @@ const source = new URL(
 );
 const load = () => import(source.href);
 
-async function backend(t, receive = (socket) => socket.pipe(socket)) {
+async function backend(
+  t,
+  receive = (socket) => socket.pipe(socket),
+  { resume = true } = {},
+) {
   const sockets = new Set();
   let accepted = 0;
   const server = createServer({ allowHalfOpen: true }, (socket) => {
@@ -22,7 +26,7 @@ async function backend(t, receive = (socket) => socket.pipe(socket)) {
     socket.once("close", () => sockets.delete(socket));
     socket.once("end", () => socket.end());
     receive(socket);
-    socket.resume();
+    if (resume) socket.resume();
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -154,6 +158,147 @@ test(
 );
 
 test(
+  "a normally closed source does not discard a pending destination write",
+  { timeout: 10000 },
+  async (t) => {
+    const payload = Buffer.alloc(32781, 0x6b);
+    const peer = await backend(t, (socket) => socket.end(payload));
+    const bridge = await relay(t, {
+      targets: [target(peer)],
+      maxConnections: 1,
+    });
+    const pending = Promise.withResolvers();
+    const writeSettled = Promise.withResolvers();
+    const sourceClosed = Promise.withResolvers();
+    const nativePipe = Socket.prototype.pipe;
+    const nativeWrite = Socket.prototype._write;
+    let destination, sourceSocket, release;
+    t.mock.method(Socket.prototype, "pipe", function (output, ...args) {
+      if (this.localPort === bridge.addresses.fixture.port) {
+        destination = this;
+        sourceSocket = output;
+        output.once("close", sourceClosed.resolve);
+      }
+      return nativePipe.call(this, output, ...args);
+    });
+    t.mock.method(
+      Socket.prototype,
+      "_write",
+      function (chunk, encoding, callback) {
+        if (this !== destination || release) {
+          return nativeWrite.call(this, chunk, encoding, callback);
+        }
+        // Hold one real socket write until its source has completely closed.
+        // This controls the backpressure race without depending on kernel buffers.
+        let released = false;
+        release = () => {
+          if (released) return;
+          released = true;
+          const completed = (error) => {
+            callback(error);
+            writeSettled.resolve();
+          };
+          if (this.destroyed)
+            completed(new Error("pending destination was destroyed"));
+          else nativeWrite.call(this, chunk, encoding, completed);
+        };
+        pending.resolve();
+      },
+    );
+    const socket = await connect(t, bridge.addresses.fixture.port);
+    const chunks = [];
+    socket.on("data", (chunk) => chunks.push(chunk));
+    const ended = Promise.withResolvers();
+    socket.once("end", ended.resolve);
+    socket.once("error", ended.reject);
+    socket.once("close", () => {
+      if (!socket.readableEnded)
+        ended.reject(new Error("response closed before EOF"));
+    });
+    void ended.promise.catch(() => {});
+    try {
+      socket.end();
+      await pending.promise;
+      await sourceClosed.promise;
+      assert.equal(sourceSocket.readableEnded, true);
+      assert.equal(sourceSocket.writableFinished, true);
+      assert.equal(
+        destination.destroyed,
+        false,
+        "normal source close discarded a pending write",
+      );
+      const rejected = await connect(t, bridge.addresses.fixture.port);
+      await until(() => rejected.destroyed);
+      assert.equal(
+        peer.accepted(),
+        1,
+        "pending write released the connection budget early",
+      );
+      release();
+      await ended.promise;
+      assert.deepEqual(Buffer.concat(chunks), payload);
+      await until(() => socket.destroyed && peer.sockets.size === 0);
+      const replacement = await connect(t, bridge.addresses.fixture.port);
+      await until(() => peer.accepted() === 2);
+      replacement.end();
+      await until(() => replacement.destroyed && peer.sockets.size === 0);
+    } finally {
+      release?.();
+      await bridge.close();
+      socket.destroy();
+      await Promise.allSettled([ended.promise, writeSettled.promise]);
+    }
+  },
+);
+
+test(
+  "a slow upstream retains the complete half-close upload under backpressure",
+  { timeout: 10000 },
+  async (t) => {
+    const payload = Buffer.alloc(8 * 1024 * 1024 + 29, 0x59);
+    const received = Promise.withResolvers();
+    void received.promise.catch(() => {});
+    const peer = await backend(
+      t,
+      (socket) => {
+        const chunks = [];
+        socket.on("data", (chunk) => chunks.push(chunk));
+        socket.once("end", () => received.resolve(Buffer.concat(chunks)));
+        socket.once("error", received.reject);
+        socket.once("close", () => {
+          if (!socket.readableEnded)
+            received.reject(new Error("upstream closed before upload EOF"));
+        });
+        socket.pause();
+        socket.end("ack");
+        const resume = setTimeout(() => socket.resume(), 200);
+        t.after(() => clearTimeout(resume));
+      },
+      { resume: false },
+    );
+    const bridge = await relay(t, {
+      targets: [target(peer)],
+      maxConnections: 1,
+    });
+    const socket = await connect(t, bridge.addresses.fixture.port);
+    const ended = once(socket, "end");
+    socket.end(payload);
+    await ended;
+    const bytes = await received.promise;
+    assert.equal(bytes.length, payload.length);
+    assert.equal(
+      createHash("sha256").update(bytes).digest("hex"),
+      createHash("sha256").update(payload).digest("hex"),
+    );
+    await until(() => socket.destroyed && peer.sockets.size === 0);
+    const replacement = await connect(t, bridge.addresses.fixture.port);
+    await until(() => peer.accepted() === 2);
+    replacement.end();
+    await until(() => replacement.destroyed && peer.sockets.size === 0);
+  },
+);
+
+test(
   "the connection budget is global across listeners and is released after closure",
   { timeout: 10000 },
   async (t) => {
@@ -221,6 +366,65 @@ test(
     });
     t.after(() => unavailable.destroy());
     assert.equal((await once(unavailable, "error"))[0].code, "ECONNREFUSED");
+  },
+);
+
+test(
+  "relay shutdown joins both the accepted and upstream socket close",
+  { timeout: 10000 },
+  async (t) => {
+    const peer = await backend(t, () => {});
+    const bridge = await relay(t, { targets: [target(peer)] });
+    const nativePipe = Socket.prototype.pipe;
+    const nativeDestroy = Socket.prototype._destroy;
+    const destroyedUpstream = Promise.withResolvers();
+    const closedIncoming = Promise.withResolvers();
+    let upstream,
+      release,
+      upstreamClosed = false;
+    t.mock.method(Socket.prototype, "pipe", function (output, ...args) {
+      if (this.localPort === bridge.addresses.fixture.port) {
+        upstream = output;
+        this.once("close", closedIncoming.resolve);
+        output.once("close", () => {
+          upstreamClosed = true;
+        });
+      }
+      return nativePipe.call(this, output, ...args);
+    });
+    t.mock.method(Socket.prototype, "_destroy", function (error, callback) {
+      if (this !== upstream) return nativeDestroy.call(this, error, callback);
+      let released = false;
+      release = () => {
+        if (released) return;
+        released = true;
+        nativeDestroy.call(this, error, callback);
+      };
+      destroyedUpstream.resolve();
+    });
+    const socket = await connect(t, bridge.addresses.fixture.port);
+    await until(() => peer.accepted() === 1);
+    let shutdownFinished = false;
+    const stopped = bridge.close().then(() => {
+      shutdownFinished = true;
+    });
+    try {
+      await destroyedUpstream.promise;
+      await closedIncoming.promise;
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(
+        shutdownFinished,
+        false,
+        "shutdown returned before upstream close",
+      );
+      release();
+      await stopped;
+      assert.equal(upstreamClosed, true);
+      await until(() => socket.destroyed && peer.sockets.size === 0);
+    } finally {
+      release?.();
+      await stopped;
+    }
   },
 );
 

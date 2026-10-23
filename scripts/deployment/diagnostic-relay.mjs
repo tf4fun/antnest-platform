@@ -94,7 +94,10 @@ export async function startDiagnosticRelay({
           ? new Promise((resolve) => server.close(resolve))
           : Promise.resolve(),
       );
-      for (const pair of pairs) pair.destroy();
+      for (const pair of pairs) {
+        stops.push(pair.closed);
+        pair.destroy();
+      }
       await Promise.all(stops);
       closed.resolve();
     })();
@@ -123,9 +126,11 @@ export async function startDiagnosticRelay({
             highWaterMark: limits.max_buffer_bytes_per_stream,
           });
           let remaining = 2;
+          const pairClosed = Promise.withResolvers();
           const timer = setTimeout(() => pair.destroy(), connectTimeoutMs);
           timer.unref();
           const pair = {
+            closed: pairClosed.promise,
             destroy() {
               clearTimeout(timer);
               incoming.destroy();
@@ -136,8 +141,15 @@ export async function startDiagnosticRelay({
           for (const socket of [incoming, upstream]) {
             socket.on("error", () => pair.destroy());
             socket.once("close", () => {
-              pair.destroy();
-              if (--remaining === 0) pairs.delete(pair);
+              // A fully completed source may close while its peer still has
+              // buffered writes. Let pipe finish flushing that half normally.
+              if (!socket.readableEnded || !socket.writableFinished) {
+                pair.destroy();
+              }
+              if (--remaining === 0) {
+                pairs.delete(pair);
+                pairClosed.resolve();
+              }
             });
             socket.setTimeout(idleTimeoutMs, () => pair.destroy());
           }
