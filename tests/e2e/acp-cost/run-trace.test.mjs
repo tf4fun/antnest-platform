@@ -77,14 +77,14 @@ const mutations = [
   ],
   ["admission SQL foreign process", (f) => foreign(f, f.admissionQueries[0])],
   ["missing intent transaction", (f) => remove(f, f.intent.span)],
-  ["missing admitting Run insert", (f) => remove(f, f.intent.queries[2])],
+  ["missing admitting Run insert", (f) => remove(f, f.intent.queries[3])],
   [
     "intent returns the full prompt body",
     (f) => {
-      const sql = tag(f.intent.queries[2], "db.query.text");
+      const sql = tag(f.intent.queries[3], "db.query.text");
       assert(sql.includes("pending_user_message_id, session_configuration"));
       f.set(
-        f.intent.queries[2],
+        f.intent.queries[3],
         "db.query.text",
         sql.replace(
           "pending_user_message_id, session_configuration",
@@ -93,7 +93,7 @@ const mutations = [
       );
     },
   ],
-  ["missing append version update", (f) => remove(f, f.intent.queries[3])],
+  ["missing append version update", (f) => remove(f, f.intent.queries[4])],
   ["unlocked intent", (f) => corrupt(f, f.intent.queries[1], "FOR UPDATE")],
   ["intent moved to RPC", (f) => parent(f, f.intent.span, f.request)],
   ["intent foreign process", (f) => foreign(f, f.intent.span)],

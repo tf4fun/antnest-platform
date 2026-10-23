@@ -115,16 +115,18 @@ const admissionQueries = [
 ].map(normalize);
 const intentQueries = [
   "BEGIN",
-  `SELECT state, client_mcp_revision_id, configuration, append_version
+  `SELECT organization_id, agent_id, state, client_mcp_revision_id, configuration, append_version
              FROM acp_sessions WHERE id = $1 FOR UPDATE`,
+  "SELECT id FROM runs WHERE session_id = $1 AND state IN ('admitting', 'running') LIMIT 1",
   `INSERT INTO runs(
              id, request_id, session_id, client_mcp_revision_id,
              expected_access_revision, state,
              pending_user_message_id, input_prompt,
              created_at, updated_at, session_configuration,
-             bridge_intent_id, intent_digest, expected_append_version, append_version
+             bridge_intent_id, intent_digest, expected_append_version, append_version,
+             organization_id, agent_id
            ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8, $9::jsonb,
-                     $10, $11, $12, $13)
+                     $10, $11, $12, $13, $14, $15)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
                      pending_user_message_id, session_configuration`,
@@ -495,7 +497,7 @@ export function inspectPrivateCostRunTrace(
     transactions.filter(
       (span) =>
         tree.parent(span) === admission &&
-        queriesUnder(span).some((query) => sql(query) === intentQueries[2]),
+        queriesUnder(span).some((query) => sql(query) === intentQueries[3]),
     ),
     "intent transaction",
   );

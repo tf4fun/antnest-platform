@@ -74,7 +74,11 @@ const intentQueries = [
   "BEGIN",
   actualQuery(
     "run-repository",
-    "SELECT state, client_mcp_revision_id, configuration, append_version",
+    "SELECT organization_id, agent_id, state, client_mcp_revision_id, configuration, append_version",
+  ),
+  actualQuery(
+    "run-repository",
+    "SELECT id FROM runs WHERE session_id = $1 AND state IN ('admitting', 'running') LIMIT 1",
   ),
   actualQuery("run-repository", "INSERT INTO runs("),
   actualQuery("run-repository", "UPDATE acp_sessions SET append_version"),
