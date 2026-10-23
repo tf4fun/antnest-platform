@@ -102,9 +102,10 @@ describe.skipIf(databaseUrl === undefined)(
                     : "wrong-scope";
           invalid[fields.indexOf(field)] = changed;
           const sql = `INSERT INTO run_owner_recoveries(${fields.join(",")}) VALUES(${fields.map((_, i) => `$${i + 1}`).join(",")})`;
-          await expect(f.observer.query(sql, invalid)).rejects.toMatchObject({
-            code: expect.stringMatching(/^23/u),
-          });
+          await expect(f.observer.query(sql, invalid)).rejects.toHaveProperty(
+            "code",
+            expect.stringMatching(/^23/u),
+          );
           expect(
             (await f.observer.query("SELECT * FROM run_owner_recoveries")).rows,
           ).toHaveLength(0);
