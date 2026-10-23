@@ -13,7 +13,7 @@ import {
 import { loadConfig } from "../../../../services/agent-acp-service/src/config.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
-import { PostgresSessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
 import { auditDetailSchema } from "../../../../services/agent-acp-service/src/domain/execution-audit.js";
@@ -24,7 +24,11 @@ describe.skipIf(url === undefined)("production audit HTTP composition", () => {
   const pool = new Pool({ connectionString: url, max: 2 });
   const kernel = new PostgresKernel(pool);
   const key = randomBytes(32);
-  const sessions = new PostgresSessionRepository(kernel, new SecretBox(key));
+  const sessions = createLegacySessionRepository(
+    kernel,
+    new SecretBox(key),
+    new AbortController().signal,
+  );
   const runs = createLegacyRunRepositories(
     kernel,
     new AbortController().signal,

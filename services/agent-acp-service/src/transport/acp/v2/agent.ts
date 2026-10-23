@@ -308,7 +308,7 @@ export function createAcpV2Agent({
             client,
             outputs,
             binding,
-            onAttached: () => {
+            enableOutputChanges: () => {
               observing = true;
               outputs.invalidate(key);
             },
@@ -333,7 +333,7 @@ async function observeRun({
   client,
   outputs,
   binding,
-  onAttached,
+  enableOutputChanges,
 }: {
   application: AcpApplicationPort;
   accepted: SubmittedAcpRun;
@@ -343,7 +343,7 @@ async function observeRun({
   client: acp.AgentConnection["client"];
   outputs: SessionOutputStreams;
   binding: ConnectionBinding;
-  onAttached: () => void;
+  enableOutputChanges: () => void;
 }): Promise<void> {
   const key = sessionOutputKey(binding, sessionId);
   try {
@@ -384,13 +384,16 @@ async function observeRun({
           });
         },
       });
-    if (!connection.signal.aborted) onAttached();
+    // Durable changes belong to the Session, not the initiating connection.
+    // A replacement subscription still needs hints when this attach was skipped
+    // or cancelled; keep the live connection's initial replay ordering intact.
+    enableOutputChanges();
     await accepted.completion;
   } catch (error) {
     connection.close(error);
   } finally {
+    enableOutputChanges();
     if (!connection.signal.aborted) {
-      onAttached();
       outputs.invalidate(key);
       await outputs.flush(key, binding.connectionId);
     }

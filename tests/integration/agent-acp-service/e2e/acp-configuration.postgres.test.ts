@@ -4,7 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
-import { PostgresSessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
+import { createLegacySessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
 import { PostgresBridgeObservationRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
 import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
@@ -207,8 +207,9 @@ describe.skipIf(databaseUrl === undefined)(
           app.model.complete.mock.calls.at(-1)?.[0].snapshot.executionSpec.model
             .thinking,
         ).toEqual({ protocol: "deepseek", effort: "max" });
-        const repository = new PostgresSessionConfiguration(
+        const repository = createLegacySessionConfiguration(
           new PostgresKernel(pool),
+          new AbortController().signal,
         );
         expect(
           (await repository.get(sessionId)).configuration.thinkingEffort,
@@ -304,8 +305,9 @@ describe.skipIf(databaseUrl === undefined)(
         expect(selected(fork.result, "model")).toBe("profile:profile-1");
         const forkId = String(fork.result?.sessionId);
         await set(reconnected, version, forkId, "model", "agent_default");
-        const repository = new PostgresSessionConfiguration(
+        const repository = createLegacySessionConfiguration(
           new PostgresKernel(pool),
+          new AbortController().signal,
         );
         expect(
           (await repository.get(sessionId)).configuration.modelProfileId,
@@ -347,8 +349,9 @@ describe.skipIf(databaseUrl === undefined)(
           (await set(client, version, sessionId, "mode", "chat")).error?.data
             ?.code,
         ).toBe("access_denied");
-        const stored = await new PostgresSessionConfiguration(
+        const stored = await createLegacySessionConfiguration(
           new PostgresKernel(pool),
+          new AbortController().signal,
         ).get(sessionId);
         expect(stored).toEqual({ configuration: {}, revision: 0 });
         expect(
@@ -384,9 +387,10 @@ describe.skipIf(databaseUrl === undefined)(
         ?.configurationRevision;
       expect(nextRevision).not.toBe(firstRevision);
       expect((await conditional("approve")).error).toBeDefined();
-      const stored = await new PostgresSessionConfiguration(kernel).get(
-        sessionId,
-      );
+      const stored = await createLegacySessionConfiguration(
+        kernel,
+        new AbortController().signal,
+      ).get(sessionId);
       expect(stored.configuration.authorizationMode).toBe("chat");
       expect(stored.revision).toBe(1);
     });
@@ -396,8 +400,9 @@ describe.skipIf(databaseUrl === undefined)(
       const sessionId = String(
         (await client.request("session/new", setup)).result?.sessionId,
       );
-      const repository = new PostgresSessionConfiguration(
+      const repository = createLegacySessionConfiguration(
         new PostgresKernel(pool),
+        new AbortController().signal,
       );
       const blocker = await pool.connect();
       const configuration = { authorizationMode: "chat" as const };
@@ -624,8 +629,9 @@ describe.skipIf(databaseUrl === undefined)(
       const sessionId = String(
         (await client.request("session/new", setup)).result?.sessionId,
       );
-      const repository = new PostgresSessionConfiguration(
+      const repository = createLegacySessionConfiguration(
         new PostgresKernel(pool),
+        new AbortController().signal,
       );
       const configuration = { authorizationMode: "chat" as const };
       const input = {

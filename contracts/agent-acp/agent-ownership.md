@@ -161,6 +161,30 @@ Remaining owned writes, scoped recovery, actual task joins, configuration ACKs
 and peer/integration work below remain pending. The global worker lock stays
 until their required admission passes.
 
+### Session Mutation Boundary
+
+Session create, fork, MCP replacement/reactivation, cancellation, close, delete
+and configuration changes use the same immutable authority as the Agent's Run
+repositories. They enter the lease transaction before locking the actual Session;
+scope is rechecked on the locked row. Any affected active Run is then locked and
+checked against its original execution tuple before Session changes, cancellation
+timestamps, configuration revision or replay events are written. A targeted
+cancel also validates a matching terminal Run before returning its no-op result.
+Legacy writers cannot mutate a Session over an active owned Run.
+
+Delete retries for an absent or already-deleted Session still require a live
+captured authority before local cancellation is dispatched. Existing Session
+authorization is preserved. Callers cannot retarget an in-flight mutation or its
+subsequent supervisor cancellation by changing mutable inputs across an await.
+Denied writes leave persisted business state unchanged and dispatch no local
+cancel. Successful ordinary cancellation keeps its original authority and joins
+the supervised task; it is not evidence of whole-generation or remote quiescence.
+
+Configuration compare-and-set remains atomic with its revision and replay event.
+These adapter and Application boundaries do not enable production multi-replica
+execution: coordinator lifetime capture, remaining permission/temporary/learning
+writers, scoped recovery and cross-replica integration are separate requirements.
+
 ## Configuration And Recovery Boundaries
 
 Controller configuration revision and Agent ownership epoch are independent.

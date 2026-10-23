@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
-import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { binding } from "../../../../../services/agent-acp-service/test/support/fixtures.js";
 
@@ -13,9 +13,10 @@ const url = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 describe.skipIf(url === undefined)("durable Session organization", () => {
   const pool = new Pool({ connectionString: url, max: 2 });
   const kernel = new PostgresKernel(pool);
-  const sessions = new PostgresSessionRepository(
+  const sessions = createLegacySessionRepository(
     kernel,
     new SecretBox(randomBytes(32)),
+    new AbortController().signal,
   );
   const runs = createLegacyRunRepositories(
     kernel,
@@ -54,9 +55,10 @@ describe.skipIf(url === undefined)("durable Session organization", () => {
       mcpSources: [],
       createdAt: new Date(),
     });
-    const restarted = new PostgresSessionRepository(
+    const restarted = createLegacySessionRepository(
       kernel,
       new SecretBox(randomBytes(32)),
+      new AbortController().signal,
     );
     for (const id of [one, fork]) {
       expect(await restarted.get(id)).toMatchObject({

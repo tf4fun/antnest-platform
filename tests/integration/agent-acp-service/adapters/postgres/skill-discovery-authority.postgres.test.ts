@@ -5,7 +5,7 @@ import { PostgresSkillDiscoveryAuthority } from "../../../../../services/agent-a
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
-import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { skillDiscoveryTools } from "../../../../../services/agent-acp-service/src/domain/skill-discovery.js";
 import { executionConfiguration } from "../../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
@@ -47,9 +47,10 @@ describe.skipIf(databaseUrl === undefined)(
         agentId,
         connectionId: randomUUID(),
       };
-      await new PostgresSessionRepository(
+      await createLegacySessionRepository(
         kernel,
         new SecretBox(randomBytes(32)),
+        new AbortController().signal,
       ).create({
         sessionId,
         binding: identity,

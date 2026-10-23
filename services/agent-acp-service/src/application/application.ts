@@ -38,6 +38,7 @@ export class AcpApplication implements AcpApplicationPort {
   public async setSessionConfiguration(
     input: Parameters<AcpApplicationPort["setSessionConfiguration"]>[0],
   ) {
+    input = structuredClone(input);
     await this.assertAccess(input);
     return this.dependencies.configuration.set(input);
   }
@@ -56,6 +57,7 @@ export class AcpApplication implements AcpApplicationPort {
   public async createSession(
     input: Parameters<AcpApplicationPort["createSession"]>[0],
   ): Promise<Awaited<ReturnType<AcpApplicationPort["createSession"]>>> {
+    input = structuredClone(input);
     await this.assertAccess(input);
     return this.dependencies.sessions.createSession(input);
   }
@@ -70,6 +72,7 @@ export class AcpApplication implements AcpApplicationPort {
   public async deleteSession(
     input: Parameters<AcpApplicationPort["deleteSession"]>[0],
   ): Promise<void> {
+    input = structuredClone(input);
     await this.assertAccess(input);
     await this.dependencies.sessions.deleteSession(input);
     await this.dependencies.runs.cancel(input.sessionId);
@@ -78,6 +81,7 @@ export class AcpApplication implements AcpApplicationPort {
   public async forkSession(
     input: Parameters<AcpApplicationPort["forkSession"]>[0],
   ): Promise<Awaited<ReturnType<AcpApplicationPort["forkSession"]>>> {
+    input = structuredClone(input);
     await this.assertAccess(input);
     return this.dependencies.sessions.forkSession(input);
   }
@@ -85,6 +89,7 @@ export class AcpApplication implements AcpApplicationPort {
   public async resumeSession(
     input: Parameters<AcpApplicationPort["resumeSession"]>[0],
   ): Promise<Awaited<ReturnType<AcpApplicationPort["resumeSession"]>>> {
+    input = structuredClone(input);
     await this.assertAccess(input);
     return this.dependencies.sessions.resumeSession(input);
   }
@@ -92,12 +97,14 @@ export class AcpApplication implements AcpApplicationPort {
   public async closeSession(
     input: Parameters<AcpApplicationPort["closeSession"]>[0],
   ): Promise<void> {
+    input = structuredClone(input);
     await this.assertAccess(input);
     await this.dependencies.sessions.closeSession(input);
     await this.dependencies.runs.cancel(input.sessionId);
   }
 
   public async cancelRun(input: Parameters<AcpApplicationPort["cancelRun"]>[0]): Promise<void> {
+    input = structuredClone(input);
     await this.assertAccess(input);
     if (input.expectedRunId !== undefined) {
       const matched = await this.dependencies.sessions.requestTargetCancellation(

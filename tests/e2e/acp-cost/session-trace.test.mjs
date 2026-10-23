@@ -140,6 +140,32 @@ for (const profile of [{ version: 1 }, { version: 2 }, { http: true }]) {
   ]) {
     const options = { ...profile, method },
       label = JSON.stringify(options);
+    if (method !== "session/new") {
+      for (const mutation of ["missing", "owner columns", "row lock"])
+        test(`Cost Session refuses altered Run guard (${mutation}) ${label}`, () => {
+          const f = fixture(options);
+          check(f);
+          const guard = f.queries.find((span) =>
+            tag(span, "db.query.text")?.includes(
+              "execution_owner_registration_id",
+            ),
+          );
+          assert(guard);
+          if (mutation === "missing") remove(f, guard);
+          else
+            f.set(
+              guard,
+              "db.query.text",
+              tag(guard, "db.query.text").replace(
+                mutation === "owner columns"
+                  ? "execution_owner_epoch::text"
+                  : "FOR UPDATE",
+                "",
+              ),
+            );
+          assert.throws(() => check(f));
+        });
+    }
     test(`Cost Session owns actual receipt and persistence ${label}`, () => {
       available();
       const f = fixture(options);

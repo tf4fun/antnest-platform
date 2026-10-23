@@ -15,6 +15,8 @@ import type {
 } from "../../ports/session-repository.js";
 import type { PostgresKernel } from "./kernel.js";
 import type { SecretBox } from "./secret-box.js";
+import { RunWriteAuthority } from "./run-write-authority.js";
+import { guardSessionRuns } from "./session-write-guard.js";
 
 type SessionRow = {
   id: string;
@@ -33,10 +35,17 @@ type SessionRow = {
 };
 
 export class PostgresSessionRepository implements SessionRepository {
+  readonly #authority: RunWriteAuthority;
+
   public constructor(
     private readonly kernel: PostgresKernel,
     private readonly secretBox: SecretBox,
-  ) {}
+    authority: RunWriteAuthority,
+  ) {
+    if (!(authority instanceof RunWriteAuthority))
+      throw new TypeError("Session writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async readOutput(sessionId: string, afterSequence?: number, includeDelivery = false) {
     const result = await this.kernel.query<{
@@ -98,8 +107,13 @@ export class PostgresSessionRepository implements SessionRepository {
   }
 
   public async create(input: CreateSessionInput): Promise<void> {
+    input = structuredClone(input);
     const now = new Date();
-    await this.kernel.transaction(async (client) => {
+    await this.#authority.transaction(this.kernel, async (client) => {
+      this.#authority.assertSession({
+        organization_id: input.binding.organizationId,
+        agent_id: input.binding.agentId,
+      });
       await client.query(
         `INSERT INTO acp_sessions(
            id, principal_id, agent_id, cwd, state,
@@ -181,18 +195,14 @@ export class PostgresSessionRepository implements SessionRepository {
   }
 
   public async fork(input: ForkSessionInput): Promise<void> {
-    await this.kernel.transaction(async (client) => {
+    input = structuredClone(input);
+    await this.#authority.transaction(this.kernel, async (client) => {
       const source = await selectSessionForUpdate(client, input.sourceSessionId);
+      const activeRuns = await guardSessionRuns(client, this.#authority, source);
       if (source.state === "deleted") {
         throw new DomainError("session_not_found", "Session has been deleted");
       }
-      const activeRun = await client.query(
-        `SELECT 1 FROM runs
-          WHERE session_id = $1 AND state IN ('admitting', 'running')
-          LIMIT 1`,
-        [input.sourceSessionId],
-      );
-      if (activeRun.rowCount !== 0) {
+      if (activeRuns !== 0) {
         throw new DomainError("session_busy", "Session has an active Run");
       }
       await client.query(
@@ -274,8 +284,10 @@ export class PostgresSessionRepository implements SessionRepository {
   }
 
   public async replaceMcpAndActivate(input: ReplaceMcpInput): Promise<SessionRecord> {
-    return this.kernel.transaction(async (client) => {
+    input = structuredClone(input);
+    return this.#authority.transaction(this.kernel, async (client) => {
       const session = await selectSessionForUpdate(client, input.sessionId);
+      await guardSessionRuns(client, this.#authority, session);
       if (session.state === "deleted") {
         throw new Error("Session does not exist");
       }
@@ -366,8 +378,10 @@ export class PostgresSessionRepository implements SessionRepository {
   }
 
   public async requestCancellation(sessionId: string, requestedAt: Date): Promise<void> {
-    await this.kernel.transaction(async (client) => {
+    requestedAt = new Date(requestedAt);
+    await this.#authority.transaction(this.kernel, async (client) => {
       const session = await selectSessionForUpdate(client, sessionId);
+      await guardSessionRuns(client, this.#authority, session);
       if (session.state === "deleted") {
         throw new Error("Session does not exist");
       }
@@ -380,8 +394,10 @@ export class PostgresSessionRepository implements SessionRepository {
     runId: string,
     requestedAt: Date,
   ): Promise<boolean> {
-    return this.kernel.transaction(async (client) => {
+    requestedAt = new Date(requestedAt);
+    return this.#authority.transaction(this.kernel, async (client) => {
       const session = await selectSessionForUpdate(client, sessionId);
+      await guardSessionRuns(client, this.#authority, session, runId);
       if (session.state === "deleted") throw new Error("Session does not exist");
       const result = await client.query<{ id: string }>(
         `UPDATE runs
@@ -428,8 +444,14 @@ export class PostgresSessionRepository implements SessionRepository {
     state: "closed" | "deleted",
     changedAt: Date,
   ): Promise<void> {
-    await this.kernel.transaction(async (client) => {
-      const session = await selectSessionForUpdate(client, sessionId);
+    changedAt = new Date(changedAt);
+    await this.#authority.transaction(this.kernel, async (client) => {
+      const session = await findSessionForUpdate(client, sessionId);
+      if (session === undefined) {
+        if (state === "deleted") return;
+        throw new Error("Session does not exist");
+      }
+      await guardSessionRuns(client, this.#authority, session);
       if (session.state === "deleted") {
         if (state === "deleted") return;
         throw new Error("Session does not exist");
@@ -475,6 +497,13 @@ async function markRunsCancelled(
 }
 
 async function selectSessionForUpdate(client: PoolClient, sessionId: string): Promise<SessionRow> {
+  return requireRow(await findSessionForUpdate(client, sessionId), "Session does not exist");
+}
+
+async function findSessionForUpdate(
+  client: PoolClient,
+  sessionId: string,
+): Promise<SessionRow | undefined> {
   const result = await client.query<SessionRow>(
     `SELECT id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
             client_mcp_revision_id,
@@ -482,7 +511,15 @@ async function selectSessionForUpdate(client: PoolClient, sessionId: string): Pr
        FROM acp_sessions WHERE id = $1 FOR UPDATE`,
     [sessionId],
   );
-  return requireRow(result.rows[0], "Session does not exist");
+  return result.rows[0];
+}
+
+export function createLegacySessionRepository(
+  kernel: PostgresKernel,
+  box: SecretBox,
+  workerOwnership: AbortSignal,
+) {
+  return new PostgresSessionRepository(kernel, box, RunWriteAuthority.legacy(workerOwnership));
 }
 
 function mapSession(row: SessionRow): SessionRecord {

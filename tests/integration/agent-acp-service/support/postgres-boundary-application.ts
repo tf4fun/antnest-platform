@@ -6,7 +6,7 @@ import { SessionConfigurationService } from "../../../../services/agent-acp-serv
 import { PostgresToolPermissions } from "../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { ToolPermissions } from "../../../../services/agent-acp-service/src/application/tool-permissions.js";
 import { PermissionConnections } from "../../../../services/agent-acp-service/src/application/permission-connections.js";
-import { PostgresSessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
+import { createLegacySessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
 import { randomBytes } from "node:crypto";
 import { newResourceId } from "../../../../services/agent-acp-service/src/domain/resource-id.js";
 
@@ -16,7 +16,7 @@ import { vi } from "vitest";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
-import { PostgresSessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { AcpApplication } from "../../../../services/agent-acp-service/src/application/application.js";
 import { AccessService } from "../../../../services/agent-acp-service/src/application/access-service.js";
 import { ContextBuilder } from "../../../../services/agent-acp-service/src/application/context-builder.js";
@@ -56,9 +56,10 @@ export async function startBoundaryApplication(
   } = {},
 ) {
   const kernel = new PostgresKernel(pool);
-  const sessions = new PostgresSessionRepository(
+  const sessions = createLegacySessionRepository(
     kernel,
     new SecretBox(encryptionKey),
+    new AbortController().signal,
   );
   const executions = createLegacyRunRepositories(
     kernel,
@@ -227,7 +228,10 @@ export async function startBoundaryApplication(
         id: newResourceId,
         now: () => new Date(),
       }),
-      repository: new PostgresSessionConfiguration(kernel),
+      repository: createLegacySessionConfiguration(
+        kernel,
+        new AbortController().signal,
+      ),
       directory,
       now: () => new Date(),
     }),
@@ -281,6 +285,7 @@ export async function startBoundaryApplication(
     const url = `ws://127.0.0.1:${address.port}`;
     return {
       url,
+      outputs,
       readOutput,
       httpUrl: `http://127.0.0.1:${address.port}/v1/acp`,
       sessions,

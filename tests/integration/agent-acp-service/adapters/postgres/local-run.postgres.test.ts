@@ -4,7 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
-import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
 import { PostgresToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
@@ -18,9 +18,10 @@ const url = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 describe.skipIf(url === undefined)("local Run persistence", () => {
   const pool = new Pool({ connectionString: url, max: 2 });
   const kernel = new PostgresKernel(pool);
-  const sessions = new PostgresSessionRepository(
+  const sessions = createLegacySessionRepository(
     kernel,
     new SecretBox(randomBytes(32)),
+    new AbortController().signal,
   );
   const runs = createLegacyRunRepositories(
     kernel,

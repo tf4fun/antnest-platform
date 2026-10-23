@@ -19,7 +19,6 @@ import { RuntimeSkillTemporaryClient } from "./adapters/runtime-skill-temporary-
 import { DomainError } from "./domain/errors.js";
 import { PermissionConnections } from "./application/permission-connections.js";
 import { ToolPermissions } from "./application/tool-permissions.js";
-import { PostgresSessionConfiguration } from "./adapters/postgres/session-configuration.js";
 import { newResourceId } from "./domain/resource-id.js";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -42,11 +41,10 @@ import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
 import { PostgresRuntimeBarrierReader } from "./adapters/postgres/runtime-barrier.js";
 import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
-import { createLegacyRunRepositories } from "./adapters/postgres/run-repositories.js";
+import { createLegacyAgentRepositories } from "./adapters/postgres/agent-repositories.js";
 import { PostgresBridgeObservationRepository } from "./adapters/postgres/bridge-observation-repository.js";
 import { BridgeObservationService } from "./application/bridge-observation.js";
 import { SecretBox } from "./adapters/postgres/secret-box.js";
-import { PostgresSessionRepository } from "./adapters/postgres/session-repository.js";
 import { PostgresWorkerLock, WorkerOwnershipLostError } from "./adapters/postgres/worker-lock.js";
 import { AcpApplication } from "./application/application.js";
 import { AccessService } from "./application/access-service.js";
@@ -412,11 +410,8 @@ export function buildComponents(
   runtimeConnections: RuntimeConnectionAuthority,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
-  const sessions = new PostgresSessionRepository(kernel, new SecretBox(config.clientMcpKey));
-  const { runs, events, executions, contexts } = createLegacyRunRepositories(
-    kernel,
-    ownershipSignal,
-  );
+  const { sessions, sessionConfiguration, runs, events, executions, contexts } =
+    createLegacyAgentRepositories(kernel, new SecretBox(config.clientMcpKey), ownershipSignal);
 
   const model = new InstrumentedModel(
     new OpenAICompatibleModel({
@@ -553,7 +548,7 @@ export function buildComponents(
     new AcpApplication({
       configuration: new SessionConfigurationService({
         sessions: sessionService,
-        repository: new PostgresSessionConfiguration(kernel),
+        repository: sessionConfiguration,
         directory,
         now,
       }),

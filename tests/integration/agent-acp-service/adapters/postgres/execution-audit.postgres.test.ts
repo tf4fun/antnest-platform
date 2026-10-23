@@ -5,7 +5,7 @@ import { PostgresExecutionAudits } from "../../../../../services/agent-acp-servi
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
-import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { PostgresToolPermissions } from "../../../../../services/agent-acp-service/src/adapters/postgres/tool-permissions.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { encodeSessionEvent } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-event-codec.js";
@@ -22,9 +22,10 @@ describe.skipIf(url === undefined)(
   () => {
     const pool = new Pool({ connectionString: url, max: 3 });
     const kernel = new PostgresKernel(pool);
-    const sessions = new PostgresSessionRepository(
+    const sessions = createLegacySessionRepository(
       kernel,
       new SecretBox(randomBytes(32)),
+      new AbortController().signal,
     );
     const runs = createLegacyRunRepositories(
       kernel,

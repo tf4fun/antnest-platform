@@ -4,7 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresTemporarySkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/temporary-skills.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { createLegacyRunRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";
-import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
+import { createLegacySessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { SecretBox } from "../../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { snapshot } from "../../../../../services/agent-acp-service/test/support/fixtures.js";
@@ -26,9 +26,10 @@ describe.skipIf(!databaseUrl)(
       const runId = randomUUID(),
         sessionId = randomUUID(),
         revision = randomUUID();
-      await new PostgresSessionRepository(
+      await createLegacySessionRepository(
         kernel,
         new SecretBox(randomBytes(32)),
+        new AbortController().signal,
       ).create({
         sessionId,
         binding: {

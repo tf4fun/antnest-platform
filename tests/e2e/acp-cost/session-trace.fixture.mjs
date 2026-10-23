@@ -16,8 +16,10 @@ const source = (name) =>
 const normalize = (sql) => sql.replace(/\s+/gu, " ").trim();
 const statements = [
   ...new Set(
-    [...source("session-repository").matchAll(/`([^`]+)`|"([^"\n]+)"/gu)].map(
-      (match) => match[1] ?? match[2],
+    ["session-repository", "session-write-guard"].flatMap((name) =>
+      [...source(name).matchAll(/`([^`]+)`|"([^"\n]+)"/gu)].map(
+        (match) => match[1] ?? match[2],
+      ),
     ),
   ),
 ];
@@ -37,6 +39,10 @@ const sessionLock = query(
   "SELECT id, organization_id",
   "FROM acp_sessions WHERE id = $1 FOR UPDATE",
 );
+const runGuard = query(
+  "SELECT organization_id, agent_id, execution_owner_registration_id",
+  "ORDER BY id FOR UPDATE",
+);
 const outputRead = query("SELECT s.last_message_sequence AS sequence");
 const configurationRead = source("session-configuration").match(
   /"(SELECT configuration,[^"]+)"/u,
@@ -55,11 +61,11 @@ const newQueries = [
   mcpPointer,
   "COMMIT",
 ];
-const replayQueries = ["BEGIN", sessionLock, mcpRead, "COMMIT"];
+const replayQueries = ["BEGIN", sessionLock, runGuard, mcpRead, "COMMIT"];
 const forkQueries = [
   "BEGIN",
   sessionLock,
-  query("SELECT 1 FROM runs"),
+  runGuard,
   query(
     "INSERT INTO acp_sessions( id, principal_id, agent_id, cwd, state, title",
   ),
