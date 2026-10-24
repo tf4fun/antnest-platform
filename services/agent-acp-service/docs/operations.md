@@ -337,8 +337,10 @@ transaction lock additionally refuses an active old worker; it cannot prove that
 an older startup paused before worker-lock acquisition will not resume later.
 SQL locking alone does not close that rollout race. Keep the complete membership
 pin and original history/stop facts; do not remove old participation or invent
-stop proofs to admit the upgrade. The focused two-Node evidence does not replace
-the pending Docker/browser/final operations acceptance.
+stop proofs to admit the upgrade. Delivery also requires the
+[two-replica Docker/browser profile](../../../tests/e2e/acp-survivor/README.md)
+(`c-acp-survivor`), including actual resource cleanup, and the complete remote
+gate for the exact candidate commit. Focused two-Node evidence alone is insufficient.
 
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual

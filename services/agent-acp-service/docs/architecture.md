@@ -177,8 +177,10 @@ HTTP/SSE, state/control and source forwarding are connected. Existing opaque
 HTTP handles keep their original owner and are not rebound after takeover.
 The controlled two-Node fault scenario kills B, waits for natural lease expiry,
 recovers its held Run on A and executes a new same-Agent Prompt without replay.
-This coverage does not replace the pending two-replica Docker, browser and final
-operations acceptance; issue #49 remains open.
+The [c-acp-survivor profile](../../../tests/e2e/acp-survivor/README.md) exercises
+two-replica Docker/browser recovery. Admission requires the complete remote gate
+and reviewed evidence for the exact candidate, including normal shutdown and
+actual resource cleanup.
 
 ## Optional Incarnation Bootstrap
 
@@ -633,8 +635,9 @@ legacy permissions only within approved scopes in non-peer mode. Peer mode
 preserves unknown legacy permissions. Predecessor Run recovery uses the dedicated
 stopped-proof transaction. HTTP/SSE, state/control and source requests use the
 authenticated owner boundary, following the actual lease. Guarded survivor
-takeover has controlled two-Node coverage; actual two-replica Docker, browser
-and final operations acceptance remain pending.
+takeover has controlled two-Node coverage. The `c-acp-survivor` profile exercises
+the two-replica Docker/browser workflow; admission requires the complete remote
+gate and reviewed evidence for the exact candidate.
 
 ## Module Map
 
@@ -784,8 +787,9 @@ success or failure, while retaining the original operation and cleanup until
 settlement. Cancellation alone never proves a pending runner or SQL operation
 has stopped. Context loading and checkpoint persistence use the same fence.
 Peer assignment, owner routing and guarded survivor recovery are connected.
-Actual two-replica Docker, browser and resource cleanup acceptance remains
-required.
+The `c-acp-survivor` two-replica Docker/browser profile checks survivor recovery
+and actual resource cleanup. Admission requires the complete remote gate and
+reviewed evidence for the exact candidate.
 
 The legacy startup adapters additionally support explicit organization/Agent
 selection for abandoned permission cancellation, Run recovery and Learning
@@ -1014,8 +1018,10 @@ Both paths retain the original generation and source-read gate across awaits;
 changed projections are removed only under that same live Agent fence. Peer
 fetches, original service work, readers and sends are joined before retirement;
 independent cleanup failures prevent a successful retirement acknowledgement.
-Guarded survivor takeover has controlled two-Node coverage. Two-replica Docker,
-browser and final operations acceptance remain pending.
+Guarded survivor takeover has controlled two-Node coverage. The `c-acp-survivor`
+profile defines its two-replica Docker/browser and resource cleanup checks;
+admission requires the complete remote gate and reviewed evidence for the exact
+candidate.
 Foreground isolation does not establish another Agent's background claim recovery.
 
 ## Workspace Bridge Extension
