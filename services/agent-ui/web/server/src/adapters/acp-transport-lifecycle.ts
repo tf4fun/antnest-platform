@@ -21,6 +21,8 @@ export class AcpTransportLifecycle {
   private initialized = false;
   private initializationDenied = false;
   private initializationCancelled = false;
+  private connectionId: string | undefined;
+  private connectionDenied = false;
   private targetObserved = false;
   private deletes = 0;
   private deleteResponses = 0;
@@ -118,6 +120,10 @@ export class AcpTransportLifecycle {
       !this.parentSignal?.aborted;
   }
 
+  public get connectionAccessDenied(): boolean {
+    return this.connectionDenied;
+  }
+
   public completeInitialization(): void {
     if (this.closing || this.parentSignal?.aborted)
       throw new Error("ACP initialization was cancelled");
@@ -210,8 +216,10 @@ export class AcpTransportLifecycle {
         (input instanceof Request ? input.headers : undefined));
       const initializing = !this.initialized && method === "POST" &&
         !requestHeaders.has("acp-connection-id");
-      if (initializing && response.ok && response.headers.has("acp-connection-id"))
+      if (initializing && response.ok && response.headers.has("acp-connection-id")) {
         this.targetObserved = true;
+        this.connectionId = response.headers.get("acp-connection-id")!;
+      }
       if (deleting) {
         this.deleteResponses++;
         this.deleteStatus = response.status;
@@ -223,14 +231,17 @@ export class AcpTransportLifecycle {
         return response;
       }
       const owned = this.trackBody(response, signal);
-      if (initializing && response.status === 403 &&
+      const observingOriginal = method === "GET" && this.connectionId !== undefined &&
+        requestHeaders.get("acp-connection-id") === this.connectionId;
+      if ((initializing || observingOriginal) && response.status === 403 &&
         !response.headers.has("acp-connection-id")) {
         let denied = false;
         try { denied = await readInitializationDenial(owned.response, signal); }
         finally { await owned.cancel(); }
-        this.initializationDenied = denied && !signal.aborted;
+        if (initializing) this.initializationDenied = denied && !signal.aborted;
+        else if (denied && !signal.aborted) this.connectionDenied = true;
         // Do not pass a consumed response or remote error text to the SDK.
-        throw new Error("ACP initialization request was denied");
+        throw new Error("ACP request was denied");
       }
       return owned.response;
     } catch (error) {

@@ -175,6 +175,134 @@ test("early initialize body read failures never retain private upstream details"
   assert.equal(body.locked, false);
 });
 
+function initializedGetFailure(response: () => Promise<Response>) {
+  const get = deferred(), releaseGet = deferred(), supplied = deferred();
+  const deleting = deferred(), cleanup = deferred();
+  const calls: string[] = [];
+  const connectionId = "original-initialized-connection";
+  const opening = AcpHttpBridge.open({
+    baseUrl: new URL("http://acp.invalid"), scope: testScope(scope),
+    callbacks: { update() {}, requestPermission() { return { outcome: { outcome: "cancelled" } }; } },
+    fetchImpl: async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "GET") {
+        calls.push("GET");
+        assert.equal(request.headers.get("acp-connection-id"), connectionId);
+        get.resolve();
+        await releaseGet.promise;
+        const original = await response();
+        supplied.resolve();
+        return original;
+      }
+      if (request.method === "DELETE") {
+        calls.push("DELETE");
+        assert.equal(request.headers.get("acp-connection-id"), connectionId);
+        deleting.resolve();
+        await cleanup.promise;
+        return new Response(null, { status: 202 });
+      }
+      const message = await request.json();
+      calls.push(message.method);
+      assert.equal(message.method, "initialize", "closed transport must not dispatch another business RPC");
+      assert.equal(request.headers.has("acp-connection-id"), false);
+      return Response.json({ jsonrpc: "2.0", id: message.id, result: {
+        protocolVersion: message.params.protocolVersion,
+        agentCapabilities: { loadSession: true },
+        _meta: { "antnest.dev/bridge": { intentReceipt: 1, targetCancel: 1, deliveryMark: 1 } },
+      } }, { headers: { "acp-connection-id": connectionId } });
+    },
+  });
+  return { opening, get: get.promise, releaseGet: releaseGet.resolve,
+    supplied: supplied.promise, deleting: deleting.promise, cleanup: cleanup.resolve, calls };
+}
+
+test("an initialized connection preserves a complete GET access denial after its original cleanup", async () => {
+  const reading = deferred(), eof = deferred();
+  let cancelled = false, sdkClosed = false, loaded = false, cleaned = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(earlyDenied))); },
+    async pull(controller) {
+      reading.resolve();
+      await eof.promise;
+      if (!cancelled) controller.close();
+    },
+    cancel() { cancelled = true; return eof.promise; },
+  });
+  const fixture = initializedGetFailure(async () => new Response(body, {
+    status: 403, headers: { "content-type": "application/json" },
+  }));
+  const bridge = await fixture.opening;
+  const sdkStopped = bridge.closed.then(() => { sdkClosed = true; }, () => { sdkClosed = true; });
+  let loading: Promise<unknown> | undefined, closing: Promise<unknown> | undefined;
+  try {
+    await fixture.get;
+    fixture.releaseGet();
+    await fixture.supplied;
+    await Promise.race([reading.promise, sdkStopped]);
+    await turn();
+    assert.equal(sdkClosed, false, "a JSON prefix without original EOF cannot prove GET access denial");
+    assert.deepEqual(fixture.calls, ["initialize", "GET"]);
+    eof.resolve();
+    await sdkStopped;
+    loading = bridge.load("session-after-revocation").then(
+      () => undefined, (error: unknown) => error,
+    ).finally(() => { loaded = true; });
+    closing = bridge.close().then(
+      () => undefined, (error: unknown) => error,
+    ).finally(() => { cleaned = true; });
+    await fixture.deleting;
+    await turn();
+    assert.equal(loaded, false, "typed denial must not bypass the original transport cleanup");
+    assert.equal(cleaned, false, "SDK closed is not the original DELETE cleanup receipt");
+    fixture.cleanup();
+    const [error, cleanupError] = await Promise.all([loading, closing]);
+    assert(error instanceof AgentAccessRevokedError);
+    assert.equal(cleanupError, undefined);
+    assert.equal(body.locked, false, "the original GET reader is released before typed denial");
+    assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"]);
+  } finally {
+    fixture.releaseGet();
+    eof.resolve();
+    fixture.cleanup();
+    await Promise.allSettled([loading, closing, bridge.close()]);
+  }
+});
+
+for (const failure of ["invalid-403", "network"] as const) {
+  test(`an initialized connection's ${failure} is not classified as reliable access denial`, async () => {
+    let originalBody: ReadableStream | undefined;
+    const fixture = initializedGetFailure(async () => {
+      if (failure === "network") throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("peer disconnected"), { code: "ECONNRESET" }),
+      });
+      const response = Response.json({ ...earlyDenied, code: "caller_not_allowed" }, { status: 403 });
+      originalBody = response.body ?? undefined;
+      return response;
+    });
+    const bridge = await fixture.opening;
+    let loading: Promise<unknown> | undefined;
+    try {
+      await fixture.get;
+      fixture.releaseGet();
+      await bridge.closed.then(() => undefined, () => undefined);
+      loading = bridge.load("session-after-disconnect").then(
+        () => undefined, (error: unknown) => error,
+      );
+      fixture.cleanup();
+      const error = await loading;
+      assert(error instanceof Error);
+      assert(!(error instanceof AgentAccessRevokedError), "transport failure alone cannot authorize typed403");
+      await bridge.close();
+      assert.equal(originalBody?.locked ?? false, false);
+      assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"]);
+    } finally {
+      fixture.releaseGet();
+      fixture.cleanup();
+      await Promise.allSettled([loading, bridge.close()]);
+    }
+  });
+}
+
 test("owner close joins both ACP cleanup and an aborted but unfinished watch", async () => {
   const cleanup = deferred(), watch = deferred(), aborted = deferred();
   let closed = 0, settled = false;

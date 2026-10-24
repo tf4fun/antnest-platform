@@ -385,8 +385,10 @@ export function createWorkspaceRuntime(input: {
           release: lease.release,
         };
       } catch (error) {
-        lease.release();
-        throw error;
+        // The authorization workflow has finished, so owner retirement can
+        // safely join it without waiting on the current task itself.
+        try { return await lease.owner.rejectAuthorization(error); }
+        finally { lease.release(); }
       }
     },
   });

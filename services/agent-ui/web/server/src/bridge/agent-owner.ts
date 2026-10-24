@@ -43,6 +43,7 @@ export type AcpBridgePort = {
   skillCommands?: WorkspaceCommand[];
   closed?: Promise<unknown>;
   readonly canReplaceAfterPeerLoss?: boolean;
+  readonly accessRevoked?: boolean;
   capabilities?: Pick<AgentCapabilities, "promptCapabilities" | "sessionCapabilities">;
   list?(cursor?: string): Promise<ListSessionsResponse>;
   createSession?(): Promise<NewSessionResponse>;
@@ -357,6 +358,7 @@ export class AgentBridgeOwner {
             : owner.inbox.request(params, signal),
       }, input.signal);
       input.signal?.throwIfAborted();
+      if (owner.acp.accessRevoked) throw new AgentAccessRevokedError();
       owner.currentSkillCommands = projectSkillCommands(owner.acp.skillCommands ?? []);
       if (owner.acp.closed !== undefined) {
         const disconnected = () => {
@@ -690,6 +692,41 @@ export class AgentBridgeOwner {
     }
   }
 
+  /** Called only after the caller's original authorization has settled. */
+  public async rejectAuthorization(cause: unknown): Promise<never> {
+    let failure = cause;
+    let denied = cause instanceof AgentAccessRevokedError ||
+      this.accessRevoked || this.acp?.accessRevoked === true;
+    if (!denied && (this.retired || cause instanceof AcpLoadError)) {
+      const original = this.acp;
+      if (original?.readAgentExecutionState !== undefined) {
+        try {
+          // Observation uses the same verified scope and is independent of the
+          // retired SDK connection. It never replays a Session or Prompt RPC.
+          await original.readAgentExecutionState();
+        } catch (confirmation) {
+          if (confirmation instanceof AgentAccessRevokedError) {
+            denied = true;
+            if (!(failure instanceof AggregateError)) failure = confirmation;
+          } else {
+            failure = new AggregateError([failure, confirmation], "ACP authorization and access observation failed");
+          }
+        }
+      }
+    }
+    // A completed watch can establish revocation while the observation runs.
+    denied ||= this.accessRevoked || this.acp?.accessRevoked === true;
+    if (denied) {
+      this.revokeAccess();
+      if (!(failure instanceof AggregateError)) failure = new AgentAccessRevokedError();
+    }
+    if (denied || this.retired) {
+      try { await this.close(); }
+      catch (cleanup) { throw new AggregateError([failure, cleanup], "ACP authorization and owner cleanup failed"); }
+    }
+    throw failure;
+  }
+
   public authorizeSession(
     sessionId: string,
     options?: { afterCurrent?: boolean },
@@ -713,6 +750,7 @@ export class AgentBridgeOwner {
   }
 
   private async authorizeSessionOwned(sessionId: string): Promise<AuthorizedSession> {
+    if (this.accessRevoked) throw new AgentAccessRevokedError();
     if (this.retired) throw new Error("Bridge owner is retired");
     const releaseWork = this.retainWork();
     const releasePin = this.pinSession(sessionId);
@@ -809,6 +847,10 @@ export class AgentBridgeOwner {
         }));
         return;
       } catch (error) {
+        if (error instanceof AgentAccessRevokedError) {
+          this.revokeAccess();
+          throw error;
+        }
         if (this.retired) throw new Error("Bridge owner is retired");
         if (attempt === 3 || !(error instanceof AcpLoadError)) throw error;
         const classification = error.classification;
@@ -1080,6 +1122,7 @@ export class AgentBridgeOwner {
     configurationRevision: string | null;
     upstreamConfigurationRevision: string | null;
   }> {
+    if (this.accessRevoked) throw new AgentAccessRevokedError();
     const sequence = ++this.executionReadSequence;
     let execution = await this.connection().readExecution(sessionId);
     if (this.retired) throw new Error("Bridge owner is retired");
