@@ -567,10 +567,12 @@ export async function verifyOwnerInstallRecovery({
   assert.equal(runtimeReceipt.target_generation, replacement.generation);
   const [environment] = await query(
     "antnest_runtime_controller",
-    `SELECT operation_id,runtime_revision
+    `SELECT operation_id,runtime_revision,generation
     FROM runtime_controller.runtime_environments WHERE agent_id=${agent}`,
   );
-  assert.equal(environment.operation_id, runtimeReceipt.request_id);
+  // The completed receipt is retained, while the active operation slot clears.
+  assert.equal(environment.operation_id, null);
+  assert.equal(environment.generation, runtimeReceipt.target_generation);
   assert.equal(environment.runtime_revision, runtimeReceipt.runtime_revision);
   assert.notEqual(replacement.id, originalRuntime.id);
   assert(replacement.running && replacement.healthy);
