@@ -1,8 +1,8 @@
 # Runtime Controller Control API
 
 Runtime Controller exposes a small JSON-over-HTTP RPC surface on its
-purpose-specific private listener. Revision 20 adds ACP-only incarnation
-registration and inspection; existing lifecycle, Runtime inspection, image,
+purpose-specific private listener. Revision 21 adds ACP-only member registration
+history alongside incarnation registration and inspection; existing lifecycle, Runtime inspection, image,
 observation/SSE, Skill preparation and private Runtime connection routes remain
 Controller-only under the [exact workload profile](service-authentication.md).
 Loopback readiness is separate. The service performs no end-user authentication.
@@ -45,13 +45,14 @@ labels, but never appears in this API.
 
 ## ACP Incarnation Registration And Inspection
 
-Revision 20 serves two exact routes for the verified `agent-acp-service`
+Revision 21 serves three exact routes for the verified `agent-acp-service`
 workload only:
 
 | Method | Path                                           | Request                                             | HTTP 200 response                                   |
 | ------ | ---------------------------------------------- | --------------------------------------------------- | --------------------------------------------------- |
 | POST   | `/internal/acp-incarnations/register`          | `member_id`, `incarnation_id`, `registration_nonce` | `registration_id`, `member_id`, `incarnation_id`    |
 | GET    | `/internal/acp-incarnations/{registration_id}` | Path identifier only; no body or query              | Closed `running`, `unknown` or `stopped` inspection |
+| POST   | `/internal/acp-incarnations/history`           | `member_id`, explicit nullable `cursor`             | Stable page of original registration tuples         |
 
 The shared schema defines every field: member IDs are lowercase catalog labels
 of 1–64 characters, incarnation and registration IDs are lowercase UUIDv4, and
@@ -89,12 +90,24 @@ the complete stopped response with its registration/member/incarnation binding;
 HTTP 404, a failed probe, a transport error or lease expiry is not a stop proof.
 UTC observation timestamps are diagnostics and do not grant authority by age.
 
-The [planned shared manifest](../../../contracts/agent-acp/owner-incarnation-contract.json)
-retains the complete error/status mapping and future ACP probe wire. Only its
-two RC producer routes are active here. ACP's private probe and registration
-consumer, lease coordination, fenced writers, scoped recovery, ACKs, peers,
-deployment and two-replica acceptance remain pending. The ACP global worker lock
-remains in place; this RC producer is not a complete multi-instance workflow.
+The [incarnation manifest](../../../contracts/agent-acp/owner-incarnation-contract.json)
+retains registration/inspection error and status mappings. Member history has a
+separate [wire contract](../../../contracts/agent-acp/owner-incarnation-history.md).
+Its closed request accepts at most 4KiB; the response accepts at most 32KiB and
+contains at most 64 entries. It shares the ten-second total deadline, workload
+authentication, no-store and payload suppression described above.
+
+A first `cursor: null` captures the configured member's committed history
+revision. Continuations bind that same history identifier, snapshot revision and
+exclusive sequence; concurrent new registrations do not enter the old prefix.
+Pages include all original registrations, including migrated records and records
+with permanent stop receipts. No Docker observation or stop mutation occurs.
+The server rejects foreign, malformed and out-of-range cursors as `invalid_request`;
+missing/incomplete storage is `acp_registry_unavailable`, not an empty success.
+Each consumer verifies contiguous sequences and complete tuple/echo identity.
+History is not stop proof or a barrier against later process activation. ACP's
+shared participation protocol, survivor takeover and two-replica fault acceptance
+remain required before this can form a complete multi-instance workflow.
 
 ## Private Runtime connection
 
