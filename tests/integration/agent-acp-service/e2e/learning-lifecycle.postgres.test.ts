@@ -7,6 +7,7 @@ import { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { CallerContextVerifier } from "../../../../services/agent-acp-service/src/adapters/caller-context.js";
+import { OpenAICompatibleModel } from "../../../../services/agent-acp-service/src/adapters/model/openai-compatible.js";
 import { PinnedProviderTransport } from "../../../../services/agent-acp-service/src/adapters/model/provider-transport.js";
 import { PostgresAgentLeases } from "../../../../services/agent-acp-service/src/adapters/postgres/agent-leases.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
@@ -30,6 +31,7 @@ import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports
 import {
   ModelError,
   ModelTransportCleanupError,
+  type AuthenticatedModelRequest,
 } from "../../../../services/agent-acp-service/src/ports/model.js";
 import { OwnerProbeServer } from "../../../../services/agent-acp-service/src/transport/owner-probe-server.js";
 import { RequestAuthentication } from "../../../../services/agent-acp-service/src/transport/request-authentication.js";
@@ -112,6 +114,20 @@ describe.skipIf(databaseUrl === undefined)(
         const leaseRelease = vi.spyOn(PostgresAgentLeases.prototype, "release");
         const workerRelease = vi.spyOn(PostgresWorkerLock.prototype, "release");
         const runtimeClose = vi.spyOn(RuntimeConnections.prototype, "close");
+        const learningSignals: AbortSignal[] = [];
+        // The observation delegates to the original method on its original instance.
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        const originalComplete = OpenAICompatibleModel.prototype.complete;
+        const complete = vi
+          .spyOn(OpenAICompatibleModel.prototype, "complete")
+          .mockImplementation(function (
+            this: OpenAICompatibleModel,
+            request: AuthenticatedModelRequest,
+          ) {
+            if (request.purpose === "skill_learning")
+              learningSignals.push(request.signal);
+            return originalComplete.call(this, request);
+          });
         // Every invocation below binds the original method to its real transport.
         // eslint-disable-next-line @typescript-eslint/unbound-method
         const originalClose = PinnedProviderTransport.prototype.close;
@@ -774,6 +790,7 @@ describe.skipIf(databaseUrl === undefined)(
             await within(shutdown!, "original service shutdown", 10000);
           } catch (error) {
             shutdownError = error;
+            expectedShutdownFailure.value = error;
           }
           if (closeFailure === "none") {
             expect(shutdownError).toBeUndefined();
@@ -807,8 +824,14 @@ describe.skipIf(databaseUrl === undefined)(
                     error.status === 503,
                 ),
               ).toBe(true);
-            } else expect(causes).toEqual([cleanupError]);
-            expectedShutdownFailure.value = shutdownError;
+            } else {
+              expect(learningSignals).toHaveLength(1);
+              const originalSignal = learningSignals[0]!;
+              expect(originalSignal.aborted).toBe(true);
+              expect(causes).toHaveLength(2);
+              expect(causes[0]).toBe(originalSignal.reason);
+              expect(causes[1]).toBe(cleanupError);
+            }
           }
           if (action === "loss") {
             expect(retirementAck?.status).toBe(
@@ -884,6 +907,7 @@ describe.skipIf(databaseUrl === undefined)(
           if (createdSchema)
             await settle(() => pool.query(`DROP SCHEMA ${schema} CASCADE`));
           await settle(() => pool.end());
+          complete.mockRestore();
           close.mockRestore();
           probeListen.mockRestore();
           leaseRelease.mockRestore();

@@ -463,10 +463,11 @@ async function appendModelAttemptLocked(
      VALUES($1,$2,$3,$4,'model_attempt',false,$5::jsonb,$6,true)`,
     [id, locked.sessionId, locked.runId, locked.nextSequence, JSON.stringify(payload), createdAt],
   );
-  await client.query("UPDATE acp_sessions SET last_message_sequence=$2,updated_at=$3 WHERE id=$1", [
+  // Hidden attempt bookkeeping has no public update to publish. Keep Session
+  // metadata tied to the visible events that advance it and wake observers.
+  await client.query("UPDATE acp_sessions SET last_message_sequence=$2 WHERE id=$1", [
     locked.sessionId,
     locked.nextSequence,
-    createdAt,
   ]);
 }
 

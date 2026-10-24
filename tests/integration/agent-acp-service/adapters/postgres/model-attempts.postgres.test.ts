@@ -94,6 +94,36 @@ async function messages(fixture: FencingFixture, sessionId: string) {
 describe.skipIf(databaseUrl === undefined)(
   "owned model attempt facts in PostgreSQL",
   () => {
+    it("keeps hidden attempt starts from changing public Session metadata", async () => {
+      await withDatabase(async (fixture) => {
+        const run = await accept(fixture);
+        const metadata = async () =>
+          (
+            await fixture.observer.query<{
+              updated_at: Date;
+              last_message_sequence: string;
+            }>(
+              "SELECT updated_at,last_message_sequence::text FROM acp_sessions WHERE id=$1",
+              [run.session.sessionId],
+            )
+          ).rows[0]!;
+        const before = await metadata();
+        await run.events.startModelAttempt(start(run.runId, 1));
+        const after = await metadata();
+        expect(after.updated_at).toEqual(before.updated_at);
+        expect(BigInt(after.last_message_sequence)).toBe(
+          BigInt(before.last_message_sequence) + 1n,
+        );
+        expect(
+          (await messages(fixture, run.session.sessionId)).at(-1),
+        ).toMatchObject({
+          kind: "model_attempt",
+          visible: false,
+          context_excluded: true,
+        });
+      });
+    });
+
     it("keeps attempt ordinals above the PostgreSQL int32 boundary exact", async () => {
       await withDatabase(async (fixture) => {
         const run = await accept(fixture, Number.MAX_SAFE_INTEGER);

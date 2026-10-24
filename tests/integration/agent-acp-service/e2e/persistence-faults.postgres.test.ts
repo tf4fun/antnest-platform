@@ -173,6 +173,110 @@ describe.skipIf(databaseUrl === undefined)(
       return response.json() as Promise<ProxyStatus>;
     }
 
+    async function pollDiagnostics(
+      stage: "finish-model-tool-wait" | "post-recovery-run-wait",
+      sessionId: unknown,
+      counters: {
+        version: ProtocolVersion;
+        phase: string;
+        models: number;
+        tools: number;
+        prompt_settled: boolean;
+        service_failed: boolean;
+        runtime_connections: number;
+      },
+    ): Promise<unknown[]> {
+      const receiptMetadata = (receipt: FaultReceipt) => ({
+        receipt_id: receipt.receipt_id,
+        phase: receipt.phase,
+        session_id: receipt.session_id,
+        run_id: receipt.run_id,
+        command_tag: receipt.command_tag,
+        delivery: receipt.delivery,
+      });
+      const probes: { name: string; read: () => Promise<unknown> }[] = [
+        {
+          name: "runs",
+          read: () =>
+            pool
+              .query<Record<string, unknown>>(
+                "SELECT r.id,r.state,r.executor_state,r.terminal_class,r.error_class,r.tool_effect_state,r.unknown_effect_source,r.cancel_requested_at,r.deadline_at,r.created_at,r.updated_at,s.last_message_sequence::text,s.last_execution_revision FROM runs r JOIN acp_sessions s ON s.id=r.session_id WHERE r.session_id=$1 ORDER BY r.created_at,r.id",
+                [sessionId],
+              )
+              .then((result) => result.rows),
+        },
+        {
+          name: "messages",
+          read: () =>
+            pool
+              .query<Record<string, unknown>>(
+                "SELECT run_id,sequence::text,kind,visible,context_excluded,CASE WHEN kind='model_attempt' THEN payload->>'phase' END AS phase,CASE WHEN kind='model_attempt' THEN payload->>'ordinal' END AS ordinal,CASE WHEN kind='model_attempt' THEN payload->>'outcome' END AS outcome,CASE WHEN kind='model_attempt' THEN payload->>'reason' END AS reason FROM session_messages WHERE session_id=$1 ORDER BY sequence",
+                [sessionId],
+              )
+              .then((result) => result.rows),
+        },
+        {
+          name: "tools",
+          read: () =>
+            pool
+              .query<Record<string, unknown>>(
+                "SELECT t.run_id,t.state,t.tool_effect_state,t.started_at,t.finished_at,t.updated_at FROM tool_attempts t JOIN runs r ON r.id=t.run_id WHERE r.session_id=$1 ORDER BY t.created_at,t.id",
+                [sessionId],
+              )
+              .then((result) => result.rows),
+        },
+        {
+          name: "database_activity",
+          read: () =>
+            pool
+              .query<Record<string, unknown>>(
+                "SELECT pid,state,wait_event_type,wait_event,application_name FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() ORDER BY application_name,pid",
+              )
+              .then((result) => result.rows),
+        },
+        {
+          name: "proxy",
+          read: () =>
+            control().then((status) => ({
+              connections: status.connections,
+              errors: status.errors,
+              held: status.held === null ? null : receiptMetadata(status.held),
+              records: status.records.map(receiptMetadata),
+            })),
+        },
+      ];
+      const outcomes = await Promise.allSettled(
+        probes.map((probe) => Promise.resolve().then(probe.read)),
+      );
+      const failures: unknown[] = [];
+      const diagnostics: Record<string, unknown> = {};
+      for (const [index, outcome] of outcomes.entries()) {
+        const name = probes[index]!.name;
+        if (outcome.status === "fulfilled") diagnostics[name] = outcome.value;
+        else {
+          failures.push(outcome.reason as unknown);
+          diagnostics[name] = { status: "diagnostic_failed" };
+        }
+      }
+      try {
+        await new Promise<void>((resolve, reject) => {
+          process.stderr.write(
+            JSON.stringify({
+              kind: "acp_persistence_poll_diagnostic",
+              stage,
+              session_id: typeof sessionId === "string" ? sessionId : null,
+              ...counters,
+              diagnostics,
+            }) + "\n",
+            (error) => (error ? reject(error) : resolve()),
+          );
+        });
+      } catch (error) {
+        failures.push(error);
+      }
+      return failures;
+    }
+
     async function saved(runId: string) {
       const repository = new PostgresExecutionAudits(new PostgresKernel(pool));
       const signal = AbortSignal.timeout(5000);
@@ -306,15 +410,38 @@ describe.skipIf(databaseUrl === undefined)(
             );
           requests.push(pending);
           if (phase === "finish") {
-            await expect
-              .poll(
-                () => ({
+            try {
+              await expect
+                .poll(
+                  () => ({
+                    models: modelRequests,
+                    tools: tool.mock.calls.length,
+                  }),
+                  { timeout: 5000 },
+                )
+                .toEqual({ models: 2, tools: 1 });
+            } catch (error) {
+              const diagnosticFailures = await pollDiagnostics(
+                "finish-model-tool-wait",
+                sessionId,
+                {
+                  version,
+                  phase,
                   models: modelRequests,
                   tools: tool.mock.calls.length,
-                }),
-                { timeout: 5000 },
-              )
-              .toEqual({ models: 2, tools: 1 });
+                  prompt_settled: resolved,
+                  service_failed: failure !== undefined,
+                  runtime_connections: connections.size,
+                },
+              );
+              if (diagnosticFailures.length > 0)
+                throw new AggregateError(
+                  [error, ...diagnosticFailures],
+                  "Persistence wait and diagnostics failed",
+                  { cause: error },
+                );
+              throw error;
+            }
             const runs = await pool.query<{ id: string }>(
               "SELECT id FROM runs WHERE session_id = $1",
               [sessionId],
@@ -603,18 +730,41 @@ describe.skipIf(databaseUrl === undefined)(
             prompt: [{ type: "text", text: "post-recovery" }],
           });
           expect(next.error).toBeUndefined();
-          await expect
-            .poll(
-              async () =>
-                (
-                  await pool.query<{ state: string }>(
-                    "SELECT state FROM runs WHERE session_id = $1 AND id <> $2",
-                    [sessionId, held!.run_id],
-                  )
-                ).rows,
-              { timeout: 5000 },
-            )
-            .toEqual([{ state: "completed" }]);
+          try {
+            await expect
+              .poll(
+                async () =>
+                  (
+                    await pool.query<{ state: string }>(
+                      "SELECT state FROM runs WHERE session_id = $1 AND id <> $2",
+                      [sessionId, held!.run_id],
+                    )
+                  ).rows,
+                { timeout: 5000 },
+              )
+              .toEqual([{ state: "completed" }]);
+          } catch (error) {
+            const diagnosticFailures = await pollDiagnostics(
+              "post-recovery-run-wait",
+              sessionId,
+              {
+                version,
+                phase,
+                models: modelRequests,
+                tools: tool.mock.calls.length,
+                prompt_settled: resolved,
+                service_failed: failure !== undefined,
+                runtime_connections: connections.size,
+              },
+            );
+            if (diagnosticFailures.length > 0)
+              throw new AggregateError(
+                [error, ...diagnosticFailures],
+                "Persistence wait and diagnostics failed",
+                { cause: error },
+              );
+            throw error;
+          }
           expect(modelRequests).toBe(callsBeforeReplay + 2);
           expect(tool).toHaveBeenCalledTimes(toolsBeforeReplay + 1);
           expect(await saved(held!.run_id)).toEqual(after);
