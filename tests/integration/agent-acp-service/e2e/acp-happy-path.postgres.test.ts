@@ -154,10 +154,12 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     expect(tools.call).toHaveBeenCalledOnce();
     expect(readOutput).toHaveBeenCalled();
     expect(acceptRun).toHaveBeenCalledOnce();
-    expect(acquireClient).toHaveBeenCalledExactlyOnceWith(
-      "organization-1",
-      "connection-1",
-    );
+    // One preparation guard plus one handle for each of the two model calls.
+    expect(acquireClient.mock.calls).toEqual([
+      ["organization-1", "connection-1"],
+      ["organization-1", "connection-1"],
+      ["organization-1", "connection-1"],
+    ]);
     expect(JSON.stringify(acceptRun.mock.calls)).not.toContain(
       "synthetic-provider-secret",
     );
