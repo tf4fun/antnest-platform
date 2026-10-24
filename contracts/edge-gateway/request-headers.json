@@ -80,6 +80,11 @@
       "owner": "agent-acp-service"
     },
     {
+      "name": "Antnest-ACP-Forward",
+      "role": "internal-fence",
+      "owner": "agent-acp-service"
+    },
+    {
       "name": "X-Antnest-Trace-ID",
       "role": "response-only",
       "owner": "edge-gateway"
