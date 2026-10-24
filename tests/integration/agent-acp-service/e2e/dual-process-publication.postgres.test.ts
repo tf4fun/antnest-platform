@@ -302,7 +302,6 @@ describe.skipIf(databaseUrl === undefined)(
                   /^(?:0|[1-9][0-9]{0,18})$/u.test(value) &&
                   BigInt(value) <= 9223372036854775807n;
                 if (
-                  cursor === undefined ||
                   typeof cursor !== "object" ||
                   Array.isArray(cursor) ||
                   Object.keys(cursor).sort().join(",") !==
@@ -998,7 +997,7 @@ describe.skipIf(databaseUrl === undefined)(
               .poll(
                 async () =>
                   (
-                    await pool.query(
+                    await pool.query<{ state: string }>(
                       "SELECT state FROM runs WHERE session_id=$1",
                       [nextSessionId],
                     )

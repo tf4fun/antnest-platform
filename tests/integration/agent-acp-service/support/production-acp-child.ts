@@ -151,7 +151,12 @@ export class ProductionAcpChild {
     const exit = await this.exited.promise;
     if (this.error !== undefined) throw this.error;
     if (!sent) throw new Error("Original ACP child did not accept SIGKILL");
-    if (timeout !== undefined) throw timeout;
+    if (timeout !== undefined)
+      throw timeout instanceof Error
+        ? timeout
+        : new Error("Original ACP child crash close timed out", {
+            cause: timeout,
+          });
     if (
       result.code !== null ||
       result.signal !== "SIGKILL" ||
