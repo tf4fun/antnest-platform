@@ -4,7 +4,9 @@ import { TurnRunner } from "./turn-runner.js";
 import type { ContextBuilder } from "./context-builder.js";
 import { commandReply, type SessionCommand } from "../domain/slash-commands.js";
 import { type RunExecutionInput, type ExecuteRunResult } from "../ports/acp-application.js";
-import type { ProviderClients, ProviderClientHandle } from "./provider-clients.js";
+import type { ProviderClients } from "./provider-clients.js";
+import type { ModelPort } from "../ports/model.js";
+import { RunModelClient } from "./run-model-client.js";
 import type { ExecutionRepository } from "../ports/execution-repository.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
@@ -151,16 +153,49 @@ export class RunExecutor implements RunExecutionPort {
     assertWorkerOwnership(this.dependencies.ownershipSignal);
     input.signal.throwIfAborted();
     if (input.accepted.command !== undefined) return this.runCommand(input, input.accepted.command);
-    const client = this.dependencies.providers.acquire(
-      input.accepted.snapshot.organizationId,
-      input.accepted.snapshot.providerConnectionId,
-    );
+    const providerStop = new AbortController();
+    let activeProvider: AbortSignal | undefined;
+    const revoked = (): void => {
+      providerStop.abort(activeProvider?.reason);
+    };
+    const observeForegroundProvider = (next: AbortSignal): void => {
+      activeProvider?.removeEventListener("abort", revoked);
+      activeProvider = next;
+      activeProvider.addEventListener("abort", revoked, { once: true });
+      if (activeProvider.aborted) revoked();
+    };
+    const signal = AbortSignal.any([input.signal, providerStop.signal]);
     try {
-      const result = await this.runWithClient(
-        { ...input, signal: AbortSignal.any([input.signal, client.signal]) },
-        client,
+      // The primary must still be available before preparing Runtime context.
+      // Keep its revocation watch until an actual candidate replaces it, even
+      // after releasing the preparation handle. The watch also covers Tool gaps.
+      const guard = this.dependencies.providers.acquire(
+        input.accepted.snapshot.organizationId,
+        input.accepted.snapshot.providerConnectionId,
       );
-      if (!client.signal.aborted) return result;
+      let context: Awaited<ReturnType<ContextBuilder["build"]>>;
+      try {
+        observeForegroundProvider(guard.signal);
+        context = await this.dependencies.contextBuilder.build(
+          input.accepted.sessionId,
+          input.accepted.snapshot,
+          signal,
+          input.accepted.runId,
+        );
+        signal.throwIfAborted();
+      } finally {
+        guard.release();
+      }
+      const result = await this.runWithContext(
+        { ...input, signal },
+        new RunModelClient({
+          providers: this.dependencies.providers,
+          snapshot: input.accepted.snapshot,
+          onForegroundProvider: observeForegroundProvider,
+        }),
+        context,
+      );
+      if (!providerStop.signal.aborted) return result;
       return result.toolEffectState === "unknown"
         ? { ...result, errorClass: "provider_unavailable" }
         : {
@@ -170,20 +205,15 @@ export class RunExecutor implements RunExecutionPort {
             errorClass: "provider_unavailable",
           };
     } finally {
-      client.release();
+      activeProvider?.removeEventListener("abort", revoked);
     }
   }
 
-  private async runWithClient(
+  private async runWithContext(
     input: RunExecutionInput,
-    client: ProviderClientHandle,
+    client: ModelPort,
+    context: Awaited<ReturnType<ContextBuilder["build"]>>,
   ): Promise<ExecuteRunResult> {
-    const context = await this.dependencies.contextBuilder.build(
-      input.accepted.sessionId,
-      input.accepted.snapshot,
-      input.signal,
-      input.accepted.runId,
-    );
     const events = new DurableRunEvents({
       repository: this.dependencies.events,
       ownershipSignal: this.dependencies.ownershipSignal,

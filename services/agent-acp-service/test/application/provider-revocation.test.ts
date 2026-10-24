@@ -21,26 +21,42 @@ it("revokes in-flight and idle holders without reviving them on re-enable", asyn
   const config = executionConfiguration();
   clients.apply(config);
   const handle = clients.acquire("organization-1", "provider-1");
+  const frozen = snapshot();
+  frozen.organizationId = config.organization_id;
+  frozen.providerConnectionId = config.providers[0]!.connection_id;
+  frozen.executionSpec.model.baseUrl = config.providers[0]!.base_url;
   const request: ModelRequest = {
-    snapshot: snapshot(),
+    snapshot: frozen,
     messages: [],
     tools: [],
     signal: new AbortController().signal,
   };
   const running = handle.complete(request);
   const rejected = expect(running).rejects.toMatchObject({ code: "provider_unavailable" });
-  clients.apply({
-    ...config,
-    revision: 2,
-    providers: config.providers.map((p) => ({ ...p, enabled: false })),
-  });
-  expect(handle.signal.aborted).toBe(true);
-  await rejected;
-  clients.apply({ ...config, revision: 3 });
-  await expect(handle.complete(request)).rejects.toMatchObject({ code: "provider_unavailable" });
-  const fresh = clients.acquire("organization-1", "provider-1");
-  handle.release();
-  expect(fresh.signal.aborted).toBe(false);
-  expect(complete).toHaveBeenCalledTimes(1);
-  fresh.release();
+  try {
+    // Exercise revocation of an actual in-flight request, not an earlier
+    // routing rejection caused by an unrelated generic snapshot fixture.
+    expect(complete).toHaveBeenCalledTimes(1);
+    clients.apply({
+      ...config,
+      revision: 2,
+      providers: config.providers.map((p) => ({ ...p, enabled: false })),
+    });
+    expect(handle.signal.aborted).toBe(true);
+    await rejected;
+    clients.apply({ ...config, revision: 3 });
+    await expect(handle.complete(request)).rejects.toMatchObject({ code: "provider_unavailable" });
+    const fresh = clients.acquire("organization-1", "provider-1");
+    try {
+      expect(fresh.signal.aborted).toBe(false);
+      expect(complete).toHaveBeenCalledTimes(1);
+    } finally {
+      fresh.release();
+    }
+  } finally {
+    clients.apply({ ...config, revision: 4, providers: [], models: [], agents: [] });
+    handle.release();
+    await running.catch(() => undefined);
+    await rejected;
+  }
 });

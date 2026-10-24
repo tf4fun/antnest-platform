@@ -3,9 +3,9 @@ import { runtimeConnectionIdSchema } from "./runtime-connection.js";
 
 import { thinkingEffortSchema } from "./model-thinking.js";
 import { admittedConfigurationSchema } from "./session-configuration.js";
-import type { RunExecutionSnapshot } from "./types.js";
+import type { ModelSpec, RunExecutionSnapshot } from "./types.js";
 import { modelPricingSchema } from "./usage.js";
-import { modelRetrySchema } from "./model-call-policy.js";
+import { modelFailoverSchema, modelRetrySchema } from "./model-call-policy.js";
 
 const id = z.string().min(1).max(200);
 const digest = z.string().regex(/^[0-9a-f]{64}$/u);
@@ -22,45 +22,109 @@ const modelSchema = z.strictObject({
   supportsImages: z.boolean(),
   supportsAudio: z.boolean().optional(),
   supportsPdf: z.boolean().optional(),
+  supportsTools: z.boolean().optional(),
   pricing: modelPricingSchema.optional(),
 });
 
-const schema = z.strictObject({
-  organizationId: id,
-  providerConnectionId: id,
-  modelProfileId: id,
-  configurationRevision: positive,
-  accessRevision: id,
-  deadlineAt: z.iso.datetime({ offset: true }).transform((value) => new Date(value)),
-  agentSpecRevision: id,
-  executionRevision: id,
-  runtimeMcpSourceDigest: digest,
-  agentExecutionSpecDigest: digest,
-  runtime: z.strictObject({
-    revision: id,
-    executionId: id,
-    mcpEndpoint: z.url(),
-    connectionId: runtimeConnectionIdSchema,
-  }),
-  executionSpec: z.strictObject({
-    configuration: admittedConfigurationSchema.optional(),
-    systemPrompt: z.string(),
-    contextPolicyVersion: z.literal("context-v1"),
-    skillInstructions: z
-      .array(z.strictObject({ skillKey: id, version: id, instructions: z.string() }))
-      .max(0),
-    model: modelSchema,
-    maxModelRequests: positive,
-    modelRetry: modelRetrySchema.optional(),
-  }),
-  clientMcpRevisionId: id,
-});
+const schema = z
+  .strictObject({
+    organizationId: id,
+    providerConnectionId: id,
+    modelProfileId: id,
+    configurationRevision: positive,
+    accessRevision: id,
+    deadlineAt: z.iso.datetime({ offset: true }).transform((value) => new Date(value)),
+    agentSpecRevision: id,
+    executionRevision: id,
+    runtimeMcpSourceDigest: digest,
+    agentExecutionSpecDigest: digest,
+    runtime: z.strictObject({
+      revision: id,
+      executionId: id,
+      mcpEndpoint: z.url(),
+      connectionId: runtimeConnectionIdSchema,
+    }),
+    executionSpec: z.strictObject({
+      configuration: admittedConfigurationSchema.optional(),
+      systemPrompt: z.string(),
+      contextPolicyVersion: z.literal("context-v1"),
+      skillInstructions: z
+        .array(z.strictObject({ skillKey: id, version: id, instructions: z.string() }))
+        .max(0),
+      model: modelSchema,
+      maxModelRequests: positive,
+      modelRetry: modelRetrySchema.optional(),
+      modelFailover: modelFailoverSchema.optional(),
+      fallbackModels: z
+        .array(
+          z.strictObject({
+            modelProfileId: id,
+            providerConnectionId: id,
+            model: modelSchema,
+          }),
+        )
+        .max(31)
+        .optional(),
+    }),
+    clientMcpRevisionId: id,
+  })
+  .superRefine((snapshot, ctx) => {
+    const spec = snapshot.executionSpec;
+    if ((spec.modelFailover === undefined) !== (spec.fallbackModels === undefined))
+      ctx.addIssue({
+        code: "custom",
+        message: "Incomplete frozen model fallback plan",
+        path: ["executionSpec"],
+      });
+    const profiles = new Set([snapshot.modelProfileId]);
+    for (const candidate of spec.fallbackModels ?? []) {
+      if (profiles.has(candidate.modelProfileId))
+        ctx.addIssue({
+          code: "custom",
+          message: "Duplicate frozen model candidate",
+          path: ["executionSpec", "fallbackModels"],
+        });
+      profiles.add(candidate.modelProfileId);
+      if (
+        candidate.model.thinking?.protocol !== spec.model.thinking?.protocol ||
+        candidate.model.thinking?.effort !== spec.model.thinking?.effort
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "Fallback changes the original thinking effort",
+          path: ["executionSpec", "fallbackModels"],
+        });
+    }
+  });
 
 export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
   const parsed = schema.parse(value);
-  const { configuration, modelRetry, ...executionSpec } = parsed.executionSpec;
-  const { temperature, thinking, supportsAudio, supportsPdf, pricing, ...model } =
-    executionSpec.model;
+  const { configuration, modelRetry, modelFailover, fallbackModels, ...executionSpec } =
+    parsed.executionSpec;
+  return {
+    ...parsed,
+    executionSpec: {
+      ...executionSpec,
+      model: normalizedModel(executionSpec.model),
+      ...(configuration === undefined ? {} : { configuration }),
+      ...(modelRetry === undefined ? {} : { modelRetry }),
+      ...(modelFailover === undefined ? {} : { modelFailover }),
+      ...(fallbackModels === undefined
+        ? {}
+        : {
+            fallbackModels: fallbackModels.map((candidate) => ({
+              modelProfileId: candidate.modelProfileId,
+              providerConnectionId: candidate.providerConnectionId,
+              model: normalizedModel(candidate.model),
+            })),
+          }),
+    },
+  };
+}
+
+function normalizedModel(value: z.infer<typeof modelSchema>): ModelSpec {
+  const { temperature, thinking, supportsAudio, supportsPdf, supportsTools, pricing, ...model } =
+    value;
   const normalizedPricing =
     pricing === undefined
       ? undefined
@@ -76,19 +140,12 @@ export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
             : { cacheWritePerMillion: pricing.cacheWritePerMillion }),
         };
   return {
-    ...parsed,
-    executionSpec: {
-      ...executionSpec,
-      model: {
-        ...model,
-        ...(temperature === undefined ? {} : { temperature }),
-        ...(thinking === undefined ? {} : { thinking }),
-        ...(supportsAudio === undefined ? {} : { supportsAudio }),
-        ...(supportsPdf === undefined ? {} : { supportsPdf }),
-        ...(normalizedPricing === undefined ? {} : { pricing: normalizedPricing }),
-      },
-      ...(configuration === undefined ? {} : { configuration }),
-      ...(modelRetry === undefined ? {} : { modelRetry }),
-    },
+    ...model,
+    ...(temperature === undefined ? {} : { temperature }),
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(supportsAudio === undefined ? {} : { supportsAudio }),
+    ...(supportsPdf === undefined ? {} : { supportsPdf }),
+    ...(supportsTools === undefined ? {} : { supportsTools }),
+    ...(normalizedPricing === undefined ? {} : { pricing: normalizedPricing }),
   };
 }

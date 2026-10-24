@@ -9,8 +9,13 @@ import type {
 import { executionConfiguration } from "../fixtures/execution-configuration.js";
 import { snapshot } from "../support/fixtures.js";
 
-function request(): ModelRequest {
-  return { snapshot: snapshot(), messages: [], tools: [], signal: new AbortController().signal };
+function request(organizationId = "organization-1"): ModelRequest {
+  const frozen = snapshot();
+  const provider = executionConfiguration().providers[0]!;
+  frozen.organizationId = organizationId;
+  frozen.providerConnectionId = provider.connection_id;
+  frozen.executionSpec.model.baseUrl = provider.base_url;
+  return { snapshot: frozen, messages: [], tools: [], signal: new AbortController().signal };
 }
 
 function result(): ModelResult {
@@ -263,7 +268,7 @@ describe("logical Provider clients", () => {
       models: [],
       providers: [],
     });
-    await handle.complete(request());
+    await handle.complete(request("organization-2"));
     expect(calls.mock.calls[0]?.[0].credential).toBe("other-organization-key");
     expect(() => clients.acquire("unknown", "provider-1")).toThrow("unavailable");
     handle.release();

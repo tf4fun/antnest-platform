@@ -232,6 +232,9 @@
           "supports_pdf": {
             "type": "boolean"
           },
+          "supports_tools": {
+            "type": "boolean"
+          },
           "pricing": {
             "type": "object",
             "properties": {
@@ -495,6 +498,13 @@
               "cap_ms"
             ],
             "additionalProperties": false
+          },
+          "failover": {
+            "type": "string",
+            "enum": [
+              "never",
+              "before_output"
+            ]
           },
           "runtime": {
             "anyOf": [

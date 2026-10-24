@@ -7,7 +7,9 @@ import type {
   ToolEffectState,
   UnknownEffectSource,
   RunExecutionSnapshot,
+  ModelCandidate,
 } from "../../domain/types.js";
+import type { ModelAttemptStarted } from "../../ports/model-attempts.js";
 import type { InterruptedToolEffects } from "../../ports/run-event-repository.js";
 
 import type { SessionEvent } from "../../ports/acp-application.js";
@@ -176,9 +178,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       );
       const frozen = requireRow(row.rows[0], "Run snapshot is missing").execution_snapshot;
       if (
-        input.modelProfileId !== frozen.modelProfileId ||
-        input.providerConnectionId !== frozen.providerConnectionId ||
-        input.model !== frozen.executionSpec.model.model ||
+        frozenModelCandidate(frozen, input) === undefined ||
         input.ordinal > frozen.executionSpec.maxModelRequests
       )
         throw new Error("Model attempt does not match the frozen Run");
@@ -240,11 +240,21 @@ export class PostgresRunEventRepository implements RunEventRepository {
         return usageReceipt;
       }
       requireRunning(locked.state);
-      const started = await client.query(
-        "SELECT id FROM session_messages WHERE id=$1 AND run_id=$2 AND session_id=$3 AND kind='model_attempt' AND NOT visible AND context_excluded AND payload->>'phase'='start'",
+      const started = await client.query<{
+        payload: ModelAttemptStarted;
+        execution_snapshot: RunExecutionSnapshot;
+      }>(
+        `SELECT m.payload, r.execution_snapshot FROM session_messages m
+         JOIN runs r ON r.id=m.run_id
+         WHERE m.id=$1 AND m.run_id=$2 AND m.session_id=$3 AND m.kind='model_attempt'
+           AND NOT m.visible AND m.context_excluded AND m.payload->>'phase'='start'`,
         [modelAttemptId(input.runId, input.ordinal, "start"), locked.runId, locked.sessionId],
       );
       if (started.rowCount !== 1) throw new Error("Model attempt start is missing");
+      const original = requireRow(started.rows[0], "Model attempt start is missing");
+      const candidate = frozenModelCandidate(original.execution_snapshot, original.payload);
+      if (candidate === undefined || input.contextSize !== candidate.model.contextWindow)
+        throw new Error("Model attempt context does not match its frozen candidate");
       await appendModelAttemptLocked(client, locked, id, event, input.finishedAt);
       return appendUsageLocked(client, { ...locked, nextSequence: locked.nextSequence + 1 }, usage);
     });
@@ -394,6 +404,28 @@ export class PostgresRunEventRepository implements RunEventRepository {
       return event;
     });
   }
+}
+
+function frozenModelCandidate(
+  snapshot: RunExecutionSnapshot,
+  attempt: Pick<ModelAttemptStarted, "modelProfileId" | "providerConnectionId" | "model">,
+): ModelCandidate | undefined {
+  const candidates = [
+    {
+      modelProfileId: snapshot.modelProfileId,
+      providerConnectionId: snapshot.providerConnectionId,
+      model: snapshot.executionSpec.model,
+    },
+    ...(snapshot.executionSpec.modelFailover === "before_output"
+      ? (snapshot.executionSpec.fallbackModels ?? [])
+      : []),
+  ];
+  return candidates.find(
+    (candidate) =>
+      candidate.modelProfileId === attempt.modelProfileId &&
+      candidate.providerConnectionId === attempt.providerConnectionId &&
+      candidate.model.model === attempt.model,
+  );
 }
 
 function mergeUnknownEffectSource(

@@ -63,6 +63,7 @@ export class ModelError extends Error {
       | "model_unavailable"
       | "model_http_error"
       | "model_invalid_response"
+      | "provider_unavailable"
       | "provider_endpoint_forbidden"
       | "provider_endpoint_unavailable",
     message: string,
@@ -76,8 +77,13 @@ export class ModelError extends Error {
 }
 
 export class ModelTransportCleanupError extends ModelError {
-  public constructor(cause: unknown, usage?: ModelUsage, outputStarted = false) {
-    super("model_unavailable", "Model transport cleanup failed", false, undefined, { cause });
+  public constructor(
+    cause: unknown,
+    usage?: ModelUsage,
+    outputStarted = false,
+    code: "model_unavailable" | "provider_unavailable" = "model_unavailable",
+  ) {
+    super(code, "Model transport cleanup failed", false, undefined, { cause });
     this.outputStarted = outputStarted;
     this.name = "ModelTransportCleanupError";
     if (usage !== undefined) this.usage = usage;

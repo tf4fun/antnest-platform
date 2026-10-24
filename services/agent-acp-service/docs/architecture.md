@@ -426,15 +426,36 @@ Session overrides belong to ACP; available organization models, Agent defaults
 and credentials are published by Controller. See
 [Session configuration](session-configuration.md). The current local directory
 resolves an accepted Run into one immutable non-secret snapshot containing its
-logical Provider/model, model parameters, authorization and Runtime identity.
+logical primary Provider/model, model parameters, authorization and Runtime identity.
+Optional execution wire fields `model_retry`, Agent `failover` and model
+`supports_tools` retain legacy omission behavior: zero retries, no runtime
+failover and no inferred fallback Tool capability. Explicit failover freezes an
+ordered candidate plan from that same publication, including complete model
+parameters, capabilities, thinking effort, prices and Provider identities.
+Session model overrides and selection-time handling of an unavailable default
+retain their existing semantics. Later catalog updates do not rewrite the plan.
 It does not contain a Controller admission ticket or fixed credential reference.
 
 Run intent creation captures Session overrides under the Session lock.
 The local deadline is fixed at acceptance from `ANTNEST_ACP_RUN_TIMEOUT`.
-Startup never replays intent. ProviderClients owns volatile authentication and
-injects its current value into each outgoing request; rotation is invisible to
-the model loop. Provider disable revokes existing holders and aborts active requests;
-credential rotation alone does not cancel a Run. Re-enabling creates a fresh client.
+Startup never replays intent. A primary Provider guard checks availability and
+cancellation before and during Runtime context preparation. Each model attempt
+then acquires its own logical Provider handle. ProviderClients injects current
+volatile authentication only after matching the request organization, connection
+ID and frozen base URL. Rotation alone does not cancel a Run; re-enabling creates
+fresh clients without reviving old handles. The RunExecutor-owned watch follows
+the most recently selected foreground Provider through Tool work until the next
+foreground selection. RunModelClient updates it through `onForegroundProvider`.
+A permission judge protects its original in-flight call with its own handle
+signal without replacing that watch. After B proposes a Tool, a completed judge
+on A cannot detach B's watch: B revocation still stops the Tool, while A
+revocation does not cancel B's Tool. Original cleanup remains joined.
+
+The [model call implementation](model-calls.md) defines bounded retries and
+capable fallback. Controller has not yet published the delivery defaults of two
+retries and `before_output`. Spending ledgers/caps, circuit breaking, Console
+controls and final Docker integration admission remain pending; this ACP
+implementation is not final fallback delivery or completion of #52.
 
 ### Message And ToolAttempt
 
@@ -486,14 +507,23 @@ stored context reconstruction; see [Model reasoning history](model-reasoning-his
    with transient Runtime guidance/Skill summaries, the system prompt,
    compression checkpoint, durable messages and labelled Run-start plan snapshot.
    See [Runtime context](runtime-context.md) and [Structured plans](structured-plan.md).
-3. Use the logical Provider handle acquired before Runtime setup. The model
-   transport, not the Run or Tool loop, receives current volatile authentication.
+3. Keep the primary Provider guard during Runtime preparation, then acquire a
+   fresh handle for the frozen candidate selected by each model attempt. Keep
+   only the most recent foreground Provider's revocation monitor through Tool
+   work, replacing it on a foreground candidate switch. Permission-judge calls
+   use their own in-flight handle signals and do not replace that monitor.
+   The model transport, not the Run or Tool loop,
+   receives current volatile authentication.
    It applies the shared destination policy to each request, checks all DNS
    answers and pins the socket with the original TLS/Host identity. Its bounded
    dispatcher lives through streaming body consumption and is destroyed in
    `finally`; it has no service credentials, redirects or environment proxy.
    Foreground, permission-judge and learning calls use this same adapter.
-4. Check the complete model-input budget before each model request.
+4. Check the complete model-input context estimate before each model request.
+   Fallback preserves the input and skips candidates that cannot accept its
+   media, Tool definitions/history, exact thinking effort or context size. The
+   existing length/4 estimate is compatibility checking, not a hard token/cost
+   spending bound; improved estimation remains under #51.
 5. Call the model and persist/emit text or thought output. Mixed text and Tool
    calls are retained as one assistant response. Before persistence, derive each
    Tool ID from `(runId, model request index, provider call ID)`. This single ID

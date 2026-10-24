@@ -15,11 +15,29 @@ effective Session/Run selection; Controller readiness does not decide model
 availability. Manual selection remains organization-scoped. A missing available
 candidate rejects prompting, not Session history or configuration access.
 
+Execution wire Agents also accept optional `model_retry: {max, base_ms, cap_ms}`
+and `failover: "never" | "before_output"`; models accept optional boolean
+`supports_tools`. Missing fields preserve zero retries, no runtime failover and
+unknown fallback Tool capability. They do not materialize Controller's delivery
+defaults. Explicit `before_output` exhausts each candidate's retries before
+trying the next capable candidate, retaining one Run, input, request counter and
+deadline. `never` does not disable the existing selection-time fallback or
+organization-scoped manual override behavior.
+
 Provider disable/revocation fails existing holders without graceful draining or
 Run replay. Re-enable creates new holders; credential rotation alone does not
 cancel execution. Platform publications refresh current ACP configuration options
 without adding synthetic model replies to the transcript. OpenRouter uses the
 OpenAI-compatible transport without DeepSeek-specific thinking parameters.
+The Run monitors its current foreground Provider through Tool work: revoking
+inactive A after selection moves to B cannot cancel B, while revoking current B
+still stops its work and waits for original cleanup.
+
+The [ACP model call implementation](model-calls.md) freezes and filters runtime
+candidates. Controller default publication, spending ledgers/caps, circuit
+breaking, Console policy controls and final Docker integration remain pending.
+The ACP implementation alone does not establish final fallback delivery or
+complete #52.
 
 Cross-service ownership between Controller and ACP is summarized in
 [service layout](../../../docs/service-layout.md) and
@@ -361,18 +379,29 @@ for workspace bootstrap and state.
 Run acceptance resolves the current organization configuration and the captured
 Session overrides locally. The immutable execution snapshot identifies the
 organization, logical Provider connection and model profile, and fixes model
-parameters, authorization and Runtime binding. It contains no Controller
+parameters, authorization and Runtime binding. With explicit failover it also
+fixes the ordered fallback identities, complete parameters, capabilities,
+thinking effort and prices from that same accepted publication. Later attempts
+do not re-read a new model catalog to replace those facts. It contains no Controller
 admission ID, bearer, Provider credential revision or maintenance ticket.
 The Runtime connection ID is a public part of the immutable binding.
 
 The local execution deadline is fixed when accepting the input, using ACP's
 execution timeout. It is independent of lifecycle settlement and is not extended
-by configuration replay or reconnect. Provider credential lookup is absent from Run
-acceptance and execution: the executor holds a logical client for actual work,
-and that client injects current authentication into each outgoing model request.
-Model loops and permission classification receive no secret field. Retirement
-prevents new client acquisition but lets an existing holder finish and receive
-authentication rotation. Missing clients fail before Runtime setup.
+by configuration replay or reconnect. Acceptance stores no Provider credentials.
+Before Runtime setup, a primary client guard checks availability and supplies
+the preparation cancellation signal; its original preparation task must join
+before the guard is released. Each model attempt then obtains its selected
+candidate's fresh handle. Before injecting current authentication, that handle
+checks the request organization, connection ID and frozen base URL against its
+binding. Model loops and permission classification receive no secret field.
+Disable/removal revokes holders and aborts current work; rotation alone remains
+usable on a later request. Missing primary clients fail before Runtime setup.
+The foreground Provider monitor remains through Tool work, is replaced on a
+foreground candidate switch and is removed on Run cleanup. A judge's temporary
+handle protects its own in-flight call without replacing that monitor.
+All attempts share the original
+deadline and model-request counter; switching candidates does not reset either.
 
 ## Startup Interruption Cleanup
 

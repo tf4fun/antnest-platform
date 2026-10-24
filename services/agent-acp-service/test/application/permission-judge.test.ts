@@ -53,6 +53,14 @@ function setup(limit = 4) {
   return { judge, budget, model, usage, input, prepared, answer, cancellation };
 }
 describe("Smart Approve exact-call read-only judge", () => {
+  it("propagates Provider revocation instead of continuing with manual Tool approval", async () => {
+    const h = setup();
+    const failure = new ModelError("provider_unavailable", "Provider was revoked", false);
+    h.model.complete.mockRejectedValue(failure);
+    await expect(h.judge.readOnly(h.input, h.prepared)).rejects.toBe(failure);
+    expect(h.model.complete).toHaveBeenCalledOnce();
+    expect(h.usage).toHaveBeenCalledExactlyOnceWith("r", {});
+  });
   it("records returned fees even when the classifier completion is invalid", async () => {
     const h = setup();
     const error = new ModelError("model_invalid_response", "invalid", false);

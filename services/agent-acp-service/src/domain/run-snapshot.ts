@@ -33,6 +33,12 @@ export function runSnapshot(input: {
     skillInstructions: selected.skillInstructions,
     maxModelRequests: selected.maxModelRequests,
     ...(selected.modelRetry === undefined ? {} : { modelRetry: { ...selected.modelRetry } }),
+    ...(selected.modelFailover === undefined
+      ? {}
+      : {
+          modelFailover: selected.modelFailover,
+          fallbackModels: structuredClone(selected.fallbackModels ?? []),
+        }),
   };
   return {
     organizationId: selected.organizationId,

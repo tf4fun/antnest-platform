@@ -158,7 +158,12 @@ describe.skipIf(databaseUrl === undefined)(
         expect(normal.error).toBeUndefined();
         await finished(sessionId, 2);
         expect(app.model.complete).toHaveBeenCalledOnce();
-        expect(app.acquireClient).toHaveBeenCalledOnce();
+        // The preparation guard and the single physical attempt each retain
+        // their own Provider handle; acquiring a handle does not call the model.
+        expect(app.acquireClient.mock.calls).toEqual([
+          ["organization-1", "connection-1"],
+          ["organization-1", "connection-1"],
+        ]);
         expect(app.recoveryRequired).not.toHaveBeenCalled();
       });
 

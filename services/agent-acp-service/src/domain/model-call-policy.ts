@@ -12,3 +12,6 @@ export const modelRetrySchema = z
   .refine((value) => value.baseMs <= value.capMs, "Retry base exceeds cap");
 
 export type ModelRetry = z.infer<typeof modelRetrySchema>;
+
+export const modelFailoverSchema = z.enum(["never", "before_output"]);
+export type ModelFailover = z.infer<typeof modelFailoverSchema>;
