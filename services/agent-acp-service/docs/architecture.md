@@ -509,6 +509,7 @@ owner_stop_receipts
 run_owner_recoveries
 learning_owner_recoveries
 learning_runtime_protections
+acp_peer_membership
 ```
 
 There are no cross-service foreign keys, views, triggers, or SQL queries.

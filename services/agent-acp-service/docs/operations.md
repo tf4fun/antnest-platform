@@ -197,6 +197,17 @@ request. It cancels the old claim before opening new foreground work, while any
 unresolved install protection still keeps its Runtime unavailable. Keep the global
 worker lock and single-replica deployment restriction.
 
+Migration `0030_peer_membership.sql` adds the immutable singleton
+`acp_peer_membership`. The peer storage adapter pins and compares the complete
+canonical member catalog, cluster ID and digest in one bounded transaction.
+Another cluster, changed origins, removed members or disabled peer configuration
+cannot replace an existing pin. UPDATE, DELETE and TRUNCATE are rejected; no
+automatic roster migration or reset API is provided. A lost completion after a
+real commit retains the original pin for an identical retry. This storage batch
+does not yet wire the check into production bootstrap; peer listener composition,
+original revocation joins and multi-replica admission remain pending. Retain the
+single-replica restriction until those consumers pass.
+
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
 Session/Run scope in the same transaction; existing Runs must also match their

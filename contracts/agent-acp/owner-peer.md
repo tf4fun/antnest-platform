@@ -23,6 +23,11 @@ members must compute the same digest. Do not silently drop a member after an RPC
 failure or lease expiry. Changing the roster requires retiring the previous
 roster's registrations and access holders; a different local file is not that
 proof. The initial implementation rejects a changed roster without that migration.
+The ACP database pins the complete canonical catalog and its digest in one
+immutable singleton row, independent of cluster ID. A restart must compare that
+row even when peer configuration is absent; removing configuration cannot bypass
+an existing pin. A first initialization is atomic with its comparison, and a lost
+completion does not authorize clearing the committed row or trying a new roster.
 
 The separate private peer listener accepts only explicitly granted ACP workload
 operations. It is distinct from ordinary workspace/control listeners and the early
