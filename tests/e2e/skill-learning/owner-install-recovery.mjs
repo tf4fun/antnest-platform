@@ -192,7 +192,7 @@ export async function verifyOwnerInstallRecovery({
   const agent = literal(fixture.agentID);
   const network = () =>
     query(
-      "antnest_runtime_egress",
+      "antnest_egress",
       `SELECT n.agent_id,n.state AS network_state,
     n.resource_version::text AS network_rv,host(n.tunnel_ipv4) AS tunnel_ipv4,a.state AS attachment_state,
     a.resource_version::text AS attachment_rv,a.runtime_endpoint::text,a.tunnel_key_id
