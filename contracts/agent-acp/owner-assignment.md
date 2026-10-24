@@ -4,8 +4,9 @@ This batch follows [peer publication](owner-peer.md). The
 [deterministic vectors](owner-assignment-contract.json) define the first
 two-process startup and distribution stage. Peer production uses this assignment
 and shared compatibility locking. The real-main PostgreSQL test covers two
-processes with controlled dependency peers; Docker acceptance, non-owner
-forwarding and stopped-member takeover remain separate required stages.
+processes with controlled dependency peers. Non-owner forwarding and
+stopped-member takeover use this assignment. Actual two-replica Docker
+acceptance is a separate requirement of the complete remote delivery gate.
 
 The complete pinned catalog determines each Agent's preferred member. Sort its
 member IDs by ascending ASCII order. Encode `[organization_id, agent_id]` with
@@ -20,8 +21,9 @@ The initial distribution stage acquires and recovers only the preferred member's
 scopes, including inventory-only Agents no longer in a publication. It must not
 ignore historical rows, recover another live member's work or acquire a lease
 for every Agent merely because it starts first. An absent member stays in the
-catalog. Forwarding and stopped-member takeover remain subsequent stages; this
-batch does not imply failover or permit a timeout to substitute for revocation.
+catalog. Forwarding and stopped-member takeover extend this initial stage.
+Assignment alone does not prove failover or permit
+a timeout to substitute for revocation.
 
 Legacy and non-peer processes retain the exclusive PostgreSQL advisory lock with
 key 2026083002. Registered peer processes may use its shared form only after all

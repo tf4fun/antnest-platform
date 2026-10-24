@@ -106,8 +106,8 @@ Owner discovery can reject an unauthorized Agent before ACP initialize. An HTTP
 `403` with `code=access_denied` and `retryable=false` retains that classification
 through the Agent UI adapter after its original response and transport cleanup.
 It must not become a generic dependency 503 or trigger replay. The Agent UI
-consumer implementation and its peer-mode browser acceptance are a separate
-pending service batch; this ACP producer does not complete that workflow.
+consumer preserves this classification. Peer-mode browser acceptance is a
+separate requirement of the complete remote delivery gate.
 
 Public DELETE still requires its original authenticated identity and CCT, and
 the existing empty-body validation. It addresses the original transport without
@@ -144,7 +144,8 @@ shutdown even after the original connection's receipt expires. Public DELETE
 still requires the original owner's 202; disconnect, timeout, 404 or a newer
 lease never substitutes for it. The aggregate publication binds currently
 identified registrations; it does not prove cleanup of a historical incarnation.
-That history and stopped-member proof remain part of the later takeover batch.
+Survivor takeover consumes that history and the original stopped-member proof;
+two-replica fault acceptance remains required.
 
 Acceptance includes actual two-process HTTP single-entry Prompts and SSE
 notifications, moving an existing handle to another ingress, permission and
@@ -186,9 +187,9 @@ original transport owner; DELETE does not require a current live execution lease
 Cleanup cannot be answered by a new owner or fabricated from a stopped-process
 proof. New execution and original-connection cleanup are separate admissions.
 
-HTTP/SSE forwarding is wired into the production composition. Its candidate still
-requires complete remote admission. State/control/source forwarding,
-deceased-member takeover, and actual two-replica Docker acceptance remain required.
+HTTP/SSE, state/control/source forwarding, and survivor takeover are wired into
+the production composition. Actual two-replica Docker acceptance is a separate
+requirement of the complete remote delivery gate.
 A WebSocket Prompt passing alone
 does not complete #49. Acceptance includes both protocols, bidirectional
 permission traffic, cancellation, revoked access, held original cleanup, and

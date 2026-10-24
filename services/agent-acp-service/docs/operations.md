@@ -224,8 +224,10 @@ it is not a 202 cleanup receipt or evidence of remote Run settlement. Ordinary
 503/404, timeout, TLS/auth failures, a nonempty DELETE, an unfinished task or a
 competing DELETE do not qualify. See the
 [original peer loss contract](../../../contracts/agent-acp/owner-forwarding.md#original-peer-loss-and-bridge-retirement).
-The Agent UI consumer and actual browser recovery remain a separate pending
-batch. State read/watch and
+The Agent UI consumer validates the typed original-peer-loss response and joins original
+transport/watch work before allowing one fresh authenticated Bridge. Actual
+browser recovery must pass two-replica Docker acceptance as part of the complete
+remote delivery gate. State read/watch and
 Controller settlement can use a different ingress member. Settlement discovers
 the guarded target for a closed scope even after its execution lease expires, checks the closed
 operation and private publication under that member's control fence, and joins

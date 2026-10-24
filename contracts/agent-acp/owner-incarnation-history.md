@@ -4,9 +4,10 @@ This extends [incarnation handoff](owner-handoff.md) with private discovery of
 every original registration for an operator-configured member. The
 [manifest](owner-incarnation-history-contract.json) and
 [wire schema](owner-incarnation-history.schema.json) define the Runtime Controller
-producer. The ACP consumer, survivor takeover and two-replica fault acceptance
-remain separate batches. Listing history does not establish that an executor
-stopped or that a new incarnation cannot activate.
+producer. The ACP consumer uses this history during survivor takeover.
+Actual two-replica fault acceptance is required in the complete remote delivery
+gate. Listing history does not establish that an executor stopped or that a new
+incarnation cannot activate.
 
 ## Boundary
 
