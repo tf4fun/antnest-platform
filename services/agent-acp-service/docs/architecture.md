@@ -87,11 +87,23 @@ publication, but its join runs outside the publication queue so later revisions
 can progress. A later grant does not bypass an earlier unfinished revocation.
 Original Learning model transport cleanup failures are retained per organization
 and fail its ACK, as well as shutdown; unrelated healthy Agent execution remains
-available. This local barrier does not implement cross-owner acknowledgement.
-Predecessor Learning claim/global review-slot recovery, independent Runtime
-isolation, cross-owner ACKs and peers, and two-replica integration
-remain pending. The global worker lock and
-single-instance restriction stay in place.
+available.
+
+Optional peer mode connects the private listener and membership pin to production
+bootstrap. Publication captures the frozen complete private authority inside the
+organization queue, then collects every member's receipt outside that queue using
+the original apply deadline. Each member reports only its own prepared accepting
+generations after original revocations have joined. A zero-owner member still
+checks the sealed authority and supplies a receipt. The sole aggregator verifies
+the complete fence union with the original authority in one final transaction;
+peer leaf application neither saves nor aggregates. Shutdown and failed startup
+join original peer handlers before shared resource cleanup.
+
+The composition integration tests exercise separate owners over real HTTP and
+PostgreSQL, including a non-owner's held output cleanup. They do not establish two
+independent service processes. The global worker lock and single-instance
+restriction stay in place; request forwarding, live-peer takeover and real
+two-replica integration remain pending.
 
 ## Optional Incarnation Bootstrap
 
@@ -195,8 +207,8 @@ Bootstrap is optional. Its validated identity now binds production Agent leases,
 fenced writers and scoped background work. Without owner settings, startup
 retains the legacy path. The global worker lock, single-instance restriction and
 independent ownership-loss fail-stop channel remain; connected generations and
-scoped recovery do not complete independent Runtime isolation, cross-owner ACKs
-and peers, or two-replica integration.
+scoped recovery and optional peer publication do not complete independent Runtime
+isolation or two-replica integration.
 
 ## Mission
 

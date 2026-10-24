@@ -33,6 +33,12 @@ export type AgentAcpConfig = {
     runtimeControllerUrl: string;
     registrationTimeoutMs: number;
   };
+  peer?: {
+    listen: { host: string; port: number };
+    membershipFile: string;
+    callersFile: string;
+    tokenDirectory: string;
+  };
   databaseUrl: string;
   databaseTimeoutMs: number;
   stateDeliveryTimeoutMs: number;
@@ -120,6 +126,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
         : [new URL(learningController.skillLearningControllerUrl).origin]),
     ],
   );
+  const peer = parsePeerConfiguration(environment, ownerIncarnation.ownerIncarnation, [
+    listen,
+    controlListen,
+  ]);
   const workload = new ServiceAuthentication(environment);
   const identityFetch = workload.fetchFor("identity-service", identityUrl.toString());
   const authentication = new RequestAuthentication(
@@ -157,6 +167,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     listen,
     controlListen,
     ...ownerIncarnation,
+    ...peer,
     databaseUrl,
     databaseTimeoutMs: parseDuration(
       environment.ANTNEST_ACP_DATABASE_TIMEOUT ?? "10s",
@@ -195,6 +206,68 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     ),
     telemetry: telemetryConfig(environment),
   };
+}
+
+function parsePeerConfiguration(
+  environment: NodeJS.ProcessEnv,
+  owner: AgentAcpConfig["ownerIncarnation"],
+  listeners: readonly { host: string; port: number }[],
+): Pick<AgentAcpConfig, "peer"> {
+  const values = [
+    environment.ANTNEST_ACP_PEER_LISTEN,
+    environment.ANTNEST_ACP_PEER_MEMBERSHIP_FILE,
+    environment.ANTNEST_ACP_PEER_CALLERS_FILE,
+    environment.ANTNEST_ACP_PEER_TOKEN_DIRECTORY,
+  ];
+  if (values.every((value) => value === undefined)) return {};
+  const invalid = () =>
+    new ConfigError(
+      "ACP peer requires owner registration, a separate private listener and complete credential paths",
+    );
+  if (
+    owner === undefined ||
+    values.some(
+      (value) =>
+        value === undefined ||
+        value.length === 0 ||
+        value !== value.trim() ||
+        Array.from(value).some(
+          (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+        ),
+    )
+  )
+    throw invalid();
+  const [rawListen, membershipFile, callersFile, tokenDirectory] = values as [
+    string,
+    string,
+    string,
+    string,
+  ];
+  try {
+    const match = /^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/u.exec(rawListen);
+    if (match === null) throw invalid();
+    const host = match[1] ?? match[2]!;
+    const port = Number(match[3]);
+    if (
+      !isIP(host) ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65535 ||
+      !["loopback", "private", "uniqueLocal", "linkLocal"].includes(ipaddr.process(host).range())
+    )
+      throw invalid();
+    if (
+      [...listeners, owner.listen].some(
+        (listener) =>
+          listener.port === port &&
+          (listener.host === host || ["0.0.0.0", "::"].includes(listener.host)),
+      )
+    )
+      throw invalid();
+    return { peer: { listen: { host, port }, membershipFile, callersFile, tokenDirectory } };
+  } catch {
+    throw invalid();
+  }
 }
 
 function parseOwnerIncarnation(

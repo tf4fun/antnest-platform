@@ -121,8 +121,8 @@ Learning model transport cleanup failures remain visible to subsequent ACKs
 for the affected organization and to shutdown. Ordinary business failures and
 expected cancellation are still handled by their original callers. Existing
 healthy Agents can execute while an organization-wide ACK is unavailable.
-This is a local cleanup barrier; peer bootstrap and cross-owner ACK remain
-pending.
+Optional peer publication uses this barrier on every member, including members
+without an accepting Agent. See the peer configuration below.
 
 The
 generation manager uses a 30-second lease, 10-second renewal interval and
@@ -145,6 +145,37 @@ it covers stopped Run and Learning claim recovery, permanent proof reuse during 
 unavailable predecessor isolation and independent foreground execution.
 it does not establish a real Runtime Controller/Runtime deployment or two replicas.
 See the [owner handoff contract](../../../contracts/agent-acp/owner-handoff.md).
+
+### Optional Peer Publication
+
+Peer mode requires the complete owner registration group and all four variables:
+
+| Variable                           | Meaning                                                                                              |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `ANTNEST_ACP_PEER_LISTEN`          | Explicit private or loopback IP and port, distinct from workspace, control and owner probe listeners |
+| `ANTNEST_ACP_PEER_MEMBERSHIP_FILE` | Immutable complete member catalog with cluster UUID, member IDs and canonical peer origins           |
+| `ANTNEST_ACP_PEER_CALLERS_FILE`    | Dedicated incoming token hashes for every other member                                               |
+| `ANTNEST_ACP_PEER_TOKEN_DIRECTORY` | Outgoing direction-specific token files named by target member ID                                    |
+
+Membership and receiver files are read during bootstrap. Outgoing token files are
+read on each request; successful configuration parsing does not prove that every
+outgoing credential is available. Ordinary service grants do not authorize peer
+operations. Startup checks the persistent membership pin after migration even
+when the peer group is absent, then starts the independent listener after local
+recovery. Startup failure and shutdown join its original handlers before closing
+Runtime, PostgreSQL and workload transports.
+
+Configuration ACK uses one deadline established at the original apply entry,
+including time spent queued or preparing. Each catalog member confirms its sealed
+publication, joined revocations and only its own prepared Agent fences. A member
+owning no Agent still participates. The entrypoint verifies the exact complete
+union and private configuration in the final database transaction. The peer leaf
+does not persist or redistribute the request.
+
+The global worker lock is still held. This publication channel does not enable a
+second production ACP process, non-owner request forwarding or crash takeover.
+Those behaviors and real two-replica Docker admission remain pending. An absent
+catalog member cannot be silently omitted from ACK.
 
 ### PostgreSQL Migration And Recovery
 
@@ -173,9 +204,9 @@ ownership and handoff.
 Migration `0025_agent_leases.sql` adds the storage foundation for partitioned
 ownership. It creates an initially empty lease table and does not switch the
 service to multiple replicas. Registered owner mode now uses the lease
-coordinator, and composition still acquires the global worker lock. There is no
-peer listener or lease tuning environment variable. Do not remove the global
-lock to use these primitives.
+coordinator, and composition still acquires the global worker lock. The optional
+peer listener confirms publications; lease timing is not configurable. The
+global lock remains required until the remaining ownership consumers are ready.
 
 Migration `0026_run_execution_owner.sql` records the original registration,
 member, incarnation and epoch on each newly owned Run intent. The four private
@@ -214,10 +245,10 @@ canonical member catalog, cluster ID and digest in one bounded transaction.
 Another cluster, changed origins, removed members or disabled peer configuration
 cannot replace an existing pin. UPDATE, DELETE and TRUNCATE are rejected; no
 automatic roster migration or reset API is provided. A lost completion after a
-real commit retains the original pin for an identical retry. This storage batch
-does not yet wire the check into production bootstrap; peer listener composition,
-original revocation joins and multi-replica admission remain pending. Retain the
-single-replica restriction until those consumers pass.
+real commit retains the original pin for an identical retry. Production bootstrap
+now checks this pin before ordinary or peer listeners, including when peer
+configuration is disabled. Peer publication and original revocation joins are
+connected; multi-replica admission and takeover remain pending.
 
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual

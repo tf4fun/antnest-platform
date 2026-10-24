@@ -17,7 +17,20 @@ import { RuntimeConnections } from "./adapters/runtime-connections.js";
 import type { RuntimeConnectionAuthority } from "./ports/runtime-connections.js";
 
 import { PostgresExecutionConfiguration } from "./adapters/postgres/execution-configuration.js";
-import { ExecutionDirectory } from "./application/execution-directory.js";
+import {
+  ExecutionDirectory,
+  type LocalExecutionPublication,
+} from "./application/execution-directory.js";
+import { PeerAcknowledgement } from "./application/peer-acknowledgement.js";
+import { parsePeerPublicationRequest } from "./application/peer-request.js";
+import { PeerAuthentication } from "./adapters/peer-authentication.js";
+import { HttpAgentPeers } from "./adapters/http-agent-peers.js";
+import { PostgresPeerMembership } from "./adapters/postgres/peer-membership.js";
+import { PeerServer } from "./transport/peer-server.js";
+import { DomainError } from "./domain/errors.js";
+import { executionPublication } from "./domain/execution-publication.js";
+import { isDeepStrictEqual } from "node:util";
+import type { PeerPublicationRequest } from "./ports/agent-peers.js";
 import { ProviderClients } from "./application/provider-clients.js";
 import { AgentSettlement } from "./application/agent-settlement.js";
 import { AgentExecutionState } from "./application/agent-execution-state.js";
@@ -51,6 +64,7 @@ import { AgentAcpHttpServer } from "./transport/http-server.js";
 import {
   OwnerIncarnation,
   OwnerIncarnationError,
+  parseOwnerRegistration,
   type OwnerRegistration,
 } from "./application/owner-incarnation.js";
 import {
@@ -91,6 +105,7 @@ export async function startAgentAcpService(
   let listeningServer: AgentAcpHttpServer | undefined;
   let incarnation: OwnerIncarnation | undefined;
   let ownerProbe: OwnerProbeServer | undefined;
+  let peerServer: PeerServer | undefined;
   let ownerInspection: Pick<RuntimeControllerIncarnations, "inspect"> | undefined;
   const background: Promise<void>[] = [];
   const ownership = new AbortController();
@@ -108,6 +123,16 @@ export async function startAgentAcpService(
 
   try {
     ownership.signal.throwIfAborted();
+    if (config.peer !== undefined && config.ownerIncarnation === undefined)
+      throw new Error("ACP peer mode requires registered ownership");
+    const peerAuthentication =
+      config.peer === undefined
+        ? undefined
+        : new PeerAuthentication({
+            ...config.peer,
+            memberId: config.ownerIncarnation!.memberId,
+            workload: config.authentication.workload,
+          });
     if (config.ownerIncarnation !== undefined) {
       const owner = config.ownerIncarnation;
       incarnation = new OwnerIncarnation(owner.memberId);
@@ -171,6 +196,10 @@ export async function startAgentAcpService(
       migrate(pool),
     );
     ownership.signal.throwIfAborted();
+    await new PostgresPeerMembership(new PostgresKernel(pool, telemetry)).assertPinned(
+      peerAuthentication?.membership,
+    );
+    ownership.signal.throwIfAborted();
     await requireDependenciesReady(pool, telemetry);
     ownership.signal.throwIfAborted();
     const acquiredWorkerLock = await telemetry.span(
@@ -190,6 +219,7 @@ export async function startAgentAcpService(
       registeredOwner,
       ownerInspection,
       (snapshot) => listeningServer?.revokeAccess(snapshot) ?? Promise.resolve(),
+      peerAuthentication,
     );
     components = built;
     void acquiredWorkerLock.waitForLoss().then((error) => {
@@ -224,6 +254,15 @@ export async function startAgentAcpService(
       throw ownershipLoss;
     }
 
+    if (peerAuthentication !== undefined) {
+      peerServer = new PeerServer({
+        registration: registeredOwner!,
+        authentication: peerAuthentication,
+        apply: built.applyPeerPublication,
+      });
+      await peerServer.listen(config.peer!.listen.host, config.peer!.listen.port);
+      ownership.signal.throwIfAborted();
+    }
     const server = new AgentAcpHttpServer({
       authentication: config.authentication,
       executionConfiguration: built.directory,
@@ -293,6 +332,7 @@ export async function startAgentAcpService(
         const results = await Promise.allSettled([
           server.close(),
           ...(ownerProbe === undefined ? [] : [ownerProbe.close()]),
+          ...(peerServer === undefined ? [] : [peerServer.close()]),
           built.supervisor.shutdown(),
           ...(built.owned === undefined ? [] : [built.owned.shutdown()]),
           ...background,
@@ -333,6 +373,7 @@ export async function startAgentAcpService(
     const cleanupFailures: unknown[] =
       probeCleanup?.status === "rejected" ? [probeCleanup.reason as unknown] : [];
     for (const cleanup of [
+      () => peerServer?.close(),
       () => listeningServer?.close(),
       () => components?.supervisor.shutdown(),
       () => components?.owned?.shutdown(),
@@ -390,10 +431,18 @@ export function buildComponents(
   registration?: OwnerRegistration,
   ownerInspection?: Pick<RuntimeControllerIncarnations, "inspect">,
   revokeTransports?: (snapshot: ExecutionAccessSnapshot) => Promise<void>,
+  peerAuthentication?: PeerAuthentication,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
   const secretBox = new SecretBox(config.clientMcpKey);
   const configurationRepository = new PostgresExecutionConfiguration(kernel, secretBox);
+  const peerRegistration =
+    peerAuthentication === undefined ? undefined : parseOwnerRegistration(registration);
+  if (
+    peerAuthentication !== undefined &&
+    peerAuthentication.memberId !== peerRegistration!.member_id
+  )
+    throw new Error("ACP peer registration does not match configured membership");
   const repositories = createLegacyAgentRepositories(kernel, secretBox, ownershipSignal);
   const { permissions: permissionRepository, executions } = repositories;
 
@@ -419,6 +468,7 @@ export function buildComponents(
   const permissionConnections = new PermissionConnections();
   const outputs = new SessionOutputStreams();
   let owned: OwnedAgentComponents | undefined;
+  let peerAcknowledgement: PeerAcknowledgement | undefined;
   const revocations = new Map<string, Promise<void>>();
   const revokeAccess = (snapshot: ExecutionAccessSnapshot): void => {
     permissionConnections.revokeAccess(snapshot);
@@ -472,13 +522,23 @@ export function buildComponents(
       outputs.invalidateOrganization(organizationId);
       owned?.published(organizationId);
     },
-    beforeAck: async (snapshot) => {
-      await joinRevocations(snapshot.organization_id);
-      if (registration !== undefined) {
-        if (owned === undefined) throw new Error("Owned Agent components are unavailable");
-        await owned.beforeAck(snapshot);
-      }
-    },
+    ...(peerAuthentication === undefined
+      ? {
+          beforeAck: async (snapshot: Parameters<OwnedAgentComponents["beforeAck"]>[0]) => {
+            await joinRevocations(snapshot.organization_id);
+            if (registration !== undefined) {
+              if (owned === undefined) throw new Error("Owned Agent components are unavailable");
+              await owned.beforeAck(snapshot);
+            }
+          },
+        }
+      : {
+          beforePeerAck: (capture: LocalExecutionPublication, deadline: Date) => {
+            if (peerAcknowledgement === undefined)
+              throw new Error("ACP peer acknowledgement is unavailable");
+            return peerAcknowledgement.confirm(capture, deadline, ownershipSignal);
+          },
+        }),
     onInvalidAuthority: (organizationId) =>
       telemetry.log("warn", "execution_authority_unavailable", {
         organization_id: organizationId,
@@ -552,6 +612,66 @@ export function buildComponents(
       legacyRecovery: recovery,
       learningChanged: () => learningNotices.wake(),
     });
+  const checkPeerRequest = (request: PeerPublicationRequest, signal: AbortSignal) => {
+    ownershipSignal.throwIfAborted();
+    signal.throwIfAborted();
+    if (
+      peerAuthentication === undefined ||
+      peerRegistration === undefined ||
+      request.membership_sha256 !== peerAuthentication.membership.sha256 ||
+      !isDeepStrictEqual(request.target, peerRegistration) ||
+      !peerAuthentication.membership.members.some(
+        (member) => member.member_id === request.source.member_id,
+      )
+    )
+      throw new DomainError("configuration_unavailable", "ACP peer publication context changed");
+    const remaining = Date.parse(request.deadline_at) - Date.now();
+    if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 10000)
+      throw new DomainError("deadline_exceeded", "ACP peer publication deadline exceeded");
+  };
+  const localPeerReceipt = async (
+    capture: LocalExecutionPublication,
+    request: PeerPublicationRequest,
+    signal: AbortSignal,
+  ) => {
+    const lifetime = AbortSignal.any([ownershipSignal, signal]);
+    checkPeerRequest(request, lifetime);
+    capture.assertCurrent();
+    if (
+      owned === undefined ||
+      !isDeepStrictEqual(executionPublication(capture.authority), request.publication)
+    )
+      throw new DomainError("configuration_unavailable", "ACP peer publication changed");
+    await joinRevocations(capture.authority.organization_id);
+    const fences = await owned.localPublicationFences(capture, lifetime);
+    checkPeerRequest(request, lifetime);
+    capture.assertCurrent();
+    return {
+      request_id: request.request_id,
+      membership_sha256: request.membership_sha256,
+      publication: request.publication,
+      registration: peerRegistration!,
+      status: "applied" as const,
+      revocation: "joined" as const,
+      owned_agents: fences.map((fence) => ({ agent_id: fence.agentId, epoch: fence.epoch })),
+    };
+  };
+  if (peerAuthentication !== undefined)
+    peerAcknowledgement = new PeerAcknowledgement({
+      registration: peerRegistration!,
+      membershipSha256: peerAuthentication.membership.sha256,
+      members: peerAuthentication.membership.members.map((member) => member.member_id),
+      peers: new HttpAgentPeers(peerAuthentication),
+      local: localPeerReceipt,
+      confirm: (expected, fences, options) =>
+        configurationRepository.confirmOwnedAuthority(expected, fences, options),
+    });
+  const applyPeerPublication = async (input: PeerPublicationRequest, signal: AbortSignal) => {
+    const request = parsePeerPublicationRequest(input);
+    checkPeerRequest(request, signal);
+    const capture = await directory.applyPeerPublication(request.publication);
+    return localPeerReceipt(capture, request, signal);
+  };
   const signing = config.skillMaintenanceSigning;
   const sourceRepository = new PostgresSkillSourceProjections(kernel);
   const discovery = config.skillDiscovery;
@@ -618,6 +738,7 @@ export function buildComponents(
         });
   return {
     owned,
+    applyPeerPublication,
     skillSources,
     skillProjectionWorker,
     temporarySkillCleanupWorker,

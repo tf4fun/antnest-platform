@@ -11,6 +11,7 @@ import { TemporarySkills } from "./application/temporary-skills.js";
 import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
 import type { LearningPausedRecovery } from "./application/learning-paused-recovery.js";
 import type { OwnerRegistration } from "./application/owner-incarnation.js";
+import type { LocalExecutionPublication } from "./application/execution-directory.js";
 import type { OwnerInspection } from "./application/owner-inspection.js";
 import { PostgresAgentLeases } from "./adapters/postgres/agent-leases.js";
 import { PostgresAgentStartup } from "./adapters/postgres/agent-startup.js";
@@ -33,7 +34,11 @@ import { SecretBox } from "./adapters/postgres/secret-box.js";
 import type { PostgresWorkerLock } from "./adapters/postgres/worker-lock.js";
 import { RuntimeSkillTemporaryClient } from "./adapters/runtime-skill-temporary-client.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
-import { AgentOwnershipLostError, type AgentOwnershipScope } from "./domain/agent-ownership.js";
+import {
+  AgentOwnershipLostError,
+  type AgentOwnershipScope,
+  type AgentOwnershipFence,
+} from "./domain/agent-ownership.js";
 import { DomainError } from "./domain/errors.js";
 import {
   publicExecutionConfiguration,
@@ -421,6 +426,80 @@ export class OwnedAgentComponents {
     }
   }
 
+  public async localPublicationFences(
+    publication: LocalExecutionPublication,
+    signal: AbortSignal,
+  ): Promise<readonly AgentOwnershipFence[]> {
+    const organizationId = publication.authority.organization_id;
+    signal.throwIfAborted();
+    publication.assertCurrent();
+    await this.joinRetirements(organizationId);
+    signal.throwIfAborted();
+    const accepting = new Set(
+      publication.configuration.agents
+        .filter((agent) => agent.accepting_runs)
+        .map((agent) => agent.agent_id),
+    );
+    const captured: Entry[] = [];
+    for (const entry of this.entries.values()) {
+      if (
+        entry.scope.organizationId !== organizationId ||
+        !accepting.has(entry.scope.agentId) ||
+        entry.stopping
+      )
+        continue;
+      try {
+        captured.push(this.capture(entry.scope));
+      } catch (error) {
+        if (
+          !(error instanceof AgentOwnershipLostError) &&
+          !(error instanceof DomainError && error.code === "agent_unavailable")
+        )
+          throw error;
+      }
+    }
+    // A non-owner still proves its sealed view and completed revocations.
+    const originals =
+      captured.length === 0
+        ? [this.options.configuration.loadAuthority(organizationId)]
+        : captured.map((entry) =>
+            entry.generation.dispatch(() =>
+              this.options.configuration.loadOwnedAuthority(entry.generation.authority.fence),
+            ),
+          );
+    const results = await Promise.allSettled(originals);
+    // Capture may itself observe an expired generation and start retirement.
+    await this.joinRetirements(organizationId);
+    signal.throwIfAborted();
+    const failures = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (
+      failures.length ||
+      results.some(
+        (result) =>
+          result.status === "fulfilled" && !isDeepStrictEqual(result.value, publication.authority),
+      )
+    ) {
+      const failure = configurationUnavailable();
+      if (failures.length)
+        failure.cause = new AggregateError(failures.map((result) => result.reason as unknown));
+      throw failure;
+    }
+    const fences = captured.map((entry) => {
+      if (
+        this.capture(entry.scope) !== entry ||
+        !isDeepStrictEqual(entry.generation.authority.registration, this.options.registration)
+      )
+        throw configurationUnavailable();
+      return Object.freeze({ ...entry.generation.authority.fence });
+    });
+    publication.assertCurrent();
+    return Object.freeze(
+      fences.sort((a, b) => (a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0)),
+    );
+  }
+
   public async beforeAck(next: PublicExecutionConfiguration): Promise<void> {
     const captured = next.agents
       .filter((agent) => agent.accepting_runs)
@@ -654,8 +733,10 @@ export class OwnedAgentComponents {
         busy: (binding) => graph.supervisor.occupancy(binding).busy,
       }),
     };
-    signal.addEventListener("abort", () => this.stopEntry(entry), { once: true });
-    if (signal.aborted) this.stopEntry(entry);
+    // Automatic expiry/renewal loss also owns the manager's original close.
+    // Register it without awaiting from the generation's own abort callback.
+    signal.addEventListener("abort", () => this.retire(entry, signal.reason), { once: true });
+    if (signal.aborted) this.retire(entry, signal.reason);
     return entry;
   }
 
@@ -708,6 +789,7 @@ export class OwnedAgentComponents {
     const pending = this.retiring.get(entry.scope.organizationId) ?? new Set<Promise<void>>();
     this.retiring.set(entry.scope.organizationId, pending);
     const original = this.generations.closeScope(entry.scope, cause);
+    if (pending.has(original)) return;
     pending.add(original);
     void original.then(
       () => pending.delete(original),

@@ -34,6 +34,7 @@ export type ExecutionDirectoryDependencies = {
   runtimeConnections: RuntimeConnectionAuthority;
   onApplied: (configuration: PublicExecutionConfiguration) => Promise<void>;
   beforeAck?: (configuration: PublicExecutionConfiguration) => Promise<void>;
+  beforePeerAck?: (publication: LocalExecutionPublication, deadline: Date) => Promise<void>;
   onUnavailable: (organizationId: string) => void;
   onPublished?: (organizationId: string) => void;
   onInvalidAuthority?: (organizationId: string) => void;
@@ -56,6 +57,7 @@ class SupersededRestoration extends Error {}
 
 export class ExecutionDirectory {
   private readonly configurations = new Map<string, PublicExecutionConfiguration>();
+  private readonly publications = new Map<string, LocalExecutionPublication>();
   private readonly pending = new Map<
     string,
     { publication: Promise<void> | undefined; agents: Map<string, Promise<void>> }
@@ -139,9 +141,11 @@ export class ExecutionDirectory {
   public async apply(
     input: unknown,
   ): Promise<{ organization_id: string; applied_revision: number }> {
+    const deadline = new Date(Date.now() + 10000);
     const configuration = parseExecutionConfiguration(input);
     const beforeAck = this.dependencies.beforeAck;
-    if (beforeAck === undefined)
+    const beforePeerAck = this.dependencies.beforePeerAck;
+    if (beforeAck === undefined && beforePeerAck === undefined)
       return this.authorized(configuration.organization_id, undefined, () =>
         this.applyCurrent(configuration),
       );
@@ -150,8 +154,11 @@ export class ExecutionDirectory {
       undefined,
       async () => {
         const applied = await this.applyCurrent(configuration);
-        const publication = this.configurations.get(applied.organization_id);
-        if (publication === undefined || publication.revision !== applied.applied_revision)
+        const publication = this.publications.get(applied.organization_id);
+        if (
+          publication === undefined ||
+          publication.configuration.revision !== applied.applied_revision
+        )
           throw new DomainError(
             "configuration_unavailable",
             "Execution configuration is unavailable",
@@ -161,12 +168,9 @@ export class ExecutionDirectory {
     );
     // Owner proof may await Agent work. Release the publication boundary first
     // so healthy Agents and later configuration changes can continue.
-    await beforeAck(publication);
-    if (
-      this.configurations.get(applied.organization_id) !== publication ||
-      this.pending.get(applied.organization_id)?.publication !== undefined
-    )
-      throw new DomainError("configuration_unavailable", "Execution configuration is unavailable");
+    await beforeAck?.(publication.configuration);
+    await beforePeerAck?.(publication, deadline);
+    publication.assertCurrent();
     return applied;
   }
 
@@ -195,19 +199,9 @@ export class ExecutionDirectory {
       } finally {
         connections.rollback();
       }
-      const configuration = this.configurations.get(expected.organization_id);
-      if (configuration === undefined) throw publicationUnavailable();
-      return Object.freeze({
-        configuration,
-        authority,
-        assertCurrent: () => {
-          if (
-            this.configurations.get(expected.organization_id) !== configuration ||
-            this.pending.get(expected.organization_id)?.publication !== undefined
-          )
-            throw publicationUnavailable();
-        },
-      });
+      const capture = this.publications.get(expected.organization_id);
+      if (capture === undefined) throw publicationUnavailable();
+      return capture;
     });
   }
 
@@ -342,7 +336,11 @@ export class ExecutionDirectory {
         throw error;
       }
       // Equal-revision replay still verifies private identity and sender files.
-      if (applied?.revision === next.revision && this.dependencies.beforeAck === undefined) {
+      if (
+        applied?.revision === next.revision &&
+        this.dependencies.beforeAck === undefined &&
+        this.dependencies.beforePeerAck === undefined
+      ) {
         connections.commit();
         return { organization_id: organizationId, applied_revision: next.revision };
       }
@@ -359,7 +357,9 @@ export class ExecutionDirectory {
     beforeCommit?: () => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const next = freezeExecutionConfiguration(publicExecutionConfiguration(incoming));
+    const authority = parseExecutionConfiguration(incoming);
+    freezeAuthority(authority);
+    const next = freezeExecutionConfiguration(publicExecutionConfiguration(authority));
     const organizationId = incoming.organization_id;
     try {
       this.dependencies.clients.apply(incoming);
@@ -369,6 +369,18 @@ export class ExecutionDirectory {
       signal?.throwIfAborted();
       connections.commit();
       this.configurations.set(organizationId, next);
+      const capture: LocalExecutionPublication = Object.freeze({
+        configuration: next,
+        authority,
+        assertCurrent: () => {
+          if (
+            this.publications.get(organizationId) !== capture ||
+            this.pending.get(organizationId)?.publication !== undefined
+          )
+            throw publicationUnavailable();
+        },
+      });
+      this.publications.set(organizationId, capture);
       this.changes.invalidate(organizationId);
       this.dependencies.onPublished?.(organizationId);
     } catch (error) {
@@ -379,6 +391,7 @@ export class ExecutionDirectory {
 
   private withdraw(organizationId: string): void {
     this.configurations.delete(organizationId);
+    this.publications.delete(organizationId);
     this.dependencies.runtimeConnections.revokePublication(organizationId);
     try {
       this.dependencies.onUnavailable(organizationId);
