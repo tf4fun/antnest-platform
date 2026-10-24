@@ -4,11 +4,14 @@ import { spawn } from "node:child_process";
 export function parseRuntimeProcessStat(stat, expectedPID) {
   const prefix = stat.match(/^(\d+) \(/u);
   const end = stat.lastIndexOf(") ");
-  const fields = stat.slice(end + 2).match(/^([A-Za-z]) (\d+) (\d+) (?=\S)/u);
+  const fields = stat.slice(end + 2).match(/^([A-Za-z]) (\d+) (-?\d+) (?=\S)/u);
   const decimal = (value) =>
     typeof value === "string" &&
     /^\d+$/u.test(value) &&
     Number.isSafeInteger(Number(value));
+  // Captured exiting Z/X records report the -1 process-group sentinel.
+  const exitingGroup =
+    (fields?.[1] === "Z" || fields?.[1] === "X") && fields[3] === "-1";
   if (
     !prefix ||
     end < prefix[0].length ||
@@ -18,7 +21,7 @@ export function parseRuntimeProcessStat(stat, expectedPID) {
     !decimal(expectedPID) ||
     Number(prefix[1]) !== Number(expectedPID) ||
     !decimal(fields[2]) ||
-    !decimal(fields[3])
+    (!decimal(fields[3]) && !exitingGroup)
   ) {
     const bytes = Buffer.from(stat);
     const error = new Error("invalid process inventory");

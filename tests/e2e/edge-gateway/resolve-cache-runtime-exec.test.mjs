@@ -471,6 +471,59 @@ test("the actual Runtime process parser accepts complete Linux command names", a
   );
 });
 
+test("the recorded exiting process rows cannot block Runtime sampling cleanup", async () => {
+  const { parseRuntimeProcessStat } = await load();
+  // Original inventory from main run 40097259369, before the second /stop.
+  const zombie =
+    "141 (sleep) Z 0 -1 -1 0 -1 4227084 82 0 0 0 0 0 0 0 20 0 0 0 88323 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 17 3 0 0 0 0 0 0 0 0 0 0 0 0 0\n";
+  // Already captured by upload-capacity and retained in workspace process tests.
+  const exitingCurl =
+    "236 (curl) X 0 -1 -1 0 -1 4227084 584 0 0 0 0 0 0 0 20 0 0 0 119682 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 17 1 0 0 0 0 0 0 0 0 0 0 0 0 0";
+  const serialized = runInNewContext(
+    `(${parseRuntimeProcessStat.toString()})`,
+    {
+      Buffer,
+      TextDecoder,
+    },
+  );
+  for (const parse of [parseRuntimeProcessStat, serialized]) {
+    for (const [stat, pid, state] of [
+      [zombie, "141", "Z"],
+      [exitingCurl, "236", "X"],
+    ])
+      assert.deepEqual(
+        { ...parse(stat, pid) },
+        {
+          pid: Number(pid),
+          state,
+          group: -1,
+        },
+      );
+  }
+});
+
+test("the exiting group sentinel does not admit live or malformed inventory", async () => {
+  const { parseRuntimeProcessStat } = await load();
+  for (const stat of [
+    "141 (sleep) S 0 -1 -1 0\n",
+    "141 (sleep) R 0 -1 -1 0\n",
+    "141 (sleep) Z -1 -1 -1 0\n",
+    "141 (sleep) Z 0 -2 -1 0\n",
+    "141 (sleep) X 0 -2 -1 0\n",
+    "141 (sleep) Z 0 -0 -1 0\n",
+    "141 (sleep) Z 0 -9007199254740992 -1 0\n",
+  ]) {
+    assert.throws(
+      () => parseRuntimeProcessStat(stat, "141"),
+      (error) => {
+        assert.equal(error.message, "invalid process inventory");
+        assert.equal(error.inventory.stat, stat);
+        return true;
+      },
+    );
+  }
+});
+
 test("the actual Runtime process parser rejects malformed or mismatched inventory", async () => {
   const { parseRuntimeProcessStat } = await load();
   for (const [stat, expectedPID] of [
