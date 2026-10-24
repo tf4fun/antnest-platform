@@ -49,8 +49,20 @@ WebSocket upgrades, before authentication or body reads. Request and response bo
 size bounds, deadlines, closed DTOs, `no-store` and payload-capture prohibition.
 Outbound registration uses the fixed `ANTNEST_ACP_RUNTIME_CONTROLLER_URL` with
 Runtime Controller's receiver-specific workload credential only. This startup
-gate preserves the global worker lock; peer forwarding and multi-replica
-deployment remain separate admission work.
+gate precedes the worker lock: non-peer deployments use exclusive mode, while
+the fixed peer membership uses shared mode and per-Agent ownership. Peer
+forwarding and multi-replica Docker deployment remain separate admission work.
+
+The optional `ANTNEST_ACP_PEER_LISTEN` is a separate listener for
+`POST /internal/acp-peer/identity` and
+`POST /internal/acp-peer/publications/apply`, explicitly registered in
+[the caller catalog](callers.json). Both require a configured directional
+member credential; mTLS also verifies the ACP workload certificate. Ordinary
+service credentials do not grant peer access, and user CCTs are rejected.
+Authentication precedes body parsing. The server checks the source member,
+fixed membership digest, target member or registration, and original deadline
+before dispatch; publication additionally requires a single hop. This listener
+does not accept user ACP traffic or WebSocket upgrades.
 
 ACP and workspace routes require exactly one Identity-signed CCT with ACP
 audience and `agt`, then repeat current local Agent and Session authorization.
