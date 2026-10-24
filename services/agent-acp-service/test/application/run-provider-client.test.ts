@@ -49,6 +49,10 @@ function setup() {
     runtimeWorkspace: "/workspace",
   });
   const events = {
+    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+    finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
+      Promise.resolve({ kind: "usage", used: 5, size: input.contextSize }),
+    ),
     appendAgentMessage: vi.fn<RunEventRepository["appendAgentMessage"]>((input) =>
       Promise.resolve({ kind: "agent_message", messageId: input.id, content: input.content }),
     ),
@@ -165,8 +169,8 @@ describe("Run logical Provider client", () => {
             ? { terminalClass: "failed", errorClass: "provider_unavailable" }
             : { terminalClass: "cancelled" },
         );
-        expect(events.appendUsage).toHaveBeenCalledOnce();
-        expect(events.appendUsage.mock.calls[0]?.[0]).toMatchObject({
+        expect(events.finishModelAttempt).toHaveBeenCalledOnce();
+        expect(events.finishModelAttempt.mock.calls[0]?.[0]).toMatchObject({
           runId: "run-1",
           usage: {
             inputTokens: 7,
@@ -174,6 +178,7 @@ describe("Run logical Provider client", () => {
             cost: { amount: 0.00001, currency: "USD" },
           },
         });
+        expect(events.appendUsage).not.toHaveBeenCalled();
         expect(complete).toHaveBeenCalledOnce();
         expect(finish).toHaveBeenCalledOnce();
       } finally {

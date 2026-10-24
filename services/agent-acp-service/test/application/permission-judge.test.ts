@@ -1,17 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
-import { PermissionJudge, ModelRequestBudget } from "../../src/application/permission-judge.js";
+import { PermissionJudge } from "../../src/application/permission-judge.js";
+import { ModelCallPolicy } from "../../src/application/model-call-policy.js";
+import { RunEventPersistenceError } from "../../src/application/durable-run-events.js";
+import { ModelRequestBudget } from "../../src/application/model-request-budget.js";
 import type { ModelPort, ModelResult } from "../../src/ports/model.js";
-import { ModelError } from "../../src/ports/model.js";
+import { ModelError, ModelTransportCleanupError } from "../../src/ports/model.js";
 import { snapshot } from "../support/fixtures.js";
 
 function setup(limit = 4) {
   const model = { complete: vi.fn<ModelPort["complete"]>() };
   const usage = vi.fn().mockResolvedValue(undefined);
   const budget = new ModelRequestBudget(limit);
-  const judge = new PermissionJudge(model, budget, usage);
+  const judge = new PermissionJudge(
+    new ModelCallPolicy({
+      model,
+      budget,
+      attempts: {
+        start: () => Promise.resolve(),
+        finish: async (runId, fact) => {
+          await usage(runId, fact.usage);
+        },
+      },
+    }),
+  );
   const cancellation = new AbortController();
   const input = {
-    snapshot: snapshot(),
+    snapshot: { ...snapshot(), deadlineAt: new Date(Date.now() + 60_000) },
     credential: "secret",
     signal: cancellation.signal,
     authoritySignal: new AbortController().signal,
@@ -118,4 +132,53 @@ describe("Smart Approve exact-call read-only judge", () => {
     h.cancellation.abort();
     await expect(h.judge.readOnly(h.input, h.prepared)).rejects.toThrow();
   });
+  it.each(["active", "cancelled", "revoked"] as const)(
+    "preserves the original model cleanup failure when the judge is %s",
+    async (mode) => {
+      const h = setup();
+      const authority = new AbortController();
+      h.input.authoritySignal = authority.signal;
+      const cleanup = new ModelTransportCleanupError(
+        new Error("original cleanup failed"),
+        { inputTokens: 7, outputTokens: 2 },
+        true,
+      );
+      h.model.complete.mockImplementation(() => {
+        if (mode === "cancelled") h.cancellation.abort();
+        if (mode === "revoked") authority.abort();
+        return Promise.reject(cleanup);
+      });
+      await expect(h.judge.readOnly(h.input, h.prepared)).rejects.toBe(cleanup);
+      expect(h.usage).toHaveBeenCalledExactlyOnceWith("r", cleanup.usage);
+    },
+  );
+  it.each([new Error("usage persistence failed"), undefined])(
+    "retains model cleanup and accounting failure together (%s)",
+    async (accountingError) => {
+      const h = setup();
+      const cleanup = new ModelTransportCleanupError(
+        new Error("original cleanup failed"),
+        { inputTokens: 7, outputTokens: 2 },
+        true,
+      );
+      h.model.complete.mockRejectedValue(cleanup);
+      h.usage.mockRejectedValue(accountingError);
+      const failure: unknown = await h.judge.readOnly(h.input, h.prepared).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(ModelTransportCleanupError);
+      if (!(failure instanceof ModelTransportCleanupError))
+        throw new Error("Expected model transport cleanup failure");
+      const cause = failure.cause;
+      expect(cause).toBeInstanceOf(AggregateError);
+      if (!(cause instanceof AggregateError))
+        throw new Error("Expected aggregate cleanup and accounting failure");
+      expect(cause.errors).toHaveLength(2);
+      expect(cause.errors[0]).toBe(cleanup);
+      expect(cause.errors[1]).toBeInstanceOf(RunEventPersistenceError);
+      expect((cause.errors[1] as RunEventPersistenceError).cause).toBe(accountingError);
+      expect(h.usage).toHaveBeenCalledExactlyOnceWith("r", cleanup.usage);
+    },
+  );
 });

@@ -199,6 +199,7 @@ describe("RunExecutor", () => {
       test.input.accepted.command = { name: "help", locale: "en" };
       const acquire = vi.spyOn(test.providers, "acquire");
       const appendAgentMessage = vi.spyOn(test.events, "appendAgentMessage");
+      const finishModelAttempt = vi.spyOn(test.events, "finishModelAttempt");
       const appendUsage = vi.spyOn(test.events, "appendUsage");
       if (scenario === "cancelled") test.cancellation.abort();
       if (scenario === "expired") test.input.accepted.snapshot.deadlineAt = new Date("2026-08-29");
@@ -246,6 +247,7 @@ describe("RunExecutor", () => {
       expect(test.complete).not.toHaveBeenCalled();
       expect(test.tools.list).not.toHaveBeenCalled();
       expect(test.tools.call).not.toHaveBeenCalled();
+      expect(finishModelAttempt).not.toHaveBeenCalled();
       expect(appendUsage).not.toHaveBeenCalled();
     },
   );
@@ -540,9 +542,10 @@ describe("RunExecutor", () => {
 
   it("carries failed temporary cleanup into event recovery and retains an unknown outcome's pin", async () => {
     await withExecutorTimers(async (test) => {
-      const appendUsage = vi
-        .spyOn(test.events, "appendUsage")
+      const finishModelAttempt = vi
+        .spyOn(test.events, "finishModelAttempt")
         .mockRejectedValue(new Error("durable usage unavailable"));
+      const appendUsage = vi.spyOn(test.events, "appendUsage");
       const releaseTemporary = vi.fn().mockRejectedValue(new Error("cleanup not confirmed"));
       test.dependencies.temporarySkills = { releaseRun: releaseTemporary };
       const stored: RunOutcome = {
@@ -556,7 +559,8 @@ describe("RunExecutor", () => {
       const result = observeExecution(test.execute());
       await vi.runAllTimersAsync();
 
-      expect(appendUsage).toHaveBeenCalledTimes(3);
+      expect(finishModelAttempt).toHaveBeenCalledTimes(3);
+      expect(appendUsage).not.toHaveBeenCalled();
       expect(releaseTemporary).toHaveBeenCalledExactlyOnceWith(
         test.input.accepted.runId,
         test.ownership.signal,
@@ -749,8 +753,9 @@ describe("RunExecutor", () => {
 
   it("does not persist or close a Run after worker ownership is lost", async () => {
     const test = setup();
-    const appendUsage = vi.spyOn(test.events, "appendUsage");
+    const finishModelAttempt = vi.spyOn(test.events, "finishModelAttempt");
     const appendAgentMessage = vi.spyOn(test.events, "appendAgentMessage");
+    const appendUsage = vi.spyOn(test.events, "appendUsage");
     test.complete.mockImplementationOnce(() => {
       test.ownership.abort(new WorkerOwnershipLostError());
       return Promise.resolve({
@@ -761,6 +766,7 @@ describe("RunExecutor", () => {
       });
     });
     await expect(test.execute()).rejects.toBeInstanceOf(WorkerOwnershipLostError);
+    expect(finishModelAttempt).not.toHaveBeenCalled();
     expect(appendUsage).not.toHaveBeenCalled();
     expect(appendAgentMessage).not.toHaveBeenCalled();
     expect(test.finish).not.toHaveBeenCalled();
@@ -925,6 +931,14 @@ function setup() {
 
 function eventRepository(): RunEventRepository {
   return {
+    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+    finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
+      Promise.resolve({
+        kind: "usage",
+        used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+        size: input.contextSize,
+      }),
+    ),
     appendAgentMessage: vi.fn<RunEventRepository["appendAgentMessage"]>((input) =>
       Promise.resolve({ kind: "agent_message", messageId: input.id, content: input.content }),
     ),

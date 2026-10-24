@@ -12,7 +12,9 @@ import { boundToolResult } from "../domain/tool-result.js";
 import { boundedRawOutput } from "../domain/tool-presentation.js";
 import { DomainError } from "../domain/errors.js";
 import { RunToolAuthorization } from "./run-tool-authorization.js";
-import { ModelRequestBudget, PermissionJudge } from "./permission-judge.js";
+import { PermissionJudge } from "./permission-judge.js";
+import { ModelRequestBudget, ModelRequestLimitError } from "./model-request-budget.js";
+import { ModelCallPolicy, ModelCallInterruptedError } from "./model-call-policy.js";
 import type { ToolPermissionPort } from "../ports/tool-permissions.js";
 import { planResult, type PlanEntry } from "../domain/plan.js";
 import { assertModelInputBudget } from "./context-budget.js";
@@ -30,6 +32,7 @@ export type TurnRunnerDependencies = {
   tools: Pick<ToolCatalogPort, "call">;
   catalog: ModelToolDefinition[];
   events: RunEventPort;
+  now?: () => Date;
 };
 
 export type RunTurnInput = {
@@ -51,23 +54,35 @@ export class TurnRunner {
     let effectState: ToolEffectState = "none";
     const preflight = new ToolPreflight();
     const budget = new ModelRequestBudget(input.snapshot.executionSpec.maxModelRequests);
+    const model = new ModelCallPolicy({
+      model: this.dependencies.model,
+      budget,
+      attempts: this.dependencies.events,
+      ...(this.dependencies.now === undefined
+        ? {}
+        : { clock: { now: () => this.dependencies.now!().getTime() } }),
+    });
     const authorization = new RunToolAuthorization(
       this.dependencies.permissions,
-      new PermissionJudge(this.dependencies.model, budget, (runId, usage) =>
-        this.dependencies.events.usage(runId, usage),
-      ),
+      new PermissionJudge(model),
     );
 
     try {
       const tools = this.dependencies.catalog;
       assertAuthority(input.authoritySignal);
-      for (let request = 0; budget.take(); request += 1) {
+      for (let request = 0; budget.canTake(); request += 1) {
         input.signal.throwIfAborted();
         assertModelInputBudget(input.snapshot, tools, messages);
         const responseId = createHash("sha256")
           .update(JSON.stringify([input.runId, request]))
           .digest("hex");
-        const { response, output } = await this.completeModel(input, messages, responseId);
+        const { response, output } = await this.completeModel(
+          input,
+          messages,
+          responseId,
+          model,
+          request,
+        );
         assertAuthority(input.authoritySignal);
         if (response.thought !== undefined && !output.kinds.has("thought")) {
           await this.dependencies.events.agentThought(input.runId, response.thought);
@@ -143,11 +158,21 @@ export class TurnRunner {
       if (input.signal.aborted) {
         return cancelled(effectState, unknownSourceFromError(error));
       }
+      if (error instanceof ModelRequestLimitError)
+        return completed(effectState, "max_turn_requests");
+      if (error instanceof ModelCallInterruptedError && error.deadlineExceeded)
+        return failure(effectState, "run_deadline_exceeded", unknownSourceFromError(error));
       return failure(effectState, errorClass(error), unknownSourceFromError(error));
     }
   }
 
-  private async completeModel(input: RunTurnInput, messages: ModelMessage[], responseId: string) {
+  private async completeModel(
+    input: RunTurnInput,
+    messages: ModelMessage[],
+    responseId: string,
+    model: ModelCallPolicy,
+    requestIndex: number,
+  ) {
     const output = new ModelOutput(async (delta) => {
       assertAuthority(input.authoritySignal);
       const content = [{ type: "text" as const, text: delta.text }];
@@ -158,26 +183,74 @@ export class TurnRunner {
       }
       assertAuthority(input.authoritySignal);
     });
+    let originalFailure: { error: unknown } | undefined;
+    let completed:
+      | {
+          response: Awaited<ReturnType<ModelPort["complete"]>>;
+          output: ModelOutput;
+        }
+      | undefined;
     try {
-      const response = await this.dependencies.model.complete({
-        snapshot: input.snapshot,
-        messages,
-        tools: this.dependencies.catalog,
-        signal: AbortSignal.any([input.signal, input.authoritySignal, output.signal]),
-        onDelta: (delta) => output.append(delta),
+      const response = await model.complete({
+        runId: input.runId,
+        request: {
+          snapshot: input.snapshot,
+          messages,
+          tools: this.dependencies.catalog,
+          signal: AbortSignal.any([input.signal, input.authoritySignal, output.signal]),
+          onDelta: (delta) => output.append(delta),
+        },
       });
       assertAuthority(input.authoritySignal);
-      await this.dependencies.events.usage(input.runId, response.usage);
-      return { response, output };
+      completed = { response, output };
     } catch (error) {
-      assertAuthority(input.authoritySignal);
-      if (error instanceof ModelError && error.usage !== undefined) {
-        await this.dependencies.events.usage(input.runId, error.usage);
+      try {
+        assertAuthority(input.authoritySignal);
+        if (error instanceof ModelCallInterruptedError && error.response?.kind === "tool_calls") {
+          // Keep returned proposals as undispatched history. This path never
+          // re-enters authorization or the Tool loop after cancellation/deadline.
+          const calls = error.response.calls.map((call) => ({
+            ...call,
+            id: createHash("sha256")
+              .update(JSON.stringify([input.runId, requestIndex, call.id]))
+              .digest("hex"),
+          }));
+          await this.dependencies.events.agentMessage(
+            input.runId,
+            output.kinds.has("message") ? [] : error.response.content,
+            calls,
+            output.kinds.has("message") ? responseId : undefined,
+          );
+          assertAuthority(input.authoritySignal);
+          for (const call of calls) {
+            await this.dependencies.events.toolRejected(
+              input.runId,
+              call,
+              "Tool was not executed because this Run ended before dispatch.",
+            );
+            assertAuthority(input.authoritySignal);
+          }
+        }
+        throw error;
+      } catch (escapingFailure) {
+        originalFailure = { error: escapingFailure };
       }
-      throw error;
-    } finally {
-      await output.finish();
     }
+    try {
+      await output.finish();
+    } catch (outputError) {
+      if (originalFailure === undefined || originalFailure.error === outputError) throw outputError;
+      throw new RunEventPersistenceError(
+        "model output cleanup",
+        new AggregateError(
+          [originalFailure.error, outputError],
+          "Model attempt and output persistence failed",
+        ),
+      );
+    }
+    if (originalFailure !== undefined) throw originalFailure.error;
+    if (completed === undefined) throw new Error("Model completion returned without a result");
+    return completed;
   }
 
   private async closeUndispatched(

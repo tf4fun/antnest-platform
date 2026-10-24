@@ -240,6 +240,8 @@ function setup() {
         runtimeConnections: { releaseRun: vi.fn() },
         executions: { finish, getState: vi.fn(), listRecoveryWork: vi.fn() },
         events: {
+          startModelAttempt: vi.fn(),
+          finishModelAttempt: vi.fn(),
           appendAgentMessage,
           appendAgentThought: vi.fn(),
           appendUsage: vi.fn(),

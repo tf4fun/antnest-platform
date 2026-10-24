@@ -84,7 +84,7 @@ export class PostgresExecutionAudits implements ExecutionAuditRepository {
       : row.items.map((event) => ({
           ...event,
           payload:
-            event.kind === "environment_change"
+            event.kind === "environment_change" || event.kind === "model_attempt"
               ? event.payload
               : decodeSessionEvent(event.payload as StoredSessionEvent),
         }));

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { modelRetryConfigurationSchema } from "./model-call-policy.js";
 import { isDeepStrictEqual } from "node:util";
 import { DomainError } from "./errors.js";
 import {
@@ -129,6 +130,7 @@ const agentFieldsSchema = z.strictObject({
       "Retired Skill body channel; permanently empty. System Skill content is read on demand from Runtime.",
     ),
   max_model_requests: revision,
+  model_retry: modelRetryConfigurationSchema.optional(),
   runtime: publicRuntimeSchema.nullable(),
 });
 
@@ -474,6 +476,15 @@ export function resolveExecutionConfiguration(
       instructions: skill.instructions,
     })),
     maxModelRequests: agent.max_model_requests,
+    ...(agent.model_retry === undefined
+      ? {}
+      : {
+          modelRetry: {
+            max: agent.model_retry.max,
+            baseMs: agent.model_retry.base_ms,
+            capMs: agent.model_retry.cap_ms,
+          },
+        }),
   };
 }
 

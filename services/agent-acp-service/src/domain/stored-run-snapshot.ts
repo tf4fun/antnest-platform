@@ -5,6 +5,7 @@ import { thinkingEffortSchema } from "./model-thinking.js";
 import { admittedConfigurationSchema } from "./session-configuration.js";
 import type { RunExecutionSnapshot } from "./types.js";
 import { modelPricingSchema } from "./usage.js";
+import { modelRetrySchema } from "./model-call-policy.js";
 
 const id = z.string().min(1).max(200);
 const digest = z.string().regex(/^[0-9a-f]{64}$/u);
@@ -50,13 +51,14 @@ const schema = z.strictObject({
       .max(0),
     model: modelSchema,
     maxModelRequests: positive,
+    modelRetry: modelRetrySchema.optional(),
   }),
   clientMcpRevisionId: id,
 });
 
 export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
   const parsed = schema.parse(value);
-  const { configuration, ...executionSpec } = parsed.executionSpec;
+  const { configuration, modelRetry, ...executionSpec } = parsed.executionSpec;
   const { temperature, thinking, supportsAudio, supportsPdf, pricing, ...model } =
     executionSpec.model;
   const normalizedPricing =
@@ -86,6 +88,7 @@ export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
         ...(normalizedPricing === undefined ? {} : { pricing: normalizedPricing }),
       },
       ...(configuration === undefined ? {} : { configuration }),
+      ...(modelRetry === undefined ? {} : { modelRetry }),
     },
   };
 }

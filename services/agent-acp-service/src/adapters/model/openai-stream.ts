@@ -1,10 +1,15 @@
 import { EventSourceParserStream } from "eventsource-parser/stream";
 import { z } from "zod";
 
-import { ModelError, type ModelDelta, type ModelRequest } from "../../ports/model.js";
+import {
+  ModelError,
+  ModelTransportCleanupError,
+  type ModelDelta,
+  type ModelRequest,
+} from "../../ports/model.js";
 import { invalidResponse } from "./errors.js";
 import { extractUsage, mergeUsage, modelUsage } from "./openai-usage.js";
-import type { ModelPricing } from "../../domain/usage.js";
+import type { ModelPricing, ModelUsage } from "../../domain/usage.js";
 
 const MAX_RESPONSE_CHARACTERS = 4 * 1024 * 1024;
 const toolDelta = z.object({
@@ -35,6 +40,7 @@ const chunkSchema = z.object({
 });
 
 class CompletionAssembly {
+  public outputStarted = false;
   private content = "";
   private thought: string | undefined;
   private refusal = false;
@@ -90,6 +96,11 @@ class CompletionAssembly {
       updates.push({ kind: "message", text });
     }
     for (const part of choice.delta.tool_calls ?? []) this.appendTool(part);
+    this.outputStarted ||=
+      updates.length > 0 ||
+      (choice.delta.tool_calls ?? []).some((part) =>
+        Boolean(part.id || part.function?.name || part.function?.arguments),
+      );
     if (choice.finish_reason != null) this.finishReason = choice.finish_reason;
     return updates;
   }
@@ -135,19 +146,96 @@ class CompletionAssembly {
   }
 }
 
-export async function readStream(response: Response, request: ModelRequest): Promise<unknown> {
+type PipeOutcome = { completed: true } | { completed: false; cause: unknown };
+
+export type StreamObservation = { outputStarted: boolean; usage?: ModelUsage };
+
+function observe(task: Promise<unknown>): Promise<PipeOutcome> {
+  return task.then(
+    () => ({ completed: true }),
+    (cause: unknown) => ({ completed: false, cause }),
+  );
+}
+
+export async function readStream(
+  response: Response,
+  request: ModelRequest,
+  observation: StreamObservation,
+): Promise<unknown> {
   if (response.body === null) throw invalidResponse("Model stream has no body");
-  const reader = response.body
-    .pipeThrough(new TextDecoderStream("utf-8", { fatal: true }), { signal: request.signal })
-    .pipeThrough(
-      new EventSourceParserStream({ onError: "terminate", maxBufferSize: MAX_RESPONSE_CHARACTERS }),
-    )
-    .getReader();
+  const decoder = new TextDecoderStream("utf-8", { fatal: true });
+  const parser = new EventSourceParserStream({
+    onError: "terminate",
+    maxBufferSize: MAX_RESPONSE_CHARACTERS,
+  });
+  // Keep the original pipe promises: cancelling the final reader alone does not
+  // establish that cancellation of the upstream HTTP body has finished.
+  const pipes = [
+    observe(response.body.pipeTo(decoder.writable, { signal: request.signal })),
+    observe(decoder.readable.pipeTo(parser.writable)),
+  ];
+  const reader = parser.readable.getReader();
   const assembly = new CompletionAssembly();
+  const streamFailures = new Set<unknown>();
+  let operationFailed = false;
+  let operationError: unknown;
+  const finishStream = async (): Promise<void> => {
+    // Observation belongs to this attempt, including when a caller's output
+    // callback throws a non-ModelError whose identity must remain unchanged.
+    observation.outputStarted = assembly.outputStarted;
+    const usage = assembly.measurement(request.snapshot.executionSpec.model.pricing);
+    if (Object.keys(usage).length > 0) observation.usage = usage;
+    const cancellation = new Error("Model stream reader finished");
+    const outcomes = await Promise.all([observe(reader.cancel(cancellation)), ...pipes]);
+    const cleanupErrors = new Set<unknown>();
+    for (const outcome of outcomes) {
+      if (outcome.completed) continue;
+      if (outcome.cause === cancellation || streamFailures.has(outcome.cause)) continue;
+      if (request.signal.aborted && outcome.cause === request.signal.reason) continue;
+      cleanupErrors.add(outcome.cause);
+    }
+    try {
+      reader.releaseLock();
+    } catch (error) {
+      cleanupErrors.add(error);
+    }
+    if (cleanupErrors.size > 0) {
+      const errors = [
+        ...(operationFailed
+          ? [operationError]
+          : request.signal.aborted
+            ? [request.signal.reason as unknown]
+            : []),
+        ...cleanupErrors,
+      ];
+      throw new ModelTransportCleanupError(
+        errors.length === 1
+          ? errors[0]
+          : new AggregateError(errors, "Model stream and cleanup failed"),
+        assembly.measurement(request.snapshot.executionSpec.model.pricing),
+        assembly.outputStarted,
+      );
+    }
+    if (!operationFailed && request.signal.aborted) {
+      const error = new ModelError(
+        "model_unavailable",
+        "Model stream was interrupted",
+        true,
+        undefined,
+        { cause: request.signal.reason },
+      );
+      error.outputStarted = assembly.outputStarted;
+      if (observation.usage !== undefined) error.usage = observation.usage;
+      throw error;
+    }
+  };
   try {
     for (;;) {
       request.signal.throwIfAborted();
       const event = await reader.read().catch((error: unknown) => {
+        // During abort, a pipe can reject with an independent source-cancel
+        // failure. That must not be dismissed as ordinary error propagation.
+        if (!request.signal.aborted) streamFailures.add(error);
         request.signal.throwIfAborted();
         throw invalidResponse("Model stream was interrupted", error);
       });
@@ -160,6 +248,7 @@ export async function readStream(response: Response, request: ModelRequest): Pro
       }
     }
   } catch (cause) {
+    operationFailed = true;
     const error =
       request.signal.aborted && !(cause instanceof ModelError)
         ? new ModelError("model_unavailable", "Model stream was interrupted", true, undefined, {
@@ -167,11 +256,13 @@ export async function readStream(response: Response, request: ModelRequest): Pro
           })
         : cause;
     const usage = assembly.measurement(request.snapshot.executionSpec.model.pricing);
-    if (error instanceof ModelError && Object.keys(usage).length > 0) error.usage = usage;
+    if (error instanceof ModelError) {
+      error.outputStarted = assembly.outputStarted;
+      if (Object.keys(usage).length > 0) error.usage = usage;
+    }
+    operationError = error;
     throw error;
   } finally {
-    // Cancelling an already failed/aborted stream can reject; its original error is authoritative.
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
+    await finishStream();
   }
 }

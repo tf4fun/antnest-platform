@@ -380,6 +380,7 @@ package checks.
   [multimodal input](docs/multimodal-content.md) and
   [Session cost](docs/session-cost.md).
 - [Model reasoning history](docs/model-reasoning-history.md).
+- [Model calls](docs/model-calls.md): streaming output and original cleanup boundaries.
 - [Observability](docs/observability.md): trace parentage and diagnostic
   projections.
 - Contracts: [execution API](../../contracts/agent-acp/execution-api.md),

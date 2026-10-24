@@ -53,6 +53,10 @@ export interface AuthenticatedModelTransport {
 
 export class ModelError extends Error {
   public usage?: ModelUsage;
+  // Header delay is normalized once when the HTTP response arrives.
+  public retryAfterMs?: number;
+  // This attempt received nonempty text/thought/tool output; used by later retry guards.
+  public outputStarted: boolean = false;
   public constructor(
     public readonly code:
       | "model_unsupported_content"
@@ -72,8 +76,9 @@ export class ModelError extends Error {
 }
 
 export class ModelTransportCleanupError extends ModelError {
-  public constructor(cause: unknown, usage?: ModelUsage) {
+  public constructor(cause: unknown, usage?: ModelUsage, outputStarted = false) {
     super("model_unavailable", "Model transport cleanup failed", false, undefined, { cause });
+    this.outputStarted = outputStarted;
     this.name = "ModelTransportCleanupError";
     if (usage !== undefined) this.usage = usage;
   }

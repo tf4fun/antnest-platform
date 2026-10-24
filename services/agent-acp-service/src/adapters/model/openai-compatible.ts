@@ -11,7 +11,7 @@ import type {
 } from "../../ports/model.js";
 import { ModelError, ModelTransportCleanupError } from "../../ports/model.js";
 import { OpenAICompatibleModelError, invalidResponse } from "./errors.js";
-import { readStream } from "./openai-stream.js";
+import { readStream, type StreamObservation } from "./openai-stream.js";
 import { extractUsage, modelUsage } from "./openai-usage.js";
 import type { ModelUsage } from "../../domain/usage.js";
 import {
@@ -81,6 +81,21 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
     let operationFailed = false;
     let operationError: unknown;
     let knownUsage: ModelUsage | undefined;
+    let outputStarted = false;
+    const streamObservation: StreamObservation = { outputStarted: false };
+    const assertNotAborted = (): void => {
+      if (!request.signal.aborted) return;
+      const error = new ModelError(
+        "model_unavailable",
+        "Model request was interrupted",
+        true,
+        undefined,
+        { cause: request.signal.reason },
+      );
+      error.outputStarted = outputStarted;
+      if (knownUsage !== undefined) error.usage = knownUsage;
+      throw error;
+    };
     try {
       let response: Response;
       try {
@@ -104,19 +119,29 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
       }
 
       if (!response.ok) {
-        await response.body?.cancel();
-        throw new OpenAICompatibleModelError(
+        const failure = new OpenAICompatibleModelError(
           "model_http_error",
           `Model API returned HTTP ${response.status}`,
           isRetryableStatus(response.status),
           response.status,
         );
+        const delay = retryAfterDelay(response.headers.get("retry-after"), Date.now());
+        if (delay !== undefined) failure.retryAfterMs = delay;
+        try {
+          await response.body?.cancel();
+        } catch (cleanupError) {
+          throw new ModelTransportCleanupError(
+            new AggregateError([failure, cleanupError], "Model response cleanup failed"),
+          );
+        }
+        throw failure;
       }
 
-      const payload =
-        response.headers.get("content-type")?.split(";")[0]?.trim() === "text/event-stream"
-          ? await readStream(response, request)
-          : await readPayload(response);
+      let payload: unknown;
+      if (response.headers.get("content-type")?.split(";")[0]?.trim() === "text/event-stream") {
+        payload = await readStream(response, request, streamObservation);
+        outputStarted = streamObservation.outputStarted;
+      } else payload = await readPayload(response);
       const usage = modelUsage(extractUsage(payload), request.snapshot.executionSpec.model.pricing);
       knownUsage = usage;
       try {
@@ -125,29 +150,69 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
           throw invalidResponse("Model API returned an invalid completion", parsed.error);
         return toModelResult(parsed.data, usage);
       } catch (error) {
-        if (error instanceof OpenAICompatibleModelError && Object.keys(usage).length > 0)
-          error.usage = usage;
+        if (error instanceof OpenAICompatibleModelError) {
+          error.outputStarted = outputStarted;
+          if (Object.keys(usage).length > 0) error.usage = usage;
+        }
         throw error;
       }
     } catch (error) {
       operationFailed = true;
       operationError = error;
-      if (error instanceof ModelError && error.usage !== undefined) knownUsage = error.usage;
+      outputStarted ||= streamObservation.outputStarted;
+      if (streamObservation.usage !== undefined) knownUsage = streamObservation.usage;
+      if (error instanceof ModelError) {
+        outputStarted ||= error.outputStarted;
+        if (error.usage !== undefined) knownUsage = error.usage;
+      }
       throw error;
     } finally {
       await transport?.close().catch((closeError: unknown) => {
+        const failures = operationFailed
+          ? [operationError]
+          : request.signal.aborted
+            ? [request.signal.reason as unknown]
+            : [];
         throw new ModelTransportCleanupError(
-          operationFailed
+          failures.length > 0
             ? new AggregateError(
-                [operationError, closeError],
+                [...failures, closeError],
                 "Model operation and transport cleanup failed",
               )
             : closeError,
           knownUsage,
+          outputStarted,
         );
       });
+      if (!operationFailed) assertNotAborted();
     }
   }
+}
+
+function retryAfterDelay(header: string | null, receivedAt: number): number | undefined {
+  if (header === null) return undefined;
+  const value = header.trim();
+  // Every supported retry policy caps backoff at 30 seconds. Clamp before
+  // multiplying so even an arbitrarily long valid delta cannot overflow.
+  if (/^\d+$/u.test(value)) return Math.min(30, Number(value)) * 1000;
+  // RFC 9110 section 5.6.7 allows IMF-fixdate and both obsolete HTTP dates.
+  const imf = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/u;
+  const rfc850 =
+    /^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), \d{2}-[A-Z][a-z]{2}-\d{2} \d{2}:\d{2}:\d{2} GMT$/u;
+  const asctime =
+    /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2} (?: \d|\d{2}) \d{2}:\d{2}:\d{2} \d{4}$/u;
+  if (!imf.test(value) && !rfc850.test(value) && !asctime.test(value)) return undefined;
+  const date = new Date(Date.parse(asctime.test(value) ? `${value} GMT` : value));
+  if (!Number.isFinite(date.getTime())) return undefined;
+  if (rfc850.test(value)) {
+    const year = new Date(receivedAt).getUTCFullYear();
+    const shortYear = Number(/-(\d{2}) /u.exec(value)![1]);
+    date.setUTCFullYear(Math.floor(year / 100) * 100 + shortYear);
+    const horizon = new Date(receivedAt);
+    horizon.setUTCFullYear(year + 50);
+    if (date.getTime() > horizon.getTime()) date.setUTCFullYear(date.getUTCFullYear() - 100);
+  }
+  return Math.min(30_000, Math.max(0, date.getTime() - receivedAt));
 }
 
 function toRequestBody(request: ModelRequest): Record<string, unknown> {

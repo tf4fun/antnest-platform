@@ -21,7 +21,10 @@ const cases = [
 ] as const;
 
 type Operation = (typeof cases)[number]["operation"];
-type WriteMethod = Exclude<keyof RunEventRepository, "interruptToolAttempts">;
+type WriteMethod = Exclude<
+  keyof RunEventRepository,
+  "interruptToolAttempts" | "startModelAttempt" | "finishModelAttempt"
+>;
 type WriteInput = Parameters<RunEventRepository[WriteMethod]>[0];
 
 describe("DurableRunEvents retry inputs", () => {
@@ -137,6 +140,14 @@ function eventRepository(
     return receipt;
   };
   return {
+    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+    finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
+      Promise.resolve({
+        kind: "usage",
+        used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+        size: input.contextSize,
+      }),
+    ),
     appendPlan: vi.fn<RunEventRepository["appendPlan"]>(async (input) => {
       await write(input);
       return true;

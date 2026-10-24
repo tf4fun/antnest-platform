@@ -526,6 +526,32 @@
                 "type": "null"
               }
             ]
+          },
+          "model_retry": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "max",
+              "base_ms",
+              "cap_ms"
+            ],
+            "properties": {
+              "max": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8
+              },
+              "base_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30000
+              },
+              "cap_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30000
+              }
+            }
           }
         },
         "required": [

@@ -3,6 +3,9 @@
 This document describes how Agent ACP Service measures model usage, projects a
 known USD cost per Session and exposes it through standard ACP
 `usage_update` notifications. Known cost is partial accounting, not an invoice.
+Its floating-point reporting total is not the atomic spending ledger or hard
+Run/organization cap enforcement planned under
+[model-call policy](../../../contracts/agent-controller/model-call-policy.md).
 
 ## Ownership And Contract
 
@@ -40,18 +43,25 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
    rates use the input rate. Missing token usage, inconsistent cache counts or
    absent prices cannot produce a fabricated zero estimate. Zero reported cost
    and explicitly zero configured prices remain valid known amounts.
-4. Keep each model call's returned normalized token counts and optional
+4. Keep each physical model attempt's returned normalized token counts and optional
    `{amount, currency, source, pricing?}` receipt in its existing usage event.
    `source` distinguishes `provider_reported` from `estimated`; estimated receipts
    retain the actual frozen rates. A missing receipt means unpriced, not free.
    A Model error carries already-received usage separately from its failed
-   completion; the turn runner and permission judge record it once before
-   handling the failure. Failed/cancelled requests without usable returned
-   usage are not guessed. Losing execution ownership still forbids new writes.
-5. Under the existing Session write lock, append the measurement and its known
-   cumulative cost together. Retrying the same event ID with the same measurement
-   returns the saved event; conflicting reuse fails. There is no second mutable
-   total, attachment table, billing ledger or per-token write.
+   completion. Foreground and permission-judge calls use the same Run attempt
+   policy and counter; each attempt records its usage once, including failures
+   and cancellation. Missing returned usage is stored as `{}`, not fabricated
+   zero token counts or zero cost. Its standard `used: 0` projection does not
+   prove that the Provider consumed nothing. Losing execution ownership still
+   forbids new writes.
+5. Attempt start/finish facts are hidden audit entries, excluded from Session
+   replay and model context. Under the existing Session/Run authority boundary,
+   one PostgreSQL transaction appends the finish fact, usage measurement and its
+   known cumulative cost. The caller does not append usage separately after
+   finishing the attempt. Stable Run/ordinal/phase identities make identical
+   retries return the saved receipt; conflicting reuse fails. Only the returned
+   usage projection is published. There is no second mutable total, attachment
+   table, spending ledger or per-token write.
    An unrepresentable cumulative amount retains the last representable known
    baseline and the new receipt, never silently resetting the next sum to zero.
    As with unpriced calls, the projection is a partial amount, not a bill.
@@ -85,6 +95,14 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
    switching, Provider precedence, no-price calls, restored/forked Sessions and
    Jaeger ancestry. Tests use deterministic USD rates; no external Provider
    spend is required.
+
+The [same-model retry path](model-calls.md) also covers failed-attempt unknown
+measurements, successful known usage, hidden audit and unchanged Session replay
+through real HTTP Provider connections and PostgreSQL. That component coverage
+does not replace final Docker acceptance. Controller's two-retry default is not
+yet published. Fallback, circuit breaking, Run/organization spending reservations
+and caps, Console policy controls and the final #52 integration remain pending;
+the existing Session projection does not implement them.
 
 Prior deployment evidence used the retired Gateway ACP/state routes. That
 recorded coverage remains historical. Gateway 24 requires a separate consumer

@@ -3,7 +3,11 @@ import type { PoolClient } from "pg";
 import { isDeepStrictEqual } from "node:util";
 import { projectUsage } from "../../domain/usage.js";
 
-import type { ToolEffectState, UnknownEffectSource } from "../../domain/types.js";
+import type {
+  ToolEffectState,
+  UnknownEffectSource,
+  RunExecutionSnapshot,
+} from "../../domain/types.js";
 import type { InterruptedToolEffects } from "../../ports/run-event-repository.js";
 
 import type { SessionEvent } from "../../ports/acp-application.js";
@@ -142,22 +146,107 @@ export class PostgresRunEventRepository implements RunEventRepository {
       const receipt = await storedUsage(client, locked, input);
       if (receipt !== undefined) return receipt;
       requireRunning(locked.state);
-      const previous = await client.query<{ payload: StoredSessionEvent }>(
-        "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'usage' ORDER BY sequence DESC LIMIT 1",
-        [locked.sessionId],
+      return appendUsageLocked(client, locked, input);
+    });
+  }
+
+  public startModelAttempt(
+    request: Parameters<RunEventRepository["startModelAttempt"]>[0],
+  ): Promise<void> {
+    const input = structuredClone(request);
+    requireOrdinal(input.ordinal);
+    const id = modelAttemptId(input.runId, input.ordinal, "start");
+    const event = {
+      kind: "model_attempt",
+      phase: "start",
+      ordinal: input.ordinal,
+      modelProfileId: input.modelProfileId,
+      providerConnectionId: input.providerConnectionId,
+      model: input.model,
+      purpose: input.purpose,
+      startedAt: input.startedAt,
+    };
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockSessionRun(client, input.runId, this.#authority);
+      if (await storedModelAttempt(client, locked, id, event, input.startedAt)) return;
+      requireRunning(locked.state);
+      const row = await client.query<{ execution_snapshot: RunExecutionSnapshot }>(
+        "SELECT execution_snapshot FROM runs WHERE id=$1",
+        [input.runId],
       );
-      const stored = previous.rows[0]?.payload;
-      const prior = stored === undefined ? undefined : decodeSessionEvent(stored);
-      const event: SessionEvent = {
-        kind: "usage",
-        ...projectUsage(
-          input.usage,
-          input.contextSize,
-          prior?.kind === "usage" ? prior.cost : undefined,
-        ),
-      };
-      await appendLocked(client, locked, input.id, "usage", event, input.createdAt);
-      return event;
+      const frozen = requireRow(row.rows[0], "Run snapshot is missing").execution_snapshot;
+      if (
+        input.modelProfileId !== frozen.modelProfileId ||
+        input.providerConnectionId !== frozen.providerConnectionId ||
+        input.model !== frozen.executionSpec.model.model ||
+        input.ordinal > frozen.executionSpec.maxModelRequests
+      )
+        throw new Error("Model attempt does not match the frozen Run");
+      const previous = await client.query<{ ordinal: string | null }>(
+        `SELECT max((payload->>'ordinal')::bigint)::text AS ordinal FROM session_messages
+         WHERE run_id=$1 AND session_id=$2 AND kind='model_attempt' AND payload->>'phase'='start'`,
+        [locked.runId, locked.sessionId],
+      );
+      if (input.ordinal !== Number(previous.rows[0]?.ordinal ?? 0) + 1)
+        throw new Error("Model attempt ordinal is not next");
+      if (input.ordinal > 1) {
+        const prior = await client.query(
+          "SELECT id FROM session_messages WHERE id=$1 AND run_id=$2 AND session_id=$3 AND kind='model_attempt' AND payload->>'phase'='finish'",
+          [
+            modelAttemptId(input.runId, input.ordinal - 1, "finish"),
+            locked.runId,
+            locked.sessionId,
+          ],
+        );
+        if (prior.rowCount !== 1) throw new Error("Previous model attempt is unfinished");
+      }
+      await appendModelAttemptLocked(client, locked, id, event, input.startedAt);
+    });
+  }
+
+  public finishModelAttempt(
+    request: Parameters<RunEventRepository["finishModelAttempt"]>[0],
+  ): Promise<SessionEvent> {
+    const input = structuredClone(request);
+    requireOrdinal(input.ordinal);
+    const id = modelAttemptId(input.runId, input.ordinal, "finish");
+    const event = {
+      kind: "model_attempt",
+      phase: "finish",
+      ordinal: input.ordinal,
+      outcome: input.outcome,
+      reason: input.reason,
+      durationMs: input.durationMs,
+      outputStarted: input.outputStarted,
+      usage: input.usage,
+      ...(input.status === undefined ? {} : { status: input.status }),
+      finishedAt: input.finishedAt,
+      contextSize: input.contextSize,
+    };
+    const usage = {
+      id: deriveResourceId("message", "model-attempt-usage", `${request.runId}:${request.ordinal}`),
+      runId: input.runId,
+      usage: input.usage,
+      contextSize: input.contextSize,
+      createdAt: input.finishedAt,
+    };
+    return this.#authority.transaction(this.kernel, async (client) => {
+      const locked = await lockSessionRun(client, input.runId, this.#authority);
+      const receipt = await storedModelAttempt(client, locked, id, event, input.finishedAt);
+      const usageReceipt = await storedUsage(client, locked, usage);
+      if (receipt || usageReceipt !== undefined) {
+        if (!receipt || usageReceipt === undefined)
+          throw new Error("Model attempt receipt is incomplete");
+        return usageReceipt;
+      }
+      requireRunning(locked.state);
+      const started = await client.query(
+        "SELECT id FROM session_messages WHERE id=$1 AND run_id=$2 AND session_id=$3 AND kind='model_attempt' AND NOT visible AND context_excluded AND payload->>'phase'='start'",
+        [modelAttemptId(input.runId, input.ordinal, "start"), locked.runId, locked.sessionId],
+      );
+      if (started.rowCount !== 1) throw new Error("Model attempt start is missing");
+      await appendModelAttemptLocked(client, locked, id, event, input.finishedAt);
+      return appendUsageLocked(client, { ...locked, nextSequence: locked.nextSequence + 1 }, usage);
     });
   }
 
@@ -318,6 +407,91 @@ function mergeUnknownEffectSource(
 }
 
 type LockedRun = { runId: string; sessionId: string; nextSequence: number };
+
+function requireOrdinal(ordinal: number): void {
+  if (!Number.isSafeInteger(ordinal) || ordinal <= 0)
+    throw new Error("Invalid model attempt ordinal");
+}
+
+function modelAttemptId(runId: string, ordinal: number, phase: "start" | "finish"): string {
+  return deriveResourceId("message", "model-attempt", `${runId}:${ordinal}:${phase}`);
+}
+
+async function storedModelAttempt(
+  client: PoolClient,
+  locked: LockedRun,
+  id: string,
+  payload: object,
+  createdAt: Date,
+): Promise<boolean> {
+  const result = await client.query<{
+    run_id: string;
+    session_id: string;
+    kind: string;
+    visible: boolean;
+    context_excluded: boolean;
+    payload: unknown;
+    created_at: Date;
+  }>(
+    "SELECT run_id,session_id,kind,visible,context_excluded,payload,created_at FROM session_messages WHERE id=$1",
+    [id],
+  );
+  const row = result.rows[0];
+  if (row === undefined) return false;
+  if (
+    row.run_id !== locked.runId ||
+    row.session_id !== locked.sessionId ||
+    row.kind !== "model_attempt" ||
+    row.visible ||
+    !row.context_excluded ||
+    row.created_at.getTime() !== createdAt.getTime() ||
+    !isDeepStrictEqual(row.payload, JSON.parse(JSON.stringify(payload)))
+  )
+    throw new Error("Model attempt receipt identity conflict");
+  return true;
+}
+
+async function appendModelAttemptLocked(
+  client: PoolClient,
+  locked: LockedRun,
+  id: string,
+  payload: object,
+  createdAt: Date,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO session_messages(id,session_id,run_id,sequence,kind,visible,payload,created_at,context_excluded)
+     VALUES($1,$2,$3,$4,'model_attempt',false,$5::jsonb,$6,true)`,
+    [id, locked.sessionId, locked.runId, locked.nextSequence, JSON.stringify(payload), createdAt],
+  );
+  await client.query("UPDATE acp_sessions SET last_message_sequence=$2,updated_at=$3 WHERE id=$1", [
+    locked.sessionId,
+    locked.nextSequence,
+    createdAt,
+  ]);
+}
+
+async function appendUsageLocked(
+  client: PoolClient,
+  locked: LockedRun,
+  input: Parameters<RunEventRepository["appendUsage"]>[0],
+): Promise<SessionEvent> {
+  const previous = await client.query<{ payload: StoredSessionEvent }>(
+    "SELECT payload FROM session_messages WHERE session_id=$1 AND kind='usage' ORDER BY sequence DESC LIMIT 1",
+    [locked.sessionId],
+  );
+  const stored = previous.rows[0]?.payload;
+  const prior = stored === undefined ? undefined : decodeSessionEvent(stored);
+  const event: SessionEvent = {
+    kind: "usage",
+    ...projectUsage(
+      input.usage,
+      input.contextSize,
+      prior?.kind === "usage" ? prior.cost : undefined,
+    ),
+  };
+  await appendLocked(client, locked, input.id, "usage", event, input.createdAt);
+  return event;
+}
 
 export async function interruptLockedToolAttempts(
   client: PoolClient,

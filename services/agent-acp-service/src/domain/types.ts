@@ -2,6 +2,7 @@ import type { AdmittedConfiguration } from "./session-configuration.js";
 import type { ModelPricing } from "./usage.js";
 import type { ModelThinking } from "./model-thinking.js";
 import type { AgentOwnershipFence } from "./agent-ownership.js";
+import type { ModelRetry } from "./model-call-policy.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonObject = { [key: string]: JsonValue };
@@ -65,6 +66,7 @@ export type AgentExecutionSpec = {
   skillInstructions: SkillInstruction[];
   model: ModelSpec;
   maxModelRequests: number;
+  modelRetry?: ModelRetry;
 };
 
 export type RuntimeBinding = {
