@@ -73,6 +73,7 @@ describe("ACP v1 Streamable HTTP", () => {
   let url: string;
   const connections: acp.ClientConnection[] = [];
   let closeTransport = () => Promise.resolve();
+  let expectedCleanupFailure: Error | undefined;
   const application = {
     assertAccess: vi.fn(() => Promise.resolve()),
     getSessionConfiguration: vi.fn(() =>
@@ -104,17 +105,29 @@ describe("ACP v1 Streamable HTTP", () => {
   beforeEach(() => {
     exporter.reset();
     vi.clearAllMocks();
+    expectedCleanupFailure = undefined;
     application.createSession
       .mockReset()
       .mockResolvedValue({ sessionId: "session-1" });
   });
 
   afterEach(async () => {
-    for (const connection of connections.splice(0)) connection.close();
-    await server?.close();
+    const active = connections.splice(0);
+    for (const connection of active) connection.close();
     const cleanup = closeTransport;
     closeTransport = () => Promise.resolve();
-    await cleanup();
+    const expected = expectedCleanupFailure;
+    expectedCleanupFailure = undefined;
+    try {
+      await server?.close();
+    } finally {
+      try {
+        if (expected === undefined) await cleanup();
+        else await expectCleanupRejection(cleanup(), expected);
+      } finally {
+        await Promise.all(active.map((connection) => connection.closed));
+      }
+    }
   });
 
   async function start(
@@ -673,11 +686,14 @@ describe("ACP v1 Streamable HTTP", () => {
       });
     });
     closeTransport = async () => {
-      await transport.close();
-      await new Promise<void>((resolve, reject) => {
-        listener.close((error) => (error ? reject(error) : resolve()));
-        listener.closeAllConnections();
-      });
+      try {
+        await transport.close();
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          listener.close((error) => (error ? reject(error) : resolve()));
+          listener.closeAllConnections();
+        });
+      }
     };
     await new Promise<void>((resolve) =>
       listener.listen(0, "127.0.0.1", resolve),
@@ -748,6 +764,7 @@ describe("ACP v1 Streamable HTTP", () => {
   function holdSdkCleanup(failure = false) {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    const failureError = new Error("cleanup-private-canary");
     // The spy calls this saved method with its actual receiver via .call(this).
     // eslint-disable-next-line @typescript-eslint/unbound-method
     const original = AcpServer.prototype.close;
@@ -761,9 +778,32 @@ describe("ACP v1 Streamable HTTP", () => {
         entered.resolve();
         await release.promise;
         await cleanup;
-        if (failure) throw new Error("cleanup-private-canary");
+        if (failure) throw failureError;
       });
-    return { entered: entered.promise, release: release.resolve, close };
+    return {
+      entered: entered.promise,
+      release: release.resolve,
+      close,
+      failureError,
+    };
+  }
+
+  function assertCleanupFailure(error: unknown, expected: Error): void {
+    if (error instanceof AggregateError) {
+      expect(error.errors.length).toBeGreaterThan(0);
+      for (const contained of error.errors)
+        assertCleanupFailure(contained, expected);
+    } else expect(error).toBe(expected);
+  }
+
+  async function expectCleanupRejection(
+    operation: Promise<unknown>,
+    expected: Error,
+  ): Promise<void> {
+    const [result] = await Promise.allSettled([operation]);
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected")
+      assertCleanupFailure(result.reason, expected);
   }
 
   function heldDelete(id: string) {
@@ -1010,12 +1050,14 @@ describe("ACP v1 Streamable HTTP", () => {
       );
       const id = await open();
       const cleanup = holdSdkCleanup(failure);
+      if (failure) expectedCleanupFailure = cleanup.failureError;
       let stopping: Promise<void> | undefined;
       let pending: Promise<{ status: number; body: string }> | undefined;
       let received = false;
       try {
         serving = false;
         stopping = transport.drain(1000);
+        void stopping.catch(() => undefined);
         expect(transport.drain(1)).toBe(stopping);
         await cleanup.entered;
         pending = request("DELETE", "owner", id).then(async (response) => {
@@ -1036,14 +1078,25 @@ describe("ACP v1 Streamable HTTP", () => {
           const again = await request("DELETE", "owner", id);
           expect(again.status).toBe(503);
           await again.text();
-          await transport.close();
+          await expectCleanupRejection(transport.close(), cleanup.failureError);
         }
-        await stopping;
+        if (failure)
+          await expectCleanupRejection(stopping, cleanup.failureError);
+        else await stopping;
         expect(cleanup.close).toHaveBeenCalledOnce();
       } finally {
         cleanup.release();
-        await transport.close();
-        await Promise.allSettled([pending, stopping]);
+        try {
+          if (failure)
+            await expectCleanupRejection(
+              transport.close(),
+              cleanup.failureError,
+            );
+          else await transport.close();
+        } finally {
+          await Promise.allSettled([pending, stopping]);
+          cleanup.close.mockRestore();
+        }
       }
     },
   );
@@ -1376,14 +1429,16 @@ describe("ACP v1 Streamable HTTP", () => {
   it.each([false, true])(
     "waits for actual SDK cleanup before DELETE (failure=%s)",
     async (failure) => {
-      await startBounded();
+      const transport = await startBounded();
       const id = await open();
       const cleanup = holdSdkCleanup(failure);
+      if (failure) expectedCleanupFailure = cleanup.failureError;
       let settled = false;
       const pending = request("DELETE", "owner", id).then(async (response) => {
         settled = true;
         return { status: response.status, body: await response.text() };
       });
+      void pending.catch(() => undefined);
       try {
         await cleanup.entered;
         expect((await request("GET", "owner", id)).status).toBe(404);
@@ -1401,10 +1456,20 @@ describe("ACP v1 Streamable HTTP", () => {
           await quotaRejected(
             await request("POST", "owner", undefined, initialize),
           );
+          await expectCleanupRejection(transport.close(), cleanup.failureError);
         } else await open();
       } finally {
         cleanup.release();
-        await Promise.allSettled([pending]);
+        try {
+          if (failure)
+            await expectCleanupRejection(
+              transport.close(),
+              cleanup.failureError,
+            );
+        } finally {
+          await Promise.allSettled([pending]);
+          cleanup.close.mockRestore();
+        }
       }
     },
   );

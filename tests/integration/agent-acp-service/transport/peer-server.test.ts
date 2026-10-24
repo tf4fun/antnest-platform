@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest, type ClientRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { once } from "node:events";
+import { WebSocket } from "ws";
 import { expect, it, vi } from "vitest";
 import {
   PeerServer,
@@ -19,9 +21,11 @@ import {
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import type { PeerPublicationRequest } from "../../../../services/agent-acp-service/src/ports/agent-peers.js";
 import { PeerDeadlineError } from "../../../../services/agent-acp-service/src/ports/agent-peers.js";
+import { encodeOwnerForward } from "../../../../services/agent-acp-service/src/application/owner-forwarding.js";
 
 const identityPath = "/internal/acp-peer/identity";
 const publicationPath = "/internal/acp-peer/publications/apply";
+const httpForwardPath = "/internal/acp-peer/forward/http";
 const receipt = (request: PeerPublicationRequest) => ({
   request_id: request.request_id,
   membership_sha256: request.membership_sha256,
@@ -42,6 +46,7 @@ type SendOptions = {
   headers?: Record<string, string>;
   held?: boolean;
   declaredBytes?: number;
+  rawResponse?: boolean;
 };
 type Exchange = {
   request: ClientRequest;
@@ -79,12 +84,19 @@ async function withPeer(
     send(body: unknown, options?: SendOptions): Exchange;
     reply(task: Exchange): Promise<Reply>;
     close(): Promise<void>;
+    connectForward(value: unknown): WebSocket;
   }) => Promise<void>,
-  options: { apply?: PeerServerOptions["apply"]; timeoutMs?: number } = {},
+  options: {
+    apply?: PeerServerOptions["apply"];
+    timeoutMs?: number;
+    forward?: PeerServerOptions["forward"];
+    forwardHttp?: PeerServerOptions["forwardHttp"];
+  } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), "acp-peer-server-"));
   const workload = new ServiceAuthentication(testSecurityEnvironment());
   const tasks: Exchange[] = [];
+  const sockets: { socket: WebSocket; closed: Promise<void> }[] = [];
   const release: Array<() => void> = [];
   const errors: unknown[] = [];
   let server: PeerServer | undefined;
@@ -167,6 +179,10 @@ async function withPeer(
       authentication,
       apply,
       timeoutMs: options.timeoutMs ?? 2000,
+      ...(options.forward === undefined ? {} : { forward: options.forward }),
+      ...(options.forwardHttp === undefined
+        ? {}
+        : { forwardHttp: options.forwardHttp }),
     });
     await server.listen("127.0.0.1", 0);
     const port = server.address()!.port;
@@ -204,12 +220,12 @@ async function withPeer(
         response.once("error", (error) => result.resolve(error));
         response.once("end", () => {
           try {
+            const text = Buffer.concat(chunks).toString();
             result.resolve({
               status: response.statusCode!,
-              body: JSON.parse(Buffer.concat(chunks).toString()) as Record<
-                string,
-                unknown
-              >,
+              body: settings.rawResponse
+                ? { text }
+                : (JSON.parse(text) as Record<string, unknown>),
               headers: response.headers,
             });
           } catch {
@@ -248,6 +264,26 @@ async function withPeer(
       publication,
       send,
       close,
+      connectForward(value) {
+        const socket = new WebSocket(
+          `ws://127.0.0.1:${port}/internal/acp-peer/forward/ws`,
+          {
+            headers: {
+              [SERVICE_AUTH_HEADER]: `Bearer ${current}`,
+              "Antnest-ACP-Forward": encodeOwnerForward(value),
+            },
+            handshakeTimeout: 2000,
+          },
+        );
+        socket.on("error", () => undefined);
+        sockets.push({
+          socket,
+          closed: new Promise<void>((resolve) =>
+            socket.once("close", () => resolve()),
+          ),
+        });
+        return socket;
+      },
       async reply(task) {
         const result = await bounded(task.result);
         await bounded(task.join());
@@ -259,12 +295,25 @@ async function withPeer(
     errors.push(error);
   } finally {
     for (const finish of release) finish();
+    for (const { socket } of sockets)
+      if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
     for (const task of tasks)
       task.request.destroy(new Error("Peer fixture cleanup"));
-    for (const result of await Promise.allSettled([
+    const joining = Promise.allSettled([
       ...tasks.map((task) => task.join()),
+      ...sockets.map(({ closed }) => closed),
       close(),
-    ]))
+    ]);
+    let results: PromiseSettledResult<unknown>[] = [];
+    try {
+      results =
+        options.forwardHttp === undefined
+          ? await joining
+          : await bounded(joining, 7500);
+    } catch (error) {
+      errors.push(error);
+    }
+    for (const result of results)
       if (result.status === "rejected") errors.push(result.reason);
     try {
       await workload.close();
@@ -397,6 +446,28 @@ it.each([
     expect(reply.body.code).toBe(code);
     expect(f.apply).not.toHaveBeenCalled();
   });
+});
+
+it("preserves the private deadline status when WebSocket admission expires", async () => {
+  await withPeer(
+    async (f) => {
+      const socket = f.connectForward({
+        ...f.publication(),
+        identity: {
+          organizationId: "org-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+        epoch: "1",
+        protocol: "v1",
+        caller: "agent-ui",
+      });
+      await expect(once(socket, "open")).rejects.toThrow(
+        "Unexpected server response: 504",
+      );
+    },
+    { forward: () => Promise.reject(new PeerDeadlineError()) },
+  );
 });
 
 it("preserves the private deadline status when publication admission expires", async () => {
@@ -586,3 +657,173 @@ it("bounds a valid multibyte publication receipt by UTF-8 bytes before sending i
     },
   );
 });
+
+it("shutdown joins an admitted HTTP DELETE without cancelling its original cleanup signal", async () => {
+  const entered = Promise.withResolvers<AbortSignal>();
+  const release = Promise.withResolvers<void>();
+  const connectionId = "original-admitted-http-connection";
+  let cleanupJoined = false;
+  const forwardHttp = vi.fn<NonNullable<PeerServerOptions["forwardHttp"]>>(
+    async (request, response, member, signal, admitted) => {
+      expect(request.method).toBe("DELETE");
+      expect(request.headers["acp-connection-id"]).toBe(connectionId);
+      expect(member).toBe("acp-a");
+      admitted();
+      entered.resolve(signal);
+      await release.promise;
+      signal.throwIfAborted();
+      cleanupJoined = true;
+      response.writeHead(202).end();
+    },
+  );
+  await withPeer(
+    async (f) => {
+      f.release.push(() => release.resolve());
+      const deletion = f.send("", {
+        method: "DELETE",
+        path: httpForwardPath,
+        headers: { "Acp-Connection-Id": connectionId },
+        rawResponse: true,
+      });
+      let closing: Promise<void> | undefined;
+      let closed = false;
+      try {
+        const signal = await bounded(entered.promise);
+        closing = f.close();
+        void closing.then(
+          () => {
+            closed = true;
+          },
+          () => {
+            closed = true;
+          },
+        );
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(signal.aborted).toBe(false);
+        expect(cleanupJoined).toBe(false);
+        expect(closed).toBe(false);
+        release.resolve();
+        expect((await bounded(f.reply(deletion))).status).toBe(202);
+        expect(cleanupJoined).toBe(true);
+        await bounded(closing, 7500);
+        expect(f.server.address()).toBeNull();
+        expect(forwardHttp).toHaveBeenCalledOnce();
+      } finally {
+        release.resolve();
+        deletion.request.destroy();
+        await bounded(Promise.allSettled([deletion.join(), closing]), 7500);
+      }
+    },
+    { forwardHttp },
+  );
+}, 20_000);
+
+it("shutdown keeps HTTP cleanup admission open while an original SSE GET is joining", async () => {
+  const readEntered = Promise.withResolvers<void>();
+  const deleteEntered = Promise.withResolvers<AbortSignal>();
+  const releaseRead = Promise.withResolvers<void>();
+  const releaseDelete = Promise.withResolvers<void>();
+  const connectionId = "original-streaming-http-connection";
+  let readJoined = false;
+  let deleteJoined = false;
+  const forwardHttp = vi.fn<NonNullable<PeerServerOptions["forwardHttp"]>>(
+    async (request, response, member, signal, admitted) => {
+      expect(request.headers["acp-connection-id"]).toBe(connectionId);
+      expect(member).toBe("acp-a");
+      admitted();
+      if (request.method === "GET") {
+        response.writeHead(200, { "Content-Type": "text/event-stream" });
+        response.write('data: {"active":true}\n\n');
+        readEntered.resolve();
+        await releaseRead.promise;
+        readJoined = true;
+        response.end();
+      } else if (request.method === "DELETE") {
+        deleteEntered.resolve(signal);
+        await releaseDelete.promise;
+        signal.throwIfAborted();
+        deleteJoined = true;
+        response.writeHead(202).end();
+      } else throw new Error("New HTTP execution entered during shutdown");
+    },
+  );
+  await withPeer(
+    async (f) => {
+      f.release.push(
+        () => releaseRead.resolve(),
+        () => releaseDelete.resolve(),
+      );
+      const reading = f.send("", {
+        method: "GET",
+        path: httpForwardPath,
+        headers: { "Acp-Connection-Id": connectionId },
+        rawResponse: true,
+      });
+      let deletion: Exchange | undefined;
+      let closing: Promise<void> | undefined;
+      let closed = false;
+      try {
+        await bounded(readEntered.promise);
+        closing = f.close();
+        void closing.then(
+          () => {
+            closed = true;
+          },
+          () => {
+            closed = true;
+          },
+        );
+        for (const method of ["GET", "POST"]) {
+          const rejected = await bounded(
+            f.reply(
+              f.send("", {
+                method,
+                path: httpForwardPath,
+                headers: { "Acp-Connection-Id": connectionId },
+                rawResponse: true,
+              }),
+            ),
+            1000,
+          );
+          expect(rejected.status).toBe(503);
+        }
+        expect(forwardHttp).toHaveBeenCalledOnce();
+        expect(closed).toBe(false);
+        deletion = f.send("", {
+          method: "DELETE",
+          path: httpForwardPath,
+          headers: { "Acp-Connection-Id": connectionId },
+          rawResponse: true,
+        });
+        const signal = await bounded(deleteEntered.promise, 1000);
+        expect(signal.aborted).toBe(false);
+        expect(deleteJoined).toBe(false);
+        expect(closed).toBe(false);
+        releaseRead.resolve();
+        const readReply = await bounded(f.reply(reading));
+        expect(readReply.status).toBe(200);
+        expect(readReply.body.text).toContain('data: {"active":true}');
+        expect(readJoined).toBe(true);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(closed).toBe(false);
+        expect(signal.aborted).toBe(false);
+        releaseDelete.resolve();
+        expect((await bounded(f.reply(deletion))).status).toBe(202);
+        expect(deleteJoined).toBe(true);
+        await bounded(closing, 7500);
+        expect(f.server.address()).toBeNull();
+        expect(forwardHttp).toHaveBeenCalledTimes(2);
+      } finally {
+        releaseRead.resolve();
+        releaseDelete.resolve();
+        reading.request.destroy();
+        deletion?.request.destroy();
+        await bounded(
+          Promise.allSettled([reading.join(), deletion?.join(), closing]),
+          7500,
+        );
+      }
+    },
+    { forwardHttp },
+  );
+}, 20_000);

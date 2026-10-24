@@ -141,7 +141,7 @@ Work cancellation uses the entry signal; Learning retains original model work.
 
 Non-peer mode retains exclusive startup; peer mode uses shared compatibility
 locking and fixed Agent assignment. The independent ownership-loss fail-stop
-channel remains. Non-owner forwarding, crash takeover and two-replica Docker
+channel remains. HTTP/SSE, state/control and source forwarding, crash takeover and two-replica Docker
 integration remain pending.
 Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
 registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
@@ -185,9 +185,13 @@ remain protected, and an accepting protected scope prevents a complete ACK.
 
 Two actual `main.ts` processes have a PostgreSQL integration test covering empty
 lease startup, one control publication, both owners' durable Prompts and resource
-cleanup. Its RC/Runtime peers are controlled fixtures. Non-owner request forwarding,
-crash takeover and actual two-replica Docker acceptance remain pending. Requests
-must reach the assigned owner during this stage; an absent catalog member cannot
+cleanup. Its RC/Runtime peers are controlled fixtures. v1/v2 WebSocket clients
+may use one public ACP origin; the peer listener routes them to the fixed owner
+and requires that owner's original cleanup receipt. A missing receipt remains
+an unresolved scope cleanup and prevents a later successful revocation ACK.
+HTTP/SSE, state/control and source requests still require the assigned owner.
+Those forwarding paths, crash takeover and actual two-replica Docker acceptance
+remain pending. An absent catalog member cannot
 be omitted from ACK or have its Agents reassigned on a timeout. Membership remains
 pinned; changing the replica set requires a later migration/handoff design.
 
@@ -221,7 +225,7 @@ service to multiple replicas. Registered owner mode now uses the lease
 coordinator. Non-peer composition acquires the exclusive worker lock; peer mode
 uses its shared form and fixed Agent assignment. The optional peer listener
 confirms publications. Lease timing is not configurable, and this stage does
-not yet supply non-owner forwarding or crash takeover.
+not yet supply HTTP/SSE, state/control or source forwarding, or crash takeover.
 
 Migration `0026_run_execution_owner.sql` records the original registration,
 member, incarnation and epoch on each newly owned Run intent. The four private
@@ -297,7 +301,7 @@ timeouts and lost commit receipts remain failures, never permission to retry an
 effect. These callbacks must contain database work only. Existing transactions
 without this option retain their existing configured statement budgets.
 
-Non-owner forwarding, crash takeover and actual two-replica Docker integration
+HTTP/SSE, state/control and source forwarding, crash takeover and actual two-replica Docker integration
 remain required. The
 [ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
 those remaining gates. Lease rows must not be deleted to reset an epoch.

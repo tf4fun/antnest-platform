@@ -69,6 +69,13 @@ execution fences, response-only metadata, and retired names. An internal or
 response-only header is not a browser exception. Principal hints are display
 compatibility fields; receiving services authenticate signed caller context.
 
+`Antnest-ACP-Forward` is an internal execution fence owned by Agent ACP Service.
+Only the authenticated ACP peer listener consumes the
+[owner-forwarding envelope](../agent-acp/owner-forwarding.md); the field grants
+no authority without peer authentication and the original signed caller context.
+Gateway strips browser-supplied copies with the reserved namespace and never
+adds this field to a browser profile or presentation hint projection.
+
 The [registry](request-headers.json) is the source for the generated attack
 vocabulary in Gateway tests and the session contract's hint projections.
 Run `node tests/support/check-trusted-headers.mjs` to check the repository;

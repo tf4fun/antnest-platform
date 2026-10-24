@@ -118,7 +118,15 @@ protection. `dual-process-publication.postgres.test.ts` additionally starts two
 actual `main.ts` processes from empty leases, publishes through one control
 endpoint, executes one durable Prompt per owner and checks original exits and
 resource cleanup. Its authenticated RC, Identity, Provider and Runtime peers
-are controlled fixtures. Non-owner forwarding, live-peer takeover and actual
+are controlled fixtures. The v1/v2 WebSocket variants now also use one public
+ACP origin for both owners. The ingress resolves the fixed member and current
+lease, and the receiver revalidates the original CCT, complete authority and
+prepared generation. ACP traffic remains owned by the existing SDK; private
+frame envelopes separate business messages from the original cleanup receipt.
+An ingress missing that receipt retains the unresolved result for later scope
+revocation; an owner that has joined its original work may separately report
+receipt delivery failure. See [owner forwarding](../../../contracts/agent-acp/owner-forwarding.md).
+HTTP/SSE, state/control and source forwarding, crash takeover and actual
 two-replica Docker integration remain pending; absent members stay in the catalog.
 
 ## Optional Incarnation Bootstrap
@@ -223,7 +231,7 @@ Bootstrap is optional. Its validated identity now binds production Agent leases,
 fenced writers and scoped background work. Without owner settings, startup
 retains the legacy path. Non-peer mode remains exclusive; peer mode partitions
 Agents under the shared compatibility lock. The independent ownership-loss
-fail-stop channel remains. Non-owner forwarding, crash takeover and actual
+fail-stop channel remains. HTTP/SSE, state/control and source forwarding, crash takeover and actual
 two-replica Docker integration remain required.
 
 ## Mission
@@ -569,7 +577,7 @@ rejects a selected owned Run and updates only its locked set of pending requests
 Registered owner mode captures the generation in production and cancels abandoned
 legacy permissions only within approved scopes in non-peer mode. Peer mode
 preserves unknown legacy permissions. Predecessor Run recovery uses the dedicated
-stopped-proof transaction. Non-owner forwarding, crash takeover and actual
+stopped-proof transaction. HTTP/SSE, state/control and source forwarding, crash takeover and actual
 two-replica Docker integration remain pending.
 
 ## Module Map
@@ -934,7 +942,7 @@ Production component tests hold a real Provider transport close during legacy
 and owned shutdown, and expire Agent A's lease while Agent B completes a real
 foreground Run. Warm startup also consumes stopped Learning claim recovery before
 new foreground work, retaining original costs and history without replay.
-Non-owner forwarding, crash takeover and two-replica Docker integration remain pending.
+HTTP/SSE, state/control and source forwarding, crash takeover and two-replica Docker integration remain pending.
 Foreground isolation does not establish another Agent's background claim recovery.
 
 ## Workspace Bridge Extension

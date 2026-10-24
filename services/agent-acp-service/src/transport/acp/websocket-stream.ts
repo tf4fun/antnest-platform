@@ -1,25 +1,32 @@
 import type * as acpV1 from "@agentclientprotocol/sdk";
 import type * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
-import type WebSocket from "ws";
 import type { RawData } from "ws";
 import { strictJson } from "../../adapters/strict-json.js";
 
+export interface JsonSocket {
+  on(event: "message", listener: (data: RawData, isBinary: boolean) => void): unknown;
+  once(event: "close", listener: () => void): unknown;
+  once(event: "error", listener: (error: Error) => void): unknown;
+  send(value: string, done: (error?: Error) => void): void;
+  close(code?: number, reason?: string): void;
+}
+
 export function createAcpV1WebSocketStream(
-  socket: WebSocket,
+  socket: JsonSocket,
   authorized = () => true,
 ): acpV1.Stream {
   return createWebSocketJsonStream<acpV1.AnyMessage>(socket, authorized);
 }
 
 export function createAcpV2WebSocketWireStream(
-  socket: WebSocket,
+  socket: JsonSocket,
   authorized = () => true,
 ): acpV2.WireStream {
   return createWebSocketJsonStream<acpV2.AnyWireMessage>(socket, authorized);
 }
 
 function createWebSocketJsonStream<Message>(
-  socket: WebSocket,
+  socket: JsonSocket,
   authorized: () => boolean,
 ): {
   readable: ReadableStream<Message>;
@@ -98,7 +105,7 @@ function createWebSocketJsonStream<Message>(
   return { readable, writable };
 }
 
-function sendParseError(socket: WebSocket): void {
+function sendParseError(socket: JsonSocket): void {
   socket.send(
     JSON.stringify({
       jsonrpc: "2.0",

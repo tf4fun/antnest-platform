@@ -17,7 +17,16 @@ import type { PeerPublicationRequest } from "../ports/agent-peers.js";
 import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { PeerAuthentication } from "../adapters/peer-authentication.js";
 import { fields } from "../adapters/service-authentication.js";
+import { OWNER_HTTP_PATH } from "./owner-http.js";
 import { strictObject } from "../adapters/strict-json.js";
+import { WebSocketServer, type WebSocket } from "ws";
+import type { Duplex } from "node:stream";
+import {
+  OWNER_FORWARD_HEADER,
+  OWNER_FORWARD_PATH,
+  parseOwnerForward,
+  type OwnerForwardRequest,
+} from "../application/owner-forwarding.js";
 
 const identityPath = "/internal/acp-peer/identity";
 const publicationPath = "/internal/acp-peer/publications/apply";
@@ -54,11 +63,25 @@ export type PeerServerOptions = {
   authentication: PeerAuthentication;
   apply: (request: PeerPublicationRequest, signal: AbortSignal) => Promise<unknown>;
   timeoutMs?: number;
+  maxWebSocketPayloadBytes?: number;
+  forwardHttp?: (
+    request: IncomingMessage,
+    response: ServerResponse,
+    member: string,
+    signal: AbortSignal,
+    admitted: () => void,
+  ) => Promise<void>;
+  forward?: (
+    request: IncomingMessage,
+    target: OwnerForwardRequest,
+    signal: AbortSignal,
+  ) => Promise<{ accept(socket: WebSocket): Promise<void>; cancel(): void }>;
 };
 
 type SocketOwner = {
   closed: Promise<void>;
   deadline: number;
+  transfer: () => void;
 };
 type RequestOwner = {
   request: IncomingMessage;
@@ -67,6 +90,7 @@ type RequestOwner = {
   requestClosed: Promise<void>;
   responseClosed: Promise<void>;
   socket: SocketOwner;
+  httpReceipt: boolean;
 };
 
 export class PeerServer {
@@ -80,8 +104,13 @@ export class PeerServer {
   private readonly handlers = new Set<Promise<void>>();
   private readonly cleanupErrors: Error[] = [];
   private closed = false;
+  private httpReceiptDeadline = 0;
   private listening: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
+  private readonly webSockets: WebSocketServer;
+  private readonly forwards = new Set<AbortController>();
+  private readonly forward: PeerServerOptions["forward"];
+  private readonly forwardHttp: PeerServerOptions["forwardHttp"];
 
   public constructor(options: PeerServerOptions) {
     const timeoutMs = options.timeoutMs === undefined ? defaultTimeoutMs : options.timeoutMs;
@@ -97,14 +126,22 @@ export class PeerServer {
     this.authentication = options.authentication;
     this.apply = options.apply;
     this.timeoutMs = timeoutMs;
+    this.forward = options.forward;
+    this.forwardHttp = options.forwardHttp;
+    this.webSockets = new WebSocketServer({
+      noServer: true,
+      clientTracking: false,
+      perMessageDeflate: false,
+      maxPayload: (options.maxWebSocketPayloadBytes ?? 1048576) * 2 + 1024,
+    });
     const handler = (request: IncomingMessage, response: ServerResponse) => {
       this.handle(request, response);
     };
     this.server =
       this.authentication.serverTLS === undefined
-        ? createServer(handler)
+        ? createServer({ maxHeaderSize: 32768 }, handler)
         : createSecureServer(
-            { ...this.authentication.serverTLS, handshakeTimeout: timeoutMs },
+            { ...this.authentication.serverTLS, handshakeTimeout: timeoutMs, maxHeaderSize: 32768 },
             handler,
           );
     // The owned timers also cover incomplete headers and TLS connections.
@@ -113,10 +150,16 @@ export class PeerServer {
     this.server.timeout = 0;
     this.server.on("connection", (socket: Socket) => {
       this.ownSocket(socket);
-      if (this.closed) socket.destroy();
+      if (this.closed && !this.receivingHttpReceipts()) socket.destroy();
     });
     this.server.on("checkContinue", handler);
     this.server.on("checkExpectation", handler);
+    this.server.on("upgrade", (request, socket, head) => {
+      const original = this.handleForward(request, socket, head);
+      this.handlers.add(original);
+      const forget = () => this.handlers.delete(original);
+      void original.then(forget, forget);
+    });
     this.server.on("clientError", (_error, socket) => {
       if (socket.destroyed || !socket.writable) return;
       const body = errorBody("invalid_request");
@@ -168,8 +211,11 @@ export class PeerServer {
     const receipt = Promise.withResolvers<void>();
     this.closePromise = receipt.promise;
     this.closed = true;
+    if (this.forwardHttp !== undefined && this.server.listening)
+      this.httpReceiptDeadline = performance.now() + 5000;
+    for (const controller of this.forwards) controller.abort(new Error("Peer listener closing"));
     for (const owner of this.active)
-      owner.controller.abort(new PeerFailure("configuration_unavailable"));
+      if (!owner.httpReceipt) owner.controller.abort(new PeerFailure("configuration_unavailable"));
     void this.stop().then(receipt.resolve, receipt.reject);
     return receipt.promise;
   }
@@ -181,6 +227,15 @@ export class PeerServer {
     } catch {
       /* listen reports its own fixed error */
     }
+    // The public HTTP transport retires connections concurrently. Preserve the
+    // same receipt window on this private ingress so original DELETEs can join
+    // that cleanup; neither a listener close nor an abort is its acknowledgement.
+    const remaining = this.httpReceiptDeadline - performance.now();
+    if (remaining > 0)
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, remaining);
+        timer.unref();
+      });
     const listenerClosed = new Promise<void>((resolve) => {
       if (!this.server.listening) {
         resolve();
@@ -194,6 +249,7 @@ export class PeerServer {
     });
     this.server.closeIdleConnections();
     await this.drainHandlers();
+    await new Promise<void>((resolve) => this.webSockets.close(() => resolve()));
     for (const socket of this.sockets.keys()) socket.destroy();
     await Promise.all([...this.sockets.values()].map((owner) => owner.closed));
     await listenerClosed;
@@ -212,7 +268,7 @@ export class PeerServer {
     if (existing !== undefined) return existing;
     const receipt = Promise.withResolvers<void>();
     const deadline = performance.now() + this.timeoutMs;
-    const owner = { closed: receipt.promise, deadline };
+    const owner = { closed: receipt.promise, deadline, transfer: () => clearTimeout(timer) };
     this.sockets.set(socket, owner);
     const interrupt = (code: FailureCode) => {
       for (const request of this.active)
@@ -235,6 +291,89 @@ export class PeerServer {
     return owner;
   }
 
+  private async handleForward(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+  ): Promise<void> {
+    const controller = new AbortController();
+    this.forwards.add(controller);
+    const cancel = () => controller.abort(new Error("Peer socket closed"));
+    socket.once("close", cancel);
+    let prepared: Awaited<ReturnType<NonNullable<PeerServerOptions["forward"]>>> | undefined;
+    const state = { upgraded: false };
+    try {
+      if (
+        this.closed ||
+        this.forward === undefined ||
+        request.url !== OWNER_FORWARD_PATH ||
+        request.method !== "GET"
+      )
+        throw new PeerFailure("route_not_found");
+      const authenticated = this.authentication.authenticate(request);
+      if (authenticated.code !== null)
+        throw new PeerFailure(
+          authenticated.code === "caller_not_allowed"
+            ? "caller_not_allowed"
+            : "service_unauthenticated",
+        );
+      const headers = fields(request).filter(
+        (field) => field.name.toLowerCase() === OWNER_FORWARD_HEADER.toLowerCase(),
+      );
+      if (headers.length !== 1 || request.headers.expect !== undefined)
+        throw new PeerFailure("invalid_request");
+      const target = parseOwnerForward(headers[0]!.value);
+      if (
+        target.source.member_id !== authenticated.caller ||
+        target.membership_sha256 !== this.authentication.membership.sha256 ||
+        !isDeepStrictEqual(target.target, this.registration)
+      )
+        throw new PeerFailure("caller_not_allowed");
+      const remaining = Date.parse(target.deadline_at) - Date.now();
+      if (remaining <= 0 || remaining > 10000) throw new PeerFailure("deadline_exceeded");
+      prepared = await this.forward(request, target, controller.signal);
+      controller.signal.throwIfAborted();
+      if (this.isClosed() || Date.now() >= Date.parse(target.deadline_at))
+        throw new PeerFailure("deadline_exceeded");
+      this.sockets.get(request.socket)?.transfer();
+      // The owning server rewrites the URL only after validating the fixed private route.
+      const accepted = Promise.withResolvers<void>();
+      this.webSockets.handleUpgrade(request, socket, head, (wire) => {
+        state.upgraded = true;
+        void prepared!.accept(wire).then(accepted.resolve, accepted.reject);
+      });
+      if (!state.upgraded) throw new PeerFailure("invalid_request");
+      await accepted.promise;
+    } catch (error) {
+      if (state.upgraded) {
+        this.cleanupErrors.push(new Error("Forwarded peer cleanup failed", { cause: error }));
+        socket.destroy();
+      } else if (!socket.destroyed) {
+        const status =
+          error instanceof PeerFailure || error instanceof PeerDeadlineError
+            ? failures[error.code].status
+            : error instanceof DomainError && error.code === "access_denied"
+              ? 403
+              : 503;
+        socket.end(
+          `HTTP/1.1 ${status} Peer admission failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+        );
+      }
+    } finally {
+      prepared?.cancel();
+      socket.off("close", cancel);
+      this.forwards.delete(controller);
+    }
+  }
+
+  private isClosed(): boolean {
+    return this.closed;
+  }
+
+  private receivingHttpReceipts(): boolean {
+    return this.closed && performance.now() < this.httpReceiptDeadline;
+  }
+
   private handle(request: IncomingMessage, response: ServerResponse): void {
     const receipt = Promise.withResolvers<void>();
     this.handlers.add(receipt.promise);
@@ -249,6 +388,7 @@ export class PeerServer {
       requestClosed: requestClosed.promise,
       responseClosed: responseClosed.promise,
       socket: this.ownSocket(request.socket),
+      httpReceipt: false,
     };
     this.active.add(owner);
     const completed = () => {
@@ -291,6 +431,27 @@ export class PeerServer {
             ? "caller_not_allowed"
             : "service_unauthenticated",
         );
+      }
+      if (request.url === OWNER_HTTP_PATH && this.forwardHttp !== undefined) {
+        const receipt =
+          request.method === "DELETE" &&
+          fields(request).some((field) => field.name.toLowerCase() === "acp-connection-id");
+        if (this.closed && !(receipt && this.receivingHttpReceipts()))
+          throw new PeerFailure("configuration_unavailable");
+        if (request.headers.expect !== undefined) throw new PeerFailure("invalid_request");
+        if (!["POST", "GET", "DELETE"].includes(request.method ?? ""))
+          throw new PeerFailure("method_not_allowed");
+        if (authentication.caller === null) throw new PeerFailure("service_unauthenticated");
+        owner.httpReceipt = receipt;
+        // This listener owns one original request per socket and closes it in
+        // finally. Advertise that before a client can pipeline its next SSE GET.
+        response.shouldKeepAlive = false;
+        response.setHeader("Connection", "close");
+        await this.forwardHttp(request, response, authentication.caller, controller.signal, () => {
+          clearTimeout(timer);
+          owner.socket.transfer();
+        });
+        return;
       }
       if (request.url !== identityPath && request.url !== publicationPath)
         throw new PeerFailure(

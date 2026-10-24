@@ -235,9 +235,12 @@ export async function checkRepository({
       if (
         access.authentication === "peer-member" &&
         (service !== "agent-acp-service" ||
-          !/^(?:POST|UPGRADE) \/internal\/acp-peer\/[a-z0-9/-]+$/u.test(
+          (!/^(?:POST|UPGRADE) \/internal\/acp-peer\/[a-z0-9/-]+$/u.test(
             route,
-          ) ||
+          ) &&
+            !/^(?:GET|DELETE) \/internal\/acp-peer\/forward\/http$/u.test(
+              route,
+            )) ||
           JSON.stringify(callers) !== '["agent-acp-service"]')
       )
         errors.push(

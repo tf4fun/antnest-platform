@@ -10,6 +10,8 @@ import {
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as acp from "@agentclientprotocol/sdk";
+import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { Pool } from "pg";
 import { describe, expect, it } from "vitest";
@@ -26,17 +28,89 @@ import {
   runtimeConfiguration,
 } from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 import { runtimeInformation } from "../../../../services/agent-acp-service/test/fixtures/runtime-information.js";
+import { identityHeaders } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import {
   testJwks,
   testSecurityEnvironment,
   workloadHeaders,
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
-import { AcpWireClient } from "../support/acp-wire-client.js";
+import { AcpWireClient, type WireFrame } from "../support/acp-wire-client.js";
 import { ProductionAcpChild } from "../support/production-acp-child.js";
 import { readBody, startPeer, within } from "../support/production-peers.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 const reply = "Two real ACP processes completed their assigned work.";
+
+type FixtureClient = Pick<AcpWireClient, "initialize" | "request" | "close">;
+
+class AcpHttpClient implements FixtureClient {
+  public readonly updates: acp.SessionUpdate[] = [];
+  private readonly connection: acp.ClientConnection;
+
+  public constructor(
+    url: string,
+    identity: ReturnType<typeof executionIdentity>,
+  ) {
+    this.connection = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        this.updates.push(params.update);
+      })
+      .connect(createHttpStream(url, { headers: identityHeaders(identity) }));
+  }
+
+  public async initialize(version: 1 | 2): Promise<WireFrame> {
+    if (version !== 1) throw new Error("The HTTP fixture only supports ACP v1");
+    const frame = await this.request(acp.methods.agent.initialize, {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+    expect(frame.error).toBeUndefined();
+    return frame;
+  }
+
+  public async request(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<WireFrame> {
+    try {
+      let result: Record<string, unknown>;
+      switch (method) {
+        case acp.methods.agent.initialize:
+          result = await this.connection.agent.request<Record<string, unknown>>(
+            acp.methods.agent.initialize,
+            params,
+          );
+          break;
+        case acp.methods.agent.session.new:
+          result = await this.connection.agent.request<Record<string, unknown>>(
+            acp.methods.agent.session.new,
+            params,
+          );
+          break;
+        case acp.methods.agent.session.prompt:
+          result = await this.connection.agent.request<Record<string, unknown>>(
+            acp.methods.agent.session.prompt,
+            params,
+          );
+          break;
+        default:
+          throw new Error(`Unsupported HTTP fixture request: ${method}`);
+      }
+      return { result };
+    } catch (error) {
+      if (!(error instanceof acp.RequestError)) throw error;
+      return {
+        error: error.toErrorResponse() as NonNullable<WireFrame["error"]>,
+      };
+    }
+  }
+
+  public async close(): Promise<void> {
+    this.connection.close();
+    await this.connection.closed;
+  }
+}
 
 async function availablePort(): Promise<number> {
   const server = createServer();
@@ -77,504 +151,547 @@ async function refused(port: number): Promise<void> {
 describe.skipIf(databaseUrl === undefined)(
   "two actual ACP main processes",
   () => {
-    it("starts without preseeded leases, publishes through one control endpoint and completes one durable Prompt per owner", async () => {
-      const root = mkdtempSync(join(tmpdir(), "acp-dual-main-"));
-      const id = randomUUID().replaceAll("-", "");
-      const schema = "dual_main_" + id;
-      const fixtureUrl = new URL(databaseUrl!);
-      fixtureUrl.searchParams.set("options", "-c search_path=" + schema);
-      const pool = new Pool({
-        connectionString: fixtureUrl.toString(),
-        max: 3,
-        connectionTimeoutMillis: 5000,
-        statement_timeout: 5000,
-        query_timeout: 6000,
-      });
-      const peers: Awaited<ReturnType<typeof startPeer>>[] = [];
-      const handlers: ReturnType<typeof createMcpHandler>[] = [];
-      const children: ProductionAcpChild[] = [];
-      const clients: AcpWireClient[] = [];
-      const originals: Promise<unknown>[] = [];
-      const errors: unknown[] = [];
-      const ports: number[] = [];
-      const names = ["dual-main-a-" + id, "dual-main-b-" + id];
-      const temporary: string[] = [];
-      const registrations = new Map<string, OwnerRegistration>();
-      const security = testSecurityEnvironment();
-      const token = (service: string) =>
-        "Bearer " +
-        readFileSync(
-          join(security.ANTNEST_SERVICE_AUTH_TOKEN_DIR, service),
-          "utf8",
-        ).trim();
-      const tracked = <T>(promise: Promise<T>): Promise<T> => {
-        originals.push(promise);
-        void promise.catch(() => undefined);
-        return promise;
-      };
-      let closing = false;
-      let created = false;
-      let businessPassed = false;
-      try {
-        await pool.query(`CREATE SCHEMA ${schema}`);
-        created = true;
-        await migrate(pool);
-        expect((await pool.query("SELECT * FROM agent_leases")).rows).toEqual(
-          [],
-        );
-        while (ports.length < 8) {
-          const port = await availablePort();
-          if (!ports.includes(port)) ports.push(port);
-        }
-        const members = [0, 1].map((i) => ({
-          member_id: i === 0 ? "acp-a" : "acp-b",
-          origin: `http://127.0.0.1:${ports[i * 4 + 3]!}`,
-        }));
-        const identity = await startPeer(async (request, response) => {
-          expect((await readBody(request)).byteLength).toBe(0);
-          expect(request.method).toBe("GET");
-          expect(request.url).toBe("/rpc/identity/jwks");
-          expect(request.headers["antnest-service-authorization"]).toBe(
-            token("identity-service"),
-          );
-          response
-            .writeHead(200, { "content-type": "application/json" })
-            .end(JSON.stringify(testJwks()));
+    it.each([
+      { mode: "direct-owner", transport: "websocket", version: 1 },
+      { mode: "single-entry", transport: "websocket", version: 1 },
+      { mode: "direct-owner", transport: "websocket", version: 2 },
+      { mode: "single-entry", transport: "websocket", version: 2 },
+      { mode: "direct-owner", transport: "http", version: 1 },
+      { mode: "single-entry", transport: "http", version: 1 },
+    ] as const)(
+      "$mode / $transport / v$version",
+      async ({ mode, transport, version }) => {
+        const root = mkdtempSync(join(tmpdir(), "acp-dual-main-"));
+        const id = randomUUID().replaceAll("-", "");
+        const schema = "dual_main_" + id;
+        const fixtureUrl = new URL(databaseUrl!);
+        fixtureUrl.searchParams.set("options", "-c search_path=" + schema);
+        const pool = new Pool({
+          connectionString: fixtureUrl.toString(),
+          max: 3,
+          connectionTimeoutMillis: 5000,
+          statement_timeout: 5000,
+          query_timeout: 6000,
         });
-        peers.push(identity);
-        const controller = await startPeer(async (request, response) => {
-          expect(request.method).toBe("POST");
-          expect(request.url).toBe("/internal/acp-incarnations/register");
-          expect(request.headers["antnest-service-authorization"]).toBe(
-            token("runtime-controller"),
+        const peers: Awaited<ReturnType<typeof startPeer>>[] = [];
+        const handlers: ReturnType<typeof createMcpHandler>[] = [];
+        const children: ProductionAcpChild[] = [];
+        const clients: FixtureClient[] = [];
+        const originals: Promise<unknown>[] = [];
+        const errors: unknown[] = [];
+        const ports: number[] = [];
+        const names = ["dual-main-a-" + id, "dual-main-b-" + id];
+        const temporary: string[] = [];
+        const registrations = new Map<string, OwnerRegistration>();
+        const security = testSecurityEnvironment();
+        const token = (service: string) =>
+          "Bearer " +
+          readFileSync(
+            join(security.ANTNEST_SERVICE_AUTH_TOKEN_DIR, service),
+            "utf8",
+          ).trim();
+        const tracked = <T>(promise: Promise<T>): Promise<T> => {
+          originals.push(promise);
+          void promise.catch(() => undefined);
+          return promise;
+        };
+        let closing = false;
+        let created = false;
+        let businessPassed = false;
+        try {
+          await pool.query(`CREATE SCHEMA ${schema}`);
+          created = true;
+          await migrate(pool);
+          expect((await pool.query("SELECT * FROM agent_leases")).rows).toEqual(
+            [],
           );
-          const payload = JSON.parse(
-            (await readBody(request)).toString("utf8"),
-          ) as Record<string, unknown>;
-          const challenge = parseOwnerProbeRequest({
-            ...payload,
-            challenge: randomBytes(32).toString("hex"),
+          while (ports.length < 8) {
+            const port = await availablePort();
+            if (!ports.includes(port)) ports.push(port);
+          }
+          const members = [0, 1].map((i) => ({
+            member_id: i === 0 ? "acp-a" : "acp-b",
+            origin: `http://127.0.0.1:${ports[i * 4 + 3]!}`,
+          }));
+          const identity = await startPeer(async (request, response) => {
+            expect((await readBody(request)).byteLength).toBe(0);
+            expect(request.method).toBe("GET");
+            expect(request.url).toBe("/rpc/identity/jwks");
+            expect(request.headers["antnest-service-authorization"]).toBe(
+              token("identity-service"),
+            );
+            response
+              .writeHead(200, { "content-type": "application/json" })
+              .end(JSON.stringify(testJwks()));
           });
-          const index = members.findIndex(
-            (member) => member.member_id === challenge.member_id,
+          peers.push(identity);
+          const controller = await startPeer(async (request, response) => {
+            expect(request.method).toBe("POST");
+            expect(request.url).toBe("/internal/acp-incarnations/register");
+            expect(request.headers["antnest-service-authorization"]).toBe(
+              token("runtime-controller"),
+            );
+            const payload = JSON.parse(
+              (await readBody(request)).toString("utf8"),
+            ) as Record<string, unknown>;
+            const challenge = parseOwnerProbeRequest({
+              ...payload,
+              challenge: randomBytes(32).toString("hex"),
+            });
+            const index = members.findIndex(
+              (member) => member.member_id === challenge.member_id,
+            );
+            expect(index).toBeGreaterThanOrEqual(0);
+            const probe = await fetch(
+              `http://127.0.0.1:${ports[index * 4 + 2]!}/internal/acp-owner/incarnation/probe`,
+              {
+                method: "POST",
+                headers: {
+                  ...workloadHeaders("runtime-controller"),
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify(challenge),
+                signal: AbortSignal.timeout(5000),
+              },
+            );
+            const observed: unknown = await probe.json();
+            expect(probe.status).toBe(200);
+            expect(observed).toEqual(challenge);
+            expect(registrations.has(challenge.member_id)).toBe(false);
+            const registration = {
+              registration_id: randomUUID(),
+              member_id: challenge.member_id,
+              incarnation_id: challenge.incarnation_id,
+            };
+            registrations.set(challenge.member_id, registration);
+            response
+              .writeHead(200, { "content-type": "application/json" })
+              .end(JSON.stringify(registration));
+          });
+          peers.push(controller);
+          const modelRequests: Array<{ model?: unknown; messages?: unknown }> =
+            [];
+          const providerSecret = randomBytes(32).toString("base64url");
+          const model = await startPeer(async (request, response) => {
+            expect(request.method).toBe("POST");
+            expect(request.url).toBe("/v1/chat/completions");
+            expect(request.headers.authorization).toBe(
+              "Bearer " + providerSecret,
+            );
+            const payload = JSON.parse(
+              (await readBody(request)).toString("utf8"),
+            ) as { model?: unknown; messages?: unknown };
+            modelRequests.push(payload);
+            response.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                choices: [
+                  {
+                    index: 0,
+                    finish_reason: "stop",
+                    message: { role: "assistant", content: reply },
+                  },
+                ],
+                usage: {
+                  prompt_tokens: 3,
+                  completion_tokens: 2,
+                  total_tokens: 5,
+                },
+              }),
+            );
+          });
+          peers.push(model);
+          const configuration = executionConfiguration();
+          configuration.providers[0]!.base_url = model.origin + "/v1";
+          configuration.providers[0]!.credential.secret = providerSecret;
+          configuration.agents.push({
+            ...structuredClone(configuration.agents[0]!),
+            agent_id: "agent-3",
+            runtime: runtimeConfiguration(2),
+          });
+          const runtimeReads = [0, 0];
+          for (const i of [0, 1]) {
+            const agent = configuration.agents[i]!;
+            const binding = runtimeConfiguration(i + 1);
+            const handler = createMcpHandler(
+              () => {
+                const server = new McpServer({
+                  name: "dual-process-runtime",
+                  version: "1.0.0",
+                });
+                server.registerResource(
+                  "runtime-info",
+                  "antnest://runtime/info",
+                  { mimeType: "application/json" },
+                  (uri) => {
+                    runtimeReads[i]!++;
+                    const { executionId, ...information } =
+                      runtimeInformation();
+                    void executionId;
+                    return {
+                      contents: [
+                        {
+                          uri: uri.toString(),
+                          mimeType: "application/json",
+                          text: JSON.stringify({
+                            ...information,
+                            execution_id: binding.runtime_execution_id,
+                            instructions: null,
+                            skills: [],
+                          }),
+                        },
+                      ],
+                    };
+                  },
+                );
+                server.registerTool(
+                  "echo",
+                  {
+                    description: "Unused fixture tool",
+                    inputSchema: z.object({ text: z.string() }),
+                  },
+                  () => {
+                    throw new Error("Unexpected Runtime Tool dispatch");
+                  },
+                );
+                return server;
+              },
+              { legacy: "reject" },
+            );
+            handlers.push(handler);
+            const runtime = await startPeer(async (request, response) => {
+              expect(request.headers["antnest-service-authorization"]).toBe(
+                "Bearer " + binding.credential.token,
+              );
+              expect(request.headers["x-antnest-expected-execution-id"]).toBe(
+                binding.runtime_execution_id,
+              );
+              const body = await readBody(request);
+              const headers = new Headers();
+              for (const [name, value] of Object.entries(request.headers)) {
+                if (Array.isArray(value))
+                  for (const item of value) headers.append(name, item);
+                else if (value !== undefined) headers.set(name, value);
+              }
+              const init: RequestInit & { duplex?: "half" } = {
+                method: request.method ?? "GET",
+                headers,
+              };
+              if (body.length > 0) {
+                init.body = new Uint8Array(body);
+                init.duplex = "half";
+              }
+              const result = await handler.fetch(
+                new Request(
+                  `http://${request.headers.host}${request.url ?? "/"}`,
+                  init,
+                ),
+              );
+              response.statusCode = result.status;
+              result.headers.forEach((value, name) =>
+                response.setHeader(name, value),
+              );
+              response.end(Buffer.from(await result.arrayBuffer()));
+            });
+            peers.push(runtime);
+            agent.runtime = {
+              ...binding,
+              mcp_endpoint: runtime.origin + "/mcp",
+            };
+            // Independent reference to the contract vectors, without invoking the implementation.
+            const hash = createHash("sha256")
+              .update(
+                JSON.stringify([configuration.organization_id, agent.agent_id]),
+                "utf8",
+              )
+              .digest("hex");
+            expect(Number(BigInt("0x" + hash) % 2n)).toBe(i);
+          }
+          const key = randomBytes(32).toString("base64"),
+            cluster = randomUUID();
+          const peerTokens = [
+            randomBytes(32).toString("base64url"),
+            randomBytes(32).toString("base64url"),
+          ];
+          for (const i of [0, 1]) {
+            const directory = join(root, String(i));
+            mkdirSync(directory);
+            mkdirSync(join(directory, "tokens"));
+            const temp = join(directory, "tmp");
+            mkdirSync(temp);
+            temporary.push(temp);
+            writeFileSync(
+              join(directory, "members.json"),
+              JSON.stringify({ version: 1, cluster_id: cluster, members }),
+            );
+            writeFileSync(
+              join(directory, "callers.json"),
+              JSON.stringify({
+                [members[1 - i]!.member_id]: [
+                  "sha256:" +
+                    createHash("sha256")
+                      .update(peerTokens[1 - i]!)
+                      .digest("hex"),
+                ],
+              }),
+              { mode: 0o600 },
+            );
+            writeFileSync(
+              join(directory, "tokens", members[1 - i]!.member_id),
+              peerTokens[i]!,
+              { mode: 0o600 },
+            );
+            const url = new URL(fixtureUrl);
+            url.searchParams.set("application_name", names[i]!);
+            const environment: NodeJS.ProcessEnv = { ...process.env };
+            for (const name of Object.keys(environment))
+              if (name.startsWith("ANTNEST_") || name === "NODE_OPTIONS")
+                delete environment[name];
+            Object.assign(environment, security, {
+              ANTNEST_ALLOW_PUBLIC_DEV_SECRETS:
+                process.env.ANTNEST_ALLOW_PUBLIC_DEV_SECRETS ?? "false",
+              TMPDIR: temp,
+              ANTNEST_ACP_DATABASE_URL: url.toString(),
+              ANTNEST_ACP_CLIENT_MCP_KEY: key,
+              ANTNEST_ACP_LISTEN: `127.0.0.1:${ports[i * 4]!}`,
+              ANTNEST_ACP_CONTROL_LISTEN: `127.0.0.1:${ports[i * 4 + 1]!}`,
+              ANTNEST_ACP_OWNER_MEMBER_ID: members[i]!.member_id,
+              ANTNEST_ACP_OWNER_LISTEN: `127.0.0.1:${ports[i * 4 + 2]!}`,
+              ANTNEST_ACP_RUNTIME_CONTROLLER_URL: controller.origin,
+              ANTNEST_ACP_IDENTITY_URL: identity.origin,
+              ANTNEST_ACP_PEER_LISTEN: `127.0.0.1:${ports[i * 4 + 3]!}`,
+              ANTNEST_ACP_PEER_MEMBERSHIP_FILE: join(directory, "members.json"),
+              ANTNEST_ACP_PEER_CALLERS_FILE: join(directory, "callers.json"),
+              ANTNEST_ACP_PEER_TOKEN_DIRECTORY: join(directory, "tokens"),
+              ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true",
+              ANTNEST_ACP_SHUTDOWN_TIMEOUT: "8s",
+              OTEL_SDK_DISABLED: "true",
+              OTEL_TRACES_EXPORTER: "none",
+              OTEL_METRICS_EXPORTER: "none",
+            });
+            children.push(
+              new ProductionAcpChild(
+                environment,
+                `http://127.0.0.1:${ports[i * 4]!}`,
+              ),
+            );
+          }
+          await Promise.all(children.map((child) => tracked(child.ready())));
+          expect(registrations.size).toBe(2);
+          expect((await pool.query("SELECT * FROM agent_leases")).rows).toEqual(
+            [],
           );
-          expect(index).toBeGreaterThanOrEqual(0);
-          const probe = await fetch(
-            `http://127.0.0.1:${ports[index * 4 + 2]!}/internal/acp-owner/incarnation/probe`,
+          const publication = await fetch(
+            `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/apply-execution-snapshot`,
             {
               method: "POST",
               headers: {
-                ...workloadHeaders("runtime-controller"),
+                ...workloadHeaders("agent-controller"),
                 "content-type": "application/json",
               },
-              body: JSON.stringify(challenge),
-              signal: AbortSignal.timeout(5000),
+              body: JSON.stringify(configuration),
+              signal: AbortSignal.timeout(15_000),
             },
           );
-          const observed: unknown = await probe.json();
-          expect(probe.status).toBe(200);
-          expect(observed).toEqual(challenge);
-          expect(registrations.has(challenge.member_id)).toBe(false);
-          const registration = {
-            registration_id: randomUUID(),
-            member_id: challenge.member_id,
-            incarnation_id: challenge.incarnation_id,
-          };
-          registrations.set(challenge.member_id, registration);
-          response
-            .writeHead(200, { "content-type": "application/json" })
-            .end(JSON.stringify(registration));
-        });
-        peers.push(controller);
-        const modelRequests: Array<{ model?: unknown; messages?: unknown }> =
-          [];
-        const providerSecret = randomBytes(32).toString("base64url");
-        const model = await startPeer(async (request, response) => {
-          expect(request.method).toBe("POST");
-          expect(request.url).toBe("/v1/chat/completions");
-          expect(request.headers.authorization).toBe(
-            "Bearer " + providerSecret,
-          );
-          const payload = JSON.parse(
-            (await readBody(request)).toString("utf8"),
-          ) as { model?: unknown; messages?: unknown };
-          modelRequests.push(payload);
-          response.writeHead(200, { "content-type": "application/json" }).end(
-            JSON.stringify({
-              choices: [
-                {
-                  index: 0,
-                  finish_reason: "stop",
-                  message: { role: "assistant", content: reply },
-                },
-              ],
-              usage: {
-                prompt_tokens: 3,
-                completion_tokens: 2,
-                total_tokens: 5,
-              },
-            }),
-          );
-        });
-        peers.push(model);
-        const configuration = executionConfiguration();
-        configuration.providers[0]!.base_url = model.origin + "/v1";
-        configuration.providers[0]!.credential.secret = providerSecret;
-        configuration.agents.push({
-          ...structuredClone(configuration.agents[0]!),
-          agent_id: "agent-3",
-          runtime: runtimeConfiguration(2),
-        });
-        const runtimeReads = [0, 0];
-        for (const i of [0, 1]) {
-          const agent = configuration.agents[i]!;
-          const binding = runtimeConfiguration(i + 1);
-          const handler = createMcpHandler(
-            () => {
-              const server = new McpServer({
-                name: "dual-process-runtime",
-                version: "1.0.0",
-              });
-              server.registerResource(
-                "runtime-info",
-                "antnest://runtime/info",
-                { mimeType: "application/json" },
-                (uri) => {
-                  runtimeReads[i]!++;
-                  const { executionId, ...information } = runtimeInformation();
-                  void executionId;
-                  return {
-                    contents: [
-                      {
-                        uri: uri.toString(),
-                        mimeType: "application/json",
-                        text: JSON.stringify({
-                          ...information,
-                          execution_id: binding.runtime_execution_id,
-                          instructions: null,
-                          skills: [],
-                        }),
-                      },
-                    ],
-                  };
-                },
-              );
-              server.registerTool(
-                "echo",
-                {
-                  description: "Unused fixture tool",
-                  inputSchema: z.object({ text: z.string() }),
-                },
-                () => {
-                  throw new Error("Unexpected Runtime Tool dispatch");
-                },
-              );
-              return server;
-            },
-            { legacy: "reject" },
-          );
-          handlers.push(handler);
-          const runtime = await startPeer(async (request, response) => {
-            expect(request.headers["antnest-service-authorization"]).toBe(
-              "Bearer " + binding.credential.token,
-            );
-            expect(request.headers["x-antnest-expected-execution-id"]).toBe(
-              binding.runtime_execution_id,
-            );
-            const body = await readBody(request);
-            const headers = new Headers();
-            for (const [name, value] of Object.entries(request.headers)) {
-              if (Array.isArray(value))
-                for (const item of value) headers.append(name, item);
-              else if (value !== undefined) headers.set(name, value);
-            }
-            const init: RequestInit & { duplex?: "half" } = {
-              method: request.method ?? "GET",
-              headers,
+          const published: unknown = await publication.json();
+          expect(publication.status).toBe(200);
+          expect(published).toMatchObject({ applied_revision: 1 });
+          for (const i of [0, 1]) {
+            const agentId = configuration.agents[i]!.agent_id;
+            const entryPort = ports[(mode === "single-entry" ? 0 : i) * 4]!;
+            const identity = { ...executionIdentity(), agentId };
+            const connect = async () => {
+              const connected =
+                transport === "http"
+                  ? new AcpHttpClient(
+                      `http://127.0.0.1:${entryPort}/v1/acp`,
+                      identity,
+                    )
+                  : await AcpWireClient.connect(
+                      `ws://127.0.0.1:${entryPort}/v${version}/acp`,
+                      identity,
+                    );
+              clients.push(connected);
+              if (closing) await connected.close();
+              return connected;
             };
-            if (body.length > 0) {
-              init.body = new Uint8Array(body);
-              init.duplex = "half";
-            }
-            const result = await handler.fetch(
-              new Request(
-                `http://${request.headers.host}${request.url ?? "/"}`,
-                init,
-              ),
+            const client = await within(
+              tracked(connect()),
+              `real ACP ${transport}`,
+              5000,
             );
-            response.statusCode = result.status;
-            result.headers.forEach((value, name) =>
-              response.setHeader(name, value),
-            );
-            response.end(Buffer.from(await result.arrayBuffer()));
-          });
-          peers.push(runtime);
-          agent.runtime = { ...binding, mcp_endpoint: runtime.origin + "/mcp" };
-          // Independent reference to the contract vectors, without invoking the implementation.
-          const hash = createHash("sha256")
-            .update(
-              JSON.stringify([configuration.organization_id, agent.agent_id]),
-              "utf8",
-            )
-            .digest("hex");
-          expect(Number(BigInt("0x" + hash) % 2n)).toBe(i);
-        }
-        const key = randomBytes(32).toString("base64"),
-          cluster = randomUUID();
-        const peerTokens = [
-          randomBytes(32).toString("base64url"),
-          randomBytes(32).toString("base64url"),
-        ];
-        for (const i of [0, 1]) {
-          const directory = join(root, String(i));
-          mkdirSync(directory);
-          mkdirSync(join(directory, "tokens"));
-          const temp = join(directory, "tmp");
-          mkdirSync(temp);
-          temporary.push(temp);
-          writeFileSync(
-            join(directory, "members.json"),
-            JSON.stringify({ version: 1, cluster_id: cluster, members }),
-          );
-          writeFileSync(
-            join(directory, "callers.json"),
-            JSON.stringify({
-              [members[1 - i]!.member_id]: [
-                "sha256:" +
-                  createHash("sha256")
-                    .update(peerTokens[1 - i]!)
-                    .digest("hex"),
-              ],
-            }),
-            { mode: 0o600 },
-          );
-          writeFileSync(
-            join(directory, "tokens", members[1 - i]!.member_id),
-            peerTokens[i]!,
-            { mode: 0o600 },
-          );
-          const url = new URL(fixtureUrl);
-          url.searchParams.set("application_name", names[i]!);
-          const environment: NodeJS.ProcessEnv = { ...process.env };
-          for (const name of Object.keys(environment))
-            if (name.startsWith("ANTNEST_") || name === "NODE_OPTIONS")
-              delete environment[name];
-          Object.assign(environment, security, {
-            ANTNEST_ALLOW_PUBLIC_DEV_SECRETS:
-              process.env.ANTNEST_ALLOW_PUBLIC_DEV_SECRETS ?? "false",
-            TMPDIR: temp,
-            ANTNEST_ACP_DATABASE_URL: url.toString(),
-            ANTNEST_ACP_CLIENT_MCP_KEY: key,
-            ANTNEST_ACP_LISTEN: `127.0.0.1:${ports[i * 4]!}`,
-            ANTNEST_ACP_CONTROL_LISTEN: `127.0.0.1:${ports[i * 4 + 1]!}`,
-            ANTNEST_ACP_OWNER_MEMBER_ID: members[i]!.member_id,
-            ANTNEST_ACP_OWNER_LISTEN: `127.0.0.1:${ports[i * 4 + 2]!}`,
-            ANTNEST_ACP_RUNTIME_CONTROLLER_URL: controller.origin,
-            ANTNEST_ACP_IDENTITY_URL: identity.origin,
-            ANTNEST_ACP_PEER_LISTEN: `127.0.0.1:${ports[i * 4 + 3]!}`,
-            ANTNEST_ACP_PEER_MEMBERSHIP_FILE: join(directory, "members.json"),
-            ANTNEST_ACP_PEER_CALLERS_FILE: join(directory, "callers.json"),
-            ANTNEST_ACP_PEER_TOKEN_DIRECTORY: join(directory, "tokens"),
-            ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true",
-            ANTNEST_ACP_SHUTDOWN_TIMEOUT: "8s",
-            OTEL_SDK_DISABLED: "true",
-            OTEL_TRACES_EXPORTER: "none",
-            OTEL_METRICS_EXPORTER: "none",
-          });
-          children.push(
-            new ProductionAcpChild(
-              environment,
-              `http://127.0.0.1:${ports[i * 4]!}`,
-            ),
-          );
-        }
-        await Promise.all(children.map((child) => tracked(child.ready())));
-        expect(registrations.size).toBe(2);
-        expect((await pool.query("SELECT * FROM agent_leases")).rows).toEqual(
-          [],
-        );
-        const publication = await fetch(
-          `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/apply-execution-snapshot`,
-          {
-            method: "POST",
-            headers: {
-              ...workloadHeaders("agent-controller"),
-              "content-type": "application/json",
-            },
-            body: JSON.stringify(configuration),
-            signal: AbortSignal.timeout(15_000),
-          },
-        );
-        const published: unknown = await publication.json();
-        expect(publication.status).toBe(200);
-        expect(published).toMatchObject({ applied_revision: 1 });
-        for (const i of [0, 1]) {
-          const agentId = configuration.agents[i]!.agent_id;
-          const client = await within(
-            tracked(
-              AcpWireClient.connect(`ws://127.0.0.1:${ports[i * 4]!}/v1/acp`, {
-                ...executionIdentity(),
-                agentId,
-              }).then(async (connected) => {
-                clients.push(connected);
-                if (closing) await connected.close();
-                return connected;
+            await tracked(client.initialize(version));
+            const createdSession = await tracked(
+              client.request("session/new", {
+                cwd: "/workspace",
+                mcpServers: [],
               }),
-            ),
-            "real ACP WebSocket",
-            5000,
-          );
-          await tracked(client.initialize(1));
-          const createdSession = await tracked(
-            client.request("session/new", {
-              cwd: "/workspace",
-              mcpServers: [],
-            }),
-          );
-          expect(createdSession.error).toBeUndefined();
-          const sessionId = createdSession.result?.sessionId;
-          if (typeof sessionId !== "string")
-            throw new Error("Missing real ACP session");
-          const prompt = `Complete exactly once for ${agentId}`;
-          const response = await tracked(
-            client.request("session/prompt", {
-              sessionId,
-              prompt: [{ type: "text", text: prompt }],
-            }),
-          );
-          expect(response.error).toBeUndefined();
-          await expect
-            .poll(
-              async () =>
-                (
-                  await pool.query<{ state: string }>(
-                    "SELECT state FROM runs WHERE session_id=$1",
-                    [sessionId],
-                  )
-                ).rows[0]?.state,
-              { timeout: 10_000 },
-            )
-            .toBe("completed");
-          const owner = registrations.get(members[i]!.member_id)!;
-          const runs = await pool.query(
-            "SELECT id,state,terminal_class,executor_state,tool_effect_state,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs WHERE session_id=$1",
-            [sessionId],
-          );
-          expect(runs.rows).toHaveLength(1);
-          expect(runs.rows[0]).toMatchObject({
-            state: "completed",
-            terminal_class: "completed",
-            executor_state: "quiescent",
-            tool_effect_state: "none",
-            execution_owner_registration_id: owner.registration_id,
-            execution_owner_member_id: owner.member_id,
-            execution_owner_incarnation_id: owner.incarnation_id,
-            execution_owner_epoch: "1",
-          });
-          const messages = (
-            await pool.query(
-              "SELECT kind,payload->'content' AS content FROM session_messages WHERE session_id=$1 AND kind IN ('user_message','agent_message') ORDER BY sequence",
+            );
+            expect(createdSession.error).toBeUndefined();
+            const sessionId = createdSession.result?.sessionId;
+            if (typeof sessionId !== "string")
+              throw new Error("Missing real ACP session");
+            const prompt = `Complete exactly once for ${agentId}`;
+            const response = await tracked(
+              client.request("session/prompt", {
+                sessionId,
+                prompt: [{ type: "text", text: prompt }],
+              }),
+            );
+            expect(response.error).toBeUndefined();
+            if (client instanceof AcpHttpClient) {
+              await expect
+                .poll(
+                  () =>
+                    client.updates
+                      .map((update) =>
+                        update.sessionUpdate === "agent_message_chunk" &&
+                        update.content.type === "text"
+                          ? update.content.text
+                          : "",
+                      )
+                      .join(""),
+                  { timeout: 10_000 },
+                )
+                .toBe(reply);
+            }
+            await expect
+              .poll(
+                async () =>
+                  (
+                    await pool.query<{ state: string }>(
+                      "SELECT state FROM runs WHERE session_id=$1",
+                      [sessionId],
+                    )
+                  ).rows[0]?.state,
+                { timeout: 10_000 },
+              )
+              .toBe("completed");
+            const owner = registrations.get(members[i]!.member_id)!;
+            const runs = await pool.query(
+              "SELECT id,state,terminal_class,executor_state,tool_effect_state,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs WHERE session_id=$1",
               [sessionId],
-            )
-          ).rows;
-          expect(messages).toHaveLength(2);
-          expect(messages).toEqual(
-            expect.arrayContaining([
-              {
-                kind: "user_message",
-                content: [{ type: "text", text: prompt }],
-              },
-              {
-                kind: "agent_message",
-                content: [{ type: "text", text: reply }],
-              },
-            ]),
-          );
-          expect(
-            (
+            );
+            expect(runs.rows).toHaveLength(1);
+            expect(runs.rows[0]).toMatchObject({
+              state: "completed",
+              terminal_class: "completed",
+              executor_state: "quiescent",
+              tool_effect_state: "none",
+              execution_owner_registration_id: owner.registration_id,
+              execution_owner_member_id: owner.member_id,
+              execution_owner_incarnation_id: owner.incarnation_id,
+              execution_owner_epoch: "1",
+            });
+            const messages = (
               await pool.query(
-                "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS live FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
-                [configuration.organization_id, agentId],
+                "SELECT kind,payload->'content' AS content FROM session_messages WHERE session_id=$1 AND kind IN ('user_message','agent_message') ORDER BY sequence",
+                [sessionId],
               )
-            ).rows,
-          ).toEqual([
-            { owner_instance_id: owner.incarnation_id, epoch: "1", live: true },
-          ]);
-          await client.close();
-        }
-        expect(modelRequests).toHaveLength(2);
-        expect(
-          modelRequests.every((request) => request.model === "test-model"),
-        ).toBe(true);
-        expect(runtimeReads.every((count) => count > 0)).toBe(true);
-        businessPassed = true;
-      } catch (error) {
-        errors.push(error);
-      } finally {
-        closing = true;
-        const collect = async (operations: Promise<unknown>[]) => {
-          for (const result of await Promise.allSettled(operations))
-            if (result.status === "rejected")
-              errors.push(result.reason as unknown);
-        };
-        await collect(clients.map((client) => client.close()));
-        await collect(children.map((child) => child.stop()));
-        // Timed-out observations never replace their original operation receipts.
-        await Promise.allSettled(originals);
-        await collect(clients.map((client) => client.close()));
-        try {
-          expect(
-            (
-              await pool.query(
-                "SELECT pid FROM pg_stat_activity WHERE application_name=ANY($1::text[])",
-                [names],
-              )
-            ).rows,
-          ).toEqual([]);
-          if (businessPassed)
+            ).rows;
+            expect(messages).toHaveLength(2);
+            expect(messages).toEqual(
+              expect.arrayContaining([
+                {
+                  kind: "user_message",
+                  content: [{ type: "text", text: prompt }],
+                },
+                {
+                  kind: "agent_message",
+                  content: [{ type: "text", text: reply }],
+                },
+              ]),
+            );
             expect(
               (
                 await pool.query(
-                  "SELECT count(*)::int AS count FROM agent_leases WHERE expires_at>clock_timestamp()",
+                  "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS live FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                  [configuration.organization_id, agentId],
                 )
               ).rows,
-            ).toEqual([{ count: 0 }]);
-          const exclusive = await PostgresWorkerLock.acquire(pool);
-          await exclusive.release();
-          for (const port of ports) await refused(port);
-          for (const directory of temporary)
-            expect(
-              readdirSync(directory).filter((name) =>
-                name.startsWith("antnest-acp-runtime-"),
-              ),
-            ).toEqual([]);
+            ).toEqual([
+              {
+                owner_instance_id: owner.incarnation_id,
+                epoch: "1",
+                live: true,
+              },
+            ]);
+            await client.close();
+          }
+          expect(modelRequests).toHaveLength(2);
+          expect(
+            modelRequests.every((request) => request.model === "test-model"),
+          ).toBe(true);
+          expect(runtimeReads.every((count) => count > 0)).toBe(true);
+          businessPassed = true;
         } catch (error) {
           errors.push(error);
-        }
-        await collect([
-          ...handlers.map((handler) => handler.close()),
-          ...peers.map((peer) => peer.close()),
-        ]);
-        if (created) {
+        } finally {
+          closing = true;
+          const collect = async (operations: Promise<unknown>[]) => {
+            for (const result of await Promise.allSettled(operations))
+              if (result.status === "rejected")
+                errors.push(result.reason as unknown);
+          };
+          await collect(clients.map((client) => client.close()));
+          await collect(children.map((child) => child.stop()));
+          // Timed-out observations never replace their original operation receipts.
+          await Promise.allSettled(originals);
+          await collect(clients.map((client) => client.close()));
           try {
-            await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+            expect(
+              (
+                await pool.query(
+                  "SELECT pid FROM pg_stat_activity WHERE application_name=ANY($1::text[])",
+                  [names],
+                )
+              ).rows,
+            ).toEqual([]);
+            if (businessPassed)
+              expect(
+                (
+                  await pool.query(
+                    "SELECT count(*)::int AS count FROM agent_leases WHERE expires_at>clock_timestamp()",
+                  )
+                ).rows,
+              ).toEqual([{ count: 0 }]);
+            const exclusive = await PostgresWorkerLock.acquire(pool);
+            await exclusive.release();
+            for (const port of ports) await refused(port);
+            for (const directory of temporary)
+              expect(
+                readdirSync(directory).filter((name) =>
+                  name.startsWith("antnest-acp-runtime-"),
+                ),
+              ).toEqual([]);
           } catch (error) {
             errors.push(error);
           }
+          await collect([
+            ...handlers.map((handler) => handler.close()),
+            ...peers.map((peer) => peer.close()),
+          ]);
+          if (created) {
+            try {
+              await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+            } catch (error) {
+              errors.push(error);
+            }
+          }
+          try {
+            await pool.end();
+          } catch (error) {
+            errors.push(error);
+          }
+          rmSync(root, { recursive: true, force: true });
         }
-        try {
-          await pool.end();
-        } catch (error) {
-          errors.push(error);
-        }
-        rmSync(root, { recursive: true, force: true });
-      }
-      if (errors.length === 1) throw errors[0];
-      if (errors.length)
-        throw new AggregateError(
-          errors,
-          "Dual-process production acceptance failed",
-        );
-    }, 120_000);
+        if (errors.length === 1) throw errors[0];
+        if (errors.length)
+          throw new AggregateError(
+            errors,
+            "Dual-process production acceptance failed",
+          );
+      },
+      120_000,
+    );
   },
 );

@@ -50,8 +50,8 @@ size bounds, deadlines, closed DTOs, `no-store` and payload-capture prohibition.
 Outbound registration uses the fixed `ANTNEST_ACP_RUNTIME_CONTROLLER_URL` with
 Runtime Controller's receiver-specific workload credential only. This startup
 gate precedes the worker lock: non-peer deployments use exclusive mode, while
-the fixed peer membership uses shared mode and per-Agent ownership. Peer
-forwarding and multi-replica Docker deployment remain separate admission work.
+the fixed peer membership uses shared mode and per-Agent ownership. WebSocket peer forwarding is described below; multi-replica Docker crash
+recovery remains separate admission work.
 
 The optional `ANTNEST_ACP_PEER_LISTEN` is a separate listener for
 `POST /internal/acp-peer/identity` and
@@ -62,7 +62,22 @@ service credentials do not grant peer access, and user CCTs are rejected.
 Authentication precedes body parsing. The server checks the source member,
 fixed membership digest, target member or registration, and original deadline
 before dispatch; publication additionally requires a single hop. This listener
-does not accept user ACP traffic or WebSocket upgrades.
+also accepts exact private `UPGRADE /internal/acp-peer/forward/ws` and
+`POST/GET/DELETE /internal/acp-peer/forward/http` routes under the `peer-member`
+profile. These forwarding routes carry the original Agent UI
+CCT, which the owner independently verifies against the forwarded organization,
+principal and Agent. Its target registration, full private publication digest,
+lease epoch, deadline and one-hop envelope are checked before SDK admission;
+each business dispatch rechecks the captured epoch. Original SDK work and
+connection cleanup must join before an owner cleanup receipt. HTTP continuations
+use the authenticated original-owner handle without resolving a new lease;
+public DELETE retains its original CCT and 202 receipt. Each member joins its
+local HTTP relay and SDK work before its publication ACK; cleanup failures remain
+scoped even after a connection is removed. Missing WebSocket cleanup receipts
+remain unknown and block the affected scope's revocation acknowledgement.
+The identity/publication POST routes continue to reject CCTs. See the
+[forwarding contract](owner-forwarding.md) for HTTP/SSE and WebSocket scope
+and the remaining state, settlement and source paths.
 
 ACP and workspace routes require exactly one Identity-signed CCT with ACP
 audience and `agt`, then repeat current local Agent and Session authorization.

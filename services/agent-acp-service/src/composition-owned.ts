@@ -57,6 +57,9 @@ import type { AgentSettlementPort } from "./ports/agent-settlement.js";
 import type { AgentExecutionStatePort } from "./ports/agent-execution-state.js";
 import type { SkillCommandsPort } from "./ports/skill-commands.js";
 import { ModelTransportCleanupError } from "./ports/model.js";
+import type { OwnerForwardRequest } from "./application/owner-forwarding.js";
+import { PeerDeadlineError } from "./ports/agent-peers.js";
+import { executionPublication } from "./domain/execution-publication.js";
 
 type Graph = ReturnType<typeof buildAgentComponents>;
 type Options = Omit<
@@ -618,6 +621,42 @@ export class OwnedAgentComponents {
     }
   }
 
+  public async admitForwardedExecution(
+    request: OwnerForwardRequest,
+    signal: AbortSignal,
+  ): Promise<{ fence: AgentOwnershipFence; signal: AbortSignal; assertCurrent(): void }> {
+    const { identity } = request;
+    const publication = this.options.directory.capturePublication(identity.organizationId);
+    this.options.directory.inspect(identity);
+    const entry = this.capture(identity);
+    const expected: AgentOwnershipFence = Object.freeze({
+      organizationId: identity.organizationId,
+      agentId: identity.agentId,
+      ownerInstanceId: request.target.incarnation_id,
+      epoch: request.epoch,
+    });
+    const check = () => {
+      signal.throwIfAborted();
+      entry.signal.throwIfAborted();
+      publication.assertCurrent();
+      if (Date.now() >= Date.parse(request.deadline_at))
+        throw new PeerDeadlineError("Forwarding admission expired");
+      if (
+        this.capture(identity) !== entry ||
+        !isDeepStrictEqual(entry.generation.authority.registration, request.target) ||
+        !isDeepStrictEqual(entry.generation.authority.fence, expected) ||
+        !isDeepStrictEqual(executionPublication(publication.authority), request.publication) ||
+        this.options.assignment?.owns(identity) === false
+      )
+        throw unavailable();
+    };
+    check();
+    const stored = await this.options.configuration.loadOwnedAuthority(expected);
+    check();
+    if (!isDeepStrictEqual(stored, publication.authority)) throw unavailable();
+    return { fence: expected, signal: entry.signal, assertCurrent: check };
+  }
+
   private capture(scope: AgentOwnershipScope): Entry {
     const generation = this.generations.capture(scope);
     const entry = this.entries.get(key(scope));
@@ -626,11 +665,18 @@ export class OwnedAgentComponents {
     return entry;
   }
   private dispatch<T>(
-    scope: AgentOwnershipScope,
+    scope: AgentOwnershipScope & { ownerFence?: AgentOwnershipFence },
     operation: (entry: Entry) => Promise<T>,
   ): Promise<T> {
     const entry = this.capture(scope);
-    return entry.generation.dispatch(() => operation(entry));
+    return entry.generation.dispatch(() => {
+      if (
+        scope.ownerFence !== undefined &&
+        !isDeepStrictEqual(scope.ownerFence, entry.generation.authority.fence)
+      )
+        throw unavailable();
+      return operation(entry);
+    });
   }
 
   private build(
