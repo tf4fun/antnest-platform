@@ -316,3 +316,180 @@ it("shutdown joins another original connection after one cleanup fails", async (
   await release();
   expect(await shutdown).toBeInstanceOf(AggregateError);
 });
+
+async function abruptForwarding(
+  expected: OwnerForwardRequest,
+  stopped: (registration: OwnerForwardRequest["target"]) => boolean,
+  expectCloseFailure: boolean,
+  decorate?: (wire: WebSocket) => void,
+) {
+  const peer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise<void>((resolve) => peer.once("listening", resolve));
+  cleanups.push(
+    () =>
+      new Promise<void>((resolve) => {
+        for (const socket of peer.clients) socket.terminate();
+        peer.close(() => resolve());
+      }),
+  );
+  const address = peer.address();
+  if (address === null || typeof address === "string") throw new Error("Missing peer listener");
+  const accepted = Promise.withResolvers<WebSocket>();
+  peer.once("connection", (socket) => accepted.resolve(socket));
+  const f = await start(
+    {
+      resolver: { resolve: () => Promise.resolve(expected) },
+      peers: {
+        connect: () => {
+          const wire = new WebSocket(`ws://127.0.0.1:${address.port}`);
+          decorate?.(wire);
+          return wire;
+        },
+      },
+      admit,
+      stopped,
+    },
+    expectCloseFailure,
+  );
+  const client = f.dial();
+  await new Promise<void>((resolve) => client.socket.once("open", resolve));
+  const original = await accepted.promise;
+  const peerClosed = new Promise<void>((resolve) => original.once("close", () => resolve()));
+  return { ...f, client, original, peerClosed };
+}
+
+it.each(["missing", "another incarnation"] as const)(
+  "keeps an abruptly disconnected owner unknown with %s stop evidence",
+  async (evidence) => {
+    const expected = target();
+    const foreign = {
+      ...expected.target,
+      registration_id: randomUUID(),
+      incarnation_id: randomUUID(),
+    };
+    const stopped = vi.fn(
+      (registration: OwnerForwardRequest["target"]) =>
+        evidence === "another incarnation" &&
+        registration.registration_id === foreign.registration_id &&
+        registration.member_id === foreign.member_id &&
+        registration.incarnation_id === foreign.incarnation_id,
+    );
+    const f = await abruptForwarding(expected, stopped, true);
+    f.original.terminate();
+    await Promise.all([f.peerClosed, f.client.closed]);
+    const snapshot = { organization_id: identity.organizationId, agents: [] };
+    await expect(f.server.revokeAccess(snapshot)).rejects.toThrow();
+    await expect(f.server.revokeAccess(snapshot)).rejects.toThrow();
+    await expect(
+      f.server.revokeAccess({ organization_id: "healthy-other", agents: [] }),
+    ).resolves.toBeUndefined();
+    await expect(f.server.close()).rejects.toThrow();
+    expect(stopped).toHaveBeenCalledWith(expected.target);
+  },
+);
+
+it("allows later revocation and shutdown only after the original disconnected owner is proven stopped", async () => {
+  const expected = target();
+  const originalRegistration = structuredClone(expected.target);
+  let proof: OwnerForwardRequest["target"] | undefined;
+  const stopped = vi.fn(
+    (registration: OwnerForwardRequest["target"]) =>
+      proof !== undefined &&
+      registration.registration_id === proof.registration_id &&
+      registration.member_id === proof.member_id &&
+      registration.incarnation_id === proof.incarnation_id,
+  );
+  const f = await abruptForwarding(expected, stopped, false);
+  f.original.terminate();
+  await Promise.all([f.peerClosed, f.client.closed]);
+  const snapshot = { organization_id: identity.organizationId, agents: [] };
+  await expect(f.server.revokeAccess(snapshot)).rejects.toThrow();
+  proof = { ...originalRegistration, incarnation_id: randomUUID() };
+  await expect(f.server.revokeAccess(snapshot)).rejects.toThrow();
+  proof = originalRegistration;
+  await expect(f.server.revokeAccess(snapshot)).resolves.toBeUndefined();
+  await expect(f.server.close()).resolves.toBeUndefined();
+  expect(stopped).toHaveBeenCalledWith(originalRegistration);
+});
+
+it("joins a held original send and retains its independent failure even when that owner is stopped", async () => {
+  const expected = target();
+  const sent = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const sentinel = new Error("original local peer frame send failed");
+  const sends: Promise<void>[] = [];
+  let proof = false;
+  const f = await abruptForwarding(
+    expected,
+    (registration) =>
+      proof &&
+      registration.registration_id === expected.target.registration_id &&
+      registration.member_id === expected.target.member_id &&
+      registration.incarnation_id === expected.target.incarnation_id,
+    true,
+    (wire) => {
+      const originalSend = wire.send.bind(wire);
+      Object.defineProperty(wire, "send", {
+        configurable: true,
+        value: (value: string, done: (error?: Error) => void) => {
+          const frame = JSON.parse(value) as { type?: unknown };
+          if (frame.type !== "frame") {
+            originalSend(value, done);
+            return;
+          }
+          originalSend(value, (originalError) => {
+            sent.resolve();
+            const original = release.promise.then(() => done(originalError ?? sentinel));
+            sends.push(original);
+            void original.catch(() => undefined);
+          });
+        },
+      });
+    },
+  );
+  let revocation: Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
+  const failures: unknown[] = [];
+  try {
+    f.client.socket.send(
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+    );
+    await sent.promise;
+    f.original.terminate();
+    // The ingress intentionally pauses client reads until its original send
+    // callback joins; waiting for that client's close before releasing it deadlocks.
+    await f.peerClosed;
+    proof = true;
+    let settled = false;
+    revocation = f.server
+      .revokeAccess({ organization_id: identity.organizationId, agents: [] })
+      .then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      .finally(() => {
+        settled = true;
+      });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    release.resolve();
+    const result = await revocation;
+    await f.client.closed;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(nestedErrors(result.error)).toContain(sentinel);
+    await expect(f.server.close()).rejects.toThrow();
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    release.resolve();
+    for (const result of await Promise.allSettled([...sends, revocation]))
+      if (result.status === "rejected") failures.push(result.reason as unknown);
+  }
+  if (failures.length) throw new AggregateError(failures, "Original send fixture failed");
+});
+
+function nestedErrors(error: unknown): unknown[] {
+  const children: unknown[] =
+    error instanceof AggregateError ? [...(error.errors as unknown[])] : [];
+  if (error instanceof Error && error.cause !== undefined) children.push(error.cause);
+  return [error, ...children.flatMap(nestedErrors)];
+}

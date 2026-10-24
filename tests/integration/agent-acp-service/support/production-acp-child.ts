@@ -18,6 +18,8 @@ export class ProductionAcpChild {
   private exit: Exit | undefined;
   private error: Error | undefined;
   private stopPromise: Promise<void> | undefined;
+  private crashPromise: Promise<Readonly<Exit>> | undefined;
+  private verifiedCrash: Readonly<Exit> | undefined;
   private readonly events: string[] = [];
 
   public constructor(
@@ -105,8 +107,62 @@ export class ProductionAcpChild {
   }
 
   public stop(): Promise<void> {
-    this.stopPromise ??= this.stopOriginal();
+    this.stopPromise ??=
+      this.crashPromise === undefined
+        ? this.stopOriginal()
+        : this.crashPromise.then(() => undefined);
     return this.stopPromise;
+  }
+
+  public isRunning(): boolean {
+    return (
+      this.error === undefined && this.exit === undefined && !this.child.killed
+    );
+  }
+
+  public crashReceipt(): Readonly<Exit> | undefined {
+    return this.verifiedCrash;
+  }
+
+  public crash(): Promise<Readonly<Exit>> {
+    if (this.crashPromise !== undefined) return this.crashPromise;
+    if (this.stopPromise !== undefined || !this.isRunning())
+      return Promise.reject(
+        new Error("Cannot intentionally crash a child that is not running"),
+      );
+    this.crashPromise = this.crashOriginal();
+    return this.crashPromise;
+  }
+
+  private async crashOriginal(): Promise<Readonly<Exit>> {
+    const sent = this.child.kill("SIGKILL");
+    let result: Exit;
+    let timeout: unknown;
+    try {
+      result = await within(
+        this.closed.promise,
+        "intentionally crashed ACP child close",
+        10_000,
+      );
+    } catch (error) {
+      timeout = error;
+      result = await this.closed.promise;
+    }
+    const exit = await this.exited.promise;
+    if (this.error !== undefined) throw this.error;
+    if (!sent) throw new Error("Original ACP child did not accept SIGKILL");
+    if (timeout !== undefined) throw timeout;
+    if (
+      result.code !== null ||
+      result.signal !== "SIGKILL" ||
+      exit.code !== result.code ||
+      exit.signal !== result.signal
+    )
+      throw new Error(
+        `ACP crash did not produce its original SIGKILL exit and close: ${JSON.stringify({ exit, close: result })}`,
+      );
+    this.verifiedCrash = Object.freeze({ ...result });
+    return this.verifiedCrash;
   }
 
   private async stopOriginal(): Promise<void> {

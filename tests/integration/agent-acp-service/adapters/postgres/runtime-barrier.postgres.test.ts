@@ -395,6 +395,8 @@ describe.skipIf(databaseUrl === undefined)(
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query("DROP TABLE acp_peer_participants");
+        await client.query("DROP TABLE acp_peer_participation");
         await client.query("DROP TABLE acp_peer_membership");
         await client.query("DROP FUNCTION preserve_acp_peer_membership()");
         await client.query("DROP TABLE learning_runtime_protections");
@@ -447,7 +449,7 @@ describe.skipIf(databaseUrl === undefined)(
            DROP COLUMN execution_owner_epoch`,
         );
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8)",
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
           [
             "0023_runtime_barrier_cycles.sql",
             "0024_agent_run_admission.sql",
@@ -457,9 +459,10 @@ describe.skipIf(databaseUrl === undefined)(
             "0028_owner_stop_recovery.sql",
             "0029_learning_owner_recovery.sql",
             "0030_peer_membership.sql",
+            "0031_peer_participation.sql",
           ],
         );
-        expect(removed.rowCount).toBe(8);
+        expect(removed.rowCount).toBe(9);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");

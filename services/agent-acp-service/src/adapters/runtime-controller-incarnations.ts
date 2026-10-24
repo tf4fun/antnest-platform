@@ -5,6 +5,12 @@ import {
   type OwnerRegistrationRequest,
 } from "../application/owner-incarnation.js";
 import { parseOwnerInspection, type OwnerInspection } from "../application/owner-inspection.js";
+import {
+  parseOwnerHistoryRequest,
+  parseOwnerHistoryPage,
+  type OwnerHistoryRequest,
+  type OwnerHistoryPage,
+} from "../application/owner-history.js";
 import type { ServiceAuthentication } from "./service-authentication.js";
 import { strictObject } from "./strict-json.js";
 
@@ -100,8 +106,20 @@ export class RuntimeControllerIncarnations {
     });
   }
 
+  public async history(input: OwnerHistoryRequest, signal: AbortSignal): Promise<OwnerHistoryPage> {
+    return this.exchange("history", signal, () => {
+      const original = parseOwnerHistoryRequest(input);
+      return {
+        endpoint: new URL("history", this.endpoint).toString(),
+        method: "POST",
+        body: JSON.stringify(original),
+        parse: (value) => parseOwnerHistoryPage(value, original),
+      };
+    });
+  }
+
   private async exchange<T>(
-    operation: "register" | "inspect",
+    operation: "register" | "inspect" | "history",
     signal: AbortSignal,
     prepare: () => {
       endpoint: string;
@@ -110,6 +128,8 @@ export class RuntimeControllerIncarnations {
       parse(value: Record<string, unknown>): T;
     },
   ): Promise<T> {
+    const responseBytes = operation === "history" ? 32768 : MAX_RESPONSE_BYTES;
+    const expiresAt = performance.now() + this.timeoutMs;
     const controller = new AbortController();
     const requestSignal = AbortSignal.any([signal, controller.signal]);
     const completion = { timedOut: false, bodyFailed: false, cancellationFailed: false };
@@ -179,7 +199,7 @@ export class RuntimeControllerIncarnations {
       )
         throw new OwnerIncarnationError("acp_registration_unavailable");
       const declared = response.headers.get("content-length");
-      if (declared !== null && (!/^\d+$/u.test(declared) || Number(declared) > MAX_RESPONSE_BYTES))
+      if (declared !== null && (!/^\d+$/u.test(declared) || Number(declared) > responseBytes))
         throw new OwnerIncarnationError("acp_registration_unavailable");
       const chunks: Uint8Array[] = [];
       let size = 0;
@@ -190,8 +210,7 @@ export class RuntimeControllerIncarnations {
         requestSignal.throwIfAborted();
         if (chunk.done) break;
         size += chunk.value.byteLength;
-        if (size > MAX_RESPONSE_BYTES)
-          throw new OwnerIncarnationError("acp_registration_unavailable");
+        if (size > responseBytes) throw new OwnerIncarnationError("acp_registration_unavailable");
         chunks.push(chunk.value);
       }
       result = request.parse(strictObject(Buffer.concat(chunks)));
@@ -235,7 +254,12 @@ export class RuntimeControllerIncarnations {
         : new OwnerInspectionAttemptError(retryable, incompleteCleanup);
     if (cleanupFailed) throw unavailable(false, true);
     if (rejected) throw unavailable(false);
-    if (signal.aborted || completion.timedOut) throw new OwnerIncarnationError("deadline_exceeded");
+    if (
+      signal.aborted ||
+      completion.timedOut ||
+      (operation === "history" && performance.now() >= expiresAt)
+    )
+      throw new OwnerIncarnationError("deadline_exceeded");
     if (failed || result === undefined) throw unavailable(true);
     return result;
   }

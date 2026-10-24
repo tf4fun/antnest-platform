@@ -37,6 +37,8 @@ export type ExecutionDirectoryDependencies = {
   beforePeerAck?: (publication: LocalExecutionPublication, deadline: Date) => Promise<void>;
   onUnavailable: (organizationId: string) => void;
   onPublished?: (organizationId: string) => void;
+  onOwnershipRefreshed?: (organizationId: string) => void;
+  needsOwnershipRefresh?: (configuration: PublicExecutionConfiguration) => boolean;
   onInvalidAuthority?: (organizationId: string) => void;
 };
 
@@ -203,6 +205,64 @@ export class ExecutionDirectory {
       if (capture === undefined) throw publicationUnavailable();
       return capture;
     });
+  }
+
+  /** Reconcile ownership without replacing a publication or its existing connections. */
+  public async reconcileOwnership(signal: AbortSignal, organizationId?: string): Promise<void> {
+    const scopes = organizationId === undefined ? [...this.publications.keys()] : [organizationId];
+    for (const scope of scopes) {
+      signal.throwIfAborted();
+      const existing = this.publications.get(scope);
+      if (
+        existing === undefined ||
+        this.dependencies.needsOwnershipRefresh?.(existing.configuration) === false
+      )
+        continue;
+      await this.authorized(scope, undefined, async () => {
+        signal.throwIfAborted();
+        // This operation owns the publication queue, so assertCurrent() would
+        // reject its own pending marker. Compare the map identity under the queue.
+        const capture = this.publications.get(scope);
+        if (capture === undefined) return;
+        const current = await this.dependencies.repository.loadAuthority(scope);
+        signal.throwIfAborted();
+        if (!isDeepStrictEqual(current, capture.authority)) return;
+        let preparationFailure: { error: unknown } | undefined;
+        try {
+          await this.dependencies.onApplied(capture.configuration);
+        } catch (error) {
+          preparationFailure = { error };
+        }
+        // Preparation may have created some graphs before rejecting. Join it
+        // and recheck sealed authority even after failure or caller cancellation.
+        let confirmed: ExecutionConfiguration | null;
+        try {
+          confirmed = await this.dependencies.repository.loadAuthority(scope);
+        } catch (error) {
+          this.withdraw(scope);
+          if (preparationFailure !== undefined)
+            throw new AggregateError(
+              [preparationFailure.error, error],
+              "Ownership preparation and authority confirmation failed",
+              { cause: error },
+            );
+          throw error;
+        }
+        if (
+          this.publications.get(scope) !== capture ||
+          !isDeepStrictEqual(confirmed, capture.authority)
+        ) {
+          // A graph prepared while sealed credentials changed must not admit
+          // work through the old in-memory publication.
+          this.withdraw(scope);
+          if (preparationFailure !== undefined) throw preparationFailure.error;
+          throw publicationUnavailable();
+        }
+        if (preparationFailure !== undefined) throw preparationFailure.error;
+        signal.throwIfAborted();
+        this.dependencies.onOwnershipRefreshed?.(scope);
+      });
+    }
   }
 
   // Serialize local commits per Agent. A configuration publication waits for

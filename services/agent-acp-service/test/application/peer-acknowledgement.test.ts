@@ -88,6 +88,68 @@ function setup() {
 }
 
 describe("complete peer publication acknowledgement", () => {
+  it("covers the stopped member separately and confirms the survivor's complete fences under the captured participation version", async () => {
+    const f = setup();
+    const guard = { membershipSha256: "a".repeat(64), revision: "2" };
+    const identify = vi.fn(() => Promise.reject(new Error("dead peer must not be contacted")));
+    const publish = vi.fn(() => Promise.reject(new Error("dead peer must not be contacted")));
+    const local = vi.fn<PeerAcknowledgementOptions["local"]>((_capture, request) =>
+      Promise.resolve({
+        ...f.receipt(request, f.source),
+        owned_agents: [
+          { agent_id: "agent-1", epoch: "2" },
+          { agent_id: "agent-b", epoch: "2" },
+        ],
+      }),
+    );
+    const availability = {
+      refresh: vi.fn(() =>
+        Promise.resolve({
+          guard,
+          members: [
+            { memberId: "acp-a", state: "running" as const, registration: f.source, stopped: [] },
+            {
+              memberId: "acp-b",
+              state: "stopped" as const,
+              stopped: [
+                {
+                  ...f.peer,
+                  state: "stopped" as const,
+                  stop_receipt: {
+                    receipt_id: "33333333-3333-4333-8333-333333333333",
+                    reason: "container_stopped" as const,
+                    observed_at: "2026-10-24T00:00:00Z",
+                  },
+                },
+              ],
+            },
+          ],
+          live: [f.source],
+        }),
+      ),
+    };
+    const coordinator = new PeerAcknowledgement({
+      registration: f.source,
+      membershipSha256: guard.membershipSha256,
+      members: ["acp-a", "acp-b"],
+      peers: { identify, publish },
+      local,
+      confirm: f.confirm,
+      availability,
+    });
+    await coordinator.confirm(
+      f.captured,
+      new Date(Date.now() + 5000),
+      new AbortController().signal,
+    );
+    expect(availability.refresh).toHaveBeenCalledOnce();
+    expect(identify).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(f.confirm.mock.calls[0]?.[2]).toMatchObject({ participation: guard });
+    expect(f.confirm.mock.calls[0]?.[1]).toHaveLength(2);
+    expect(local).toHaveBeenCalledOnce();
+  });
+
   it("collects both owners and the nonowner before one complete final database confirmation", async () => {
     const f = setup();
     await f.run();

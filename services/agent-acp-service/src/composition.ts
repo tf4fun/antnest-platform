@@ -26,6 +26,8 @@ import { parsePeerPublicationRequest } from "./application/peer-request.js";
 import { PeerAuthentication } from "./adapters/peer-authentication.js";
 import { HttpAgentPeers } from "./adapters/http-agent-peers.js";
 import { PostgresPeerMembership } from "./adapters/postgres/peer-membership.js";
+import { PostgresPeerParticipation } from "./adapters/postgres/peer-participation.js";
+import { PeerAvailability } from "./application/peer-availability.js";
 import { PeerServer } from "./transport/peer-server.js";
 import { DomainError } from "./domain/errors.js";
 import { executionPublication } from "./domain/execution-publication.js";
@@ -35,6 +37,7 @@ import { PeerDeadlineError } from "./ports/agent-peers.js";
 import { ProviderClients } from "./application/provider-clients.js";
 import { AgentSettlement } from "./application/agent-settlement.js";
 import { AgentAssignment } from "./application/agent-assignment.js";
+import type { AgentOwnershipScope } from "./domain/agent-ownership.js";
 import { OwnerForwarding } from "./application/owner-forwarding.js";
 import { HttpOwnerHandles } from "./application/http-owner-handle.js";
 import { PostgresAgentLeases } from "./adapters/postgres/agent-leases.js";
@@ -74,6 +77,7 @@ import {
 } from "./application/owner-incarnation.js";
 import {
   OwnerRegistrationAttemptError,
+  OwnerInspectionAttemptError,
   RuntimeControllerIncarnations,
 } from "./adapters/runtime-controller-incarnations.js";
 import { OwnerProbeServer } from "./transport/owner-probe-server.js";
@@ -111,7 +115,8 @@ export async function startAgentAcpService(
   let incarnation: OwnerIncarnation | undefined;
   let ownerProbe: OwnerProbeServer | undefined;
   let peerServer: PeerServer | undefined;
-  let ownerInspection: Pick<RuntimeControllerIncarnations, "inspect"> | undefined;
+  let ownerInspection: RuntimeControllerIncarnations | undefined;
+  let peerAvailability: PeerAvailability | undefined;
   const background: Promise<void>[] = [];
   const ownership = new AbortController();
   const cancelStartup = (): void => ownership.abort(startupSignal?.reason);
@@ -217,6 +222,40 @@ export async function startAgentAcpService(
     );
     workerLock = acquiredWorkerLock;
     ownership.signal.throwIfAborted();
+    if (peerAuthentication !== undefined) {
+      if (registeredOwner === undefined || ownerInspection === undefined)
+        throw new Error("ACP peer participation requires its original registration");
+      const participation = new PostgresPeerParticipation(
+        new PostgresKernel(pool, telemetry),
+        peerAuthentication.membership.sha256,
+      );
+      // No recovery, lease acquisition or peer/business listener precedes join.
+      const expiresAt = Date.now() + config.ownerIncarnation!.registrationTimeoutMs;
+      await participation.join(registeredOwner);
+      peerAvailability = new PeerAvailability({
+        registration: registeredOwner,
+        membershipSha256: peerAuthentication.membership.sha256,
+        members: peerAuthentication.membership.members.map((member) => member.member_id),
+        ledger: participation,
+        registry: ownerInspection,
+      });
+      for (;;) {
+        ownership.signal.throwIfAborted();
+        try {
+          await peerAvailability.refresh(ownership.signal, Math.min(expiresAt, Date.now() + 10000));
+          break;
+        } catch (error) {
+          if (!retryablePeerDiscovery(error)) throw error;
+          ownership.signal.throwIfAborted();
+          if (Date.now() >= expiresAt) throw error;
+          // A sibling may have registered with RC but not joined SQL yet.
+          // Retry only after its original discovery calls and cleanup joined.
+          await delay(Math.min(100, expiresAt - Date.now()), undefined, {
+            signal: ownership.signal,
+          });
+        }
+      }
+    }
     const built = buildComponents(
       pool,
       config,
@@ -228,6 +267,7 @@ export async function startAgentAcpService(
       ownerInspection,
       (snapshot) => listeningServer?.revokeAccess(snapshot) ?? Promise.resolve(),
       peerAuthentication,
+      peerAvailability,
     );
     components = built;
     void acquiredWorkerLock.waitForLoss().then((error) => {
@@ -272,12 +312,27 @@ export async function startAgentAcpService(
               assignment: new AgentAssignment(
                 peerAuthentication.memberId,
                 peerAuthentication.membership.members.map((member) => member.member_id),
+                () => peerAvailability!.current(),
               ),
+              availability: () => peerAvailability!.current(),
               directory: built.directory,
               leases: new PostgresAgentLeases(new PostgresKernel(pool, telemetry)),
               peers: new HttpAgentPeers(peerAuthentication),
             }),
             peers: peerAuthentication,
+            stopped: (original: OwnerRegistration) =>
+              peerAvailability!
+                .current()
+                .members.some(
+                  (member) =>
+                    member.state !== "unregistered" &&
+                    member.stopped.some(
+                      (proof) =>
+                        proof.registration_id === original.registration_id &&
+                        proof.member_id === original.member_id &&
+                        proof.incarnation_id === original.incarnation_id,
+                    ),
+                ),
             admit: (
               request: Parameters<OwnedAgentComponents["admitForwardedExecution"]>[0],
               signal: AbortSignal,
@@ -353,6 +408,35 @@ export async function startAgentAcpService(
     serving = true;
     built.learningNotices.start();
     built.owned?.start();
+    if (peerAvailability !== undefined) {
+      const availability = peerAvailability;
+      const refreshAborted = (): boolean => ownership.signal.aborted;
+      const refresh = (async () => {
+        while (!refreshAborted()) {
+          try {
+            await availability.refresh(ownership.signal, Date.now() + 10000);
+            await built.directory.reconcileOwnership(ownership.signal);
+          } catch (error) {
+            if (!retryablePeerDiscovery(error)) throw error;
+            if (ownership.signal.aborted && error === ownership.signal.reason) break;
+            if (!(error instanceof DomainError || error instanceof OwnerIncarnationError))
+              throw error;
+            if (ownership.signal.aborted) break;
+            telemetry.log("warn", "peer_ownership_refresh_unavailable", {}, error);
+          }
+          if (!ownership.signal.aborted)
+            await delay(1000, undefined, { signal: ownership.signal }).catch((error: unknown) => {
+              if (!ownership.signal.aborted) throw error;
+            });
+        }
+      })().catch((error: unknown) => {
+        // Cleanup failures remain observable even when shutdown requested abort.
+        recoveryRequired(asError(error));
+        throw error;
+      });
+      void refresh.catch(() => undefined);
+      background.push(refresh);
+    }
     const learningRun = (built.owned === undefined ? built.learningWorker : undefined)
       ?.run(ownership.signal)
       .catch((error: unknown) => {
@@ -490,6 +574,7 @@ export function buildComponents(
   ownerInspection?: Pick<RuntimeControllerIncarnations, "inspect">,
   revokeTransports?: (snapshot: ExecutionAccessSnapshot) => Promise<void>,
   peerAuthentication?: PeerAuthentication,
+  peerAvailability?: PeerAvailability,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
   const secretBox = new SecretBox(config.clientMcpKey);
@@ -501,6 +586,14 @@ export function buildComponents(
     peerAuthentication.memberId !== peerRegistration!.member_id
   )
     throw new Error("ACP peer registration does not match configured membership");
+  const peerAssignment =
+    peerAuthentication === undefined
+      ? undefined
+      : new AgentAssignment(
+          peerAuthentication.memberId,
+          peerAuthentication.membership.members.map((member) => member.member_id),
+          peerAvailability === undefined ? undefined : () => peerAvailability.current(),
+        );
   const repositories = createLegacyAgentRepositories(kernel, secretBox, ownershipSignal);
   const { permissions: permissionRepository, executions } = repositories;
 
@@ -580,6 +673,8 @@ export function buildComponents(
       outputs.invalidateOrganization(organizationId);
       owned?.published(organizationId);
     },
+    onOwnershipRefreshed: (organizationId) => owned?.published(organizationId),
+    needsOwnershipRefresh: (snapshot) => owned?.needsPreparation(snapshot) ?? false,
     ...(peerAuthentication === undefined
       ? {
           beforeAck: async (snapshot: Parameters<OwnedAgentComponents["beforeAck"]>[0]) => {
@@ -664,13 +759,11 @@ export function buildComponents(
       recoveryRequired,
       now,
       registration,
-      ...(peerAuthentication === undefined
+      ...(peerAssignment === undefined ? {} : { assignment: peerAssignment }),
+      ...(peerAvailability === undefined
         ? {}
         : {
-            assignment: new AgentAssignment(
-              peerAuthentication.memberId,
-              peerAuthentication.membership.members.map((member) => member.member_id),
-            ),
+            participation: (scope: AgentOwnershipScope) => peerAssignment!.acquireGuard(scope),
           }),
       ...(ownerInspection === undefined ? {} : { ownerInspection }),
       configuration: configurationRepository,
@@ -708,6 +801,7 @@ export function buildComponents(
       !isDeepStrictEqual(executionPublication(capture.authority), request.publication)
     )
       throw new DomainError("configuration_unavailable", "ACP peer publication changed");
+    await directory.reconcileOwnership(lifetime, capture.authority.organization_id);
     await joinRevocations(capture.authority.organization_id);
     const fences = await owned.localPublicationFences(capture, lifetime);
     checkPeerRequest(request, lifetime);
@@ -728,6 +822,7 @@ export function buildComponents(
       membershipSha256: peerAuthentication.membership.sha256,
       members: peerAuthentication.membership.members.map((member) => member.member_id),
       peers: new HttpAgentPeers(peerAuthentication),
+      ...(peerAvailability === undefined ? {} : { availability: peerAvailability }),
       local: localPeerReceipt,
       confirm: (expected, fences, options) =>
         configurationRepository.confirmOwnedAuthority(expected, fences, options),
@@ -735,6 +830,10 @@ export function buildComponents(
   const applyPeerPublication = async (input: PeerPublicationRequest, signal: AbortSignal) => {
     const request = parsePeerPublicationRequest(input);
     checkPeerRequest(request, signal);
+    await peerAvailability?.refresh(
+      AbortSignal.any([ownershipSignal, signal]),
+      Date.parse(request.deadline_at),
+    );
     const capture = await directory.applyPeerPublication(request.publication);
     return localPeerReceipt(capture, request, signal);
   };
@@ -899,4 +998,14 @@ async function settle(operation: Promise<void>): Promise<PromiseSettledResult<vo
 
 function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error("Agent ACP Service startup failed");
+}
+
+/** Non-retryable transport/cleanup failures cannot be demoted to a refresh warning. */
+function retryablePeerDiscovery(error: unknown): boolean {
+  if (error instanceof OwnerInspectionAttemptError) return error.retryable && !error.cleanupFailed;
+  if (error instanceof AggregateError)
+    return error.errors.every((item: unknown) => retryablePeerDiscovery(item));
+  if (error instanceof Error && error.cause !== undefined)
+    return retryablePeerDiscovery(error.cause);
+  return true;
 }

@@ -9,12 +9,15 @@ import type { AgentPeers, PeerPublicationRequest } from "../ports/agent-peers.js
 import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { LocalExecutionPublication } from "./execution-directory.js";
 import { parseOwnerRegistration, type OwnerRegistration } from "./owner-incarnation.js";
+import type { PeerAvailability } from "./peer-availability.js";
+import type { PeerParticipationGuard } from "../ports/peer-participation.js";
 
 export type PeerAcknowledgementOptions = {
   registration: OwnerRegistration;
   membershipSha256: string;
   members: readonly string[];
   peers: AgentPeers;
+  availability?: Pick<PeerAvailability, "refresh">;
   local: (
     capture: LocalExecutionPublication,
     request: PeerPublicationRequest,
@@ -23,7 +26,7 @@ export type PeerAcknowledgementOptions = {
   confirm: (
     expected: ExecutionConfiguration,
     fences: readonly AgentOwnershipFence[],
-    options: { timeoutMs: number },
+    options: { timeoutMs: number; participation?: PeerParticipationGuard },
   ) => Promise<void>;
 };
 
@@ -74,11 +77,23 @@ export class PeerAcknowledgement {
       source: this.registration,
     });
     try {
+      const availability = await this.options.availability?.refresh(lifetime, expiresAt);
+      if (
+        availability !== undefined &&
+        (availability.guard.membershipSha256 !== this.membershipSha256 ||
+          availability.members.length !== this.members.length ||
+          availability.members.some((member, index) => member.memberId !== this.members[index]))
+      )
+        throw unavailable();
       // allSettled owns every original operation. Cancellation must never make
       // an unjoined peer/database operation look like completed cleanup.
       const results = await Promise.allSettled(
         this.members.map(async (member) => {
           lifetime.throwIfAborted();
+          const available = availability?.members.find((item) => item.memberId === member);
+          // An exact stopped/never-participated result is kept distinct from a
+          // live peer's joined revocation receipt. The final SQL guard covers both.
+          if (available !== undefined && available.state !== "running") return null;
           let target = this.registration;
           if (member !== this.registration.member_id) {
             const challenge = randomBytes(32).toString("hex");
@@ -103,6 +118,8 @@ export class PeerAcknowledgement {
               throw unavailable();
             target = parseOwnerRegistration(identity.registration);
           }
+          if (available?.state === "running" && !isDeepStrictEqual(target, available.registration))
+            throw unavailable();
           const request: PeerPublicationRequest = Object.freeze({
             ...common,
             target,
@@ -142,6 +159,7 @@ export class PeerAcknowledgement {
       for (const result of results) {
         if (result.status !== "fulfilled") throw unavailable();
         const receipt = result.value;
+        if (receipt === null) continue;
         for (const agent of receipt.owned_agents) {
           if (!accepting.has(agent.agent_id) || fences.has(agent.agent_id)) throw unavailable();
           fences.set(
@@ -159,7 +177,10 @@ export class PeerAcknowledgement {
       capture.assertCurrent();
       const timeoutMs = expiresAt - Date.now();
       if (timeoutMs <= 0) throw expired();
-      await this.options.confirm(capture.authority, [...fences.values()], { timeoutMs });
+      await this.options.confirm(capture.authority, [...fences.values()], {
+        timeoutMs,
+        ...(availability === undefined ? {} : { participation: availability.guard }),
+      });
       lifetime.throwIfAborted();
       if (Date.now() >= expiresAt) throw expired();
       capture.assertCurrent();

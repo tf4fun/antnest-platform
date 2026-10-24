@@ -11,6 +11,8 @@ import {
 } from "../../domain/agent-ownership.js";
 import type { AgentLease, AgentLeases } from "../../ports/agent-leases.js";
 import type { PostgresKernel } from "./kernel.js";
+import { lockPeerParticipation } from "./peer-participation.js";
+import type { PeerParticipationGuard } from "../../ports/peer-participation.js";
 
 type LeaseRow = {
   organization_id: string;
@@ -26,7 +28,10 @@ const columns = `organization_id, agent_id, owner_instance_id, epoch::text AS ep
 const budget = { timeoutMs: 10_000 };
 
 export class PostgresAgentLeases implements AgentLeases {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    private readonly participation?: (scope: AgentOwnershipScope) => PeerParticipationGuard,
+  ) {}
 
   public async tryAcquire(
     input: AgentOwnershipScope,
@@ -36,7 +41,13 @@ export class PostgresAgentLeases implements AgentLeases {
     const scope = ownershipScope(input);
     const owner = ownershipInstance(instance);
     const ttl = leaseDuration(durationMs);
+    const captured = this.participation?.(scope);
+    const participation =
+      captured === undefined
+        ? undefined
+        : { membershipSha256: captured.membershipSha256, revision: captured.revision };
     return this.kernel.transaction(async (client) => {
+      if (participation !== undefined) await lockPeerParticipation(client, participation);
       await client.query(
         `INSERT INTO agent_leases(organization_id,agent_id,owner_instance_id,epoch,expires_at)
          VALUES ($1,$2,$3,1,clock_timestamp()+$4::integer*interval '1 millisecond')

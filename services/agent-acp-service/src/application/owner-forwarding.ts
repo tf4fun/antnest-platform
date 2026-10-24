@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { strictObject } from "../adapters/strict-json.js";
 import { ownershipFence } from "../domain/agent-ownership.js";
@@ -14,6 +15,7 @@ import type { AgentLeases } from "../ports/agent-leases.js";
 import type { AgentPeers } from "../ports/agent-peers.js";
 import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { AgentAssignment } from "./agent-assignment.js";
+import type { PeerAvailabilityCapture } from "./peer-availability.js";
 import type { ExecutionDirectory } from "./execution-directory.js";
 import { parseOwnerRegistration, type OwnerRegistration } from "./owner-incarnation.js";
 import { peerDeadline } from "./peer-request.js";
@@ -91,6 +93,7 @@ export class OwnerForwarding {
       registration: OwnerRegistration;
       membershipSha256: string;
       assignment: AgentAssignment;
+      availability?: () => PeerAvailabilityCapture;
       directory: ExecutionDirectory;
       leases: Pick<AgentLeases, "read">;
       peers: Pick<AgentPeers, "identify">;
@@ -114,10 +117,38 @@ export class OwnerForwarding {
     // The existing local service validates the closed operation and returns
     // not_settled without acquiring a lease once the business deadline expires.
     if (Date.now() >= operationDeadline) return null;
-    const member = assignment.preferred(scope);
-    if (member === registration.member_id) return null;
     const publication = directory.capturePublication(scope.organizationId);
     const deadline = Math.min(operationDeadline, Date.now() + 10000);
+    const view = this.options.availability?.();
+    let expected: OwnerRegistration | undefined;
+    let member = assignment.preferred(scope);
+    if (view !== undefined) {
+      const readStarted = performance.now();
+      const lease = await this.options.leases.read(scope);
+      signal.throwIfAborted();
+      publication.assertCurrent();
+      directory.closedAgent(operation);
+      if (Date.now() >= operationDeadline) return null;
+      if (Date.now() >= deadline) throw new PeerDeadlineError("Settlement owner discovery expired");
+      if (
+        lease !== null &&
+        lease.expiresAt.getTime() - lease.observedAt.getTime() > performance.now() - readStarted
+      ) {
+        expected = view.live.find(
+          (original) => original.incarnation_id === lease.fence.ownerInstanceId,
+        );
+        if (expected === undefined) throw unavailable();
+        member = expected.member_id;
+      } else {
+        member = assignment.target(scope);
+        expected = view.live.find((original) => original.member_id === member);
+        if (expected === undefined) throw unavailable();
+      }
+    }
+    if (member === registration.member_id) {
+      if (expected !== undefined && !isDeepStrictEqual(expected, registration)) throw unavailable();
+      return null;
+    }
     if (Date.now() >= deadline) throw new PeerDeadlineError("Settlement owner discovery expired");
     const discovery = {
       request_id: randomUUID(),
@@ -135,7 +166,8 @@ export class OwnerForwarding {
       receipt.request_id !== discovery.request_id ||
       receipt.challenge !== discovery.challenge ||
       receipt.membership_sha256 !== membershipSha256 ||
-      receipt.registration.member_id !== member
+      receipt.registration.member_id !== member ||
+      (expected !== undefined && !isDeepStrictEqual(receipt.registration, expected))
     )
       throw unavailable();
     publication.assertCurrent();
@@ -165,13 +197,45 @@ export class OwnerForwarding {
     originalDeadline?: number,
   ): Promise<OwnerForwardRequest | null> {
     const { directory, assignment, registration, membershipSha256 } = this.options;
+    signal.throwIfAborted();
     directory.inspect(identity);
-    const member = assignment.preferred(identity);
-    if (member === registration.member_id && !includeLocal) return null;
-    const publication = directory.capturePublication(identity.organizationId);
-    const requestId = randomUUID();
     const deadline = Math.min(Date.now() + 10000, originalDeadline ?? Infinity);
     if (Date.now() >= deadline) throw new PeerDeadlineError("Owner resolution expired");
+    const view = this.options.availability?.();
+    // Keep the legacy local fast path for non-peer component callers. Production
+    // peer ingress always captures the real lease before choosing a destination.
+    if (
+      view === undefined &&
+      assignment.preferred(identity) === registration.member_id &&
+      !includeLocal
+    )
+      return null;
+    const publication = directory.capturePublication(identity.organizationId);
+    const readStarted = performance.now();
+    const capturedLease = view === undefined ? undefined : await this.options.leases.read(identity);
+    let expected: OwnerRegistration | undefined;
+    let member = assignment.preferred(identity);
+    if (view !== undefined) {
+      signal.throwIfAborted();
+      if (Date.now() >= deadline) throw new PeerDeadlineError("Owner resolution expired");
+      if (
+        capturedLease == null ||
+        capturedLease.expiresAt.getTime() - capturedLease.observedAt.getTime() <=
+          performance.now() - readStarted
+      )
+        throw unavailable();
+      expected = view.live.find(
+        (original) => original.incarnation_id === capturedLease.fence.ownerInstanceId,
+      );
+      if (expected === undefined) throw unavailable();
+      member = expected.member_id;
+      publication.assertCurrent();
+      directory.inspect(identity);
+      if (member === registration.member_id && !isDeepStrictEqual(expected, registration))
+        throw unavailable();
+      if (member === registration.member_id && !includeLocal) return null;
+    }
+    const requestId = randomUUID();
     const challenge = randomBytes(32).toString("hex");
     const discovery = {
       request_id: requestId,
@@ -190,10 +254,11 @@ export class OwnerForwarding {
       receipt.request_id !== requestId ||
       receipt.challenge !== challenge ||
       receipt.membership_sha256 !== membershipSha256 ||
-      receipt.registration.member_id !== member
+      receipt.registration.member_id !== member ||
+      (expected !== undefined && !isDeepStrictEqual(receipt.registration, expected))
     )
       throw unavailable();
-    const lease = await this.options.leases.read(identity);
+    const lease = capturedLease ?? (await this.options.leases.read(identity));
     signal.throwIfAborted();
     if (Date.now() >= deadline) throw new PeerDeadlineError("Owner resolution expired");
     if (
