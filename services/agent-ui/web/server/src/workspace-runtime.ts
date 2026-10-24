@@ -1,6 +1,6 @@
 import { diffAgentViews, validAgentView } from "./protocol/agent-view-delta.ts";
 import { randomBytes, randomUUID } from "node:crypto";
-import type { AcpBridgeCallbacks } from "./adapters/acp-http.ts";
+import { AgentAccessRevokedError, type AcpBridgeCallbacks } from "./adapters/acp-http.ts";
 import { AgentBridgeOwner, type AcpBridgePort } from "./bridge/agent-owner.ts";
 import {
   ConfigurationConflictError,
@@ -568,6 +568,12 @@ export function createWorkspaceRuntime(input: {
           },
           fork: (sessionId) => lease.owner.forkSession(sessionId),
         });
+      } catch (error) {
+        // The original control has settled; join retirement before releasing
+        // its observer so revoked active-Run work cannot pin the owner.
+        if (error instanceof AgentAccessRevokedError)
+          return await lease.owner.rejectAuthorization(error);
+        throw error;
       } finally { lease.release(); }
     },
   });

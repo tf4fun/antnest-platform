@@ -320,6 +320,10 @@ result to `403/access_denied`; a disconnected stream, HTTP 404, allowed state or
 unavailable observation cannot establish revocation. This confirmation does not
 replay a Session or Prompt command. The failed authorization finishes before
 retiring its owner, and original transport/watch cleanup failures remain 503.
+The same cleanup rule applies when a control command such as `/stop` receives
+a typed denial while reading its original intent. The control finishes before
+owner retirement; the response waits for cleanup and releases retained Run work
+without sending another cancel, Prompt or projection request.
 An explicit ACP workspace observation `403/access_denied` with
 `retryable: false` remains a `403/access_denied`, `recovery: none` at command
 authorization and subsequent operation reads. The same classification applies
