@@ -22,6 +22,10 @@ export async function startProxy({
     errors = [];
   const tcp = net.createServer((down) => {
     const up = net.createConnection({ host: upstreamHost, port: upstreamPort });
+    // Forward parsed frames immediately; ordinary traffic must not acquire
+    // Nagle/delayed-ACK latency before an explicitly armed fault.
+    down.setNoDelay(true);
+    up.setNoDelay(true);
     sockets.add(down);
     sockets.add(up);
     const front = new Frames({ startup: true }),
