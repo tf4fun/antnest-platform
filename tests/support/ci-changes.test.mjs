@@ -34,6 +34,51 @@ import {
 } from "./ci-changes.mjs";
 import { temporaryStorageRoot } from "./storage.mjs";
 
+test("ACP survivor admission runs the actual two-replica and browser scenario", () => {
+  const suite = suites.find((item) => item.id === "c-acp-survivor");
+  const owner = suites.find((item) => item.id === "acp-owner-bootstrap");
+  assert(suite, "missing blocking two-Docker ACP survivor acceptance");
+  assert(owner);
+  assert.equal(suite.tier, "c");
+  assert(!suite.disabled);
+  assert.deepEqual(suite.run, ["node tests/e2e/acp-survivor/run.mjs"]);
+  assert.deepEqual(suite.setup, ["agent-ui-web", "chromium"]);
+  assert.deepEqual(suite.images, owner.images);
+  assert.equal(
+    suite.strict,
+    true,
+    "auxiliary trace warnings must not fail business admission",
+  );
+  assert.equal(outsideCI["e2e-acp-survivor"], undefined);
+});
+
+test("ACP survivor admission follows its producer, consumer and fixture changes", () => {
+  for (const file of [
+    "contracts/agent-acp/owner-incarnation-history.schema.json",
+    "services/runtime-controller/internal/rpc/acp_incarnation.go",
+    "services/agent-acp-service/src/composition.ts",
+    "services/agent-ui/web/src/BridgeApp.tsx",
+    "tests/e2e/acp-survivor/compose.yaml",
+    "tests/e2e/acp-survivor/profile.mjs",
+    "tests/e2e/acp-survivor/business.mjs",
+    "tests/e2e/acp-survivor/browser.mjs",
+    "tests/e2e/acp-survivor/run.mjs",
+  ])
+    assert(
+      selectSuites([file]).some((suite) => suite.id === "c-acp-survivor"),
+      `${file} must select actual survivor acceptance`,
+    );
+});
+
+test("ACP survivor admission has one independent required shard", () => {
+  const matches = shards.filter((shard) =>
+    shard.suites.includes("c-acp-survivor"),
+  );
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].id, "c-acp-survivor");
+  assert.deepEqual(matches[0].suites, ["c-acp-survivor"]);
+});
+
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const ids = (selected) => selected.map((suite) => suite.id);
 const enabled = suites.filter((suite) => !suite.disabled);
@@ -447,7 +492,7 @@ test("every suite belongs to exactly one shard of its own tier", () => {
     assert.equal(tiers.size, 1, shard.id);
     assert(shard.id.startsWith(`${[...tiers][0]}-`), shard.id);
   }
-  assert(shards.filter((shard) => shard.id.startsWith("c-")).length <= 12);
+  assert(shards.filter((shard) => shard.id.startsWith("c-")).length <= 13);
 });
 
 test("suite entries carry the tier and scalar setup flags", () => {
@@ -694,7 +739,7 @@ test("ACP authentication runs in the required auth shard with its CI-built image
 
 test("tier C platform scenarios get every local image and no rebuilding target", () => {
   const tierC = suites.filter((suite) => suite.tier === "c");
-  assert.equal(tierC.length, 51);
+  assert.equal(tierC.length, 52);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   const primary = Object.keys(images).filter(
     (name) => typeof images[name] === "string",
@@ -855,6 +900,7 @@ test("tier C organization display installs the Agent UI browser client", () => {
 
 test("foundation runners report strict-only findings through exit 2", () => {
   const foundation = {
+    "c-acp-survivor": "acp-survivor/run.mjs",
     "gateway-resolve-cache": "edge-gateway/resolve-cache-docker.mjs",
     "c-lifecycle-loss": "lifecycle-closeout/run.mjs loss",
     "c-lifecycle-restore": "lifecycle-closeout/run.mjs restore",

@@ -125,6 +125,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/deployment/e2e-overlays.test.mjs tests/integration/deployment/agent-ui-receipt-gate.test.mjs
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/agent-readiness/*.test.mjs
+	node --test --test-concurrency=1 tests/e2e/acp-survivor/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs tests/integration/skill-registry/prepare-auth.test.mjs
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
@@ -235,6 +236,10 @@ e2e-workspace:
 .PHONY: e2e-workspace-browser
 e2e-workspace-browser:
 	node tests/support/authenticated-shell-e2e.mjs workspace-browser
+
+.PHONY: e2e-acp-survivor
+e2e-acp-survivor:
+	node tests/e2e/acp-survivor/run.mjs
 
 .PHONY: e2e-development
 e2e-development:
