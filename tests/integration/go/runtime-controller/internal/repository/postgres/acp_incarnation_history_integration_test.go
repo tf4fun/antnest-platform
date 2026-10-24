@@ -167,9 +167,10 @@ func TestAcpIncarnationHistoryRejectsForeignAndOutOfRangeCursorsWithoutMutation(
 	for group := range 3 {
 		for index := range 2 {
 			record := acpIncarnationRecord(400 + group*2 + index)
-			if group == 1 {
+			switch group {
+			case 1:
 				record.Scope = "other-history-scope"
-			} else if group == 2 {
+			case 2:
 				record.Registration.MemberID = "acp-b"
 			}
 			if _, err := store.RegisterVerified(ctx, record); err != nil {
@@ -249,9 +250,10 @@ func TestAcpIncarnationHistoryUpgradeFromFourteenBackfillsEveryOriginalRecord(t 
 		record.NonceDigest[0] = byte(index + 1)
 		record.Binding.EngineID = fmt.Sprintf("legacy-engine-%d", index)
 		record.Binding.ContainerID = fmt.Sprintf("%064x", index+1)
-		if index == 3 {
+		switch index {
+		case 3:
 			record.Registration.MemberID = "acp-b"
-		} else if index == 4 {
+		case 4:
 			record.Scope = "legacy-other-scope"
 		}
 		var receipt, reason, stopped any
