@@ -438,7 +438,9 @@ export async function workspaceProtocolBusiness(input, work) {
     `/api/admin/agents/${agentID}/events?limit=100`,
   );
   const beforeRevocationAudit = await auditPage();
+  const beforeRevocationRequests = structuredClone(client.requests);
   const baseline = work.beginRevocation(watch);
+  const closeDeadline = baseline.observedAt + 30000;
   const revocationRequest = {
     path: `/api/admin/directory/users/${agentBody.owner_user_id}/active`,
     body: { active: false },
@@ -447,25 +449,65 @@ export async function workspaceProtocolBusiness(input, work) {
     body: revocationRequest.body,
   });
   await work.revoked(watch, revoked.traceID);
-  await rejectWorkspaceRequest(
+  const remoteClose = await client.waitForClose(
+    Math.max(1, closeDeadline - Date.now()),
+  );
+  assert.equal(
+    remoteClose.localClose,
+    false,
+    "local cleanup cannot prove old-connection revocation",
+  );
+  assert(
+    [1000, 1005].includes(remoteClose.code),
+    "abnormal revoked connection close",
+  );
+  assert(
+    Number.isSafeInteger(remoteClose.at) &&
+      remoteClose.at >= baseline.observedAt &&
+      remoteClose.at <= closeDeadline,
+    "old connection closed outside the revocation window",
+  );
+  assert.deepEqual(client.requests, beforeRevocationRequests);
+  await client.closeAndWait();
+  const beforeProbe = client.snapshot();
+  assert.equal(beforeProbe.closed, true, "old-connection cleanup did not join");
+  assert.deepEqual(beforeProbe.close_receipt, remoteClose);
+  await assert.rejects(
     client.request("prompt", {
       sessionId: second,
       prompt: [{ type: "text", text: "must-not-execute" }],
     }),
-    (error) => {
-      assertAdmissionError(error, "access_denied");
-      return true;
-    },
   );
-  remember(client, "session/prompt", {
+  const afterProbe = client.snapshot();
+  assert.deepEqual(
+    client.requests,
+    beforeRevocationRequests,
+    "post-close probe sent a Workspace wire request",
+  );
+  assert.deepEqual(
+    afterProbe.raw_frames,
+    beforeProbe.raw_frames,
+    "post-close probe added a Workspace wire frame",
+  );
+  const closedConnectionProbe = {
+    version: 1,
+    agentId: agentID,
+    connectionTraceID: client.connectionTraceID,
     sessionId: second,
-    rejection: "access_denied",
-    probe: true,
-  });
+    method: "session/prompt",
+    started_at: baseline.observedAt,
+    deadline_at: closeDeadline,
+    close: structuredClone(remoteClose),
+    cleanup_joined: afterProbe.closed,
+    request_count_before: beforeRevocationRequests.length,
+    request_count_after: client.requests.length,
+    raw_frame_count_before: beforeProbe.raw_frames.length,
+    raw_frame_count_after: afterProbe.raw_frames.length,
+    post_close_request_sent: false,
+  };
   await work.denyNewConnection(agentID, owner, principal, {
     after: baseline.observedAt,
   });
-  await client.closeAndWait();
   const revocationModelAfter = await modelState();
   assert.deepEqual(
     revocationModelAfter,
@@ -534,6 +576,7 @@ export async function workspaceProtocolBusiness(input, work) {
   const network = await json(`/api/admin/agents/${agentID}/network-policy`);
   assert.equal(network.attachment.state, "closed");
   work.record("revocation", {
+    closed_connection_probe: closedConnectionProbe,
     audit_before: beforeRevocationAudit,
     audit_after: revocationAuditAfter,
     model_before: calls,

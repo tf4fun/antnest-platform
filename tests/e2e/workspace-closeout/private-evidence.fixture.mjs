@@ -157,12 +157,15 @@ export async function workspacePrivateEvidenceFixture() {
   );
   const connections = f.clients.map((client) => {
     const rows = client.requests.map(rawRow);
-    const close = {
-      code: 1000,
-      reason: "",
-      at: 1000 + client.index,
-      localClose: true,
-    };
+    const close =
+      client.index === 5
+        ? clone(client.snapshot().close_receipt)
+        : {
+            code: 1000,
+            reason: "",
+            at: 1000 + client.index,
+            localClose: true,
+          };
     const disconnects = client.disconnectReceipts.map((receipt) => {
       const row = rows.find((item) => item.requestId === receipt.requestId);
       return {

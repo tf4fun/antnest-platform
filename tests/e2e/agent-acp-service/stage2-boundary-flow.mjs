@@ -608,6 +608,11 @@ try {
       ownerLogin.principal,
     );
     await watch.ready();
+    const beforeAudits = await rpc("list-execution-audits", {
+      agent_id: agentId,
+      limit: 100,
+    });
+    const beforeModel = await modelState();
     const start = watch.beginRevocation();
     await json(`${identity}/rpc/identity/update-membership`, {
       ...requestBody("stage2-owner-deactivate"),
@@ -631,19 +636,67 @@ try {
       revocationTraceID: traceId,
       revocationStart: start,
     });
-    await client.denied(session.sessionId, ["access_denied"]);
-    await client.close();
-    client = undefined;
+    const closeDeadline = start.observedAt + 30000;
+    const remoteClose = await client.waitForClose(
+      Math.max(1, closeDeadline - Date.now()),
+    );
+    assert.equal(
+      remoteClose.localClose,
+      false,
+      "local cleanup cannot prove remote revocation",
+    );
+    assert(
+      Number.isFinite(remoteClose.at) &&
+        remoteClose.at >= start.observedAt &&
+        remoteClose.at <= closeDeadline,
+      "original connection did not close within the revocation window",
+    );
     evidence.revocation = {
       mutation_trace_id: traceId,
       watch: receipt,
-      denied_connection: await privateAccess.denyNewConnection(
+      old_connection: {
+        connection_trace_id: client.connectionTraceID,
+        session_id: session.sessionId,
+        ...remoteClose,
+      },
+    };
+    await client.closeAndWait();
+    const beforeProbe = client.snapshot();
+    const probe = {
+      method: "session/prompt",
+      session_id: session.sessionId,
+      attempted_at: Date.now(),
+    };
+    evidence.revocation.post_close_probe = probe;
+    await assert.rejects(
+      client.request("prompt", {
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "must not reach the revoked Agent" }],
+      }),
+      /Stage2 connection is closing/u,
+    );
+    probe.rejected = true;
+    const afterProbe = client.snapshot();
+    assert.deepEqual(
+      afterProbe,
+      beforeProbe,
+      "post-close Prompt changed the original connection wire or evidence",
+    );
+    Object.assign(probe, {
+      request_count_before: beforeProbe.requests.length,
+      request_count_after: afterProbe.requests.length,
+      raw_frame_count_before: beforeProbe.raw_frames.length,
+      raw_frame_count_after: afterProbe.raw_frames.length,
+      wire_unchanged: true,
+    });
+    client = undefined;
+    evidence.revocation.denied_connection =
+      await privateAccess.denyNewConnection(
         agentId,
         ownerLogin,
         ownerLogin.principal,
         { after: start.observedAt },
-      ),
-    };
+      );
     await waitFor(
       current,
       (value) =>
@@ -651,6 +704,30 @@ try {
         !value.active_operation_request_id,
       "offboarding completion",
     );
+    const afterAudits = await rpc("list-execution-audits", {
+      agent_id: agentId,
+      limit: 100,
+    });
+    const afterModel = await modelState();
+    assert.deepEqual(afterAudits, beforeAudits, "revocation created execution");
+    assert.deepEqual(
+      afterModel.requests,
+      beforeModel.requests,
+      "revoked connection created model requests",
+    );
+    assert.deepEqual(
+      afterModel.attempts,
+      beforeModel.attempts,
+      "revoked connection attempted model calls",
+    );
+    evidence.revocation.no_new_execution = {
+      audit_run_ids_before: beforeAudits.items.map((row) => row.run_id),
+      audit_run_ids_after: afterAudits.items.map((row) => row.run_id),
+      model_requests_before: beforeModel.requests.length,
+      model_requests_after: afterModel.requests.length,
+      model_attempts_before: beforeModel.attempts.length,
+      model_attempts_after: afterModel.attempts.length,
+    };
   });
   await scenario("delete-and-retain-execution-audit", async () => {
     const before = await rpc("list-execution-audits", {

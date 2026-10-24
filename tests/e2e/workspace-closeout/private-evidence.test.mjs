@@ -13,6 +13,8 @@ function admit(result) {
   assert.equal(typeof implementation.workspacePrivateAdmission, "function");
   return implementation.workspacePrivateAdmission(result);
 }
+const revocationProbe = (result) =>
+  result.private_workspace.business.revocation.closed_connection_probe;
 test("Workspace admission accepts original diagnostic identities regardless of export order", async () => {
   const result = await workspacePrivateEvidenceFixture();
   result.authority_traces.at(-1).raw_error_inventory.reverse();
@@ -27,9 +29,11 @@ test("Workspace admission binds the complete original protocol inventory, privat
   for (const [key, value] of Object.entries({
     connections: 5,
     initializations: 5,
-    business_requests: 12,
+    business_requests: 11,
     original_business_requests: 11,
+    wire_requests: 16,
     revocation_probes: 1,
+    revocation_probe_wire_requests: 0,
     sessions: 2,
     login_sessions: 1,
     runs: 3,
@@ -75,8 +79,45 @@ for (const [name, mutate] of [
       }),
   ],
   [
-    "missing denial probe",
-    (r) => delete r.private_workspace.observations.at(-1).probe,
+    "missing no-wire revocation probe",
+    (r) =>
+      delete r.private_workspace.business.revocation.closed_connection_probe,
+  ],
+  [
+    "local old-connection close substituted for remote revocation",
+    (r) => (revocationProbe(r).close.localClose = true),
+  ],
+  [
+    "old connection closed before revocation",
+    (r) => {
+      const probe = revocationProbe(r);
+      probe.close.at = probe.started_at - 1;
+    },
+  ],
+  [
+    "old connection closed beyond its revocation deadline",
+    (r) => {
+      const probe = revocationProbe(r);
+      probe.close.at = probe.deadline_at + 1;
+    },
+  ],
+  [
+    "unjoined old-connection cleanup",
+    (r) => (revocationProbe(r).cleanup_joined = false),
+  ],
+  [
+    "old-connection probe sent a wire request",
+    (r) => (revocationProbe(r).post_close_request_sent = true),
+  ],
+  [
+    "old-connection probe added a raw frame",
+    (r) => revocationProbe(r).raw_frame_count_after++,
+  ],
+  [
+    "old-connection receipt belongs to another connection",
+    (r) =>
+      (revocationProbe(r).connectionTraceID =
+        r.private_connections[0].connectionTraceID),
   ],
   [
     "replaced login",
@@ -177,6 +218,10 @@ for (const [name, mutate] of [
     (r) => r.authority_traces[0].authority_scope.operation_id++,
   ],
   ["missing actual denied Resolve", (r) => r.private_authority_receipts.pop()],
+  [
+    "fresh same-scope connection was authorized",
+    (r) => (r.private_authority_receipts.at(-1).receipts[0].status = 200),
+  ],
   [
     "invented notification request ID",
     (r) => (r.private_notifications[0].requestId = "invented"),

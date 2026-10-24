@@ -221,7 +221,7 @@ export function workspaceBusinessFixture() {
       ["load", "agent_busy", "runtime_barrier_required"],
       ["load", "c4-offline"],
       ["load"],
-      ["load", "c4-rebuilt", "access_denied"],
+      ["load", "c4-rebuilt"],
     ][index - 1];
     let cursor = 0,
       pending;
@@ -234,13 +234,24 @@ export function workspaceBusinessFixture() {
       notificationReceipts: [],
       disconnectReceipts: [],
       closed: false,
+      closeReceipt: null,
       localCloseError: new Error(`fixture connection ${index} local close`),
       async initialize() {
         assert.fail("fixture opener already initialized the connection");
       },
       async request(method, params) {
-        if (client.closed)
-          assert.fail("request on a closed fixture connection");
+        if (client.closed) {
+          if (index === 5 && state.revoked) {
+            assert.equal(method, "prompt");
+            assert.deepEqual(params, {
+              sessionId: "S2",
+              prompt: [{ type: "text", text: "must-not-execute" }],
+            });
+            state.probeRejected = true;
+            events.push(["closed-probe", index]);
+          }
+          throw new Error("Workspace connection is closing");
+        }
         const step = sequence[cursor++];
         if (!step) assert.fail("unexpected Workspace business request");
         if (step === "new" || step === "load") {
@@ -265,18 +276,10 @@ export function workspaceBusinessFixture() {
           prompt: [{ type: "text", text: phase }],
         });
         const row = record(client, "session/prompt", params);
-        if (
-          ["agent_busy", "runtime_barrier_required", "access_denied"].includes(
-            step,
-          )
-        ) {
+        if (["agent_busy", "runtime_barrier_required"].includes(step)) {
           if (step === "agent_busy")
             assert(state.cancelAlive && !state.cancelled);
           if (step === "runtime_barrier_required") assert(state.cancelled);
-          if (step === "access_denied") {
-            assert(state.revoked);
-            state.probeRejected = true;
-          }
           throw rejected(row, step);
         }
         provider(step, "tool");
@@ -339,9 +342,20 @@ export function workspaceBusinessFixture() {
       isLocalCloseError(error) {
         return error === client.localCloseError;
       },
+      async waitForClose(timeoutMs) {
+        assert(Number.isFinite(timeoutMs) && timeoutMs > 0);
+        assert(client.closeReceipt, "fixture has no original remote close");
+        return clone(client.closeReceipt);
+      },
       async closeAndWait() {
         if (!client.closed) {
           client.closed = true;
+          client.closeReceipt ??= {
+            code: 1000,
+            reason: "",
+            at: now(),
+            localClose: true,
+          };
           if (pending) {
             pending.reject(client.localCloseError);
             pending = undefined;
@@ -355,6 +369,17 @@ export function workspaceBusinessFixture() {
           agentId: "agent",
           connectionTraceID: client.connectionTraceID,
           closed: client.closed,
+          close_receipt: client.closeReceipt,
+          requests: client.requests,
+          raw_frames: [
+            ...client.requests
+              .filter((row) => row.response)
+              .map((row) => row.response),
+            ...client.updates.map((params) => ({
+              method: "session/update",
+              params,
+            })),
+          ],
           initialization: client.requests[0],
           evidence: client.requests.slice(1),
           notifications: client.notificationReceipts,
@@ -553,6 +578,20 @@ export function workspaceBusinessFixture() {
       state.networkState = "closed";
       emit(view("offline", null, "access_denied", false));
       endWatch(watches[1], "transport-end", "eof");
+      const client = clients.at(-1);
+      assert.equal(client.index, 5);
+      assert.equal(client.closed, false);
+      client.closeReceipt = {
+        code: 1000,
+        reason: "",
+        at: now(),
+        localClose: false,
+      };
+      events.push([
+        "remote-client-close",
+        client.index,
+        clone(client.closeReceipt),
+      ]);
       state.lifecycleEvents.push(
         {
           event_id: "owner-revoked",
