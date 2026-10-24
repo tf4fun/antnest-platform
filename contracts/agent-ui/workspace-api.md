@@ -315,11 +315,17 @@ selection over budget is `stream_capacity_exceeded` and requires a fresh read.
 A still-valid signed caller context does not override current Agent access.
 An explicit ACP workspace observation `403/access_denied` with
 `retryable: false` remains a `403/access_denied`, `recovery: none` at command
-authorization and subsequent operation reads. It must not become a transient
-503. Missing Sessions retain 404 existence hiding, while downstream caller
-authentication failures and unavailable or malformed observations remain
-dependency failures. Gateway can reject a revoked browser credential with 401
-before forwarding; a valid cached resolution can instead reach this UI 403.
+authorization and subsequent operation reads. The same classification applies
+when owner discovery rejects HTTP initialization before a connection exists,
+including Session list and creation. Agent UI validates the complete JSON
+error envelope within 65,536 bytes and joins the original response and transport
+cleanup before reporting the denial. It does not replay initialization or
+Session/Prompt requests. Cleanup failures remain dependency failures.
+The denial must not become a transient 503. Missing Sessions retain 404
+existence hiding, while downstream caller authentication failures, unknown or
+malformed denials and unavailable observations remain dependency failures.
+Gateway can reject a revoked browser credential with 401 before forwarding;
+a valid cached resolution can instead reach this UI 403.
 
 Prompt body admission is per Agent UI process, after workload and signed user
 authentication and before consuming or parsing the body. It reserves at most

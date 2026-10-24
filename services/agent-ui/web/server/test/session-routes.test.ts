@@ -1,7 +1,8 @@
-import { TestRequest as Request } from "./support/auth-fixture.ts";
+import { TestRequest as Request, testScope } from "./support/auth-fixture.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createSessionHandler } from "../src/http/session-routes.ts";
+import { AcpHttpBridge } from "../src/adapters/acp-http.ts";
 
 const path = "http://localhost/api/app/workspace/v1/agents/agent-1/sessions";
 const headers = {
@@ -78,3 +79,48 @@ test("Session creation rejects a nonempty body and never calls ACP", async () =>
   assert.equal(response?.status, 422);
   assert.equal(contacted, 0);
 });
+
+for (const method of ["GET", "POST"]) {
+  test(`Session ${method === "GET" ? "list" : "create"} preserves an actual ACP initialize HTTP access denial`, async () => {
+    const calls: string[] = [];
+    const bodies: ReadableStream[] = [];
+    const open = (scope: { organizationId: string; principalId: string; agentId: string }) => AcpHttpBridge.open({
+      baseUrl: new URL("http://acp.invalid"), scope: testScope(scope),
+      callbacks: { update() {}, requestPermission() { return { outcome: { outcome: "cancelled" } }; } },
+      fetchImpl: async (input, init) => {
+        const request = new globalThis.Request(input, init);
+        calls.push(request.method === "POST" ? (await request.json()).method : request.method);
+        assert.equal(calls.length, 1, "an initialize denial cannot replay a Session command");
+        const response = Response.json({
+          code: "access_denied", message: "Agent access is not allowed", retryable: false,
+        }, { status: 403 });
+        if (response.body) bodies.push(response.body);
+        return response;
+      },
+    });
+    const handler = createSessionHandler({
+      list: async (scope, cursor) => {
+        const bridge = await open(scope);
+        try { return await bridge.list(cursor); }
+        finally { await bridge.close(); }
+      },
+      create: async (scope) => {
+        const bridge = await open(scope);
+        try { return await bridge.createSession(); }
+        finally { await bridge.close(); }
+      },
+    });
+    const response = await handler(new Request(path, {
+      method,
+      headers: { ...headers, "content-type": "application/json" },
+      ...(method === "POST" ? { body: "{}" } : {}),
+    }));
+    assert.equal(response?.status, 403);
+    const body = await response?.json();
+    assert.equal(body.code, "access_denied");
+    assert.equal(body.retryable, false);
+    assert.equal(body.recovery, "none");
+    assert.deepEqual(calls, ["initialize"]);
+    assert(bodies.every((body) => !body.locked), "route failure joins the original ACP response cleanup");
+  });
+}

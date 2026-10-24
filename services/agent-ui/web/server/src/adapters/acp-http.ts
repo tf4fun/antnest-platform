@@ -377,6 +377,7 @@ export class AcpHttpBridge {
       connection.close(error);
       try { await transport.close(); }
       catch (cleanup) { throw new AggregateError([error, cleanup], "ACP initialization and cleanup failed"); }
+      if (transport.initializationAccessDenied) throw new AgentAccessRevokedError();
       throw error;
     }
   }
