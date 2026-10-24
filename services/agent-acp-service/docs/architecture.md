@@ -66,6 +66,14 @@ configuration settings for these values. Legacy compatibility writer authority
 still comes from the held global worker lock; work cancellation uses the entry
 signal, and Learning retains and joins original model work.
 
+The next [fixed membership stage](../../../contracts/agent-acp/owner-assignment.md)
+provides deterministic assignment, a shared compatibility-lock option and
+fenced legacy repository factories as internal components. Production does not
+activate these components yet. Fenced legacy authority checks a current Agent
+lease while preserving the original null owner fields; it does not prove that
+historical execution stopped. New Prompts must continue to use the owned factory.
+Shared worker locks reject the old global Learning recovery helper.
+
 `AgentApplicationRouter` implements the existing application port against those
 prepared graphs. It copies request data before authorization, routes by the trusted
 organization/Agent binding and retains each accepted Run's original completion.

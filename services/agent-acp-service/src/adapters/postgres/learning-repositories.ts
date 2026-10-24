@@ -34,6 +34,17 @@ export function createLegacyLearningRepositories(
     callbacks,
   );
 }
+export function createFencedLegacyLearningRepositories(
+  kernel: PostgresKernel,
+  input: RunOwnerAuthority,
+  callbacks: Callbacks = {},
+) {
+  return repositories(
+    kernel,
+    new LearningWriteAuthority(RunWriteAuthority.fencedLegacy(input)),
+    callbacks,
+  );
+}
 function repositories(
   kernel: PostgresKernel,
   authority: LearningWriteAuthority,
