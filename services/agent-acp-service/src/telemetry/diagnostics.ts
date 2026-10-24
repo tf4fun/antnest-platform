@@ -75,6 +75,8 @@ const errorTypes = new Set([
   "ClientMcpNetworkError",
   "RequestError",
   "WorkerOwnershipLostError",
+  "AgentOwnershipLostError",
+  "OwnerIncarnationError",
 ]);
 const errorCodes = new Set<string>([
   "access_denied",
@@ -108,6 +110,9 @@ const errorCodes = new Set<string>([
   "invalid_execution_configuration",
   "configuration_conflict",
   "configuration_not_ready",
+  "configuration_unavailable",
+  "deadline_exceeded",
+  "acp_registry_unavailable",
   "agent_operation_conflict",
   "invalid_agent_settlement",
   "runtime_barrier_required",

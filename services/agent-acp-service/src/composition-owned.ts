@@ -60,6 +60,7 @@ import { ModelTransportCleanupError } from "./ports/model.js";
 import type { OwnerExecutionAdmission } from "./application/owner-forwarding.js";
 import { PeerDeadlineError } from "./ports/agent-peers.js";
 import { executionPublication } from "./domain/execution-publication.js";
+import type { PeerParticipationGuard } from "./ports/peer-participation.js";
 
 type Graph = ReturnType<typeof buildAgentComponents>;
 type Options = Omit<
@@ -72,6 +73,7 @@ type Options = Omit<
 > & {
   registration: OwnerRegistration;
   assignment?: AgentAssignment;
+  participation?: (scope: AgentOwnershipScope) => PeerParticipationGuard;
   ownerInspection?: Pick<RuntimeControllerIncarnations, "inspect">;
   configuration: PostgresExecutionConfiguration;
   legacy: ReturnType<typeof createLegacyAgentRepositories>;
@@ -114,7 +116,7 @@ export class OwnedAgentComponents {
   public constructor(private readonly options: Options) {
     this.generations = new AgentGenerations({
       registration: options.registration,
-      leases: new PostgresAgentLeases(options.kernel),
+      leases: new PostgresAgentLeases(options.kernel, options.participation),
     });
     this.inventory = new PostgresAgentStartup(options.kernel);
     this.application = new AgentApplicationRouter({
@@ -143,33 +145,42 @@ export class OwnedAgentComponents {
             return this.settleProtected(request, signal, expected);
           throw error;
         }
-        return entry.generation.dispatch(async (_value, original) => {
-          const lifetime = AbortSignal.any([original, ...(signal === undefined ? [] : [signal])]);
-          const publication = this.assertSettlementAuthority(
-            request,
-            expected,
-            entry.generation.authority.registration,
-          );
-          if (publication !== undefined) {
-            const stored = await this.options.configuration.loadOwnedAuthority(
-              entry.generation.authority.fence,
+        try {
+          return await entry.generation.dispatch(async (_value, original) => {
+            const lifetime = AbortSignal.any([original, ...(signal === undefined ? [] : [signal])]);
+            const publication = this.assertSettlementAuthority(
+              request,
+              expected,
+              entry.generation.authority.registration,
             );
+            if (publication !== undefined) {
+              const stored = await this.options.configuration.loadOwnedAuthority(
+                entry.generation.authority.fence,
+              );
+              this.assertSettlementAuthority(
+                request,
+                expected,
+                entry.generation.authority.registration,
+              );
+              publication.assertCurrent();
+              if (!isDeepStrictEqual(stored, publication.authority))
+                throw configurationUnavailable();
+            }
+            const result = await entry.settlement.settle(request, lifetime);
             this.assertSettlementAuthority(
               request,
               expected,
               entry.generation.authority.registration,
             );
-            publication.assertCurrent();
-            if (!isDeepStrictEqual(stored, publication.authority)) throw configurationUnavailable();
-          }
-          const result = await entry.settlement.settle(request, lifetime);
-          this.assertSettlementAuthority(
-            request,
-            expected,
-            entry.generation.authority.registration,
-          );
-          return result;
-        });
+            return result;
+          });
+        } catch (error) {
+          // SQL may observe lease loss before the local renewal timer. Join
+          // this original dispatch before retiring and acquiring a control lease.
+          if (!(error instanceof AgentOwnershipLostError)) throw error;
+          this.retire(entry, error);
+          return this.settleProtected(request, signal, expected);
+        }
       },
     };
     this.executionState = {
@@ -206,7 +217,7 @@ export class OwnedAgentComponents {
     for (const scope of await this.inventory.inspect()) {
       this.options.ownershipSignal.throwIfAborted();
       if (this.options.assignment !== undefined) {
-        if (!this.options.assignment.owns(scope)) continue;
+        if (!this.ownsScope(scope)) continue;
         try {
           await this.generations.runControl(
             scope,
@@ -250,7 +261,7 @@ export class OwnedAgentComponents {
       minimumRevision: request.minimum_revision,
     };
     const initial = this.options.directory.closedAgent(operation);
-    if (this.options.assignment !== undefined && !this.options.assignment.owns(operation))
+    if (!this.ownsScope(operation))
       return { applied_revision: initial.revision, outcome: "not_settled" };
     const deadline = Date.parse(request.deadline_at);
     const waiting = new AbortController();
@@ -347,7 +358,7 @@ export class OwnedAgentComponents {
     if (
       !isDeepStrictEqual(expected.owner, this.options.registration) ||
       (registration !== undefined && !isDeepStrictEqual(expected.owner, registration)) ||
-      this.options.assignment?.owns(scope) === false ||
+      !this.ownsScope(scope) ||
       !isDeepStrictEqual(expected.publication, executionPublication(publication.authority))
     )
       throw configurationUnavailable();
@@ -382,6 +393,24 @@ export class OwnedAgentComponents {
     if (failures?.length) throw new AggregateError(failures, "Retired Agent model cleanup failed");
   }
 
+  public needsPreparation(next: PublicExecutionConfiguration): boolean {
+    return next.agents.some((agent) => {
+      const scope = { organizationId: next.organization_id, agentId: agent.agent_id };
+      if (!agent.accepting_runs) return false;
+      try {
+        const entry = this.capture(scope);
+        return this.started && !entry.started;
+      } catch (error) {
+        if (
+          error instanceof AgentOwnershipLostError ||
+          (error instanceof DomainError && error.code === "agent_unavailable")
+        )
+          return this.options.assignment?.owns(scope) !== false;
+        throw error;
+      }
+    });
+  }
+
   public async prepare(next: PublicExecutionConfiguration): Promise<void> {
     this.options.ownershipSignal.throwIfAborted();
     if (this.stopped) throw unavailable();
@@ -390,12 +419,11 @@ export class OwnedAgentComponents {
     for (const entry of this.entries.values())
       if (entry.scope.organizationId === next.organization_id)
         entry.graph.learningGate.syncOrganization(next.organization_id, next.agents);
-    const assigned = next.agents.filter(
-      (agent) =>
-        this.options.assignment?.owns({
-          organizationId: next.organization_id,
-          agentId: agent.agent_id,
-        }) ?? true,
+    const assigned = next.agents.filter((agent) =>
+      this.ownsScope({
+        organizationId: next.organization_id,
+        agentId: agent.agent_id,
+      }),
     );
     const agentIds = new Set(assigned.map((agent) => agent.agent_id));
     for (const entry of this.entries.values())
@@ -726,7 +754,7 @@ export class OwnedAgentComponents {
         !isDeepStrictEqual(entry.generation.authority.registration, request.target) ||
         !isDeepStrictEqual(entry.generation.authority.fence, expected) ||
         !isDeepStrictEqual(executionPublication(publication.authority), request.publication) ||
-        this.options.assignment?.owns(identity) === false
+        !this.ownsScope(identity)
       )
         throw unavailable();
     };
@@ -735,6 +763,22 @@ export class OwnedAgentComponents {
     check();
     if (!isDeepStrictEqual(stored, publication.authority)) throw unavailable();
     return { fence: expected, signal: entry.signal, assertCurrent: check };
+  }
+
+  private ownsScope(scope: AgentOwnershipScope): boolean {
+    // A membership change chooses future owners. A still-valid generation
+    // retains its original lease and work until revocation, loss, or shutdown.
+    try {
+      this.capture(scope);
+      return true;
+    } catch (error) {
+      if (
+        !(error instanceof AgentOwnershipLostError) &&
+        !(error instanceof DomainError && error.code === "agent_unavailable")
+      )
+        throw error;
+      return this.options.assignment?.owns(scope) ?? true;
+    }
   }
 
   private capture(scope: AgentOwnershipScope): Entry {

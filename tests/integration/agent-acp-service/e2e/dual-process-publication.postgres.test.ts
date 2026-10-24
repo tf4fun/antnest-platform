@@ -37,6 +37,10 @@ import {
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { AcpWireClient, type WireFrame } from "../support/acp-wire-client.js";
 import { ProductionAcpChild } from "../support/production-acp-child.js";
+import {
+  replayPublicationOnce,
+  type PublicationResponse,
+} from "../support/publication-replay.js";
 import { readBody, startPeer, within } from "../support/production-peers.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -161,6 +165,7 @@ describe.skipIf(databaseUrl === undefined)(
       { mode: "single-entry", transport: "http", version: 1 },
       { mode: "single-entry", transport: "http-state-watch", version: 1 },
       { mode: "single-entry", transport: "http-settlement", version: 1 },
+      { mode: "survivor-takeover", transport: "websocket", version: 1 },
     ] as const)(
       "$mode / $transport / v$version",
       async ({ mode, transport, version }) => {
@@ -186,6 +191,22 @@ describe.skipIf(databaseUrl === undefined)(
         const names = ["dual-main-a-" + id, "dual-main-b-" + id];
         const temporary: string[] = [];
         const registrations = new Map<string, OwnerRegistration>();
+        const registrationNonces = new Map<string, string>();
+        const registeredChildren = new Map<string, ProductionAcpChild>();
+        const registrationHistories = new Map<
+          string,
+          { id: string; items: OwnerRegistration[] }
+        >();
+        const historyRequests: string[] = [];
+        const inspectionRequests: string[] = [];
+        const stopReceipts = new Map<
+          string,
+          {
+            receipt_id: string;
+            reason: "container_stopped";
+            observed_at: string;
+          }
+        >();
         const security = testSecurityEnvironment();
         const token = (service: string) =>
           "Bearer " +
@@ -224,6 +245,11 @@ describe.skipIf(databaseUrl === undefined)(
             member_id: i === 0 ? "acp-a" : "acp-b",
             origin: `http://127.0.0.1:${ports[i * 4 + 3]!}`,
           }));
+          for (const member of members)
+            registrationHistories.set(member.member_id, {
+              id: randomUUID(),
+              items: [],
+            });
           const identity = await startPeer(async (request, response) => {
             expect((await readBody(request)).byteLength).toBe(0);
             expect(request.method).toBe("GET");
@@ -237,11 +263,174 @@ describe.skipIf(databaseUrl === undefined)(
           });
           peers.push(identity);
           const controller = await startPeer(async (request, response) => {
-            expect(request.method).toBe("POST");
-            expect(request.url).toBe("/internal/acp-incarnations/register");
             expect(request.headers["antnest-service-authorization"]).toBe(
               token("runtime-controller"),
             );
+            response.setHeader("cache-control", "no-store");
+            if (request.url === "/internal/acp-incarnations/history") {
+              expect(request.method).toBe("POST");
+              const input = JSON.parse(
+                (await readBody(request)).toString("utf8"),
+              ) as {
+                member_id: string;
+                cursor: {
+                  history_id: string;
+                  snapshot_revision: string;
+                  after_sequence: string;
+                } | null;
+              };
+              expect(Object.keys(input).sort()).toEqual([
+                "cursor",
+                "member_id",
+              ]);
+              const history = registrationHistories.get(input.member_id);
+              if (history === undefined) {
+                response
+                  .writeHead(403, { "content-type": "application/json" })
+                  .end(
+                    JSON.stringify({
+                      code: "acp_member_not_allowed",
+                      message: "Member is not configured",
+                      retryable: false,
+                    }),
+                  );
+                return;
+              }
+              historyRequests.push(input.member_id);
+              let revision = BigInt(history.items.length),
+                after = 0n;
+              if (input.cursor !== null) {
+                const cursor = input.cursor;
+                const canonical = (value: unknown): value is string =>
+                  typeof value === "string" &&
+                  /^(?:0|[1-9][0-9]{0,18})$/u.test(value) &&
+                  BigInt(value) <= 9223372036854775807n;
+                if (
+                  typeof cursor !== "object" ||
+                  Array.isArray(cursor) ||
+                  Object.keys(cursor).sort().join(",") !==
+                    "after_sequence,history_id,snapshot_revision" ||
+                  cursor.history_id !== history.id ||
+                  !canonical(cursor.snapshot_revision) ||
+                  !canonical(cursor.after_sequence) ||
+                  BigInt(cursor.snapshot_revision) < 1n ||
+                  BigInt(cursor.snapshot_revision) > revision ||
+                  BigInt(cursor.after_sequence) >=
+                    BigInt(cursor.snapshot_revision)
+                ) {
+                  response
+                    .writeHead(400, { "content-type": "application/json" })
+                    .end(
+                      JSON.stringify({
+                        code: "invalid_request",
+                        message: "Invalid history cursor",
+                        retryable: false,
+                      }),
+                    );
+                  return;
+                }
+                revision = BigInt(cursor.snapshot_revision);
+                after = BigInt(cursor.after_sequence);
+              }
+              const end = after + 64n < revision ? after + 64n : revision;
+              const items = history.items
+                .slice(Number(after), Number(end))
+                .map((registration, index) => ({
+                  sequence: String(after + BigInt(index) + 1n),
+                  registration,
+                }));
+              response
+                .writeHead(200, { "content-type": "application/json" })
+                .end(
+                  JSON.stringify({
+                    member_id: input.member_id,
+                    history_id: history.id,
+                    snapshot_revision: String(revision),
+                    after_sequence: String(after),
+                    items,
+                    next_cursor:
+                      end < revision
+                        ? {
+                            history_id: history.id,
+                            snapshot_revision: String(revision),
+                            after_sequence: String(end),
+                          }
+                        : null,
+                  }),
+                );
+              return;
+            }
+            if (
+              request.method === "GET" &&
+              request.url?.startsWith("/internal/acp-incarnations/")
+            ) {
+              expect((await readBody(request)).byteLength).toBe(0);
+              const registrationId = request.url.slice(
+                "/internal/acp-incarnations/".length,
+              );
+              inspectionRequests.push(registrationId);
+              const registration = [...registrationHistories.values()]
+                .flatMap((history) => history.items)
+                .find((item) => item.registration_id === registrationId);
+              const child = registeredChildren.get(registrationId);
+              if (registration === undefined || child === undefined) {
+                response
+                  .writeHead(200, { "content-type": "application/json" })
+                  .end(
+                    JSON.stringify({
+                      state: "unknown",
+                      registration_id: registrationId,
+                      reason: "unregistered",
+                    }),
+                  );
+                return;
+              }
+              const crashed = child.crashReceipt();
+              if (crashed !== undefined) {
+                expect(crashed).toEqual({ code: null, signal: "SIGKILL" });
+                let receipt = stopReceipts.get(registrationId);
+                if (receipt === undefined) {
+                  receipt = Object.freeze({
+                    receipt_id: randomUUID(),
+                    reason: "container_stopped" as const,
+                    observed_at: new Date().toISOString(),
+                  });
+                  stopReceipts.set(registrationId, receipt);
+                }
+                response
+                  .writeHead(200, { "content-type": "application/json" })
+                  .end(
+                    JSON.stringify({
+                      state: "stopped",
+                      ...registration,
+                      stop_receipt: receipt,
+                    }),
+                  );
+              } else if (child.isRunning()) {
+                response
+                  .writeHead(200, { "content-type": "application/json" })
+                  .end(
+                    JSON.stringify({
+                      state: "running",
+                      ...registration,
+                      observed_at: new Date().toISOString(),
+                    }),
+                  );
+              } else {
+                response
+                  .writeHead(200, { "content-type": "application/json" })
+                  .end(
+                    JSON.stringify({
+                      state: "unknown",
+                      registration_id: registrationId,
+                      reason: "platform_unavailable",
+                    }),
+                  );
+              }
+              return;
+            }
+            expect(request.method).toBe("POST");
+            expect(request.url).toBe("/internal/acp-incarnations/register");
             const payload = JSON.parse(
               (await readBody(request)).toString("utf8"),
             ) as Record<string, unknown>;
@@ -253,6 +442,19 @@ describe.skipIf(databaseUrl === undefined)(
               (member) => member.member_id === challenge.member_id,
             );
             expect(index).toBeGreaterThanOrEqual(0);
+            const history = registrationHistories.get(challenge.member_id)!;
+            const previous = history.items.find(
+              (item) => item.incarnation_id === challenge.incarnation_id,
+            );
+            if (previous !== undefined) {
+              expect(registrationNonces.get(previous.registration_id)).toBe(
+                challenge.registration_nonce,
+              );
+              response
+                .writeHead(200, { "content-type": "application/json" })
+                .end(JSON.stringify(previous));
+              return;
+            }
             const probe = await fetch(
               `http://127.0.0.1:${ports[index * 4 + 2]!}/internal/acp-owner/incarnation/probe`,
               {
@@ -268,12 +470,22 @@ describe.skipIf(databaseUrl === undefined)(
             const observed: unknown = await probe.json();
             expect(probe.status).toBe(200);
             expect(observed).toEqual(challenge);
-            expect(registrations.has(challenge.member_id)).toBe(false);
-            const registration = {
+            if (mode !== "survivor-takeover")
+              expect(registrations.has(challenge.member_id)).toBe(false);
+            const registration = Object.freeze({
               registration_id: randomUUID(),
               member_id: challenge.member_id,
               incarnation_id: challenge.incarnation_id,
-            };
+            });
+            const child = children[index];
+            if (child === undefined)
+              throw new Error("Registration has no original ACP child");
+            history.items.push(registration);
+            registrationNonces.set(
+              registration.registration_id,
+              challenge.registration_nonce,
+            );
+            registeredChildren.set(registration.registration_id, child);
             registrations.set(challenge.member_id, registration);
             response
               .writeHead(200, { "content-type": "application/json" })
@@ -293,7 +505,10 @@ describe.skipIf(databaseUrl === undefined)(
               (await readBody(request)).toString("utf8"),
             ) as { model?: unknown; messages?: unknown };
             modelRequests.push(payload);
-            if (transport === "http-state-watch") {
+            if (
+              transport === "http-state-watch" ||
+              (mode === "survivor-takeover" && modelRequests.length === 1)
+            ) {
               modelEntered.resolve();
               await releaseModel.promise;
             }
@@ -508,8 +723,390 @@ describe.skipIf(databaseUrl === undefined)(
             },
           );
           const published: unknown = await publication.json();
-          expect(publication.status).toBe(200);
+          expect(
+            publication.status,
+            JSON.stringify({
+              response: published,
+              events: children.map((child) => child.diagnosticEvents()),
+            }),
+          ).toBe(200);
           expect(published).toMatchObject({ applied_revision: 1 });
+          if (mode === "survivor-takeover") {
+            const agentId = configuration.agents[1]!.agent_id;
+            const identity = { ...executionIdentity(), agentId };
+            const originalOwner = registrations.get("acp-b");
+            const survivor = registrations.get("acp-a");
+            const killed = children[1];
+            if (
+              originalOwner === undefined ||
+              survivor === undefined ||
+              killed === undefined
+            )
+              throw new Error("Missing original ACP survivor/crash identities");
+            const connect = async () => {
+              const client = await AcpWireClient.connect(
+                `ws://127.0.0.1:${ports[0]!}/v1/acp`,
+                identity,
+              );
+              clients.push(client);
+              if (closing) await client.close();
+              return client;
+            };
+            const originalClient = await within(
+              tracked(connect()),
+              "single-entry original B connection",
+              5000,
+            );
+            await tracked(originalClient.initialize(1));
+            const createdSession = await tracked(
+              originalClient.request("session/new", {
+                cwd: "/workspace",
+                mcpServers: [],
+              }),
+            );
+            expect(createdSession.error).toBeUndefined();
+            const originalSessionId = createdSession.result?.sessionId;
+            if (typeof originalSessionId !== "string")
+              throw new Error("Missing original B Session");
+            const originalPrompt = `Hold the original B Run without replay for ${agentId}`;
+            const running = tracked(
+              originalClient.request("session/prompt", {
+                sessionId: originalSessionId,
+                prompt: [{ type: "text", text: originalPrompt }],
+              }),
+            );
+            const originalOutcome = tracked(
+              running.then(
+                (value) => ({ ok: true as const, value }),
+                (error: unknown) => ({ ok: false as const, error }),
+              ),
+            );
+            let originalSettled = false;
+            void originalOutcome.then(() => {
+              originalSettled = true;
+            });
+            await within(
+              modelEntered.promise,
+              "original B model call entered",
+              5000,
+            );
+            expect(modelRequests).toHaveLength(1);
+            expect(originalSettled).toBe(false);
+            const originalRuns = await pool.query<{ id: string }>(
+              "SELECT id,state,terminal_class,executor_state,tool_effect_state,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs WHERE session_id=$1",
+              [originalSessionId],
+            );
+            expect(originalRuns.rows).toHaveLength(1);
+            const originalRun = originalRuns.rows[0]!;
+            expect(originalRun).toMatchObject({
+              state: "running",
+              terminal_class: null,
+              executor_state: null,
+              tool_effect_state: null,
+              execution_owner_registration_id: originalOwner.registration_id,
+              execution_owner_member_id: originalOwner.member_id,
+              execution_owner_incarnation_id: originalOwner.incarnation_id,
+              execution_owner_epoch: "1",
+            });
+            const beforeKill = await pool.query(
+              "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS live FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+              [configuration.organization_id, agentId],
+            );
+            expect(beforeKill.rows).toEqual([
+              {
+                owner_instance_id: originalOwner.incarnation_id,
+                epoch: "1",
+                live: true,
+              },
+            ]);
+            const inspectionsBeforeKill = inspectionRequests.length;
+            expect(await tracked(killed.crash())).toEqual({
+              code: null,
+              signal: "SIGKILL",
+            });
+            expect(killed.crashReceipt()).toEqual({
+              code: null,
+              signal: "SIGKILL",
+            });
+            expect(killed.isRunning()).toBe(false);
+            const disconnected = await within(
+              originalOutcome,
+              "original Prompt after real B exit",
+              10_000,
+            );
+            if (disconnected.ok) expect(disconnected.value.error).toBeDefined();
+            else {
+              expect(disconnected.error).toBeInstanceOf(Error);
+              expect(String(disconnected.error)).toMatch(
+                /ACP connection closed before the response|WebSocket is not open|socket closed|ECONNRESET/iu,
+              );
+            }
+            await tracked(originalClient.close());
+            const deadLease = await pool.query<{ expires_at: Date }>(
+              "SELECT owner_instance_id,epoch::text,expires_at FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+              [configuration.organization_id, agentId],
+            );
+            expect(deadLease.rows).toHaveLength(1);
+            expect(deadLease.rows[0]).toMatchObject({
+              owner_instance_id: originalOwner.incarnation_id,
+              epoch: "1",
+            });
+            const originalExpiry = deadLease.rows[0]!.expires_at;
+            // Only the database clock advances. No fixture UPDATE, lease release,
+            // fabricated stop row or direct recovery call can admit this takeover.
+            await expect
+              .poll(
+                async () =>
+                  (
+                    await pool.query<{ expired: boolean }>(
+                      "SELECT clock_timestamp()>=$1::timestamptz AS expired",
+                      [originalExpiry],
+                    )
+                  ).rows[0]?.expired,
+                { timeout: 45_000, interval: 100 },
+              )
+              .toBe(true);
+
+            const refreshed = structuredClone(configuration);
+            refreshed.revision = 2;
+            const publicationBody = JSON.stringify(refreshed);
+            const publicationLifetime = AbortSignal.timeout(15_000);
+            const publicationAttempts: PublicationResponse[] = [];
+            const reapplied = await within(
+              tracked(
+                replayPublicationOnce(async (signal) => {
+                  const response = await fetch(
+                    `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/apply-execution-snapshot`,
+                    {
+                      method: "POST",
+                      headers: {
+                        ...workloadHeaders("agent-controller"),
+                        "content-type": "application/json",
+                        connection: "close",
+                      },
+                      body: publicationBody,
+                      signal,
+                    },
+                  );
+                  const attempt = {
+                    status: response.status,
+                    body: (await response.json()) as unknown,
+                  };
+                  publicationAttempts.push(attempt);
+                  // Preserve both original receipts even when the test reporter
+                  // omits console output for passing cases. Join the actual write.
+                  await new Promise<void>((resolve, reject) => {
+                    process.stdout.write(
+                      `Survivor publication receipt: ${JSON.stringify({ attempt: publicationAttempts.length, ...attempt })}\n`,
+                      (error) => (error == null ? resolve() : reject(error)),
+                    );
+                  });
+                  return attempt;
+                }, publicationLifetime),
+              ),
+              "survivor publication ACK after natural lease expiry",
+              15_000,
+            );
+            expect(
+              reapplied.status,
+              JSON.stringify({
+                response: reapplied.body,
+                events: children.map((child) => child.diagnosticEvents()),
+              }),
+            ).toBe(200);
+            expect(reapplied.body).toMatchObject({ applied_revision: 2 });
+            expect(historyRequests).toContain("acp-b");
+            expect(inspectionRequests.slice(inspectionsBeforeKill)).toContain(
+              originalOwner.registration_id,
+            );
+            expect(registrationHistories.get("acp-b")?.items).toEqual([
+              originalOwner,
+            ]);
+            expect(registrations.size).toBe(2);
+            const stop = stopReceipts.get(originalOwner.registration_id);
+            if (stop === undefined)
+              throw new Error(
+                "Survivor did not obtain original B stop evidence",
+              );
+            const recovered = await pool.query(
+              "SELECT id,state,terminal_class,executor_state,tool_effect_state,error_class,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs WHERE id=$1",
+              [originalRun.id],
+            );
+            expect(recovered.rows).toEqual([
+              {
+                id: originalRun.id,
+                state: "failed",
+                terminal_class: "failed",
+                executor_state: "quiescent",
+                tool_effect_state: "none",
+                error_class: "service_restarted_during_run",
+                execution_owner_registration_id: originalOwner.registration_id,
+                execution_owner_member_id: originalOwner.member_id,
+                execution_owner_incarnation_id: originalOwner.incarnation_id,
+                execution_owner_epoch: "1",
+              },
+            ]);
+            const audit = await pool.query(
+              "SELECT run_id,receipt_id,organization_id,agent_id,original_registration_id,original_member_id,original_incarnation_id,original_epoch::text,recovering_registration_id,recovering_member_id,recovering_incarnation_id,recovering_epoch::text FROM run_owner_recoveries WHERE run_id=$1",
+              [originalRun.id],
+            );
+            expect(audit.rows).toEqual([
+              {
+                run_id: originalRun.id,
+                receipt_id: stop.receipt_id,
+                organization_id: configuration.organization_id,
+                agent_id: agentId,
+                original_registration_id: originalOwner.registration_id,
+                original_member_id: originalOwner.member_id,
+                original_incarnation_id: originalOwner.incarnation_id,
+                original_epoch: "1",
+                recovering_registration_id: survivor.registration_id,
+                recovering_member_id: survivor.member_id,
+                recovering_incarnation_id: survivor.incarnation_id,
+                recovering_epoch: "2",
+              },
+            ]);
+            expect(
+              (
+                await pool.query(
+                  "SELECT receipt_id,registration_id,inspection FROM owner_stop_receipts WHERE registration_id=$1",
+                  [originalOwner.registration_id],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                receipt_id: stop.receipt_id,
+                registration_id: originalOwner.registration_id,
+                inspection: {
+                  state: "stopped",
+                  ...originalOwner,
+                  stop_receipt: stop,
+                },
+              },
+            ]);
+            expect(
+              (
+                await pool.query(
+                  "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS live FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                  [configuration.organization_id, agentId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                owner_instance_id: survivor.incarnation_id,
+                epoch: "2",
+                live: true,
+              },
+            ]);
+            expect(modelRequests).toHaveLength(1);
+
+            const nextClient = await within(
+              tracked(connect()),
+              "same-Agent survivor connection through A",
+              5000,
+            );
+            await tracked(nextClient.initialize(1));
+            const nextSession = await tracked(
+              nextClient.request("session/new", {
+                cwd: "/workspace",
+                mcpServers: [],
+              }),
+            );
+            expect(nextSession.error).toBeUndefined();
+            const nextSessionId = nextSession.result?.sessionId;
+            if (typeof nextSessionId !== "string")
+              throw new Error("Missing survivor Session");
+            expect(nextSessionId).not.toBe(originalSessionId);
+            const nextPrompt = `Complete a new Prompt on survivor A for ${agentId}`;
+            const completed = await tracked(
+              nextClient.request("session/prompt", {
+                sessionId: nextSessionId,
+                prompt: [{ type: "text", text: nextPrompt }],
+              }),
+            );
+            expect(completed.error).toBeUndefined();
+            await expect
+              .poll(
+                async () =>
+                  (
+                    await pool.query<{ state: string }>(
+                      "SELECT state FROM runs WHERE session_id=$1",
+                      [nextSessionId],
+                    )
+                  ).rows[0]?.state,
+                { timeout: 10_000 },
+              )
+              .toBe("completed");
+            expect(
+              (
+                await pool.query(
+                  "SELECT state,terminal_class,executor_state,tool_effect_state,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs WHERE session_id=$1",
+                  [nextSessionId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                state: "completed",
+                terminal_class: "completed",
+                executor_state: "quiescent",
+                tool_effect_state: "none",
+                execution_owner_registration_id: survivor.registration_id,
+                execution_owner_member_id: survivor.member_id,
+                execution_owner_incarnation_id: survivor.incarnation_id,
+                execution_owner_epoch: "2",
+              },
+            ]);
+            expect(
+              (
+                await pool.query(
+                  "SELECT kind,payload->'content' AS content FROM session_messages WHERE session_id=$1 AND kind IN ('user_message','agent_message') ORDER BY sequence",
+                  [originalSessionId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                kind: "user_message",
+                content: [{ type: "text", text: originalPrompt }],
+              },
+            ]);
+            expect(
+              (
+                await pool.query(
+                  "SELECT kind,payload->'content' AS content FROM session_messages WHERE session_id=$1 AND kind IN ('user_message','agent_message') ORDER BY sequence",
+                  [nextSessionId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                kind: "user_message",
+                content: [{ type: "text", text: nextPrompt }],
+              },
+              {
+                kind: "agent_message",
+                content: [{ type: "text", text: reply }],
+              },
+            ]);
+            expect(
+              (
+                await pool.query("SELECT id FROM runs WHERE agent_id=$1", [
+                  agentId,
+                ])
+              ).rows,
+            ).toHaveLength(2);
+            expect(modelRequests).toHaveLength(2);
+            expect(JSON.stringify(modelRequests[0]?.messages)).toContain(
+              originalPrompt,
+            );
+            expect(JSON.stringify(modelRequests[1]?.messages)).toContain(
+              nextPrompt,
+            );
+            expect(JSON.stringify(modelRequests[1]?.messages)).not.toContain(
+              originalPrompt,
+            );
+            expect(runtimeReads[1]).toBeGreaterThan(0);
+            releaseModel.resolve();
+            await tracked(nextClient.close());
+          }
           if (transport === "http-state-watch") {
             const agentId = configuration.agents[1]!.agent_id;
             const identity = { ...executionIdentity(), agentId };
@@ -828,7 +1425,8 @@ describe.skipIf(databaseUrl === undefined)(
               ).rows,
             ).toEqual(persisted.rows);
           }
-          for (const i of transport === "http-state-watch"
+          for (const i of mode === "survivor-takeover" ||
+          transport === "http-state-watch"
             ? []
             : transport === "http-settlement"
               ? [1]
@@ -1158,6 +1756,7 @@ describe.skipIf(databaseUrl === undefined)(
             expect(runtimeReads[1]).toBeGreaterThan(0);
           }
           if (
+            mode !== "survivor-takeover" &&
             transport !== "http-state-watch" &&
             transport !== "http-settlement"
           ) {
@@ -1216,12 +1815,21 @@ describe.skipIf(databaseUrl === undefined)(
             const exclusive = await PostgresWorkerLock.acquire(pool);
             await exclusive.release();
             for (const port of ports) await refused(port);
-            for (const directory of temporary)
+            for (const [index, directory] of temporary.entries()) {
+              if (children[index]?.crashReceipt() !== undefined) {
+                // A verified SIGKILL cannot run process-local finally blocks.
+                // The fixture owns this dead process's private temp mount and
+                // removes it only after joining its original exit and close.
+                for (const name of readdirSync(directory))
+                  if (name.startsWith("antnest-acp-runtime-"))
+                    rmSync(join(directory, name), { recursive: true });
+              }
               expect(
                 readdirSync(directory).filter((name) =>
                   name.startsWith("antnest-acp-runtime-"),
                 ),
               ).toEqual([]);
+            }
           } catch (error) {
             errors.push(error);
           }
@@ -1243,6 +1851,11 @@ describe.skipIf(databaseUrl === undefined)(
           }
           rmSync(root, { recursive: true, force: true });
         }
+        if (errors.length > 0)
+          console.error(
+            "Dual-process ACP events after original child close:",
+            JSON.stringify(children.map((child) => child.diagnosticEvents())),
+          );
         if (errors.length === 1) throw errors[0];
         if (errors.length)
           throw new AggregateError(

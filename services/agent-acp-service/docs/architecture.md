@@ -21,7 +21,8 @@ for earlier Agent commits and blocks later commits until publication finishes.
 The [connection admission contract](../../../contracts/agent-acp/connection-admission.md)
 defines the shared HTTP/WebSocket quotas. These quotas remain process-local.
 Non-peer mode retains an exclusive database worker lock; registered peer mode
-uses the same key's shared compatibility lock and fixed Agent assignment.
+uses the same key's shared compatibility lock, stable preferred assignment and
+guarded survivor takeover.
 
 Run admission also reserves one durable slot per `(organization_id, agent_id)`.
 The intent transaction reads that scope from its locked Session, and PostgreSQL
@@ -68,9 +69,26 @@ uses the current Agent fence. Work cancellation uses the entry signal, and
 Learning retains and joins original model work.
 
 Peer production activates the [fixed membership stage](../../../contracts/agent-acp/owner-assignment.md).
-The full pinned member catalog determines each Agent's preferred member;
-publication, startup inventory and lifecycle settlement cannot acquire another
-member's scope. Fenced legacy authority preserves original null owner fields;
+The full pinned member catalog and original hash still determine each Agent's
+preferred member. Before recovery, lease acquisition or peer/business listening,
+the registered process joins the shared participation ledger at revision `H`.
+Availability reads the complete RC history for every configured member and
+inspects each original registration tuple. `unknown`, a live predecessor,
+transport failure or lease expiry cannot stand in for a stopped result. Only a
+member whose original registrations are all proven stopped can have its partition
+assigned to a live survivor by walking the original member ring. Empty history
+remains unregistered and does not automatically reassign that partition.
+
+`AgentAssignment.acquireGuard` checks the target and captures `H` from the same
+availability view. Lease acquisition checks that membership digest and `H` in
+its original SQL transaction; final publication ACK checks its captured guard
+in the transaction that verifies the complete authority and fence union. A new
+participant changes `H`, invalidating earlier captures. Reading history or a
+revision again outside those transactions is not an activation barrier.
+Migration 31 requires all previous-version workers and pending startups to exit
+before the new version is deployed. Its advisory SQL lock cannot exclude an old
+startup resuming later; the deployment retirement boundary remains required.
+Fenced legacy authority preserves original null owner fields;
 it does not prove that historical execution stopped. New Prompts use the owned
 factory. Shared worker locks reject the old global Learning recovery helper.
 Unknown legacy execution remains protected without manufacturing quiescence,
@@ -105,13 +123,39 @@ available.
 
 Optional peer mode connects the private listener and membership pin to production
 bootstrap. Publication captures the frozen complete private authority inside the
-organization queue, then collects every member's receipt outside that queue using
-the original apply deadline. Each member reports only its own prepared accepting
-generations after original revocations have joined. A zero-owner member still
-checks the sealed authority and supplies a receipt. The sole aggregator verifies
-the complete fence union with the original authority in one final transaction;
+organization queue, then discovers complete member histories and collects live
+members' receipts outside that queue using the original apply deadline. Each
+live member reports only its own prepared accepting generations after original
+revocations have joined. A live zero-owner member still checks the sealed
+authority and supplies a receipt. Exact stopped facts remain distinct from live
+joined receipts; absent members stay in the pinned catalog. The sole aggregator
+verifies the complete fence union, original authority and captured participation
+guard in one final transaction;
 peer leaf application neither saves nor aggregates. Shutdown and failed startup
 join original peer handlers before shared resource cleanup.
+
+Local preparation starts revocation before refreshing member availability and
+acquiring leases, using the original publication deadline and cancellation.
+This includes the first publication after another replica joins the ledger.
+Overlapping refreshes may reuse the newer published capture only when their
+complete guard, member histories/stop proofs and live registrations are equal;
+each refresh still completes its own SQL assertion and cancellation checks.
+
+An original generation retirement can temporarily leave the complete owner fence
+union unavailable. Publication then returns retryable `configuration_unavailable`;
+the same snapshot can be applied again after the original retirement joins.
+The dual-process takeover fixture allows one such replay within its original
+15-second budget and retains both receipts. Initial publication still requires
+one successful response; sustained failure, incomplete fences and cleanup failure
+remain test failures. Fixed-stage internal logs diagnose publication failures
+even when trace export is disabled, without logging authority or credentials.
+
+Background availability refresh reconciles the current publication with natural
+lease expiry. The survivor acquires a new epoch and recovers original Run and
+Learning facts under its fence before opening new work; it does not replay an
+old Prompt. A returning preferred member does not migrate a healthy existing
+Run or lease. Business ingress follows the actual live lease and its complete
+registration, rather than substituting the preferred member for its holder.
 
 The composition tests cover original revocation joins and unknown legacy
 protection. `dual-process-publication.postgres.test.ts` additionally starts two
@@ -119,15 +163,24 @@ actual `main.ts` processes from empty leases, publishes through one control
 endpoint, executes one durable Prompt per owner and checks original exits and
 resource cleanup. Its authenticated RC, Identity, Provider and Runtime peers
 are controlled fixtures. The v1/v2 WebSocket variants now also use one public
-ACP origin for both owners. The ingress resolves the fixed member and current
+ACP origin for both owners. The ingress resolves the actual owner and current
 lease, and the receiver revalidates the original CCT, complete authority and
 prepared generation. ACP traffic remains owned by the existing SDK; private
 frame envelopes separate business messages from the original cleanup receipt.
-An ingress missing that receipt retains the unresolved result for later scope
-revocation; an owner that has joined its original work may separately report
+An ingress missing that receipt retains the original unresolved result. Only
+exact stop proof for that connection's original registration can discharge the
+remote missing-receipt result after its local physical connection and writes
+have joined. Independent local send or cleanup failures still block revocation
+and shutdown. An owner that has joined its original work may separately report
 receipt delivery failure. See [owner forwarding](../../../contracts/agent-acp/owner-forwarding.md).
-HTTP/SSE, state/control and source forwarding, crash takeover and actual
-two-replica Docker integration remain pending; absent members stay in the catalog.
+HTTP/SSE, state/control and source forwarding are connected. Existing opaque
+HTTP handles keep their original owner and are not rebound after takeover.
+The controlled two-Node fault scenario kills B, waits for natural lease expiry,
+recovers its held Run on A and executes a new same-Agent Prompt without replay.
+The [c-acp-survivor profile](../../../tests/e2e/acp-survivor/README.md) exercises
+two-replica Docker/browser recovery. Admission requires the complete remote gate
+and reviewed evidence for the exact candidate, including normal shutdown and
+actual resource cleanup.
 
 ## Optional Incarnation Bootstrap
 
@@ -148,8 +201,10 @@ validated optional owner configuration
   -> Runtime Controller registration and validated matching receipt
   -> PostgreSQL migration and readiness check
   -> same-key compatibility lock (peer shared / non-peer exclusive)
+  -> peer participation join and complete RC history/stop discovery (peer mode)
   -> assigned owned stop-proof recovery and legacy protection in peer mode
   -> fixed Agent generations and sealed configuration restoration
+  -> independent peer listener (peer mode)
   -> ordinary control/workspace listeners
 ```
 
@@ -231,8 +286,9 @@ Bootstrap is optional. Its validated identity now binds production Agent leases,
 fenced writers and scoped background work. Without owner settings, startup
 retains the legacy path. Non-peer mode remains exclusive; peer mode partitions
 Agents under the shared compatibility lock. The independent ownership-loss
-fail-stop channel remains. HTTP/SSE, state/control and source forwarding, crash takeover and actual
-two-replica Docker integration remain required.
+fail-stop channel remains. HTTP/SSE, state/control and source forwarding and
+guarded survivor takeover are connected. Actual two-replica Docker, browser and
+final operations acceptance remain required.
 
 ## Mission
 
@@ -578,8 +634,10 @@ Registered owner mode captures the generation in production and cancels abandone
 legacy permissions only within approved scopes in non-peer mode. Peer mode
 preserves unknown legacy permissions. Predecessor Run recovery uses the dedicated
 stopped-proof transaction. HTTP/SSE, state/control and source requests use the
-fixed owner boundary. Surviving-member crash takeover and actual two-replica
-Docker integration remain pending.
+authenticated owner boundary, following the actual lease. Guarded survivor
+takeover has controlled two-Node coverage. The `c-acp-survivor` profile exercises
+the two-replica Docker/browser workflow; admission requires the complete remote
+gate and reviewed evidence for the exact candidate.
 
 ## Module Map
 
@@ -728,8 +786,10 @@ External and durable effects check authority before the call and after either
 success or failure, while retaining the original operation and cleanup until
 settlement. Cancellation alone never proves a pending runner or SQL operation
 has stopped. Context loading and checkpoint persistence use the same fence.
-Active-active execution still requires the remaining handoff and two-replica
-acceptance, independently of HTTP adapters.
+Peer assignment, owner routing and guarded survivor recovery are connected.
+The `c-acp-survivor` two-replica Docker/browser profile checks survivor recovery
+and actual resource cleanup. Admission requires the complete remote gate and
+reviewed evidence for the exact candidate.
 
 The legacy startup adapters additionally support explicit organization/Agent
 selection for abandoned permission cancellation, Run recovery and Learning
@@ -760,8 +820,9 @@ event journal. A single PostgreSQL statement reads visible messages after a
 sequence, the snapshot's maximum sequence, and current Run state. Local event
 invalidations trigger reads and are coalesced while delivery is active; there
 is no polling timer. Subscribe before catch-up, advance the cursor only after
-delivery, and re-read when invalidated during delivery. The existing single
-worker per database owns all live invalidations; this is not multi-worker fanout.
+delivery, and re-read when invalidated during delivery. Each Agent's active owner
+owns its live invalidations; forwarded connections consume that owner's original
+stream. This adds no cross-process invalidation fanout.
 
 Model/Tool execution and terminal persistence never wait for socket delivery.
 The scoped Bridge intent observation reads a Run's durable `error_class` with
@@ -957,7 +1018,10 @@ Both paths retain the original generation and source-read gate across awaits;
 changed projections are removed only under that same live Agent fence. Peer
 fetches, original service work, readers and sends are joined before retirement;
 independent cleanup failures prevent a successful retirement acknowledgement.
-Surviving-member crash takeover and two-replica Docker integration remain pending.
+Guarded survivor takeover has controlled two-Node coverage. The `c-acp-survivor`
+profile defines its two-replica Docker/browser and resource cleanup checks;
+admission requires the complete remote gate and reviewed evidence for the exact
+candidate.
 Foreground isolation does not establish another Agent's background claim recovery.
 
 ## Workspace Bridge Extension

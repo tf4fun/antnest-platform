@@ -8,6 +8,7 @@ import { startAgentAcpService, type RunningAgentAcpService } from "../src/compos
 import { loadConfig } from "../src/config.js";
 import * as migrations from "../src/adapters/postgres/migrate.js";
 import { PostgresPeerMembership } from "../src/adapters/postgres/peer-membership.js";
+import { PostgresPeerParticipation } from "../src/adapters/postgres/peer-participation.js";
 import { PostgresWorkerLock } from "../src/adapters/postgres/worker-lock.js";
 import { PostgresAgentStartup } from "../src/adapters/postgres/agent-startup.js";
 import { PostgresExecutionConfiguration } from "../src/adapters/postgres/execution-configuration.js";
@@ -19,6 +20,7 @@ import { NOOP_TELEMETRY } from "../src/ports/telemetry.js";
 import { testSecurityEnvironment, workloadHeaders } from "./support/auth-fixture.js";
 import { executionConfiguration } from "./fixtures/execution-configuration.js";
 import { PeerAcknowledgement } from "../src/application/peer-acknowledgement.js";
+import type { OwnerRegistration } from "../src/application/owner-incarnation.js";
 import type { ExecutionConfiguration } from "../src/domain/execution-configuration.js";
 
 async function fixture(
@@ -67,13 +69,15 @@ async function fixture(
   );
   vi.spyOn(PostgresAgentStartup.prototype, "inspect").mockResolvedValue([]);
   vi.spyOn(PostgresExecutionConfiguration.prototype, "listOrganizations").mockResolvedValue([]);
-  vi.spyOn(RuntimeControllerIncarnations.prototype, "register").mockImplementation((request) =>
-    Promise.resolve({
+  let registration: OwnerRegistration | undefined;
+  vi.spyOn(RuntimeControllerIncarnations.prototype, "register").mockImplementation((request) => {
+    registration = {
       registration_id: randomUUID(),
       member_id: request.member_id,
       incarnation_id: request.incarnation_id,
-    }),
-  );
+    };
+    return Promise.resolve(structuredClone(registration));
+  });
   const loss = Promise.withResolvers<Error>();
   vi.spyOn(PostgresWorkerLock, "acquire").mockResolvedValue({
     isHeld: () => true,
@@ -97,6 +101,52 @@ async function fixture(
       callersFile: join(directory, "callers.json"),
       tokenDirectory: join(directory, "tokens"),
     };
+    const historyId = randomUUID();
+    let joined: OwnerRegistration | undefined;
+    const original = () => {
+      if (registration === undefined) throw new Error("Owner has not registered");
+      return structuredClone(registration);
+    };
+    const stamp = () => {
+      const membership = pin.mock.calls[0]?.[0];
+      if (membership === undefined || joined === undefined)
+        throw new Error("Owner has not joined the pinned membership");
+      expect(joined).toEqual(original());
+      return { membershipSha256: membership.sha256, revision: "1" };
+    };
+    vi.spyOn(PostgresPeerParticipation.prototype, "join").mockImplementation((input) => {
+      expect(pin).toHaveBeenCalledOnce();
+      expect(input).toEqual(original());
+      expect(input.member_id).toBe("acp-a");
+      joined = structuredClone(input);
+      return Promise.resolve();
+    });
+    vi.spyOn(PostgresPeerParticipation.prototype, "capture").mockImplementation(() =>
+      Promise.resolve({ ...stamp(), registrations: [original()] }),
+    );
+    vi.spyOn(PostgresPeerParticipation.prototype, "assert").mockImplementation((input) => {
+      expect(input).toEqual(stamp());
+      return Promise.resolve();
+    });
+    vi.spyOn(RuntimeControllerIncarnations.prototype, "history").mockImplementation((input) => {
+      expect(input).toEqual({ member_id: "acp-a", cursor: null });
+      return Promise.resolve({
+        member_id: "acp-a",
+        history_id: historyId,
+        snapshot_revision: "1",
+        after_sequence: "0",
+        items: [{ sequence: "1", registration: original() }],
+        next_cursor: null,
+      });
+    });
+    vi.spyOn(RuntimeControllerIncarnations.prototype, "inspect").mockImplementation((input) => {
+      expect(input).toEqual(original());
+      return Promise.resolve({
+        ...original(),
+        state: "running",
+        observed_at: new Date().toISOString(),
+      });
+    });
   }
   const failures: unknown[] = [];
   try {

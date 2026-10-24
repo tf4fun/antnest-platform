@@ -20,6 +20,8 @@ import {
   type ExecutionConfigurationRepository,
 } from "../../ports/execution-configuration.js";
 import type { PostgresKernel } from "./kernel.js";
+import { lockPeerParticipation } from "./peer-participation.js";
+import type { PeerParticipationGuard } from "../../ports/peer-participation.js";
 import type { SecretBox } from "./secret-box.js";
 import {
   lockRuntimeBarrierOrganization,
@@ -202,11 +204,16 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
   public async confirmOwnedAuthority(
     input: ExecutionConfiguration,
     inputs: readonly AgentOwnershipFence[],
-    options: { timeoutMs?: number } = {},
+    options: { timeoutMs?: number; participation?: PeerParticipationGuard } = {},
   ): Promise<void> {
     const timeoutMs = transactionBudget(options.timeoutMs ?? 10_000);
     if (timeoutMs > 10_000) throw new RangeError("Publication confirmation exceeds its deadline");
     const expected = parseExecutionConfiguration(structuredClone(input));
+    const captured = options.participation;
+    const participation =
+      captured === undefined
+        ? undefined
+        : { membershipSha256: captured.membershipSha256, revision: captured.revision };
     const fences = inputs
       .map(ownershipFence)
       .sort((left, right) =>
@@ -228,6 +235,7 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
       throw changed();
     await this.kernel.transaction(
       async (client) => {
+        if (participation !== undefined) await lockPeerParticipation(client, participation);
         await lockRuntimeBarrierOrganization(client, expected.organization_id);
         for (const fence of fences) {
           const locked = await client.query(

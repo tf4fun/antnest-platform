@@ -106,8 +106,8 @@ Owner discovery can reject an unauthorized Agent before ACP initialize. An HTTP
 `403` with `code=access_denied` and `retryable=false` retains that classification
 through the Agent UI adapter after its original response and transport cleanup.
 It must not become a generic dependency 503 or trigger replay. The Agent UI
-consumer implementation and its peer-mode browser acceptance are a separate
-pending service batch; this ACP producer does not complete that workflow.
+consumer preserves this classification. Peer-mode browser acceptance is a
+separate requirement of the complete remote delivery gate.
 
 Public DELETE still requires its original authenticated identity and CCT, and
 the existing empty-body validation. It addresses the original transport without
@@ -144,12 +144,40 @@ shutdown even after the original connection's receipt expires. Public DELETE
 still requires the original owner's 202; disconnect, timeout, 404 or a newer
 lease never substitutes for it. The aggregate publication binds currently
 identified registrations; it does not prove cleanup of a historical incarnation.
-That history and stopped-member proof remain part of the later takeover batch.
+Survivor takeover consumes that history and the original stopped-member proof;
+two-replica fault acceptance remains required.
 
 Acceptance includes actual two-process HTTP single-entry Prompts and SSE
 notifications, moving an existing handle to another ingress, permission and
 cancel traffic, tampered/foreign-scope handles, DELETE after execution lease
 loss, held cleanup preventing revocation ACK, and retained cleanup failures.
+
+## Original peer loss and Bridge retirement
+
+An authenticated DELETE with a valid original opaque handle may return HTTP 503
+with `code=acp_http_peer_disconnected`, `retryable=true`, and the static message
+`Original ACP HTTP peer disconnected`. This is a narrow retirement qualification,
+not the original owner's 202 cleanup receipt. It never proves remote cleanup,
+Run settlement, lease expiry, process death, or permission to replay a Prompt.
+
+Only the ingress that attempted the fixed original peer may emit this code, when
+that fetch obtained no Response and its complete native error cause consists
+only of refused/reset connections (`ECONNREFUSED`/`ECONNRESET`). The original
+DELETE upload must reach EOF with zero bytes. Its fetch and the same handle's
+non-DELETE relay tasks must have joined
+without independent cleanup failures. A live competing DELETE, an unfinished
+local task, caller cancellation, a deadline, TLS/authentication failure, unknown
+error, actual upstream HTTP response (including 503/404), or retained independent
+cleanup failure cannot qualify. Other handles are not cancelled by this rule.
+
+The Agent UI consumer strictly validates the original DELETE response, joins its
+original response body, SDK stream, requests, state watch and retry decisions,
+and retains the original failed close promise. Only after those tasks join may
+the next authenticated observation create one fresh Bridge replacement. It
+neither replays an old Prompt nor reinterprets this qualification as successful
+cleanup. Normal owner fencing and authorization govern every subsequent
+admission. The service batches alone do not complete browser recovery or #49;
+actual two-replica Docker business acceptance remains the integration gate.
 
 ## Remaining transport and integration batches
 
@@ -159,9 +187,9 @@ original transport owner; DELETE does not require a current live execution lease
 Cleanup cannot be answered by a new owner or fabricated from a stopped-process
 proof. New execution and original-connection cleanup are separate admissions.
 
-HTTP/SSE forwarding is wired into the production composition. Its candidate still
-requires complete remote admission. State/control/source forwarding,
-deceased-member takeover, and actual two-replica Docker acceptance remain required.
+HTTP/SSE, state/control/source forwarding, and survivor takeover are wired into
+the production composition. Actual two-replica Docker acceptance is a separate
+requirement of the complete remote delivery gate.
 A WebSocket Prompt passing alone
 does not complete #49. Acceptance includes both protocols, bidirectional
 permission traffic, cancellation, revoked access, held original cleanup, and

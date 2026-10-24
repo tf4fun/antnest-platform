@@ -585,6 +585,15 @@
       "message": "Skill learning status is unavailable",
       "surfaces": ["http"]
     },
+    "acp_http_peer_disconnected": {
+      "class": "dependency",
+      "json_rpc_code": null,
+      "http_status": 503,
+      "retryable": true,
+      "recovery": "reconnect",
+      "message": "Original ACP HTTP peer disconnected",
+      "surfaces": ["http"]
+    },
     "acp_http_unavailable": {
       "class": "dependency",
       "json_rpc_code": null,

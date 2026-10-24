@@ -26,6 +26,8 @@ import {
 import { DomainError } from "../domain/errors.js";
 import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { AcpHttpTransport, HttpOwnerAdmission } from "./acp/http-transport.js";
+import { isDisconnectedHttpPeer } from "./http-peer-disconnection.js";
+import { HttpRelayBodyCleanupError, OwnedRelayResponse } from "./owned-relay-response.js";
 import { httpFailure } from "./public-error.js";
 import type { RequestAuthentication } from "./request-authentication.js";
 import { trustedIdentity } from "./trusted-identity.js";
@@ -310,7 +312,8 @@ export class OwnerHttpTransport {
       await operation(signal);
     } catch (error) {
       this.options.report(error);
-      if (error instanceof HttpRelayCleanupError) this.cleanupFailures.set(identity, error);
+      if (error instanceof HttpRelayCleanupError || error instanceof HttpRelayBodyCleanupError)
+        this.cleanupFailures.set(identity, error);
       this.fail(response, error);
     } finally {
       signal.removeEventListener("abort", interrupt);
@@ -349,7 +352,12 @@ export class OwnerHttpTransport {
     let upstream: Response | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let primary: unknown;
+    let peerFailure: { error: unknown } | undefined;
     let failures: unknown[];
+    const uploadState = { bytes: 0, completed: false };
+    const countUpload = (chunk: Buffer | string) => {
+      uploadState.bytes += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+    };
     const key = target === undefined ? this.connection(request) : `new:${target.request_id}`;
     if (key === undefined) throw denied();
     const capacity = this.relayCapacity.get(key) ?? {
@@ -373,8 +381,14 @@ export class OwnerHttpTransport {
       const body =
         request.method === "POST" || request.method === "DELETE" ? new PassThrough() : undefined;
       if (body !== undefined) {
+        if (request.method === "DELETE") request.on("data", countUpload);
         const upload = pipeline(request, body, { signal });
-        void upload.catch(() => undefined);
+        void upload.then(
+          () => {
+            uploadState.completed = true;
+          },
+          () => undefined,
+        );
         originals.push(upload);
       } else {
         const input = finished(request, { cleanup: true });
@@ -394,8 +408,16 @@ export class OwnerHttpTransport {
         } as RequestInit,
       );
       originals.push(pending);
-      upstream = await pending;
+      try {
+        upstream = await pending;
+      } catch (error) {
+        peerFailure = { error };
+        throw error;
+      }
       clearTimeout(timer);
+      const owned = new OwnedRelayResponse(upstream, signal);
+      upstream = owned.response;
+      originals.push(owned.closed);
       const handle = upstream.headers.get(connectionHeader);
       if (handle !== null) {
         const bound = this.options.handles.open(handle);
@@ -440,13 +462,14 @@ export class OwnerHttpTransport {
         originals.push(upstream.body.cancel());
       // A closed public response is not the completion of its upload or reader.
       const settled = await Promise.allSettled(originals);
+      request.off("data", countUpload);
       failures = settled.flatMap((result) =>
         result.status === "rejected" && result.reason !== primary && !cancelledPump(result.reason)
           ? [result.reason as unknown]
           : [],
       );
       capacity.references -= 1;
-      capacity.failed ||= failures.length !== 0;
+      capacity.failed ||= failures.length !== 0 || primary instanceof HttpRelayBodyCleanupError;
       if (capacity.references === 0 && !capacity.failed) {
         this.relayCapacity.delete(capacity.key);
         capacity.lease.release();
@@ -454,10 +477,60 @@ export class OwnerHttpTransport {
     }
     if (failures.length)
       throw new HttpRelayCleanupError(primary === undefined ? failures : [primary, ...failures]);
+    if (
+      target === undefined &&
+      request.method === "DELETE" &&
+      upstream === undefined &&
+      uploadState.completed &&
+      request.complete &&
+      !request.aborted &&
+      request.readableEnded &&
+      uploadState.bytes === 0 &&
+      peerFailure !== undefined &&
+      isDisconnectedHttpPeer(peerFailure.error)
+    )
+      await this.rejectDisconnectedHandle(response, identity, key, parent, peerFailure.error);
     if (primary !== undefined)
       throw primary instanceof Error
         ? primary
         : new Error("HTTP forwarding failed", { cause: primary });
+  }
+
+  private async rejectDisconnectedHandle(
+    response: ServerResponse,
+    identity: ExecutionIdentity,
+    handle: string,
+    parent: AbortSignal,
+    cause: unknown,
+  ): Promise<void> {
+    for (;;) {
+      if (
+        this.stopped ||
+        parent.aborted ||
+        [...this.cleanupFailures.keys()].some((scope) => isDeepStrictEqual(scope, identity))
+      )
+        return;
+      const pending = [...this.originals].filter(
+        (original) =>
+          original.response !== response &&
+          original.response.req.headers[connectionHeader] === handle &&
+          isDeepStrictEqual(original.identity, identity),
+      );
+      // DELETEs keep their own result; waiting for one here could join ourselves
+      // through another DELETE trying to qualify this same original handle.
+      if (pending.some((original) => original.response.req.method === "DELETE")) return;
+      if (pending.length === 0)
+        throw Object.assign(
+          new DomainError("acp_http_peer_disconnected", "Original ACP HTTP peer disconnected"),
+          { cause },
+        );
+      for (const original of pending) {
+        original.cancellation.abort(new Error("Original HTTP peer disconnected"));
+        original.response.destroy();
+      }
+      await Promise.all(pending.map((original) => original.joined.promise));
+      // New requests or independent cleanup failures can appear during the join.
+    }
   }
 
   private connection(request: IncomingMessage): string | undefined {

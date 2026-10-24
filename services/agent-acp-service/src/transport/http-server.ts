@@ -31,7 +31,11 @@ import {
 } from "../application/owner-forwarding.js";
 import type { AgentOwnershipFence } from "../domain/agent-ownership.js";
 import { isDeepStrictEqual } from "node:util";
-import { PeerSocket, PeerReceiptDeliveryError } from "./peer-socket.js";
+import { PeerSocket, PeerReceiptDeliveryError, PeerCleanupUnknownError } from "./peer-socket.js";
+import {
+  parseOwnerRegistration,
+  type OwnerRegistration,
+} from "../application/owner-incarnation.js";
 import { promptCapabilities } from "./acp/capabilities.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../ports/telemetry.js";
 import {
@@ -89,6 +93,7 @@ export type AgentAcpHttpServerOptions = {
   forwarding?: {
     resolver: Pick<OwnerForwarding, "resolve">;
     peers: Pick<PeerAuthentication, "connect">;
+    stopped?: (registration: OwnerRegistration) => boolean;
     admit(
       request: OwnerForwardRequest,
       signal: AbortSignal,
@@ -125,6 +130,14 @@ type OwnedHttpRequest = {
   stateWatch: boolean;
   finished: PromiseWithResolvers<void>;
 };
+
+class UnconfirmedPeerCleanup extends Error {
+  public readonly registration: OwnerRegistration;
+  public constructor(registration: OwnerRegistration, cause: PeerCleanupUnknownError) {
+    super("Original peer cleanup requires a stopped-process proof", { cause });
+    this.registration = parseOwnerRegistration(registration);
+  }
+}
 
 export class AgentAcpHttpServer {
   private readonly outputs: SessionOutputStreams;
@@ -323,11 +336,8 @@ export class AgentAcpHttpServer {
       if (isExecutionAccessRevoked(snapshot, failure.identity))
         errors.push({ status: "rejected", reason: failure.error });
     }
-    if (errors.length)
-      throw new AggregateError(
-        errors.map((result) => result.reason as unknown),
-        "Revoked transport cleanup failed",
-      );
+    const unresolved = errors.flatMap((result) => this.unresolvedPeerCleanup(result.reason));
+    if (unresolved.length) throw new AggregateError(unresolved, "Revoked transport cleanup failed");
   }
 
   private accessRevoked(identity: ExecutionIdentity, since = 0): boolean {
@@ -401,7 +411,9 @@ export class AgentAcpHttpServer {
       result.status === "rejected" ? [result.reason as unknown] : [],
     );
     failures.push(...[...this.forwardingFailures.values()].map((failure) => failure.error));
-    if (failures.length) throw new AggregateError(failures, "Forwarded connection cleanup failed");
+    const unresolved = failures.flatMap((error) => this.unresolvedPeerCleanup(error));
+    if (unresolved.length)
+      throw new AggregateError(unresolved, "Forwarded connection cleanup failed");
   }
 
   private async handleHttp(
@@ -1077,7 +1089,10 @@ export class AgentAcpHttpServer {
         });
         const original = (async () => {
           await closed.promise;
-          const cleanup = await Promise.allSettled([channel.finishIngress(), ...sends]);
+          const cleanup = await Promise.allSettled([
+            this.joinPeerIngress(channel, target.target),
+            ...sends,
+          ]);
           if (errors.length || cleanup.some((result) => result.status === "rejected"))
             throw new AggregateError(
               [
@@ -1112,7 +1127,7 @@ export class AgentAcpHttpServer {
         try {
           if (state.opened) {
             wire.resume();
-            await channel.finishIngress();
+            await this.joinPeerIngress(channel, target.target);
           } else {
             wire.terminate();
             await physical.promise;
@@ -1129,10 +1144,43 @@ export class AgentAcpHttpServer {
     return 101;
   }
 
+  private async joinPeerIngress(
+    channel: PeerSocket,
+    registration: OwnerRegistration,
+  ): Promise<void> {
+    try {
+      await channel.finishIngress();
+    } catch (error) {
+      if (error instanceof PeerCleanupUnknownError)
+        throw new UnconfirmedPeerCleanup(registration, error);
+      throw error;
+    }
+  }
+
+  private unresolvedPeerCleanup(error: unknown): unknown[] {
+    if (
+      error instanceof UnconfirmedPeerCleanup &&
+      this.options.forwarding?.stopped?.(error.registration) === true
+    ) {
+      // Retain the original finding in forwardingFailures. Only the missing
+      // remote receipt is discharged; local send/read/cancel errors stay below.
+      return [];
+    }
+    if (error instanceof AggregateError && error.errors.length > 0)
+      return error.errors.flatMap((item: unknown) => this.unresolvedPeerCleanup(item));
+    return [error];
+  }
+
   private recordForwardingFailure(identity: ExecutionIdentity, error: unknown): void {
     const key = JSON.stringify([identity.organizationId, identity.principalId, identity.agentId]);
-    if (!this.forwardingFailures.has(key))
-      this.forwardingFailures.set(key, { identity: { ...identity }, error });
+    const previous = this.forwardingFailures.get(key);
+    this.forwardingFailures.set(key, {
+      identity: { ...identity },
+      error:
+        previous === undefined
+          ? error
+          : new AggregateError([previous.error, error], "Original forwarding failures"),
+    });
   }
 
   private connectWebSocket(

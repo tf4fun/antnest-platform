@@ -64,6 +64,7 @@ function setup() {
     Promise.resolve(receipt(request, source)),
   );
   const confirm = vi.fn<PeerAcknowledgementOptions["confirm"]>(() => Promise.resolve());
+  const reportFailure = vi.fn<NonNullable<PeerAcknowledgementOptions["reportFailure"]>>();
   const coordinator = new PeerAcknowledgement({
     registration: source,
     membershipSha256: digest,
@@ -71,6 +72,7 @@ function setup() {
     peers: { identify, publish },
     local,
     confirm,
+    reportFailure,
   });
   return {
     coordinator,
@@ -82,12 +84,77 @@ function setup() {
     publish,
     local,
     confirm,
+    reportFailure,
     run: () =>
       coordinator.confirm(captured, new Date(Date.now() + 5000), new AbortController().signal),
   };
 }
 
 describe("complete peer publication acknowledgement", () => {
+  it("covers the stopped member separately and confirms the survivor's complete fences under the captured participation version", async () => {
+    const f = setup();
+    const guard = { membershipSha256: "a".repeat(64), revision: "2" };
+    const identify = vi.fn(() => Promise.reject(new Error("dead peer must not be contacted")));
+    const publish = vi.fn(() => Promise.reject(new Error("dead peer must not be contacted")));
+    const local = vi.fn<PeerAcknowledgementOptions["local"]>((_capture, request) =>
+      Promise.resolve({
+        ...f.receipt(request, f.source),
+        owned_agents: [
+          { agent_id: "agent-1", epoch: "2" },
+          { agent_id: "agent-b", epoch: "2" },
+        ],
+      }),
+    );
+    const availability = {
+      refresh: vi.fn(() =>
+        Promise.resolve({
+          guard,
+          members: [
+            { memberId: "acp-a", state: "running" as const, registration: f.source, stopped: [] },
+            {
+              memberId: "acp-b",
+              state: "stopped" as const,
+              stopped: [
+                {
+                  ...f.peer,
+                  state: "stopped" as const,
+                  stop_receipt: {
+                    receipt_id: "33333333-3333-4333-8333-333333333333",
+                    reason: "container_stopped" as const,
+                    observed_at: "2026-10-24T00:00:00Z",
+                  },
+                },
+              ],
+            },
+          ],
+          live: [f.source],
+        }),
+      ),
+    };
+    const coordinator = new PeerAcknowledgement({
+      registration: f.source,
+      membershipSha256: guard.membershipSha256,
+      members: ["acp-a", "acp-b"],
+      peers: { identify, publish },
+      local,
+      confirm: f.confirm,
+      availability,
+      reportFailure: f.reportFailure,
+    });
+    await coordinator.confirm(
+      f.captured,
+      new Date(Date.now() + 5000),
+      new AbortController().signal,
+    );
+    expect(availability.refresh).toHaveBeenCalledOnce();
+    expect(identify).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(f.confirm.mock.calls[0]?.[2]).toMatchObject({ participation: guard });
+    expect(f.confirm.mock.calls[0]?.[1]).toHaveLength(2);
+    expect(local).toHaveBeenCalledOnce();
+    expect(f.reportFailure).not.toHaveBeenCalled();
+  });
+
   it("collects both owners and the nonowner before one complete final database confirmation", async () => {
     const f = setup();
     await f.run();
@@ -115,6 +182,7 @@ describe("complete peer publication acknowledgement", () => {
     expect(f.confirm.mock.calls[0]?.[2].timeoutMs).toBeGreaterThan(0);
     expect(f.confirm.mock.calls[0]?.[2].timeoutMs).toBeLessThanOrEqual(5000);
     expect(f.captured.assertCurrent).toHaveBeenCalledTimes(2);
+    expect(f.reportFailure).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -187,6 +255,26 @@ describe("complete peer publication acknowledgement", () => {
     });
     await expect(f.run()).rejects.toMatchObject({ code: "configuration_unavailable" });
     expect(f.confirm).not.toHaveBeenCalled();
+    const reason =
+      _name === "unknown owner"
+        ? "unexpected"
+        : _name === "duplicate owner"
+          ? "duplicate"
+          : _name === "missing owner"
+            ? "missing"
+            : undefined;
+    expect(f.reportFailure).toHaveBeenCalledWith(
+      reason === undefined
+        ? { stage: "receipt", revision: f.captured.authority.revision }
+        : {
+            stage: "fence_union",
+            revision: f.captured.authority.revision,
+            reason,
+            expectedOwners: 2,
+            observedOwners: 1,
+          },
+      expect.objectContaining({ code: "configuration_unavailable" }),
+    );
   });
 
   it("does not omit a nonowner whose old-stream cleanup is still held", async () => {
@@ -230,15 +318,43 @@ describe("complete peer publication acknowledgement", () => {
     await expect(f.run()).rejects.toMatchObject({ code: "configuration_unavailable" });
     expect(f.publish.mock.calls.some(([member]) => member === "acp-b")).toBe(false);
     expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.reportFailure).toHaveBeenCalledWith(
+      { stage: "identity", revision: f.captured.authority.revision },
+      expect.objectContaining({ code: "configuration_unavailable" }),
+    );
   });
 
-  it("keeps the expected authority for the final transaction and propagates its rejection", async () => {
+  it("reports a rejected original peer publication at the apply stage", async () => {
     const f = setup();
-    const failure = new Error("lease takeover or sealed DB authority changed");
-    f.confirm.mockRejectedValue(failure);
-    await expect(f.run()).rejects.toBe(failure);
-    expect(f.confirm.mock.calls[0]?.[0]).toBe(f.captured.authority);
+    const failure = new Error("original peer publication failed");
+    f.publish.mockRejectedValueOnce(failure);
+    await expect(f.run()).rejects.toMatchObject({ code: "configuration_unavailable" });
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.reportFailure).toHaveBeenCalledWith(
+      { stage: "apply", revision: f.captured.authority.revision },
+      failure,
+    );
   });
+
+  it.each([false, true])(
+    "keeps the original final transaction rejection when the diagnostic callback throws: %s",
+    async (diagnosticThrows) => {
+      const f = setup();
+      const failure = new Error("lease takeover or sealed DB authority changed");
+      if (diagnosticThrows)
+        f.reportFailure.mockImplementation(() => {
+          throw new Error("diagnostic sink failed");
+        });
+      f.confirm.mockRejectedValue(failure);
+      await expect(f.run()).rejects.toBe(failure);
+      expect(f.confirm.mock.calls[0]?.[0]).toBe(f.captured.authority);
+      expect(f.reportFailure).toHaveBeenCalledOnce();
+      expect(f.reportFailure).toHaveBeenCalledWith(
+        { stage: "authority_confirm", revision: f.captured.authority.revision },
+        failure,
+      );
+    },
+  );
 
   it("rejects local supersession after remote receipts without final SQL", async () => {
     const f = setup();

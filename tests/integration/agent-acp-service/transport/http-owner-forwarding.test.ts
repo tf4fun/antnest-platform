@@ -36,6 +36,7 @@ import type {
   PermissionConnectionsPort,
 } from "../../../../services/agent-acp-service/src/ports/tool-permissions.js";
 import { AgentAcpHttpServer } from "../../../../services/agent-acp-service/src/transport/http-server.js";
+import { HttpRelayBodyCleanupError } from "../../../../services/agent-acp-service/src/transport/owned-relay-response.js";
 import {
   OWNER_HTTP_PATH,
   type HttpOwnerForwardingOptions,
@@ -107,6 +108,7 @@ function application() {
 async function start(
   oneIngressSlot = false,
   permissions?: PermissionConnectionsPort,
+  peerFetch: typeof fetch = fetch,
 ) {
   const base = binding();
   const identity: ExecutionIdentity = {
@@ -143,6 +145,7 @@ async function start(
   const privateHandlers = new Set<Promise<void>>();
   const privateGets = new Map<Promise<void>, string | null>();
   const errors: unknown[] = [];
+  const expectedCleanupFailures = new Set<unknown>();
   const clients: acp.ClientConnection[] = [];
   const release: Array<() => void> = [];
   // Assign after cleanup registration so partial startup is owned as well.
@@ -208,6 +211,21 @@ async function start(
       forget();
     });
   });
+  let peerClosing: Promise<void> | undefined;
+  const closePeer = () => {
+    peerClosing ??= new Promise<void>((resolve, reject) => {
+      peer.close((error) => {
+        if (
+          error &&
+          !("code" in error && error.code === "ERR_SERVER_NOT_RUNNING")
+        )
+          reject(error);
+        else resolve();
+      });
+      peer.closeAllConnections();
+    });
+    return peerClosing;
+  };
   cleanups.push(async () => {
     for (const unblock of release) unblock();
     for (const client of clients) client.close();
@@ -223,19 +241,15 @@ async function start(
     results.push(
       ...(await Promise.allSettled([ingress?.close(), owner?.close()])),
     );
-    results.push(
-      ...(await Promise.allSettled([
-        new Promise<void>((resolve, reject) => {
-          peer.close((error) => (error ? reject(error) : resolve()));
-          peer.closeAllConnections();
-        }),
-      ])),
-    );
+    results.push(...(await Promise.allSettled([closePeer()])));
     while (privateHandlers.size)
       results.push(...(await Promise.allSettled([...privateHandlers])));
     while (pending.size) await Promise.allSettled([...pending]);
     const failures = results.flatMap((result) =>
-      result.status === "rejected" ? [result.reason as unknown] : [],
+      result.status === "rejected" &&
+      !expectedCleanupFailures.has(result.reason)
+        ? [result.reason as unknown]
+        : [],
     );
     if (errors.length || failures.length)
       throw new AggregateError(
@@ -267,7 +281,7 @@ async function start(
         if (url.origin !== privateOrigin)
           throw new Error("Untrusted peer origin");
         // The production relay owns this response body and joins its reader.
-        return retain(fetch(input, init));
+        return retain(peerFetch(input, init));
       };
     },
   };
@@ -379,6 +393,8 @@ async function start(
     origins,
     send,
     open,
+    closePeer,
+    expectedCleanupFailures,
     target,
     release,
     activeSessionGets: () => [...privateGets.values()],
@@ -578,6 +594,359 @@ it("preserves retired HTTP handle 404 and original DELETE 202 across both revoke
   await deleted.text();
   expect(f.appA.createSession).not.toHaveBeenCalled();
   expect(f.appB.createSession).not.toHaveBeenCalled();
+});
+
+it("returns a typed reconnectable 503 for an original-handle DELETE after the real private peer listener closes", async () => {
+  const f = await start();
+  const id = await f.open();
+  await f.closePeer();
+
+  const response = await f.send("a", "DELETE", id);
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    code: "acp_http_peer_disconnected",
+    message: "Original ACP HTTP peer disconnected",
+    retryable: true,
+  });
+  expect(f.appA.createSession).not.toHaveBeenCalled();
+  expect(f.appB.createSession).not.toHaveBeenCalled();
+});
+
+it.each([503, 404] as const)(
+  "preserves an actual upstream HTTP %s without reconnect qualification",
+  async (status) => {
+    const upstreamStatuses: number[] = [];
+    const f = await start(false, undefined, async (input, init) => {
+      if (init?.method !== "DELETE") return fetch(input, init);
+      const headers = new Headers(init.headers);
+      headers.set("Acp-Connection-Id", upstreamHandle);
+      const response = await fetch(input, { ...init, headers });
+      upstreamStatuses.push(response.status);
+      return response;
+    });
+    const id = await f.open();
+    const original = f.codec.open(id);
+    const upstreamHandle = f.codec.seal({
+      owner:
+        status === 503
+          ? { ...original.owner, registration_id: randomUUID() }
+          : original.owner,
+      epoch: original.epoch,
+      connectionId: status === 404 ? randomUUID() : original.connectionId,
+      identity: original.identity,
+    });
+    const response = await f.send("a", "DELETE", id);
+    expect(response.status).toBe(status);
+    expect(await response.text()).not.toContain("acp_http_peer_disconnected");
+    expect(upstreamStatuses).toEqual([status]);
+    expect(f.appA.createSession).not.toHaveBeenCalled();
+    expect(f.appB.createSession).not.toHaveBeenCalled();
+  },
+);
+
+function disconnectedPeer(): TypeError {
+  return new TypeError("peer-fetch-private-canary", {
+    cause: Object.assign(new Error("peer-network-private-canary"), {
+      code: "ECONNREFUSED",
+    }),
+  });
+}
+
+async function drainOriginalUpload(init?: RequestInit): Promise<number> {
+  if (init?.body === undefined || init.body === null) return 0;
+  return (await new Response(init.body).arrayBuffer()).byteLength;
+}
+
+function cleanupLeaves(error: unknown): unknown[] {
+  if (error instanceof AggregateError)
+    return error.errors.flatMap((item: unknown) => cleanupLeaves(item));
+  if (error instanceof Error && Object.hasOwn(error, "cause"))
+    return cleanupLeaves(error.cause);
+  return [error];
+}
+
+function originalCancellation(error: unknown, signal: AbortSignal): boolean {
+  if (!signal.aborted) return false;
+  if (error === signal.reason) return true;
+  if (!(error instanceof Error)) return false;
+  // The fixture deliberately destroys the original downstream response after
+  // aborting its relay; Node may report that exact cancellation as premature close.
+  if ("code" in error && error.code === "ERR_STREAM_PREMATURE_CLOSE")
+    return !Object.hasOwn(error, "cause");
+  return (
+    error.name === "AbortError" &&
+    (!Object.hasOwn(error, "cause") || error.cause === signal.reason)
+  );
+}
+
+it.each([
+  ["TLS", "DELETE", "tls", false],
+  ["timeout", "DELETE", "timeout", false],
+  ["mixed causes", "DELETE", "mixed", false],
+  ["GET", "GET", "disconnected", false],
+  ["POST", "POST", "disconnected", false],
+  ["nonempty DELETE", "DELETE", "disconnected", true],
+] as const)(
+  "does not qualify %s as an original empty DELETE network loss",
+  async (_name, method, kind, nonempty) => {
+    const disconnected = disconnectedPeer();
+    const failure =
+      kind === "tls"
+        ? Object.assign(new Error("peer-tls-private-canary"), {
+            code: "CERT_HAS_EXPIRED",
+          })
+        : kind === "timeout"
+          ? Object.assign(new Error("peer-timeout-private-canary"), {
+              code: "ETIMEDOUT",
+            })
+          : kind === "mixed"
+            ? new TypeError("peer-mixed-private-canary", {
+                cause: Object.assign(
+                  new AggregateError([
+                    disconnected,
+                    new Error("independent-peer-private-canary"),
+                  ]),
+                  { code: "ECONNREFUSED" },
+                ),
+              })
+            : disconnected;
+    let failing = false;
+    const f = await start(false, undefined, async (input, init) => {
+      if (!failing) return fetch(input, init);
+      if (method !== "GET") {
+        const bytes = await drainOriginalUpload(init);
+        if (nonempty) expect(bytes).toBeGreaterThan(0);
+      }
+      throw failure;
+    });
+    const id = await f.open();
+    failing = true;
+    const response = await f.send(
+      "a",
+      method,
+      id,
+      method === "POST"
+        ? newSession
+        : nonempty
+          ? { unexpected: true }
+          : undefined,
+    );
+    if (nonempty) expect(response.status).toBeGreaterThanOrEqual(400);
+    else expect(response.status).toBe(503);
+    const body = await response.text();
+    expect(body).not.toContain("acp_http_peer_disconnected");
+    expect(body).not.toContain("private-canary");
+    expect(f.appA.createSession).not.toHaveBeenCalled();
+    expect(f.appB.createSession).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "joins the same handle's original GET cleanup before qualifying DELETE and preserves independent failure (%s)",
+  async (brokenCleanup) => {
+    const entered = Promise.withResolvers<void>();
+    const releaseCancel = Promise.withResolvers<void>();
+    const sentinel = new Error("peer-reader-cleanup-private-canary");
+    const disconnected = disconnectedPeer();
+    const sourceFailures: unknown[] = [];
+    const signals = new Map<string, AbortSignal>();
+    let heldHandle: string | undefined;
+    let originalBody: ReadableStream<Uint8Array> | undefined;
+    let cancellation: Promise<void> | undefined;
+    let cleanupJoined = false;
+    let failDelete = false;
+    const f = await start(false, undefined, async (input, init) => {
+      const method = init?.method ?? "GET";
+      const handle = new Headers(init?.headers).get("Acp-Connection-Id");
+      if (failDelete && method === "DELETE" && handle === heldHandle) {
+        await drainOriginalUpload(init);
+        throw disconnected;
+      }
+      const response = await fetch(input, init);
+      if (method !== "GET" || handle === null) return response;
+      const signal = init?.signal;
+      if (!signal || response.body === null)
+        throw new Error("Missing original peer GET body or cancellation");
+      signals.set(handle, signal);
+      if (handle !== heldHandle) return response;
+      originalBody = response.body;
+      const reader = originalBody.getReader();
+      void reader.closed.catch(() => undefined);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          // Retain the actual network reader without completing this GET. Its
+          // cancellation is part of the production relay's original pump task.
+          cancel: (reason: unknown) => {
+            cancellation ??= (async () => {
+              entered.resolve();
+              const results = await Promise.allSettled([
+                reader.cancel(reason),
+                reader.closed,
+              ]);
+              sourceFailures.push(
+                ...results.flatMap((result) =>
+                  result.status === "rejected"
+                    ? [result.reason as unknown]
+                    : [],
+                ),
+              );
+              try {
+                await releaseCancel.promise;
+              } finally {
+                reader.releaseLock();
+                cleanupJoined = true;
+              }
+              if (
+                brokenCleanup ||
+                sourceFailures.some(
+                  (error) => !originalCancellation(error, signal),
+                )
+              )
+                throw new AggregateError(
+                  [...sourceFailures, ...(brokenCleanup ? [sentinel] : [])],
+                  "Original peer reader cleanup failed",
+                );
+            })();
+            return cancellation;
+          },
+        }),
+        { status: response.status, headers: response.headers },
+      );
+    });
+    f.release.push(releaseCancel.resolve);
+    const streams: Response[] = [];
+    let deletion: Promise<Response> | undefined;
+    try {
+      const id = await f.open();
+      const otherId = await f.open();
+      expect(otherId).not.toBe(id);
+      heldHandle = id;
+      streams.push(await f.send("a", "GET", id));
+      streams.push(await f.send("a", "GET", otherId));
+      expect(streams.map((response) => response.status)).toEqual([200, 200]);
+      const signal = signals.get(id),
+        otherSignal = signals.get(otherId);
+      if (!signal || !otherSignal || originalBody === undefined)
+        throw new Error("Original GET requests were not retained");
+      failDelete = true;
+      let responded = false;
+      deletion = f.send("a", "DELETE", id).then((response) => {
+        responded = true;
+        return response;
+      });
+      void deletion.catch(() => undefined);
+      await Promise.race([entered.promise, deletion]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(responded).toBe(false);
+      expect(signal.aborted).toBe(true);
+      expect(otherSignal.aborted).toBe(false);
+      expect(cleanupJoined).toBe(false);
+      expect(originalBody.locked).toBe(true);
+      releaseCancel.resolve();
+      const response = await deletion;
+      const body = await response.text();
+      expect(response.status).toBe(503);
+      if (brokenCleanup) {
+        expect(body).not.toContain("acp_http_peer_disconnected");
+        expect(body).not.toContain("private-canary");
+      } else
+        expect(JSON.parse(body)).toEqual({
+          code: "acp_http_peer_disconnected",
+          message: "Original ACP HTTP peer disconnected",
+          retryable: true,
+        });
+      expect(cleanupJoined).toBe(true);
+      expect(originalBody.locked).toBe(false);
+      expect(otherSignal.aborted).toBe(false);
+      for (const failure of sourceFailures)
+        expect(originalCancellation(failure, signal)).toBe(true);
+      await Promise.allSettled(
+        streams.map((stream) => stream.body?.cancel() ?? Promise.resolve()),
+      );
+      await vi.waitFor(() => expect(f.activeSessionGets()).toEqual([]));
+      if (brokenCleanup) {
+        await f.ingress.close().then(
+          () => {
+            throw new Error(
+              "Independent peer cleanup must reject ingress close",
+            );
+          },
+          (error: unknown) => {
+            const leaves = cleanupLeaves(error);
+            expect(leaves).toContain(sentinel);
+            const allowed = new Set([
+              sentinel,
+              ...cleanupLeaves(disconnected),
+              ...sourceFailures.flatMap(cleanupLeaves),
+              ...cleanupLeaves(signal.reason),
+            ]);
+            for (const leaf of leaves)
+              if (!(
+                allowed.has(leaf) ||
+                originalCancellation(leaf, signal) ||
+                originalCancellation(leaf, otherSignal)
+              ))
+                throw new Error("Unexpected independent cleanup leaf", {
+                  cause: leaf,
+                });
+            f.expectedCleanupFailures.add(error);
+          },
+        );
+      }
+      expect(f.appA.createSession).not.toHaveBeenCalled();
+      expect(f.appB.createSession).not.toHaveBeenCalled();
+    } finally {
+      releaseCancel.resolve();
+      await Promise.allSettled([
+        ...streams.map((stream) => stream.body?.cancel()),
+        cancellation,
+        deletion?.then(async (response) => {
+          if (!response.bodyUsed) await response.text();
+        }),
+      ]);
+    }
+  },
+  15000,
+);
+
+it("retains an explicit body cleanup failure when it is the primary relay error", async () => {
+  const sentinel = new Error("primary-cleanup-private-canary");
+  const primary = new HttpRelayBodyCleanupError([sentinel]);
+  let injected = false;
+  const f = await start(true, undefined, async (input, init) => {
+    const response = await fetch(input, init);
+    if (init?.method !== "GET") return response;
+    await response.body?.cancel();
+    injected = true;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(primary);
+        },
+      }),
+      { status: response.status, headers: response.headers },
+    );
+  });
+  const id = await f.open();
+  await expect(
+    f.send("a", "GET", id).then((response) => response.text()),
+  ).rejects.toThrow();
+  expect(injected).toBe(true);
+  const rejected = await f.send("a", "POST", undefined, initialize);
+  await rejected.text();
+  expect(rejected.status).toBe(429);
+  expect(rejected.headers.get("Retry-After")).toBe("1");
+  await f.ingress.close().then(
+    () => {
+      throw new Error("Primary cleanup failure must remain retained");
+    },
+    (error: unknown) => {
+      const leaves = cleanupLeaves(error);
+      expect(leaves.length).toBeGreaterThan(0);
+      for (const leaf of leaves) expect(leaf).toBe(sentinel);
+      f.expectedCleanupFailures.add(error);
+    },
+  );
 });
 
 it("preserves private missing/invalid CCT 401 and Identity dependency 503 before owner admission", async () => {

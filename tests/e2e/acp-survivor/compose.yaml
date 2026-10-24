@@ -1,0 +1,80 @@
+# Disposable two-owner deployment. The canonical UI/control entry remains A.
+x-peer-environment: &peer-environment
+  ANTNEST_ACP_RUNTIME_CONTROLLER_URL: http://runtime-controller:8080
+  ANTNEST_ACP_OWNER_REGISTRATION_TIMEOUT: 30s
+  ANTNEST_ACP_PEER_MEMBERSHIP_FILE: /etc/antnest/acp-peer/membership.json
+  ANTNEST_ACP_PEER_CALLERS_FILE: /etc/antnest/acp-peer/callers.json
+  ANTNEST_ACP_PEER_TOKEN_DIRECTORY: /etc/antnest/acp-peer/tokens
+
+services:
+  runtime-controller:
+    environment:
+      ANTNEST_RUNTIME_ACP_MEMBERS_FILE: /etc/antnest/acp-members.json
+    volumes:
+      - type: bind
+        source: ${ANTNEST_E2E_ACP_MEMBERS_FILE:?prepare the private two-member catalog}
+        target: /etc/antnest/acp-members.json
+        read_only: true
+        bind:
+          create_host_path: false
+  agent-acp-service:
+    environment:
+      <<: *peer-environment
+      ANTNEST_ACP_OWNER_MEMBER_ID: acp-a
+      ANTNEST_ACP_OWNER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.53:8085
+      ANTNEST_ACP_PEER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.53:8083
+    volumes:
+      - type: bind
+        source: ${ANTNEST_E2E_ACP_PEER_A_DIRECTORY:?prepare private A credentials}
+        target: /etc/antnest/acp-peer
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      runtime-controller:
+        condition: service_healthy
+  agent-acp-peer-b:
+    extends:
+      file: compose.yaml
+      service: agent-acp-service
+    image: antnest/agent-acp-service:${ANTNEST_ADMISSION_TAG:-local}
+    environment:
+      <<: *peer-environment
+      ANTNEST_ALLOW_PUBLIC_DEV_SECRETS: ${ANTNEST_ALLOW_PUBLIC_DEV_SECRETS:?disposable fixture must opt in}
+      ANTNEST_ACP_OWNER_MEMBER_ID: acp-b
+      ANTNEST_ACP_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.8:8080
+      ANTNEST_ACP_CONTROL_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.36:8081
+      ANTNEST_ACP_OWNER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.54:8085
+      ANTNEST_ACP_PEER_LISTEN: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.54:8083
+      ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: ${ANTNEST_E2E_ALLOW_PRIVATE_PROVIDER_ENDPOINTS:-false}
+    networks:
+      edge:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.8
+      controller-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.25
+      controller-acp:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.36
+      controller-runtime:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.54
+      identity-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.74
+      registry-clients:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.87
+      observability:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:?required isolated fixture prefix}.126
+      runtime-management:
+        ipv4_address: ${ANTNEST_E2E_ACP_PEER_B_MANAGEMENT_IPV4:?required isolated management address}
+    volumes:
+      - type: bind
+        source: ${ANTNEST_E2E_ACP_PEER_B_DIRECTORY:?prepare private B credentials}
+        target: /etc/antnest/acp-peer
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      runtime-controller:
+        condition: service_healthy
+  stage3-model:
+    command: ["node", "/survivor/model.mjs"]
+    volumes:
+      - ./tests/e2e/acp-survivor:/survivor:ro

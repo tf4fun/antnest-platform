@@ -175,13 +175,16 @@ test("early initialize body read failures never retain private upstream details"
   assert.equal(body.locked, false);
 });
 
-function initializedGetFailure(response: () => Promise<Response>) {
+function initializedGetFailure(response: () => Promise<Response>,
+  deleteResponse: () => Promise<Response> = () => Promise.resolve(new Response(null, { status: 202 })),
+  closeTimeoutMs?: number) {
   const get = deferred(), releaseGet = deferred(), supplied = deferred();
   const deleting = deferred(), cleanup = deferred();
   const calls: string[] = [];
   const connectionId = "original-initialized-connection";
   const opening = AcpHttpBridge.open({
     baseUrl: new URL("http://acp.invalid"), scope: testScope(scope),
+    ...(closeTimeoutMs === undefined ? {} : { closeTimeoutMs }),
     callbacks: { update() {}, requestPermission() { return { outcome: { outcome: "cancelled" } }; } },
     fetchImpl: async (input, init) => {
       const request = new Request(input, init);
@@ -199,7 +202,7 @@ function initializedGetFailure(response: () => Promise<Response>) {
         assert.equal(request.headers.get("acp-connection-id"), connectionId);
         deleting.resolve();
         await cleanup.promise;
-        return new Response(null, { status: 202 });
+        return deleteResponse();
       }
       const message = await request.json();
       calls.push(message.method);
@@ -214,6 +217,230 @@ function initializedGetFailure(response: () => Promise<Response>) {
   });
   return { opening, get: get.promise, releaseGet: releaseGet.resolve,
     supplied: supplied.promise, deleting: deleting.promise, cleanup: cleanup.resolve, calls };
+}
+
+const forwardedPeerLoss = {
+  code: "acp_http_peer_disconnected",
+  message: "Original ACP HTTP peer disconnected",
+  retryable: true,
+};
+
+test("a strict forwarded peer loss permits replacement only after original cleanup and keeps close rejected", async () => {
+  const response = Response.json(forwardedPeerLoss, { status: 503 });
+  const fixture = initializedGetFailure(
+    () => Promise.reject(new TypeError("original GET disconnected")),
+    () => Promise.resolve(response),
+  );
+  const bridge = await fixture.opening;
+  let closing: Promise<void> | undefined;
+  try {
+    await fixture.get;
+    fixture.releaseGet();
+    await fixture.deleting;
+    await bridge.closed.then(() => undefined, () => undefined);
+    closing = bridge.close();
+    assert.equal(bridge.close(), closing, "the original close Promise must remain stable");
+    let settled = false;
+    const outcome = closing.then(() => undefined, (error: unknown) => error)
+      .finally(() => { settled = true; });
+    await turn();
+    assert.equal(settled, false, "SDK closed does not join the original DELETE");
+    assert.equal(bridge.canReplaceAfterPeerLoss, false);
+    fixture.cleanup();
+    const failure = await outcome;
+    assert(failure instanceof AggregateError, "replacement qualification must not fabricate a successful close");
+    assert.equal(bridge.close(), closing);
+    await assert.rejects(closing, (error: unknown) => error === failure);
+    assert.equal(response.body?.locked, false);
+    assert.equal(bridge.canReplaceAfterPeerLoss, true);
+    assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"], "no business RPC or initialization replay");
+  } finally {
+    fixture.releaseGet(); fixture.cleanup();
+    await Promise.allSettled([closing, bridge.close()]);
+  }
+});
+
+test("a forwarded peer loss JSON prefix cannot qualify replacement before its original EOF", async () => {
+  const reading = deferred(), eof = deferred();
+  let cancelled = false, settled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(forwardedPeerLoss))); },
+    async pull(controller) {
+      reading.resolve();
+      await eof.promise;
+      if (!cancelled) controller.close();
+    },
+    cancel() { cancelled = true; return eof.promise; },
+  });
+  const fixture = initializedGetFailure(
+    () => Promise.reject(new TypeError("original GET disconnected")),
+    () => Promise.resolve(new Response(body, { status: 503, headers: { "content-type": "application/json" } })),
+  );
+  const bridge = await fixture.opening;
+  let closing: Promise<void> | undefined;
+  try {
+    await fixture.get;
+    fixture.releaseGet();
+    await fixture.deleting;
+    await bridge.closed.then(() => undefined, () => undefined);
+    closing = bridge.close();
+    const outcome = closing.then(() => undefined, (error: unknown) => error)
+      .finally(() => { settled = true; });
+    fixture.cleanup();
+    await Promise.race([reading.promise, outcome]);
+    await turn();
+    assert.equal(settled, false, "a complete JSON prefix is not the original body EOF");
+    assert.equal(bridge.canReplaceAfterPeerLoss, false);
+    assert.equal(body.locked, true);
+    eof.resolve();
+    const failure = await outcome;
+    assert(failure instanceof AggregateError);
+    assert.equal(bridge.close(), closing);
+    await assert.rejects(closing, (error: unknown) => error === failure);
+    assert.equal(body.locked, false);
+    assert.equal(bridge.canReplaceAfterPeerLoss, true);
+    assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"]);
+  } finally {
+    fixture.releaseGet(); fixture.cleanup(); eof.resolve();
+    await Promise.allSettled([closing, bridge.close()]);
+  }
+});
+
+for (const brokenCancel of [false, true]) {
+  test(`a forwarded peer loss cleanup deadline joins its original body cancellation (${brokenCancel})`, async () => {
+    const cancellation = deferred(), releaseCancel = deferred();
+    const canary = "private-forwarded-peer-cancel-canary";
+    let cancels = 0, cancelJoined = false, settled = false;
+    let originalCancel: Promise<void> | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      // The valid envelope remains a prefix: this original stream never sends EOF.
+      start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(forwardedPeerLoss))); },
+      cancel() {
+        cancels++;
+        cancellation.resolve();
+        originalCancel = (async () => {
+          await releaseCancel.promise;
+          cancelJoined = true;
+          if (brokenCancel) throw new Error(canary);
+        })();
+        void originalCancel.catch(() => {});
+        return originalCancel;
+      },
+    });
+    const fixture = initializedGetFailure(
+      () => Promise.reject(new TypeError("original GET disconnected")),
+      () => Promise.resolve(new Response(body, { status: 503, headers: { "content-type": "application/json" } })),
+      50,
+    );
+    const bridge = await fixture.opening;
+    let closing: Promise<void> | undefined;
+    try {
+      await fixture.get;
+      fixture.releaseGet();
+      await fixture.deleting;
+      fixture.cleanup();
+      await bridge.closed.then(() => undefined, () => undefined);
+      closing = bridge.close();
+      const outcome = closing.then(() => undefined, (error: unknown) => error)
+        .finally(() => { settled = true; });
+      await Promise.race([cancellation.promise, outcome]);
+      await turn();
+      assert.equal(cancels, 1, "the actual cleanup deadline must cancel the original reader");
+      assert.equal(cancelJoined, false);
+      assert.equal(settled, false, "the deadline cannot bypass the held original cancellation");
+      assert.equal(body.locked, true);
+      assert.equal(bridge.canReplaceAfterPeerLoss, false);
+      releaseCancel.resolve();
+      const failure = await outcome;
+      assert(failure instanceof AggregateError);
+      assert.equal(bridge.close(), closing);
+      await assert.rejects(closing, (error: unknown) => error === failure);
+      assert.equal(cancelJoined, true);
+      assert.equal(cancels, 1);
+      assert.equal(body.locked, false);
+      assert.equal(bridge.canReplaceAfterPeerLoss, false);
+      const pending: unknown[] = [failure], seen = new Set<unknown>();
+      const messages: string[] = [];
+      while (pending.length) {
+        const error = pending.pop();
+        if (typeof error === "string") assert(!error.includes(canary));
+        if (!(error instanceof Error) || seen.has(error)) continue;
+        seen.add(error);
+        assert(!error.message.includes(canary));
+        assert(!error.stack?.includes(canary));
+        messages.push(error.message);
+        pending.push(error.cause);
+        if (error instanceof AggregateError) pending.push(...error.errors);
+      }
+      assert(messages.includes("ACP cleanup deadline exceeded"));
+      assert(messages.includes("ACP DELETE cleanup failed"));
+      assert.equal(messages.includes("ACP response body cleanup failed"), brokenCancel,
+        "an independent cancellation failure must remain in addition to the deadline");
+      assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"]);
+    } finally {
+      fixture.releaseGet(); fixture.cleanup(); releaseCancel.resolve();
+      await Promise.allSettled([originalCancel, closing, bridge.close()]);
+    }
+  });
+}
+
+const invalidForwardedPeerLosses: Array<{
+  name: string; status: number; body: BodyInit; headers?: Record<string, string>;
+}> = [
+  { name: "ordinary 503", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, code: "acp_http_unavailable" }) },
+  { name: "ordinary 404", status: 404, body: JSON.stringify(forwardedPeerLoss) },
+  { name: "unknown code", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, code: "agent_unavailable" }) },
+  { name: "nonretryable result", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, retryable: false }) },
+  { name: "different message", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, message: "private-peer-response-canary" }) },
+  { name: "wrong content type", status: 503, body: JSON.stringify(forwardedPeerLoss), headers: { "content-type": "text/plain" } },
+  { name: "response connection header", status: 503, body: JSON.stringify(forwardedPeerLoss), headers: { "acp-connection-id": "foreign-connection" } },
+  { name: "extra field", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, extra: true }) },
+  { name: "duplicate key", status: 503, body: '{"code":"acp_http_peer_disconnected","code":"acp_http_peer_disconnected","message":"Original ACP HTTP peer disconnected","retryable":true}' },
+  { name: "invalid UTF-8", status: 503, body: new Uint8Array([
+    ...new TextEncoder().encode('{"code":"acp_http_peer_disconnected","message":"'),
+    0xff, ...new TextEncoder().encode('","retryable":true}'),
+  ]) },
+  { name: "body over 65536 bytes", status: 503, body: JSON.stringify(forwardedPeerLoss) + " ".repeat(65536) },
+];
+
+for (const entry of invalidForwardedPeerLosses) {
+  test(`forwarded peer loss ${entry.name} cannot qualify replacement`, async () => {
+    const response = new Response(entry.body, { status: entry.status,
+      headers: { "content-type": "application/json", ...entry.headers } });
+    const fixture = initializedGetFailure(
+      () => Promise.reject(new TypeError("original GET disconnected")),
+      () => Promise.resolve(response),
+    );
+    const bridge = await fixture.opening;
+    let closing: Promise<void> | undefined;
+    try {
+      await fixture.get;
+      fixture.releaseGet();
+      await fixture.deleting;
+      await bridge.closed.then(() => undefined, () => undefined);
+      closing = bridge.close();
+      fixture.cleanup();
+      const failure = await closing.then(() => undefined, (error: unknown) => error);
+      assert(failure instanceof AggregateError);
+      assert.equal(bridge.close(), closing);
+      await assert.rejects(closing, (error: unknown) => error === failure);
+      assert.equal(bridge.canReplaceAfterPeerLoss, false);
+      assert.equal(response.body?.locked, false, "the original invalid response must still be released");
+      const pending: unknown[] = [failure], seen = new Set<unknown>();
+      while (pending.length) {
+        const error = pending.pop();
+        if (!(error instanceof Error) || seen.has(error)) continue;
+        seen.add(error);
+        assert(!error.message.includes("private-peer-response-canary"));
+        pending.push(error.cause);
+        if (error instanceof AggregateError) pending.push(...error.errors);
+      }
+      assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"]);
+    } finally {
+      fixture.releaseGet(); fixture.cleanup();
+      await Promise.allSettled([closing, bridge.close()]);
+    }
+  });
 }
 
 test("an initialized connection preserves a complete GET access denial after its original cleanup", async () => {

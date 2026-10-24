@@ -14,6 +14,13 @@ export class PeerReceiptDeliveryError extends Error {
   }
 }
 
+/** Physical socket and local writes joined, but the remote process sent no receipt. */
+export class PeerCleanupUnknownError extends Error {
+  public constructor(cause: unknown) {
+    super("Peer cleanup outcome is unknown", { cause });
+  }
+}
+
 /** ACP frames and lifecycle acknowledgements have distinct, closed envelopes. */
 export class PeerSocket extends EventEmitter {
   private ended = false;
@@ -73,20 +80,36 @@ export class PeerSocket extends EventEmitter {
     if (this.side !== "owner") throw new Error("Invalid peer receipt issuer");
     try {
       await this.drainWrites();
-      await this.write({ type: "joined", request_id: this.requestId });
-      this.wire.close(1000, "Owner cleanup joined");
     } catch (error) {
       this.wire.terminate();
       await this.physical.promise;
       await Promise.allSettled([...this.writes]);
+      throw error;
+    }
+    try {
+      await this.write({ type: "joined", request_id: this.requestId });
+    } catch (error) {
+      this.wire.terminate();
+      await this.physical.promise;
+      await Promise.allSettled([...this.writes]);
+      const independent = this.failures.filter((failure) => failure !== error);
+      if (independent.length)
+        throw new AggregateError([error, ...independent], "Owner peer cleanup failed", {
+          cause: error,
+        });
       throw new PeerReceiptDeliveryError(error);
     }
+    try {
+      this.wire.close(1000, "Owner cleanup joined");
+    } catch (error) {
+      this.wire.terminate();
+      await this.physical.promise;
+      throw error;
+    }
     await this.physical.promise;
-    if (this.failures.length)
-      throw new PeerReceiptDeliveryError(
-        new AggregateError(this.failures, "Owner peer cleanup failed"),
-      );
+    if (this.failures.length) throw new AggregateError(this.failures, "Owner peer cleanup failed");
   }
+
   public async finishIngress(): Promise<void> {
     if (this.side !== "ingress") throw new Error("Invalid peer receipt receiver");
     this.close();
@@ -98,6 +121,14 @@ export class PeerSocket extends EventEmitter {
     const errors = results.filter(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
+    if (
+      !this.receivedReceipt &&
+      this.failures.length === 0 &&
+      results[0].status === "rejected" &&
+      results[1].status === "fulfilled" &&
+      results[2].status === "fulfilled"
+    )
+      throw new PeerCleanupUnknownError(results[0].reason);
     if (errors.length || this.failures.length)
       throw new AggregateError(
         [...errors.map((result) => result.reason as unknown), ...this.failures],

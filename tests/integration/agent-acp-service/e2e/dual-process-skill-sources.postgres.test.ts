@@ -112,6 +112,13 @@ describe.skipIf(databaseUrl === undefined)(
       const temporary: string[] = [];
       const names = ["dual-sources-a-" + id, "dual-sources-b-" + id];
       const registrations = new Map<string, OwnerRegistration>();
+      const registeredChildren = new Map<string, ProductionAcpChild>();
+      const registrationHistories = new Map<
+        string,
+        { id: string; items: OwnerRegistration[] }
+      >();
+      const historyRequests: string[] = [];
+      const inspectionRequests: string[] = [];
       const security = testSecurityEnvironment();
       const keys = [
         generateKeyPairSync("ed25519"),
@@ -168,6 +175,11 @@ describe.skipIf(databaseUrl === undefined)(
           member_id: i === 0 ? "acp-a" : "acp-b",
           origin: `http://127.0.0.1:${ports[i * 4 + 3]!}`,
         }));
+        for (const member of members)
+          registrationHistories.set(member.member_id, {
+            id: randomUUID(),
+            items: [],
+          });
         const identity = await startPeer(async (request, response) => {
           expect(request.method).toBe("GET");
           expect(request.url).toBe("/rpc/identity/jwks");
@@ -181,11 +193,71 @@ describe.skipIf(databaseUrl === undefined)(
         });
         peers.push(identity);
         const controller = await startPeer(async (request, response) => {
-          expect(request.method).toBe("POST");
-          expect(request.url).toBe("/internal/acp-incarnations/register");
           expect(request.headers["antnest-service-authorization"]).toBe(
             token("runtime-controller"),
           );
+          response.setHeader("cache-control", "no-store");
+          if (request.url === "/internal/acp-incarnations/history") {
+            expect(request.method).toBe("POST");
+            const input = JSON.parse(
+              (await readBody(request)).toString("utf8"),
+            ) as { member_id: string; cursor: null };
+            expect(Object.keys(input).sort()).toEqual(["cursor", "member_id"]);
+            expect(input.cursor).toBeNull();
+            const history = registrationHistories.get(input.member_id);
+            if (history === undefined)
+              throw new Error("History requested an unconfigured ACP member");
+            historyRequests.push(input.member_id);
+            response.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                member_id: input.member_id,
+                history_id: history.id,
+                snapshot_revision: String(history.items.length),
+                after_sequence: "0",
+                items: history.items.map((registration, index) => ({
+                  sequence: String(index + 1),
+                  registration,
+                })),
+                next_cursor: null,
+              }),
+            );
+            return;
+          }
+          if (
+            request.method === "GET" &&
+            request.url?.startsWith("/internal/acp-incarnations/")
+          ) {
+            expect((await readBody(request)).byteLength).toBe(0);
+            const registrationId = request.url.slice(
+              "/internal/acp-incarnations/".length,
+            );
+            inspectionRequests.push(registrationId);
+            const registration = [...registrationHistories.values()]
+              .flatMap((history) => history.items)
+              .find((item) => item.registration_id === registrationId);
+            const child = registeredChildren.get(registrationId);
+            response.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify(
+                registration !== undefined && child?.isRunning()
+                  ? {
+                      state: "running",
+                      ...registration,
+                      observed_at: new Date().toISOString(),
+                    }
+                  : {
+                      state: "unknown",
+                      registration_id: registrationId,
+                      reason:
+                        registration === undefined
+                          ? "unregistered"
+                          : "platform_unavailable",
+                    },
+              ),
+            );
+            return;
+          }
+          expect(request.method).toBe("POST");
+          expect(request.url).toBe("/internal/acp-incarnations/register");
           const payload = JSON.parse(
             (await readBody(request)).toString("utf8"),
           ) as Record<string, unknown>;
@@ -213,11 +285,18 @@ describe.skipIf(databaseUrl === undefined)(
           expect(probe.status).toBe(200);
           expect(observed).toEqual(challenge);
           expect(registrations.has(challenge.member_id)).toBe(false);
-          const registration = {
+          const registration = Object.freeze({
             registration_id: randomUUID(),
             member_id: challenge.member_id,
             incarnation_id: challenge.incarnation_id,
-          };
+          });
+          const child = children[index];
+          if (child === undefined)
+            throw new Error("Registration has no original ACP child");
+          registrationHistories
+            .get(challenge.member_id)!
+            .items.push(registration);
+          registeredChildren.set(registration.registration_id, child);
           registrations.set(challenge.member_id, registration);
           response
             .writeHead(200, { "content-type": "application/json" })
@@ -490,6 +569,9 @@ describe.skipIf(databaseUrl === undefined)(
         }
         await Promise.all(children.map((child) => tracked(child.ready())));
         expect(registrations.size).toBe(2);
+        expect(new Set(historyRequests)).toEqual(new Set(["acp-a", "acp-b"]));
+        for (const registration of registrations.values())
+          expect(inspectionRequests).toContain(registration.registration_id);
         expect((await pool.query("SELECT * FROM agent_leases")).rows).toEqual(
           [],
         );

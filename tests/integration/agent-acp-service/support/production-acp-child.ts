@@ -18,6 +18,8 @@ export class ProductionAcpChild {
   private exit: Exit | undefined;
   private error: Error | undefined;
   private stopPromise: Promise<void> | undefined;
+  private crashPromise: Promise<Readonly<Exit>> | undefined;
+  private verifiedCrash: Readonly<Exit> | undefined;
   private readonly events: string[] = [];
 
   public constructor(
@@ -64,8 +66,63 @@ export class ProductionAcpChild {
             const value = JSON.parse(line) as {
               event?: unknown;
               error_type?: unknown;
+              stage?: unknown;
+              reason?: unknown;
+              revision?: unknown;
+              error_code?: unknown;
+              expectedOwners?: unknown;
+              observedOwners?: unknown;
             };
-            if (typeof value.event === "string")
+            if (value.event === "peer_publication_failed") {
+              const safe: Record<string, string | number> = {
+                event: value.event,
+              };
+              if (
+                typeof value.stage === "string" &&
+                [
+                  "availability_refresh",
+                  "owned_prepare",
+                  "availability",
+                  "receipts",
+                  "identity",
+                  "apply",
+                  "receipt",
+                  "fence_union",
+                  "publication_check",
+                  "authority_confirm",
+                ].includes(value.stage)
+              )
+                safe.stage = value.stage;
+              if (
+                typeof value.reason === "string" &&
+                ["missing", "duplicate", "unexpected"].includes(value.reason)
+              )
+                safe.reason = value.reason;
+              if (
+                typeof value.error_code === "string" &&
+                [
+                  "configuration_unavailable",
+                  "deadline_exceeded",
+                  "acp_registry_unavailable",
+                  "agent_unavailable",
+                ].includes(value.error_code)
+              )
+                safe.code = value.error_code;
+              for (const key of [
+                "revision",
+                "expectedOwners",
+                "observedOwners",
+              ] as const) {
+                const field = value[key];
+                if (
+                  typeof field === "number" &&
+                  Number.isSafeInteger(field) &&
+                  field >= 0
+                )
+                  safe[key] = field;
+              }
+              this.events.push(JSON.stringify(safe));
+            } else if (typeof value.event === "string")
               this.events.push(
                 value.event +
                   (typeof value.error_type === "string"
@@ -105,8 +162,71 @@ export class ProductionAcpChild {
   }
 
   public stop(): Promise<void> {
-    this.stopPromise ??= this.stopOriginal();
+    this.stopPromise ??=
+      this.crashPromise === undefined
+        ? this.stopOriginal()
+        : this.crashPromise.then(() => undefined);
     return this.stopPromise;
+  }
+
+  public diagnosticEvents(): readonly string[] {
+    return [...this.events];
+  }
+
+  public isRunning(): boolean {
+    return (
+      this.error === undefined && this.exit === undefined && !this.child.killed
+    );
+  }
+
+  public crashReceipt(): Readonly<Exit> | undefined {
+    return this.verifiedCrash;
+  }
+
+  public crash(): Promise<Readonly<Exit>> {
+    if (this.crashPromise !== undefined) return this.crashPromise;
+    if (this.stopPromise !== undefined || !this.isRunning())
+      return Promise.reject(
+        new Error("Cannot intentionally crash a child that is not running"),
+      );
+    this.crashPromise = this.crashOriginal();
+    return this.crashPromise;
+  }
+
+  private async crashOriginal(): Promise<Readonly<Exit>> {
+    const sent = this.child.kill("SIGKILL");
+    let result: Exit;
+    let timeout: unknown;
+    try {
+      result = await within(
+        this.closed.promise,
+        "intentionally crashed ACP child close",
+        10_000,
+      );
+    } catch (error) {
+      timeout = error;
+      result = await this.closed.promise;
+    }
+    const exit = await this.exited.promise;
+    if (this.error !== undefined) throw this.error;
+    if (!sent) throw new Error("Original ACP child did not accept SIGKILL");
+    if (timeout !== undefined)
+      throw timeout instanceof Error
+        ? timeout
+        : new Error("Original ACP child crash close timed out", {
+            cause: timeout,
+          });
+    if (
+      result.code !== null ||
+      result.signal !== "SIGKILL" ||
+      exit.code !== result.code ||
+      exit.signal !== result.signal
+    )
+      throw new Error(
+        `ACP crash did not produce its original SIGKILL exit and close: ${JSON.stringify({ exit, close: result })}`,
+      );
+    this.verifiedCrash = Object.freeze({ ...result });
+    return this.verifiedCrash;
   }
 
   private async stopOriginal(): Promise<void> {
