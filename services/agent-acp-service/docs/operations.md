@@ -113,7 +113,18 @@ original legacy path.
 
 The complete accepting-Agent ACK runs outside publication. Its failure does not
 withdraw healthy applied configuration, but the organization-wide ACK cannot
-guarantee that Controller independently marks a healthy new Agent ready. The
+guarantee that Controller independently marks a healthy new Agent ready.
+ACK also waits for revoked Run, output, transport and retired-generation work
+to finish. A socket closing or a cancellation request does not bypass this wait.
+Regranting access keeps the original cleanup barrier. Independent output or
+Learning model transport cleanup failures remain visible to subsequent ACKs
+for the affected organization and to shutdown. Ordinary business failures and
+expected cancellation are still handled by their original callers. Existing
+healthy Agents can execute while an organization-wide ACK is unavailable.
+This is a local cleanup barrier; peer bootstrap and cross-owner ACK remain
+pending.
+
+The
 generation manager uses a 30-second lease, 10-second renewal interval and
 10-second operation budget; these values are not configurable. Initialization
 uses an independent monotonic deadline with that budget. Expiry closes only the

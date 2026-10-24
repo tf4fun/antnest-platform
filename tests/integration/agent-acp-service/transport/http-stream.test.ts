@@ -1,4 +1,7 @@
-import { testAuthentication } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
+import {
+  testAuthentication,
+  workloadHeaders,
+} from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { randomBytes } from "node:crypto";
@@ -138,6 +141,55 @@ describe("ACP v1 Streamable HTTP", () => {
       throw new Error("Missing address");
     url = `http://127.0.0.1:${address.port}/v1/acp`;
   }
+
+  it("shutdown joins an original control publication without a user identity", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
+      application,
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 4096,
+      executionConfiguration: {
+        apply: async () => {
+          entered.resolve();
+          await release.promise;
+          return { organization_id: "organization-1", applied_revision: 1 };
+        },
+      },
+    });
+    await server.listenControl("127.0.0.1", 0);
+    const address = server.controlAddress();
+    if (!address || typeof address === "string")
+      throw new Error("Missing control address");
+    const pending = fetch(
+      `http://127.0.0.1:${address.port}/rpc/agent-acp/apply-execution-snapshot`,
+      {
+        method: "POST",
+        headers: {
+          ...workloadHeaders("agent-controller"),
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      },
+    )
+      .then((response) => response.text())
+      .catch((error: unknown) => error);
+    let closing: Promise<void> | undefined;
+    let closed = false;
+    try {
+      await entered.promise;
+      closing = server.close().then(() => {
+        closed = true;
+      });
+      await pending;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([pending, closing]);
+    }
+  });
 
   it("acknowledges the official client's delayed DELETE after server-initiated closure", async () => {
     const ready = Promise.withResolvers<void>();
@@ -743,6 +795,135 @@ describe("ACP v1 Streamable HTTP", () => {
     sent.flushHeaders();
     return { sent, completed: completed.promise };
   }
+
+  it("publication revocation joins original HTTP cleanup and retains its DELETE receipt", async () => {
+    const transport = await startBounded();
+    const id = await open();
+    const cleanup = holdSdkCleanup();
+    let revocation: Promise<void> | undefined;
+    let deletion: Promise<Response> | undefined;
+    let joined = false;
+    try {
+      revocation = transport
+        .revokeAccess({ organization_id: binding().organizationId, agents: [] })
+        .then(() => {
+          joined = true;
+        });
+      await cleanup.entered;
+      deletion = request("DELETE", "owner", id);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(joined).toBe(false);
+      cleanup.release();
+      await revocation;
+      const response = await deletion;
+      expect(response.status).toBe(202);
+      await response.text();
+      expect(cleanup.close).toHaveBeenCalledOnce();
+    } finally {
+      cleanup.release();
+      await Promise.allSettled([revocation, deletion]);
+      await transport.close();
+      cleanup.close.mockRestore();
+    }
+  });
+
+  it("publication revocation joins the original HTTP handler after its socket closes", async () => {
+    const transport = await startBounded();
+    const id = await open();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const original = AcpServer.prototype.handleRequest;
+    const handler = vi
+      .spyOn(AcpServer.prototype, "handleRequest")
+      .mockImplementation(async function (this: AcpServer, incoming: Request) {
+        const response = await original.call(this, incoming);
+        if (incoming.method === "POST") {
+          entered.resolve();
+          await release.promise;
+        }
+        return response;
+      });
+    const pending = request("POST", "owner", id, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/list",
+      params: {},
+    })
+      .then((response) => response.text())
+      .catch((error: unknown) => error);
+    let revocation: Promise<void> | undefined;
+    let joined = false;
+    try {
+      await entered.promise;
+      revocation = transport
+        .revokeAccess({ organization_id: binding().organizationId, agents: [] })
+        .then(() => {
+          joined = true;
+        });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(joined).toBe(false);
+      release.resolve();
+      await Promise.all([revocation, pending]);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([pending, revocation]);
+      await transport.close();
+      handler.mockRestore();
+    }
+  });
+
+  it("publication revocation joins the original authorized state watch after disconnect", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let watching: AbortSignal | undefined;
+    server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
+      application,
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 4096,
+      executionState: {
+        read: vi.fn(),
+        watch: async (_identity, _send, signal) => {
+          watching = signal;
+          entered.resolve();
+          await release.promise;
+          signal.throwIfAborted();
+        },
+      },
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing address");
+    const pending = fetch(
+      `http://127.0.0.1:${address.port}/rpc/agent-acp/watch-agent-execution-state`,
+      {
+        method: "POST",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: "{}",
+      },
+    )
+      .then((response) => response.text())
+      .catch((error: unknown) => error);
+    let revocation: Promise<void> | undefined;
+    let joined = false;
+    try {
+      await entered.promise;
+      revocation = server
+        .revokeAccess({ organization_id: binding().organizationId, agents: [] })
+        .then(() => {
+          joined = true;
+        });
+      await vi.waitFor(() => expect(watching?.aborted).toBe(true));
+      expect(joined).toBe(false);
+      release.resolve();
+      await Promise.all([revocation, pending]);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([pending, revocation]);
+    }
+  });
 
   it("acknowledges the official client's original DELETE during normal shutdown after readiness stops", async () => {
     let serving = true;

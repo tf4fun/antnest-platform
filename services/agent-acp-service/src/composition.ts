@@ -189,6 +189,7 @@ export async function startAgentAcpService(
       ownedRuntimeConnections,
       registeredOwner,
       ownerInspection,
+      (snapshot) => listeningServer?.revokeAccess(snapshot) ?? Promise.resolve(),
     );
     components = built;
     void acquiredWorkerLock.waitForLoss().then((error) => {
@@ -299,6 +300,7 @@ export async function startAgentAcpService(
         // Review cancellation can settle the worker before the original
         // inference's finally/transport close. Join it before shared resources.
         results.push(await settle(built.joinLegacyModelRequests()));
+        results.push(await settle(built.joinRevocations()));
         results.push(
           await settle(ownedRuntimeConnections.close()),
           await settle(acquiredWorkerLock.release()),
@@ -336,6 +338,7 @@ export async function startAgentAcpService(
       () => components?.owned?.shutdown(),
       () => Promise.allSettled(background),
       () => components?.joinLegacyModelRequests(),
+      () => components?.joinRevocations(),
       () => runtimeConnections?.close(),
       () => workerLock?.release(),
       () => pool.end(),
@@ -386,6 +389,7 @@ export function buildComponents(
   runtimeConnections: RuntimeConnectionAuthority,
   registration?: OwnerRegistration,
   ownerInspection?: Pick<RuntimeControllerIncarnations, "inspect">,
+  revokeTransports?: (snapshot: ExecutionAccessSnapshot) => Promise<void>,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
   const secretBox = new SecretBox(config.clientMcpKey);
@@ -415,11 +419,50 @@ export function buildComponents(
   const permissionConnections = new PermissionConnections();
   const outputs = new SessionOutputStreams();
   let owned: OwnedAgentComponents | undefined;
+  const revocations = new Map<string, Promise<void>>();
   const revokeAccess = (snapshot: ExecutionAccessSnapshot): void => {
-    if (owned === undefined) agent.supervisor.revokeAccess(snapshot);
-    else owned.revoke(snapshot);
     permissionConnections.revokeAccess(snapshot);
-    outputs.revokeAccess(snapshot);
+    const original = Promise.allSettled([
+      revocations.get(snapshot.organization_id),
+      owned === undefined ? agent.supervisor.revokeAccess(snapshot) : owned.revoke(snapshot),
+      outputs.revokeAccess(snapshot),
+      revokeTransports?.(snapshot),
+    ]).then((results) => {
+      const errors = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (errors.length)
+        throw new AggregateError(
+          errors.map((result) => result.reason as unknown),
+          "Publication revocation failed",
+        );
+    });
+    revocations.set(snapshot.organization_id, original);
+    void original.catch((error: unknown) =>
+      telemetry.log(
+        "error",
+        "publication_revocation_failed",
+        { organization_id: snapshot.organization_id },
+        error,
+      ),
+    );
+  };
+  const joinRevocations = async (organizationId?: string): Promise<void> => {
+    const scopes = organizationId === undefined ? [...revocations.keys()] : [organizationId];
+    const results = await Promise.allSettled(
+      scopes.map(async (scope) => {
+        await revocations.get(scope);
+        await owned?.joinRetirements(scope);
+      }),
+    );
+    const errors = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (errors.length)
+      throw new AggregateError(
+        errors.map((result) => result.reason as unknown),
+        "Publication cleanup was incomplete",
+      );
   };
   const directory = new ExecutionDirectory({
     repository: configurationRepository,
@@ -429,14 +472,13 @@ export function buildComponents(
       outputs.invalidateOrganization(organizationId);
       owned?.published(organizationId);
     },
-    ...(registration === undefined
-      ? {}
-      : {
-          beforeAck: (snapshot: Parameters<OwnedAgentComponents["beforeAck"]>[0]) => {
-            if (owned === undefined) throw new Error("Owned Agent components are unavailable");
-            return owned.beforeAck(snapshot);
-          },
-        }),
+    beforeAck: async (snapshot) => {
+      await joinRevocations(snapshot.organization_id);
+      if (registration !== undefined) {
+        if (owned === undefined) throw new Error("Owned Agent components are unavailable");
+        await owned.beforeAck(snapshot);
+      }
+    },
     onInvalidAuthority: (organizationId) =>
       telemetry.log("warn", "execution_authority_unavailable", {
         organization_id: organizationId,
@@ -623,6 +665,7 @@ export function buildComponents(
     learningWorker,
     permissionConnections,
     permissionRepository,
+    joinRevocations,
     async joinLegacyModelRequests(): Promise<void> {
       // Business cancellation and errors remain owned by the review worker;
       // this is the lifetime barrier for its original model calls.

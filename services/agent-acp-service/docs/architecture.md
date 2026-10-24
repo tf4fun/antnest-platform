@@ -80,6 +80,14 @@ configuration under the fixed fence before use.
 The ACK checks every accepting Agent outside configuration publication. Failure
 does not withdraw healthy applied configuration, but an organization-wide ACK
 does not guarantee that Controller independently marks a healthy new Agent ready.
+Before that check, publication joins the revoked Agents' original Runs, session
+output reads and sends, HTTP handlers, WebSocket tasks and retired generations.
+Closed responses alone are not completion receipts. Revocation starts during
+publication, but its join runs outside the publication queue so later revisions
+can progress. A later grant does not bypass an earlier unfinished revocation.
+Original Learning model transport cleanup failures are retained per organization
+and fail its ACK, as well as shutdown; unrelated healthy Agent execution remains
+available. This local barrier does not implement cross-owner acknowledgement.
 Predecessor Learning claim/global review-slot recovery, independent Runtime
 isolation, cross-owner ACKs and peers, and two-replica integration
 remain pending. The global worker lock and

@@ -181,13 +181,16 @@ export class RunSupervisor implements RunLifecyclePort {
     return waitForSlot(slot, stopWaiting);
   }
 
-  public revokeAccess(snapshot: ExecutionAccessSnapshot): void {
+  public revokeAccess(snapshot: ExecutionAccessSnapshot): Promise<void> {
+    const revoked: RunSlot[] = [];
     for (const slot of this.active.values()) {
       if (isExecutionAccessRevoked(snapshot, slot.binding)) {
+        revoked.push(slot);
         slot.accessDenied ??= new DomainError("access_denied", "Agent access was revoked");
         slot.controller.abort(slot.accessDenied);
       }
     }
+    return Promise.all(revoked.map((slot) => slot.finished.promise)).then(() => undefined);
   }
 
   public stop(reason: Error): void {

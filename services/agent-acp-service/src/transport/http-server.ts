@@ -37,6 +37,11 @@ import {
   type ConnectionCapacityLimits,
 } from "../application/connection-capacity.js";
 import { DomainError } from "../domain/errors.js";
+import {
+  isExecutionAccessRevoked,
+  type ExecutionAccessSnapshot,
+  type ExecutionIdentity,
+} from "../domain/execution-configuration.js";
 import { ConnectionTasks } from "./acp/connection-tasks.js";
 import type { BridgeObservationService } from "../application/bridge-observation.js";
 import type { LearningChangeReader } from "../application/learning-change-reader.js";
@@ -85,6 +90,13 @@ export type AgentAcpHttpServerOptions = {
   reportError?: (error: unknown, operation: string) => void;
 };
 
+type OwnedHttpRequest = {
+  identity: ExecutionIdentity | null;
+  response: ServerResponse;
+  deleting: boolean;
+  finished: PromiseWithResolvers<void>;
+};
+
 export class AgentAcpHttpServer {
   private readonly outputs: SessionOutputStreams;
   private readonly server: Server;
@@ -92,6 +104,14 @@ export class AgentAcpHttpServer {
   private readonly webSockets: WebSocketServer;
   private readonly connections = new Set<WebSocket>();
   private readonly ownedWebSockets = new Set<Promise<void>>();
+  private readonly upgrades = new Set<Promise<void>>();
+  private readonly socketBindings = new Set<{
+    identity: ExecutionIdentity;
+    close: () => void;
+    joined: Promise<void>;
+  }>();
+  private readonly requests = new Set<OwnedHttpRequest>();
+  private readonly latestAccess = new Map<string, ExecutionAccessSnapshot>();
   private readonly capacity: ConnectionCapacity;
   private readonly id: () => string;
   private readonly telemetry: TelemetryPort;
@@ -149,7 +169,7 @@ export class AgentAcpHttpServer {
       const onError = (error: Error) => boundary.finish(undefined, error);
       socket.once("close", onClose);
       socket.once("error", onError);
-      void context
+      const original = context
         .with(boundary.context, () => this.handleUpgrade(request, socket, head))
         .then(
           (status) => boundary.finish(status),
@@ -162,6 +182,9 @@ export class AgentAcpHttpServer {
           socket.off("close", onClose);
           socket.off("error", onError);
         });
+      this.upgrades.add(original);
+      const forget = () => this.upgrades.delete(original);
+      void original.then(forget, forget);
     });
   }
 
@@ -198,6 +221,36 @@ export class AgentAcpHttpServer {
     return this.closePromise;
   }
 
+  public async revokeAccess(snapshot: ExecutionAccessSnapshot): Promise<void> {
+    this.latestAccess.set(snapshot.organization_id, structuredClone(snapshot));
+    const joins: Promise<unknown>[] = [this.httpTransport.revokeAccess(snapshot)];
+    for (const request of this.requests) {
+      if (request.identity === null || !isExecutionAccessRevoked(snapshot, request.identity))
+        continue;
+      if (!request.deleting) request.response.destroy();
+      joins.push(request.finished.promise);
+    }
+    for (const binding of this.socketBindings) {
+      if (!isExecutionAccessRevoked(snapshot, binding.identity)) continue;
+      binding.close();
+      joins.push(binding.joined);
+    }
+    const results = await Promise.allSettled(joins);
+    const errors = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (errors.length)
+      throw new AggregateError(
+        errors.map((result) => result.reason as unknown),
+        "Revoked transport cleanup failed",
+      );
+  }
+
+  private accessRevoked(identity: ExecutionIdentity): boolean {
+    const snapshot = this.latestAccess.get(identity.organizationId);
+    return snapshot !== undefined && isExecutionAccessRevoked(snapshot, identity);
+  }
+
   private isClosing(): boolean {
     return this.closePromise !== undefined;
   }
@@ -217,6 +270,10 @@ export class AgentAcpHttpServer {
         }),
       )),
     );
+    results.push(
+      ...(await Promise.allSettled([...this.requests].map((request) => request.finished.promise))),
+    );
+    results.push(...(await Promise.allSettled([...this.upgrades])));
     const errors = results.filter(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
@@ -255,6 +312,27 @@ export class AgentAcpHttpServer {
     response: ServerResponse,
     listener: "workspace" | "control",
   ): Promise<void> {
+    const original: OwnedHttpRequest = {
+      identity: null,
+      response,
+      deleting: request.method === "DELETE",
+      finished: Promise.withResolvers<void>(),
+    };
+    this.requests.add(original);
+    try {
+      await this.admitHttp(request, response, listener, original);
+    } finally {
+      this.requests.delete(original);
+      original.finished.resolve();
+    }
+  }
+
+  private async admitHttp(
+    request: IncomingMessage,
+    response: ServerResponse,
+    listener: "workspace" | "control",
+    original: OwnedHttpRequest,
+  ): Promise<void> {
     const path = (request.url ?? "").split("?", 1)[0];
     const control =
       path === AGENT_SETTLEMENT_PATH ||
@@ -280,6 +358,21 @@ export class AgentAcpHttpServer {
       json(response, failure.status, failure.body);
       return;
     }
+    const identity = trustedIdentity(request.headers);
+    original.identity = identity;
+    if (response.destroyed) return;
+    if (identity !== null && request.method !== "DELETE" && this.accessRevoked(identity)) {
+      const failure = httpFailure("access_denied");
+      json(response, failure.status, failure.body);
+      return;
+    }
+    await this.handleAuthorizedHttp(request, response);
+  }
+
+  private async handleAuthorizedHttp(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
     const sourceRoute = skillSourceRoute(request.url);
     if (sourceRoute !== undefined) {
       await serveSkillSource(
@@ -430,7 +523,9 @@ export class AgentAcpHttpServer {
       });
       return rejectUpgrade(socket, 401, "Unauthorized");
     }
-    if (socket.destroyed) return rejectUpgrade(socket, 503, "Service Unavailable");
+    if (socket.destroyed || this.isClosing())
+      return rejectUpgrade(socket, 503, "Service Unavailable");
+    if (this.accessRevoked(identity)) return rejectUpgrade(socket, 403, "Forbidden");
     const setup = Promise.withResolvers<void>();
     try {
       const lease = this.capacity.reserve(identity);
@@ -445,6 +540,16 @@ export class AgentAcpHttpServer {
         this.ownedWebSockets.delete(owned);
       });
       this.ownedWebSockets.add(owned);
+      const original = {
+        identity,
+        close: () => {
+          socket.destroy();
+        },
+        joined: owned,
+      };
+      this.socketBindings.add(original);
+      const forget = () => this.socketBindings.delete(original);
+      void owned.then(forget, forget);
       socket.pause();
       const binding = {
         connectionId: this.id(),

@@ -90,6 +90,8 @@ export class OwnedAgentComponents {
   private readonly inventory: PostgresAgentStartup;
   private readonly entries = new Map<string, Entry>();
   private readonly cleanupFailures: unknown[] = [];
+  private readonly modelCleanupFailures = new Map<string, ModelTransportCleanupError[]>();
+  private readonly retiring = new Map<string, Set<Promise<void>>>();
   private started = false;
   private stopped = false;
   private shutdownPromise: Promise<void> | undefined;
@@ -252,17 +254,39 @@ export class OwnedAgentComponents {
     }
   }
 
-  public revoke(snapshot: ExecutionAccessSnapshot): void {
+  public revoke(snapshot: ExecutionAccessSnapshot): Promise<void> {
+    const originals: Promise<void>[] = [];
     for (const entry of this.entries.values()) {
       if (entry.scope.organizationId !== snapshot.organization_id) continue;
-      entry.graph.supervisor.revokeAccess(snapshot);
+      originals.push(entry.graph.supervisor.revokeAccess(snapshot));
     }
+    return Promise.all(originals).then(() => undefined);
+  }
+
+  public async joinRetirements(organizationId: string): Promise<void> {
+    const pending = this.retiring.get(organizationId);
+    while (pending !== undefined && pending.size > 0) {
+      const results = await Promise.allSettled([...pending]);
+      const errors = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (errors.length)
+        throw new AggregateError(
+          errors.map((result) => result.reason as unknown),
+          "Retired Agent cleanup failed",
+        );
+    }
+    // Generation drain joins original calls but leaves their result to the
+    // caller. A failed native cleanup must also prevent publication ACKs.
+    const failures = this.modelCleanupFailures.get(organizationId);
+    if (failures?.length) throw new AggregateError(failures, "Retired Agent model cleanup failed");
   }
 
   public async prepare(next: PublicExecutionConfiguration): Promise<void> {
     this.options.ownershipSignal.throwIfAborted();
     if (this.stopped) throw unavailable();
-    this.revoke(next);
+    // Publication's revocation barrier owns the join outside this preparation.
+    void this.revoke(next);
     for (const entry of this.entries.values())
       if (entry.scope.organizationId === next.organization_id)
         entry.graph.learningGate.syncOrganization(next.organization_id, next.agents);
@@ -553,7 +577,12 @@ export class OwnedAgentComponents {
       // Observe the original result before generation tracking deletes it.
       // Business errors and expected cancellation are owned by the caller.
       void original.catch((error: unknown) => {
-        if (error instanceof ModelTransportCleanupError) this.cleanupFailures.push(error);
+        if (error instanceof ModelTransportCleanupError) {
+          this.cleanupFailures.push(error);
+          const failures = this.modelCleanupFailures.get(scope.organizationId) ?? [];
+          failures.push(error);
+          this.modelCleanupFailures.set(scope.organizationId, failures);
+        }
       });
       generation.retainRun(original);
     };
@@ -676,7 +705,16 @@ export class OwnedAgentComponents {
   }
   private retire(entry: Entry, cause: unknown = new AgentOwnershipLostError()): void {
     this.stopEntry(entry);
-    void this.generations.closeScope(entry.scope, cause);
+    const pending = this.retiring.get(entry.scope.organizationId) ?? new Set<Promise<void>>();
+    this.retiring.set(entry.scope.organizationId, pending);
+    const original = this.generations.closeScope(entry.scope, cause);
+    pending.add(original);
+    void original.then(
+      () => pending.delete(original),
+      (error: unknown) => {
+        this.cleanupFailures.push(error);
+      },
+    );
   }
   private stopEntry(entry: Entry): void {
     if (entry.stopping) return;

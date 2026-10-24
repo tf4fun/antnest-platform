@@ -11,6 +11,103 @@ const message = (text: string): SessionEvent => ({
 });
 
 describe("Session output delivery", () => {
+  it("retains an independent late output failure after the transport already closed", async () => {
+    const streams = new SessionOutputStreams();
+    const stop = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const original = Promise.withResolvers<SessionOutputSnapshot>();
+    const failure = new Error("original output read failed after disconnect");
+    const attaching = streams.attach({
+      identity: binding(),
+      key: "failed",
+      connectionId: "failed",
+      read: () => {
+        entered.resolve();
+        return original.promise;
+      },
+      send: vi.fn(),
+      signal: stop.signal,
+      onFailure: vi.fn(),
+    });
+    await entered.promise;
+    stop.abort();
+    await attaching;
+    const snapshot = { organization_id: binding().organizationId, agents: [] };
+    const joined = streams.revokeAccess(snapshot);
+    void joined.catch(() => undefined);
+    original.reject(failure);
+    await expect(joined).rejects.toThrow("output");
+    await expect(streams.revokeAccess(snapshot)).rejects.toThrow("output");
+  });
+
+  it("refuses an attachment started by an old continuation after publication revoked its identity", async () => {
+    const streams = new SessionOutputStreams();
+    await streams.revokeAccess({ organization_id: binding().organizationId, agents: [] });
+    const read = vi.fn(() => Promise.resolve({ sequence: 0, events: [], state: idle }));
+    const stop = new AbortController();
+    try {
+      expect(
+        await streams.attach({
+          identity: binding(),
+          key: "late",
+          connectionId: "late",
+          read,
+          send: vi.fn().mockResolvedValue(undefined),
+          signal: stop.signal,
+          onFailure: vi.fn(),
+        }),
+      ).toBe(false);
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      stop.abort();
+    }
+  });
+
+  it.each([false, true])(
+    "joins the original revoked read after transport closed=%s",
+    async (closedFirst) => {
+      const streams = new SessionOutputStreams();
+      const stop = new AbortController();
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<SessionOutputSnapshot>();
+      const send = vi.fn().mockResolvedValue(undefined);
+      const attaching = streams.attach({
+        identity: binding(),
+        key: "original",
+        connectionId: "old",
+        read: () => {
+          entered.resolve();
+          return release.promise;
+        },
+        send,
+        signal: stop.signal,
+        onFailure: vi.fn(),
+      });
+      await entered.promise;
+      if (closedFirst) {
+        stop.abort();
+        await attaching;
+      }
+      let joined = false;
+      const revocation = Promise.resolve(
+        streams.revokeAccess({ organization_id: binding().organizationId, agents: [] }),
+      ).then(() => {
+        joined = true;
+      });
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(joined).toBe(false);
+        expect(send).not.toHaveBeenCalled();
+      } finally {
+        release.resolve({ sequence: 0, events: [], state: idle });
+        stop.abort();
+        await Promise.all([attaching, revocation]);
+      }
+      expect(joined).toBe(true);
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
   it("retains persisted state events for clients without Bridge checkpoints", async () => {
     const streams = new SessionOutputStreams();
     const stop = new AbortController();
