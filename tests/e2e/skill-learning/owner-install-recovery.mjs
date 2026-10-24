@@ -16,13 +16,7 @@ const literal = (value) => {
   return `convert_from(decode('${Buffer.from(value).toString("hex")}','hex'),'UTF8')`;
 };
 
-async function holdRuntimeUpdate({
-  config,
-  docker,
-  postgres,
-  agentId,
-  signal,
-}) {
+async function holdRuntimeUpdate({ config, docker, postgres, signal }) {
   const name = `${config.project}-owner-install-rc-gate`;
   const read = async (select) =>
     JSON.parse(
@@ -50,7 +44,9 @@ async function holdRuntimeUpdate({
     read(`SELECT pid,backend_start,wait_event FROM pg_stat_activity
     WHERE datname='antnest_runtime_controller' AND application_name=${literal(name)}`);
   // The original psql stays in this transaction. ON_ERROR_STOP makes explicit
-  // cancellation close the connection and roll back the held row lock.
+  // cancellation close the connection and release the table lock. Keep the
+  // Environment row available to pre-admission PrepareSkillSet. This isolated
+  // fixture gates operation writes only, after Controller has fenced Egress.
   const original = docker(
     [
       "exec",
@@ -69,7 +65,7 @@ async function holdRuntimeUpdate({
       "-d",
       "antnest_runtime_controller",
       "-c",
-      `BEGIN; SELECT agent_id FROM runtime_controller.runtime_environments WHERE agent_id=${literal(agentId)} FOR UPDATE; SELECT pg_sleep(90); ROLLBACK;`,
+      "BEGIN; LOCK TABLE runtime_controller.operations IN SHARE MODE; SELECT pg_sleep(90); ROLLBACK;",
     ],
     true,
   ).then(
@@ -126,7 +122,7 @@ async function holdRuntimeUpdate({
         assert(rows.length <= 1);
         return rows.length === 1 && rows[0].wait_event === "PgSleep" && rows[0];
       },
-      "Runtime update row lock acquired",
+      "Runtime operation write gate acquired",
       signal,
       10000,
     );
@@ -134,9 +130,13 @@ async function holdRuntimeUpdate({
       ...row,
       release,
       waiters: () =>
-        read(`SELECT pid,backend_start FROM pg_stat_activity
-      WHERE datname='antnest_runtime_controller' AND wait_event_type='Lock'
-        AND ${row.pid}=ANY(pg_blocking_pids(pid))`),
+        read(`SELECT a.pid,a.backend_start FROM pg_stat_activity a
+      WHERE a.datname='antnest_runtime_controller' AND a.wait_event_type='Lock'
+        AND position('INSERT INTO runtime_controller.operations' in a.query)>0
+        AND ${row.pid}=ANY(pg_blocking_pids(a.pid))
+        AND EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid=a.pid
+          AND l.locktype='relation' AND l.mode='RowExclusiveLock' AND NOT l.granted
+          AND l.relation='runtime_controller.operations'::regclass)`),
     };
   } catch (error) {
     try {
@@ -449,7 +449,6 @@ export async function verifyOwnerInstallRecovery({
     config,
     docker,
     postgres,
-    agentId: fixture.agentID,
     signal,
   });
   let receipt, fenced, checkpointFailure;
@@ -507,7 +506,7 @@ export async function verifyOwnerInstallRecovery({
         const waiting = await blocker.waiters();
         return waiting.length > 0 && waiting;
       },
-      "actual Runtime update waits behind the original Runtime row",
+      "actual Runtime operation INSERT waits behind the owned write gate",
       signal,
       5000,
     );
