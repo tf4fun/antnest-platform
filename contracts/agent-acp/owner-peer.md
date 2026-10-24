@@ -5,7 +5,10 @@ This extends [Agent ownership](agent-ownership.md) and
 and [closed wire schemas](owner-peer.schema.json) define the first ACP peer batch:
 local publication/revocation receipts and the aggregate Controller ACK. They are
 planned until the ACP implementation and its production HTTP admission pass.
-The global worker lock remains until forwarding and genuine two-replica E2E also pass.
+The exclusive worker lock remains in the current production batch. The planned
+[fixed membership assignment](owner-assignment.md) batch defines the guarded
+shared-lock transition; forwarding and genuine two-replica failover remain
+separate required delivery gates.
 
 ## Trusted membership and process binding
 

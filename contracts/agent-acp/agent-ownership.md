@@ -4,8 +4,9 @@ This contract defines the ownership facts that ACP processes must agree on.
 It follows [durable Run admission](run-admission.md). The first delivery batch
 provides lease storage and a fenced transaction primitive only. Connecting all
 service writes, recovery, configuration acknowledgements and peer forwarding
-remains separate work. The database-wide worker lock remains until those
-batches and explicit two-replica integration pass.
+remains separate work. The database-wide worker lock remains; the later
+[fixed assignment contract](owner-assignment.md) defines a guarded shared mode
+after Agent-scoped legacy recovery is fenced and two-process distribution passes.
 
 ## Scope And Identity
 

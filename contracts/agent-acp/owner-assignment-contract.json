@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "status": "planned",
+  "issue": 49,
+  "algorithm": "sha256-json-scope-mod-v1",
+  "scope_encoding": "UTF-8 JSON.stringify([organization_id, agent_id]) without normalization",
+  "member_order": "ascending ASCII member_id",
+  "selection": "unsigned big-endian SHA-256 integer modulo complete member count",
+  "member_count": {
+    "minimum": 1,
+    "maximum": 64
+  },
+  "lock": {
+    "key": 2026083002,
+    "legacy": "exclusive",
+    "registered_peer": "shared",
+    "fenced_legacy_required": true
+  },
+  "missing_members": "retain in catalog and assignment; no implicit failover",
+  "vectors": [
+    {
+      "organization_id": "org-1",
+      "agent_id": "agent-1",
+      "members": ["acp-c", "acp-a", "acp-b"],
+      "scope_sha256": "b87264b37a13d5cdcbef8b5dbbdf610694e5d3d82c0c61b4ea29f998baba6c3f",
+      "preferred_member": "acp-c"
+    },
+    {
+      "organization_id": "org-1",
+      "agent_id": "agent-2",
+      "members": ["acp-c", "acp-a", "acp-b"],
+      "scope_sha256": "a34aaaf5b365ea1495edfbf1cc321744ca3e6ebd268807a84a7b15f4c41d0840",
+      "preferred_member": "acp-a"
+    },
+    {
+      "organization_id": "org-2",
+      "agent_id": "agent-1",
+      "members": ["acp-c", "acp-a", "acp-b"],
+      "scope_sha256": "cd04d74e2ae3f07ff8fa60b4f4f9713a5a6e8a98cac05fded930064c18721ad5",
+      "preferred_member": "acp-b"
+    },
+    {
+      "organization_id": "组织",
+      "agent_id": "代理",
+      "members": ["acp-c", "acp-a", "acp-b"],
+      "scope_sha256": "acae303e63b6950f094dea01cc311a03e7fcd4463c934fdb8b672cba2e5275ac",
+      "preferred_member": "acp-a"
+    },
+    {
+      "organization_id": "a\"b",
+      "agent_id": "agent\\1",
+      "members": ["acp-c", "acp-a", "acp-b"],
+      "scope_sha256": "cd50e7ab84d639e4654a5f91b424ff5113d0fcdf06a6a2029dba9b1e4dbee3a5",
+      "preferred_member": "acp-b"
+    }
+  ]
+}
