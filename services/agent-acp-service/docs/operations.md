@@ -141,7 +141,8 @@ Work cancellation uses the entry signal; Learning retains original model work.
 
 Non-peer mode retains exclusive startup; peer mode uses shared compatibility
 locking and fixed Agent assignment. The independent ownership-loss fail-stop
-channel remains. HTTP/SSE, state/control and source forwarding, crash takeover and two-replica Docker
+channel remains. HTTP/SSE, state read/watch and settlement use fixed owner
+forwarding. Registry source forwarding, crash takeover and two-replica Docker
 integration remain pending.
 Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
 registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
@@ -189,9 +190,13 @@ cleanup. Its RC/Runtime peers are controlled fixtures. v1/v2 WebSocket clients
 may use one public ACP origin; the peer listener routes them to the fixed owner
 and requires that owner's original cleanup receipt. A missing receipt remains
 an unresolved scope cleanup and prevents a later successful revocation ACK.
-HTTP/SSE, state/control and source requests still require the assigned owner.
-Those forwarding paths, crash takeover and actual two-replica Docker acceptance
-remain pending. An absent catalog member cannot
+HTTP/SSE connections retain their original owner handle. State read/watch and
+Controller settlement can use a different ingress member. Settlement discovers
+the assigned member even after its execution lease expires, checks the closed
+operation and private publication under that member's control fence, and joins
+the original task and lease release before replying. User revocation does not
+cancel authorized lifecycle cleanup. Registry source forwarding, crash takeover
+and actual two-replica Docker acceptance remain pending. An absent catalog member cannot
 be omitted from ACK or have its Agents reassigned on a timeout. Membership remains
 pinned; changing the replica set requires a later migration/handoff design.
 
@@ -267,7 +272,8 @@ automatic roster migration or reset API is provided. A lost completion after a
 real commit retains the original pin for an identical retry. Production bootstrap
 now checks this pin before ordinary or peer listeners, including when peer
 configuration is disabled. Peer publication and original revocation joins are
-connected; multi-replica admission and takeover remain pending.
+connected. Fixed-assignment multi-replica admission has focused two-process
+coverage; surviving-member crash takeover remains pending.
 
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
@@ -301,7 +307,11 @@ timeouts and lost commit receipts remain failures, never permission to retry an
 effect. These callbacks must contain database work only. Existing transactions
 without this option retain their existing configured statement budgets.
 
-HTTP/SSE, state/control and source forwarding, crash takeover and actual two-replica Docker integration
+HTTP/SSE, state read/watch and Controller settlement forwarding have focused
+two-process coverage. Settlement retains its original business deadline and
+joins original work and lease release; a finite relay reply may finish within
+ten seconds after that deadline, without extending business work. Registry
+source forwarding, crash takeover and actual two-replica Docker integration
 remain required. The
 [ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
 those remaining gates. Lease rows must not be deleted to reset an epoch.

@@ -53,7 +53,7 @@ import {
   type AgentSettlementResult,
 } from "./domain/agent-settlement.js";
 import type { AcpApplicationPort } from "./ports/acp-application.js";
-import type { AgentSettlementPort } from "./ports/agent-settlement.js";
+import type { AgentSettlementAuthority, AgentSettlementPort } from "./ports/agent-settlement.js";
 import type { AgentExecutionStatePort } from "./ports/agent-execution-state.js";
 import type { SkillCommandsPort } from "./ports/skill-commands.js";
 import { ModelTransportCleanupError } from "./ports/model.js";
@@ -122,7 +122,7 @@ export class OwnedAgentComponents {
       generations: this.generations,
     });
     this.settlement = {
-      settle: async (input, signal) => {
+      settle: async (input, signal, expected) => {
         const request = parseAgentSettlement(input);
         const scope = { organizationId: request.organization_id, agentId: request.agent_id };
         // Lifecycle authorization is deliberately separate from user/Prompt admission.
@@ -131,6 +131,7 @@ export class OwnedAgentComponents {
           operationId: request.operation_id,
           minimumRevision: request.minimum_revision,
         });
+        this.assertSettlementAuthority(request, expected);
         let entry: Entry;
         try {
           entry = this.capture(scope);
@@ -139,10 +140,36 @@ export class OwnedAgentComponents {
             error instanceof AgentOwnershipLostError ||
             (error instanceof DomainError && error.code === "agent_unavailable")
           )
-            return this.settleProtected(request, signal);
+            return this.settleProtected(request, signal, expected);
           throw error;
         }
-        return entry.generation.dispatch(() => entry.settlement.settle(request, signal));
+        return entry.generation.dispatch(async (_value, original) => {
+          const lifetime = AbortSignal.any([original, ...(signal === undefined ? [] : [signal])]);
+          const publication = this.assertSettlementAuthority(
+            request,
+            expected,
+            entry.generation.authority.registration,
+          );
+          if (publication !== undefined) {
+            const stored = await this.options.configuration.loadOwnedAuthority(
+              entry.generation.authority.fence,
+            );
+            this.assertSettlementAuthority(
+              request,
+              expected,
+              entry.generation.authority.registration,
+            );
+            publication.assertCurrent();
+            if (!isDeepStrictEqual(stored, publication.authority)) throw configurationUnavailable();
+          }
+          const result = await entry.settlement.settle(request, lifetime);
+          this.assertSettlementAuthority(
+            request,
+            expected,
+            entry.generation.authority.registration,
+          );
+          return result;
+        });
       },
     };
     this.executionState = {
@@ -214,6 +241,7 @@ export class OwnedAgentComponents {
   private async settleProtected(
     request: AgentSettlementRequest,
     signal?: AbortSignal,
+    expected?: AgentSettlementAuthority,
   ): Promise<AgentSettlementResult> {
     const operation = {
       organizationId: request.organization_id,
@@ -234,6 +262,7 @@ export class OwnedAgentComponents {
     const expired = () => lifetime.aborted || this.options.now().getTime() >= deadline;
     const current = () => {
       this.options.ownershipSignal.throwIfAborted();
+      this.assertSettlementAuthority(request, expected);
       const latest = this.options.directory.closedAgent(operation);
       if (!isDeepStrictEqual(latest.agent.runtime, initial.agent.runtime))
         throw new DomainError("agent_operation_conflict", "Runtime changed during settlement");
@@ -251,8 +280,15 @@ export class OwnedAgentComponents {
         async (authority, original) => {
           original.throwIfAborted();
           const published = current();
+          const publication = this.assertSettlementAuthority(
+            request,
+            expected,
+            authority.registration,
+          );
           const saved = await this.options.configuration.loadOwnedAuthority(authority.fence);
           original.throwIfAborted();
+          publication?.assertCurrent();
+          this.assertSettlementAuthority(request, expected, authority.registration);
           const agent =
             saved === null
               ? undefined
@@ -262,6 +298,7 @@ export class OwnedAgentComponents {
           if (
             saved === null ||
             saved.revision !== published.revision ||
+            (publication !== undefined && !isDeepStrictEqual(saved, publication.authority)) ||
             !isDeepStrictEqual(agent, published.agent)
           )
             throw configurationUnavailable();
@@ -270,6 +307,7 @@ export class OwnedAgentComponents {
           const inventory = await this.inventory.settlement(authority.fence);
           original.throwIfAborted();
           current();
+          this.assertSettlementAuthority(request, expected, authority.registration);
           return inventory.localUncertain
             ? ("not_settled" as const)
             : inventory.runtimeProtected
@@ -277,17 +315,43 @@ export class OwnedAgentComponents {
               : ("settled" as const);
         },
         lifetime,
+        { joinOriginal: true },
       );
       const latest = current();
       return { applied_revision: latest.revision, outcome: expired() ? "not_settled" : outcome };
     } catch (error) {
-      const latest = current();
-      if (expired() || error instanceof AgentOwnershipLostError)
-        return { applied_revision: latest.revision, outcome: "not_settled" };
+      // Deadline cancellation may produce not_settled only after the original
+      // task and release have joined. Independent cleanup failures stay errors.
+      if (error instanceof AgentOwnershipLostError)
+        return { applied_revision: current().revision, outcome: "not_settled" };
       throw error;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private assertSettlementAuthority(
+    request: AgentSettlementRequest,
+    expected: AgentSettlementAuthority | undefined,
+    registration?: OwnerRegistration,
+  ) {
+    if (expected === undefined) return undefined;
+    const scope = { organizationId: request.organization_id, agentId: request.agent_id };
+    this.options.directory.closedAgent({
+      ...scope,
+      operationId: request.operation_id,
+      minimumRevision: request.minimum_revision,
+    });
+    const publication = this.options.directory.capturePublication(scope.organizationId);
+    publication.assertCurrent();
+    if (
+      !isDeepStrictEqual(expected.owner, this.options.registration) ||
+      (registration !== undefined && !isDeepStrictEqual(expected.owner, registration)) ||
+      this.options.assignment?.owns(scope) === false ||
+      !isDeepStrictEqual(expected.publication, executionPublication(publication.authority))
+    )
+      throw configurationUnavailable();
+    return publication;
   }
 
   public revoke(snapshot: ExecutionAccessSnapshot): Promise<void> {

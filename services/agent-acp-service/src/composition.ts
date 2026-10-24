@@ -299,6 +299,11 @@ export async function startAgentAcpService(
             throw new DomainError("agent_unavailable", "ACP ingress is not ready");
           return listeningServer.handlePeerHttp(request, response, member, signal, admitted);
         },
+        forwardControl: (request, response, member, signal, admitted) => {
+          if (listeningServer === undefined)
+            throw new DomainError("agent_unavailable", "ACP ingress is not ready");
+          return listeningServer.handlePeerControl(request, response, member, signal, admitted);
+        },
       });
       await peerServer.listen(config.peer!.listen.host, config.peer!.listen.port);
       ownership.signal.throwIfAborted();

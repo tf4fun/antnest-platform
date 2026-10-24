@@ -49,7 +49,7 @@ const responseHeaders = new Set([
 export type HttpOwnerForwardingOptions = {
   registration: OwnerRegistration;
   handles: HttpOwnerHandles;
-  resolver: Pick<OwnerForwarding, "resolve">;
+  resolver: Pick<OwnerForwarding, "resolve"> & Partial<Pick<OwnerForwarding, "resolveSettlement">>;
   peers: Pick<PeerAuthentication, "fetchFor" | "membership">;
   admit(
     request: OwnerForwardRequest,

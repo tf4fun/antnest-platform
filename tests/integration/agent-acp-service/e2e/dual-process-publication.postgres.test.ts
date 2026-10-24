@@ -23,6 +23,7 @@ import {
   type OwnerRegistration,
 } from "../../../../services/agent-acp-service/src/application/owner-incarnation.js";
 import {
+  closedExecutionAgent,
   executionConfiguration,
   executionIdentity,
   runtimeConfiguration,
@@ -158,6 +159,8 @@ describe.skipIf(databaseUrl === undefined)(
       { mode: "single-entry", transport: "websocket", version: 2 },
       { mode: "direct-owner", transport: "http", version: 1 },
       { mode: "single-entry", transport: "http", version: 1 },
+      { mode: "single-entry", transport: "http-state-watch", version: 1 },
+      { mode: "single-entry", transport: "http-settlement", version: 1 },
     ] as const)(
       "$mode / $transport / v$version",
       async ({ mode, transport, version }) => {
@@ -198,6 +201,14 @@ describe.skipIf(databaseUrl === undefined)(
         let closing = false;
         let created = false;
         let businessPassed = false;
+        const modelEntered = Promise.withResolvers<void>();
+        const releaseModel = Promise.withResolvers<void>();
+        const stateWatchAbort = new AbortController();
+        let stateWatchResponse: Response | undefined;
+        let stateWatchReader:
+          ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let stateWatchReaderOwned = false;
+        let stateWatchReading: Promise<void> | undefined;
         try {
           await pool.query(`CREATE SCHEMA ${schema}`);
           created = true;
@@ -282,6 +293,10 @@ describe.skipIf(databaseUrl === undefined)(
               (await readBody(request)).toString("utf8"),
             ) as { model?: unknown; messages?: unknown };
             modelRequests.push(payload);
+            if (transport === "http-state-watch") {
+              modelEntered.resolve();
+              await releaseModel.promise;
+            }
             response.writeHead(200, { "content-type": "application/json" }).end(
               JSON.stringify({
                 choices: [
@@ -495,13 +510,342 @@ describe.skipIf(databaseUrl === undefined)(
           const published: unknown = await publication.json();
           expect(publication.status).toBe(200);
           expect(published).toMatchObject({ applied_revision: 1 });
-          for (const i of [0, 1]) {
+          if (transport === "http-state-watch") {
+            const agentId = configuration.agents[1]!.agent_id;
+            const identity = { ...executionIdentity(), agentId };
+            const read = await within(
+              tracked(
+                fetch(
+                  `http://127.0.0.1:${ports[0]!}/rpc/agent-acp/get-agent-execution-state`,
+                  {
+                    method: "POST",
+                    headers: {
+                      ...identityHeaders(identity),
+                      "content-type": "application/json",
+                      connection: "close",
+                    },
+                    body: "{}",
+                    signal: AbortSignal.timeout(5000),
+                  },
+                ).then(async (response) => ({
+                  status: response.status,
+                  body: (await response.json()) as unknown,
+                })),
+              ),
+              "non-owner public state read",
+              5000,
+            );
+            expect(read.status).toBe(200);
+            expect(read.body).toMatchObject({
+              agent_id: agentId,
+              access_allowed: true,
+              availability: "ready",
+              active_session_id: null,
+              unavailable_reason: null,
+            });
+            const owner = registrations.get("acp-b");
+            if (owner === undefined)
+              throw new Error("Missing B owner registration");
+            expect(
+              (
+                await pool.query(
+                  "SELECT owner_instance_id FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                  [configuration.organization_id, agentId],
+                )
+              ).rows,
+            ).toEqual([{ owner_instance_id: owner.incarnation_id }]);
+
+            const openingWatch = tracked(
+              fetch(
+                `http://127.0.0.1:${ports[0]!}/rpc/agent-acp/watch-agent-execution-state`,
+                {
+                  method: "POST",
+                  headers: {
+                    ...identityHeaders(identity),
+                    "content-type": "application/json",
+                    accept: "text/event-stream",
+                    connection: "close",
+                  },
+                  body: "{}",
+                  signal: stateWatchAbort.signal,
+                },
+              ).then(async (response) => {
+                stateWatchResponse = response;
+                if (closing || stateWatchAbort.signal.aborted)
+                  await response.body?.cancel();
+                return response;
+              }),
+            );
+            const watch = await within(
+              openingWatch,
+              "non-owner public state watch",
+              5000,
+            );
+            expect(watch.status).toBe(200);
+            expect(watch.headers.get("content-type")).toContain(
+              "text/event-stream",
+            );
+            if (watch.body === null)
+              throw new Error("Missing original state watch body");
+            const reader = watch.body.getReader();
+            stateWatchReader = reader;
+            stateWatchReaderOwned = true;
+            void tracked(reader.closed);
+            const states: Record<string, unknown>[] = [];
+            let normalEof = false;
+            stateWatchReading = tracked(
+              (async () => {
+                const decoder = new TextDecoder("utf-8", { fatal: true });
+                let buffer = "";
+                try {
+                  for (;;) {
+                    const next = await reader.read();
+                    if (next.done) {
+                      stateWatchAbort.signal.throwIfAborted();
+                      buffer += decoder.decode();
+                      expect(buffer.trim()).toBe("");
+                      normalEof = true;
+                      return;
+                    }
+                    buffer += decoder.decode(next.value, { stream: true });
+                    buffer = buffer.replaceAll("\r\n", "\n");
+                    let boundary = buffer.indexOf("\n\n");
+                    while (boundary !== -1) {
+                      const frame = buffer.slice(0, boundary);
+                      buffer = buffer.slice(boundary + 2);
+                      const lines = frame.split("\n");
+                      if (
+                        !lines.every(
+                          (line) => line === "" || line.startsWith(":"),
+                        )
+                      ) {
+                        const events = lines.filter((line) =>
+                          line.startsWith("event:"),
+                        );
+                        const data = lines.filter((line) =>
+                          line.startsWith("data:"),
+                        );
+                        expect(events).toHaveLength(1);
+                        expect(events[0]?.slice(6).trim()).toBe(
+                          "workspace_state",
+                        );
+                        expect(data.length).toBeGreaterThan(0);
+                        const state: unknown = JSON.parse(
+                          data
+                            .map((line) => line.slice(5).trimStart())
+                            .join("\n"),
+                        );
+                        if (
+                          state === null ||
+                          typeof state !== "object" ||
+                          Array.isArray(state)
+                        )
+                          throw new Error("Invalid state watch frame");
+                        expect(state).toMatchObject({ agent_id: agentId });
+                        states.push(state as Record<string, unknown>);
+                      }
+                      boundary = buffer.indexOf("\n\n");
+                    }
+                    if (Buffer.byteLength(buffer) > 65_536)
+                      throw new Error(
+                        "State watch frame exceeded its test limit",
+                      );
+                  }
+                } finally {
+                  reader.releaseLock();
+                  stateWatchReaderOwned = false;
+                }
+              })(),
+            );
+            const readyState = {
+              agent_id: agentId,
+              access_allowed: true,
+              availability: "ready",
+              active_session_id: null,
+              unavailable_reason: null,
+            };
+            await expect
+              .poll(() => states.at(-1), { timeout: 5000 })
+              .toMatchObject(readyState);
+
+            const client = new AcpHttpClient(
+              `http://127.0.0.1:${ports[0]!}/v1/acp`,
+              identity,
+            );
+            clients.push(client);
+            await tracked(client.initialize(1));
+            const createdSession = await tracked(
+              client.request("session/new", {
+                cwd: "/workspace",
+                mcpServers: [],
+              }),
+            );
+            expect(createdSession.error).toBeUndefined();
+            const sessionId = createdSession.result?.sessionId;
+            if (typeof sessionId !== "string")
+              throw new Error("Missing watched ACP session");
+            const prompt = `Complete exactly once while state watch is busy for ${agentId}`;
+            let promptSettled = false;
+            const running = tracked(
+              client.request("session/prompt", {
+                sessionId,
+                prompt: [{ type: "text", text: prompt }],
+              }),
+            );
+            void running.then(
+              () => {
+                promptSettled = true;
+              },
+              () => {
+                promptSettled = true;
+              },
+            );
+            await within(
+              modelEntered.promise,
+              "original model request entered",
+              5000,
+            );
+            expect(modelRequests).toHaveLength(1);
+            await expect
+              .poll(() => states.at(-1), { timeout: 5000 })
+              .toMatchObject({
+                agent_id: agentId,
+                access_allowed: true,
+                availability: "busy",
+                active_session_id: sessionId,
+              });
+            expect(promptSettled).toBe(false);
+            releaseModel.resolve();
+            expect(
+              (await within(running, "original watched Prompt", 15_000)).error,
+            ).toBeUndefined();
+            await expect
+              .poll(() => states.at(-1), { timeout: 5000 })
+              .toMatchObject(readyState);
+            await expect
+              .poll(
+                () =>
+                  client.updates
+                    .map((update) =>
+                      update.sessionUpdate === "agent_message_chunk" &&
+                      update.content.type === "text"
+                        ? update.content.text
+                        : "",
+                    )
+                    .join(""),
+                { timeout: 5000 },
+              )
+              .toBe(reply);
+
+            const persisted = await pool.query<{ id: string }>(
+              "SELECT id,state,terminal_class,executor_state,tool_effect_state,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs WHERE session_id=$1",
+              [sessionId],
+            );
+            expect(persisted.rows).toHaveLength(1);
+            expect(persisted.rows[0]).toMatchObject({
+              state: "completed",
+              terminal_class: "completed",
+              executor_state: "quiescent",
+              tool_effect_state: "none",
+              execution_owner_registration_id: owner.registration_id,
+              execution_owner_member_id: owner.member_id,
+              execution_owner_incarnation_id: owner.incarnation_id,
+              execution_owner_epoch: "1",
+            });
+            expect(
+              (
+                await pool.query(
+                  "SELECT kind,payload->'content' AS content FROM session_messages WHERE session_id=$1 AND kind IN ('user_message','agent_message') ORDER BY sequence",
+                  [sessionId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                kind: "user_message",
+                content: [{ type: "text", text: prompt }],
+              },
+              {
+                kind: "agent_message",
+                content: [{ type: "text", text: reply }],
+              },
+            ]);
+            const revoked = structuredClone(configuration);
+            revoked.revision = 2;
+            revoked.agents[1]!.principal_ids = [];
+            const revocation = tracked(
+              fetch(
+                `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/apply-execution-snapshot`,
+                {
+                  method: "POST",
+                  headers: {
+                    ...workloadHeaders("agent-controller"),
+                    "content-type": "application/json",
+                    connection: "close",
+                  },
+                  body: JSON.stringify(revoked),
+                  signal: AbortSignal.timeout(15_000),
+                },
+              ).then(async (response) => ({
+                status: response.status,
+                body: (await response.json()) as unknown,
+              })),
+            );
+            const [ack] = await within(
+              Promise.all([revocation, stateWatchReading]),
+              "revocation ACK and original state watch EOF",
+              15_000,
+            );
+            expect(ack.status).toBe(200);
+            expect(ack.body).toMatchObject({ applied_revision: 2 });
+            expect(normalEof).toBe(true);
+            expect(stateWatchAbort.signal.aborted).toBe(false);
+            expect(watch.body.locked).toBe(false);
+            expect(states.at(-1)).toMatchObject({
+              agent_id: agentId,
+              access_allowed: false,
+            });
+            expect(
+              states
+                .filter((state) => state.availability === "busy")
+                .every((state) => state.active_session_id === sessionId),
+            ).toBe(true);
+            expect(modelRequests).toHaveLength(1);
+            expect(modelRequests[0]?.model).toBe("test-model");
+            expect(runtimeReads[1]).toBeGreaterThan(0);
+            expect(
+              (
+                await pool.query("SELECT id FROM runs WHERE agent_id=$1", [
+                  agentId,
+                ])
+              ).rows,
+            ).toEqual([{ id: persisted.rows[0]!.id }]);
+            expect(
+              (
+                await pool.query(
+                  "SELECT id,state,terminal_class,executor_state,tool_effect_state,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs WHERE session_id=$1",
+                  [sessionId],
+                )
+              ).rows,
+            ).toEqual(persisted.rows);
+          }
+          for (const i of transport === "http-state-watch"
+            ? []
+            : transport === "http-settlement"
+              ? [1]
+              : [0, 1]) {
             const agentId = configuration.agents[i]!.agent_id;
-            const entryPort = ports[(mode === "single-entry" ? 0 : i) * 4]!;
+            const entryPort =
+              ports[
+                (transport === "http-settlement"
+                  ? i
+                  : mode === "single-entry"
+                    ? 0
+                    : i) * 4
+              ]!;
             const identity = { ...executionIdentity(), agentId };
             const connect = async () => {
               const connected =
-                transport === "http"
+                transport === "http" || transport === "http-settlement"
                   ? new AcpHttpClient(
                       `http://127.0.0.1:${entryPort}/v1/acp`,
                       identity,
@@ -617,21 +961,236 @@ describe.skipIf(databaseUrl === undefined)(
             ]);
             await client.close();
           }
-          expect(modelRequests).toHaveLength(2);
-          expect(
-            modelRequests.every((request) => request.model === "test-model"),
-          ).toBe(true);
-          expect(runtimeReads.every((count) => count > 0)).toBe(true);
+          if (transport === "http-settlement") {
+            const agentId = configuration.agents[1]!.agent_id;
+            const owner = registrations.get("acp-b");
+            if (owner === undefined)
+              throw new Error("Missing B settlement owner registration");
+            const facts = async () => ({
+              runs: (
+                await pool.query(
+                  "SELECT id,session_id,state,terminal_class,executor_state,tool_effect_state,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs ORDER BY id",
+                )
+              ).rows,
+              messages: (
+                await pool.query(
+                  "SELECT session_id,sequence,kind,payload->'content' AS content FROM session_messages ORDER BY session_id,sequence",
+                )
+              ).rows,
+              stopReceipts: (
+                await pool.query(
+                  "SELECT receipt_id,registration_id FROM owner_stop_receipts ORDER BY receipt_id",
+                )
+              ).rows,
+              runRecoveries: (
+                await pool.query(
+                  "SELECT run_id,receipt_id FROM run_owner_recoveries ORDER BY run_id",
+                )
+              ).rows,
+              learningRecoveries: (
+                await pool.query(
+                  "SELECT task_id,receipt_id FROM learning_owner_recoveries ORDER BY task_id",
+                )
+              ).rows,
+            });
+            const original = await facts();
+            const originalModels = structuredClone(modelRequests);
+            expect(original.runs).toHaveLength(1);
+            expect(original.runs[0]).toMatchObject({
+              state: "completed",
+              executor_state: "quiescent",
+              tool_effect_state: "none",
+              execution_owner_member_id: "acp-b",
+              execution_owner_epoch: "1",
+            });
+            expect(original.stopReceipts).toEqual([]);
+            expect(original.runRecoveries).toEqual([]);
+            expect(original.learningRecoveries).toEqual([]);
+            expect(originalModels).toHaveLength(1);
+
+            const closed = structuredClone(configuration);
+            closed.revision = 2;
+            closed.agents[1] = closedExecutionAgent(closed.agents[1]!);
+            closed.agents[1].operation_id = randomUUID();
+            const publication = await within(
+              tracked(
+                fetch(
+                  `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/apply-execution-snapshot`,
+                  {
+                    method: "POST",
+                    headers: {
+                      ...workloadHeaders("agent-controller"),
+                      "content-type": "application/json",
+                      connection: "close",
+                    },
+                    body: JSON.stringify(closed),
+                    signal: AbortSignal.timeout(15_000),
+                  },
+                ).then(async (response) => ({
+                  status: response.status,
+                  body: (await response.json()) as unknown,
+                })),
+              ),
+              "closed B Agent publication",
+              15_000,
+            );
+            expect(publication).toEqual({
+              status: 200,
+              body: {
+                organization_id: configuration.organization_id,
+                applied_revision: closed.revision,
+              },
+            });
+
+            // Expire the actual original lease without changing the original
+            // Run, owner identity or durable stop evidence. The production
+            // renewal/loss path must retire its original generation.
+            expect(
+              (
+                await pool.query(
+                  "UPDATE agent_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE organization_id=$1 AND agent_id=$2 AND owner_instance_id=$3 AND epoch=1 RETURNING epoch::text",
+                  [
+                    configuration.organization_id,
+                    agentId,
+                    owner.incarnation_id,
+                  ],
+                )
+              ).rows,
+            ).toEqual([{ epoch: "1" }]);
+            await expect
+              .poll(
+                async () => {
+                  const observed = await tracked(
+                    fetch(
+                      `http://127.0.0.1:${ports[4]!}/rpc/agent-acp/get-agent-execution-state`,
+                      {
+                        method: "POST",
+                        headers: {
+                          ...identityHeaders({
+                            ...executionIdentity(),
+                            agentId,
+                          }),
+                          "content-type": "application/json",
+                          connection: "close",
+                        },
+                        body: "{}",
+                        signal: AbortSignal.timeout(2000),
+                      },
+                    ).then(async (response) => {
+                      await response.arrayBuffer();
+                      return response.status;
+                    }),
+                  );
+                  return observed;
+                },
+                { timeout: 15_000, interval: 100 },
+              )
+              .toBe(503);
+            expect(
+              (
+                await pool.query(
+                  "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS live FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                  [configuration.organization_id, agentId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                owner_instance_id: owner.incarnation_id,
+                epoch: "1",
+                live: false,
+              },
+            ]);
+
+            const settlement = await within(
+              tracked(
+                fetch(
+                  `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/settle-agent`,
+                  {
+                    method: "POST",
+                    headers: {
+                      ...workloadHeaders("agent-controller"),
+                      "content-type": "application/json",
+                      connection: "close",
+                    },
+                    body: JSON.stringify({
+                      organization_id: configuration.organization_id,
+                      agent_id: agentId,
+                      minimum_revision: closed.revision,
+                      operation_id: closed.agents[1].operation_id,
+                      mode: "wait",
+                      deadline_at: new Date(Date.now() + 8000).toISOString(),
+                    }),
+                    signal: AbortSignal.timeout(15_000),
+                  },
+                ).then(async (response) => ({
+                  status: response.status,
+                  body: (await response.json()) as unknown,
+                })),
+              ),
+              "non-owner settlement after original execution lease expired",
+              15_000,
+            );
+            expect(settlement).toEqual({
+              status: 200,
+              body: {
+                applied_revision: closed.revision,
+                outcome: "settled",
+              },
+            });
+            // Exactly the assigned B member acquired and released the next
+            // control fence. An ingress A acquisition would consume an epoch.
+            expect(
+              (
+                await pool.query(
+                  "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS live FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                  [configuration.organization_id, agentId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                owner_instance_id: owner.incarnation_id,
+                epoch: "2",
+                live: false,
+              },
+            ]);
+            expect(await facts()).toEqual(original);
+            expect(modelRequests).toEqual(originalModels);
+            expect(runtimeReads[1]).toBeGreaterThan(0);
+          }
+          if (
+            transport !== "http-state-watch" &&
+            transport !== "http-settlement"
+          ) {
+            expect(modelRequests).toHaveLength(2);
+            expect(
+              modelRequests.every((request) => request.model === "test-model"),
+            ).toBe(true);
+            expect(runtimeReads.every((count) => count > 0)).toBe(true);
+          }
           businessPassed = true;
         } catch (error) {
           errors.push(error);
         } finally {
           closing = true;
+          releaseModel.resolve();
           const collect = async (operations: Promise<unknown>[]) => {
             for (const result of await Promise.allSettled(operations))
               if (result.status === "rejected")
                 errors.push(result.reason as unknown);
           };
+          const stateWatchCancellation =
+            stateWatchReaderOwned && stateWatchReader !== undefined
+              ? stateWatchReader.cancel()
+              : stateWatchResponse?.body !== null &&
+                  stateWatchResponse?.body !== undefined &&
+                  !stateWatchResponse.body.locked
+                ? stateWatchResponse.body.cancel()
+                : undefined;
+          stateWatchAbort.abort(new Error("State watch fixture is closing"));
+          if (stateWatchCancellation !== undefined)
+            await collect([tracked(stateWatchCancellation)]);
+          if (stateWatchReading !== undefined)
+            await collect([stateWatchReading]);
           await collect(clients.map((client) => client.close()));
           await collect(children.map((child) => child.stop()));
           // Timed-out observations never replace their original operation receipts.

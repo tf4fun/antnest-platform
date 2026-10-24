@@ -230,6 +230,33 @@
       },
       "request_body": "none",
       "notes": "Dedicated directional member authentication only. Reverify the original agent-ui CCT. Creation checks the fixed membership, original registration, publication and epoch; continuation and DELETE use the authenticated original-owner handle, never a new lease. Each member joins its local HTTP relay and SDK cleanup before publication acknowledgement."
+    },
+    "POST /internal/acp-peer/control/state-read": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "required"
+      },
+      "request_body": "json",
+      "notes": "Dedicated directional member authentication. Reverify the original agent-ui CCT, fixed membership and complete source/target registrations, publication, live owner epoch and admission deadline. Forward state JSON/SSE without local fallback after dispatch; publication joins original streams and bounded delivery cleanup."
+    },
+    "POST /internal/acp-peer/control/state-watch": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "required"
+      },
+      "request_body": "json",
+      "notes": "Dedicated directional member authentication. Reverify the original agent-ui CCT, fixed membership and complete source/target registrations, publication, live owner epoch and admission deadline. Forward state JSON/SSE without local fallback after dispatch; publication joins original streams and bounded delivery cleanup."
+    },
+    "POST /internal/acp-peer/control/settlement": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "none"
+      },
+      "request_body": "json",
+      "notes": "Directional member credentials authenticate the fixed peer listener. Reapply the original agent-controller route policy without a user CCT. Validate the body digest, closed operation, fixed assignment, full registrations, private publication and original lifecycle deadline. No ingress lease acquisition; the owner joins its original control task and lease release."
     }
   },
   "guarded_sources": {
@@ -238,14 +265,14 @@
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
-      "sha256": "4d776e491e535b143012c8d8900339f02f7b2f21beec0deb24989243831d52d5",
+      "sha256": "8548b888792ecde4d577bda540ea5ff7fba8b69404887a25ccbae99fe628e739",
       "routes": [
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/watch-agent-execution-state"
       ]
     },
     "services/agent-acp-service/src/transport/agent-settlement.ts": {
-      "sha256": "da72511e2e101cf4c540965a993a00545838ea96317090f35e0949a1eb7e7a18",
+      "sha256": "281e8e3763c9e9630c8fd42a9c7bb7f4b3e9e3d084ed62af06554d27bd084d23",
       "routes": ["POST /rpc/agent-acp/settle-agent"]
     },
     "services/agent-acp-service/src/transport/bridge-observation.ts": {
@@ -268,7 +295,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "137674663280792460879fadfaa5bf70a675062b130da51d6d56a327f75dbe88",
+      "sha256": "21cb1adbebcd4ddcfacbebe8fc97d0ab121baac9c756af7ee592281bcd5250a4",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -339,22 +366,33 @@
       ]
     },
     "services/agent-acp-service/src/transport/peer-server.ts": {
-      "sha256": "1c979a1bea54edd100b13fe855a397fc45168f92d29a85fcc7c16a3af16a8b57",
+      "sha256": "15b88f6f2b2d494b2089611c74789c6e3b84e396f0add0116ed56fe87fa46384",
       "routes": [
         "POST /internal/acp-peer/identity",
         "POST /internal/acp-peer/publications/apply",
         "UPGRADE /internal/acp-peer/forward/ws",
         "POST /internal/acp-peer/forward/http",
         "GET /internal/acp-peer/forward/http",
-        "DELETE /internal/acp-peer/forward/http"
+        "DELETE /internal/acp-peer/forward/http",
+        "POST /internal/acp-peer/control/state-read",
+        "POST /internal/acp-peer/control/state-watch",
+        "POST /internal/acp-peer/control/settlement"
       ]
     },
     "services/agent-acp-service/src/transport/owner-http.ts": {
-      "sha256": "0f124967e9883f54fc002a6955f4902eeefb48b2ffea151c3c0965d94f2657a2",
+      "sha256": "4a9373cb21104ba324455e73e9a76545bb8fb29bd56f84eb37b4ea57fbdf32ed",
       "routes": [
         "POST /internal/acp-peer/forward/http",
         "GET /internal/acp-peer/forward/http",
         "DELETE /internal/acp-peer/forward/http"
+      ]
+    },
+    "services/agent-acp-service/src/transport/owner-control.ts": {
+      "sha256": "a60d0752653dd1f585c9535fbe61ebc5fec5b77f5ad097c85618e29b935b7b12",
+      "routes": [
+        "POST /internal/acp-peer/control/state-read",
+        "POST /internal/acp-peer/control/state-watch",
+        "POST /internal/acp-peer/control/settlement"
       ]
     }
   }

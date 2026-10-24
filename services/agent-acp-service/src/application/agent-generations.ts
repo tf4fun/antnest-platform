@@ -386,6 +386,7 @@ export class AgentGenerations<T> {
     input: AgentOwnershipScope,
     operation: (authority: AgentGenerationAuthority, signal: AbortSignal) => Promise<R>,
     signal?: AbortSignal,
+    options?: { joinOriginal: boolean },
   ): Promise<R> {
     if (this.stopped || signal?.aborted) return Promise.reject(new AgentOwnershipLostError());
     const scope = ownershipScope(input);
@@ -393,6 +394,7 @@ export class AgentGenerations<T> {
     if (this.controls.has(key)) return Promise.reject(new AgentOwnershipLostError());
     const result = Promise.withResolvers<R>();
     const finished = Promise.withResolvers<void>();
+    const originalFailures: unknown[] = [];
     void result.promise.catch(() => {});
     void finished.promise.catch(() => {});
     const cancellation = new AbortController();
@@ -477,8 +479,10 @@ export class AgentGenerations<T> {
           !(error instanceof AgentOwnershipLostError) &&
           error !== cancellation.signal.reason &&
           error !== generation?.signal.reason
-        )
+        ) {
           this.cleanupFailures.push(error);
+          originalFailures.push(error);
+        }
         result.reject(error);
       } finally {
         try {
@@ -505,7 +509,21 @@ export class AgentGenerations<T> {
         }
       }
     })();
-    return result.promise;
+    if (!options?.joinOriginal) return result.promise;
+    return Promise.allSettled([result.promise, finished.promise]).then(([outcome, cleanup]) => {
+      const failures = [
+        ...new Set([
+          ...(outcome.status === "rejected" ? [outcome.reason as unknown] : []),
+          ...(cleanup.status === "rejected" ? [cleanup.reason as unknown] : []),
+          ...originalFailures,
+        ]),
+      ];
+      if (failures.length === 1) throw failures[0];
+      if (failures.length)
+        throw new AggregateError(failures, "Original Agent control cleanup failed");
+      if (outcome.status === "fulfilled") return outcome.value;
+      throw outcome.reason;
+    });
   }
 
   public capture(input: AgentOwnershipScope): AgentGeneration<T> {

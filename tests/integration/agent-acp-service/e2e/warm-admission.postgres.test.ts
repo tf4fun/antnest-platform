@@ -502,6 +502,7 @@ describe.skipIf(databaseUrl === undefined)(
           control = false,
         ) {
           const origin = serviceOrigin(service, control);
+          const callerSignal = init?.signal ?? undefined;
           return track(
             (async () => {
               const response = await fetch(origin + path, {
@@ -509,6 +510,7 @@ describe.skipIf(databaseUrl === undefined)(
                 signal: AbortSignal.any([
                   requestAbort.signal,
                   AbortSignal.timeout(5000),
+                  ...(callerSignal === undefined ? [] : [callerSignal]),
                 ]),
               });
               return {
@@ -1518,17 +1520,23 @@ describe.skipIf(databaseUrl === undefined)(
             async function holdSettlement(
               snapshot: typeof closed,
               deadlineMs: number,
+              signal?: AbortSignal,
             ) {
               const organization = await lockClient();
               await lockRuntimeBarrierOrganization(
                 organization.client,
                 snapshot.organization_id,
               );
-              const response = http(
+              const deadlineAt = new Date(
+                Date.now() + deadlineMs,
+              ).toISOString();
+              let responseSettled = false;
+              const originalResponse = http(
                 second,
                 "/rpc/agent-acp/settle-agent",
                 {
                   method: "POST",
+                  ...(signal === undefined ? {} : { signal }),
                   headers: {
                     ...workloadHeaders("agent-controller"),
                     "content-type": "application/json",
@@ -1539,12 +1547,15 @@ describe.skipIf(databaseUrl === undefined)(
                     minimum_revision: snapshot.revision,
                     operation_id: snapshot.agents[0]!.operation_id,
                     mode: "wait",
-                    deadline_at: new Date(
-                      Date.now() + deadlineMs,
-                    ).toISOString(),
+                    deadline_at: deadlineAt,
                   }),
                 },
                 true,
+              );
+              const response = track(
+                originalResponse.finally(() => {
+                  responseSettled = true;
+                }),
               );
               await expect
                 .poll(
@@ -1602,7 +1613,9 @@ describe.skipIf(databaseUrl === undefined)(
                 lease,
                 originalRead,
                 fence,
+                deadlineAt,
                 response,
+                responseSettled: () => responseSettled,
                 releaseIndex,
               };
             }
@@ -1653,17 +1666,14 @@ describe.skipIf(databaseUrl === undefined)(
               status: 409,
             });
 
-            // A public deadline must not discard either the original SQL or the
-            // later lease release. Shutdown must join both before shared cleanup.
+            // A public deadline must join both the original SQL and lease release
+            // before returning not_settled, independently of service shutdown.
             const inventoryCalls = settlementInventory.mock.calls.length;
             const cancellation = await holdSettlement(republished, 3000);
-            expect(await cancellation.response).toEqual({
-              status: 200,
-              body: {
-                applied_revision: republished.revision,
-                outcome: "not_settled",
-              },
-            });
+            await expect
+              .poll(() => Date.now(), { timeout: 3500, interval: 10 })
+              .toBeGreaterThanOrEqual(Date.parse(cancellation.deadlineAt));
+            expect(cancellation.responseSettled()).toBe(false);
             expect(
               await blockedBy(
                 cancellation.organization.client,
@@ -1673,15 +1683,9 @@ describe.skipIf(databaseUrl === undefined)(
             ).toEqual(cancellation.originalRead);
             expect(cancellation.releaseIndex()).toBe(-1);
             expect(settlementInventory).toHaveBeenCalledTimes(inventoryCalls);
-            const workerReleasesBeforeShutdown =
+            const workerReleasesBeforeDeadline =
               releaseWorker.mock.calls.length;
-            const poolEndsBeforeShutdown = endPool.mock.calls.length;
-            let shutdownJoined = false;
-            const shutdown = track(
-              second.shutdown().then(() => {
-                shutdownJoined = true;
-              }),
-            );
+            const poolEndsBeforeDeadline = endPool.mock.calls.length;
             await unlock(cancellation.organization.client);
             await expect
               .poll(
@@ -1707,16 +1711,23 @@ describe.skipIf(databaseUrl === undefined)(
               }),
             );
             expect(releaseJoined).toBe(false);
-            expect(shutdownJoined).toBe(false);
+            expect(cancellation.responseSettled()).toBe(false);
             expect(releaseWorker).toHaveBeenCalledTimes(
-              workerReleasesBeforeShutdown,
+              workerReleasesBeforeDeadline,
             );
-            expect(endPool).toHaveBeenCalledTimes(poolEndsBeforeShutdown);
+            expect(endPool).toHaveBeenCalledTimes(poolEndsBeforeDeadline);
             expect(settlementInventory).toHaveBeenCalledTimes(inventoryCalls);
             await unlock(cancellation.lease.client);
             expect(await originalRelease).toBe(true);
-            await shutdown;
-            expect(shutdownJoined).toBe(true);
+            expect(releaseJoined).toBe(true);
+            expect(await cancellation.response).toEqual({
+              status: 200,
+              body: {
+                applied_revision: republished.revision,
+                outcome: "not_settled",
+              },
+            });
+            expect(cancellation.responseSettled()).toBe(true);
             expect(
               (
                 await pool.query(
@@ -1735,6 +1746,106 @@ describe.skipIf(databaseUrl === undefined)(
                 expired: true,
               },
             ]);
+
+            // A separate cancelled request proves that actual shutdown still
+            // joins held SQL and release before closing shared dependencies.
+            const shutdownRequest = new AbortController();
+            const shutdownReason = new Error(
+              "Warm settlement client cancelled for shutdown",
+            );
+            try {
+              const shutdownCancellation = await holdSettlement(
+                republished,
+                3000,
+                shutdownRequest.signal,
+              );
+              const workerReleasesBeforeShutdown =
+                releaseWorker.mock.calls.length;
+              const poolEndsBeforeShutdown = endPool.mock.calls.length;
+              let shutdownJoined = false;
+              shutdownRequest.abort(shutdownReason);
+              const shutdown = track(
+                second.shutdown().then(() => {
+                  shutdownJoined = true;
+                }),
+              );
+              await expect(shutdownCancellation.response).rejects.toBe(
+                shutdownReason,
+              );
+              expect(shutdownCancellation.responseSettled()).toBe(true);
+              expect(
+                await blockedBy(
+                  shutdownCancellation.organization.client,
+                  shutdownCancellation.organization.pid,
+                  advisorySql,
+                ),
+              ).toEqual(shutdownCancellation.originalRead);
+              expect(shutdownCancellation.releaseIndex()).toBe(-1);
+              expect(shutdownJoined).toBe(false);
+              expect(releaseWorker).toHaveBeenCalledTimes(
+                workerReleasesBeforeShutdown,
+              );
+              expect(endPool).toHaveBeenCalledTimes(poolEndsBeforeShutdown);
+              expect(settlementInventory).toHaveBeenCalledTimes(inventoryCalls);
+              await unlock(shutdownCancellation.organization.client);
+              await expect
+                .poll(
+                  () =>
+                    blockedBy(
+                      shutdownCancellation.lease.client,
+                      shutdownCancellation.lease.pid,
+                      releaseSql,
+                    ),
+                  { timeout: 2000 },
+                )
+                .toHaveLength(1);
+              const shutdownReleaseResult =
+                releaseLease.mock.results[shutdownCancellation.releaseIndex()]!;
+              expect(shutdownReleaseResult.type).toBe("return");
+              if (shutdownReleaseResult.type !== "return")
+                throw new Error(
+                  "Original shutdown release did not return a Promise",
+                );
+              let shutdownReleaseJoined = false;
+              const originalShutdownRelease = track(
+                shutdownReleaseResult.value.then((result) => {
+                  shutdownReleaseJoined = true;
+                  return result;
+                }),
+              );
+              expect(shutdownReleaseJoined).toBe(false);
+              expect(shutdownJoined).toBe(false);
+              expect(releaseWorker).toHaveBeenCalledTimes(
+                workerReleasesBeforeShutdown,
+              );
+              expect(endPool).toHaveBeenCalledTimes(poolEndsBeforeShutdown);
+              expect(settlementInventory).toHaveBeenCalledTimes(inventoryCalls);
+              await unlock(shutdownCancellation.lease.client);
+              expect(await originalShutdownRelease).toBe(true);
+              expect(shutdownReleaseJoined).toBe(true);
+              await shutdown;
+              expect(shutdownJoined).toBe(true);
+              expect(
+                (
+                  await pool.query(
+                    `SELECT owner_instance_id,epoch::text,expires_at<=clock_timestamp() AS expired
+                 FROM agent_leases WHERE organization_id=$1 AND agent_id=$2`,
+                    [
+                      shutdownCancellation.fence.organizationId,
+                      shutdownCancellation.fence.agentId,
+                    ],
+                  )
+                ).rows,
+              ).toEqual([
+                {
+                  owner_instance_id: shutdownCancellation.fence.ownerInstanceId,
+                  epoch: shutdownCancellation.fence.epoch,
+                  expired: true,
+                },
+              ]);
+            } finally {
+              shutdownRequest.abort(shutdownReason);
+            }
             expect(
               (
                 await pool.query(
