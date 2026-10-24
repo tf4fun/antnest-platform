@@ -414,7 +414,11 @@ describe.skipIf(databaseUrl === undefined)(
         expect(migrated.slice(0, applied.length)).toEqual(applied);
         expect(
           migrated.slice(applied.length).map((entry) => entry.version),
-        ).toEqual([migration, "0027_learning_claim_owner.sql"]);
+        ).toEqual([
+          migration,
+          "0027_learning_claim_owner.sql",
+          "0028_owner_stop_recovery.sql",
+        ]);
         expect(
           migrated.find((entry) => entry.version === migration)?.checksum,
         ).toBe(

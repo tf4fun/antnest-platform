@@ -91,6 +91,7 @@ export async function startAgentAcpService(
   let listeningServer: AgentAcpHttpServer | undefined;
   let incarnation: OwnerIncarnation | undefined;
   let ownerProbe: OwnerProbeServer | undefined;
+  let ownerInspection: Pick<RuntimeControllerIncarnations, "inspect"> | undefined;
   const background: Promise<void>[] = [];
   const ownership = new AbortController();
   const cancelStartup = (): void => ownership.abort(startupSignal?.reason);
@@ -118,6 +119,7 @@ export async function startAgentAcpService(
         origin: owner.runtimeControllerUrl,
         authentication: config.authentication.workload,
       });
+      ownerInspection = registration;
       const deadline = new AbortController();
       const registrationSignal = AbortSignal.any([ownership.signal, deadline.signal]);
       const closeIntent = (): void => incarnation?.close();
@@ -186,6 +188,7 @@ export async function startAgentAcpService(
       ownership.signal,
       ownedRuntimeConnections,
       registeredOwner,
+      ownerInspection,
     );
     components = built;
     void acquiredWorkerLock.waitForLoss().then((error) => {
@@ -382,6 +385,7 @@ export function buildComponents(
   ownershipSignal: AbortSignal,
   runtimeConnections: RuntimeConnectionAuthority,
   registration?: OwnerRegistration,
+  ownerInspection?: Pick<RuntimeControllerIncarnations, "inspect">,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
   const secretBox = new SecretBox(config.clientMcpKey);
@@ -500,6 +504,7 @@ export function buildComponents(
       recoveryRequired,
       now,
       registration,
+      ...(ownerInspection === undefined ? {} : { ownerInspection }),
       configuration: configurationRepository,
       legacy: repositories,
       legacyRecovery: recovery,

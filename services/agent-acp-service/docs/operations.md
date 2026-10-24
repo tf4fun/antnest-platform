@@ -97,8 +97,10 @@ Runtime Controller inspection results. `unknown`, HTTP 404, transport failure,
 an expired lease or a missing heartbeat is not an executor stop proof. The
 adapter issues one bounded request without retry or redirect and joins its
 original work before returning or rejecting. A returned stop receipt still
-requires the future owned-predecessor recovery consumer to persist it under the
-current Agent fence. Production scoped legacy recovery does not consume these
+is persisted by owned-generation Run recovery under the current Agent fence.
+That path also revalidates and reuses a complete previously accepted proof,
+including one first accepted for another Agent, without requiring another
+Controller query. Production scoped legacy recovery does not consume these
 stop receipts.
 
 After registration, production routes application, settlement, state, commands
@@ -113,17 +115,24 @@ The complete accepting-Agent ACK runs outside publication. Its failure does not
 withdraw healthy applied configuration, but the organization-wide ACK cannot
 guarantee that Controller independently marks a healthy new Agent ready. The
 generation manager uses a 30-second lease, 10-second renewal interval and
-10-second operation budget; these values are not configurable. Legacy
+10-second operation budget; these values are not configurable. Initialization
+uses an independent monotonic deadline with that budget. Expiry closes only the
+affected Agent's readiness, retaining and joining its original inspection and
+cleanup before releasing its lease. Healthy Agents can continue, while shutdown
+still waits for original cleanup; normal drain keeps renewing until work joins.
+Legacy
 compatibility writes still use held global worker-lock authority, while work
 cancellation uses the entry signal. Learning retains and joins original model
 work.
 
 The global worker lock, single-instance restriction and independent
-ownership-loss fail-stop channel remain. Production predecessor stop-proof
-and Learning claim/global review-slot recovery, cross-owner ACKs and peers,
+ownership-loss fail-stop channel remain. Predecessor Learning claim/global
+review-slot recovery, independent Runtime isolation, cross-owner ACKs and peers,
 and two-replica integration remain pending.
 Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
 registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
+it covers stopped Run recovery, permanent proof reuse during Controller failure,
+unavailable predecessor isolation and independent foreground execution.
 it does not establish a real Runtime Controller/Runtime deployment or two replicas.
 See the [owner handoff contract](../../../contracts/agent-acp/owner-handoff.md).
 
@@ -164,6 +173,17 @@ columns are either all null for legacy execution or a complete validated tuple.
 Existing Runs stay all null, even when their Agent has a current lease. A
 database trigger rejects later backfill, replacement or clearing of that tuple.
 
+Migration `0028_owner_stop_recovery.sql` adds immutable `owner_stop_receipts` and
+`run_owner_recoveries`. The full stopped response keeps its diagnostic timestamp
+string; neither a different receipt for that registration nor a changed response
+can replace it. The recovery association records the original Run identity and
+the first recovering authority separately. A dedicated current-fence transaction
+records these facts with Run recovery; ordinary writers still reject another
+owner's Run. ACP stop proof cannot mark a Runtime stopped or release Temporary
+resources. Owned generation preparation consumes these tables before admission;
+predecessor Learning recovery remains pending and the global worker lock remains
+required.
+
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
 Session/Run scope in the same transaction; existing Runs must also match their
@@ -196,7 +216,7 @@ timeouts and lost commit receipts remain failures, never permission to retry an
 effect. These callbacks must contain database work only. Existing transactions
 without this option retain their existing configured statement budgets.
 
-Production predecessor stop-proof recovery, cross-owner configuration/revocation
+Independent Runtime isolation, cross-owner configuration/revocation
 ACKs and trusted peers, two-replica integration, and predecessor Learning
 claim/global review-slot recovery remain required. The
 [ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
@@ -506,7 +526,8 @@ Collector retention. This service adds no retention service.
   effects or temporary cleanup failure remain unresolved and retain their barrier.
   Recovery retries use 250 ms to 5 s backoff plus jitter and stop on worker
   ownership loss or shutdown. Admission uncertainty uses the mode-specific path
-  above; predecessor stop-proof recovery remains pending for protected owned work.
+  above; protected owned work requires valid predecessor proof and any independent
+  Runtime or Learning recovery before reuse.
 - Run worker lock unavailable: startup fails because another replica owns Run
   execution. A same-session heartbeat detects loss of the dedicated lock
   connection; loss immediately closes admission, clears readiness and cancels

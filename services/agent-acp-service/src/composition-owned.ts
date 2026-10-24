@@ -13,6 +13,12 @@ import type { LearningPausedRecovery } from "./application/learning-paused-recov
 import type { OwnerRegistration } from "./application/owner-incarnation.js";
 import { PostgresAgentLeases } from "./adapters/postgres/agent-leases.js";
 import { PostgresAgentStartup } from "./adapters/postgres/agent-startup.js";
+import { PostgresOwnerRecovery } from "./adapters/postgres/owner-recovery.js";
+import type { RunOwnerAuthority } from "./adapters/postgres/run-write-authority.js";
+import {
+  OwnerInspectionAttemptError,
+  type RuntimeControllerIncarnations,
+} from "./adapters/runtime-controller-incarnations.js";
 import {
   createLegacyAgentRepositories,
   createOwnedAgentRepositories,
@@ -50,6 +56,7 @@ type Options = Omit<
   | "retainModelRequest"
 > & {
   registration: OwnerRegistration;
+  ownerInspection?: Pick<RuntimeControllerIncarnations, "inspect">;
   configuration: PostgresExecutionConfiguration;
   legacy: ReturnType<typeof createLegacyAgentRepositories>;
   legacyRecovery: Graph["recovery"];
@@ -176,6 +183,7 @@ export class OwnedAgentComponents {
         const generation = await this.generations.prepare(scope, async (captured) => {
           const signal = AbortSignal.any([this.options.ownershipSignal, captured.signal]);
           signal.throwIfAborted();
+          await this.recoverPredecessors(captured.authority, signal);
           await this.inventory.assertAvailable(captured.authority.fence);
           const original = await this.options.configuration.loadOwnedAuthority(
             captured.authority.fence,
@@ -208,6 +216,60 @@ export class OwnedAgentComponents {
         if (!(error instanceof AgentOwnershipLostError)) throw error;
         this.reportUnavailable(scope);
       }
+    }
+  }
+
+  private async recoverPredecessors(
+    authority: RunOwnerAuthority,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const recovery = new PostgresOwnerRecovery(this.options.kernel, authority);
+    let stage: "list" | "inspect" | "recover" = "list";
+    let reason = "recovery_unavailable";
+    try {
+      signal.throwIfAborted();
+      const work = await recovery.listPredecessors();
+      for (const item of work) {
+        signal.throwIfAborted();
+        stage = "inspect";
+        reason = "inspection_unavailable";
+        let inspection = item.inspection;
+        if (inspection === undefined) {
+          const inspector = this.options.ownerInspection;
+          if (inspector === undefined) throw new AgentOwnershipLostError();
+          // The inventory transaction has finished. Join the authenticated
+          // request and its original cleanup before recovery SQL. A permanent
+          // proof revalidated in that inventory does not need another RPC.
+          const observed = await inspector.inspect(item.registration, signal);
+          if (observed.state !== "stopped") {
+            reason = observed.state === "running" ? "predecessor_running" : "predecessor_unknown";
+            throw new AgentOwnershipLostError();
+          }
+          inspection = observed;
+        }
+        signal.throwIfAborted();
+        stage = "recover";
+        reason = "recovery_unavailable";
+        await recovery.recoverRun({
+          runId: item.runId,
+          inspection,
+          recoveredAt: this.options.now(),
+        });
+      }
+    } catch (error) {
+      const cleanupFailed = error instanceof OwnerInspectionAttemptError && error.cleanupFailed;
+      if (cleanupFailed) this.cleanupFailures.push(error);
+      this.options.ownershipSignal.throwIfAborted();
+      this.options.telemetry.log("warn", "agent_predecessor_recovery_unavailable", {
+        organization_id: authority.fence.organizationId,
+        agent_id: authority.fence.agentId,
+        stage,
+        reason,
+        cleanup_failed: cleanupFailed,
+      });
+      // The generation manager owns closing and joining this initializer. Do
+      // not join our own generation here or fail other healthy Agent scopes.
+      throw new AgentOwnershipLostError();
     }
   }
 

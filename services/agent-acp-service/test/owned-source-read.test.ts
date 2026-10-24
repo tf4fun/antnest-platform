@@ -7,6 +7,7 @@ import { LearningForegroundGate } from "../src/application/learning-foreground-g
 import { PostgresAgentLeases } from "../src/adapters/postgres/agent-leases.js";
 import { PostgresAgentStartup } from "../src/adapters/postgres/agent-startup.js";
 import { PostgresExecutionConfiguration } from "../src/adapters/postgres/execution-configuration.js";
+import { PostgresOwnerRecovery } from "../src/adapters/postgres/owner-recovery.js";
 import { AgentOwnershipLostError } from "../src/domain/agent-ownership.js";
 import { publicExecutionConfiguration } from "../src/domain/execution-configuration.js";
 import type { AcpApplicationPort } from "../src/ports/acp-application.js";
@@ -30,6 +31,9 @@ describe("owned source read lifetime", () => {
     vi.spyOn(PostgresExecutionConfiguration.prototype, "confirmOwnedAuthority").mockResolvedValue();
     vi.spyOn(PostgresExecutionConfiguration.prototype, "save").mockResolvedValue(true);
     vi.spyOn(PostgresAgentStartup.prototype, "assertAvailable").mockResolvedValue();
+    const listPredecessors = vi
+      .spyOn(PostgresOwnerRecovery.prototype, "listPredecessors")
+      .mockResolvedValue([]);
     vi.spyOn(PostgresAgentLeases.prototype, "tryAcquire").mockImplementation(
       (scope, ownerInstanceId) =>
         Promise.resolve({
@@ -52,6 +56,12 @@ describe("owned source read lifetime", () => {
       },
     );
     const pool = new Pool();
+    const connect = vi.spyOn(pool, "connect").mockImplementation(() => {
+      throw new Error("Unexpected database access in source-read lifetime unit fixture");
+    });
+    const query = vi.spyOn(pool, "query").mockImplementation(() => {
+      throw new Error("Unexpected database access in source-read lifetime unit fixture");
+    });
     const config = loadConfig({
       ...testSecurityEnvironment(),
       ANTNEST_ACP_DATABASE_URL: "postgres://unused/unused",
@@ -76,6 +86,7 @@ describe("owned source read lifetime", () => {
     let delivered: { finish(): void } | undefined;
     try {
       await components.directory.apply(configuration);
+      expect(listPredecessors).toHaveBeenCalledOnce();
       const manager = components.owned!;
       const generation = capture.mock.results.at(-1)?.value as AgentGeneration<AcpApplicationPort>;
       const dispatch = generation.dispatch.bind(generation);
@@ -109,15 +120,20 @@ describe("owned source read lifetime", () => {
       await manager.shutdown();
       expect(release).toHaveBeenCalledOnce();
     } finally {
-      // This cleanup also joins the unfixed regression without abandoning its
-      // retained task when the assertion above fails.
-      delivered?.finish();
-      await components.owned?.shutdown();
-      await components.supervisor.shutdown();
-      await connections.close();
-      await pool.end();
-      await config.authentication.workload.close();
-      vi.restoreAllMocks();
+      try {
+        // This cleanup also joins the unfixed regression without abandoning its
+        // retained task when the assertion above fails.
+        delivered?.finish();
+        await components.owned?.shutdown();
+        await components.supervisor.shutdown();
+        await connections.close();
+        await pool.end();
+        await config.authentication.workload.close();
+        expect(connect).not.toHaveBeenCalled();
+        expect(query).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
     }
   });
 });

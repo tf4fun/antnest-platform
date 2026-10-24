@@ -230,11 +230,26 @@ recovers only approved legacy scopes; `loadOwnedAuthority` revalidates sealed
 configuration under the fixed fence. With owner settings disabled, the original
 legacy path remains.
 
+The dedicated PostgreSQL predecessor-recovery entrypoint stores the complete
+stop response and its original Run association without changing either on retry.
+It validates the current fence and atomically records interrupted Tool events,
+permission cancellation, terminal facts and any Runtime barrier. Owned generation
+preparation now consumes this entrypoint before opening admission: it revalidates
+an already accepted permanent proof or performs one authenticated inspection
+outside SQL, then recovers under the current fence. It never replays the old
+Prompt. Runtime and Temporary protection remain independent of proof that the
+ACP process stopped; unresolved Runtime effects and Learning work stay isolated.
+
 The complete accepting-Agent ACK runs outside configuration publication. ACK
 failure retains healthy applied configuration, but the organization-wide ACK
 does not guarantee that Controller independently marks a healthy new Agent ready.
 The generation manager uses a 30-second lease, 10-second renewal interval and
 10-second operation budget; these values have no configuration settings.
+Initialization has an independent deadline using that budget. Expiry closes
+only the affected Agent's readiness while retaining its original request and
+cleanup until they finish; another Agent can prepare and run in the meantime.
+Shutdown joins that original cleanup before releasing the lease and shared
+resources. A normal drain continues renewal while joining.
 Legacy compatibility writes still derive authority from the held global worker
 lock; work cancellation uses the entry signal, and Learning retains and joins
 its original model work.
@@ -244,7 +259,7 @@ Internal model transport-close failures are retained through cancellation and
 reported by shutdown after the remaining resources have been closed.
 
 The global worker lock and single-instance restriction remain. Production
-predecessor stop-proof and Learning claim/global review-slot recovery,
+predecessor Learning claim/global review-slot recovery, independent Runtime isolation,
 cross-owner ACKs and peers, and two-replica integration
 remain pending under the
 [owner handoff contract](../../contracts/agent-acp/owner-handoff.md).

@@ -269,6 +269,82 @@ describe("Agent generation lifetime", () => {
     expect(leases.release).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["resolve", "reject"] as const)(
+    "an initializer deadline isolates A while retaining its original late %s and lease",
+    async (completion) => {
+      const { manager, leases, initialize } = fixture();
+      const initialization = held("late graph");
+      let generation: AgentGeneration<string> | undefined;
+      let readyFailure: unknown;
+      const ready = manager.prepare(scopeA, (value) => {
+        generation = value;
+        return initialization.promise;
+      });
+      void ready.catch((error: unknown) => {
+        readyFailure = error;
+      });
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(readyFailure).toBeInstanceOf(AgentOwnershipLostError);
+      expect(generation?.signal.aborted).toBe(true);
+      expect(() => manager.capture(scopeA)).toThrow(AgentOwnershipLostError);
+      await expect(manager.prepare(scopeA, initialize)).rejects.toBeInstanceOf(
+        AgentOwnershipLostError,
+      );
+      const b = await manager.prepare(scopeB, initialize);
+      await expect(b.dispatch((value) => Promise.resolve(value))).resolves.toBe("components");
+      expect(leases.release).not.toHaveBeenCalled();
+      let drained = false;
+      const stopping = manager.drain().then(() => {
+        drained = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(drained).toBe(false);
+      expect(leases.release.mock.calls.some(([fence]) => fence.agentId === scopeA.agentId)).toBe(
+        false,
+      );
+      if (completion === "resolve") initialization.resolve("late graph");
+      else initialization.reject(new Error("Original initializer cleanup failed"));
+      await stopping;
+      expect(
+        leases.release.mock.calls.filter(([fence]) => fence.agentId === scopeA.agentId),
+      ).toEqual([[lease(scopeA).fence]]);
+      expect(() => manager.capture(scopeA)).toThrow(AgentOwnershipLostError);
+    },
+  );
+
+  it("rejects late initializer success before opening even when its timer callback is delayed", async () => {
+    const { manager } = fixture();
+    const initialization = held("late graph");
+    const ready = manager.prepare(scopeA, () => initialization.promise);
+    const rejected = expect(ready).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    await vi.advanceTimersByTimeAsync(0);
+    vi.spyOn(performance, "now").mockReturnValue(10_001);
+    initialization.resolve("late graph");
+    await rejected;
+    expect(() => manager.capture(scopeA)).toThrow(AgentOwnershipLostError);
+  });
+
+  it("normal drain retains and renews an original initializer beyond its admission budget", async () => {
+    const { manager, leases } = fixture();
+    const initialization = held("late graph");
+    let generation: AgentGeneration<string> | undefined;
+    const ready = manager.prepare(scopeA, (value) => {
+      generation = value;
+      return initialization.promise;
+    });
+    const rejected = expect(ready).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    await vi.advanceTimersByTimeAsync(0);
+    const stopping = manager.drain();
+    await rejected;
+    await vi.advanceTimersByTimeAsync(10_001);
+    expect(generation?.signal.aborted).toBe(false);
+    expect(leases.renew).toHaveBeenCalled();
+    expect(leases.release).not.toHaveBeenCalled();
+    initialization.resolve("late graph");
+    await stopping;
+    expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
+  });
+
   it("initialization failure never opens admission and releases its exact lease", async () => {
     const { manager, leases } = fixture();
     const failure = new Error("sealed revision changed");
