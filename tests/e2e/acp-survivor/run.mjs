@@ -23,6 +23,7 @@ import {
 } from "../../support/storage.mjs";
 import { prepareSurvivorProfile } from "./profile.mjs";
 import { runSurvivorBusiness, requiredChecks } from "./business.mjs";
+import { partitionSurvivorDeployment } from "./deployment.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 process.chdir(root);
@@ -34,8 +35,42 @@ process.once("SIGINT", interrupt);
 process.once("SIGTERM", interrupt);
 const timer = setTimeout(interrupt, 900000);
 const errors = [];
+const failures = [];
+function recordFailure(error, stage) {
+  errors.push(error);
+  // Messages, assertion values and command arguments can contain credentials.
+  // Keep the original private error separately; publish only safe source facts.
+  const frames = String(error?.stack ?? "")
+    .split("\n")
+    .flatMap((line) => {
+      const prefix = `file://${root}`;
+      const index = line.indexOf(prefix);
+      if (index === -1) return [];
+      const location = line.slice(index + prefix.length).replace(/\)$/, "");
+      return /^[\w./-]+\.(?:mjs|js|ts):\d+:\d+$/u.test(location)
+        ? [location]
+        : [];
+    });
+  failures.push({
+    stage,
+    type: [
+      "AssertionError",
+      "AggregateError",
+      "AbortError",
+      "TypeError",
+      "RangeError",
+    ].includes(error?.name)
+      ? error.name
+      : "Error",
+    code: ["ERR_ASSERTION", "ABORT_ERR", "ENOENT"].includes(error?.code)
+      ? error.code
+      : undefined,
+    frames,
+  });
+}
 const report = {
   status: "running",
+  stage: "configuration",
   checks: [],
   business_completed: false,
   cleanup: "pending",
@@ -76,8 +111,10 @@ try {
   config.compose = (args) =>
     base(["-f", "tests/e2e/acp-survivor/compose.yaml", ...args]);
   const docker = dockerClient(config.env, abort.signal);
+  report.stage = "compose-render";
   const rendered = await docker(config.compose(["config", "--format", "json"]));
   writeEvidenceFile(directory, "compose.private.json", rendered);
+  report.stage = "compose-start";
   await docker(
     config.compose([
       "up",
@@ -101,11 +138,12 @@ try {
   );
   const rows = JSON.parse(await docker(["inspect", ...ids]));
   writeEvidenceFile(directory, "deployment.private.json", JSON.stringify(rows));
+  report.stage = "deployment-inspection";
   const service = (row) => row.Config.Labels["com.docker.compose.service"];
-  const peers = rows.filter((row) => service(row) === "agent-acp-peer-b");
-  assert.equal(peers.length, 1);
-  const peer = peers[0];
-  const baseRows = rows.filter((row) => row !== peer);
+  const { baseRows, peer, initializers } = partitionSurvivorDeployment(
+    rows,
+    config.project,
+  );
   const deployment = inspectFoundationDeployment(baseRows, config);
   const images = {};
   for (const name of applicationServices)
@@ -156,17 +194,19 @@ try {
   }
   report.deployment = {
     ...deployment,
-    services: rows.length,
+    services: baseRows.length + 1,
+    successful_initializers: initializers.map(service),
     acp_replicas: 2,
     same_candidate_image: true,
   };
   report.project = config.project;
+  report.stage = "business";
   await checkpoint();
   await runSurvivorBusiness(config, docker, abort.signal, report, checkpoint);
   assert.deepEqual(report.checks, requiredChecks);
   assert.equal(report.business_completed, true);
 } catch (error) {
-  errors.push(error);
+  recordFailure(error, report.stage);
   if (config && directory) {
     // Diagnostics use a separate bounded lifetime; collection is auxiliary.
     try {
@@ -210,7 +250,7 @@ try {
         );
         report.survivor_shutdown = { exit_code: 0, container: aId };
       } catch (error) {
-        errors.push(error);
+        recordFailure(error, "survivor-shutdown");
       }
     }
     try {
@@ -220,12 +260,12 @@ try {
       report.cleanup = "verified";
     } catch (error) {
       report.cleanup = "failed";
-      errors.push(error);
+      recordFailure(error, "resource-cleanup");
     }
   }
   process.removeListener("SIGINT", interrupt);
   process.removeListener("SIGTERM", interrupt);
-  if (abort.signal.aborted) errors.push(abort.signal.reason);
+  if (abort.signal.aborted) recordFailure(abort.signal.reason, "interruption");
   report.status =
     errors.length === 0 &&
     report.business_completed &&
@@ -233,6 +273,7 @@ try {
       ? "passed"
       : "failed";
   report.trace_collection = { status: "not_collected", auxiliary: true };
+  report.failures = failures;
   try {
     await checkpoint();
     if (directory && errors.length)
@@ -244,7 +285,7 @@ try {
         }),
       );
   } catch (error) {
-    errors.push(error);
+    recordFailure(error, "evidence-write");
     report.status = "failed";
   }
   process.umask(previousMask);
@@ -253,6 +294,8 @@ process.exitCode = report.status === "passed" ? 0 : 1;
 console.log(
   JSON.stringify({
     status: report.status,
+    stage: report.stage,
+    failures,
     business_completed: report.business_completed,
     checks: report.checks,
     cleanup: report.cleanup,

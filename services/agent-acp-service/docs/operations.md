@@ -141,6 +141,13 @@ legacy paused-Learning pipeline. Unknown legacy running reviews remain unchanged
 and can occupy the global review slot, preventing new background reviews.
 Work cancellation uses the entry signal; Learning retains original model work.
 
+The repository's 1–300 second lease range is an internal adapter limit, not a
+deployment setting. `ANTNEST_ACP_OWNER_REGISTRATION_TIMEOUT` controls the owner
+registration budget and does not change lease duration or renewal. Survivor
+takeover requires the exact original process's stop proof, natural lease expiry
+and completed recovery. The 30-second TTL is therefore not a takeover SLA;
+unavailable proof or unresolved original work keeps that Agent unavailable.
+
 Non-peer mode retains exclusive startup; peer mode uses shared compatibility
 locking, stable preferred assignment and guarded survivor takeover. The independent ownership-loss fail-stop
 channel remains. HTTP/SSE, state read/watch, settlement and Registry source reads

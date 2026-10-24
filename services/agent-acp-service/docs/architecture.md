@@ -767,8 +767,9 @@ External and durable effects check authority before the call and after either
 success or failure, while retaining the original operation and cleanup until
 settlement. Cancellation alone never proves a pending runner or SQL operation
 has stopped. Context loading and checkpoint persistence use the same fence.
-Active-active execution still requires the remaining handoff and two-replica
-acceptance, independently of HTTP adapters.
+Peer assignment, owner routing and guarded survivor recovery are connected.
+Actual two-replica Docker, browser and resource cleanup acceptance remains
+required.
 
 The legacy startup adapters additionally support explicit organization/Agent
 selection for abandoned permission cancellation, Run recovery and Learning
@@ -799,8 +800,9 @@ event journal. A single PostgreSQL statement reads visible messages after a
 sequence, the snapshot's maximum sequence, and current Run state. Local event
 invalidations trigger reads and are coalesced while delivery is active; there
 is no polling timer. Subscribe before catch-up, advance the cursor only after
-delivery, and re-read when invalidated during delivery. The existing single
-worker per database owns all live invalidations; this is not multi-worker fanout.
+delivery, and re-read when invalidated during delivery. Each Agent's active owner
+owns its live invalidations; forwarded connections consume that owner's original
+stream. This adds no cross-process invalidation fanout.
 
 Model/Tool execution and terminal persistence never wait for socket delivery.
 The scoped Bridge intent observation reads a Run's durable `error_class` with
