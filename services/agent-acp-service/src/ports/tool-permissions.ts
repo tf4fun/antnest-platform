@@ -1,4 +1,5 @@
 import type { ConnectionBinding, ModelToolDefinition } from "../domain/types.js";
+import type { AgentOwnershipScope } from "../domain/agent-ownership.js";
 import type { ModelToolCall } from "./model.js";
 import type { PermissionDecision } from "../domain/tool-permissions.js";
 import type { Authorization } from "../domain/session-configuration.js";
@@ -32,7 +33,7 @@ export interface PermissionRepository {
     signal?: AbortSignal;
     authoritySignal?: AbortSignal;
   }): Promise<boolean>;
-  cancelAbandoned(): Promise<void>;
+  cancelAbandoned(scope?: AgentOwnershipScope): Promise<void>;
 }
 export type PermissionConnection = {
   binding: ConnectionBinding;

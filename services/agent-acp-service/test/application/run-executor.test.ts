@@ -765,6 +765,53 @@ describe("RunExecutor", () => {
     expect(appendAgentMessage).not.toHaveBeenCalled();
     expect(test.finish).not.toHaveBeenCalled();
   });
+
+  it("does not settle ownership loss before the original model call and its cleanup finish", async () => {
+    const test = setup();
+    const entered = Promise.withResolvers<void>();
+    const response =
+      Promise.withResolvers<Awaited<ReturnType<AuthenticatedModelTransport["complete"]>>>();
+    const cleanup = Promise.withResolvers<void>();
+    const receipt: Awaited<ReturnType<AuthenticatedModelTransport["complete"]>> = {
+      kind: "message",
+      content: [{ type: "text", text: "late" }],
+      usage: { inputTokens: 2, outputTokens: 1 },
+      stopReason: "end_turn",
+    };
+    let cleaned = false;
+    test.complete.mockImplementationOnce(async () => {
+      entered.resolve();
+      try {
+        return await response.promise;
+      } finally {
+        await cleanup.promise;
+        cleaned = true;
+      }
+    });
+    const result = observeExecution(test.execute());
+    const lost = new WorkerOwnershipLostError();
+    try {
+      await entered.promise;
+      test.ownership.abort(lost);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(result.rejected).not.toHaveBeenCalled();
+      response.resolve(receipt);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(cleaned).toBe(false);
+      expect(result.rejected).not.toHaveBeenCalled();
+      cleanup.resolve();
+      await result.settled;
+      expect(cleaned).toBe(true);
+      expect(result.rejected).toHaveBeenCalledExactlyOnceWith(lost);
+      expect(result.resolved).not.toHaveBeenCalled();
+      expect(test.finish).not.toHaveBeenCalled();
+      expect(test.dependencies.runtimeConnections.releaseRun).not.toHaveBeenCalled();
+    } finally {
+      response.resolve(receipt);
+      cleanup.resolve();
+      await result.settled;
+    }
+  });
 });
 
 function setup() {

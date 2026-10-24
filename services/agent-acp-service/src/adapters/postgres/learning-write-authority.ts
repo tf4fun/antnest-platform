@@ -132,9 +132,9 @@ export class LearningWriteAuthority {
       this.assertOriginalOwner(row);
       return row;
     }
-    if (row.authority_mode === "owned") return row;
+    const alreadyOwned = row.authority_mode === "owned";
     if (
-      row.state !== "pending" ||
+      (row.state !== "pending" && !(alreadyOwned && row.state === "cancelled")) ||
       row.model_calls !== 0 ||
       row.input_tokens !== 0 ||
       row.output_tokens !== 0 ||
@@ -153,6 +153,7 @@ export class LearningWriteAuthority {
       [taskId],
     );
     if (effects.rows[0]?.present !== false) throw new AgentOwnershipLostError();
+    if (alreadyOwned) return row;
     if (adopt) {
       await client.query("UPDATE learning_tasks SET authority_mode='owned' WHERE id=$1", [taskId]);
       return { ...row, authority_mode: "owned" };

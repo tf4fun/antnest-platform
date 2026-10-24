@@ -75,10 +75,10 @@ describe("flushBeforeFailStop", () => {
 });
 
 describe("raceWithOwnershipLoss", () => {
-  it("allows ownership loss to preempt a hanging cleanup", async () => {
-    const cleanup = new Promise<void>(() => undefined);
+  it("allows ownership loss to preempt a hanging diagnostic flush", async () => {
+    const diagnostic = new Promise<void>(() => undefined);
     const ownership = Promise.withResolvers<Error>();
-    const waiting = raceWithOwnershipLoss(cleanup, ownership.promise);
+    const waiting = raceWithOwnershipLoss(diagnostic, ownership.promise);
 
     ownership.resolve(new WorkerOwnershipLostError());
 

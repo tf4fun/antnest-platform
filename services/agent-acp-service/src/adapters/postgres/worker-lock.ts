@@ -1,6 +1,10 @@
 import type { Pool, PoolClient } from "pg";
 import { setTimeout as delay } from "node:timers/promises";
-import { AgentOwnershipLostError } from "../../domain/agent-ownership.js";
+import {
+  AgentOwnershipLostError,
+  ownershipScope,
+  type AgentOwnershipScope,
+} from "../../domain/agent-ownership.js";
 
 const WORKER_LOCK = 2_026_083_002;
 const DEFAULT_PROBE_INTERVAL_MS = 1_000;
@@ -23,7 +27,9 @@ export class PostgresWorkerLock {
   private readonly loss = Promise.withResolvers<Error>();
   private readonly monitorAbort = new AbortController();
   private readonly monitor: Promise<void>;
-  private recovery: Promise<number> | undefined;
+  private readonly recoveries = new Map<string, Promise<number>>();
+  private recoveryTail: Promise<void> = Promise.resolve();
+  private releasePromise: Promise<void> | undefined;
 
   private constructor(
     private readonly client: PoolClient,
@@ -64,19 +70,38 @@ export class PostgresWorkerLock {
     return this.loss.promise;
   }
 
-  public pauseAbandonedLearningTasks(): Promise<number> {
+  public pauseAbandonedLearningTasks(scope?: AgentOwnershipScope): Promise<number> {
+    const fixed = scope === undefined ? undefined : ownershipScope(scope);
     if (!this.isHeld()) return Promise.reject(new WorkerOwnershipLostError());
-    this.recovery ??= this.pauseAbandonedLearningTasksUnderLock().finally(() => {
-      this.recovery = undefined;
+    const key =
+      fixed === undefined ? "global" : JSON.stringify([fixed.organizationId, fixed.agentId]);
+    const existing = this.recoveries.get(key);
+    if (existing !== undefined) return existing;
+    // One lock-owning connection must never interleave recovery transactions.
+    // Only identical scopes share a result; failure in A must not suppress B.
+    const operation = this.recoveryTail.then(() => {
+      if (!this.isHeld()) throw new WorkerOwnershipLostError();
+      return this.pauseAbandonedLearningTasksUnderLock(fixed);
     });
-    return this.recovery;
+    const recovery = operation.finally(() => {
+      this.recoveries.delete(key);
+    });
+    this.recoveries.set(key, recovery);
+    this.recoveryTail = recovery.then(
+      () => undefined,
+      () => undefined,
+    );
+    return recovery;
   }
 
-  private async pauseAbandonedLearningTasksUnderLock(): Promise<number> {
+  private async pauseAbandonedLearningTasksUnderLock(scope?: AgentOwnershipScope): Promise<number> {
     await this.client.query("BEGIN");
     try {
       const selected = await this.client.query<{ id: string; authority_mode: string }>(
-        "SELECT id,authority_mode FROM learning_tasks WHERE state='running' ORDER BY id FOR UPDATE",
+        `SELECT id,authority_mode FROM learning_tasks WHERE state='running'
+          AND ($1::text IS NULL OR (organization_id=$1 AND agent_id=$2))
+          ORDER BY id FOR UPDATE`,
+        [scope?.organizationId ?? null, scope?.agentId ?? null],
       );
       if (selected.rows.some((task) => task.authority_mode !== "legacy"))
         throw new AgentOwnershipLostError();
@@ -103,12 +128,14 @@ export class PostgresWorkerLock {
     }
   }
 
-  public async release(): Promise<void> {
-    if (this.released) {
-      return;
-    }
+  public release(): Promise<void> {
+    this.releasePromise ??= this.releaseOwnedConnection();
+    return this.releasePromise;
+  }
+
+  private async releaseOwnedConnection(): Promise<void> {
     this.released = true;
-    await this.recovery?.catch(() => undefined);
+    await this.recoveryTail;
     this.monitorAbort.abort();
     await this.monitor;
     const shouldUnlock = this.held;

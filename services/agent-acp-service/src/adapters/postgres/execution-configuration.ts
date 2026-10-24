@@ -10,6 +10,11 @@ import {
 } from "../../domain/execution-configuration.js";
 import { DomainError } from "../../domain/errors.js";
 import {
+  AgentOwnershipLostError,
+  ownershipFence,
+  type AgentOwnershipFence,
+} from "../../domain/agent-ownership.js";
+import {
   InvalidExecutionAuthorityError,
   type ExecutionConfigurationRepository,
 } from "../../ports/execution-configuration.js";
@@ -171,6 +176,99 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
     );
     const row = result.rows[0];
     return row === undefined ? null : (this.openAuthority(row)?.configuration ?? null);
+  }
+
+  /** Read the authenticated private payload under the captured Agent lease. */
+  public async loadOwnedAuthority(
+    input: AgentOwnershipFence,
+  ): Promise<ExecutionConfiguration | null> {
+    const fence = ownershipFence(input);
+    return this.kernel.agentTransaction(
+      fence,
+      async (client) => {
+        const result = await client.query<StoredAuthority>(
+          `SELECT ${authorityColumns} FROM execution_configurations WHERE organization_id = $1`,
+          [fence.organizationId],
+        );
+        const row = result.rows[0];
+        return row === undefined ? null : (this.openAuthority(row)?.configuration ?? null);
+      },
+      { organizationBarrier: true },
+    );
+  }
+
+  /** ACK the complete publication only while all accepting Agents remain owned. */
+  public async confirmOwnedAuthority(
+    input: ExecutionConfiguration,
+    inputs: readonly AgentOwnershipFence[],
+  ): Promise<void> {
+    const expected = parseExecutionConfiguration(structuredClone(input));
+    const fences = inputs
+      .map(ownershipFence)
+      .sort((left, right) =>
+        left.agentId < right.agentId ? -1 : left.agentId > right.agentId ? 1 : 0,
+      );
+    const accepting = new Set(
+      expected.agents.filter((agent) => agent.accepting_runs).map((agent) => agent.agent_id),
+    );
+    const changed = () =>
+      new DomainError("configuration_unavailable", "Execution ownership or configuration changed");
+    if (
+      fences.length !== accepting.size ||
+      new Set(fences.map((fence) => fence.agentId)).size !== fences.length ||
+      fences.some(
+        (fence) =>
+          fence.organizationId !== expected.organization_id || !accepting.has(fence.agentId),
+      )
+    )
+      throw changed();
+    await this.kernel.transaction(
+      async (client) => {
+        await lockRuntimeBarrierOrganization(client, expected.organization_id);
+        for (const fence of fences) {
+          const locked = await client.query(
+            "SELECT organization_id FROM agent_leases WHERE organization_id=$1 AND agent_id=$2 FOR SHARE",
+            [fence.organizationId, fence.agentId],
+          );
+          if (locked.rowCount !== 1) throw new AgentOwnershipLostError();
+        }
+        const stored = await client.query<StoredAuthority>(
+          `SELECT ${authorityColumns} FROM execution_configurations WHERE organization_id=$1`,
+          [expected.organization_id],
+        );
+        const row = stored.rows[0];
+        if (
+          row === undefined ||
+          !isDeepStrictEqual(this.openAuthority(row)?.configuration, expected)
+        )
+          throw changed();
+        if (fences.length === 0) return;
+        // Check every deadline together, after all row waits and sealed-payload
+        // validation. An earlier Agent can expire while a later row is locked.
+        const current = await client.query<{ owned: boolean }>(
+          `SELECT bool_and(COALESCE(
+             lease.owner_instance_id=expected.owner_instance_id
+             AND lease.epoch=expected.epoch
+             AND lease.expires_at>statement_timestamp(), false)) AS owned
+           FROM jsonb_to_recordset($1::jsonb) AS expected(
+             organization_id text, agent_id text, owner_instance_id text, epoch bigint)
+           LEFT JOIN agent_leases lease
+             ON lease.organization_id=expected.organization_id AND lease.agent_id=expected.agent_id`,
+          [
+            JSON.stringify(
+              fences.map((fence) => ({
+                organization_id: fence.organizationId,
+                agent_id: fence.agentId,
+                owner_instance_id: fence.ownerInstanceId,
+                epoch: fence.epoch,
+              })),
+            ),
+          ],
+        );
+        if (current.rows[0]?.owned !== true) throw new AgentOwnershipLostError();
+      },
+      { timeoutMs: 10_000 },
+    );
   }
 
   private openAuthority(row: StoredAuthority): Authority | null {

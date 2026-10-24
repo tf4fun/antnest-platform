@@ -1,6 +1,10 @@
 import type { PoolClient } from "pg";
 import { DomainError } from "../../domain/errors.js";
-import { AgentOwnershipLostError } from "../../domain/agent-ownership.js";
+import {
+  AgentOwnershipLostError,
+  ownershipScope,
+  type AgentOwnershipScope,
+} from "../../domain/agent-ownership.js";
 import type {
   TemporaryAgentScope,
   TemporaryInstallInput,
@@ -124,13 +128,30 @@ export class PostgresTemporarySkills implements TemporarySkillStore {
     );
     return result.rows.map(scope);
   }
-  public async next(after: string | null, signal: AbortSignal) {
+  public async next(after: string | null, signal: AbortSignal, scopeInput?: AgentOwnershipScope) {
+    const selectedScope =
+      scopeInput === undefined ? this.#authority.scope() : ownershipScope(scopeInput);
+    if (selectedScope !== null)
+      this.#authority.assertSession({
+        organization_id: selectedScope.organizationId,
+        agent_id: selectedScope.agentId,
+      });
     const result = await this.kernel.read<Row>(
       `SELECT ${storedReference}
    FROM temporary_skill_scopes t JOIN runs r ON r.id=t.run_id WHERE t.released_at IS NULL
     AND r.state NOT IN ('running','admitting') AND ($1::text IS NULL OR t.run_id>$1)
+    AND ($2::text IS NULL OR (r.organization_id=$2 AND r.agent_id=$3))
+    AND r.execution_owner_registration_id IS NOT DISTINCT FROM $4::text
+    AND r.execution_owner_member_id IS NOT DISTINCT FROM $5::text
+    AND r.execution_owner_incarnation_id IS NOT DISTINCT FROM $6::text
+    AND r.execution_owner_epoch IS NOT DISTINCT FROM $7::bigint
    ORDER BY t.run_id LIMIT 1`,
-      [after],
+      [
+        after,
+        selectedScope?.organizationId ?? null,
+        selectedScope?.agentId ?? null,
+        ...this.#authority.origin(),
+      ],
       signal,
     );
     return result.rows[0] ? scope(result.rows[0]) : null;

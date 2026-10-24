@@ -70,3 +70,11 @@ export class ModelError extends Error {
     this.name = "ModelError";
   }
 }
+
+export class ModelTransportCleanupError extends ModelError {
+  public constructor(cause: unknown, usage?: ModelUsage) {
+    super("model_unavailable", "Model transport cleanup failed", false, undefined, { cause });
+    this.name = "ModelTransportCleanupError";
+    if (usage !== undefined) this.usage = usage;
+  }
+}

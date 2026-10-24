@@ -1,16 +1,18 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
-import {
-  createServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
 import { join } from "node:path";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { RuntimeConnections } from "../../../../services/agent-acp-service/src/adapters/runtime-connections.js";
+import { OwnerProbeServer } from "../../../../services/agent-acp-service/src/transport/owner-probe-server.js";
+import { CallerContextVerifier } from "../../../../services/agent-acp-service/src/adapters/caller-context.js";
+import { RequestAuthentication } from "../../../../services/agent-acp-service/src/transport/request-authentication.js";
+import {
+  parseOwnerProbeRequest,
+  type OwnerRegistration,
+} from "../../../../services/agent-acp-service/src/application/owner-incarnation.js";
 import {
   startAgentAcpService,
   type RunningAgentAcpService,
@@ -23,11 +25,17 @@ import {
 } from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 import { runtimeInformation } from "../../../../services/agent-acp-service/test/fixtures/runtime-information.js";
 import {
-  testAuthentication,
+  testJwks,
   testSecurityEnvironment,
   workloadHeaders,
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { AcpWireClient, type WireFrame } from "../support/acp-wire-client.js";
+import {
+  serviceOrigin,
+  startPeer,
+  readBody,
+  within,
+} from "../support/production-peers.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 const reply = "The sealed warm configuration admitted this Run.";
@@ -45,14 +53,23 @@ type StoredRun = {
   organization_id: string;
   agent_id: string;
   principal_id: string;
+  execution_owner_registration_id: string | null;
+  execution_owner_member_id: string | null;
+  execution_owner_incarnation_id: string | null;
+  execution_owner_epoch: string | null;
 };
 
 describe.skipIf(databaseUrl === undefined)(
   "production ACP warm admission",
   () => {
-    it.each([1, 2] as const)(
-      "v%s admits a persisted new Run before republication and uses a newer revision in the same restarted instance",
-      async (version) => {
+    it.each([
+      { version: 1, ownership: "legacy" },
+      { version: 2, ownership: "legacy" },
+      { version: 1, ownership: "owned" },
+      { version: 2, ownership: "owned" },
+    ] as const)(
+      "$ownership v$version admits a persisted new Run before republication and uses a newer revision in the same restarted instance",
+      async ({ version, ownership }) => {
         expect(new URL(databaseUrl!).pathname).toMatch(/_test$/u);
         const pool = new Pool({
           connectionString: databaseUrl,
@@ -76,6 +93,9 @@ describe.skipIf(databaseUrl === undefined)(
         const requestAbort = new AbortController();
         const prepare = vi.spyOn(RuntimeConnections.prototype, "prepare");
         const close = vi.spyOn(RuntimeConnections.prototype, "close");
+        const probeListen = vi.spyOn(OwnerProbeServer.prototype, "listen");
+        const registrations: OwnerRegistration[] = [];
+        let registrationOrigin: string | undefined;
         const modelRequests: Array<{
           boot: Boot;
           authorized: boolean;
@@ -131,7 +151,14 @@ describe.skipIf(databaseUrl === undefined)(
             ANTNEST_ACP_CLIENT_MCP_KEY: key,
             ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS: "true",
           });
-          await loaded.authentication.workload.close();
+          // The running service owns this authentication instance. Do not also
+          // register it for a second fixture-level close after shutdown.
+          const authentication = new RequestAuthentication(
+            loaded.authentication.workload,
+            new CallerContextVerifier("http://identity.invalid/", () =>
+              Promise.resolve(Response.json(testJwks())),
+            ),
+          );
           return within(
             track(
               startAgentAcpService(
@@ -141,7 +168,17 @@ describe.skipIf(databaseUrl === undefined)(
                   controlListen: { host: "127.0.0.1", port: 0 },
                   databaseTimeoutMs: 5000,
                   runTimeoutMs: 15_000,
-                  authentication: testAuthentication(),
+                  authentication,
+                  ...(registrationOrigin === undefined
+                    ? {}
+                    : {
+                        ownerIncarnation: {
+                          memberId: "acp-warm-owned",
+                          listen: { host: "127.0.0.1", port: 0 },
+                          runtimeControllerUrl: registrationOrigin,
+                          registrationTimeoutMs: 5000,
+                        },
+                      }),
                 },
                 NOOP_TELEMETRY,
                 ownershipLost,
@@ -187,7 +224,9 @@ describe.skipIf(databaseUrl === undefined)(
               `SELECT r.id, r.state, r.terminal_class, r.executor_state,
                   r.tool_effect_state, r.unknown_effect_source, r.stop_reason,
                   r.error_class, r.execution_snapshot,
-                  s.organization_id, s.agent_id, s.principal_id
+                  s.organization_id, s.agent_id, s.principal_id,
+                  r.execution_owner_registration_id, r.execution_owner_member_id,
+                  r.execution_owner_incarnation_id, r.execution_owner_epoch::text
            FROM runs r JOIN acp_sessions s ON s.id = r.session_id
            WHERE r.session_id = $1 ORDER BY r.id`,
               [sessionId],
@@ -295,6 +334,41 @@ describe.skipIf(databaseUrl === undefined)(
             ),
           ).toBe(true);
           expect(resourceReads).toContain(boot);
+          if (ownership === "owned") {
+            const registered = registrations.at(-1)!;
+            expect(registered).toBeDefined();
+            expect(rows[0]!.execution_owner_registration_id).toBe(
+              registered.registration_id,
+            );
+            expect(rows[0]).toMatchObject({
+              execution_owner_registration_id: registered.registration_id,
+              execution_owner_member_id: registered.member_id,
+              execution_owner_incarnation_id: registered.incarnation_id,
+            });
+            const lease = (
+              await pool.query<{
+                owner_instance_id: string;
+                epoch: string;
+                current: boolean;
+              }>(
+                "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS current FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                ["organization-1", "agent-1"],
+              )
+            ).rows;
+            expect(lease).toEqual([
+              {
+                owner_instance_id: registered.incarnation_id,
+                epoch: rows[0]!.execution_owner_epoch,
+                current: true,
+              },
+            ]);
+          } else
+            expect(rows[0]).toMatchObject({
+              execution_owner_registration_id: null,
+              execution_owner_member_id: null,
+              execution_owner_incarnation_id: null,
+              execution_owner_epoch: null,
+            });
           await client.close();
           return { sessionId, rows };
         }
@@ -348,6 +422,70 @@ describe.skipIf(databaseUrl === undefined)(
         try {
           await pool.query("DROP SCHEMA public CASCADE");
           await pool.query("CREATE SCHEMA public");
+          if (ownership === "owned") {
+            // This peer supplies only registration. Prompt, persistence, warm
+            // restoration, provider calls and the probe remain actual service paths.
+            const registration = await startPeer(async (request, response) => {
+              expect(request.method).toBe("POST");
+              expect(request.url).toBe("/internal/acp-incarnations/register");
+              const expectedToken = readFileSync(
+                join(
+                  testSecurityEnvironment().ANTNEST_SERVICE_AUTH_TOKEN_DIR,
+                  "runtime-controller",
+                ),
+                "utf8",
+              ).trim();
+              expect(
+                request.headers["antnest-service-authorization"] ===
+                  `Bearer ${expectedToken}`,
+              ).toBe(true);
+              const input: unknown = JSON.parse(
+                (await readBody(request)).toString("utf8"),
+              );
+              const challenge = parseOwnerProbeRequest({
+                ...(input as Record<string, unknown>),
+                challenge: randomBytes(32).toString("hex"),
+              });
+              const ownerProbe = probeListen.mock.contexts.at(-1);
+              const address =
+                ownerProbe instanceof OwnerProbeServer
+                  ? ownerProbe.address()
+                  : null;
+              if (address === null)
+                throw new Error(
+                  "Owner probe did not listen before registration",
+                );
+              const probeResponse = await fetch(
+                `http://127.0.0.1:${address.port}/internal/acp-owner/incarnation/probe`,
+                {
+                  method: "POST",
+                  headers: {
+                    ...workloadHeaders("runtime-controller"),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify(challenge),
+                  signal: AbortSignal.any([
+                    requestAbort.signal,
+                    AbortSignal.timeout(2000),
+                  ]),
+                },
+              );
+              const probeBody: unknown = await probeResponse.json();
+              expect(probeResponse.status).toBe(200);
+              expect(probeBody).toEqual(challenge);
+              const receipt = {
+                registration_id: randomUUID(),
+                member_id: challenge.member_id,
+                incarnation_id: challenge.incarnation_id,
+              };
+              registrations.push(receipt);
+              response
+                .writeHead(200, { "content-type": "application/json" })
+                .end(JSON.stringify(receipt));
+            });
+            peers.push(registration);
+            registrationOrigin = registration.origin;
+          }
           // These are real local HTTP peers, not a second Antnest service or a
           // fixture that reconstructs secrets and republishes on every boot.
           const model = await startPeer(async (request, response) => {
@@ -557,6 +695,12 @@ describe.skipIf(databaseUrl === undefined)(
           expect(services).toHaveLength(2);
           expect(services[0]).toBe(first);
           expect(services[1]).toBe(second);
+          if (ownership === "owned") {
+            expect(registrations).toHaveLength(2);
+            expect(registrations[0]!.incarnation_id).not.toBe(
+              registrations[1]!.incarnation_id,
+            );
+          }
           assertSender(secondDirectory);
           expect(existsSync(firstDirectory)).toBe(false);
           expect(ownershipLost).not.toHaveBeenCalled();
@@ -594,6 +738,7 @@ describe.skipIf(databaseUrl === undefined)(
           ]);
           prepare.mockRestore();
           close.mockRestore();
+          probeListen.mockRestore();
           for (const directory of directories) {
             if (existsSync(directory))
               failures.push(
@@ -612,83 +757,3 @@ describe.skipIf(databaseUrl === undefined)(
     );
   },
 );
-
-function serviceOrigin(
-  service: RunningAgentAcpService,
-  control = false,
-): string {
-  const address = control ? service.controlAddress() : service.address();
-  if (address === null || typeof address === "string")
-    throw new Error("ACP did not listen");
-  return `http://127.0.0.1:${address.port}`;
-}
-
-async function startPeer(
-  handle: (request: IncomingMessage, response: ServerResponse) => Promise<void>,
-) {
-  const pending = new Set<Promise<void>>();
-  const errors: unknown[] = [];
-  const server = createServer((request, response) => {
-    const running = handle(request, response).catch((error: unknown) => {
-      errors.push(error);
-      response.destroy();
-    });
-    pending.add(running);
-    void running.then(() => pending.delete(running));
-  });
-  server.requestTimeout = 5000;
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Peer did not listen");
-  return {
-    origin: `http://127.0.0.1:${address.port}`,
-    async close() {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) =>
-          error === undefined ? resolve() : reject(error),
-        );
-        server.closeAllConnections();
-      });
-      await Promise.allSettled(pending);
-      if (errors.length > 0)
-        throw new AggregateError(errors, "Warm peer request failed");
-    },
-  };
-}
-
-async function readBody(request: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request)
-    chunks.push(
-      Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array),
-    );
-  return Buffer.concat(chunks);
-}
-
-async function within<T>(
-  promise: Promise<T>,
-  label: string,
-  budgetMs: number,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${label} exceeded its test budget`)),
-          budgetMs,
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}

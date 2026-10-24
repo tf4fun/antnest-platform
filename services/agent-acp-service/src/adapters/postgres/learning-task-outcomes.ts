@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { ownershipScope, type AgentOwnershipScope } from "../../domain/agent-ownership.js";
 import { learningPolicySchema, type LearningPolicy } from "../../domain/learning-policy.js";
 import type {
   LearningPauseReason,
@@ -44,6 +45,7 @@ export class PostgresLearningTaskOutcomes {
   public async listPaused(
     afterTaskId: string | null,
     limit: number,
+    scopeInput?: AgentOwnershipScope,
   ): Promise<
     Array<{
       claim: LearningTaskClaim;
@@ -59,6 +61,9 @@ export class PostgresLearningTaskOutcomes {
       limit > 100
     )
       throw new Error("Invalid paused learning task page");
+    const selectedScope =
+      scopeInput === undefined ? this.#authority.scope() : ownershipScope(scopeInput);
+    if (selectedScope !== null) this.#authority.assertScope(selectedScope);
     const result = await this.kernel.read<
       TaskRow & {
         id: string;
@@ -84,8 +89,8 @@ export class PostgresLearningTaskOutcomes {
         afterTaskId,
         limit,
         this.#authority.mode,
-        this.#authority.scope()?.organizationId ?? null,
-        this.#authority.scope()?.agentId ?? null,
+        selectedScope?.organizationId ?? null,
+        selectedScope?.agentId ?? null,
         ...this.#authority.origin(),
       ],
     );

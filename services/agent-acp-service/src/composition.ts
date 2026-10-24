@@ -1,4 +1,5 @@
-import { createLegacyLearningRepositories } from "./adapters/postgres/learning-repositories.js";
+import { buildAgentComponents } from "./composition-agent.js";
+import { OwnedAgentComponents } from "./composition-owned.js";
 import { LearningStatusReader } from "./application/learning-status-reader.js";
 import { SkillSources } from "./application/skill-sources.js";
 import { SkillProjectionWorker } from "./application/skill-projection-worker.js";
@@ -8,17 +9,7 @@ import {
   RuntimeSkillSourceVerifier,
 } from "./adapters/skill-source-http.js";
 import { PostgresLearningStatusRead } from "./adapters/postgres/learning-status-read.js";
-import { SessionConfigurationService } from "./application/session-configuration.js";
-import { PostgresSkillDiscoveryAuthority } from "./adapters/postgres/skill-discovery-authority.js";
-import { RegistrySkillDiscoveryClient } from "./adapters/skill-discovery-http.js";
-import { SkillDiscoveryTools } from "./application/skill-discovery-tools.js";
-import { TemporarySkills } from "./application/temporary-skills.js";
-import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
-import { RuntimeSkillTemporaryClient } from "./adapters/runtime-skill-temporary-client.js";
-import { DomainError } from "./domain/errors.js";
 import { PermissionConnections } from "./application/permission-connections.js";
-import { ToolPermissions } from "./application/tool-permissions.js";
-import { newResourceId } from "./domain/resource-id.js";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { Pool } from "pg";
@@ -34,71 +25,34 @@ import { ExecutionAudits } from "./application/execution-audit.js";
 import { PostgresExecutionAudits } from "./adapters/postgres/execution-audit.js";
 import type { ExecutionAccessSnapshot } from "./domain/execution-configuration.js";
 import { SessionOutputStreams } from "./transport/acp/session-output.js";
-import { OfficialMcpDialer } from "./adapters/mcp/official-client.js";
-import { McpToolCatalog } from "./adapters/mcp/tool-catalog.js";
 import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
+import { ModelTransportCleanupError } from "./ports/model.js";
 import { PostgresRuntimeBarrierReader } from "./adapters/postgres/runtime-barrier.js";
 import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
 import { createLegacyAgentRepositories } from "./adapters/postgres/agent-repositories.js";
+import { createLegacyLearningRepositories } from "./adapters/postgres/learning-repositories.js";
 import { PostgresBridgeObservationRepository } from "./adapters/postgres/bridge-observation-repository.js";
 import { BridgeObservationService } from "./application/bridge-observation.js";
 import { SecretBox } from "./adapters/postgres/secret-box.js";
 import { PostgresWorkerLock, WorkerOwnershipLostError } from "./adapters/postgres/worker-lock.js";
-import { AcpApplication } from "./application/application.js";
 import { AccessService } from "./application/access-service.js";
-import { ContextBuilder } from "./application/context-builder.js";
 import { RuntimeSkillCommands } from "./application/runtime-skill-commands.js";
-import { PromptCoordinator } from "./application/prompt-coordinator.js";
-import { RunExecutor } from "./application/run-executor.js";
-import { RunRecovery } from "./application/run-recovery.js";
-import { RunSupervisor } from "./application/run-supervisor.js";
-import { LearningForegroundGate } from "./application/learning-foreground-gate.js";
-import { LearningMaintenanceGuard } from "./application/learning-maintenance-guard.js";
-import { LearningPausedRecovery } from "./application/learning-paused-recovery.js";
-import { LearningWorker } from "./application/learning-worker.js";
-import { LearningScanSweep } from "./application/learning-scan-sweep.js";
-import {
-  LearningScanCoordinator,
-  PersistedLearningReviewCue,
-} from "./application/learning-scan-coordinator.js";
-import { LearningClaimAdmission } from "./application/learning-claim-admission.js";
-import { LearningModelAdmission } from "./application/learning-model-admission.js";
-import { LearningModelAuthority } from "./application/learning-model-authority.js";
-import { LearningReviewRunner } from "./application/learning-review-runner.js";
-import {
-  LearningTelemetry,
-  InstrumentedLearningTaskProcessor,
-  InstrumentedLearningApply,
-} from "./telemetry/learning.js";
-import { LearningReviewProcessor } from "./application/learning-review-processor.js";
-import { LearningApplyAttempt } from "./application/learning-apply-attempt.js";
-import { LearningTaskProcessor } from "./application/learning-task-processor.js";
 import { LearningChangeReader } from "./application/learning-change-reader.js";
 import { LearningNoticePublisher } from "./application/learning-notice-publisher.js";
 import { LearningChangeCursor } from "./domain/learning-change-cursor.js";
-import { ControllerLearningPolicyClient } from "./adapters/controller-learning-policy.js";
 import { tracedFetch } from "./telemetry/http.js";
-import { DirectoryLearningRuntimeBinding } from "./adapters/learning-runtime-binding.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
-import { RuntimeSkillMaintenanceClient } from "./adapters/runtime-skill-maintenance-client.js";
-import { PostgresLearningReviewSource } from "./adapters/postgres/learning-review-source.js";
-import { PostgresLearningManagedSkills } from "./adapters/postgres/learning-managed-skills.js";
-import { PostgresLearningInstallRequests } from "./adapters/postgres/learning-install-requests.js";
 import { PostgresLearningChangeRead } from "./adapters/postgres/learning-change-read.js";
-import { SessionService } from "./application/session-service.js";
 import type { AgentAcpConfig } from "./config.js";
 import type { TelemetryPort } from "./ports/telemetry.js";
-import {
-  InstrumentedAcpApplication,
-  InstrumentedRunExecutor,
-  InstrumentedModel,
-  InstrumentedToolCatalog,
-  InstrumentedRuntimeInformation,
-} from "./telemetry/instrumented-ports.js";
+import { InstrumentedModel } from "./telemetry/instrumented-ports.js";
 import { AgentAcpHttpServer } from "./transport/http-server.js";
-import { InstrumentedToolPermissions } from "./telemetry/instrumented-permissions.js";
-import { OwnerIncarnation, OwnerIncarnationError } from "./application/owner-incarnation.js";
+import {
+  OwnerIncarnation,
+  OwnerIncarnationError,
+  type OwnerRegistration,
+} from "./application/owner-incarnation.js";
 import {
   OwnerRegistrationAttemptError,
   RuntimeControllerIncarnations,
@@ -137,6 +91,7 @@ export async function startAgentAcpService(
   let listeningServer: AgentAcpHttpServer | undefined;
   let incarnation: OwnerIncarnation | undefined;
   let ownerProbe: OwnerProbeServer | undefined;
+  const background: Promise<void>[] = [];
   const ownership = new AbortController();
   const cancelStartup = (): void => ownership.abort(startupSignal?.reason);
   startupSignal?.addEventListener("abort", cancelStartup, { once: true });
@@ -202,6 +157,9 @@ export async function startAgentAcpService(
       }
     }
     ownership.signal.throwIfAborted();
+    const registeredOwner = incarnation?.currentRegistration();
+    if (config.ownerIncarnation !== undefined && registeredOwner === undefined)
+      throw new Error("ACP process registration is unavailable");
     const ownedRuntimeConnections = new RuntimeConnections({
       ...config.authentication.workload.runtimeTransport(),
       reportCleanupFailure: () => telemetry.log("warn", "runtime_connection_cleanup_failed"),
@@ -227,6 +185,7 @@ export async function startAgentAcpService(
       recoveryRequired,
       ownership.signal,
       ownedRuntimeConnections,
+      registeredOwner,
     );
     components = built;
     void acquiredWorkerLock.waitForLoss().then((error) => {
@@ -239,11 +198,14 @@ export async function startAgentAcpService(
 
     await waitForStartupRecovery(
       (async () => {
-        await acquiredWorkerLock.pauseAbandonedLearningTasks();
-        ownership.signal.throwIfAborted();
-        await built.permissionRepository.cancelAbandoned();
-        ownership.signal.throwIfAborted();
-        await built.recovery.recover(ownership.signal);
+        if (built.owned !== undefined) await built.owned.recoverStartup(acquiredWorkerLock);
+        else {
+          await acquiredWorkerLock.pauseAbandonedLearningTasks();
+          ownership.signal.throwIfAborted();
+          await built.permissionRepository.cancelAbandoned();
+          ownership.signal.throwIfAborted();
+          await built.recovery.recover(ownership.signal);
+        }
         ownership.signal.throwIfAborted();
         await built.directory.restore(ownership.signal);
       })(),
@@ -289,19 +251,27 @@ export async function startAgentAcpService(
     ownership.signal.throwIfAborted();
     serving = true;
     built.learningNotices.start();
-    const learningRun = built.learningWorker?.run(ownership.signal).catch((error: unknown) => {
-      if (!ownership.signal.aborted) recoveryRequired(asError(error));
-    });
+    built.owned?.start();
+    const learningRun = (built.owned === undefined ? built.learningWorker : undefined)
+      ?.run(ownership.signal)
+      .catch((error: unknown) => {
+        if (!ownership.signal.aborted) recoveryRequired(asError(error));
+      });
+    if (learningRun !== undefined) background.push(learningRun);
     const projectionRun = built.skillProjectionWorker
       ?.run(ownership.signal)
       .catch((error: unknown) => {
         if (!ownership.signal.aborted) recoveryRequired(asError(error));
       });
-    const temporaryCleanupRun = built.temporarySkillCleanupWorker
-      .run(ownership.signal)
+    if (projectionRun !== undefined) background.push(projectionRun);
+    const temporaryCleanupRun = (
+      built.owned === undefined ? built.temporarySkillCleanupWorker : undefined
+    )
+      ?.run(ownership.signal)
       .catch((error: unknown) => {
         if (!ownership.signal.aborted) recoveryRequired(asError(error));
       });
+    if (temporaryCleanupRun !== undefined) background.push(temporaryCleanupRun);
     telemetry.log("info", "service_started", {
       listen_host: config.listen.host,
       listen_port: config.listen.port,
@@ -320,10 +290,12 @@ export async function startAgentAcpService(
           server.close(),
           ...(ownerProbe === undefined ? [] : [ownerProbe.close()]),
           built.supervisor.shutdown(),
-          ...(learningRun === undefined ? [] : [learningRun]),
-          ...(projectionRun === undefined ? [] : [projectionRun]),
-          temporaryCleanupRun,
+          ...(built.owned === undefined ? [] : [built.owned.shutdown()]),
+          ...background,
         ]);
+        // Review cancellation can settle the worker before the original
+        // inference's finally/transport close. Join it before shared resources.
+        results.push(await settle(built.joinLegacyModelRequests()));
         results.push(
           await settle(ownedRuntimeConnections.close()),
           await settle(acquiredWorkerLock.release()),
@@ -351,10 +323,6 @@ export async function startAgentAcpService(
     ownership.abort(startupError);
     incarnation?.close();
     const probeCleanup = ownerProbe === undefined ? undefined : await settle(ownerProbe.close());
-    if (startupError instanceof WorkerOwnershipLostError) {
-      await runtimeConnections?.close().catch(() => undefined);
-      throw startupError;
-    }
     components?.supervisor.stop(startupError);
     components?.learningNotices.stop();
     const cleanupFailures: unknown[] =
@@ -362,6 +330,9 @@ export async function startAgentAcpService(
     for (const cleanup of [
       () => listeningServer?.close(),
       () => components?.supervisor.shutdown(),
+      () => components?.owned?.shutdown(),
+      () => Promise.allSettled(background),
+      () => components?.joinLegacyModelRequests(),
       () => runtimeConnections?.close(),
       () => workerLock?.release(),
       () => pool.end(),
@@ -389,7 +360,18 @@ export async function waitForStartupRecovery(
   recovery: Promise<void>,
   failure: Promise<Error>,
 ): Promise<void> {
-  await Promise.race([recovery, failure.then((error) => Promise.reject(error))]);
+  try {
+    await Promise.race([recovery, failure.then((error) => Promise.reject(error))]);
+  } catch (error) {
+    // Loss closes admission immediately, but the original recovery still owns
+    // its SQL and cleanup. Never release dependencies merely because it lost a race.
+    const [joined] = await Promise.allSettled([recovery]);
+    if (joined.status === "rejected" && joined.reason !== error)
+      throw new AggregateError([error, joined.reason], "Startup recovery failed while stopping", {
+        cause: error,
+      });
+    throw error;
+  }
 }
 
 export function buildComponents(
@@ -399,18 +381,13 @@ export function buildComponents(
   recoveryRequired: (error: Error) => void,
   ownershipSignal: AbortSignal,
   runtimeConnections: RuntimeConnectionAuthority,
+  registration?: OwnerRegistration,
 ) {
   const kernel = new PostgresKernel(pool, telemetry);
-  const {
-    sessions,
-    sessionConfiguration,
-    permissions: permissionRepository,
-    temporarySkills: temporaryStore,
-    runs,
-    events,
-    executions,
-    contexts,
-  } = createLegacyAgentRepositories(kernel, new SecretBox(config.clientMcpKey), ownershipSignal);
+  const secretBox = new SecretBox(config.clientMcpKey);
+  const configurationRepository = new PostgresExecutionConfiguration(kernel, secretBox);
+  const repositories = createLegacyAgentRepositories(kernel, secretBox, ownershipSignal);
+  const { permissions: permissionRepository, executions } = repositories;
 
   const model = new InstrumentedModel(
     new OpenAICompatibleModel({
@@ -419,167 +396,116 @@ export function buildComponents(
     telemetry,
   );
   const providers = new ProviderClients(model);
+  const legacyModelRequests = new Set<Promise<unknown>>();
+  const legacyModelCleanupFailures: ModelTransportCleanupError[] = [];
+  const retainLegacyModelRequest = (original: Promise<unknown>): void => {
+    legacyModelRequests.add(original);
+    void original.then(
+      () => legacyModelRequests.delete(original),
+      (error: unknown) => {
+        if (error instanceof ModelTransportCleanupError) legacyModelCleanupFailures.push(error);
+        legacyModelRequests.delete(original);
+      },
+    );
+  };
   const permissionConnections = new PermissionConnections();
   const outputs = new SessionOutputStreams();
-  const learningGate: LearningForegroundGate = new LearningForegroundGate(
-    (scope) => supervisor.occupancy({ ...scope, principalId: "" }).busy,
-  );
+  let owned: OwnedAgentComponents | undefined;
   const revokeAccess = (snapshot: ExecutionAccessSnapshot): void => {
-    supervisor.revokeAccess(snapshot);
+    if (owned === undefined) agent.supervisor.revokeAccess(snapshot);
+    else owned.revoke(snapshot);
     permissionConnections.revokeAccess(snapshot);
     outputs.revokeAccess(snapshot);
   };
   const directory = new ExecutionDirectory({
-    repository: new PostgresExecutionConfiguration(kernel, new SecretBox(config.clientMcpKey)),
+    repository: configurationRepository,
     clients: providers,
     runtimeConnections,
-    onPublished: (organizationId) => outputs.invalidateOrganization(organizationId),
+    onPublished: (organizationId) => {
+      outputs.invalidateOrganization(organizationId);
+      owned?.published(organizationId);
+    },
+    ...(registration === undefined
+      ? {}
+      : {
+          beforeAck: (snapshot: Parameters<OwnedAgentComponents["beforeAck"]>[0]) => {
+            if (owned === undefined) throw new Error("Owned Agent components are unavailable");
+            return owned.beforeAck(snapshot);
+          },
+        }),
     onInvalidAuthority: (organizationId) =>
       telemetry.log("warn", "execution_authority_unavailable", {
         organization_id: organizationId,
       }),
     onApplied: (snapshot) => {
       revokeAccess(snapshot);
-      learningGate.syncOrganization(snapshot.organization_id, snapshot.agents);
+      if (owned !== undefined) return owned.prepare(snapshot);
+      agent.learningGate.syncOrganization(snapshot.organization_id, snapshot.agents);
       return Promise.resolve();
     },
     onUnavailable: (organizationId) => {
       revokeAccess({ organization_id: organizationId, agents: [] });
-      learningGate.syncOrganization(organizationId, []);
+      agent.learningGate.syncOrganization(organizationId, []);
+      owned?.withdraw(organizationId);
     },
   });
-  const signing = config.skillMaintenanceSigning;
-  const signer =
-    signing === undefined
-      ? undefined
-      : new RuntimeSkillMaintenanceSigner(signing.kid, signing.privateKey);
-  // Cleanup survives configuration disabling discovery; persisted scopes remain authoritative.
-  const temporarySkills = new TemporarySkills(
-    temporaryStore,
-    new RuntimeSkillTemporaryClient(signer, runtimeConnections, undefined, (scope) =>
-      directory.runtimeForCleanup(scope),
-    ),
-    telemetry,
-  );
-  const temporarySkillCleanupWorker = new TemporarySkillCleanupWorker({
-    skills: temporarySkills,
-    gate: learningGate,
-    report: (outcome) => telemetry.count("antnest.acp.skill_temporary_cleanup", { outcome }),
-  });
-  const rawTools = new McpToolCatalog({
-    runtimeDialer: new OfficialMcpDialer({ trust: "runtime", connections: runtimeConnections }),
-    revisions: sessions,
-    reportConnectionCloseFailure: (source, sourceId, error) => {
-      telemetry.count("antnest.acp.mcp.close_failures", { source });
-      telemetry.log(
-        "warn",
-        "mcp_connection_close_failed",
-        { "mcp.source": source, "mcp.source_id": sourceId },
-        error,
-      );
-    },
-  });
-  const tools = new InstrumentedToolCatalog(
-    config.skillDiscovery === undefined
-      ? rawTools
-      : new SkillDiscoveryTools({
-          runtime: rawTools,
-          registry: new RegistrySkillDiscoveryClient(
-            config.skillDiscovery.registryUrl,
-            tracedFetch(config.dependencyFetchers.registry!, "skill_registry"),
-          ),
-          authority: new PostgresSkillDiscoveryAuthority(kernel, directory),
-          temporary: temporarySkills,
-          telemetry,
-        }),
-    telemetry,
-  );
-  const information = new InstrumentedRuntimeInformation(rawTools, telemetry);
   const access = new AccessService({ directory });
-  const permissions = new InstrumentedToolPermissions(
-    new ToolPermissions(permissionRepository, permissionConnections, access),
-    telemetry,
-  );
-  const recovery = new RunRecovery({
-    executions,
-    runs,
-    events,
-    telemetry,
-    now,
-  });
-  const executor = new RunExecutor({
-    runtimeConnections,
-    temporarySkills,
-    permissions,
-    executions,
-    contextBuilder: new ContextBuilder({
-      repository: contexts,
-      runtimeInformation: information,
-      readSkill: (binding, path, signal) => rawTools.readSkill(binding, path, signal),
-      tools,
-      id: newResourceId,
-      now,
-    }),
-    providers,
-    tools,
-    events,
-    ownershipSignal,
-    recovery,
-    id: newResourceId,
-    now,
-  });
-  const supervisor: RunSupervisor = new RunSupervisor(
-    new InstrumentedRunExecutor(executor, telemetry),
-    async (binding, signal) => {
-      await access.assert(binding);
-      await learningGate.preempt(binding, signal);
-      try {
-        await temporarySkills.releaseAgent(binding, signal);
-      } catch {
-        signal.throwIfAborted();
-        throw new DomainError("runtime_barrier_required", "Temporary Skill cleanup is pending");
-      }
-    },
-  );
-  const sessionService = new SessionService({ repository: sessions, id: newResourceId, now });
-  const application = new InstrumentedAcpApplication(
-    new AcpApplication({
-      configuration: new SessionConfigurationService({
-        sessions: sessionService,
-        repository: sessionConfiguration,
-        directory,
-        now,
-      }),
-      access,
-      sessions: sessionService,
-      prompts: new PromptCoordinator({
-        repository: runs,
-        directory,
-        protection: executions,
-        runTimeoutMs: config.runTimeoutMs,
-        recoveryRequired,
-        id: newResourceId,
-        now,
-      }),
-      runs: supervisor,
-    }),
-    telemetry,
-  );
   const learningChangeRead = new PostgresLearningChangeRead(kernel);
   const learningNotices = new LearningNoticePublisher(access, learningChangeRead);
-  const learningWorker = buildLearningWorker({
+  const learningRepositories =
+    config.skillLearningControllerUrl === undefined || config.skillMaintenanceSigning === undefined
+      ? undefined
+      : createLegacyLearningRepositories(kernel, ownershipSignal, {
+          onSettled: (requestId) => runtimeConnections.releaseOperation(requestId),
+          onCommitted: () => learningNotices.wake(),
+        });
+  const agent: ReturnType<typeof buildAgentComponents> = buildAgentComponents({
     config,
+    repositories,
+    learningRepositories,
     kernel,
-    ownershipSignal,
     directory,
     providers,
-    rawTools,
-    gate: learningGate,
-    telemetry,
-    onCommitted: () => learningNotices.wake(),
-    temporarySkills,
+    permissionConnections,
+    access,
     runtimeConnections,
+    telemetry,
+    ownershipSignal,
+    recoveryRequired,
+    ...(registration === undefined ? { retainModelRequest: retainLegacyModelRequest } : {}),
+    now,
   });
+  const {
+    application,
+    recovery,
+    supervisor,
+    learningGate,
+    learningWorker,
+    rawTools,
+    temporarySkills,
+    temporarySkillCleanupWorker,
+    sessionService,
+  } = agent;
+  if (registration !== undefined)
+    owned = new OwnedAgentComponents({
+      config,
+      kernel,
+      directory,
+      providers,
+      permissionConnections,
+      access,
+      runtimeConnections,
+      telemetry,
+      ownershipSignal,
+      recoveryRequired,
+      now,
+      registration,
+      configuration: configurationRepository,
+      legacy: repositories,
+      legacyRecovery: recovery,
+      learningChanged: () => learningNotices.wake(),
+    });
+  const signing = config.skillMaintenanceSigning;
   const sourceRepository = new PostgresSkillSourceProjections(kernel);
   const discovery = config.skillDiscovery;
   const sourceVerifier =
@@ -596,7 +522,7 @@ export function buildComponents(
           service: new SkillSources({
             directory,
             repository: sourceRepository,
-            gate: learningGate,
+            gate: owned ?? learningGate,
             runtime: {
               verify: (record, binding, signal) =>
                 telemetry.span(
@@ -644,25 +570,32 @@ export function buildComponents(
           report: (outcome) => telemetry.count("antnest.acp.skill_projections", { outcome }),
         });
   return {
+    owned,
     skillSources,
     skillProjectionWorker,
     temporarySkillCleanupWorker,
     directory,
-    skillCommands: new RuntimeSkillCommands({
-      directory,
-      gate: learningGate,
-      runtime: rawTools,
-      busy: (binding) => supervisor.occupancy(binding).busy,
-    }),
-    settlement: new AgentSettlement({
-      directory,
-      supervisor,
-      learning: learningGate,
-      protection: executions,
-      temporarySkills,
-      now,
-    }),
-    executionState: new AgentExecutionState({ directory, supervisor, protection: executions }),
+    skillCommands:
+      owned?.skillCommands ??
+      new RuntimeSkillCommands({
+        directory,
+        gate: learningGate,
+        runtime: rawTools,
+        busy: (binding) => supervisor.occupancy(binding).busy,
+      }),
+    settlement:
+      owned?.settlement ??
+      new AgentSettlement({
+        directory,
+        supervisor,
+        learning: learningGate,
+        protection: executions,
+        temporarySkills,
+        now,
+      }),
+    executionState:
+      owned?.executionState ??
+      new AgentExecutionState({ directory, supervisor, protection: executions }),
     executionAudits: new ExecutionAudits(new PostgresExecutionAudits(kernel)),
     runtimeBarriers: new PostgresRuntimeBarrierReader(kernel),
     bridgeObservation: new BridgeObservationService({
@@ -678,142 +611,21 @@ export function buildComponents(
     ),
     learningNotices,
     outputs,
-    application,
+    application: owned?.application ?? application,
     recovery,
     supervisor,
     learningGate,
     learningWorker,
     permissionConnections,
     permissionRepository,
+    async joinLegacyModelRequests(): Promise<void> {
+      // Business cancellation and errors remain owned by the review worker;
+      // this is the lifetime barrier for its original model calls.
+      while (legacyModelRequests.size > 0) await Promise.allSettled([...legacyModelRequests]);
+      if (legacyModelCleanupFailures.length > 0)
+        throw new AggregateError(legacyModelCleanupFailures, "Model transport cleanup failed");
+    },
   };
-}
-
-function buildLearningWorker(input: {
-  config: AgentAcpConfig;
-  ownershipSignal: AbortSignal;
-  kernel: PostgresKernel;
-  directory: ExecutionDirectory;
-  providers: ProviderClients;
-  rawTools: McpToolCatalog;
-  gate: LearningForegroundGate;
-  telemetry: TelemetryPort;
-  onCommitted: () => void;
-  temporarySkills: TemporarySkills;
-  runtimeConnections: RuntimeConnectionAuthority;
-}): LearningWorker | undefined {
-  const { config, kernel, directory, providers, rawTools, gate, telemetry, onCommitted } = input;
-  if (
-    config.skillLearningControllerUrl === undefined ||
-    config.skillMaintenanceSigning === undefined
-  )
-    return undefined;
-  const policy = new ControllerLearningPolicyClient(
-    config.skillLearningControllerUrl,
-    tracedFetch(config.dependencyFetchers.controller!, "agent_controller"),
-  );
-  const {
-    scan: scanStore,
-    evidence,
-    budget,
-    candidates,
-    outcomes,
-    intents,
-    bases,
-    changes,
-  } = createLegacyLearningRepositories(kernel, input.ownershipSignal, {
-    onSettled: (requestId) => input.runtimeConnections.releaseOperation(requestId),
-    onCommitted,
-  });
-  const managed = new PostgresLearningManagedSkills(kernel);
-  const installRequests = new PostgresLearningInstallRequests(kernel);
-  const binding = new DirectoryLearningRuntimeBinding(directory);
-  const signer = new RuntimeSkillMaintenanceSigner(
-    config.skillMaintenanceSigning.kid,
-    config.skillMaintenanceSigning.privateKey,
-  );
-  const runtime = new RuntimeSkillMaintenanceClient(signer, intents, input.runtimeConnections);
-  const guard = new LearningMaintenanceGuard(gate, (scope, signal) =>
-    input.temporarySkills.assertClearAgent(scope, signal),
-  );
-  const modelAdmission = new LearningModelAdmission(policy, budget);
-  const reviewRunner = new LearningReviewRunner(
-    evidence,
-    new PostgresLearningReviewSource(kernel),
-    new LearningModelAuthority(directory),
-    modelAdmission,
-    budget,
-    providers,
-    new LearningTelemetry(telemetry),
-  );
-  const review = new LearningReviewProcessor(reviewRunner, evidence, candidates, managed, outcomes);
-  const apply = new LearningApplyAttempt(
-    candidates,
-    binding,
-    policy,
-    rawTools,
-    managed,
-    runtime,
-    bases,
-    installRequests,
-    changes,
-  );
-  const processor = new InstrumentedLearningTaskProcessor(
-    new LearningTaskProcessor(review, new InstrumentedLearningApply(apply, telemetry), outcomes),
-    telemetry,
-  );
-  const paused = new LearningPausedRecovery(
-    outcomes,
-    guard,
-    policy,
-    processor,
-    gate,
-    (claim, error) =>
-      telemetry.log(
-        "warn",
-        "skill_learning_recovery_failed",
-        {
-          task_id: claim.taskId,
-          agent_id: claim.agentId,
-        },
-        error,
-      ),
-  );
-  const coordinator = new LearningScanCoordinator(
-    policy,
-    scanStore,
-    new PersistedLearningReviewCue(scanStore),
-    config.skillLearningDebugAgentId,
-  );
-  const scan = new LearningScanSweep(scanStore, coordinator, (scope, error) =>
-    telemetry.log(
-      "warn",
-      "skill_learning_scan_failed",
-      {
-        agent_id: scope.agentId,
-      },
-      error,
-    ),
-  );
-  return new LearningWorker(
-    paused,
-    scan,
-    new LearningClaimAdmission(policy, scanStore),
-    guard,
-    processor,
-    outcomes,
-    (claim, error) =>
-      telemetry.log(
-        "warn",
-        "skill_learning_task_failed",
-        {
-          task_id: claim.taskId,
-          agent_id: claim.agentId,
-        },
-        error,
-      ),
-    undefined,
-    (error) => telemetry.log("warn", "skill_learning_cycle_failed", {}, error),
-  );
 }
 
 async function requireDependenciesReady(pool: Pool, telemetry: TelemetryPort): Promise<void> {

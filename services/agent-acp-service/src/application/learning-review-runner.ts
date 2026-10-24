@@ -63,6 +63,7 @@ export class LearningReviewRunner {
     private readonly ledger: ReviewLedger,
     private readonly providers: ProviderClientFactory,
     private readonly diagnostics: LearningReviewDiagnostics = NOOP_LEARNING_DIAGNOSTICS,
+    private readonly retainModelRequest?: (original: Promise<unknown>) => void,
   ) {}
 
   public async execute(input: {
@@ -170,13 +171,17 @@ export class LearningReviewRunner {
           return {
             ok: true as const,
             response: await this.diagnostics.modelCall(claim, callIndex, requestId, () =>
-              completeReviewOrAbort(model, {
-                purpose: "skill_learning",
-                snapshot: reviewSnapshot,
-                messages,
-                tools: [],
-                signal: callSignal,
-              }),
+              completeReviewOrAbort(
+                model,
+                {
+                  purpose: "skill_learning",
+                  snapshot: reviewSnapshot,
+                  messages,
+                  tools: [],
+                  signal: callSignal,
+                },
+                this.retainModelRequest,
+              ),
             ),
           };
         } catch (error) {
@@ -258,13 +263,20 @@ export class LearningReviewRunner {
   }
 }
 
-/** Only the tool-free inference may be detached; Runtime effects must still settle. */
+/** Cancel review promptly; an owning generation retains the original inference. */
 async function completeReviewOrAbort(
   model: ModelPort,
   request: Parameters<ModelPort["complete"]>[0],
+  retain?: (original: Promise<unknown>) => void,
 ): ReturnType<ModelPort["complete"]> {
   request.signal.throwIfAborted();
   const response = model.complete(request);
+  try {
+    retain?.(response);
+  } catch (error) {
+    await response.catch(() => undefined);
+    throw error;
+  }
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (result: () => void): void => {

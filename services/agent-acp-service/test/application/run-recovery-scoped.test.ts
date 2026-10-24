@@ -347,10 +347,12 @@ describe("Run-scoped persistence recovery", () => {
       const lost = new WorkerOwnershipLostError();
       f.ownership.abort(lost);
       await vi.advanceTimersByTimeAsync(0);
-      expect(result.rejected).toHaveBeenCalledOnce();
-      expect(result.rejected.mock.calls[0]?.[0]).toBe(lost);
+      expect(result.rejected).not.toHaveBeenCalled();
+      expect(result.resolved).not.toHaveBeenCalled();
       read.resolve({ kind: "running" });
       await vi.advanceTimersByTimeAsync(0);
+      expect(result.rejected).toHaveBeenCalledOnce();
+      expect(result.rejected.mock.calls[0]?.[0]).toBe(lost);
       expect(result.resolved).not.toHaveBeenCalled();
       expect(f.events.interruptToolAttempts).not.toHaveBeenCalled();
       expect(f.executions.finish).not.toHaveBeenCalled();

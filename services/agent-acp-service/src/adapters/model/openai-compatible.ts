@@ -9,6 +9,7 @@ import type {
   ModelRequest,
   ModelResult,
 } from "../../ports/model.js";
+import { ModelError, ModelTransportCleanupError } from "../../ports/model.js";
 import { OpenAICompatibleModelError, invalidResponse } from "./errors.js";
 import { readStream } from "./openai-stream.js";
 import { extractUsage, modelUsage } from "./openai-usage.js";
@@ -77,6 +78,9 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
     const transport =
       this.fetchFn === undefined ? new PinnedProviderTransport(endpoint) : undefined;
     const send = tracedFetch(this.fetchFn ?? transport!.fetch, "model");
+    let operationFailed = false;
+    let operationError: unknown;
+    let knownUsage: ModelUsage | undefined;
     try {
       let response: Response;
       try {
@@ -114,6 +118,7 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
           ? await readStream(response, request)
           : await readPayload(response);
       const usage = modelUsage(extractUsage(payload), request.snapshot.executionSpec.model.pricing);
+      knownUsage = usage;
       try {
         const parsed = responseSchema.safeParse(payload);
         if (!parsed.success)
@@ -124,8 +129,23 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
           error.usage = usage;
         throw error;
       }
+    } catch (error) {
+      operationFailed = true;
+      operationError = error;
+      if (error instanceof ModelError && error.usage !== undefined) knownUsage = error.usage;
+      throw error;
     } finally {
-      await transport?.close();
+      await transport?.close().catch((closeError: unknown) => {
+        throw new ModelTransportCleanupError(
+          operationFailed
+            ? new AggregateError(
+                [operationError, closeError],
+                "Model operation and transport cleanup failed",
+              )
+            : closeError,
+          knownUsage,
+        );
+      });
     }
   }
 }

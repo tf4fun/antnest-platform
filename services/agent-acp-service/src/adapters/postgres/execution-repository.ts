@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { ownershipScope, type AgentOwnershipScope } from "../../domain/agent-ownership.js";
 import type {
   RunOutcome,
   RunState,
@@ -175,7 +176,8 @@ export class PostgresExecutionRepository
     return storedOutcome(row);
   }
 
-  public async listRecoveryWork(): Promise<RecoveryWork[]> {
+  public async listRecoveryWork(scope?: AgentOwnershipScope): Promise<RecoveryWork[]> {
+    const fixed = scope === undefined ? undefined : ownershipScope(scope);
     this.#authority.assertLegacyRecovery();
     return this.#authority.transaction(this.kernel, async (client) => {
       const result = await client.query<RecoveryWork & RunOwnerColumns>(
@@ -183,7 +185,9 @@ export class PostgresExecutionRepository
               execution_owner_member_id, execution_owner_incarnation_id, execution_owner_epoch::text
          FROM runs
         WHERE state IN ('admitting', 'running')
+          AND ($1::text IS NULL OR (organization_id=$1 AND agent_id=$2))
         ORDER BY created_at, id`,
+        [fixed?.organizationId ?? null, fixed?.agentId ?? null],
       );
       // Do not partially recover a mixed database. Returning only legacy rows
       // could silently leave owned reservations to an unscoped startup worker.

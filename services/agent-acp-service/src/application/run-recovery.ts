@@ -1,4 +1,5 @@
 import type { RunOutcome } from "../domain/types.js";
+import { ownershipScope, type AgentOwnershipScope } from "../domain/agent-ownership.js";
 import type {
   ExecutionRepository,
   FinishLocalRunInput,
@@ -118,8 +119,22 @@ export class RunRecovery {
   }
 
   public async recover(signal: AbortSignal = new AbortController().signal): Promise<void> {
+    return this.recoverSelected(undefined, signal);
+  }
+
+  public async recoverLegacyScope(scope: AgentOwnershipScope, signal: AbortSignal): Promise<void> {
+    const fixed = ownershipScope(scope);
+    return this.recoverSelected(fixed, signal);
+  }
+
+  private async recoverSelected(
+    scope: AgentOwnershipScope | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
     const work = await withWorkerOwnership(signal, () =>
-      this.dependencies.executions.listRecoveryWork(),
+      scope === undefined
+        ? this.dependencies.executions.listRecoveryWork()
+        : this.dependencies.executions.listRecoveryWork(scope),
     );
     for (const item of work) {
       assertWorkerOwnership(signal);

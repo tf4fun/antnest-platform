@@ -13,8 +13,11 @@ The process starts accepting ACP connections only after:
 3. private PostgreSQL migrations succeed;
 4. the private PostgreSQL database answers the local storage check;
 5. the process exclusively owns the database-scoped Run worker lock;
-6. startup recovery has classified all non-terminal Runs and configuration
-   restoration completes.
+6. startup inventory/recovery and sealed configuration restoration complete.
+
+Registered owner mode isolates scopes containing protected owned work and runs
+legacy recovery only within approved organization/Agent scopes. With owner
+settings disabled, startup keeps the original global legacy recovery path.
 
 `GET /status` returns `ready` only after those gates and while the worker lock
 is held and shutdown has not started. Each readiness probe checks only private
@@ -78,11 +81,13 @@ read and cancellation cleanup actually settle before the next attempt starts.
 Failed cleanup ends startup. Exhausted attempts or budget leave the service
 unready and fail startup after cleanup.
 
-SIGTERM during startup cancels registration or its backoff and permanently
-closes pending intent immediately. Shutdown joins the original registration,
+SIGTERM/SIGINT during startup cancels registration or its backoff and permanently
+closes pending intent immediately. Shutdown retains the original registration,
 body cancellation and owner listener resources; a late successful receipt
-cannot reopen the intent or continue ordinary startup. The configured process
-shutdown deadline still bounds cleanup, and incomplete cleanup exits non-zero.
+cannot reopen the intent or continue ordinary startup. The first signal or
+global ownership loss establishes one absolute deadline from the configured
+shutdown timeout; repeated signals do not reset it. Deadline expiry forces a
+non-zero exit without claiming that original work or cleanup joined.
 The owner wire uses `no-store` and suppresses request, response and error payload
 capture even when RPC content capture is enabled. Logs do not include nonces,
 credentials or configured private probe addresses.
@@ -92,15 +97,35 @@ Runtime Controller inspection results. `unknown`, HTTP 404, transport failure,
 an expired lease or a missing heartbeat is not an executor stop proof. The
 adapter issues one bounded request without retry or redirect and joins its
 original work before returning or rejecting. A returned stop receipt still
-requires the future scoped recovery consumer to persist it under the current
-Agent fence; this batch does not connect it to production Run recovery.
+requires the future owned-predecessor recovery consumer to persist it under the
+current Agent fence. Production scoped legacy recovery does not consume these
+stop receipts.
 
-This optional wiring does not provide multi-replica execution. The global
-worker lock and its independent ownership-loss fail-stop behavior remain.
-Production owner coordination, fenced writers, scoped recovery, cross-owner
-configuration/revocation ACKs, peers, deployment membership and explicit
-two-replica integration remain pending. Do not remove the single-instance
-restriction. See the [owner handoff contract](../../../contracts/agent-acp/owner-handoff.md).
+After registration, production routes application, settlement, state, commands
+and source reads through fixed Agent generations. Session, Run, Permission,
+Temporary Skill and Learning writers use captured owned authority; background
+workers retain their scopes. Startup inventory isolates protected owned work
+and permits only approved scoped legacy recovery. `loadOwnedAuthority` rechecks
+sealed configuration under the fixed fence. Disabled owner mode keeps the
+original legacy path.
+
+The complete accepting-Agent ACK runs outside publication. Its failure does not
+withdraw healthy applied configuration, but the organization-wide ACK cannot
+guarantee that Controller independently marks a healthy new Agent ready. The
+generation manager uses a 30-second lease, 10-second renewal interval and
+10-second operation budget; these values are not configurable. Legacy
+compatibility writes still use held global worker-lock authority, while work
+cancellation uses the entry signal. Learning retains and joins original model
+work.
+
+The global worker lock, single-instance restriction and independent
+ownership-loss fail-stop channel remain. Production predecessor stop-proof
+and Learning claim/global review-slot recovery, cross-owner ACKs and peers,
+and two-replica integration remain pending.
+Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
+registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
+it does not establish a real Runtime Controller/Runtime deployment or two replicas.
+See the [owner handoff contract](../../../contracts/agent-acp/owner-handoff.md).
 
 ### PostgreSQL Migration And Recovery
 
@@ -128,9 +153,10 @@ ownership and handoff.
 
 Migration `0025_agent_leases.sql` adds the storage foundation for partitioned
 ownership. It creates an initially empty lease table and does not switch the
-service to multiple replicas. Composition still acquires the global worker
-lock; no lease coordinator, peer listener or lease tuning environment variable
-is enabled in this batch. Do not remove the global lock to use these primitives.
+service to multiple replicas. Registered owner mode now uses the lease
+coordinator, and composition still acquires the global worker lock. There is no
+peer listener or lease tuning environment variable. Do not remove the global
+lock to use these primitives.
 
 Migration `0026_run_execution_owner.sql` records the original registration,
 member, incarnation and epoch on each newly owned Run intent. The four private
@@ -145,16 +171,18 @@ original execution tuple before mutations or duplicate receipt returns. Terminal
 transactions take the organization barrier before the lease, Session and Run;
 refusal exclusions, checkpoint deletion, permission cancellation and barrier
 creation remain atomic. Legacy startup recovery rejects a scan containing owned
-active Runs before returning any work. Legacy Run writers reject owned rows. Composition
-still selects the explicit legacy factory with the held worker signal: the
-production Agent coordinator, other writers and scoped recovery are pending.
-Registration bootstrap does not enable this execution mode or additional replicas.
+active Runs before returning any work. Legacy Run writers reject owned rows.
+Registered owner composition now selects fixed owned repository factories;
+owner-disabled composition retains the explicit legacy factory with held worker
+authority. Scoped legacy compatibility recovery never rewrites owned execution.
+Registration does not enable additional replicas.
 
 Context checkpoint writes now receive their original Run ID through the real
 RunExecutor/ContextBuilder path. The same bound factory checks lease, Session,
 origin and running state before insertion or duplicate handling. Completed Runs
-cannot recreate checkpoints removed by refusal. Production still uses the held
-legacy worker authority until all foreground consumers support Agent ownership.
+cannot recreate checkpoints removed by refusal. Registered owner composition
+uses the fixed generation's authority; owner-disabled composition keeps held
+legacy worker authority.
 
 Lease epochs are positive decimal strings, retained after release and bounded
 by PostgreSQL's signed bigint maximum. The repository accepts durations from
@@ -168,9 +196,9 @@ timeouts and lost commit receipts remain failures, never permission to retry an
 effect. These callbacks must contain database work only. Existing transactions
 without this option retain their existing configured statement budgets.
 
-Future production integration must connect every owned write and recovery path,
-cross-owner configuration/revocation acknowledgements, trusted peer routing and
-shutdown handoff before multi-replica deployment is admitted. The
+Production predecessor stop-proof recovery, cross-owner configuration/revocation
+ACKs and trusted peers, two-replica integration, and predecessor Learning
+claim/global review-slot recovery remain required. The
 [ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
 those remaining gates. Lease rows must not be deleted to reset an epoch.
 
@@ -194,7 +222,9 @@ to preserve escaped bytes. Normal approval/execution tracing does not export
 these payloads. Administrative audit RPC responses follow the global RPC content
 capture setting and can therefore expose retained input and tool data to OTLP;
 see [execution audit](execution-audit.md) before enabling capture.
-After acquiring the exclusive worker lock, startup cancels pending approvals
+After acquiring the exclusive worker lock, registered owner startup cancels
+abandoned legacy approvals only in inventory-approved scopes; protected owned
+work stays isolated. Owner-disabled startup retains global legacy cancellation
 before classifying interrupted Runs. Run completion also cancels orphan waits.
 This does not replay approved tools or resume an interrupted Tool loop.
 
@@ -268,16 +298,20 @@ redirects and environment proxies are disabled.
 
 Equal-revision publications must carry the same token for an existing connection
 ID. Missing or unsafe files make calls unavailable; memory never supplies a
-fallback bearer. Recover sender storage by restarting ACP and having Controller
-republish the verified current private reference. A cold database snapshot or
-closed publication cannot create authority.
+fallback bearer. Recover sender storage through authenticated sealed private
+configuration restoration or a verified Controller republication. Registered
+owner restoration rechecks the fixed fence with `loadOwnedAuthority`; a public
+database projection or closed publication alone cannot create authority.
 
 Accepted Runs, source digest reads and temporary-Skill operations retain
 original authority for cleanup through closure. A Skill install keeps its
 authority only until its attempt ends; a resend uses the current binding. An authentication failure cannot erase an earlier unknown effect;
-normal stopping and durable settlement rules still apply. Normal shutdown,
-failed startup and worker ownership loss close the dispatcher and remove owned
-sender files. See [execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission)
+normal stopping and durable settlement rules still apply. Normal shutdown and
+failed startup close the dispatcher and remove owned sender files. Global
+worker-loss cleanup retains the original startup and single shutdown under the
+same absolute deadline; forced exit at expiry proves no completed join. Both
+legacy service shutdown and owned generation retirement retain original Learning
+inference through its native transport close. See [execution configuration](execution-configuration.md#runtime-instance-authentication-30-owning-service-admission)
 and the [private connection contract](../../../contracts/runtime/instance-connection.md).
 
 ## Provider Model Egress
@@ -414,9 +448,13 @@ Collector retention. This service adds no retention service.
 - Configuration validation/storage failure retains the old live projection.
   Failure during publication after persistence closes the affected organization,
   aborts its execution and detaches approval/output consumers; retry the same or
-  newer snapshot. Neither the request nor raw error text is telemetry content.
-- Uncertain initial Run acceptance fails readiness and requests process
-  replacement. Startup records interruption without model or Tool replay.
+  newer snapshot. The accepting-Agent ACK runs after publication; ACK failure
+  does not withdraw healthy applied configuration. Neither the request nor raw
+  error text is telemetry content.
+- Uncertain initial Run acceptance closes the affected generation in registered
+  owner mode. Legacy/global failures retain the service-recovery path. Startup
+  never replays model or Tool work, and protected owned work remains isolated
+  pending predecessor stop-proof recovery.
   Run-event and terminal acknowledgement failures use the scoped recovery path
   below. No Controller admission or completion receipt is involved.
 - Model timeout: cancel the request and terminate the Run as failed unless the
@@ -424,10 +462,11 @@ Collector retention. This service adds no retention service.
 - Runtime MCP timeout after dispatch: report Tool effect unknown and
   never replay the Tool automatically.
 - Agent ACP Service restart during a Run: never replay model or Tool work.
-  Recovery marks dispatched-but-unconfirmed Tool calls unknown, marks retained
-  but undispatched calls not executed, and reports the Run unresolved only when
-  an unknown Tool effect actually exists; otherwise it reports a failed,
-  quiescent Run.
+  Recovery of selected legacy Runs marks dispatched-but-unconfirmed Tool calls
+  unknown, marks retained but undispatched calls not executed, and reports the
+  Run unresolved only when an unknown Tool effect actually exists; otherwise it
+  reports a failed, quiescent Run. Inventory protects unfinished owned work;
+  scoped legacy cleanup cannot clear it.
 - Nonempty ACP client MCP input fails with `client_mcp_not_allowed`, without
   persistence, replay or a client connection. Use platform-managed Runtime MCP.
   No deployment allowlist option can enable client injection.
@@ -446,12 +485,14 @@ Collector retention. This service adds no retention service.
   barrier; the default policy remains manual. The automatic kill-during-tool
   integration verifies Runtime replacement and a new Run. Notification and
   manual UI recovery consumers remain pending.
-- An unconfirmed Run admission write stops new Run admission and
-  requires service recovery. An unacknowledged prompt returns JSON-RPC `-32603`
+- An unconfirmed Run admission write stops the affected generation's admission
+  in registered owner mode; legacy/global failures require service recovery.
+  An unacknowledged prompt returns JSON-RPC `-32603`
   with `code: database_error` and `retryable: false`; its public message contains
   no database details. The original cause remains available to internal
   diagnostics. ACP does not invent a new outcome.
-  Startup classifies the durable Run without repeating model or Tool work.
+  Startup classifies legacy work without repeating model or Tool work and
+  isolates protected owned work.
   Component coverage uses production service composition and real PostgreSQL
   with fake outbound Runtime/model peers in
   [`persistence-faults.postgres.test.ts`](../../../tests/integration/agent-acp-service/e2e/persistence-faults.postgres.test.ts).
@@ -464,30 +505,47 @@ Collector retention. This service adds no retention service.
   closes undispatched calls and records `persistence_interrupted`; unknown
   effects or temporary cleanup failure remain unresolved and retain their barrier.
   Recovery retries use 250 ms to 5 s backoff plus jitter and stop on worker
-  ownership loss or shutdown. Admission uncertainty still uses the startup path
-  above; this does not yet provide complete admission-failure isolation.
+  ownership loss or shutdown. Admission uncertainty uses the mode-specific path
+  above; predecessor stop-proof recovery remains pending for protected owned work.
 - Run worker lock unavailable: startup fails because another replica owns Run
   execution. A same-session heartbeat detects loss of the dedicated lock
-  connection; loss makes readiness false, aborts startup recovery and local
-  execution, emits its structured stdout event, gives OTLP trace/metrics at
-  most 500ms to flush, and then exits non-zero for platform replacement. This is
-  a hard fail-stop, not graceful shutdown: the stale worker must not persist
-  terminal Run state after ownership is lost.
-  A dedicated ownership-loss channel races startup, recovery, serving, and
-  graceful cleanup, so an earlier ordinary component or database failure
-  cannot mask lock loss. External and durable operations, including context
-  checkpoint writes, recheck ownership after both success and failure before
-  any next transition. The same fail-stop path therefore cannot be delayed by
-  a pending operation or ordinary component cleanup before the process exits.
+  connection; loss immediately closes admission, clears readiness and cancels
+  startup recovery and local execution. It establishes the same absolute
+  configured shutdown deadline as the first SIGTERM/SIGINT. `main` retains the
+  original startup and one shutdown operation until actual completion;
+  repeated signals neither create another shutdown nor reset the deadline.
+  Service failure notifications remain observed during closure, and late
+  errors from original tasks are retained. Business errors are recorded before
+  telemetry flush. The ownership-loss telemetry flush starts after cleanup,
+  has a 500ms maximum and remains bounded by the overall deadline's remaining
+  time. Actual expiry forces a non-zero exit without claiming successful joins.
+  External and durable operations, including context checkpoint writes,
+  recheck ownership after success or failure before any next transition; a
+  stale worker cannot persist terminal Run state after losing authority.
+  Agent-local ownership loss still closes only that Agent, and the global
+  worker lock remains required. The real PostgreSQL/main startup regression
+  holds the configuration read through lock loss and repeated SIGTERM, then
+  verifies cleanup after release or hard exit at the original deadline. The
+  latter is not proof of successful SQL completion. See
+  [`main-worker-loss.postgres.test.ts`](../../../tests/integration/agent-acp-service/e2e/main-worker-loss.postgres.test.ts).
+  The separate [Learning lifecycle component test](../../../tests/integration/agent-acp-service/e2e/learning-lifecycle.postgres.test.ts)
+  holds real Provider transport cleanup during legacy/owned shutdown and Agent A
+  lease loss while B completes a foreground Run. It does not establish B's
+  background claim recovery, predecessor stop-proof handling or two replicas.
+  Injected internal transport-close failures remain visible in the shutdown
+  result, including after cancellation or an HTTP 503. Shared resource cleanup
+  still completes; another Agent can run before and after the failed close.
 - Session cancellation, close, or delete: persist a cancellation latch before
   waiting for in-memory execution. A late acceptance commit reaches an already
   aborted executor and is closed without starting model or Tool work.
-- SIGTERM: stop accepting connections, cancel active work, wait up to the
-  shutdown timeout, terminate open ACP transports, persist terminal or
-  unresolved facts where the executor can prove them, release the worker lock
-  and database pool, then exit non-zero if cleanup or quiescence was not
-  proven. Exceeding the deadline invokes a hard process exit so a stuck client
-  cannot keep the container indefinitely terminating.
+- SIGTERM/SIGINT: immediately close admission and establish the shared absolute
+  deadline from the configured shutdown timeout. Retain the original startup
+  and single shutdown, cancel active work, terminate ACP transports, persist
+  terminal or unresolved facts only under live authority, and release the
+  worker lock and database pool. Repeated signals do not extend the deadline.
+  Failure notifications and late original-task errors remain recorded before
+  telemetry flush. Incomplete cleanup exits non-zero; actual deadline expiry
+  forces exit without establishing successful joins.
 - ACP reconnect: active Run ownership remains in the process-level supervisor;
   an authorized `session/cancel`, close, or delete from a replacement
   connection still reaches the original Run.

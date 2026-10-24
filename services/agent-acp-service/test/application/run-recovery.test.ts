@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { RunRecovery } from "../../src/application/run-recovery.js";
 import { WorkerOwnershipLostError } from "../../src/adapters/postgres/worker-lock.js";
@@ -122,14 +123,27 @@ describe("local startup interruption cleanup", () => {
     executions.listRecoveryWork.mockReturnValueOnce(pending.promise);
     const owner = new AbortController();
     const recovering = recovery.recover(owner.signal);
-    const rejected = expect(recovering).rejects.toBeInstanceOf(WorkerOwnershipLostError);
-    await vi.waitFor(() => expect(executions.listRecoveryWork).toHaveBeenCalledOnce());
-    owner.abort(new WorkerOwnershipLostError());
-    await rejected;
-    pending.resolve([{ kind: "running", id: "running-1" }]);
-    await pending.promise;
-    expect(events.interruptToolAttempts).not.toHaveBeenCalled();
-    expect(executions.finish).not.toHaveBeenCalled();
+    const resolved = vi.fn();
+    const rejected = vi.fn();
+    const settled = recovering.then(resolved, rejected);
+    try {
+      await vi.waitFor(() => expect(executions.listRecoveryWork).toHaveBeenCalledOnce());
+      const lost = new WorkerOwnershipLostError();
+      owner.abort(lost);
+      await setImmediate();
+      expect(resolved).not.toHaveBeenCalled();
+      expect(rejected).not.toHaveBeenCalled();
+      pending.resolve([{ kind: "running", id: "running-1" }]);
+      await settled;
+      expect(rejected).toHaveBeenCalledExactlyOnceWith(lost);
+      expect(rejected.mock.calls[0]?.[0]).toBe(lost);
+      expect(resolved).not.toHaveBeenCalled();
+      expect(events.interruptToolAttempts).not.toHaveBeenCalled();
+      expect(executions.finish).not.toHaveBeenCalled();
+    } finally {
+      pending.resolve([{ kind: "running", id: "running-1" }]);
+      await settled;
+    }
   });
 
   it.each([false, true])(

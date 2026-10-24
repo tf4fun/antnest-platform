@@ -1,6 +1,7 @@
 import { loadConfig } from "./config.js";
 import { WorkerOwnershipLostError } from "./adapters/postgres/worker-lock.js";
 import { startTelemetry } from "./telemetry/telemetry.js";
+import type { RunningAgentAcpService } from "./composition.js";
 import {
   createShutdownReason,
   isShutdownReason,
@@ -15,50 +16,69 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const telemetryRuntime = await startTelemetry(config.telemetry);
   const startupController = new AbortController();
-  const stopping = shutdownSignal(startupController);
+  let deadline: number | undefined;
+  const stop = (reason: Error): void => {
+    deadline ??= performance.now() + config.shutdownTimeoutMs;
+    startupController.abort(reason);
+  };
+  const stopping = shutdownSignal(stop);
   const ownershipLoss = Promise.withResolvers<WorkerOwnershipLostError>();
+  let lost: WorkerOwnershipLostError | undefined;
+  let startup: Promise<RunningAgentAcpService> | undefined;
+  let observingFailures = true;
+  const failures: unknown[] = [];
+  const rememberFailure = (error: unknown): void => {
+    if (!isShutdownReason(error) && !failures.includes(error)) failures.push(error);
+  };
+  const observeFailure = (error: unknown): void => {
+    if (!observingFailures) return;
+    if (error instanceof WorkerOwnershipLostError) {
+      lost ??= error;
+      ownershipLoss.resolve(error);
+    }
+    rememberFailure(error);
+    stop(error instanceof Error ? error : new Error("Agent ACP Service failed", { cause: error }));
+  };
+  let reportedFailures = 0;
+  const reportFailures = (): void => {
+    if (failures.length <= reportedFailures) return;
+    process.exitCode = 1;
+    const error =
+      failures.length === 1
+        ? failures[0]
+        : new AggregateError(failures, "Agent ACP Service stopped with failures");
+    telemetryRuntime.telemetry.log("error", "service_failed", {}, error);
+    reportedFailures = failures.length;
+  };
   let telemetryShutdown: Promise<void> | undefined;
   const shutdownTelemetry = (): Promise<void> => {
     telemetryShutdown ??= telemetryRuntime.shutdown();
     return telemetryShutdown;
   };
-  const failStop = async (): Promise<never> => {
-    await flushBeforeFailStop(shutdownTelemetry(), FAIL_STOP_TELEMETRY_TIMEOUT_MS);
-    return forceExit();
-  };
   try {
     // The driver must load after its standard instrumentation is registered.
     const { startAgentAcpService } = await import("./composition.js");
-    const startup = raceWithOwnershipLoss(
-      startAgentAcpService(
-        config,
-        telemetryRuntime.telemetry,
-        (error) => ownershipLoss.resolve(error),
-        startupController.signal,
-      ),
-      ownershipLoss.promise,
+    startup = startAgentAcpService(
+      config,
+      telemetryRuntime.telemetry,
+      observeFailure,
+      startupController.signal,
+    );
+    // Notifications remain authoritative while startup or shutdown is pending,
+    // even if SIGTERM already won the control-flow race.
+    void startup.then(
+      (service) => {
+        void service.failure.then(observeFailure, observeFailure);
+      },
+      () => undefined,
     );
     const started = await Promise.race([
       startup.then((service) => ({ kind: "started" as const, service })),
       stopping.signal.then((signal) => ({ kind: "signal" as const, signal })),
+      ownershipLoss.promise.then((error) => Promise.reject(error)),
     ]);
     if (started.kind === "signal") {
       telemetryRuntime.telemetry.log("info", "shutdown_requested", { signal: started.signal });
-      // Keep the original startup task owned until cancellation and cleanup
-      // finish, including the case where startup won the race to return.
-      await raceWithOwnershipLoss(
-        withShutdownDeadline(
-          startup.then(
-            (service) => service.shutdown(),
-            (error: unknown) => {
-              if (!isShutdownReason(error)) throw error;
-            },
-          ),
-          config.shutdownTimeoutMs,
-          forceExit,
-        ),
-        ownershipLoss.promise,
-      );
       return;
     }
     const service = started.service;
@@ -71,53 +91,59 @@ async function main(): Promise<void> {
       throw outcome.error;
     }
     if (outcome.kind === "failure") {
-      if (outcome.error instanceof WorkerOwnershipLostError) {
-        await failStop();
-      }
-      await raceWithOwnershipLoss(
-        withShutdownDeadline(service.shutdown(), config.shutdownTimeoutMs, forceExit),
-        ownershipLoss.promise,
-      );
-      throw new Error("Agent ACP Service requires process replacement", {
-        cause: outcome.error,
-      });
+      throw outcome.error;
     }
     telemetryRuntime.telemetry.log("info", "shutdown_requested", { signal: outcome.signal });
-    await raceWithOwnershipLoss(
-      withShutdownDeadline(service.shutdown(), config.shutdownTimeoutMs, forceExit),
-      ownershipLoss.promise,
-    );
   } catch (error) {
-    if (error instanceof WorkerOwnershipLostError) {
-      await failStop();
-    }
-    if (!isShutdownReason(error)) {
-      telemetryRuntime.telemetry.log("error", "service_failed", {}, error);
-      process.exitCode = 1;
-    }
+    rememberFailure(error);
+    stop(error instanceof Error ? error : new Error("Agent ACP Service failed", { cause: error }));
   } finally {
+    stop(createShutdownReason());
+    // Loss closes admission immediately. It must not replace the original
+    // startup/shutdown promise: that task still owns SQL, Runtime and cleanup.
+    // All phases share the deadline established by the first stop request.
+    await withShutdownDeadline(
+      (async () => {
+        try {
+          const service = await startup;
+          await service?.shutdown();
+        } catch (error) {
+          rememberFailure(error);
+        }
+        observingFailures = false;
+        reportFailures();
+        const originalTelemetryShutdown = shutdownTelemetry().catch((error: unknown) => {
+          telemetryRuntime.telemetry.log("warn", "telemetry_shutdown_failed", {}, error);
+        });
+        try {
+          await raceWithOwnershipLoss(originalTelemetryShutdown, ownershipLoss.promise);
+        } catch (error) {
+          if (lost === undefined) rememberFailure(error);
+          else await flushBeforeFailStop(originalTelemetryShutdown, FAIL_STOP_TELEMETRY_TIMEOUT_MS);
+        }
+      })(),
+      Math.max(0, deadline! - performance.now()),
+      forceExit,
+    ).catch(rememberFailure);
+    reportFailures();
     stopping.dispose();
-    await withShutdownDeadline(shutdownTelemetry(), config.shutdownTimeoutMs, forceExit).catch(
-      () => {
-        process.exitCode = 1;
-      },
-    );
+    if (lost !== undefined) forceExit();
   }
 }
 
-function shutdownSignal(startup: AbortController): {
+function shutdownSignal(requestStop: (reason: Error) => void): {
   signal: Promise<"SIGINT" | "SIGTERM">;
   dispose(): void;
 } {
   const signal = Promise.withResolvers<"SIGINT" | "SIGTERM">();
   const stop = (name: "SIGINT" | "SIGTERM"): void => {
     signal.resolve(name);
-    startup.abort(createShutdownReason());
+    requestStop(createShutdownReason());
   };
   const interrupt = (): void => stop("SIGINT");
   const terminate = (): void => stop("SIGTERM");
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", terminate);
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", terminate);
   return {
     signal: signal.promise,
     dispose() {

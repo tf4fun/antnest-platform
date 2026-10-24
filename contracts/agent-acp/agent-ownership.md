@@ -64,6 +64,62 @@ snapshot is not permission to write or dispatch an effect. An unknown outcome
 from acquire/renew is not proof of continued ownership; the coordinator must
 reconcile with the database before resuming admission.
 
+## Production Generation Lifetime
+
+Each process captures its accepted registration before acquiring an Agent lease.
+Acquisition is single-flight per scope. A generation owns one immutable registration
+and fence, one component graph and the original asynchronous work dispatched through
+that graph. Initialization must load and revalidate sealed configuration and the
+durable revision under that fence before opening admission. An acquired lease or
+constructed repository factory alone does not open an Agent.
+
+Local lease deadlines are conservative monotonic deadlines: subtract the full
+request/response duration from the database-observed remaining lifetime. Neither
+wall-clock changes nor a delayed successful response may extend that bound. The
+coordinator closes admission on expiry or an unknown acquire/renew outcome; it
+continues to own and join the original operation. A late success cannot reopen the
+closed generation or replace its fence. Only that exact, validated scope and
+incarnation may be released after its work settles.
+
+Register original initialization, admission, accepted Run completion, model/Runtime
+and cleanup Promises before yielding their lifetime to another owner. Loss aborts
+that Agent's dispatch signal immediately; it does not abort unrelated Agents.
+Retaining a completion only joins work already dispatched and never authorizes a
+new effect. The admitting operation must retain accepted completion before it
+returns, including when its response arrives after ownership loss.
+
+The application router captures request data before awaits, authorizes the trusted
+connection binding, then captures a prepared generation by organization and Agent.
+It never acquires a new lease on behalf of an individual request. Loss before the
+application callback starts is `agent_unavailable`; after invocation, a write may
+already be committed and the public result must retain the non-retryable
+`database_error` / query-intent recovery classification. A captured Agent's loss
+closes only that scope. Prompt persistence must not send it to the global database
+failure channel. Closure is requested without awaiting the admission's own join.
+
+Normal draining forbids new dispatch but continues renewal while original tasks
+remain. After all original work has settled, stop renewal, join its in-flight
+request and release the original fence. A non-cooperative task prevents completion
+of drain; an AbortSignal race or elapsed grace period is not stopping proof.
+Predecessor recovery still requires the separate stop-proof protocol. Production
+startup must inventory and isolate protected owned scopes before scoped legacy
+recovery; it must not pass those rows to global legacy recovery.
+
+Legacy recovery helpers accept an explicit, validated organization/Agent scope.
+They capture the complete tuple before waiting, select all candidate rows in that
+scope, and reject owned work rather than silently filtering it out. Omitted scope
+retains the global fail-closed behavior; malformed scope cannot fall back to it.
+Learning recovery transactions share one lock-owning connection, so different
+scopes run serially and only identical scopes share a result. Release joins the
+original recovery queue, monitor and unlock, including repeated release calls.
+Successful scoped recovery alone is not admission: the production coordinator
+must still inventory protected predecessors and recheck under the acquired fence.
+
+These lifetime requirements do not remove the global worker lock. Production
+configuration/Prompt/permission/Learning consumers, scoped startup and stopping
+recovery, and explicit multi-replica integration must all be admitted before that
+lock can be retired.
+
 ## Transaction Fence And Linearization
 
 Every Agent-owned durable mutation must carry an explicit fence. The database
@@ -240,6 +296,8 @@ and no spent budget, review, model, candidate, evidence, apply or maintenance ef
 Adoption and the pending operation (first claim, cancellation or enqueue replay)
 commit under the current lease in the same transaction;
 there is no downgrade or fallback after an ownership failure.
+An already-owned task with no claim must satisfy the same pristine-work checks;
+an owned marker does not permit spending or child records before admission.
 
 Each dispatched generation persists its own immutable owner binding. Ordinary
 pause, resume, terminal transitions and receipt replay cannot replace or erase
@@ -286,6 +344,26 @@ Global startup Run recovery, abandoned permissions and learning recovery cannot
 remain unchanged when the worker lock is removed. The current owner may recover
 a predecessor's Run under the new fence while preserving its historical facts.
 Other healthy owners' work must remain untouched.
+
+Before preparing a new Agent generation, inventory persistent work by the full
+organization/Agent identity. Owned admitting/running Runs, pending permissions,
+unstopped Runtime attempts and unreleased Temporary scopes protect that Agent.
+The Run determines a Temporary scope's ownership even if copied scope metadata
+is inconsistent. Claimed nonterminal Learning and unsettled model calls also
+protect the Agent, independently of its completed source Run.
+
+An earlier pending/unknown install can be covered by a later terminal conditional
+install only when the complete canonical attempt sequence, claim, candidate,
+apply basis and final receipt agree. Applied outcomes additionally require the
+matching durable change, including principal and source Run. A replacement
+Runtime execution for a legitimate resend is allowed: the final receipt must
+match the final intent, not the older basis execution. Do not rewrite historical
+attempts or infer a model-call outcome from a terminal task label.
+
+Inventory is advisory until repeated under the acquired fixed fence, after the
+organization and lease barriers. Capture caller inputs before waiting and read
+fresh work after the wait. This only admits scopes without protected predecessor
+work; it is not the stopping proof required to recover an occupied scope.
 
 Expiry or process loss is not evidence that remote Runtime effects have stopped.
 Recovery must follow [Run recovery](execution-api.md#runtime-barrier-recovery-50-pending)

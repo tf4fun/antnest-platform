@@ -10,29 +10,18 @@ export async function withWorkerOwnership<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   assertWorkerOwnership(signal);
-  let onAbort: (() => void) | undefined;
-  const lost = new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(ownershipError(signal));
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-
   try {
-    const result = await Promise.race([
-      Promise.resolve().then(() => {
-        assertWorkerOwnership(signal);
-        return operation();
-      }),
-      lost,
-    ]);
+    // The signal closes dispatch immediately, but the caller still owns the
+    // original runner/SQL operation and its cleanup until that Promise settles.
+    const result = await Promise.resolve().then(() => {
+      assertWorkerOwnership(signal);
+      return operation();
+    });
     assertWorkerOwnership(signal);
     return result;
   } catch (error) {
     assertWorkerOwnership(signal);
     throw error;
-  } finally {
-    if (onAbort !== undefined) {
-      signal.removeEventListener("abort", onAbort);
-    }
   }
 }
 

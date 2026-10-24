@@ -119,8 +119,9 @@ A reservation lasts through the actual socket/SDK closure, connection-owned
 raw reads and sends, permission/notice cleanup and admitted response cleanup.
 Caller cancellation or a send timeout alone does not release it. An accepted
 Run is owned by the Supervisor and does not retain a closed connection's slot.
-These quotas are replica-local; the database-wide worker lock and current
-single-process restriction remain until partitioned ownership is delivered.
+These quotas are replica-local; the database-wide worker lock and
+single-process restriction remain when registered owner mode uses fixed Agent
+generations.
 See the [connection admission contract](../../contracts/agent-acp/connection-admission.md).
 
 The [execution configuration contract](../../contracts/agent-acp/execution-api.md)
@@ -221,11 +222,31 @@ and cancellation cleanup must finish before the next attempt starts. Startup
 SIGTERM cancels registration and joins cleanup. See
 [incarnation bootstrap operations](docs/operations.md#optional-acp-incarnation-bootstrap).
 
-This optional startup gate does not enable multiple ACP replicas. The global
-worker lock and single-instance restriction remain. Production owner
-coordination, fenced writers, scoped recovery, cross-owner configuration and
-revocation acknowledgements, peer routing, deployment membership and explicit
-two-replica integration remain pending under the
+After registration, production uses fixed Agent generations for application,
+settlement, state, commands and source-read routing. Session, Run, Permission,
+Temporary Skill and Learning writers capture owned authority, and background
+work uses a fixed scope. Startup inventory isolates protected owned work and
+recovers only approved legacy scopes; `loadOwnedAuthority` revalidates sealed
+configuration under the fixed fence. With owner settings disabled, the original
+legacy path remains.
+
+The complete accepting-Agent ACK runs outside configuration publication. ACK
+failure retains healthy applied configuration, but the organization-wide ACK
+does not guarantee that Controller independently marks a healthy new Agent ready.
+The generation manager uses a 30-second lease, 10-second renewal interval and
+10-second operation budget; these values have no configuration settings.
+Legacy compatibility writes still derive authority from the held global worker
+lock; work cancellation uses the entry signal, and Learning retains and joins
+its original model work.
+With owner settings disabled, the service also joins original Learning model
+calls after worker cancellation and before shared connection and lock cleanup.
+Internal model transport-close failures are retained through cancellation and
+reported by shutdown after the remaining resources have been closed.
+
+The global worker lock and single-instance restriction remain. Production
+predecessor stop-proof and Learning claim/global review-slot recovery,
+cross-owner ACKs and peers, and two-replica integration
+remain pending under the
 [owner handoff contract](../../contracts/agent-acp/owner-handoff.md).
 
 The debug Agent ID retains the existing `optional()` normalization: leading and
@@ -282,6 +303,11 @@ and Docker end-to-end tests live in
 dependencies. `test:integration` runs official ACP and MCP protocol peers,
 HTTP, WebSocket and SSE boundaries and trace propagation. `test:postgres`
 selects the real PostgreSQL cases.
+
+The [warm-admission test](../../tests/integration/agent-acp-service/e2e/warm-admission.postgres.test.ts)
+uses the real ACP startup, PostgreSQL, authenticated HTTP registration and
+probe, and v1/v2 WebSockets with controlled model and Runtime peers. It is not
+acceptance of a real Runtime Controller/Runtime deployment or two ACP replicas.
 
 The service-owned `sdk-regressions-docker.mjs` runner also revokes access through
 an actual execution publication, holds the official client's automatic DELETE
