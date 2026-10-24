@@ -1,0 +1,69 @@
+{
+  "contract": "antnest.model-call-policy",
+  "revision": 1,
+  "status": "planned",
+  "schema": "model-call-policy.schema.json",
+  "fixtures": "model-call-policy-fixtures.json",
+  "policy_path": "/internal/model-call-policy",
+  "operations": {
+    "get": { "method": "GET", "request": "policy_query", "response": "policy" },
+    "replace": {
+      "method": "PUT",
+      "request": "policy_update_request",
+      "response": "policy"
+    }
+  },
+  "authentication": "service-authentication.md",
+  "authorization": "verified caller with organization administrator authority",
+  "amount": {
+    "currency": "USD",
+    "wire_unit": "integer_microdollars",
+    "maximum": 9007199254740991
+  },
+  "compatibility": {
+    "default_retry": { "max": 0, "base_ms": 200, "cap_ms": 30000 },
+    "default_failover": "never",
+    "default_unknown_cost": "allow",
+    "absent_limits": "unlimited",
+    "zero_limit": "deny positive consumption",
+    "existing_max_model_requests": "still counts every actual model attempt"
+  },
+  "delivery_defaults": {
+    "model_retry": { "max": 2, "base_ms": 200, "cap_ms": 30000 },
+    "failover": "before_output",
+    "rollout": "Controller explicitly publishes effective defaults for existing Agents after ACP consumers support this contract; explicit zero/never settings remain opt-outs"
+  },
+  "semantic_checks": [
+    "retry_base_lte_cap",
+    "soft_lte_hard",
+    "same_organization_candidate_references",
+    "required_capabilities_preserved",
+    "atomic_budget_reservations",
+    "original_attempt_cleanup_before_retry"
+  ],
+  "planned_projections": {
+    "controller_template_definitions": [
+      "create_template_request",
+      "revise_template_request",
+      "agent_template",
+      "agent_configuration"
+    ],
+    "template_fields": ["model_retry", "failover", "run_budget"],
+    "execution_agent_fields": ["model_retry", "failover", "run_budget"],
+    "execution_organization_field": "organization_budget",
+    "model_capability_field": "supports_tools"
+  },
+  "budget_error": {
+    "catalog": "../agent-acp/errors.json",
+    "code": "budget_exceeded",
+    "json_rpc_code": -32043,
+    "http_status": 422,
+    "retryable": false
+  },
+  "pending_batches": [
+    "ACP policy parsing, attempt lifecycle, usage ledger and enforcement",
+    "Controller immutable Template policy and organization publication",
+    "Console Template and organization policy controls",
+    "Real retry, fallback, budget and cross-replica integration"
+  ]
+}
