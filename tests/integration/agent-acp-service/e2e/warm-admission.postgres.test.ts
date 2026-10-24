@@ -1014,6 +1014,8 @@ describe.skipIf(databaseUrl === undefined)(
             witnessFences.add(lease.fence);
             const auth = loadConfig({
               ...testSecurityEnvironment(),
+              ANTNEST_ALLOW_PUBLIC_DEV_SECRETS:
+                process.env.ANTNEST_ALLOW_PUBLIC_DEV_SECRETS,
               ANTNEST_ACP_DATABASE_URL: databaseUrl!,
               ANTNEST_ACP_CLIENT_MCP_KEY: key,
             }).authentication.workload;
