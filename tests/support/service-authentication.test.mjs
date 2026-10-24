@@ -72,6 +72,22 @@ test("every currently registered service route has an explicit caller policy", a
   assert(result.routes > 200);
 });
 
+test("member credentials cannot replace an ordinary workspace caller policy", async () => {
+  const { checkRepository } = await checker();
+  const result = await checkRepository({
+    transformPolicy(service, policy) {
+      if (service === "agent-acp-service")
+        policy.routes["POST /v1/acp"].authentication = "peer-member";
+      return policy;
+    },
+  });
+  assert(
+    result.errors.some((error) =>
+      error.includes("invalid peer-member credential boundary"),
+    ),
+  );
+});
+
 test("removing a caller declaration from a real route fails admission", async () => {
   const { checkRepository } = await checker();
   const result = await checkRepository({

@@ -53,10 +53,7 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "sha256",
-          "routes"
-        ],
+        "required": ["sha256", "routes"],
         "properties": {
           "sha256": {
             "type": "string",
@@ -109,6 +106,7 @@
         "authentication": {
           "enum": [
             "workload",
+            "peer-member",
             "public",
             "health",
             "deny",
@@ -135,23 +133,11 @@
             ]
           },
           "additionalProperties": {
-            "enum": [
-              "required",
-              "operation",
-              "none",
-              "session",
-              "scim-token"
-            ]
+            "enum": ["required", "operation", "none", "session", "scim-token"]
           }
         },
         "request_body": {
-          "enum": [
-            "none",
-            "json",
-            "multipart",
-            "zip",
-            "protocol"
-          ]
+          "enum": ["none", "json", "multipart", "zip", "protocol"]
         },
         "notes": {
           "type": "string",

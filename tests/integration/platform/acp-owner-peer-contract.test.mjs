@@ -210,8 +210,8 @@ for (const [label, edit] of [
     assert(!validate("publication_receipt", value));
   });
 
-test("planned peer operations are private, bounded and do not grant current caller access", () => {
-  assert.equal(manifest.status, "planned");
+test("implemented peer operations have exact private member grants and bounded payloads", () => {
+  assert.equal(manifest.status, "implemented");
   assert.equal(manifest.receiver, "agent-acp-service");
   assert.equal(manifest.listener, "peer");
   assert.equal(manifest.aggregate_deadline_ms, 10000);
@@ -219,7 +219,7 @@ test("planned peer operations are private, bounded and do not grant current call
     "identity",
     "publish",
   ]);
-  const callers = JSON.stringify(read("contracts/agent-acp/callers.json"));
+  const { routes } = read("contracts/agent-acp/callers.json");
   for (const operation of Object.values(manifest.operations)) {
     assert.equal(operation.method, "POST");
     assert.deepEqual(operation.callers, ["agent-acp-service"]);
@@ -228,7 +228,15 @@ test("planned peer operations are private, bounded and do not grant current call
     assert.equal(operation.cache_control, "no-store");
     assert(operation.request_bytes_max <= 16384);
     assert(operation.response_bytes_max <= 16777216);
-    assert(!callers.includes(operation.path));
+    const grant = routes[`${operation.method} ${operation.path}`];
+    assert(grant, "implemented peer operation must have an exact grant");
+    assert.equal(operation.authentication, "peer-member");
+    assert.equal(grant.authentication, operation.authentication);
+    assert.deepEqual(grant.callers, operation.callers);
+    assert.deepEqual(grant.caller_context, {
+      "agent-acp-service": operation.caller_context,
+    });
+    assert.equal(grant.request_body, "json");
     assert(schema.$defs[operation.request]);
     assert(schema.$defs[operation.response]);
   }

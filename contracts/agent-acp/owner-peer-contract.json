@@ -1,19 +1,19 @@
 {
   "version": 1,
-  "status": "planned",
+  "status": "implemented",
   "issue": 49,
   "receiver": "agent-acp-service",
   "listener": "peer",
   "schema": "owner-peer.schema.json",
   "semantics": "owner-peer.md",
-  "activation": "The ACP owning implementation and service admission must add exact peer-listener grants. This manifest does not grant current routes or remove the global worker lock.",
+  "activation": "The optional ACP peer listener implements these exact member-authenticated operations. Fixed peer membership uses shared worker admission and per-Agent ownership; non-peer deployments retain exclusive admission. User forwarding and replica-crash recovery have separate admission criteria.",
   "workload_header": "Antnest-Service-Authorization",
   "aggregate_deadline_ms": 10000,
   "operations": {
     "identity": {
       "method": "POST",
       "callers": ["agent-acp-service"],
-      "authentication": "workload",
+      "authentication": "peer-member",
       "caller_context": "none",
       "cache_control": "no-store",
       "capture_payload": false,
@@ -29,7 +29,7 @@
     "publish": {
       "method": "POST",
       "callers": ["agent-acp-service"],
-      "authentication": "workload",
+      "authentication": "peer-member",
       "caller_context": "none",
       "cache_control": "no-store",
       "capture_payload": false,

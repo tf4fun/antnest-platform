@@ -39,6 +39,7 @@ service gates pass; it does not claim final cross-service integration has passed
 | Authentication mode | Meaning                                                                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `workload`          | Verify the peer and require membership in `callers`.                                                                                        |
+| `peer-member`       | Dedicated ACP member listener: verify directional member credentials and the ACP certificate in mTLS mode. This never generates an ordinary service-to-service credential or workspace network grant. |
 | `public`            | External Gateway route. The route still requires its documented session, OIDC state or SCIM credential.                                     |
 | `health`            | Explicit minimal `/status` or `/live` probe; no credentials, configuration, user content or business actions. Restrict deployment exposure. |
 | `deny`              | Unknown-route or method fallback; always reject, with no business effects.                                                                  |

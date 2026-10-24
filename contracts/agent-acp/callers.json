@@ -179,7 +179,7 @@
     },
     "POST /internal/acp-peer/identity": {
       "callers": ["agent-acp-service"],
-      "authentication": "workload",
+      "authentication": "peer-member",
       "caller_context": {
         "agent-acp-service": "none"
       },
@@ -188,7 +188,7 @@
     },
     "POST /internal/acp-peer/publications/apply": {
       "callers": ["agent-acp-service"],
-      "authentication": "workload",
+      "authentication": "peer-member",
       "caller_context": {
         "agent-acp-service": "none"
       },

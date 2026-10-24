@@ -50,12 +50,26 @@ export function deriveStaticPairs(catalogs) {
         !object(catalog.routes)
       )
         throw failure("catalog_invalid");
-      for (const route of Object.values(catalog.routes)) {
+      for (const [path, route] of Object.entries(catalog.routes)) {
         if (
           !object(route) ||
-          !["workload", "public", "health", "deny", "delegate"].includes(
-            route.authentication,
-          )
+          ![
+            "workload",
+            "peer-member",
+            "public",
+            "health",
+            "deny",
+            "delegate",
+          ].includes(route.authentication)
+        )
+          throw failure("catalog_invalid");
+        if (
+          route.authentication === "peer-member" &&
+          (receiver !== "agent-acp-service" ||
+            !/^(?:POST|UPGRADE) \/internal\/acp-peer\/[a-z0-9/-]+$/u.test(
+              path,
+            ) ||
+            JSON.stringify(route.callers) !== '["agent-acp-service"]')
         )
           throw failure("catalog_invalid");
         if (route.authentication !== "workload") continue;
