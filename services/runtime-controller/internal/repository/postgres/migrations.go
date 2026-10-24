@@ -345,6 +345,11 @@ var schemaMigrations = []migration{
 		checksum: "7633deb989892120fd097eed8484404228722280a8f81c2f3372251e953a21c7",
 		sql:      acpIncarnationSQL,
 	},
+	{
+		version: 15, name: "index_acp_member_registration_history",
+		checksum: "67e6555680286c721bfea390a972f51c36c261aee87eca177b9f3fa1af5ed500",
+		sql:      acpIncarnationHistorySQL,
+	},
 }
 
 func Migrate(ctx context.Context, database *sql.DB) error {

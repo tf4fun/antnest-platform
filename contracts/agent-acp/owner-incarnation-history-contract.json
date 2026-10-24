@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "status": "implemented",
+  "issue": 49,
+  "schema": "owner-incarnation-history.schema.json",
+  "semantics": "owner-incarnation-history.md",
+  "activation": "Runtime Controller supplies the authenticated history route. The separate ACP participation consumer and two-replica fault acceptance remain pending.",
+  "workload_header": "Antnest-Service-Authorization",
+  "operations": {
+    "history": {
+      "receiver": "runtime-controller",
+      "method": "POST",
+      "path": "/internal/acp-incarnations/history",
+      "callers": ["agent-acp-service"],
+      "authentication": "workload",
+      "caller_context": "none",
+      "query_parameters": [],
+      "request": "request",
+      "response": "response",
+      "error": "error",
+      "request_bytes_max": 4096,
+      "response_bytes_max": 32768,
+      "deadline_ms": 10000,
+      "success_status": 200,
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "unsupported_media_type",
+        "request_too_large",
+        "acp_member_not_allowed",
+        "acp_registry_unavailable",
+        "deadline_exceeded",
+        "internal_error",
+        "route_not_found",
+        "method_not_allowed"
+      ]
+    }
+  },
+  "pagination": {
+    "page_size": 64,
+    "scope_source": "configured-controller-scope",
+    "immutable_snapshot": true,
+    "existing_registrations": "required",
+    "order": "contiguous per configured scope/member sequence",
+    "maximum_sequence": "9223372036854775807",
+    "first_cursor": null,
+    "last_cursor": null,
+    "retry": "same cursor returns the same original registration identities; stop inspection is separate"
+  },
+  "authority": {
+    "history_is_stop_proof": false,
+    "history_is_admission_barrier": false,
+    "stop_proof": "InspectAcpIncarnation for each exact original registration tuple",
+    "consumer_gate": "shared participation ledger serializes startup activation against publication acknowledgement and takeover; a second history read alone is insufficient"
+  }
+}

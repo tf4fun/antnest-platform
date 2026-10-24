@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.dev/contracts/agent-acp/owner-incarnation-history.schema.json",
+  "title": "Private ACP member registration history",
+  "$comment": "Canonical decimal grammar only; producer and consumer additionally enforce signed-bigint range, contiguous pages, exact identity/cursor echoes and completion. History is neither stop proof nor an activation barrier.",
+  "$defs": {
+    "member_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?![\\s\\S])"
+    },
+    "uuid": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?![\\s\\S])"
+    },
+    "sequence": {
+      "type": "string",
+      "maxLength": 19,
+      "pattern": "^[1-9][0-9]{0,18}(?![\\s\\S])"
+    },
+    "position": {
+      "type": "string",
+      "maxLength": 19,
+      "pattern": "^(?:0|[1-9][0-9]{0,18})(?![\\s\\S])"
+    },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registration_id", "member_id", "incarnation_id"],
+      "properties": {
+        "registration_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "member_id": {
+          "$ref": "#/$defs/member_id"
+        },
+        "incarnation_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/registration"
+        }
+      ]
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["history_id", "snapshot_revision", "after_sequence"],
+      "properties": {
+        "history_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "snapshot_revision": {
+          "$ref": "#/$defs/sequence"
+        },
+        "after_sequence": {
+          "$ref": "#/$defs/position"
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["member_id", "cursor"],
+      "properties": {
+        "member_id": {
+          "$ref": "#/$defs/member_id"
+        },
+        "cursor": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cursor"
+            }
+          ]
+        }
+      }
+    },
+    "registration_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "registration"],
+      "properties": {
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "registration": {
+          "$ref": "#/$defs/registration"
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "member_id",
+        "history_id",
+        "snapshot_revision",
+        "after_sequence",
+        "items",
+        "next_cursor"
+      ],
+      "properties": {
+        "member_id": {
+          "$ref": "#/$defs/member_id"
+        },
+        "history_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "snapshot_revision": {
+          "$ref": "#/$defs/position"
+        },
+        "after_sequence": {
+          "$ref": "#/$defs/position"
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/registration_entry"
+          }
+        },
+        "next_cursor": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cursor"
+            }
+          ]
+        }
+      }
+    },
+    "error": {
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/error"
+    }
+  }
+}

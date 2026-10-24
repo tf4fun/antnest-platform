@@ -524,8 +524,8 @@ SELECT (SELECT MAX(version) FROM runtime_controller.schema_migrations),
 		if !reflect.DeepEqual(acpIncarnationLegacyRows(t, database, ctx), before) || acpIncarnationMigrationJournal(t, database, ctx) != journal {
 			t.Fatal("incarnation migration changed existing business history or old migration journal")
 		}
-		if err := database.QueryRowContext(ctx, "SELECT MAX(version) FROM runtime_controller.schema_migrations").Scan(&version); err != nil || version != 14 {
-			t.Fatal("incarnation migration did not install exactly the next version")
+		if err := database.QueryRowContext(ctx, "SELECT MAX(version) FROM runtime_controller.schema_migrations").Scan(&version); err != nil || version != 15 {
+			t.Fatal("incarnation migrations did not install the registry and complete member history")
 		}
 		retained, err := store.GetOperation(ctx, accepted.RequestID)
 		if err != nil || !reflect.DeepEqual(retained, persistedOperation) {
@@ -752,7 +752,7 @@ func acpIncarnationLegacyRows(t *testing.T, database *sql.DB, ctx context.Contex
 	rows, err := database.QueryContext(ctx, `
 SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
 WHERE n.nspname='runtime_controller' AND c.relkind='r'
-  AND c.relname NOT IN ('schema_migrations','acp_incarnation_registrations') ORDER BY c.relname`)
+  AND c.relname NOT IN ('schema_migrations','acp_incarnation_registrations','acp_incarnation_histories') ORDER BY c.relname`)
 	if err != nil {
 		t.Fatal("list predecessor business tables failed")
 	}

@@ -1,11 +1,12 @@
 {
-  "revision": 20,
+  "revision": 21,
   "transport": "json-over-http",
   "trust_boundary": "authenticated-workload-with-route-specific-callers",
   "schemas": {
     "control": "control-api.schema.json",
     "configuration": "runtime-deployment.schema.json",
-    "owner_incarnation": "../../../contracts/agent-acp/owner-incarnation.schema.json"
+    "owner_incarnation": "../../../contracts/agent-acp/owner-incarnation.schema.json",
+    "owner_incarnation_history": "../../../contracts/agent-acp/owner-incarnation-history.schema.json"
   },
   "headers": {
     "Idempotency-Key": {
@@ -16,7 +17,7 @@
     "Antnest-Service-Authorization": {
       "required": true,
       "schema": "control-api.schema.json#/$defs/service_credential",
-      "description": "Exact dedicated bearer in token mode; mTLS verifies the route-specific service URI. Only incarnation registration and inspection admit the ACP workload; existing control routes require the Controller workload. Not required by local health."
+      "description": "Exact dedicated bearer in token mode; mTLS verifies the route-specific service URI. Only incarnation registration, inspection and history admit the ACP workload; existing control routes require the Controller workload. Not required by local health."
     }
   },
   "routes": [
@@ -76,6 +77,37 @@
         "service_unauthenticated",
         "caller_not_allowed",
         "invalid_request",
+        "acp_registry_unavailable",
+        "deadline_exceeded",
+        "internal_error",
+        "route_not_found",
+        "method_not_allowed"
+      ]
+    },
+    {
+      "operation_id": "historyAcpIncarnations",
+      "method": "POST",
+      "path": "/internal/acp-incarnations/history",
+      "required_headers": ["Antnest-Service-Authorization"],
+      "request_body": "control-api.schema.json#/$defs/acp_history_request",
+      "request_bytes_max": 4096,
+      "response_bytes_max": 32768,
+      "deadline_ms": 10000,
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "responses": {
+        "200": {
+          "content_type": "application/json",
+          "body": "control-api.schema.json#/$defs/acp_history_page"
+        }
+      },
+      "errors": [
+        "service_unauthenticated",
+        "caller_not_allowed",
+        "invalid_request",
+        "unsupported_media_type",
+        "request_too_large",
+        "acp_member_not_allowed",
         "acp_registry_unavailable",
         "deadline_exceeded",
         "internal_error",

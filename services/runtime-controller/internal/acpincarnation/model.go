@@ -92,6 +92,7 @@ type Store interface {
 	GetRegistration(context.Context, string, string) (*Record, error)
 	RegisterVerified(context.Context, Record) (Record, error)
 	RecordStopped(context.Context, string, string, Binding, StopReceipt) (Record, error)
+	ReadRegistrationHistory(context.Context, string, string, *HistoryCursor) (HistoryPage, error)
 }
 
 type Platform interface {
