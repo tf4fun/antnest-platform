@@ -8,6 +8,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { ServiceAuthentication } from "../../../../services/agent-acp-service/src/adapters/service-authentication.js";
 import { PeerAuthentication } from "../../../../services/agent-acp-service/src/adapters/peer-authentication.js";
+import { PeerServer } from "../../../../services/agent-acp-service/src/transport/peer-server.js";
 
 it.each(["token", "mtls"] as const)(
   "verifies real %s TLS peers and refuses a trusted certificate with another service URI",
@@ -15,6 +16,7 @@ it.each(["token", "mtls"] as const)(
     const directory = mkdtempSync(join(tmpdir(), "antnest-acp-tls-test-"));
     const clients: ServiceAuthentication[] = [];
     const servers: ReturnType<typeof createServer>[] = [];
+    const peerServers: PeerServer[] = [];
     const openssl = (...arguments_: string[]) =>
       execFileSync("openssl", arguments_, {
         cwd: directory,
@@ -252,6 +254,40 @@ it.each(["token", "mtls"] as const)(
           ).text(),
         ).toBe("acp-a");
         expect(accepted).toBe(1);
+        const registration = {
+          registration_id: "10000000-0000-4000-8000-000000000001",
+          member_id: "acp-b",
+          incarnation_id: "10000000-0000-4000-8000-000000000002",
+        };
+        const peerServer = new PeerServer({
+          registration,
+          authentication: holder.peer,
+          apply: () => Promise.reject(new Error("Identity must not publish")),
+        });
+        peerServers.push(peerServer);
+        await peerServer.listen("127.0.0.1", 0);
+        const peerOrigin = `https://127.0.0.1:${peerServer.address()!.port}`;
+        const peerResponse = await sender.fetchForPeer(peerOrigin, pairFile)(
+          peerOrigin + "/internal/acp-peer/identity",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal: AbortSignal.timeout(3000),
+            body: JSON.stringify({
+              request_id: "10000000-0000-4000-8000-000000000003",
+              deadline_at: new Date(Date.now() + 2000).toISOString(),
+              membership_sha256: holder.peer.membership.sha256,
+              source: { ...registration, member_id: "acp-a" },
+              target_member_id: "acp-b",
+              challenge: "a".repeat(64),
+            }),
+          },
+        );
+        expect(peerResponse.status).toBe(200);
+        expect(await peerResponse.json()).toHaveProperty(
+          "registration",
+          registration,
+        );
         const deniedStatus = await new Promise<number | undefined>(
           (resolve, reject) => {
             const request = httpsRequest(
@@ -326,6 +362,7 @@ it.each(["token", "mtls"] as const)(
           }),
       ).toThrow("complete_tls_configuration_required");
     } finally {
+      await Promise.all(peerServers.map((server) => server.close()));
       await Promise.all(clients.map((client) => client.close()));
       for (const server of servers) {
         server.closeAllConnections();
