@@ -3,8 +3,44 @@ import { context, propagation, trace } from "@opentelemetry/api";
 
 import { ServiceTelemetry, startTelemetry } from "../../src/telemetry/telemetry.js";
 import { extractedContext, tracedFetch } from "../../src/telemetry/http.js";
+import { configureBoundaries } from "../../src/telemetry/diagnostics.js";
 
 describe("ServiceTelemetry", () => {
+  it.each([
+    ["DomainError", "configuration_unavailable"],
+    ["DomainError", "deadline_exceeded"],
+    ["OwnerIncarnationError", "acp_registry_unavailable"],
+    ["AgentOwnershipLostError", "agent_unavailable"],
+  ])("retains safe %s/%s publication diagnostics with tracing disabled", (name, code) => {
+    const lines: string[] = [];
+    const telemetry = new ServiceTelemetry("test-service", (line) => lines.push(line));
+    const error = Object.assign(new Error("credential-publication-canary"), { name, code });
+    configureBoundaries({ captureRpcContent: false, disabled: true });
+    try {
+      telemetry.log(
+        "warn",
+        "peer_publication_failed",
+        { stage: "authority_confirm", revision: 2 },
+        error,
+      );
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]!)).toMatchObject({
+        event: "peer_publication_failed",
+        stage: "authority_confirm",
+        revision: 2,
+        error_type: name,
+        error_code: code,
+      });
+      expect(lines.join("\n")).not.toContain("credential-publication-canary");
+      const broken = new ServiceTelemetry("test-service", () => {
+        throw new Error("sink failed");
+      });
+      expect(() => broken.log("warn", "peer_publication_failed", {}, error)).not.toThrow();
+    } finally {
+      configureBoundaries({ captureRpcContent: false, disabled: false });
+    }
+  });
+
   it("keeps structured logs useful without leaking error messages or undefined fields", () => {
     const lines: string[] = [];
     const telemetry = new ServiceTelemetry("test-service", (line) => lines.push(line));

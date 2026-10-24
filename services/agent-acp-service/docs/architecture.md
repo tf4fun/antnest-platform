@@ -141,6 +141,15 @@ Overlapping refreshes may reuse the newer published capture only when their
 complete guard, member histories/stop proofs and live registrations are equal;
 each refresh still completes its own SQL assertion and cancellation checks.
 
+An original generation retirement can temporarily leave the complete owner fence
+union unavailable. Publication then returns retryable `configuration_unavailable`;
+the same snapshot can be applied again after the original retirement joins.
+The dual-process takeover fixture allows one such replay within its original
+15-second budget and retains both receipts. Initial publication still requires
+one successful response; sustained failure, incomplete fences and cleanup failure
+remain test failures. Fixed-stage internal logs diagnose publication failures
+even when trace export is disabled, without logging authority or credentials.
+
 Background availability refresh reconciles the current publication with natural
 lease expiry. The survivor acquires a new epoch and recovers original Run and
 Learning facts under its fence before opening new work; it does not replay an

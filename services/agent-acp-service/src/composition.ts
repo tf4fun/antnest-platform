@@ -21,7 +21,10 @@ import {
   ExecutionDirectory,
   type LocalExecutionPublication,
 } from "./application/execution-directory.js";
-import { PeerAcknowledgement } from "./application/peer-acknowledgement.js";
+import {
+  PeerAcknowledgement,
+  type PeerPublicationFailure,
+} from "./application/peer-acknowledgement.js";
 import { parsePeerPublicationRequest } from "./application/peer-request.js";
 import { PeerAuthentication } from "./adapters/peer-authentication.js";
 import { HttpAgentPeers } from "./adapters/http-agent-peers.js";
@@ -665,6 +668,13 @@ export function buildComponents(
         "Publication cleanup was incomplete",
       );
   };
+  const reportPublicationFailure = (diagnostic: PeerPublicationFailure, error: unknown): void => {
+    try {
+      telemetry.log("warn", "peer_publication_failed", { ...diagnostic }, error);
+    } catch {
+      // Auxiliary logging cannot replace the original publication failure.
+    }
+  };
   const directory = new ExecutionDirectory({
     repository: configurationRepository,
     clients: providers,
@@ -705,9 +715,16 @@ export function buildComponents(
             : AbortSignal.any([ownershipSignal, context.signal]);
         // Revoke first, then refresh before any lease acquisition. A peer may
         // have joined since startup or the last background availability capture.
-        await peerAvailability?.refresh(lifetime, context.deadline);
-        lifetime.throwIfAborted();
-        return owned.prepare(snapshot);
+        let stage: "availability_refresh" | "owned_prepare" = "availability_refresh";
+        try {
+          await peerAvailability?.refresh(lifetime, context.deadline);
+          lifetime.throwIfAborted();
+          stage = "owned_prepare";
+          return await owned.prepare(snapshot);
+        } catch (error) {
+          reportPublicationFailure({ stage, revision: snapshot.revision }, error);
+          throw error;
+        }
       }
       agent.learningGate.syncOrganization(snapshot.organization_id, snapshot.agents);
       return Promise.resolve();
@@ -828,6 +845,7 @@ export function buildComponents(
   };
   if (peerAuthentication !== undefined)
     peerAcknowledgement = new PeerAcknowledgement({
+      reportFailure: reportPublicationFailure,
       registration: peerRegistration!,
       membershipSha256: peerAuthentication.membership.sha256,
       members: peerAuthentication.membership.members.map((member) => member.member_id),

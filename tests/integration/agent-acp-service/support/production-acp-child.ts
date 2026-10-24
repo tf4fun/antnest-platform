@@ -66,8 +66,63 @@ export class ProductionAcpChild {
             const value = JSON.parse(line) as {
               event?: unknown;
               error_type?: unknown;
+              stage?: unknown;
+              reason?: unknown;
+              revision?: unknown;
+              error_code?: unknown;
+              expectedOwners?: unknown;
+              observedOwners?: unknown;
             };
-            if (typeof value.event === "string")
+            if (value.event === "peer_publication_failed") {
+              const safe: Record<string, string | number> = {
+                event: value.event,
+              };
+              if (
+                typeof value.stage === "string" &&
+                [
+                  "availability_refresh",
+                  "owned_prepare",
+                  "availability",
+                  "receipts",
+                  "identity",
+                  "apply",
+                  "receipt",
+                  "fence_union",
+                  "publication_check",
+                  "authority_confirm",
+                ].includes(value.stage)
+              )
+                safe.stage = value.stage;
+              if (
+                typeof value.reason === "string" &&
+                ["missing", "duplicate", "unexpected"].includes(value.reason)
+              )
+                safe.reason = value.reason;
+              if (
+                typeof value.error_code === "string" &&
+                [
+                  "configuration_unavailable",
+                  "deadline_exceeded",
+                  "acp_registry_unavailable",
+                  "agent_unavailable",
+                ].includes(value.error_code)
+              )
+                safe.code = value.error_code;
+              for (const key of [
+                "revision",
+                "expectedOwners",
+                "observedOwners",
+              ] as const) {
+                const field = value[key];
+                if (
+                  typeof field === "number" &&
+                  Number.isSafeInteger(field) &&
+                  field >= 0
+                )
+                  safe[key] = field;
+              }
+              this.events.push(JSON.stringify(safe));
+            } else if (typeof value.event === "string")
               this.events.push(
                 value.event +
                   (typeof value.error_type === "string"
@@ -112,6 +167,10 @@ export class ProductionAcpChild {
         ? this.stopOriginal()
         : this.crashPromise.then(() => undefined);
     return this.stopPromise;
+  }
+
+  public diagnosticEvents(): readonly string[] {
+    return [...this.events];
   }
 
   public isRunning(): boolean {

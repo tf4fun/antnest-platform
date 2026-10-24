@@ -12,7 +12,26 @@ import { parseOwnerRegistration, type OwnerRegistration } from "./owner-incarnat
 import type { PeerAvailability } from "./peer-availability.js";
 import type { PeerParticipationGuard } from "../ports/peer-participation.js";
 
+export type PeerPublicationFailure = Readonly<{
+  stage:
+    | "availability_refresh"
+    | "owned_prepare"
+    | "availability"
+    | "receipts"
+    | "identity"
+    | "apply"
+    | "receipt"
+    | "fence_union"
+    | "publication_check"
+    | "authority_confirm";
+  revision: number;
+  reason?: "missing" | "duplicate" | "unexpected";
+  expectedOwners?: number;
+  observedOwners?: number;
+}>;
+
 export type PeerAcknowledgementOptions = {
+  reportFailure?: (diagnostic: PeerPublicationFailure, error: unknown) => void;
   registration: OwnerRegistration;
   membershipSha256: string;
   members: readonly string[];
@@ -76,6 +95,8 @@ export class PeerAcknowledgement {
       membership_sha256: this.membershipSha256,
       source: this.registration,
     });
+    const revision = capture.authority.revision;
+    let diagnostic: PeerPublicationFailure = { stage: "availability", revision };
     try {
       const availability = await this.options.availability?.refresh(lifetime, expiresAt);
       if (
@@ -87,58 +108,70 @@ export class PeerAcknowledgement {
         throw unavailable();
       // allSettled owns every original operation. Cancellation must never make
       // an unjoined peer/database operation look like completed cleanup.
+      diagnostic = { stage: "receipts", revision };
       const results = await Promise.allSettled(
         this.members.map(async (member) => {
-          lifetime.throwIfAborted();
-          const available = availability?.members.find((item) => item.memberId === member);
-          // An exact stopped/never-participated result is kept distinct from a
-          // live peer's joined revocation receipt. The final SQL guard covers both.
-          if (available !== undefined && available.state !== "running") return null;
-          let target = this.registration;
-          if (member !== this.registration.member_id) {
-            const challenge = randomBytes(32).toString("hex");
-            const identity = parsePeerIdentityReceipt(
-              await this.options.peers.identify(
-                member,
-                {
-                  ...common,
-                  target_member_id: member,
-                  challenge,
-                },
-                lifetime,
-              ),
-            );
+          let memberStage: "identity" | "apply" | "receipt" = "identity";
+          try {
             lifetime.throwIfAborted();
+            const available = availability?.members.find((item) => item.memberId === member);
+            // An exact stopped/never-participated result is kept distinct from a
+            // live peer's joined revocation receipt. The final SQL guard covers both.
+            if (available !== undefined && available.state !== "running") return null;
+            let target = this.registration;
+            if (member !== this.registration.member_id) {
+              const challenge = randomBytes(32).toString("hex");
+              const identity = parsePeerIdentityReceipt(
+                await this.options.peers.identify(
+                  member,
+                  {
+                    ...common,
+                    target_member_id: member,
+                    challenge,
+                  },
+                  lifetime,
+                ),
+              );
+              lifetime.throwIfAborted();
+              if (
+                identity.request_id !== requestId ||
+                identity.membership_sha256 !== this.membershipSha256 ||
+                identity.challenge !== challenge ||
+                identity.registration.member_id !== member
+              )
+                throw unavailable();
+              target = parseOwnerRegistration(identity.registration);
+            }
             if (
-              identity.request_id !== requestId ||
-              identity.membership_sha256 !== this.membershipSha256 ||
-              identity.challenge !== challenge ||
-              identity.registration.member_id !== member
+              available?.state === "running" &&
+              !isDeepStrictEqual(target, available.registration)
             )
               throw unavailable();
-            target = parseOwnerRegistration(identity.registration);
+            const request: PeerPublicationRequest = Object.freeze({
+              ...common,
+              target,
+              publication,
+              hop: 1,
+            });
+            memberStage = "apply";
+            const raw =
+              member === this.registration.member_id
+                ? await this.options.local(capture, request, lifetime)
+                : await this.options.peers.publish(member, request, lifetime);
+            memberStage = "receipt";
+            const receipt = parsePeerPublicationReceipt(raw);
+            if (
+              receipt.request_id !== requestId ||
+              receipt.membership_sha256 !== this.membershipSha256 ||
+              !isDeepStrictEqual(receipt.publication, publication) ||
+              !isDeepStrictEqual(receipt.registration, target)
+            )
+              throw unavailable();
+            return receipt;
+          } catch (error) {
+            this.reportFailure({ stage: memberStage, revision }, error);
+            throw error;
           }
-          if (available?.state === "running" && !isDeepStrictEqual(target, available.registration))
-            throw unavailable();
-          const request: PeerPublicationRequest = Object.freeze({
-            ...common,
-            target,
-            publication,
-            hop: 1,
-          });
-          const raw =
-            member === this.registration.member_id
-              ? await this.options.local(capture, request, lifetime)
-              : await this.options.peers.publish(member, request, lifetime);
-          const receipt = parsePeerPublicationReceipt(raw);
-          if (
-            receipt.request_id !== requestId ||
-            receipt.membership_sha256 !== this.membershipSha256 ||
-            !isDeepStrictEqual(receipt.publication, publication) ||
-            !isDeepStrictEqual(receipt.registration, target)
-          )
-            throw unavailable();
-          return receipt;
         }),
       );
       const failures = results
@@ -156,12 +189,24 @@ export class PeerAcknowledgement {
           .map((agent) => agent.agent_id),
       );
       const fences = new Map<string, AgentOwnershipFence>();
+      diagnostic = { stage: "fence_union", revision };
+      const unionFailure = (reason: "missing" | "duplicate" | "unexpected") => {
+        diagnostic = {
+          stage: "fence_union",
+          revision,
+          reason,
+          expectedOwners: accepting.size,
+          observedOwners: fences.size,
+        };
+        return unavailable();
+      };
       for (const result of results) {
         if (result.status !== "fulfilled") throw unavailable();
         const receipt = result.value;
         if (receipt === null) continue;
         for (const agent of receipt.owned_agents) {
-          if (!accepting.has(agent.agent_id) || fences.has(agent.agent_id)) throw unavailable();
+          if (!accepting.has(agent.agent_id)) throw unionFailure("unexpected");
+          if (fences.has(agent.agent_id)) throw unionFailure("duplicate");
           fences.set(
             agent.agent_id,
             Object.freeze({
@@ -173,19 +218,33 @@ export class PeerAcknowledgement {
           );
         }
       }
-      if (fences.size !== accepting.size) throw unavailable();
+      if (fences.size !== accepting.size) throw unionFailure("missing");
+      diagnostic = { stage: "publication_check", revision };
       capture.assertCurrent();
       const timeoutMs = expiresAt - Date.now();
       if (timeoutMs <= 0) throw expired();
+      diagnostic = { stage: "authority_confirm", revision };
       await this.options.confirm(capture.authority, [...fences.values()], {
         timeoutMs,
         ...(availability === undefined ? {} : { participation: availability.guard }),
       });
       lifetime.throwIfAborted();
       if (Date.now() >= expiresAt) throw expired();
+      diagnostic = { stage: "publication_check", revision };
       capture.assertCurrent();
+    } catch (error) {
+      this.reportFailure(diagnostic, error);
+      throw error;
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  private reportFailure(diagnostic: PeerPublicationFailure, error: unknown): void {
+    try {
+      this.options.reportFailure?.(diagnostic, error);
+    } catch {
+      // Diagnostics never replace the original business or cleanup failure.
     }
   }
 }

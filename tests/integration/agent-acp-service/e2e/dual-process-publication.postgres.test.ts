@@ -37,6 +37,10 @@ import {
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { AcpWireClient, type WireFrame } from "../support/acp-wire-client.js";
 import { ProductionAcpChild } from "../support/production-acp-child.js";
+import {
+  replayPublicationOnce,
+  type PublicationResponse,
+} from "../support/publication-replay.js";
 import { readBody, startPeer, within } from "../support/production-peers.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -719,7 +723,13 @@ describe.skipIf(databaseUrl === undefined)(
             },
           );
           const published: unknown = await publication.json();
-          expect(publication.status, JSON.stringify(published)).toBe(200);
+          expect(
+            publication.status,
+            JSON.stringify({
+              response: published,
+              events: children.map((child) => child.diagnosticEvents()),
+            }),
+          ).toBe(200);
           expect(published).toMatchObject({ applied_revision: 1 });
           if (mode === "survivor-takeover") {
             const agentId = configuration.agents[1]!.agent_id;
@@ -859,29 +869,51 @@ describe.skipIf(databaseUrl === undefined)(
 
             const refreshed = structuredClone(configuration);
             refreshed.revision = 2;
+            const publicationBody = JSON.stringify(refreshed);
+            const publicationLifetime = AbortSignal.timeout(15_000);
+            const publicationAttempts: PublicationResponse[] = [];
             const reapplied = await within(
               tracked(
-                fetch(
-                  `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/apply-execution-snapshot`,
-                  {
-                    method: "POST",
-                    headers: {
-                      ...workloadHeaders("agent-controller"),
-                      "content-type": "application/json",
-                      connection: "close",
+                replayPublicationOnce(async (signal) => {
+                  const response = await fetch(
+                    `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/apply-execution-snapshot`,
+                    {
+                      method: "POST",
+                      headers: {
+                        ...workloadHeaders("agent-controller"),
+                        "content-type": "application/json",
+                        connection: "close",
+                      },
+                      body: publicationBody,
+                      signal,
                     },
-                    body: JSON.stringify(refreshed),
-                    signal: AbortSignal.timeout(15_000),
-                  },
-                ).then(async (response) => ({
-                  status: response.status,
-                  body: (await response.json()) as unknown,
-                })),
+                  );
+                  const attempt = {
+                    status: response.status,
+                    body: (await response.json()) as unknown,
+                  };
+                  publicationAttempts.push(attempt);
+                  // Preserve both original receipts even when the test reporter
+                  // omits console output for passing cases. Join the actual write.
+                  await new Promise<void>((resolve, reject) => {
+                    process.stdout.write(
+                      `Survivor publication receipt: ${JSON.stringify({ attempt: publicationAttempts.length, ...attempt })}\n`,
+                      (error) => (error == null ? resolve() : reject(error)),
+                    );
+                  });
+                  return attempt;
+                }, publicationLifetime),
               ),
               "survivor publication ACK after natural lease expiry",
               15_000,
             );
-            expect(reapplied.status, JSON.stringify(reapplied.body)).toBe(200);
+            expect(
+              reapplied.status,
+              JSON.stringify({
+                response: reapplied.body,
+                events: children.map((child) => child.diagnosticEvents()),
+              }),
+            ).toBe(200);
             expect(reapplied.body).toMatchObject({ applied_revision: 2 });
             expect(historyRequests).toContain("acp-b");
             expect(inspectionRequests.slice(inspectionsBeforeKill)).toContain(
@@ -1819,6 +1851,11 @@ describe.skipIf(databaseUrl === undefined)(
           }
           rmSync(root, { recursive: true, force: true });
         }
+        if (errors.length > 0)
+          console.error(
+            "Dual-process ACP events after original child close:",
+            JSON.stringify(children.map((child) => child.diagnosticEvents())),
+          );
         if (errors.length === 1) throw errors[0];
         if (errors.length)
           throw new AggregateError(
