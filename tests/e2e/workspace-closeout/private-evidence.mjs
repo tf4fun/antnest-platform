@@ -785,7 +785,9 @@ function workspaceAdmission(result, { requireTrace }) {
   assert.equal(probe.deadline_at, probe.started_at + 30000);
   equal(probe.close, connection.close_receipt);
   assert.equal(probe.close.localClose, false);
-  assert([1000, 1005].includes(probe.close.code));
+  // The service may revoke with socket.destroy(); 1006 is valid only with
+  // this original remote receipt and every independent business check below.
+  assert([1000, 1005, 1006].includes(probe.close.code));
   assert(
     Number.isSafeInteger(probe.close.at) &&
       probe.close.at >= probe.started_at &&

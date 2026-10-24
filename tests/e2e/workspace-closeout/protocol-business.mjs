@@ -458,8 +458,10 @@ export async function workspaceProtocolBusiness(input, work) {
     "local cleanup cannot prove old-connection revocation",
   );
   assert(
-    [1000, 1005].includes(remoteClose.code),
-    "abnormal revoked connection close",
+    // Revocation can destroy the original TCP socket without a close frame.
+    // The remote receipt, bounded window and joined no-wire probe below remain required.
+    [1000, 1005, 1006].includes(remoteClose.code),
+    "unexpected revoked connection close",
   );
   assert(
     Number.isSafeInteger(remoteClose.at) &&

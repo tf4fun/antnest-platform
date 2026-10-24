@@ -15,6 +15,82 @@ function admit(result) {
 }
 const revocationProbe = (result) =>
   result.private_workspace.business.revocation.closed_connection_probe;
+
+async function remote1006Fixture() {
+  const result = await workspacePrivateEvidenceFixture();
+  const probe = revocationProbe(result);
+  const connection = result.private_connections.find(
+    (row) => row.connectionTraceID === probe.connectionTraceID,
+  );
+  assert(connection, "original revoked connection required");
+  probe.close.code = 1006;
+  connection.close_receipt = structuredClone(probe.close);
+  return { result, probe, connection };
+}
+
+test("Workspace admits remote 1006 revocation with the original joined no-wire proof", async () => {
+  const { result, probe } = await remote1006Fixture();
+  const original = structuredClone(result);
+  assert.equal(probe.close.localClose, false);
+  assert(probe.close.at >= probe.started_at);
+  assert(probe.close.at <= probe.deadline_at);
+  assert.equal(probe.cleanup_joined, true);
+  assert.equal(probe.post_close_request_sent, false);
+  const admission = admit(result);
+  assert.equal(admission.accepted_exit, 0);
+  assert.equal(admission.inventory.wire_requests, 16);
+  assert.equal(admission.inventory.revocation_probe_wire_requests, 0);
+  assert.deepEqual(result, original);
+});
+
+for (const [name, mutate] of [
+  ["local 1006 closure", (_r, probe) => (probe.close.localClose = true)],
+  [
+    "1006 closure before revocation",
+    (_r, probe) => (probe.close.at = probe.started_at - 1),
+  ],
+  [
+    "1006 closure beyond its revocation window",
+    (_r, probe) => (probe.close.at = probe.deadline_at + 1),
+  ],
+  [
+    "1006 probe with a new wire request",
+    (_r, probe) => {
+      probe.post_close_request_sent = true;
+      probe.request_count_after++;
+    },
+  ],
+  ["unjoined 1006 cleanup", (_r, probe) => (probe.cleanup_joined = false)],
+  [
+    "an accepted fresh connection after 1006 closure",
+    (r) => (r.private_authority_receipts.at(-1).receipts[0].status = 200),
+  ],
+  [
+    "a new Run after 1006 closure",
+    (r) =>
+      r.private_workspace.business.revocation.audit_after.items.push({
+        run_id: "unexpected-after-remote-1006",
+      }),
+  ],
+  [
+    "a model call after 1006 closure",
+    (r) =>
+      r.private_workspace.business.revocation.model_after.push({
+        phase: "unexpected-after-remote-1006",
+        stage: "tool",
+      }),
+  ],
+])
+  test(`Workspace remote 1006 admission still rejects ${name}`, async () => {
+    const { result, probe, connection } = await remote1006Fixture();
+    // Establish the same accepted 1006 baseline before breaking one business
+    // fact, so the old close-code allowlist cannot make a negative case pass.
+    assert.equal(admit(result).accepted_exit, 0);
+    mutate(result, probe);
+    connection.close_receipt = structuredClone(probe.close);
+    assert.throws(() => admit(result));
+  });
+
 test("Workspace admission accepts original diagnostic identities regardless of export order", async () => {
   const result = await workspacePrivateEvidenceFixture();
   result.authority_traces.at(-1).raw_error_inventory.reverse();
