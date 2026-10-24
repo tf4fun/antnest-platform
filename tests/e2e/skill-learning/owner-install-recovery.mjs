@@ -398,7 +398,9 @@ export async function verifyOwnerInstallRecovery({
     cancel_reason: "worker_lost",
   });
   const recoveredInstalls = await installs();
-  assert.deepEqual(recoveredInstalls, [{ ...install, state: "unknown" }]);
+  // A stopped review cannot manufacture a maintenance receipt. Only reserved
+  // model calls become unknown; the original pending install stays unchanged.
+  assert.deepEqual(recoveredInstalls, originalInstalls);
   const protections = () =>
     acp(
       `SELECT * FROM learning_runtime_protections WHERE request_id=${request}`,
