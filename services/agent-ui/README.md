@@ -168,14 +168,19 @@ process shutdown does not promise a new acknowledgement; a normal UI drain
 with ACP still online requires the complete DELETE 202 response.
 
 After an initialized ACP connection ends unexpectedly, the next authorized
-observation can replace its retired owner when the only cleanup failure is a
-single DELETE attempt refused or reset before any response. This qualification
-requires the complete network cause to contain only `ECONNREFUSED` or
-`ECONNRESET`, all transport work and streams to finish, the owner watch and local cleanup callbacks to
-finish successfully, and no held registry work. Initialization failures,
-requested closes, denied access, HTTP error responses, deadlines, unknown
-causes, causes mixed with other failures and additional cleanup failures do not
-qualify. The original close
+observation can replace its retired owner when its only cleanup failure is one
+original DELETE refused/reset before any response, or the ingress's complete
+`acp_http_peer_disconnected` HTTP 503. The direct network cause must contain only
+`ECONNREFUSED` or `ECONNRESET`. The forwarded response must belong to the original
+connection's DELETE and contain exactly the canonical code, message and
+`retryable: true`, with JSON content type and no new connection header. It must
+reach EOF within 65,536 bytes; malformed or ambiguous JSON cannot qualify.
+Both paths require all original response readers, cancellation and SDK work to
+finish, the owner watch and local cleanup callbacks to finish successfully, and
+no held registry work. Initialization failures, requested closes, denied access,
+ordinary HTTP errors, deadlines, unknown or mixed causes and additional cleanup
+failures do not qualify. A forwarded 503 is not a successful remote cleanup
+receipt, Run settlement or permission to replay. The original close
 promise and ERROR trace still report failure. Concurrent observations share one
 replacement initialized with the current request's delegation; no View request
 or Prompt is replayed.

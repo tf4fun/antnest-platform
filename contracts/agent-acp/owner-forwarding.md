@@ -169,13 +169,14 @@ local task, caller cancellation, a deadline, TLS/authentication failure, unknown
 error, actual upstream HTTP response (including 503/404), or retained independent
 cleanup failure cannot qualify. Other handles are not cancelled by this rule.
 
-The Agent UI consumer is a separate pending batch. It must strictly validate the
-original DELETE response, join its original response body, SDK stream, requests,
-state watch and retry decisions, retain the original failed close promise, and
-only then allow one freshly authenticated Bridge replacement. It must not replay
-an old Prompt or reinterpret this qualification as successful cleanup. Normal
-owner fencing and authorization govern every subsequent admission. The producer
-alone does not complete browser recovery or #49.
+The Agent UI consumer strictly validates the original DELETE response, joins its
+original response body, SDK stream, requests, state watch and retry decisions,
+and retains the original failed close promise. Only after those tasks join may
+the next authenticated observation create one fresh Bridge replacement. It
+neither replays an old Prompt nor reinterprets this qualification as successful
+cleanup. Normal owner fencing and authorization govern every subsequent
+admission. The service batches alone do not complete browser recovery or #49;
+actual two-replica Docker business acceptance remains the integration gate.
 
 ## Remaining transport and integration batches
 

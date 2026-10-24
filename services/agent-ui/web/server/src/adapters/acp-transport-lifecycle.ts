@@ -172,7 +172,9 @@ export class AcpTransportLifecycle {
         });
         this.replaceAfterPeerLoss = this.closeTrigger === "transport_failure" &&
           this.initialized && this.connectionEnded && this.targetObserved &&
-          this.deletes === 1 && this.deleteResponses === 0 && this.deleteCompleted === 0 &&
+          this.deletes === 1 &&
+          ((this.deleteResponses === 0 && this.deleteCompleted === 0) ||
+            (this.deleteResponses === 1 && this.deleteCompleted === 1 && this.deleteStatus === 503)) &&
           this.streamJoined && this.pending.size === 0 &&
           this.peerLossFailure !== undefined &&
           this.errors.length === 1 && this.errors[0] === this.peerLossFailure;
@@ -208,6 +210,7 @@ export class AcpTransportLifecycle {
       deleting ? this.cleanupAbort.signal : this.trafficAbort.signal,
     ]);
     let phase: AcpCloseFailureStage = "delete_request";
+    let forwardedPeerLoss = false;
     try {
       const response = await (deleting
         ? this.closeTrace!.fetch(fetchImpl, input, { ...init, signal })
@@ -224,9 +227,15 @@ export class AcpTransportLifecycle {
         this.deleteResponses++;
         this.deleteStatus = response.status;
         phase = "delete_body";
-        await discardCleanupBody(response);
+        const owned = this.trackBody(response, signal);
+        let qualified = false;
+        try { qualified = await readCleanupBody(owned.response, signal); }
+        finally { await owned.cancel(); }
         this.deleteCompleted++;
         phase = "delete_status";
+        forwardedPeerLoss = qualified && !signal.aborted && this.initialized &&
+          this.connectionId !== undefined &&
+          requestHeaders.get("acp-connection-id") === this.connectionId;
         if (response.status !== 202) throw new Error("ACP DELETE was not accepted");
         return response;
       }
@@ -249,7 +258,8 @@ export class AcpTransportLifecycle {
       this.failures.record(phase, error);
       // Never retain remote response contents, preparation errors or credentials.
       const failure = new Error("ACP DELETE cleanup failed");
-      if (phase === "delete_request" && isDisconnectedPeer(error))
+      if ((phase === "delete_request" && isDisconnectedPeer(error)) ||
+        (phase === "delete_status" && forwardedPeerLoss))
         this.peerLossFailure = failure;
       this.errors.push(failure);
       throw failure;
@@ -323,20 +333,34 @@ function isDisconnectedPeer(error: unknown): boolean {
   try { return visit(error, 0); } catch { return false; }
 }
 
-async function discardCleanupBody(response: Response): Promise<void> {
-  if (!response.body) return;
+async function readCleanupBody(response: Response, signal: AbortSignal): Promise<boolean> {
+  if (!response.body) return false;
   const reader = response.body.getReader();
-  let complete = false;
   let bytes = 0;
+  const chunks: Uint8Array[] = [];
   try {
     while (true) {
       const next = await reader.read();
-      if (next.done) { complete = true; return; }
+      if (next.done) break;
       bytes += next.value.byteLength;
       if (bytes > 65_536) throw new Error("ACP cleanup response exceeded its limit");
+      if (response.status === 503) chunks.push(next.value);
     }
   } finally {
-    if (!complete) await reader.cancel().catch(() => {});
+    // OwnedHttpResponse joins the original cancellation and releases its raw
+    // reader separately; no independent cleanup error is discarded here.
     reader.releaseLock();
+  }
+  if (signal.aborted || response.status !== 503 || response.headers.has("acp-connection-id") ||
+    response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
+      "application/json") return false;
+  try {
+    const body = strictObject(Buffer.concat(chunks, bytes));
+    return Object.keys(body).length === 3 && body.code === "acp_http_peer_disconnected" &&
+      body.message === "Original ACP HTTP peer disconnected" && body.retryable === true;
+  } catch {
+    // Malformed or ambiguous remote bodies never authorize replacement, and
+    // neither their contents nor parser errors enter the retained failure.
+    return false;
   }
 }
