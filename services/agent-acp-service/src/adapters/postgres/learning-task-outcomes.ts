@@ -8,6 +8,7 @@ import type {
 } from "../../domain/learning-scan.js";
 import { installRejectionIsResendable } from "../../domain/learning-maintenance-errors.js";
 import type { PostgresKernel } from "./kernel.js";
+import { LearningWriteAuthority } from "./learning-write-authority.js";
 
 type TaskRow = {
   organization_id: string;
@@ -29,7 +30,16 @@ type ReviewRow = {
 };
 
 export class PostgresLearningTaskOutcomes {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: LearningWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: LearningWriteAuthority,
+  ) {
+    if (!(authority instanceof LearningWriteAuthority))
+      throw new TypeError("Learning writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async listPaused(
     afterTaskId: string | null,
@@ -63,8 +73,21 @@ export class PostgresLearningTaskOutcomes {
        FROM learning_tasks task
        LEFT JOIN learning_candidates candidate ON candidate.task_id=task.id
        WHERE task.state='paused' AND ($1::text IS NULL OR task.id>$1)
+         AND task.authority_mode=$3
+         AND ($4::text IS NULL OR (task.organization_id=$4 AND task.agent_id=$5))
+         AND task.claim_owner_registration_id IS NOT DISTINCT FROM $6::text
+         AND task.claim_owner_member_id IS NOT DISTINCT FROM $7::text
+         AND task.claim_owner_incarnation_id IS NOT DISTINCT FROM $8::text
+         AND task.claim_owner_epoch IS NOT DISTINCT FROM $9::bigint
        ORDER BY task.id LIMIT $2`,
-      [afterTaskId, limit],
+      [
+        afterTaskId,
+        limit,
+        this.#authority.mode,
+        this.#authority.scope()?.organizationId ?? null,
+        this.#authority.scope()?.agentId ?? null,
+        ...this.#authority.origin(),
+      ],
     );
     return result.rows.map((row) => {
       if (row.claim_id === null || row.generation < 1 || row.pause_reason === null)
@@ -93,8 +116,9 @@ export class PostgresLearningTaskOutcomes {
     claim: LearningTaskClaim,
     reason: LearningPauseReason,
   ): Promise<{ state: "paused"; reason: LearningPauseReason }> {
+    claim = structuredClone(claim);
     if (!PAUSE_REASONS.includes(reason)) throw new Error("Invalid learning pause reason");
-    return this.kernel.transaction(async (client) => {
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const task = (
         await client.query<TaskRow>("SELECT * FROM learning_tasks WHERE id=$1 FOR UPDATE", [
           claim.taskId,
@@ -134,33 +158,36 @@ export class PostgresLearningTaskOutcomes {
     claim: LearningTaskClaim,
     currentPolicyInput: LearningPolicy,
   ): Promise<{ state: "running" }> {
+    claim = structuredClone(claim);
     const currentPolicy = learningPolicySchema.parse(currentPolicyInput);
-    return this.kernel.transaction(async (client) => {
-      await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [2_026_092_902]);
-      const task = (
-        await client.query<TaskRow>("SELECT * FROM learning_tasks WHERE id=$1 FOR UPDATE", [
-          claim.taskId,
-        ])
-      ).rows[0];
-      if (
-        !task ||
-        task.organization_id !== claim.organizationId ||
-        task.agent_id !== claim.agentId ||
-        task.owner_principal_id !== claim.ownerId ||
-        task.source_run_id !== claim.sourceRunId ||
-        task.claim_id !== claim.claimId ||
-        task.generation !== claim.generation
-      )
-        throw new Error("Learning resume claim identity is unavailable");
-      const frozenPolicy = learningPolicySchema.parse(task.frozen_policy);
-      if (currentPolicy.mode !== "automatic" || !isDeepStrictEqual(currentPolicy, frozenPolicy))
-        throw new Error("Learning policy changed before task resume");
-      if (task.state === "running") return { state: "running" };
-      if (task.state !== "paused" || task.pause_reason === null)
-        throw new Error("Learning task is not paused");
-      const blockers = (
-        await client.query<{ blocked: boolean }>(
-          `SELECT EXISTS(SELECT 1 FROM learning_model_calls
+    return this.#authority.claimTransaction(
+      this.kernel,
+      claim,
+      async (client) => {
+        const task = (
+          await client.query<TaskRow>("SELECT * FROM learning_tasks WHERE id=$1 FOR UPDATE", [
+            claim.taskId,
+          ])
+        ).rows[0];
+        if (
+          !task ||
+          task.organization_id !== claim.organizationId ||
+          task.agent_id !== claim.agentId ||
+          task.owner_principal_id !== claim.ownerId ||
+          task.source_run_id !== claim.sourceRunId ||
+          task.claim_id !== claim.claimId ||
+          task.generation !== claim.generation
+        )
+          throw new Error("Learning resume claim identity is unavailable");
+        const frozenPolicy = learningPolicySchema.parse(task.frozen_policy);
+        if (currentPolicy.mode !== "automatic" || !isDeepStrictEqual(currentPolicy, frozenPolicy))
+          throw new Error("Learning policy changed before task resume");
+        if (task.state === "running") return { state: "running" };
+        if (task.state !== "paused" || task.pause_reason === null)
+          throw new Error("Learning task is not paused");
+        const blockers = (
+          await client.query<{ blocked: boolean }>(
+            `SELECT EXISTS(SELECT 1 FROM learning_model_calls
                    WHERE task_id=$1 AND state<>'settled')
              OR EXISTS(SELECT 1 FROM learning_tasks
                    WHERE id<>$1 AND state='running')
@@ -171,18 +198,20 @@ export class PostgresLearningTaskOutcomes {
                  AND (foreground.state IN ('admitting','running')
                       OR foreground.updated_at>now()-interval '15 seconds')
              ) AS blocked`,
-          [claim.taskId, claim.organizationId, claim.agentId],
-        )
-      ).rows[0];
-      if (blockers?.blocked !== false)
-        throw new Error("Learning task resume requires settled model work and an idle Agent");
-      await client.query(
-        `UPDATE learning_tasks SET state='running',pause_reason=NULL,updated_at=now()
+            [claim.taskId, claim.organizationId, claim.agentId],
+          )
+        ).rows[0];
+        if (blockers?.blocked !== false)
+          throw new Error("Learning task resume requires settled model work and an idle Agent");
+        await client.query(
+          `UPDATE learning_tasks SET state='running',pause_reason=NULL,updated_at=now()
          WHERE id=$1`,
-        [claim.taskId],
-      );
-      return { state: "running" };
-    });
+          [claim.taskId],
+        );
+        return { state: "running" };
+      },
+      true,
+    );
   }
 
   public async recordModelSkip(claim: LearningTaskClaim): Promise<{ state: "skipped" }> {
@@ -202,7 +231,8 @@ export class PostgresLearningTaskOutcomes {
     claim: LearningTaskClaim,
     pinnedPackagePath: string | null,
   ): Promise<{ state: "skipped" }> {
-    return this.kernel.transaction(async (client) => {
+    claim = structuredClone(claim);
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const task = (
         await client.query<TaskRow>("SELECT * FROM learning_tasks WHERE id=$1 FOR UPDATE", [
           claim.taskId,
@@ -266,13 +296,14 @@ export class PostgresLearningTaskOutcomes {
     installRequestId: string,
     kind: "conflict" | "rejected",
   ): Promise<{ state: "failed"; candidateState: "conflict" | "rejected" }> {
+    claim = structuredClone(claim);
     if (
       !/^[A-Za-z0-9_-]{1,200}$/u.test(candidateId) ||
       !/^[A-Za-z0-9_-]{1,200}$/u.test(installRequestId) ||
       !["conflict", "rejected"].includes(kind)
     )
       throw new Error("Invalid learning apply failure identity");
-    return this.kernel.transaction(async (client) => {
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const task = (
         await client.query<TaskRow>("SELECT * FROM learning_tasks WHERE id=$1 FOR UPDATE", [
           claim.taskId,

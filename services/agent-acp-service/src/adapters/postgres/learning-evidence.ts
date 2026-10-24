@@ -12,6 +12,7 @@ import {
 import { learningScopedId } from "../../domain/learning-policy.js";
 import type { LearningScanScope, LearningTaskClaim } from "../../domain/learning-scan.js";
 import type { PostgresKernel } from "./kernel.js";
+import { LearningWriteAuthority } from "./learning-write-authority.js";
 
 const MAX_USER_CHARS = 4_096;
 const MAX_TOOL_ATTEMPTS = 8;
@@ -37,66 +38,81 @@ type ToolRow = {
 };
 
 export class PostgresLearningEvidence {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: LearningWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: LearningWriteAuthority,
+  ) {
+    if (!(authority instanceof LearningWriteAuthority))
+      throw new TypeError("Learning writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async checkRecordedCitationFloor(
     claim: LearningTaskClaim,
     rules: unknown,
   ): Promise<LearningRuleProposal[]> {
+    rules = structuredClone(rules);
     return checkAutomaticCitationFloor(rules, await this.loadRecorded(claim));
   }
 
   public async loadRecorded(claim: LearningTaskClaim): Promise<LearningEvidence> {
-    const snapshots = await this.kernel.read<{
-      source_run_id: string;
-      digest: string;
-      truncated: boolean;
-    }>(
-      `SELECT saved.source_run_id,saved.digest,saved.truncated
+    claim = structuredClone(claim);
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
+      const snapshots = await client.query<{
+        source_run_id: string;
+        digest: string;
+        truncated: boolean;
+      }>(
+        `SELECT saved.source_run_id,saved.digest,saved.truncated
        FROM learning_evidence_snapshots saved
        JOIN learning_tasks task ON task.id=saved.task_id
        WHERE task.id=$1 AND task.organization_id=$2 AND task.agent_id=$3
          AND task.owner_principal_id=$4 AND task.source_run_id=$5
-         AND task.state='running' AND task.claim_id=$6 AND task.generation=$7`,
-      [
-        claim.taskId,
-        claim.organizationId,
-        claim.agentId,
-        claim.ownerId,
-        claim.sourceRunId,
-        claim.claimId,
-        claim.generation,
-      ],
-    );
-    const saved = snapshots.rows[0];
-    if (saved === undefined) throw new Error("Learning evidence snapshot is unavailable");
-    const rows = await this.kernel.read<LearningEvidenceItem & { ordinal: number }>(
-      `SELECT ordinal,evidence_id AS "evidenceId",source_id AS "sourceId",kind,scope,text
+         AND task.state='running' AND task.claim_id=$6 AND task.generation=$7
+         AND saved.source_run_id=$5 AND saved.claim_id=$6 AND saved.generation=$7`,
+        [
+          claim.taskId,
+          claim.organizationId,
+          claim.agentId,
+          claim.ownerId,
+          claim.sourceRunId,
+          claim.claimId,
+          claim.generation,
+        ],
+      );
+      const saved = snapshots.rows[0];
+      if (saved === undefined) throw new Error("Learning evidence snapshot is unavailable");
+      const rows = await client.query<LearningEvidenceItem & { ordinal: number }>(
+        `SELECT ordinal,evidence_id AS "evidenceId",source_id AS "sourceId",kind,scope,text
        FROM learning_evidence_items WHERE task_id=$1 ORDER BY ordinal`,
-      [claim.taskId],
-    );
-    const items: LearningEvidenceItem[] = rows.rows.map((row, index) => {
-      if (
-        row.ordinal !== index ||
-        !["authenticated_user", "observed_execution", "untrusted_material"].includes(row.kind) ||
-        !["user_prompt", "tool_attempt", "tool_output"].includes(row.scope)
-      )
-        throw new Error("Learning evidence item is invalid");
-      return {
-        evidenceId: row.evidenceId,
-        sourceId: row.sourceId,
-        kind: row.kind,
-        scope: row.scope,
-        text: row.text,
-      };
+        [claim.taskId],
+      );
+      const items: LearningEvidenceItem[] = rows.rows.map((row, index) => {
+        if (
+          row.ordinal !== index ||
+          !["authenticated_user", "observed_execution", "untrusted_material"].includes(row.kind) ||
+          !["user_prompt", "tool_attempt", "tool_output"].includes(row.scope)
+        )
+          throw new Error("Learning evidence item is invalid");
+        return {
+          evidenceId: row.evidenceId,
+          sourceId: row.sourceId,
+          kind: row.kind,
+          scope: row.scope,
+          text: row.text,
+        };
+      });
+      const evidence = { sourceRunId: saved.source_run_id, items, truncated: saved.truncated };
+      if (digestLearningEvidence(evidence) !== saved.digest)
+        throw new Error("Learning evidence snapshot digest mismatch");
+      return evidence;
     });
-    const evidence = { sourceRunId: saved.source_run_id, items, truncated: saved.truncated };
-    if (digestLearningEvidence(evidence) !== saved.digest)
-      throw new Error("Learning evidence snapshot digest mismatch");
-    return evidence;
   }
 
   public async readAndRecord(claim: LearningTaskClaim): Promise<LearningEvidence> {
+    claim = structuredClone(claim);
     const scope: LearningScanScope = {
       organizationId: claim.organizationId,
       agentId: claim.agentId,
@@ -104,7 +120,7 @@ export class PostgresLearningEvidence {
     };
     const evidence = await this.read(scope, claim.sourceRunId);
     const digest = digestLearningEvidence(evidence);
-    await this.kernel.transaction(async (client) => {
+    await this.#authority.claimTransaction(this.kernel, claim, async (client) => {
       const task = await client.query<{
         organization_id: string;
         agent_id: string;
@@ -131,13 +147,20 @@ export class PostgresLearningEvidence {
         row.generation !== claim.generation
       )
         throw new Error("Learning evidence claim is unavailable");
-      const existing = await client.query<{ source_run_id: string; digest: string }>(
-        "SELECT source_run_id,digest FROM learning_evidence_snapshots WHERE task_id=$1",
+      const existing = await client.query<{
+        source_run_id: string;
+        digest: string;
+        claim_id: string;
+        generation: number;
+      }>(
+        "SELECT source_run_id,digest,claim_id,generation FROM learning_evidence_snapshots WHERE task_id=$1",
         [claim.taskId],
       );
       if (existing.rows[0] !== undefined) {
         if (
           existing.rows[0].source_run_id !== evidence.sourceRunId ||
+          existing.rows[0].claim_id !== claim.claimId ||
+          existing.rows[0].generation !== claim.generation ||
           existing.rows[0].digest !== digest
         )
           throw new Error("Learning evidence snapshot changed after recording");
@@ -176,6 +199,8 @@ export class PostgresLearningEvidence {
   }
 
   public async read(scope: LearningScanScope, runId: string): Promise<LearningEvidence> {
+    scope = structuredClone(scope);
+    this.#authority.assertScope(scope);
     if (
       !learningScopedId.test(scope.organizationId) ||
       !learningScopedId.test(scope.agentId) ||

@@ -414,8 +414,10 @@ describe.skipIf(databaseUrl === undefined)(
         expect(migrated.slice(0, applied.length)).toEqual(applied);
         expect(
           migrated.slice(applied.length).map((entry) => entry.version),
-        ).toEqual([migration]);
-        expect(migrated.at(-1)?.checksum).toBe(
+        ).toEqual([migration, "0027_learning_claim_owner.sql"]);
+        expect(
+          migrated.find((entry) => entry.version === migration)?.checksum,
+        ).toBe(
           createHash("sha256")
             .update(await readFile(new URL(migration, migrations), "utf8"))
             .digest("hex"),

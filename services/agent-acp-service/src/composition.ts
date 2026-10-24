@@ -1,3 +1,4 @@
+import { createLegacyLearningRepositories } from "./adapters/postgres/learning-repositories.js";
 import { LearningStatusReader } from "./application/learning-status-reader.js";
 import { SkillSources } from "./application/skill-sources.js";
 import { SkillProjectionWorker } from "./application/skill-projection-worker.js";
@@ -81,17 +82,9 @@ import { tracedFetch } from "./telemetry/http.js";
 import { DirectoryLearningRuntimeBinding } from "./adapters/learning-runtime-binding.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
 import { RuntimeSkillMaintenanceClient } from "./adapters/runtime-skill-maintenance-client.js";
-import { PostgresLearningScan } from "./adapters/postgres/learning-scan.js";
-import { PostgresLearningEvidence } from "./adapters/postgres/learning-evidence.js";
-import { PostgresLearningBudget } from "./adapters/postgres/learning-budget.js";
 import { PostgresLearningReviewSource } from "./adapters/postgres/learning-review-source.js";
-import { PostgresLearningCandidates } from "./adapters/postgres/learning-candidates.js";
 import { PostgresLearningManagedSkills } from "./adapters/postgres/learning-managed-skills.js";
-import { PostgresLearningTaskOutcomes } from "./adapters/postgres/learning-task-outcomes.js";
-import { PostgresLearningMaintenanceLedger } from "./adapters/postgres/learning-maintenance-ledger.js";
 import { PostgresLearningInstallRequests } from "./adapters/postgres/learning-install-requests.js";
-import { PostgresLearningApplyBases } from "./adapters/postgres/learning-apply-bases.js";
-import { PostgresLearningChanges } from "./adapters/postgres/learning-changes.js";
 import { PostgresLearningChangeRead } from "./adapters/postgres/learning-change-read.js";
 import { SessionService } from "./application/session-service.js";
 import type { AgentAcpConfig } from "./config.js";
@@ -577,6 +570,7 @@ export function buildComponents(
   const learningWorker = buildLearningWorker({
     config,
     kernel,
+    ownershipSignal,
     directory,
     providers,
     rawTools,
@@ -696,6 +690,7 @@ export function buildComponents(
 
 function buildLearningWorker(input: {
   config: AgentAcpConfig;
+  ownershipSignal: AbortSignal;
   kernel: PostgresKernel;
   directory: ExecutionDirectory;
   providers: ProviderClients;
@@ -716,18 +711,21 @@ function buildLearningWorker(input: {
     config.skillLearningControllerUrl,
     tracedFetch(config.dependencyFetchers.controller!, "agent_controller"),
   );
-  const scanStore = new PostgresLearningScan(kernel);
-  const evidence = new PostgresLearningEvidence(kernel);
-  const budget = new PostgresLearningBudget(kernel);
-  const candidates = new PostgresLearningCandidates(kernel);
+  const {
+    scan: scanStore,
+    evidence,
+    budget,
+    candidates,
+    outcomes,
+    intents,
+    bases,
+    changes,
+  } = createLegacyLearningRepositories(kernel, input.ownershipSignal, {
+    onSettled: (requestId) => input.runtimeConnections.releaseOperation(requestId),
+    onCommitted,
+  });
   const managed = new PostgresLearningManagedSkills(kernel);
-  const outcomes = new PostgresLearningTaskOutcomes(kernel);
-  const intents = new PostgresLearningMaintenanceLedger(kernel, (requestId) =>
-    input.runtimeConnections.releaseOperation(requestId),
-  );
   const installRequests = new PostgresLearningInstallRequests(kernel);
-  const bases = new PostgresLearningApplyBases(kernel);
-  const changes = new PostgresLearningChanges(kernel, onCommitted);
   const binding = new DirectoryLearningRuntimeBinding(directory);
   const signer = new RuntimeSkillMaintenanceSigner(
     config.skillMaintenanceSigning.kid,

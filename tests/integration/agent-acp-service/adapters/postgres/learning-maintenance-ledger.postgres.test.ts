@@ -4,18 +4,14 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
-import { PostgresLearningMaintenanceLedger } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-maintenance-ledger.js";
+import { createLegacyLearningRepositories } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-repositories.js";
 import { PostgresLearningStatusRead } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-status-read.js";
-import { PostgresLearningCandidates } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-candidates.js";
-import { PostgresLearningApplyBases } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-apply-bases.js";
 import { PostgresLearningManagedSkills } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-managed-skills.js";
 import { PostgresSkillSourceProjections } from "../../../../../services/agent-acp-service/src/adapters/postgres/skill-source-projections.js";
-import { PostgresLearningChanges } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-changes.js";
 import { PostgresLearningChangeRead } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-change-read.js";
-import { PostgresLearningTaskOutcomes } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-task-outcomes.js";
 import { PostgresLearningInstallRequests } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-install-requests.js";
-import { PostgresLearningBudget } from "../../../../../services/agent-acp-service/src/adapters/postgres/learning-budget.js";
 import { learningApplyRequestId } from "../../../../../services/agent-acp-service/src/domain/learning-apply-request-id.js";
+import { AgentOwnershipLostError } from "../../../../../services/agent-acp-service/src/domain/agent-ownership.js";
 import { buildLearningCandidatePackage } from "../../../../../services/agent-acp-service/src/domain/learning-candidate-package.js";
 import type { LearningTaskClaim } from "../../../../../services/agent-acp-service/src/domain/learning-scan.js";
 
@@ -50,20 +46,33 @@ const currentPolicy = {
 describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
   const pool = new Pool({ connectionString: url, max: 2 });
   const statusRead = new PostgresLearningStatusRead(new PostgresKernel(pool));
-  const ledger = new PostgresLearningMaintenanceLedger(
+  const ledger = createLegacyLearningRepositories(
     new PostgresKernel(pool),
-  );
-  const candidates = new PostgresLearningCandidates(new PostgresKernel(pool));
-  const applyBases = new PostgresLearningApplyBases(new PostgresKernel(pool));
+    new AbortController().signal,
+  ).intents;
+  const candidates = createLegacyLearningRepositories(
+    new PostgresKernel(pool),
+    new AbortController().signal,
+  ).candidates;
+  const applyBases = createLegacyLearningRepositories(
+    new PostgresKernel(pool),
+    new AbortController().signal,
+  ).bases;
   const managedSkills = new PostgresLearningManagedSkills(
     new PostgresKernel(pool),
   );
   const changeRead = new PostgresLearningChangeRead(new PostgresKernel(pool));
-  const outcomes = new PostgresLearningTaskOutcomes(new PostgresKernel(pool));
+  const outcomes = createLegacyLearningRepositories(
+    new PostgresKernel(pool),
+    new AbortController().signal,
+  ).outcomes;
   const installRequests = new PostgresLearningInstallRequests(
     new PostgresKernel(pool),
   );
-  const modelBudget = new PostgresLearningBudget(new PostgresKernel(pool));
+  const modelBudget = createLegacyLearningRepositories(
+    new PostgresKernel(pool),
+    new AbortController().signal,
+  ).budget;
   const evidenceId = `evidence_${"e".repeat(32)}`;
   const proposal = {
     decision: "propose" as const,
@@ -254,10 +263,11 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
 
   it("releases accepted private-operation authority only after a durable settlement", async () => {
     const released = vi.fn<(requestId: string) => void>();
-    const ownedLedger = new PostgresLearningMaintenanceLedger(
+    const ownedLedger = createLegacyLearningRepositories(
       new PostgresKernel(pool),
-      released,
-    );
+      new AbortController().signal,
+      { onSettled: released },
+    ).intents;
     await ownedLedger.reserve(intent);
     await ownedLedger.markUnknown(claim, intent.requestId);
     await expect(
@@ -572,9 +582,9 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
       await applyBases.recordAdmitted(claim, "candidate-1", basis),
     ).toMatchObject({ state: "ready_waiting_idle" });
     expect(await applyBases.read(claim, "candidate-1")).toEqual(basis);
-    expect(
-      await applyBases.read({ ...claim, ownerId: "other" }, "candidate-1"),
-    ).toBeNull();
+    await expect(
+      applyBases.read({ ...claim, ownerId: "other" }, "candidate-1"),
+    ).rejects.toBeInstanceOf(AgentOwnershipLostError);
     expect(
       await applyBases.recordAdmitted(claim, "candidate-1", basis),
     ).toMatchObject({ state: "ready_waiting_idle" });
@@ -1250,10 +1260,11 @@ describe.skipIf(url === undefined)("Skill maintenance effect ledger", () => {
 
   it("atomically records a verified install, managed identity and gap-free Agent sequence", async () => {
     const onCommitted = vi.fn();
-    const notifiedChanges = new PostgresLearningChanges(
+    const notifiedChanges = createLegacyLearningRepositories(
       new PostgresKernel(pool),
-      onCommitted,
-    );
+      new AbortController().signal,
+      { onCommitted },
+    ).changes;
     await seedProposal();
     await candidates.record({
       claim,

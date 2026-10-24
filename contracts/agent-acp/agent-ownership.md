@@ -220,6 +220,45 @@ retirement is one transaction. It must not stop ordinary Runtime tool attempts.
 Generation dispatch closure, original network-task joins and predecessor
 stop-proof recovery remain separate requirements before multi-replica rollout.
 
+### Learning Claim Mutation Boundary
+
+Learning uses the current Agent lease and the original Learning claim's durable
+execution identity. Its historical sourceRun is evidence, not the owner of the
+current Learning execution. A successor may learn from that completed source
+with a new claim, but cannot borrow a predecessor's claim or save its late model
+or Runtime receipt. Claim identity includes task scope, principal, sourceRunId,
+claimId, generation, and the registration/member/incarnation/epoch that admitted
+that generation. Check identity before duplicate or already-settled returns.
+Claim-bound review, candidate and apply reads check the same identity before
+returning facts that may drive another dispatch.
+
+Pending tasks distinguish explicit legacy and owned admission before any claim
+exists. Legacy writers must not treat an owned pending task's empty claim tuple
+as legacy authority. Owned pending management may adopt an historical legacy task
+only while it is pristine pending work: generation zero, no claim/started time
+and no spent budget, review, model, candidate, evidence, apply or maintenance effects.
+Adoption and the pending operation (first claim, cancellation or enqueue replay)
+commit under the current lease in the same transaction;
+there is no downgrade or fallback after an ownership failure.
+
+Each dispatched generation persists its own immutable owner binding. Ordinary
+pause, resume, terminal transitions and receipt replay cannot replace or erase
+that binding, including by substituting a new claimId. Same-owner pause/resume
+preserves the claim, budget and all unsettled effects. Receipt settlement may
+still be valid after a pause; requiring a running task is a separate condition
+for new dispatch, not a substitute for ownership. Cross-owner recovery requires
+positive stopping proof and preserved old-generation evidence through a separate
+recovery operation; ordinary resume is not that operation.
+
+Acquire the Agent lease before existing queue/review locks and task/child locks;
+never hold a child intent or model-call lock while acquiring its task or lease.
+Scope candidate scans and paused-task selection to the bound Agent and operation
+mode. Keep existing global review and budget limits. Global worker-lock recovery
+remains explicit legacy-only and fails the entire transaction if selected work
+is owned; it cannot infer claim ownership from a historical sourceRun. Capture
+mutable inputs before awaits. Production generation, scoped stopping recovery,
+actual network-task joins and multi-replica admission remain later gates.
+
 ## Configuration And Recovery Boundaries
 
 Controller configuration revision and Agent ownership epoch are independent.

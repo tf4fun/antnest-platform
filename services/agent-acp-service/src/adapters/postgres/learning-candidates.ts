@@ -13,6 +13,7 @@ import {
 import { parseLearningReviewProposal } from "../../domain/learning-review-proposal.js";
 import type { LearningTaskClaim } from "../../domain/learning-scan.js";
 import type { PostgresKernel } from "./kernel.js";
+import { LearningWriteAuthority } from "./learning-write-authority.js";
 
 type CandidateState =
   | "draft"
@@ -46,13 +47,26 @@ type CandidateInput = {
 };
 
 export class PostgresLearningCandidates {
-  public constructor(private readonly kernel: PostgresKernel) {}
+  readonly #authority: LearningWriteAuthority;
+
+  public constructor(
+    private readonly kernel: PostgresKernel,
+    authority: LearningWriteAuthority,
+  ) {
+    if (!(authority instanceof LearningWriteAuthority))
+      throw new TypeError("Learning writers require explicit authority");
+    this.#authority = authority;
+  }
 
   public async record(
     input: CandidateInput,
   ): Promise<{ candidateId: string; state: CandidateState }> {
+    input = {
+      ...structuredClone(input),
+      package: { ...structuredClone(input.package), artifact: Buffer.from(input.package.artifact) },
+    };
     validateInput(input);
-    return this.kernel.transaction(async (client) => {
+    return this.#authority.claimTransaction(this.kernel, input.claim, async (client) => {
       const task = await client.query<{
         organization_id: string;
         agent_id: string;
@@ -236,43 +250,46 @@ export class PostgresLearningCandidates {
     expectedBaseDigest: string | null;
     package: LearningCandidatePackage;
   } | null> {
-    const result = await this.kernel.read<CandidateRow>(
-      `SELECT candidate.*
+    claim = structuredClone(claim);
+    return this.#authority.claimTransaction(this.kernel, claim, async (client) => {
+      const result = await client.query<CandidateRow>(
+        `SELECT candidate.*
       FROM learning_candidates candidate
       JOIN learning_tasks task ON task.id=candidate.task_id
       WHERE candidate.task_id=$1 AND candidate.claim_id=$2 AND candidate.generation=$3
         AND task.organization_id=$4 AND task.agent_id=$5 AND task.owner_principal_id=$6
         AND task.source_run_id=$7`,
-      [
-        claim.taskId,
-        claim.claimId,
-        claim.generation,
-        claim.organizationId,
-        claim.agentId,
-        claim.ownerId,
-        claim.sourceRunId,
-      ],
-    );
-    const saved = result.rows[0];
-    if (!saved) return null;
-    const packageValue: LearningCandidatePackage = {
-      packagePath: saved.package_path,
-      packageRulesVersion: 1,
-      skillText: saved.skill_text,
-      artifact: saved.artifact,
-      artifactDigest: saved.artifact_digest,
-      targetDigest: saved.target_digest,
-      evidenceIds: saved.evidence_ids,
-    };
-    if (saved.package_rules_version !== 1)
-      throw new Error("Stored learning candidate rule version is unsupported");
-    validateLearningCandidatePackage(packageValue);
-    return {
-      candidateId: saved.candidate_id,
-      state: saved.state,
-      expectedBaseDigest: saved.expected_base_digest,
-      package: packageValue,
-    };
+        [
+          claim.taskId,
+          claim.claimId,
+          claim.generation,
+          claim.organizationId,
+          claim.agentId,
+          claim.ownerId,
+          claim.sourceRunId,
+        ],
+      );
+      const saved = result.rows[0];
+      if (!saved) return null;
+      const packageValue: LearningCandidatePackage = {
+        packagePath: saved.package_path,
+        packageRulesVersion: 1,
+        skillText: saved.skill_text,
+        artifact: saved.artifact,
+        artifactDigest: saved.artifact_digest,
+        targetDigest: saved.target_digest,
+        evidenceIds: saved.evidence_ids,
+      };
+      if (saved.package_rules_version !== 1)
+        throw new Error("Stored learning candidate rule version is unsupported");
+      validateLearningCandidatePackage(packageValue);
+      return {
+        candidateId: saved.candidate_id,
+        state: saved.state,
+        expectedBaseDigest: saved.expected_base_digest,
+        package: packageValue,
+      };
+    });
   }
 }
 
