@@ -4,7 +4,7 @@ import BridgeApp from "./BridgeApp";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function fixture(administrator: boolean, initialPreparing = false) {
+function fixture(administrator: boolean, initialPreparing = false, initialView?: Promise<void>) {
   window.history.replaceState(null, "", "/workspace/agent-1/");
   vi.spyOn(document, "cookie", "get").mockReturnValue("antnest_csrf=preparing-test");
   const requests: { path: string; method: string; body?: unknown }[] = [];
@@ -54,7 +54,10 @@ function fixture(administrator: boolean, initialPreparing = false) {
     });
     if (path.endsWith("/sessions") && method === "GET") return Response.json({ items: [], nextCursor: null });
     if (path.endsWith("/sessions") && method === "POST") return Response.json({ sessionId: "session-1" }, { status: 201 });
-    if (path.endsWith("/view")) return Response.json(view());
+    if (path.endsWith("/view")) {
+      await initialView;
+      return Response.json(view());
+    }
     if (path.endsWith("/view?sessionId=session-1")) return Response.json(view("session-1"));
     if (path.endsWith("/sessions/session-1/prompts") && method === "POST") return Response.json({
       operationId: (body as { intentId: string }).intentId, acceptance: "bridge", phase: "dispatching",
@@ -74,6 +77,7 @@ test.each([true, false])("preparing retains draft and attachment without automat
   try {
     await screen.findByRole("heading", { name: "New Agent", level: 1 });
     await waitFor(() => expect(state.sources).toHaveLength(1));
+    await waitFor(() => expect(screen.getByLabelText("File attachments")).toHaveProperty("disabled", false));
     const editor = screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" });
     fireEvent.change(editor, { target: { value: originalText } });
     fireEvent.change(screen.getByLabelText("File attachments"), { target: { files: [file] } });
@@ -134,7 +138,8 @@ test("a newly opened preparing Agent shows waiting guidance without a recovery a
 });
 
 test("preparing observed during attachment reading prevents the late Prompt and preserves its draft", async () => {
-  const state = fixture(false);
+  const initialView = Promise.withResolvers<void>();
+  const state = fixture(false, false, initialView.promise);
   let release!: (bytes: ArrayBuffer) => void;
   let reading = false;
   const bytes = new TextEncoder().encode("held attachment").buffer;
@@ -143,6 +148,9 @@ test("preparing observed during attachment reading prevents the late Prompt and 
   Object.defineProperty(file, "arrayBuffer", { value: () => { reading = true; return held; } });
   try {
     await screen.findByRole("heading", { name: "New Agent", level: 1 });
+    expect(screen.getByLabelText("File attachments")).toHaveProperty("disabled", true);
+    initialView.resolve();
+    await waitFor(() => expect(screen.getByLabelText("File attachments")).toHaveProperty("disabled", false));
     const editor = screen.getByRole<HTMLTextAreaElement>("combobox", { name: "Message" });
     fireEvent.change(editor, { target: { value: "Wait for this attachment" } });
     fireEvent.change(screen.getByLabelText("File attachments"), { target: { files: [file] } });
@@ -173,6 +181,6 @@ test("preparing observed during attachment reading prevents the late Prompt and 
     fireEvent.click(send);
     await waitFor(() => expect(state.requests.filter(row => row.path.endsWith("/prompts"))).toHaveLength(1));
     expect(state.requests.filter(row => row.method === "POST" && row.path.endsWith("/sessions"))).toHaveLength(1);
-  } finally { release(bytes); state.mounted.unmount(); }
+  } finally { initialView.resolve(); release(bytes); state.mounted.unmount(); }
   expect(state.sources.every(source => source.closed)).toBe(true);
 });
