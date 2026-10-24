@@ -1,10 +1,9 @@
 # Owner routing for state and control requests
 
 This contract extends the fixed peer boundary in [owner-peer.md](owner-peer.md).
-The ACP service batch is in development. State read/watch and settlement are
-implemented and have focused two-process acceptance; remote delivery remains
-pending. Source operations below define the pending contract and are not exposed
-by the peer listener yet. Final two-replica fault/browser acceptance is pending.
+State read/watch, settlement and Registry source reads are implemented with
+focused two-process acceptance. Final two-replica fault/browser acceptance
+remains pending.
 
 | Operation         | Private POST route                           | Original caller    | Original public route                        |
 | ----------------- | -------------------------------------------- | ------------------ | -------------------------------------------- |
@@ -78,6 +77,12 @@ retain ZIP bytes, ETag, artifact/content digests and source sequence. The owner
 still holds the original source-read gate and verifies current Runtime and
 projection bindings before and after reading. Forwarding neither reconstructs
 an artifact from the shared projection nor introduces model calls.
+Each part retains the original generation authority across repository reads,
+read-gate admission and Runtime observation. Removing a changed projection uses
+that original Agent fence and checks database lease expiry after acquiring the
+projection lock. Inspect replies have a 256KiB bound, including JSON escaping
+of all 50 legal descriptions; the single-file ZIP reply has a separate 64KiB
+bound. No partial inspect response is delivered when a later group fails.
 
 All paths join original request reads, peer fetches, response readers, sends and
 cleanup. An abort or closed public socket is not a cleanup receipt. Independent

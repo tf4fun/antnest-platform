@@ -214,7 +214,7 @@ export class OwnerControlTransport {
           );
           timer.unref();
           try {
-            const authority = await this.options.admit({ ...target, protocol: "v1" }, bounded);
+            const authority = await this.options.admit(target, bounded);
             bounded.throwIfAborted();
             authority.assertCurrent();
             if (this.options.state === undefined) throw unavailable();

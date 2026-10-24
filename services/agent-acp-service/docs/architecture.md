@@ -577,8 +577,9 @@ rejects a selected owned Run and updates only its locked set of pending requests
 Registered owner mode captures the generation in production and cancels abandoned
 legacy permissions only within approved scopes in non-peer mode. Peer mode
 preserves unknown legacy permissions. Predecessor Run recovery uses the dedicated
-stopped-proof transaction. HTTP/SSE, state/control and source forwarding, crash takeover and actual
-two-replica Docker integration remain pending.
+stopped-proof transaction. HTTP/SSE, state/control and source requests use the
+fixed owner boundary. Surviving-member crash takeover and actual two-replica
+Docker integration remain pending.
 
 ## Module Map
 
@@ -948,8 +949,15 @@ it discovers the assigned member without a live execution lease and validates
 the private publication under the receiving generation. Its original tasks and
 lease release remain joined after cancellation. The original business deadline
 is unchanged; the finite relay reply has an absolute completion limit ten seconds
-after that deadline so joined cleanup can return `not_settled`. Registry source forwarding,
-surviving-member crash takeover and two-replica Docker integration remain pending.
+after that deadline so joined cleanup can return `not_settled`.
+Registry inspect groups requests by Agent under one original 8.5-second budget,
+preserving ordering, omissions and whole-request failure. Artifact reads retain
+the owner's Runtime credentials, original ZIP bytes and digest/sequence headers.
+Both paths retain the original generation and source-read gate across awaits;
+changed projections are removed only under that same live Agent fence. Peer
+fetches, original service work, readers and sends are joined before retirement;
+independent cleanup failures prevent a successful retirement acknowledgement.
+Surviving-member crash takeover and two-replica Docker integration remain pending.
 Foreground isolation does not establish another Agent's background claim recovery.
 
 ## Workspace Bridge Extension

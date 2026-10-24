@@ -6,6 +6,7 @@ import type {
   SkillSourceRecord,
 } from "../../domain/skill-source.js";
 import type { PostgresKernel } from "./kernel.js";
+import { AgentOwnershipLostError, type AgentOwnershipFence } from "../../domain/agent-ownership.js";
 
 type Head = Omit<SkillProjection, "sequence"> & { sequence: string };
 
@@ -152,7 +153,44 @@ export class PostgresSkillSourceProjections {
     return items;
   }
 
-  public async remove(projection: SkillProjection): Promise<void> {
+  public async remove(
+    projection: SkillProjection,
+    fence?: AgentOwnershipFence,
+    assertCurrent?: () => void,
+  ): Promise<void> {
+    if (fence !== undefined) {
+      if (
+        projection.organization_id !== fence.organizationId ||
+        projection.agent_id !== fence.agentId
+      )
+        throw new AgentOwnershipLostError();
+      await this.kernel.agentTransaction(fence, async (client) => {
+        const values = [
+          projection.organization_id,
+          projection.agent_id,
+          projection.name,
+          projection.sequence,
+        ];
+        // Keep the common lease -> business-row lock order. A lease that was
+        // live at transaction admission may expire while this row is held.
+        const locked = await client.query(
+          "SELECT name FROM skill_source_projections WHERE organization_id=$1 AND agent_id=$2 AND name=$3 AND sequence=$4 AND active FOR UPDATE",
+          values,
+        );
+        assertCurrent?.();
+        if (locked.rowCount === 0) return;
+        const changed = await client.query(
+          `UPDATE skill_source_projections p SET active=false,sequence=sequence+1,
+           failures=0,next_attempt_at=now(),updated_at=now()
+           WHERE p.organization_id=$1 AND p.agent_id=$2 AND p.name=$3 AND p.sequence=$4 AND p.active
+             AND EXISTS(SELECT 1 FROM agent_leases l WHERE l.organization_id=$1 AND l.agent_id=$2
+               AND l.owner_instance_id=$5 AND l.epoch=$6::bigint AND l.expires_at>clock_timestamp())`,
+          [...values, fence.ownerInstanceId, fence.epoch],
+        );
+        if (changed.rowCount !== 1) throw new AgentOwnershipLostError();
+      });
+      return;
+    }
     await this.kernel.query(
       `UPDATE skill_source_projections SET active=false,sequence=sequence+1,
       failures=0,next_attempt_at=now(),updated_at=now()

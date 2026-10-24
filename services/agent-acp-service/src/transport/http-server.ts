@@ -2,6 +2,7 @@ import type { LearningStatusReader } from "../application/learning-status-reader
 import { learningStatusRoute, serveLearningStatus } from "./learning-status.js";
 import { randomUUID } from "node:crypto";
 import { skillSourceRoute, serveSkillSource } from "./skill-sources.js";
+import { OwnerSourceTransport } from "./owner-sources.js";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createSecureServer } from "node:https";
 import type { RequestAuthentication, AuthenticationFailure } from "./request-authentication.js";
@@ -153,6 +154,7 @@ export class AgentAcpHttpServer {
   private readonly httpTransport: AcpHttpTransport;
   private readonly httpOwner: OwnerHttpTransport | undefined;
   private readonly controlOwner: OwnerControlTransport | undefined;
+  private readonly sourceOwner: OwnerSourceTransport | undefined;
   private closePromise: Promise<void> | undefined;
 
   public constructor(private readonly options: AgentAcpHttpServerOptions) {
@@ -192,6 +194,16 @@ export class AgentAcpHttpServer {
               ? {}
               : { deliveryTimeoutMs: options.stateDeliveryTimeoutMs }),
             report: (error) => this.report(error, "owner_control_forwarding"),
+          });
+    this.sourceOwner =
+      options.httpForwarding === undefined
+        ? undefined
+        : new OwnerSourceTransport({
+            ...options.httpForwarding,
+            service: options.skillSources?.service,
+            authentication: options.authentication,
+            ready: options.ready,
+            report: (error) => this.report(error, "owner_source_forwarding"),
           });
     const handler = (request: IncomingMessage, response: ServerResponse) => {
       void observeHttpRequest(request, response, () =>
@@ -290,6 +302,7 @@ export class AgentAcpHttpServer {
       this.httpTransport.revokeAccess(snapshot),
       this.httpOwner?.revokeAccess(snapshot) ?? Promise.resolve(),
       this.controlOwner?.revokeAccess(snapshot) ?? Promise.resolve(),
+      this.sourceOwner?.revokeAccess(snapshot) ?? Promise.resolve(),
     ];
     for (const request of this.requests) {
       if (request.identity === null || !isExecutionAccessRevoked(snapshot, request.identity))
@@ -334,6 +347,7 @@ export class AgentAcpHttpServer {
       this.httpTransport.drain(),
       this.httpOwner?.close(),
       this.controlOwner?.close(),
+      this.sourceOwner?.close(),
       this.closeWebSockets(),
     ]);
     results.push(
@@ -471,6 +485,10 @@ export class AgentAcpHttpServer {
         sourceRoute,
         this.options.skillSources,
         this.options.ready,
+        this.sourceOwner === undefined
+          ? undefined
+          : (operation, signal, deadline) =>
+              this.sourceOwner!.forward(request, response, operation, signal, deadline),
       );
       return;
     }
@@ -610,6 +628,15 @@ export class AgentAcpHttpServer {
     signal: AbortSignal,
     admitted: () => void,
   ): Promise<void> {
+    if (
+      request.url === "/internal/acp-peer/control/source-inspect" ||
+      request.url === "/internal/acp-peer/control/source-artifact"
+    ) {
+      if (this.sourceOwner === undefined)
+        throw new DomainError("source_unavailable", "Source owner forwarding is unavailable");
+      await this.sourceOwner.handlePeer(request, response, member, signal, admitted);
+      return;
+    }
     if (this.controlOwner === undefined)
       throw new DomainError("agent_unavailable", "Owner control forwarding is unavailable");
     await this.controlOwner.handlePeer(request, response, member, signal, admitted);

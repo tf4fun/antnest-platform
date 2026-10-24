@@ -15,6 +15,7 @@ import {
   parseOwnerForward,
   type OwnerForwarding,
   type OwnerForwardRequest,
+  type OwnerExecutionAdmission,
 } from "../application/owner-forwarding.js";
 import type { AgentOwnershipFence } from "../domain/agent-ownership.js";
 import {
@@ -49,10 +50,11 @@ const responseHeaders = new Set([
 export type HttpOwnerForwardingOptions = {
   registration: OwnerRegistration;
   handles: HttpOwnerHandles;
-  resolver: Pick<OwnerForwarding, "resolve"> & Partial<Pick<OwnerForwarding, "resolveSettlement">>;
+  resolver: Pick<OwnerForwarding, "resolve"> &
+    Partial<Pick<OwnerForwarding, "resolveSettlement" | "resolveSource">>;
   peers: Pick<PeerAuthentication, "fetchFor" | "membership">;
   admit(
-    request: OwnerForwardRequest,
+    request: OwnerExecutionAdmission,
     signal: AbortSignal,
   ): Promise<{
     fence: AgentOwnershipFence;

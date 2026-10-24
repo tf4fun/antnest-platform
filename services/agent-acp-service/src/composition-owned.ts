@@ -57,7 +57,7 @@ import type { AgentSettlementAuthority, AgentSettlementPort } from "./ports/agen
 import type { AgentExecutionStatePort } from "./ports/agent-execution-state.js";
 import type { SkillCommandsPort } from "./ports/skill-commands.js";
 import { ModelTransportCleanupError } from "./ports/model.js";
-import type { OwnerForwardRequest } from "./application/owner-forwarding.js";
+import type { OwnerExecutionAdmission } from "./application/owner-forwarding.js";
 import { PeerDeadlineError } from "./ports/agent-peers.js";
 import { executionPublication } from "./domain/execution-publication.js";
 
@@ -654,11 +654,26 @@ export class OwnedAgentComponents {
     return this.shutdownPromise;
   }
 
-  public async beginSourceRead(scope: AgentOwnershipScope, signal: AbortSignal) {
+  public async beginSourceRead(
+    scope: AgentOwnershipScope & { ownerFence?: AgentOwnershipFence },
+    signal: AbortSignal,
+  ) {
     const entry = this.capture(scope);
+    const current = () => {
+      signal.throwIfAborted();
+      entry.signal.throwIfAborted();
+      if (
+        this.capture(scope) !== entry ||
+        (scope.ownerFence !== undefined &&
+          !isDeepStrictEqual(scope.ownerFence, entry.generation.authority.fence))
+      )
+        throw unavailable();
+    };
+    current();
     let finish: (() => void) | undefined;
     try {
       return await entry.generation.dispatch(async () => {
+        current();
         const lease = await entry.graph.learningGate.beginSourceRead(
           scope,
           AbortSignal.any([signal, entry.signal]),
@@ -675,6 +690,7 @@ export class OwnedAgentComponents {
           }
         };
         entry.generation.retainRun(done.promise);
+        current();
         return { signal: lease.signal, finish };
       });
     } catch (error) {
@@ -686,7 +702,7 @@ export class OwnedAgentComponents {
   }
 
   public async admitForwardedExecution(
-    request: OwnerForwardRequest,
+    request: OwnerExecutionAdmission,
     signal: AbortSignal,
   ): Promise<{ fence: AgentOwnershipFence; signal: AbortSignal; assertCurrent(): void }> {
     const { identity } = request;

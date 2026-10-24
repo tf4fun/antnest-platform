@@ -76,7 +76,141 @@ function setup() {
   };
 }
 
+function sourceAuthority() {
+  const cancellation = new AbortController();
+  const failure = new Error("Original source authority is no longer current");
+  let current = true;
+  return {
+    authority: {
+      fence: Object.freeze({
+        organizationId: organization_id,
+        agentId: agent_id,
+        ownerInstanceId: "11111111-1111-4111-8111-111111111111",
+        epoch: "7",
+      }),
+      signal: cancellation.signal,
+      assertCurrent: vi.fn(() => {
+        cancellation.signal.throwIfAborted();
+        if (!current) throw failure;
+      }),
+    },
+    invalidate() {
+      current = false;
+    },
+    cancel() {
+      cancellation.abort(failure);
+    },
+  };
+}
+
 describe("current Agent-owned Skill sources", () => {
+  it("passes the originally admitted owner fence to inspect and artifact source gates", async () => {
+    const s = setup();
+    const admitted = sourceAuthority();
+    const caller = new AbortController();
+    expect(await s.service.inspect(s.input, caller.signal, admitted.authority)).toEqual({
+      items: [s.projection],
+    });
+    expect(await s.service.artifact(s.artifact, caller.signal, admitted.authority)).toEqual(
+      s.record,
+    );
+    expect(s.begin).toHaveBeenCalledTimes(2);
+    for (const [scope] of s.begin.mock.calls)
+      expect(scope).toEqual({
+        organizationId: organization_id,
+        agentId: agent_id,
+        ownerFence: admitted.authority.fence,
+      });
+    expect(admitted.authority.assertCurrent).toHaveBeenCalled();
+    expect(s.verify).toHaveBeenCalledTimes(2);
+    expect(s.finish).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not observe Runtime when admitted authority changes during the initial repository read", async () => {
+    const s = setup();
+    const admitted = sourceAuthority();
+    const entered = Promise.withResolvers<void>();
+    const original = Promise.withResolvers<typeof s.record>();
+    s.read.mockImplementationOnce(() => {
+      entered.resolve();
+      return original.promise;
+    });
+    const pending = s.service
+      .artifact(s.artifact, new AbortController().signal, admitted.authority)
+      .then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+    try {
+      await entered.promise;
+      admitted.invalidate();
+      expect(admitted.authority.signal.aborted).toBe(false);
+      original.resolve(s.record);
+      const result = await pending;
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected")
+        expect(result.reason).toMatchObject({ code: "source_unavailable" });
+      expect(s.verify).not.toHaveBeenCalled();
+      expect(s.remove).not.toHaveBeenCalled();
+      expect(s.finish).toHaveBeenCalledTimes(s.begin.mock.calls.length);
+    } finally {
+      original.resolve(s.record);
+      await Promise.allSettled([pending]);
+    }
+  });
+
+  it("joins the original Runtime observation before finishing the gate after authority cancellation", async () => {
+    const s = setup();
+    const admitted = sourceAuthority();
+    const caller = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const original = Promise.withResolvers<"current">();
+    let originalJoined = false,
+      settled = false;
+    s.verify.mockImplementationOnce(() => {
+      entered.resolve();
+      return original.promise.finally(() => {
+        originalJoined = true;
+      });
+    });
+    s.finish.mockImplementation(() => {
+      expect(originalJoined, "the original Runtime task must settle before gate.finish").toBe(true);
+    });
+    const pending = s.service
+      .artifact(s.artifact, caller.signal, admitted.authority)
+      .then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      )
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      await entered.promise;
+      admitted.cancel();
+      expect(caller.signal.aborted).toBe(false);
+      expect(admitted.authority.signal.aborted).toBe(true);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled, "authority cancellation is not the original Runtime cleanup receipt").toBe(
+        false,
+      );
+      expect(originalJoined).toBe(false);
+      expect(s.finish).not.toHaveBeenCalled();
+      original.resolve("current");
+      const result = await pending;
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected")
+        expect(result.reason).toMatchObject({ code: "source_unavailable" });
+      expect(originalJoined).toBe(true);
+      expect(s.verify).toHaveBeenCalledTimes(1);
+      expect(s.finish).toHaveBeenCalledTimes(1);
+      expect(s.remove).not.toHaveBeenCalled();
+    } finally {
+      original.resolve("current");
+      await Promise.allSettled([pending]);
+    }
+  });
+
   it("waits for a catalog read before verifying and delivering the selected source once", async () => {
     const s = setup();
     const gate = new LearningForegroundGate(() => false);

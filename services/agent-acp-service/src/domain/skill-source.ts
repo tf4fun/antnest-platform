@@ -56,13 +56,17 @@ export type SkillSourceRecord = {
   package: ReturnType<typeof learningSkillTextPackage>;
 };
 export class SkillSourceError extends Error {
-  public constructor(public readonly code: "not_found" | "content_changed" | "source_unavailable") {
+  public constructor(
+    public readonly code: "not_found" | "content_changed" | "source_unavailable",
+    options?: ErrorOptions,
+  ) {
     super(
       code === "not_found"
         ? "Skill source not found"
         : code === "content_changed"
           ? "Skill source content changed"
           : "Skill source unavailable",
+      options,
     );
   }
 }

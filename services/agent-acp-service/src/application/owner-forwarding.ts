@@ -49,6 +49,10 @@ const schema = z.strictObject({
   hop: z.literal(1),
 });
 export type OwnerForwardRequest = Readonly<z.infer<typeof schema>>;
+export type OwnerExecutionAdmission = Pick<
+  OwnerForwardRequest,
+  "identity" | "target" | "epoch" | "publication" | "deadline_at"
+>;
 
 function parse(value: unknown): OwnerForwardRequest {
   const result = schema.parse(value);
@@ -158,6 +162,7 @@ export class OwnerForwarding {
     protocol: "v1" | "v2",
     signal: AbortSignal,
     includeLocal = false,
+    originalDeadline?: number,
   ): Promise<OwnerForwardRequest | null> {
     const { directory, assignment, registration, membershipSha256 } = this.options;
     directory.inspect(identity);
@@ -165,7 +170,8 @@ export class OwnerForwarding {
     if (member === registration.member_id && !includeLocal) return null;
     const publication = directory.capturePublication(identity.organizationId);
     const requestId = randomUUID();
-    const deadline = Date.now() + 10000;
+    const deadline = Math.min(Date.now() + 10000, originalDeadline ?? Infinity);
+    if (Date.now() >= deadline) throw new PeerDeadlineError("Owner resolution expired");
     const challenge = randomBytes(32).toString("hex");
     const discovery = {
       request_id: requestId,
@@ -211,6 +217,17 @@ export class OwnerForwarding {
       caller: "agent-ui",
       hop: 1,
     });
+  }
+
+  /** Source batches share one original budget and bind local groups as well. */
+  public async resolveSource(
+    identity: ExecutionIdentity,
+    deadline: number,
+    signal: AbortSignal,
+  ): Promise<OwnerForwardRequest> {
+    const result = await this.resolve(identity, "v1", signal, true, deadline);
+    if (result === null) throw unavailable();
+    return result;
   }
 }
 function unavailable(): DomainError {
