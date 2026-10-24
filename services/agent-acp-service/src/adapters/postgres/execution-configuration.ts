@@ -12,6 +12,7 @@ import { DomainError } from "../../domain/errors.js";
 import {
   AgentOwnershipLostError,
   ownershipFence,
+  transactionBudget,
   type AgentOwnershipFence,
 } from "../../domain/agent-ownership.js";
 import {
@@ -201,7 +202,10 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
   public async confirmOwnedAuthority(
     input: ExecutionConfiguration,
     inputs: readonly AgentOwnershipFence[],
+    options: { timeoutMs?: number } = {},
   ): Promise<void> {
+    const timeoutMs = transactionBudget(options.timeoutMs ?? 10_000);
+    if (timeoutMs > 10_000) throw new RangeError("Publication confirmation exceeds its deadline");
     const expected = parseExecutionConfiguration(structuredClone(input));
     const fences = inputs
       .map(ownershipFence)
@@ -267,7 +271,7 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
         );
         if (current.rows[0]?.owned !== true) throw new AgentOwnershipLostError();
       },
-      { timeoutMs: 10_000 },
+      { timeoutMs },
     );
   }
 

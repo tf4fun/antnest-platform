@@ -23,6 +23,10 @@ import type {
 import type { RuntimeBinding } from "../domain/types.js";
 import type { ProviderClients } from "./provider-clients.js";
 import { InvalidationListeners } from "./invalidation-listeners.js";
+import {
+  executionPublication,
+  parseExecutionPublication,
+} from "../domain/execution-publication.js";
 
 export type ExecutionDirectoryDependencies = {
   repository: ExecutionConfigurationRepository;
@@ -41,6 +45,12 @@ export type ClosedAgentOperation = {
   minimumRevision: number;
   operationId: string;
 };
+
+export type LocalExecutionPublication = Readonly<{
+  configuration: PublicExecutionConfiguration;
+  authority: ExecutionConfiguration;
+  assertCurrent: () => void;
+}>;
 
 class SupersededRestoration extends Error {}
 
@@ -158,6 +168,47 @@ export class ExecutionDirectory {
     )
       throw new DomainError("configuration_unavailable", "Execution configuration is unavailable");
     return applied;
+  }
+
+  /** Peer leaf: read the sealed publication, apply locally, and never aggregate or persist it. */
+  public async applyPeerPublication(input: unknown): Promise<LocalExecutionPublication> {
+    const expected = parseExecutionPublication(input);
+    return this.authorized(expected.organization_id, undefined, async () => {
+      const stored = await this.dependencies.repository.loadAuthority(expected.organization_id);
+      if (stored === null || !isDeepStrictEqual(executionPublication(stored), expected))
+        throw publicationUnavailable();
+      // Own this capture: neither an adapter nor a later caller may mutate the
+      // private payload that the final aggregate transaction must confirm.
+      const authority = parseExecutionConfiguration(stored);
+      if (!isDeepStrictEqual(executionPublication(authority), expected))
+        throw publicationUnavailable();
+      freezeAuthority(authority);
+      this.dependencies.clients.validate(authority);
+      const connections = this.dependencies.runtimeConnections.prepare(authority);
+      try {
+        await this.publish(authority, connections, async () => {
+          const current = await this.dependencies.repository.loadAuthority(
+            expected.organization_id,
+          );
+          if (!isDeepStrictEqual(current, authority)) throw publicationUnavailable();
+        });
+      } finally {
+        connections.rollback();
+      }
+      const configuration = this.configurations.get(expected.organization_id);
+      if (configuration === undefined) throw publicationUnavailable();
+      return Object.freeze({
+        configuration,
+        authority,
+        assertCurrent: () => {
+          if (
+            this.configurations.get(expected.organization_id) !== configuration ||
+            this.pending.get(expected.organization_id)?.publication !== undefined
+          )
+            throw publicationUnavailable();
+        },
+      });
+    });
   }
 
   // Serialize local commits per Agent. A configuration publication waits for
@@ -396,4 +447,14 @@ export class ExecutionDirectory {
         this.pending.delete(organizationId);
     }
   }
+}
+
+function publicationUnavailable(): DomainError {
+  return new DomainError("configuration_unavailable", "Execution publication changed");
+}
+
+function freezeAuthority(value: unknown): void {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return;
+  for (const child of Object.values(value)) freezeAuthority(child);
+  Object.freeze(value);
 }
