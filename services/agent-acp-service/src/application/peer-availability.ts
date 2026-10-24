@@ -168,12 +168,17 @@ export class PeerAvailability {
       if (!live.some((r) => isDeepStrictEqual(r, this.registration))) throw unavailable();
       await this.options.ledger.assert(guard, { timeoutMs: deadline - Date.now() });
       current();
-      if (attempt < this.published) throw unavailable();
       const next = Object.freeze({
         guard,
         members: Object.freeze(members),
         live: Object.freeze(live),
       });
+      if (attempt < this.published) {
+        // A concurrent refresh of the same fully verified capture is harmless.
+        // Never replace newer membership or resurrect a peer proved stopped.
+        if (this.latest !== undefined && isDeepStrictEqual(next, this.latest)) return this.latest;
+        throw unavailable();
+      }
       this.latest = next;
       this.published = attempt;
       return next;

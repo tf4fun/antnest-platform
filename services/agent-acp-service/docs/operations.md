@@ -151,8 +151,9 @@ unavailable proof or unresolved original work keeps that Agent unavailable.
 Non-peer mode retains exclusive startup; peer mode uses shared compatibility
 locking, stable preferred assignment and guarded survivor takeover. The independent ownership-loss fail-stop
 channel remains. HTTP/SSE, state read/watch, settlement and Registry source reads
-use owner forwarding. Controlled two-Node takeover coverage is available;
-two-replica Docker, browser and final operations acceptance remain pending.
+use owner forwarding. Controlled two-Node tests and the
+[two-replica Docker/browser profile](../../../tests/e2e/acp-survivor/README.md)
+cover owner loss, survivor recovery and a new Prompt on the surviving replica.
 Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
 registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
 it covers stopped Run and Learning claim recovery, permanent proof reuse during Controller failure,

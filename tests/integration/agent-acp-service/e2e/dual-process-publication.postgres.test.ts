@@ -719,7 +719,7 @@ describe.skipIf(databaseUrl === undefined)(
             },
           );
           const published: unknown = await publication.json();
-          expect(publication.status).toBe(200);
+          expect(publication.status, JSON.stringify(published)).toBe(200);
           expect(published).toMatchObject({ applied_revision: 1 });
           if (mode === "survivor-takeover") {
             const agentId = configuration.agents[1]!.agent_id;
@@ -881,7 +881,7 @@ describe.skipIf(databaseUrl === undefined)(
               "survivor publication ACK after natural lease expiry",
               15_000,
             );
-            expect(reapplied.status).toBe(200);
+            expect(reapplied.status, JSON.stringify(reapplied.body)).toBe(200);
             expect(reapplied.body).toMatchObject({ applied_revision: 2 });
             expect(historyRequests).toContain("acp-b");
             expect(inspectionRequests.slice(inspectionsBeforeKill)).toContain(

@@ -14,6 +14,8 @@ import { PeerAuthentication } from "../../../../services/agent-acp-service/src/a
 import { PeerServer } from "../../../../services/agent-acp-service/src/transport/peer-server.js";
 import { PostgresExecutionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-configuration.js";
 import { PostgresPeerMembership } from "../../../../services/agent-acp-service/src/adapters/postgres/peer-membership.js";
+import { PostgresPeerParticipation } from "../../../../services/agent-acp-service/src/adapters/postgres/peer-participation.js";
+import { PeerAvailability } from "../../../../services/agent-acp-service/src/application/peer-availability.js";
 import { PostgresWorkerLock } from "../../../../services/agent-acp-service/src/adapters/postgres/worker-lock.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
 import type { SessionOutputSnapshot } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
@@ -58,13 +60,16 @@ async function withPeers(
     release: (() => void)[];
     db: FencingFixture;
     owners: ReturnType<typeof registration>[];
+    availabilities: PeerAvailability[];
   }) => Promise<void>,
+  availabilityEnabled = false,
 ) {
   await withDatabase(async (db) => {
     const directory = mkdtempSync(join(tmpdir(), "peer-composition-"));
     const configs: AgentAcpConfig[] = [],
       servers: PeerServer[] = [],
       components: Components[] = [];
+    const availabilities: PeerAvailability[] = [];
     const connections: ReturnType<typeof runtimeConnections>[] = [],
       release: (() => void)[] = [];
     const lifetime = new AbortController();
@@ -89,6 +94,10 @@ async function withPeers(
           randomBytes(32).toString("base64url"),
         ];
       const owners = [registration("acp-a"), registration("acp-b")];
+      const registeredOwners: ReturnType<typeof registration>[] = [];
+      const historyIds = new Map(
+        members.map((member) => [member.member_id, randomUUID()]),
+      );
       expect((await db.a.query("SELECT * FROM agent_leases")).rows).toEqual([]);
       for (const i of [0, 1]) {
         const current = join(directory, String(i));
@@ -129,6 +138,51 @@ async function withPeers(
         await new PostgresPeerMembership(
           i === 0 ? db.kernelA : db.kernelB,
         ).assertPinned(authentication.membership);
+        if (availabilityEnabled) {
+          const ledger = new PostgresPeerParticipation(
+            i === 0 ? db.kernelA : db.kernelB,
+            authentication.membership.sha256,
+          );
+          await ledger.join(owners[i]!);
+          registeredOwners.push(owners[i]!);
+          const availability = new PeerAvailability({
+            registration: owners[i]!,
+            membershipSha256: authentication.membership.sha256,
+            members: members.map((member) => member.member_id),
+            ledger,
+            registry: {
+              history: (input, signal) => {
+                signal.throwIfAborted();
+                expect(input.cursor).toBeNull();
+                const entries = registeredOwners.filter(
+                  (owner) => owner.member_id === input.member_id,
+                );
+                return Promise.resolve({
+                  member_id: input.member_id,
+                  history_id: historyIds.get(input.member_id)!,
+                  snapshot_revision: String(entries.length),
+                  after_sequence: "0",
+                  items: entries.map((owner, index) => ({
+                    sequence: String(index + 1),
+                    registration: owner,
+                  })),
+                  next_cursor: null,
+                });
+              },
+              inspect: (original, signal) => {
+                signal.throwIfAborted();
+                expect(registeredOwners).toContainEqual(original);
+                return Promise.resolve({
+                  ...original,
+                  state: "running",
+                  observed_at: "2026-10-24T00:00:00.000Z",
+                });
+              },
+            },
+          });
+          await availability.refresh(lifetime.signal, Date.now() + 5000);
+          availabilities.push(availability);
+        }
         const transport = runtimeConnections();
         connections.push(transport);
         const built = buildComponents(
@@ -144,6 +198,7 @@ async function withPeers(
           undefined,
           undefined,
           authentication,
+          availabilities[i],
         );
         components.push(built);
         const server = new PeerServer({
@@ -161,6 +216,7 @@ async function withPeers(
         release,
         db,
         owners,
+        availabilities,
       });
     } catch (error) {
       failures.push(error);
@@ -266,6 +322,149 @@ describe.skipIf(process.env.ANTNEST_ACP_TEST_DATABASE_URL === undefined)(
           b.directory.inspect(executionIdentity()).configuration.revision,
         ).toBe(1);
       });
+    });
+
+    it("refreshes stale participation before acquiring the first publication leases", async () => {
+      await withPeers(
+        false,
+        async ({ a, b, configuration, db, owners, availabilities }) => {
+          const first = availabilities[0]!.current();
+          const second = availabilities[1]!.current();
+          expect(first.guard.revision).toBe("1");
+          expect(first.members).toEqual([
+            {
+              memberId: "acp-a",
+              state: "running",
+              registration: owners[0]!,
+              stopped: [],
+            },
+            { memberId: "acp-b", state: "unregistered" },
+          ]);
+          expect(second.guard.revision).toBe("2");
+          expect(second.live).toEqual(owners);
+          expect((await db.a.query("SELECT * FROM agent_leases")).rows).toEqual(
+            [],
+          );
+          const save = vi.spyOn(
+            PostgresExecutionConfiguration.prototype,
+            "save",
+          );
+          const confirm = vi.spyOn(
+            PostgresExecutionConfiguration.prototype,
+            "confirmOwnedAuthority",
+          );
+          await expect(a.directory.apply(configuration)).resolves.toMatchObject(
+            {
+              applied_revision: 1,
+            },
+          );
+          expect(availabilities[0]!.current().guard).toEqual(second.guard);
+          expect(availabilities[0]!.current().live).toEqual(owners);
+          expect(save).toHaveBeenCalledOnce();
+          expect(confirm).toHaveBeenCalledOnce();
+          const fences = confirm.mock.calls[0]![1];
+          expect(fences.map((fence) => fence.agentId).sort()).toEqual(
+            configuration.agents.map((agent) => agent.agent_id).sort(),
+          );
+          expect(
+            new Set(fences.map((fence) => fence.ownerInstanceId)).size,
+          ).toBe(2);
+          expect(fences).toEqual(
+            expect.arrayContaining([
+              {
+                organizationId: configuration.organization_id,
+                agentId: "agent-1",
+                ownerInstanceId: owners[0]!.incarnation_id,
+                epoch: "1",
+              },
+              {
+                organizationId: configuration.organization_id,
+                agentId: "agent-3",
+                ownerInstanceId: owners[1]!.incarnation_id,
+                epoch: "1",
+              },
+            ]),
+          );
+          expect(
+            (
+              await db.observer.query(
+                "SELECT agent_id, owner_instance_id, epoch::text FROM agent_leases ORDER BY agent_id",
+              )
+            ).rows,
+          ).toEqual([
+            {
+              agent_id: "agent-1",
+              owner_instance_id: owners[0]!.incarnation_id,
+              epoch: "1",
+            },
+            {
+              agent_id: "agent-3",
+              owner_instance_id: owners[1]!.incarnation_id,
+              epoch: "1",
+            },
+          ]);
+          expect(
+            b.directory.inspect(executionIdentity()).configuration.revision,
+          ).toBe(1);
+        },
+        true,
+      );
+    });
+
+    it("starts local revocation before a held participation refresh and defers owned preparation", async () => {
+      await withPeers(
+        false,
+        async ({ a, b, configuration, availabilities }) => {
+          await expect(a.directory.apply(configuration)).resolves.toMatchObject(
+            {
+              applied_revision: 1,
+            },
+          );
+          const revoke = vi.spyOn(a.outputs, "revokeAccess");
+          const prepare = vi.spyOn(a.owned!, "prepare");
+          const availability = availabilities[0]!;
+          const originalRefresh = availability.refresh.bind(availability);
+          const entered = Promise.withResolvers<void>();
+          const held = Promise.withResolvers<void>();
+          const refresh = vi
+            .spyOn(availability, "refresh")
+            .mockImplementationOnce(async (signal, deadline) => {
+              entered.resolve();
+              await held.promise;
+              return originalRefresh(signal, deadline);
+            });
+          const changed = structuredClone(configuration);
+          changed.revision = 2;
+          changed.agents = [];
+          const applied = a.directory.apply(changed);
+          void applied.catch(() => undefined);
+          try {
+            await Promise.race([entered.promise, applied]);
+            expect(refresh).toHaveBeenCalledOnce();
+            expect(revoke).toHaveBeenCalledWith(
+              expect.objectContaining({
+                organization_id: changed.organization_id,
+                revision: changed.revision,
+                agents: [],
+              }),
+            );
+            expect(prepare).not.toHaveBeenCalled();
+            held.resolve();
+            await expect(applied).resolves.toMatchObject({
+              applied_revision: 2,
+            });
+            for (const built of [a, b])
+              expect(
+                built.directory.capturePublication(changed.organization_id)
+                  .configuration,
+              ).toMatchObject({ revision: 2, agents: [] });
+          } finally {
+            held.resolve();
+            await Promise.allSettled([applied]);
+          }
+        },
+        true,
+      );
     });
 
     it.each(["admitting", "running"] as const)(

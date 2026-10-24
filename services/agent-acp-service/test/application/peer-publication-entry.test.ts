@@ -13,6 +13,8 @@ import { executionPublication } from "../../src/domain/execution-publication.js"
 import { executionConfiguration, executionIdentity } from "../fixtures/execution-configuration.js";
 import { runtimeConnections } from "../support/runtime-connections.js";
 
+type ApplyContext = { signal?: AbortSignal; deadline: number };
+
 function setup(confirm: (capture: LocalExecutionPublication, deadline: Date) => Promise<void>) {
   let stored: ExecutionConfiguration | null = null;
   const onApplied = vi.fn<ExecutionDirectoryDependencies["onApplied"]>(() => Promise.resolve());
@@ -59,7 +61,8 @@ describe("production peer publication entry", () => {
     });
     const f = setup(confirmation);
     const original = executionConfiguration();
-    f.onApplied.mockImplementation(() => {
+    f.onApplied.mockImplementation((_configuration, context?: ApplyContext) => {
+      expect(context?.deadline).toBe(1_800_000_010_000);
       now += 4000;
       return Promise.resolve();
     });
@@ -129,5 +132,52 @@ describe("production peer publication entry", () => {
     captured.assertCurrent();
     expect(captured.authority).toEqual(original);
     expect(confirmation).not.toHaveBeenCalled();
+  });
+
+  it("passes the original peer context and joins cancelled preparation before withdrawing the publication", async () => {
+    const confirmation = vi.fn(() => Promise.reject(new Error("Recursive aggregation")));
+    const f = setup(confirmation);
+    const authority = executionConfiguration();
+    f.store(authority);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const abort = new AbortController();
+    const abortError = new Error("original peer publication cancelled");
+    const context: ApplyContext = { signal: abort.signal, deadline: Date.now() + 6000 };
+    let received: ApplyContext | undefined;
+    f.onApplied.mockImplementation(async (_configuration, appliedContext?: ApplyContext) => {
+      received = appliedContext;
+      entered.resolve();
+      await release.promise;
+    });
+    let completed = false;
+    const original = f.directory
+      .applyPeerPublication(executionPublication(authority), context)
+      .finally(() => {
+        completed = true;
+      });
+    const joined = original.catch(() => undefined);
+    try {
+      await Promise.race([
+        entered.promise,
+        original.then(() => {
+          throw new Error("Peer preparation hook was bypassed");
+        }),
+      ]);
+      expect(received?.signal).toBe(context.signal);
+      expect(received?.deadline).toBe(context.deadline);
+      abort.abort(abortError);
+      await Promise.resolve();
+      expect(completed).toBe(false);
+      release.resolve();
+      await expect(original).rejects.toBe(abortError);
+      expect(() => f.directory.inspect(executionIdentity())).toThrow();
+      expect(() => f.directory.capturePublication(authority.organization_id)).toThrow();
+      expect(confirmation).not.toHaveBeenCalled();
+    } finally {
+      abort.abort(abortError);
+      release.resolve();
+      await joined;
+    }
   });
 });

@@ -28,11 +28,16 @@ import {
   parseExecutionPublication,
 } from "../domain/execution-publication.js";
 
+export type ExecutionPreparationContext = Readonly<{ signal?: AbortSignal; deadline: number }>;
+
 export type ExecutionDirectoryDependencies = {
   repository: ExecutionConfigurationRepository;
   clients: ProviderClients;
   runtimeConnections: RuntimeConnectionAuthority;
-  onApplied: (configuration: PublicExecutionConfiguration) => Promise<void>;
+  onApplied: (
+    configuration: PublicExecutionConfiguration,
+    context: ExecutionPreparationContext,
+  ) => Promise<void>;
   beforeAck?: (configuration: PublicExecutionConfiguration) => Promise<void>;
   beforePeerAck?: (publication: LocalExecutionPublication, deadline: Date) => Promise<void>;
   onUnavailable: (organizationId: string) => void;
@@ -110,7 +115,7 @@ export class ExecutionDirectory {
                   signal.throwIfAborted();
                   if (!isDeepStrictEqual(current, expected)) throw new SupersededRestoration();
                 },
-                signal,
+                { signal, deadline: Date.now() + 10000 },
               );
               restored.push(incoming);
             } finally {
@@ -144,18 +149,19 @@ export class ExecutionDirectory {
     input: unknown,
   ): Promise<{ organization_id: string; applied_revision: number }> {
     const deadline = new Date(Date.now() + 10000);
+    const context = { deadline: deadline.getTime() };
     const configuration = parseExecutionConfiguration(input);
     const beforeAck = this.dependencies.beforeAck;
     const beforePeerAck = this.dependencies.beforePeerAck;
     if (beforeAck === undefined && beforePeerAck === undefined)
       return this.authorized(configuration.organization_id, undefined, () =>
-        this.applyCurrent(configuration),
+        this.applyCurrent(configuration, context),
       );
     const { applied, publication } = await this.authorized(
       configuration.organization_id,
       undefined,
       async () => {
-        const applied = await this.applyCurrent(configuration);
+        const applied = await this.applyCurrent(configuration, context);
         const publication = this.publications.get(applied.organization_id);
         if (
           publication === undefined ||
@@ -177,7 +183,11 @@ export class ExecutionDirectory {
   }
 
   /** Peer leaf: read the sealed publication, apply locally, and never aggregate or persist it. */
-  public async applyPeerPublication(input: unknown): Promise<LocalExecutionPublication> {
+  public async applyPeerPublication(
+    input: unknown,
+    context: ExecutionPreparationContext = { deadline: Date.now() + 10000 },
+  ): Promise<LocalExecutionPublication> {
+    context.signal?.throwIfAborted();
     const expected = parseExecutionPublication(input);
     return this.authorized(expected.organization_id, undefined, async () => {
       const stored = await this.dependencies.repository.loadAuthority(expected.organization_id);
@@ -192,12 +202,17 @@ export class ExecutionDirectory {
       this.dependencies.clients.validate(authority);
       const connections = this.dependencies.runtimeConnections.prepare(authority);
       try {
-        await this.publish(authority, connections, async () => {
-          const current = await this.dependencies.repository.loadAuthority(
-            expected.organization_id,
-          );
-          if (!isDeepStrictEqual(current, authority)) throw publicationUnavailable();
-        });
+        await this.publish(
+          authority,
+          connections,
+          async () => {
+            const current = await this.dependencies.repository.loadAuthority(
+              expected.organization_id,
+            );
+            if (!isDeepStrictEqual(current, authority)) throw publicationUnavailable();
+          },
+          context,
+        );
       } finally {
         connections.rollback();
       }
@@ -209,6 +224,7 @@ export class ExecutionDirectory {
 
   /** Reconcile ownership without replacing a publication or its existing connections. */
   public async reconcileOwnership(signal: AbortSignal, organizationId?: string): Promise<void> {
+    const context = { signal, deadline: Date.now() + 10000 };
     const scopes = organizationId === undefined ? [...this.publications.keys()] : [organizationId];
     for (const scope of scopes) {
       signal.throwIfAborted();
@@ -229,7 +245,7 @@ export class ExecutionDirectory {
         if (!isDeepStrictEqual(current, capture.authority)) return;
         let preparationFailure: { error: unknown } | undefined;
         try {
-          await this.dependencies.onApplied(capture.configuration);
+          await this.dependencies.onApplied(capture.configuration, context);
         } catch (error) {
           preparationFailure = { error };
         }
@@ -357,7 +373,10 @@ export class ExecutionDirectory {
     return { agent: structuredClone(agent), revision: configuration.revision };
   }
 
-  private async applyCurrent(incoming: ExecutionConfiguration) {
+  private async applyCurrent(
+    incoming: ExecutionConfiguration,
+    context: ExecutionPreparationContext,
+  ) {
     const organizationId = incoming.organization_id;
     const current = await this.dependencies.repository.load(organizationId);
     const applied = this.configurations.get(organizationId);
@@ -411,7 +430,7 @@ export class ExecutionDirectory {
         connections.commit();
         return { organization_id: organizationId, applied_revision: next.revision };
       }
-      await this.publish(incoming, connections);
+      await this.publish(incoming, connections, undefined, context);
     } finally {
       connections.rollback();
     }
@@ -422,7 +441,7 @@ export class ExecutionDirectory {
     incoming: ExecutionConfiguration,
     connections: PreparedRuntimeConnections,
     beforeCommit?: () => Promise<void>,
-    signal?: AbortSignal,
+    context: ExecutionPreparationContext = { deadline: Date.now() + 10000 },
   ): Promise<void> {
     const authority = parseExecutionConfiguration(incoming);
     freezeAuthority(authority);
@@ -430,10 +449,10 @@ export class ExecutionDirectory {
     const organizationId = incoming.organization_id;
     try {
       this.dependencies.clients.apply(incoming);
-      await this.dependencies.onApplied(structuredClone(next));
-      signal?.throwIfAborted();
+      await this.dependencies.onApplied(structuredClone(next), context);
+      context.signal?.throwIfAborted();
       await beforeCommit?.();
-      signal?.throwIfAborted();
+      context.signal?.throwIfAborted();
       connections.commit();
       this.configurations.set(organizationId, next);
       const capture: LocalExecutionPublication = Object.freeze({

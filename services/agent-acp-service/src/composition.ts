@@ -696,9 +696,19 @@ export function buildComponents(
       telemetry.log("warn", "execution_authority_unavailable", {
         organization_id: organizationId,
       }),
-    onApplied: (snapshot) => {
+    onApplied: async (snapshot, context) => {
       revokeAccess(snapshot);
-      if (owned !== undefined) return owned.prepare(snapshot);
+      if (owned !== undefined) {
+        const lifetime =
+          context.signal === undefined
+            ? ownershipSignal
+            : AbortSignal.any([ownershipSignal, context.signal]);
+        // Revoke first, then refresh before any lease acquisition. A peer may
+        // have joined since startup or the last background availability capture.
+        await peerAvailability?.refresh(lifetime, context.deadline);
+        lifetime.throwIfAborted();
+        return owned.prepare(snapshot);
+      }
       agent.learningGate.syncOrganization(snapshot.organization_id, snapshot.agents);
       return Promise.resolve();
     },
@@ -830,11 +840,10 @@ export function buildComponents(
   const applyPeerPublication = async (input: PeerPublicationRequest, signal: AbortSignal) => {
     const request = parsePeerPublicationRequest(input);
     checkPeerRequest(request, signal);
-    await peerAvailability?.refresh(
-      AbortSignal.any([ownershipSignal, signal]),
-      Date.parse(request.deadline_at),
-    );
-    const capture = await directory.applyPeerPublication(request.publication);
+    const capture = await directory.applyPeerPublication(request.publication, {
+      signal: AbortSignal.any([ownershipSignal, signal]),
+      deadline: Date.parse(request.deadline_at),
+    });
     return localPeerReceipt(capture, request, signal);
   };
   const signing = config.skillMaintenanceSigning;

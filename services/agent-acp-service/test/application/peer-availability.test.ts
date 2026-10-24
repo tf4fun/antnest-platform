@@ -195,4 +195,162 @@ describe("complete-history participation before survivor takeover", () => {
     await result;
     expect(f.availability.current()).toBe(previous);
   });
+
+  it("reuses the newer published object when overlapping refresh captures are identical", async () => {
+    const f = setup();
+    const held = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const originalAssert = f.assert.getMockImplementation()!;
+    f.assert.mockImplementationOnce(async (expected) => {
+      await originalAssert(expected);
+      entered.resolve();
+      await held.promise;
+    });
+    const first = f.refresh();
+    const firstJoined = first.catch(() => undefined);
+    let second: ReturnType<typeof f.refresh> | undefined;
+    try {
+      await entered.promise;
+      second = f.refresh();
+      const published = await second;
+      expect(f.availability.current()).toBe(published);
+      expect(f.assert).toHaveBeenCalledTimes(2);
+      held.resolve();
+      await expect(first).resolves.toBe(published);
+      expect(f.availability.current()).toBe(published);
+      expect(f.capture).toHaveBeenCalledTimes(2);
+    } finally {
+      held.resolve();
+      await Promise.allSettled([firstJoined, ...(second === undefined ? [] : [second])]);
+    }
+  });
+
+  it("rejects an older overlapping refresh when a newer participation revision is published", async () => {
+    const f = setup();
+    const held = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const originalAssert = f.assert.getMockImplementation()!;
+    f.assert.mockImplementationOnce(async (expected) => {
+      await originalAssert(expected);
+      entered.resolve();
+      await held.promise;
+    });
+    const first = f.refresh();
+    const firstJoined = first.catch(() => undefined);
+    let second: ReturnType<typeof f.refresh> | undefined;
+    try {
+      await entered.promise;
+      f.join();
+      second = f.refresh();
+      const published = await second;
+      expect(published.guard.revision).toBe("3");
+      expect(published.live).toEqual([local]);
+      expect(f.assert.mock.calls.map(([guard]) => guard.revision)).toEqual(["2", "3"]);
+      held.resolve();
+      await expect(first).rejects.toMatchObject({ code: "configuration_unavailable" });
+      expect(f.availability.current()).toBe(published);
+    } finally {
+      held.resolve();
+      await Promise.allSettled([firstJoined, ...(second === undefined ? [] : [second])]);
+    }
+  });
+
+  it("does not revive a running peer from an older overlapping refresh after a same-H stop proof", async () => {
+    const f = setup();
+    const held = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const originalAssert = f.assert.getMockImplementation()!;
+    const originalInspect = f.inspect.getMockImplementation()!;
+    let peerStopped = false;
+    let observedRunningPeer = false;
+    f.inspect.mockImplementation((original) => {
+      if (original.registration_id === dead.registration_id && !peerStopped) {
+        observedRunningPeer = true;
+        return Promise.resolve({
+          ...original,
+          state: "running" as const,
+          observed_at: "2026-10-24T00:00:01.000Z",
+        });
+      }
+      return originalInspect(original);
+    });
+    f.assert.mockImplementationOnce(async (expected) => {
+      await originalAssert(expected);
+      entered.resolve();
+      await held.promise;
+    });
+    const first = f.refresh();
+    const firstJoined = first.catch(() => undefined);
+    let second: ReturnType<typeof f.refresh> | undefined;
+    try {
+      await entered.promise;
+      expect(observedRunningPeer).toBe(true);
+      peerStopped = true;
+      second = f.refresh();
+      const published = await second;
+      expect(published.guard.revision).toBe("2");
+      expect(published.live).toEqual([local]);
+      expect(published.members[0]).toMatchObject({
+        memberId: dead.member_id,
+        state: "stopped",
+        stopped: [stopped(dead), stopped(old)],
+      });
+      held.resolve();
+      await expect(first).rejects.toMatchObject({ code: "configuration_unavailable" });
+      expect(f.availability.current()).toBe(published);
+      expect(f.availability.current().live).toEqual([local]);
+    } finally {
+      held.resolve();
+      await Promise.allSettled([firstJoined, ...(second === undefined ? [] : [second])]);
+    }
+  });
+
+  it.each(["ledger", "abort", "deadline"] as const)(
+    "keeps the original %s check for an otherwise identical overlapping refresh",
+    async (mode) => {
+      const f = setup();
+      const held = Promise.withResolvers<void>();
+      const entered = Promise.withResolvers<void>();
+      const originalAssert = f.assert.getMockImplementation()!;
+      const ledgerError = new Error("original participation assertion failed");
+      const abortError = new Error("original refresh cancelled");
+      const abort = new AbortController();
+      const startedAt = Date.now();
+      const deadline = startedAt + 5000;
+      const clock =
+        mode === "deadline" ? vi.spyOn(Date, "now").mockReturnValue(startedAt) : undefined;
+      f.assert.mockImplementationOnce(async (expected) => {
+        entered.resolve();
+        await held.promise;
+        if (mode === "ledger") throw ledgerError;
+        await originalAssert(expected);
+      });
+      let completed = false;
+      const first = f.availability.refresh(abort.signal, deadline).finally(() => {
+        completed = true;
+      });
+      const firstJoined = first.catch(() => undefined);
+      let second: ReturnType<typeof f.refresh> | undefined;
+      try {
+        await entered.promise;
+        second = f.refresh();
+        const published = await second;
+        expect(published.guard.revision).toBe("2");
+        expect(f.assert).toHaveBeenCalledTimes(2);
+        if (mode === "abort") abort.abort(abortError);
+        if (mode === "deadline") clock!.mockReturnValue(deadline);
+        await Promise.resolve();
+        expect(completed).toBe(false);
+        held.resolve();
+        if (mode === "ledger") await expect(first).rejects.toBe(ledgerError);
+        else if (mode === "abort") await expect(first).rejects.toBe(abortError);
+        else await expect(first).rejects.toMatchObject({ code: "configuration_unavailable" });
+        expect(f.availability.current()).toBe(published);
+      } finally {
+        held.resolve();
+        await Promise.allSettled([firstJoined, ...(second === undefined ? [] : [second])]);
+        clock?.mockRestore();
+      }
+    },
+  );
 });

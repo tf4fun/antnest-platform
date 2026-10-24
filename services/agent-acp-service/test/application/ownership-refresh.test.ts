@@ -116,8 +116,12 @@ describe("execution ownership refresh without republishing", () => {
     const unsubscribe = f.directory.subscribe(initial.organization_id, invalidated);
     f.clear();
     try {
-      await f.directory.reconcileOwnership(new AbortController().signal);
-      expect(f.onApplied).toHaveBeenCalledExactlyOnceWith(capture.configuration);
+      const signal = new AbortController().signal;
+      await f.directory.reconcileOwnership(signal);
+      expect(f.onApplied).toHaveBeenCalledExactlyOnceWith(capture.configuration, {
+        signal,
+        deadline: expect.any(Number) as unknown,
+      });
       expect(f.onApplied.mock.calls[0]![0]).toBe(capture.configuration);
       expect(f.repository.loadAuthority).toHaveBeenCalledTimes(2);
       expect(f.onOwnershipRefreshed).toHaveBeenCalledExactlyOnceWith(initial.organization_id);
@@ -156,8 +160,12 @@ describe("execution ownership refresh without republishing", () => {
     );
     f.clear();
 
-    await f.directory.reconcileOwnership(new AbortController().signal, first.organization_id);
-    expect(f.onApplied).toHaveBeenCalledExactlyOnceWith(captures[0]!.configuration);
+    const signal = new AbortController().signal;
+    await f.directory.reconcileOwnership(signal, first.organization_id);
+    expect(f.onApplied).toHaveBeenCalledExactlyOnceWith(captures[0]!.configuration, {
+      signal,
+      deadline: expect.any(Number) as unknown,
+    });
     expect(f.onOwnershipRefreshed).toHaveBeenCalledExactlyOnceWith(first.organization_id);
     expect(f.repository.loadAuthority.mock.calls.map(([organizationId]) => organizationId)).toEqual(
       [first.organization_id, first.organization_id],

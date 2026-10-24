@@ -122,7 +122,8 @@ describe("execution directory warm restoration", () => {
     const configuration = parseExecutionConfiguration(latest);
     test.repository.commit(configuration);
 
-    await expect(restore(test.directory)).resolves.toBeUndefined();
+    const signal = new AbortController().signal;
+    await expect(restore(test.directory, signal)).resolves.toBeUndefined();
 
     expect(test.repository.loadAuthority).toHaveBeenCalledWith(configuration.organization_id);
     expect(test.repository.save).not.toHaveBeenCalled();
@@ -153,6 +154,7 @@ describe("execution directory warm restoration", () => {
     }
     expect(test.onApplied).toHaveBeenCalledExactlyOnceWith(
       publicExecutionConfiguration(configuration),
+      { signal, deadline: expect.any(Number) as unknown },
     );
     expect(test.complete).not.toHaveBeenCalled();
   });
