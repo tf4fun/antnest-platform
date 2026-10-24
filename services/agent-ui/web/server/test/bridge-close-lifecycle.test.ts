@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AcpHttpBridge, consumeAgentExecutionStateStream } from "../src/adapters/acp-http.ts";
+import { AcpHttpBridge, AgentAccessRevokedError, consumeAgentExecutionStateStream } from "../src/adapters/acp-http.ts";
 import { AgentBridgeOwner, type AcpBridgePort } from "../src/bridge/agent-owner.ts";
 import { BridgeRegistry } from "../src/bridge/registry.ts";
 import { testScope } from "./support/auth-fixture.ts";
@@ -19,6 +19,289 @@ const ownerInput = (port: Partial<AcpBridgePort>) => ({
 });
 const registryOptions = { now: () => 0, idleMs: 0,
   epoch: () => "epoch", incarnation: () => "incarnation" };
+
+const earlyDenied = { code: "access_denied", message: "Agent access is not allowed", retryable: false };
+function earlyInitialization(status = 403, body: BodyInit = JSON.stringify(earlyDenied)) {
+  const response = new Response(body, { status, headers: { "content-type": "application/json" } });
+  const requested = deferred();
+  const calls: string[] = [];
+  const open = (signal?: AbortSignal) => AcpHttpBridge.open({
+    baseUrl: new URL("http://acp.invalid"), scope: testScope(scope), signal,
+    callbacks: { update() {}, requestPermission() { return { outcome: { outcome: "cancelled" } }; } },
+    fetchImpl: async (input, init) => {
+      const request = new Request(input, init);
+      calls.push(request.method === "POST" ? (await request.json()).method : request.method);
+      requested.resolve();
+      assert.equal(calls.length, 1, "failed initialization must not replay or invent cleanup targets");
+      return response;
+    },
+  });
+  return { response, requested: requested.promise, calls, open };
+}
+
+async function initializationError(fixture: ReturnType<typeof earlyInitialization>, signal?: AbortSignal) {
+  let bridge: AcpHttpBridge;
+  try { bridge = await fixture.open(signal); }
+  catch (error) { return error; }
+  try { assert.fail("early HTTP failure must not publish a usable ACP bridge"); }
+  finally { await bridge.close(); }
+}
+
+test("a complete early HTTP access denial preserves its typed error after original response cleanup", async () => {
+  const fixture = earlyInitialization();
+  const error = await initializationError(fixture);
+  assert(error instanceof AgentAccessRevokedError);
+  assert.deepEqual(fixture.calls, ["initialize"], "no session/new, list, Prompt or initialize replay");
+  assert.equal(fixture.response.body?.locked, false, "the original response reader is released before rejection");
+});
+
+test("early HTTP access denial waits for the original body's EOF before returning its typed error", async () => {
+  const reading = deferred(), eof = deferred();
+  let cancelled = false, settled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(earlyDenied))); },
+    async pull(controller) {
+      reading.resolve();
+      await eof.promise;
+      if (!cancelled) controller.close();
+    },
+    cancel() { cancelled = true; return eof.promise; },
+  });
+  const fixture = earlyInitialization(403, body);
+  const opening = initializationError(fixture).finally(() => { settled = true; });
+  void opening.catch(() => {});
+  try {
+    await reading.promise;
+    await turn();
+    assert.equal(settled, false, "a valid JSON prefix does not prove a complete response");
+  } finally {
+    eof.resolve();
+    await Promise.allSettled([opening]);
+  }
+  assert(await opening instanceof AgentAccessRevokedError);
+  assert.deepEqual(fixture.calls, ["initialize"]);
+  assert.equal(body.locked, false);
+});
+
+for (const brokenCancel of [false, true]) {
+  test(`an aborted early HTTP body joins original cancellation and never becomes typed access denial (${brokenCancel})`, async () => {
+    const cancellation = deferred(), cleanup = deferred();
+    const abort = new AbortController();
+    let cancels = 0, settled = false;
+    const body = new ReadableStream<Uint8Array>({
+      // The complete JSON text is still only a prefix until the raw stream's EOF.
+      start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(earlyDenied))); },
+      async cancel() {
+        cancels++;
+        cancellation.resolve();
+        await cleanup.promise;
+        if (brokenCancel) throw new Error("private early body cancellation detail");
+      },
+    });
+    const fixture = earlyInitialization(403, body);
+    const opening = initializationError(fixture, abort.signal).finally(() => { settled = true; });
+    void opening.catch(() => {});
+    try {
+      await fixture.requested;
+      await turn();
+      abort.abort();
+      await cancellation.promise;
+      await turn();
+      assert.equal(cancels, 1);
+      assert.equal(settled, false, "abort is not the original response cancellation receipt");
+    } finally {
+      abort.abort();
+      cleanup.resolve();
+      await Promise.allSettled([opening]);
+    }
+    const error = await opening;
+    assert(error instanceof Error);
+    assert(!(error instanceof AgentAccessRevokedError), "a body without EOF cannot authorize typed403");
+    if (brokenCancel) {
+      assert(error instanceof AggregateError, "actual cleanup failure must survive initialization failure");
+      assert.match(error.message, /cleanup/i);
+    }
+    assert.deepEqual(fixture.calls, ["initialize"]);
+    assert.equal(body.locked, false);
+  });
+}
+
+const invalidEarlyDenials: Array<{ name: string; status: number; body: BodyInit }> = [
+  { name: "caller authentication 401", status: 401, body: JSON.stringify(earlyDenied) },
+  { name: "dependency 503", status: 503, body: JSON.stringify(earlyDenied) },
+  { name: "unknown code", status: 403, body: JSON.stringify({ ...earlyDenied, code: "caller_not_allowed" }) },
+  { name: "retryable denial", status: 403, body: JSON.stringify({ ...earlyDenied, retryable: true }) },
+  { name: "malformed JSON", status: 403, body: '{"code":"access_denied"' },
+  { name: "body over 65536 bytes", status: 403, body: JSON.stringify(earlyDenied) + " ".repeat(65536) },
+  { name: "unknown extra field", status: 403, body: JSON.stringify({ ...earlyDenied, extra: true }) },
+  { name: "duplicate key", status: 403, body: '{"code":"access_denied","code":"access_denied","message":"denied","retryable":false}' },
+  { name: "invalid UTF-8", status: 403, body: new Uint8Array([
+    ...new TextEncoder().encode('{"code":"access_denied","message":"'),
+    0xff,
+    ...new TextEncoder().encode('","retryable":false}'),
+  ]) },
+];
+for (const entry of invalidEarlyDenials) {
+  test(`early initialize ${entry.name} stays a dependency failure`, async () => {
+    const fixture = earlyInitialization(entry.status, entry.body);
+    const error = await initializationError(fixture);
+    assert(error instanceof Error);
+    assert(!(error instanceof AgentAccessRevokedError));
+    assert.deepEqual(fixture.calls, ["initialize"]);
+    assert.equal(fixture.response.body?.locked, false);
+  });
+}
+
+test("early initialize body read failures never retain private upstream details", async () => {
+  const canary = "private-initialize-response-read-canary";
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) { controller.error(new Error(canary)); },
+  });
+  const fixture = earlyInitialization(403, body);
+  const error = await initializationError(fixture);
+  assert(error instanceof Error);
+  assert(!(error instanceof AgentAccessRevokedError));
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (pending.length) {
+    const failure = pending.pop();
+    if (!(failure instanceof Error) || seen.has(failure)) continue;
+    seen.add(failure);
+    assert(!failure.message.includes(canary), "raw body failures must not enter the error chain");
+    pending.push(failure.cause);
+    if (failure instanceof AggregateError) pending.push(...failure.errors);
+  }
+  assert.deepEqual(fixture.calls, ["initialize"]);
+  assert.equal(body.locked, false);
+});
+
+function initializedGetFailure(response: () => Promise<Response>) {
+  const get = deferred(), releaseGet = deferred(), supplied = deferred();
+  const deleting = deferred(), cleanup = deferred();
+  const calls: string[] = [];
+  const connectionId = "original-initialized-connection";
+  const opening = AcpHttpBridge.open({
+    baseUrl: new URL("http://acp.invalid"), scope: testScope(scope),
+    callbacks: { update() {}, requestPermission() { return { outcome: { outcome: "cancelled" } }; } },
+    fetchImpl: async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "GET") {
+        calls.push("GET");
+        assert.equal(request.headers.get("acp-connection-id"), connectionId);
+        get.resolve();
+        await releaseGet.promise;
+        const original = await response();
+        supplied.resolve();
+        return original;
+      }
+      if (request.method === "DELETE") {
+        calls.push("DELETE");
+        assert.equal(request.headers.get("acp-connection-id"), connectionId);
+        deleting.resolve();
+        await cleanup.promise;
+        return new Response(null, { status: 202 });
+      }
+      const message = await request.json();
+      calls.push(message.method);
+      assert.equal(message.method, "initialize", "closed transport must not dispatch another business RPC");
+      assert.equal(request.headers.has("acp-connection-id"), false);
+      return Response.json({ jsonrpc: "2.0", id: message.id, result: {
+        protocolVersion: message.params.protocolVersion,
+        agentCapabilities: { loadSession: true },
+        _meta: { "antnest.dev/bridge": { intentReceipt: 1, targetCancel: 1, deliveryMark: 1 } },
+      } }, { headers: { "acp-connection-id": connectionId } });
+    },
+  });
+  return { opening, get: get.promise, releaseGet: releaseGet.resolve,
+    supplied: supplied.promise, deleting: deleting.promise, cleanup: cleanup.resolve, calls };
+}
+
+test("an initialized connection preserves a complete GET access denial after its original cleanup", async () => {
+  const reading = deferred(), eof = deferred();
+  let cancelled = false, sdkClosed = false, loaded = false, cleaned = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(earlyDenied))); },
+    async pull(controller) {
+      reading.resolve();
+      await eof.promise;
+      if (!cancelled) controller.close();
+    },
+    cancel() { cancelled = true; return eof.promise; },
+  });
+  const fixture = initializedGetFailure(async () => new Response(body, {
+    status: 403, headers: { "content-type": "application/json" },
+  }));
+  const bridge = await fixture.opening;
+  const sdkStopped = bridge.closed.then(() => { sdkClosed = true; }, () => { sdkClosed = true; });
+  let loading: Promise<unknown> | undefined, closing: Promise<unknown> | undefined;
+  try {
+    await fixture.get;
+    fixture.releaseGet();
+    await fixture.supplied;
+    await Promise.race([reading.promise, sdkStopped]);
+    await turn();
+    assert.equal(sdkClosed, false, "a JSON prefix without original EOF cannot prove GET access denial");
+    assert.deepEqual(fixture.calls, ["initialize", "GET"]);
+    eof.resolve();
+    await sdkStopped;
+    loading = bridge.load("session-after-revocation").then(
+      () => undefined, (error: unknown) => error,
+    ).finally(() => { loaded = true; });
+    closing = bridge.close().then(
+      () => undefined, (error: unknown) => error,
+    ).finally(() => { cleaned = true; });
+    await fixture.deleting;
+    await turn();
+    assert.equal(loaded, false, "typed denial must not bypass the original transport cleanup");
+    assert.equal(cleaned, false, "SDK closed is not the original DELETE cleanup receipt");
+    fixture.cleanup();
+    const [error, cleanupError] = await Promise.all([loading, closing]);
+    assert(error instanceof AgentAccessRevokedError);
+    assert.equal(cleanupError, undefined);
+    assert.equal(body.locked, false, "the original GET reader is released before typed denial");
+    assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"]);
+  } finally {
+    fixture.releaseGet();
+    eof.resolve();
+    fixture.cleanup();
+    await Promise.allSettled([loading, closing, bridge.close()]);
+  }
+});
+
+for (const failure of ["invalid-403", "network"] as const) {
+  test(`an initialized connection's ${failure} is not classified as reliable access denial`, async () => {
+    let originalBody: ReadableStream | undefined;
+    const fixture = initializedGetFailure(async () => {
+      if (failure === "network") throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("peer disconnected"), { code: "ECONNRESET" }),
+      });
+      const response = Response.json({ ...earlyDenied, code: "caller_not_allowed" }, { status: 403 });
+      originalBody = response.body ?? undefined;
+      return response;
+    });
+    const bridge = await fixture.opening;
+    let loading: Promise<unknown> | undefined;
+    try {
+      await fixture.get;
+      fixture.releaseGet();
+      await bridge.closed.then(() => undefined, () => undefined);
+      loading = bridge.load("session-after-disconnect").then(
+        () => undefined, (error: unknown) => error,
+      );
+      fixture.cleanup();
+      const error = await loading;
+      assert(error instanceof Error);
+      assert(!(error instanceof AgentAccessRevokedError), "transport failure alone cannot authorize typed403");
+      await bridge.close();
+      assert.equal(originalBody?.locked ?? false, false);
+      assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"]);
+    } finally {
+      fixture.releaseGet();
+      fixture.cleanup();
+      await Promise.allSettled([loading, bridge.close()]);
+    }
+  });
+}
 
 test("owner close joins both ACP cleanup and an aborted but unfinished watch", async () => {
   const cleanup = deferred(), watch = deferred(), aborted = deferred();

@@ -313,13 +313,31 @@ replay queue is `replay_capacity_exceeded`; a stream snapshot or live
 selection over budget is `stream_capacity_exceeded` and requires a fresh read.
 
 A still-valid signed caller context does not override current Agent access.
+If command authorization loses its original ACP connection, Agent UI may confirm
+access once through the existing Agent state observation using the same verified
+scope. Only an authoritative denied state or typed access denial changes the
+result to `403/access_denied`; a disconnected stream, HTTP 404, allowed state or
+unavailable observation cannot establish revocation. This confirmation does not
+replay a Session or Prompt command. The failed authorization finishes before
+retiring its owner, and original transport/watch cleanup failures remain 503.
+The same cleanup rule applies when a control command such as `/stop` receives
+a typed denial while reading its original intent. The control finishes before
+owner retirement; the response waits for cleanup and releases retained Run work
+without sending another cancel, Prompt or projection request.
 An explicit ACP workspace observation `403/access_denied` with
 `retryable: false` remains a `403/access_denied`, `recovery: none` at command
-authorization and subsequent operation reads. It must not become a transient
-503. Missing Sessions retain 404 existence hiding, while downstream caller
-authentication failures and unavailable or malformed observations remain
-dependency failures. Gateway can reject a revoked browser credential with 401
-before forwarding; a valid cached resolution can instead reach this UI 403.
+authorization and subsequent operation reads. The same classification applies
+when owner discovery rejects HTTP initialization before a connection exists,
+including Session list and creation, or when the original connection's GET
+returns a complete typed access denial. Agent UI validates the complete JSON
+error envelope within 65,536 bytes and joins the original response and transport
+cleanup before reporting the denial. It does not replay initialization or
+Session/Prompt requests. Cleanup failures remain dependency failures.
+The denial must not become a transient 503. Missing Sessions retain 404
+existence hiding, while downstream caller authentication failures, unknown or
+malformed denials and unavailable observations remain dependency failures.
+Gateway can reject a revoked browser credential with 401 before forwarding;
+a valid cached resolution can instead reach this UI 403.
 
 Prompt body admission is per Agent UI process, after workload and signed user
 authentication and before consuming or parsing the body. It reserves at most

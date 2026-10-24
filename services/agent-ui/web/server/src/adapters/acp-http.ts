@@ -377,6 +377,7 @@ export class AcpHttpBridge {
       connection.close(error);
       try { await transport.close(); }
       catch (cleanup) { throw new AggregateError([error, cleanup], "ACP initialization and cleanup failed"); }
+      if (transport.initializationAccessDenied) throw new AgentAccessRevokedError();
       throw error;
     }
   }
@@ -387,6 +388,10 @@ export class AcpHttpBridge {
 
   public get canReplaceAfterPeerLoss(): boolean {
     return this.transport.canReplaceAfterPeerLoss;
+  }
+
+  public get accessRevoked(): boolean {
+    return this.transport.connectionAccessDenied;
   }
 
   public async load(sessionId: string): Promise<{
@@ -404,6 +409,11 @@ export class AcpHttpBridge {
         },
       );
     } catch (cause) {
+      if (this.transport.connectionAccessDenied) {
+        try { await this.transport.close(); }
+        catch (cleanup) { throw new AggregateError([cause, cleanup], "ACP access denial and cleanup failed"); }
+        throw new AgentAccessRevokedError();
+      }
       throw sessionRequestFailure(cause) ?? new AcpLoadError(cause, this.errorCapability);
     }
     return { response, cut: requireLoadCut(response._meta) };
@@ -502,6 +512,7 @@ export class AcpHttpBridge {
   }
 
   public async readAgentExecutionState(): Promise<AgentExecutionState> {
+    const signal = AbortSignal.timeout(10_000);
     const response = await this.fetchImpl(
       new URL("/rpc/agent-acp/get-agent-execution-state", this.baseUrl),
       {
@@ -512,11 +523,22 @@ export class AcpHttpBridge {
           "content-type": "application/json",
         },
         body: "{}",
-        signal: AbortSignal.timeout(10_000),
+        signal,
         redirect: "error",
       },
     );
-    return parseAgentExecutionState(response, this.scope.agentId);
+    const owned = new OwnedHttpResponse(response, signal);
+    let state: AgentExecutionState | undefined;
+    let failed = false, failure: unknown;
+    try { state = await parseAgentExecutionState(owned.response, this.scope.agentId); }
+    catch (error) { failed = true; failure = error; }
+    try { await owned.cancel(); }
+    catch (cleanup) {
+      if (failed) throw new AggregateError([failure, cleanup], "ACP Agent state and cleanup failed");
+      throw cleanup;
+    }
+    if (failed) throw failure;
+    return state!;
   }
 
   public async readLearningStatus(): Promise<LearningStatus> {

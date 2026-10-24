@@ -132,3 +132,91 @@ for (const condition of ["blocked-agent-view", "blocked-learning", "blocked-hist
     }
   });
 }
+
+for (const cleanupFailure of [false, true]) {
+  test(`targeted stop joins revoked-at-intent cleanup (${cleanupFailure ? "failed close" : "held close"})`, async () => {
+    const heldClose = Promise.withResolvers<void>();
+    const closeEntered = Promise.withResolvers<void>();
+    const cleanupError = new Error("original targeted stop cleanup failed");
+    const originalClose = heldClose.promise.then(() => {
+      if (cleanupFailure) throw cleanupError;
+    });
+    const closeOutcome = originalClose.then(() => undefined, (error: unknown) => error);
+    const calls: string[] = [];
+    const runtime = createWorkspaceRuntime({ connect: async () => {
+      calls.push("connect");
+      return {
+        async readAgentExecutionState() {
+          calls.push("agent-view");
+          assert.fail("Targeted stop must not read the Agent projection");
+        },
+        async readLearningChanges() {
+          calls.push("learning");
+          assert.fail("Targeted stop must not read the learning projection");
+        },
+        async load() {
+          calls.push("history");
+          assert.fail("Targeted stop must not load history");
+        },
+        async readExecution(sessionId) {
+          calls.push("execution");
+          assert.equal(sessionId, "session");
+          return { sessionId, appendVersion: 1, outputWatermark: 0, activeRunId: "run",
+            recentReceipts: [], configurationRevision: null };
+        },
+        async readIntent(sessionId, intentId) {
+          calls.push("intent");
+          assert.equal(sessionId, "session");
+          assert.equal(intentId, "intent");
+          throw new AgentAccessRevokedError();
+        },
+        async prompt() {
+          calls.push("prompt");
+          assert.fail("Targeted stop must not dispatch a Prompt");
+        },
+        async cancel() {
+          calls.push("cancel");
+          assert.fail("Revoked targeted stop must not send cancel");
+        },
+        close() {
+          calls.push("close");
+          closeEntered.resolve();
+          return originalClose;
+        },
+      };
+    } });
+    let responded = false;
+    const pending = runtime.handle(new Request(`${base}/commands`, { method: "POST", headers,
+      body: JSON.stringify({ text: "/stop", sessionId: "session", operationId: "intent",
+        expectedRunId: "run" }) })).then((response) => {
+      responded = true;
+      return response;
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Targeted stop cleanup did not settle")), 2000);
+    });
+    try {
+      const first = await Promise.race([
+        closeEntered.promise.then(() => "close"),
+        pending.then(() => "response"),
+        timeout,
+      ]);
+      assert.equal(first, "close", "revocation must start the original close before responding");
+      await Promise.resolve();
+      assert.equal(responded, false, "HTTP response must wait for the held original close");
+      assert.deepEqual(calls, ["connect", "execution", "intent", "close"]);
+      heldClose.resolve();
+      const response = await Promise.race([pending, timeout]);
+      assert.equal(response?.status, cleanupFailure ? 503 : 403);
+      assert.strictEqual(await closeOutcome, cleanupFailure ? cleanupError : undefined);
+      assert.equal((await runtime.drain(1000)).forced, cleanupFailure);
+      assert.deepEqual(calls, ["connect", "execution", "intent", "close"]);
+    } finally {
+      clearTimeout(timer);
+      heldClose.resolve();
+      await Promise.allSettled([pending, originalClose, closeOutcome]);
+      await runtime.drain(1000);
+    }
+  });
+}

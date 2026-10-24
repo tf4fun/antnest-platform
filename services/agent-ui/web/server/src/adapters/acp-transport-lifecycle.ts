@@ -2,6 +2,7 @@ import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-cli
 import { captureAcpCloseTrace, type AcpCloseTrigger } from "../telemetry.ts";
 import { OwnedHttpResponse } from "./owned-http-response.ts";
 import { AcpCloseFailures, type AcpCloseFailureStage } from "./acp-close-diagnostics.ts";
+import { strictObject } from "./strict-json.ts";
 
 type HttpStream = ReturnType<typeof createHttpStream>;
 
@@ -18,6 +19,10 @@ export class AcpTransportLifecycle {
   private cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   private initializationTimer: ReturnType<typeof setTimeout> | undefined;
   private initialized = false;
+  private initializationDenied = false;
+  private initializationCancelled = false;
+  private connectionId: string | undefined;
+  private connectionDenied = false;
   private targetObserved = false;
   private deletes = 0;
   private deleteResponses = 0;
@@ -87,6 +92,7 @@ export class AcpTransportLifecycle {
 
   public bindConnection(connection: { close(error?: Error): void; closed: Promise<unknown> }): void {
     this.cancelInitialization = () => {
+      this.initializationCancelled = true;
       this.beginClose("initialization_failure");
       connection.close(new Error("ACP initialization was cancelled"));
       void this.close().catch(() => {});
@@ -105,6 +111,17 @@ export class AcpTransportLifecycle {
   /** A retirement qualification; the original close promise still rejects. */
   public get canReplaceAfterPeerLoss(): boolean {
     return this.replaceAfterPeerLoss;
+  }
+
+  public get initializationAccessDenied(): boolean {
+    // SDK failure also aborts its request. Only caller/deadline cancellation
+    // supersedes a complete denial, independently of normal transport cleanup.
+    return this.initializationDenied && !this.initializationCancelled &&
+      !this.parentSignal?.aborted;
+  }
+
+  public get connectionAccessDenied(): boolean {
+    return this.connectionDenied;
   }
 
   public completeInitialization(): void {
@@ -195,10 +212,14 @@ export class AcpTransportLifecycle {
       const response = await (deleting
         ? this.closeTrace!.fetch(fetchImpl, input, { ...init, signal })
         : fetchImpl(input, { ...init, signal }));
-      const initializing = method === "POST" &&
-        !new Headers(init?.headers).has("acp-connection-id");
-      if (initializing && response.ok && response.headers.has("acp-connection-id"))
+      const requestHeaders = new Headers(init?.headers ??
+        (input instanceof Request ? input.headers : undefined));
+      const initializing = !this.initialized && method === "POST" &&
+        !requestHeaders.has("acp-connection-id");
+      if (initializing && response.ok && response.headers.has("acp-connection-id")) {
         this.targetObserved = true;
+        this.connectionId = response.headers.get("acp-connection-id")!;
+      }
       if (deleting) {
         this.deleteResponses++;
         this.deleteStatus = response.status;
@@ -209,7 +230,20 @@ export class AcpTransportLifecycle {
         if (response.status !== 202) throw new Error("ACP DELETE was not accepted");
         return response;
       }
-      return this.trackBody(response, signal);
+      const owned = this.trackBody(response, signal);
+      const observingOriginal = method === "GET" && this.connectionId !== undefined &&
+        requestHeaders.get("acp-connection-id") === this.connectionId;
+      if ((initializing || observingOriginal) && response.status === 403 &&
+        !response.headers.has("acp-connection-id")) {
+        let denied = false;
+        try { denied = await readInitializationDenial(owned.response, signal); }
+        finally { await owned.cancel(); }
+        if (initializing) this.initializationDenied = denied && !signal.aborted;
+        else if (denied && !signal.aborted) this.connectionDenied = true;
+        // Do not pass a consumed response or remote error text to the SDK.
+        throw new Error("ACP request was denied");
+      }
+      return owned.response;
     } catch (error) {
       if (!deleting) throw error;
       this.failures.record(phase, error);
@@ -222,13 +256,44 @@ export class AcpTransportLifecycle {
     }
   }
 
-  private trackBody(response: Response, signal: AbortSignal): Response {
+  private trackBody(response: Response, signal: AbortSignal): OwnedHttpResponse {
     const owned = new OwnedHttpResponse(response, signal);
     this.track(owned.closed.catch(() => {
       this.failures.record("body_cleanup");
       this.errors.push(new Error("ACP response body cleanup failed"));
     }));
-    return owned.response;
+    return owned;
+  }
+}
+
+async function readInitializationDenial(response: Response, signal: AbortSignal): Promise<boolean> {
+  const reader = response.body?.getReader();
+  if (!reader) return false;
+  let size = 0;
+  const chunks: Uint8Array[] = [];
+  try {
+    if (response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
+      "application/json") return false;
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > 65_536) return false;
+      chunks.push(next.value);
+    }
+    if (signal.aborted) return false;
+    const body = strictObject(Buffer.concat(chunks, size));
+    return Object.keys(body).length === 3 && body.code === "access_denied" &&
+      body.retryable === false && typeof body.message === "string" &&
+      body.message.length > 0 && body.message.length <= 300;
+  } catch {
+    // Incomplete or malformed bodies remain dependency failures. Neither their
+    // contents nor parser errors become a public error or retained cause.
+    return false;
+  } finally {
+    // The owner joins raw cancellation separately. Cancelling an already
+    // errored wrapper here would rethrow its private terminal read error.
+    reader.releaseLock();
   }
 }
 

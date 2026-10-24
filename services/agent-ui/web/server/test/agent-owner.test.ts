@@ -709,6 +709,79 @@ test("owner retirement waits for the actual held Load workflow to join", async (
   }
 });
 
+for (const typed of [true, false]) {
+  test(`an adopted owner ${typed ? "preserves typed access denial" : "does not invent typed access denial"} when ACP closes during Load`, async () => {
+    const f = fixture();
+    const failure = typed ? new AgentAccessRevokedError() : new Error("original Load failed");
+    const transportClosed = Promise.withResolvers<void>();
+    const loadEntered = Promise.withResolvers<void>(), releaseLoad = Promise.withResolvers<void>();
+    const closeEntered = Promise.withResolvers<void>(), releaseClose = Promise.withResolvers<void>();
+    let loads = 0, loadJoined = false, closeJoined = false, authorizationSettled = false;
+    const owner = await AgentBridgeOwner.open({
+      scope, retainWork: f.retainWork,
+      connect: async (identity, callbacks) => ({
+        ...await f.connect(identity, callbacks),
+        closed: transportClosed.promise,
+        async load(sessionId) {
+          f.calls.push(`load:${sessionId}`);
+          loads++;
+          loadEntered.resolve();
+          try { await releaseLoad.promise; throw failure; }
+          finally { loadJoined = true; }
+        },
+        async close() {
+          f.calls.push("close");
+          closeEntered.resolve();
+          await releaseClose.promise;
+          closeJoined = true;
+        },
+      }),
+    });
+    const pending = outcome(owner.authorizeSession("session-1")).finally(() => {
+      authorizationSettled = true;
+    });
+    try {
+      await loadEntered.promise;
+      transportClosed.resolve();
+      await closeEntered.promise;
+      assert.equal(owner.isClosed, true, "the adopted owner retires before its original Load settles");
+      assert.equal(loadJoined, false);
+      assert.equal(authorizationSettled, false);
+      assert.equal(f.work(), 1);
+      releaseLoad.resolve();
+      await nextEventTurn();
+      assert.equal(loadJoined, true);
+      assert.equal(authorizationSettled, true,
+        "authorization must settle before original close cleanup to avoid waiting on itself");
+      assert.equal(closeJoined, false, "the original transport cleanup remains held");
+      const result = await pending;
+      assert.equal(result.status, "rejected");
+      if (result.status === "rejected") {
+        if (typed) assert.equal(result.reason, failure,
+          "retired replay bookkeeping must not replace the original typed access denial");
+        else assert.equal(result.reason instanceof AgentAccessRevokedError, false,
+          "an ordinary Load failure plus transport closure is not an access denial");
+      }
+      if (typed) {
+        await assert.rejects(owner.authorizeSession("session-after-revocation"), AgentAccessRevokedError);
+        await assert.rejects(owner.authorizeExecution("session-after-revocation"), AgentAccessRevokedError);
+      }
+      assert.equal(loads, 1);
+      assert.equal(f.work(), 0);
+      assert.equal(f.calls.some((call) => /^(intent:|prompt:|cancel:|execution:)/u.test(call)), false);
+    } finally {
+      transportClosed.resolve();
+      releaseLoad.resolve();
+      releaseClose.resolve();
+      await Promise.allSettled([pending, owner.close()]);
+    }
+    assert.equal(loadJoined, true);
+    assert.equal(closeJoined, true);
+    assert.equal(f.work(), 0);
+    assert.equal(f.calls.filter((call) => call === "close").length, 1);
+  });
+}
+
 test("a large live update preserves the complete View without replaying it", async () => {
   const f = fixture();
   const owner = await AgentBridgeOwner.open({ scope, connect: f.connect,
