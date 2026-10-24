@@ -92,8 +92,12 @@ reservations against daily/monthly hard thresholds, before accepting the Prompt.
 An exhausted threshold rejects the original intent atomically; confirmed
 rejection releases its Runtime pin, while unknown commit receipts retain it.
 See [model-call admission](model-calls.md) for zero-cap and unknown-history rules.
-The ledger and rejection path still need production request
-bounds, per-call reservations, excess handling, soft notifications and the
+Prepared requests now reserve matching observed Provider bounds before dispatch.
+The same fixed body is sent after admission; editable model context limits are
+not trustworthy hard bounds. A canonical internal finish proof that the original
+call never invoked send settles zero and releases its reservation without claiming
+a Provider-reported price. Missing proof or any dispatched request with missing
+usage retains its uncertainty. Excess handling, soft notifications and the
 Controller/Console policy consumers still need their business acceptance.
 
 ## Verification
@@ -126,7 +130,7 @@ Each attempt uses its frozen candidate identity and pricing. That component
 coverage does not replace final Docker acceptance. Controller's two-retry and
 before-output failover defaults are not yet published. Provider circuits skip
 unavailable connections without recording synthetic attempts or usage.
-Per-call safe spending reservations, the remaining cap enforcement, Console policy
+The remaining cap enforcement, Controller/Console policy
 controls and final #52 integration remain pending; the Session display projection
 does not implement enforcement.
 

@@ -179,6 +179,11 @@ $$;
 
 WITH attempt_starts AS (
     SELECT started.run_id, started.session_id, started.created_at,
+           ordinal.value AS ordinal,
+           'message_' || substr(encode(sha256(
+               convert_to('model-attempt', 'UTF8') || decode('00', 'hex') ||
+               convert_to(started.run_id || ':' || trunc(ordinal.value)::text || ':finish', 'UTF8')
+           ), 'hex'), 1, 32) AS finish_id,
            'message_' || substr(encode(sha256(
                convert_to('model-attempt-usage', 'UTF8') || decode('00', 'hex') ||
                convert_to(started.run_id || ':' || trunc(ordinal.value)::text, 'UTF8')
@@ -202,11 +207,27 @@ INSERT INTO model_budget_baseline_receipts(
 SELECT m.id, m.run_id, s.organization_id, s.agent_id, m.created_at, started.created_at,
        antnest_budget_import_tokens(m.payload->'measurement'->'inputTokens'),
        antnest_budget_import_tokens(m.payload->'measurement'->'outputTokens'),
-       antnest_budget_import_cost(m.payload->'measurement')
+       CASE WHEN finished.id IS NOT NULL THEN 0
+            ELSE antnest_budget_import_cost(m.payload->'measurement') END
 FROM session_messages m JOIN acp_sessions s ON s.id=m.session_id
 LEFT JOIN attempt_starts started ON started.run_id=m.run_id
     AND started.session_id=m.session_id AND started.receipt_id=m.id
     AND started.created_at <= m.created_at
+-- Internal zero cost needs the complete original canonical receipt pair. A
+-- purged Run (NULL association), copied/missing finish, or contradictory usage
+-- never gains this proof. No Provider-reported cost is manufactured.
+LEFT JOIN session_messages finished ON finished.id=started.finish_id
+    AND finished.run_id=m.run_id AND finished.session_id=m.session_id
+    AND finished.kind='model_attempt' AND NOT finished.visible AND finished.context_excluded
+    AND finished.created_at=m.created_at
+    AND finished.payload->>'kind'='model_attempt' AND finished.payload->>'phase'='finish'
+    AND finished.payload->'ordinal'=to_jsonb(started.ordinal)
+    AND finished.payload->'notDispatched'='true'::jsonb
+    AND finished.payload->>'outcome' IN ('failed','cancelled')
+    AND finished.payload->'outputStarted'='false'::jsonb
+    AND NOT (finished.payload ? 'status')
+    AND finished.payload->'usage'=m.payload->'measurement'
+    AND m.payload->'measurement'='{"inputTokens":0,"outputTokens":0}'::jsonb
 WHERE m.kind='usage'
   -- Fork copies retain the original usage and clear run_id. Their deterministic
   -- copy ID distinguishes them from a real receipt whose Run was later purged.

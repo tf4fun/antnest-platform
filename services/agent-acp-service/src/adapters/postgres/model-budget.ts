@@ -247,6 +247,7 @@ export async function settleModelBudget(
     ordinal: number;
     organizationId: string;
     usage: ModelUsage;
+    notDispatched?: true;
     pricing?: ModelPricing;
   },
 ): Promise<void> {
@@ -264,7 +265,8 @@ export async function settleModelBudget(
     throw new Error("Original model budget reservation is unavailable");
   const tokensIn = knownTokenCount(input.usage.inputTokens);
   const tokensOut = knownTokenCount(input.usage.outputTokens);
-  const cost = chargeModelUsage(input.usage, input.pricing);
+  // This is an internal zero-dispatch fact, never a fabricated Provider receipt.
+  const cost = input.notDispatched === true ? 0n : chargeModelUsage(input.usage, input.pricing);
   const unknownDelta = Number(cost === null) - Number(reservation.cost_unknown);
   const resolvedUnboundedCost = reservation.cost_usd_micros === null && cost !== null ? 1 : 0;
   const releaseIn = tokensIn === null ? "0" : (reservation.input_tokens ?? "0");

@@ -12,6 +12,7 @@ import {
   type ModelResult,
   type ModelUsage,
   type ModelDelta,
+  type PreparedModelCall,
 } from "../ports/model.js";
 import type { ModelAttemptPort } from "../ports/model-attempts.js";
 import type { ProviderCircuitPort } from "../ports/provider-circuit.js";
@@ -127,9 +128,28 @@ export class ModelCallPolicy {
           retry = 0;
           continue;
         }
+        let prepared: PreparedModelCall | undefined;
         try {
           const ordinal = this.options.budget.nextAttempt(reserve);
           const started = clock.monotonic();
+          let outputStarted = false;
+          const request = immutableCopy({ ...frozen, snapshot });
+          const actualRequest: ModelRequest = {
+            ...request,
+            ...(purpose === undefined ? {} : { purpose }),
+            signal,
+            ...(onDelta === undefined
+              ? {}
+              : {
+                  onDelta: async (delta: ModelDelta) => {
+                    outputStarted ||= delta.text.length > 0;
+                    signal.throwIfAborted();
+                    await onDelta(delta);
+                  },
+                }),
+          };
+          prepared = this.options.model.prepare?.(actualRequest);
+          current();
           try {
             await this.options.attempts.start(runId, {
               ordinal,
@@ -138,6 +158,9 @@ export class ModelCallPolicy {
               model: snapshot.executionSpec.model.model,
               purpose: purpose ?? "foreground",
               startedAt: new Date(clock.now()),
+              ...(prepared === undefined
+                ? {}
+                : { reservation: structuredClone(prepared.reservation) }),
             });
           } catch (error) {
             throw persistenceFailure("model attempt start", error);
@@ -146,27 +169,15 @@ export class ModelCallPolicy {
           let result: ModelResult | undefined;
           let failure: { error: unknown } | undefined;
           let knownUsage: ModelUsage | undefined;
-          let outputStarted = false;
+          let callEntered = false;
           try {
             // The ordinal is already reserved; only recheck time and cancellation
             // after the original start receipt, never consume the slot twice.
             current();
-            const request = immutableCopy({ ...frozen, snapshot });
-            current();
-            result = await this.options.model.complete({
-              ...request,
-              ...(purpose === undefined ? {} : { purpose }),
-              signal,
-              ...(onDelta === undefined
-                ? {}
-                : {
-                    onDelta: async (delta: ModelDelta) => {
-                      outputStarted ||= delta.text.length > 0;
-                      signal.throwIfAborted();
-                      await onDelta(delta);
-                    },
-                  }),
-            });
+            callEntered = true;
+            result = await (prepared === undefined
+              ? this.options.model.complete(actualRequest)
+              : prepared.complete());
             knownUsage = result.usage;
             outputStarted ||= hasOutput(result);
             current();
@@ -184,6 +195,15 @@ export class ModelCallPolicy {
           const cleanupFailed = failure?.error instanceof ModelTransportCleanupError;
           const error = failure?.error;
           const status = error instanceof ModelError ? error.status : undefined;
+          // Do not turn an actual response, output, or reported usage into zero.
+          // The original complete task (including its cleanup) has joined here.
+          const notDispatched =
+            failure !== undefined &&
+            result === undefined &&
+            !outputStarted &&
+            knownUsage === undefined &&
+            status === undefined &&
+            (!callEntered || prepared?.dispatchState === "not_dispatched");
           try {
             await this.options.attempts.finish(runId, {
               ordinal,
@@ -205,7 +225,10 @@ export class ModelCallPolicy {
                     : failureReason(error),
               durationMs: Math.max(0, clock.monotonic() - started),
               outputStarted,
-              usage: structuredClone(knownUsage ?? {}),
+              usage: notDispatched
+                ? { inputTokens: 0, outputTokens: 0 }
+                : structuredClone(knownUsage ?? {}),
+              ...(notDispatched ? { notDispatched: true as const } : {}),
               contextSize: snapshot.executionSpec.model.contextWindow,
               ...(status === undefined ? {} : { status }),
               finishedAt: new Date(clock.now()),
@@ -288,7 +311,11 @@ export class ModelCallPolicy {
         } finally {
           // Includes budget/start failures and the original finish receipt. A
           // cancelled or unaccounted probe must not mark a Provider healthy.
-          permit?.settle("neutral");
+          try {
+            prepared?.release();
+          } finally {
+            permit?.settle("neutral");
+          }
         }
       }
     } finally {

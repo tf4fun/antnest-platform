@@ -406,39 +406,45 @@ describe("Run model call policy", () => {
     expect(f.clock.wait).not.toHaveBeenCalled();
   });
 
-  it("does not dispatch when the post-start input copy reaches the original deadline", async () => {
+  it("does not persist a start when request preparation reaches the original deadline", async () => {
     const f = setup();
-    const deadline = f.request.snapshot.deadlineAt.getTime();
-    const originalClone = globalThis.structuredClone;
-    let copies = 0;
-    let copiedAfterStart = false;
-    const copy: typeof structuredClone = (value, options) => {
-      const result = originalClone(value, options);
-      copies++;
-      if (copies === 2) {
-        copiedAfterStart = f.attempts.start.mock.calls.length === 1;
-        f.advance(deadline - f.clock.now());
-      }
-      return result;
-    };
-    const clone = vi.spyOn(globalThis, "structuredClone").mockImplementation(copy);
-    try {
-      await expect(f.call()).rejects.toBeInstanceOf(Error);
-      expect(copiedAfterStart).toBe(true);
-      expect(f.attempts.start).toHaveBeenCalledOnce();
-      expect(f.model.complete).not.toHaveBeenCalled();
-      expect(f.attempts.finish).toHaveBeenCalledOnce();
-      expect(f.attempts.finish.mock.calls[0]![1]).toMatchObject({
-        ordinal: 1,
-        outcome: "cancelled",
-        reason: "deadline_exceeded",
-        outputStarted: false,
-        usage: {},
-      });
-      expect(f.clock.wait).not.toHaveBeenCalled();
-    } finally {
-      clone.mockRestore();
-    }
+    const release = vi.fn();
+    const prepare = vi.fn(() => {
+      f.advance(f.request.snapshot.deadlineAt.getTime() - f.clock.now());
+      return {
+        reservation: { inputTokens: 100, outputTokens: 10 },
+        complete: f.model.complete,
+        release,
+      };
+    });
+    Object.assign(f.model, { prepare });
+    await expect(f.call()).rejects.toBeInstanceOf(Error);
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+    expect(f.attempts.start).not.toHaveBeenCalled();
+    expect(f.model.complete).not.toHaveBeenCalled();
+    expect(f.attempts.finish).not.toHaveBeenCalled();
+    expect(f.clock.wait).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch if the original start receipt arrives at the original deadline", async () => {
+    const f = setup();
+    f.attempts.start.mockImplementationOnce(() => {
+      f.advance(f.request.snapshot.deadlineAt.getTime() - f.clock.now());
+      return Promise.resolve();
+    });
+    await expect(f.call()).rejects.toBeInstanceOf(Error);
+    expect(f.attempts.start).toHaveBeenCalledOnce();
+    expect(f.model.complete).not.toHaveBeenCalled();
+    expect(f.attempts.finish).toHaveBeenCalledOnce();
+    expect(f.attempts.finish.mock.calls[0]![1]).toMatchObject({
+      ordinal: 1,
+      outcome: "cancelled",
+      reason: "deadline_exceeded",
+      outputStarted: false,
+      usage: {},
+    });
+    expect(f.clock.wait).not.toHaveBeenCalled();
   });
 
   it.each(["start", "failed-finish", "completed-finish"] as const)(

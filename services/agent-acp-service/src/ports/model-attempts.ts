@@ -18,6 +18,8 @@ export type ModelAttemptFinished = {
   durationMs: number;
   outputStarted: boolean;
   usage: ModelUsage;
+  /** Internal proof: the original call joined without invoking its send boundary. */
+  notDispatched?: true;
   contextSize?: number;
   status?: number;
   finishedAt: Date;

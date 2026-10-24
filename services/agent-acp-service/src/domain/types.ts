@@ -4,6 +4,7 @@ import type { ModelThinking } from "./model-thinking.js";
 import type { AgentOwnershipFence } from "./agent-ownership.js";
 import type { ModelFailover, ModelRetry } from "./model-call-policy.js";
 import type { RunBudget } from "./model-budget.js";
+import type { ProviderTokenLimits } from "./provider-token-limits.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonObject = { [key: string]: JsonValue };
@@ -42,6 +43,7 @@ export type SessionRecord = {
 };
 
 export type ModelSpec = {
+  providerTokenLimits?: ProviderTokenLimits;
   baseUrl: string;
   model: string;
   contextWindow: number;

@@ -692,5 +692,242 @@ describe.skipIf(databaseUrl === undefined)(
         );
       });
     });
+
+    it.each([
+      { name: "finite", outcome: "cancelled" },
+      { name: "unpriced-unbounded", outcome: "failed" },
+    ] as const)(
+      "settles trustworthy no-dispatch proof once for a $name reservation",
+      async (scenario) => {
+        await withDatabase(async (fixture) => {
+          await configure(fixture);
+          await fixture.observer.query(
+            "UPDATE execution_configurations SET configuration=jsonb_set(configuration,'{organization_budget,unknown_cost}','\"allow\"'::jsonb)",
+          );
+          const session = await fixture.session(
+            scope("model-budget-no-dispatch", organizationId),
+          );
+          const owner = await fixture.owner(
+            session.binding,
+            registration("acp-a"),
+          );
+          const repositories = createOwnedRunRepositories(
+            fixture.kernelA,
+            owner.authority,
+          );
+          const intent = fixture.input(session);
+          await repositories.runs.createRunIntent(intent);
+          const acceptance = fixture.acceptance(session, intent.runId);
+          if (scenario.name === "finite") {
+            acceptance.snapshot.executionSpec.model.pricing = {
+              currency: "USD",
+              inputPerMillion: 1,
+              outputPerMillion: 1,
+            };
+          } else {
+            delete acceptance.snapshot.executionSpec.model.pricing;
+          }
+          expect(await repositories.runs.acceptRun(acceptance)).toBe(
+            "accepted",
+          );
+          const startFirst = start(intent.runId);
+          if (scenario.name === "finite") {
+            await repositories.events.startModelAttempt(startFirst);
+          } else {
+            const { reservation, ...unbounded } = startFirst;
+            expect(reservation).toEqual({ inputTokens: 7, outputTokens: 0 });
+            await repositories.events.startModelAttempt(unbounded);
+          }
+          const held = await ledger(fixture);
+          expect(held.reservations).toHaveLength(1);
+          expect(held.reservations[0]).toMatchObject({
+            state: "reserved",
+            input_tokens: scenario.name === "finite" ? "7" : null,
+            output_tokens: scenario.name === "finite" ? "0" : null,
+            cost_usd_micros: scenario.name === "finite" ? "7" : null,
+          });
+          const fullAccounting = async (): Promise<
+            Record<string, string[]>
+          > => {
+            const values: Record<string, string[]> = {};
+            for (const table of [
+              "run_usage",
+              "organization_spend",
+              "model_budget_reservations",
+            ]) {
+              const rows = await fixture.observer.query<{ value: string }>(
+                "SELECT to_jsonb(stored)::text AS value FROM " +
+                  table +
+                  " AS stored ORDER BY to_jsonb(stored)::text",
+              );
+              values[table] = rows.rows.map((row) => row.value);
+            }
+            return values;
+          };
+          const stopped = {
+            ...finish(intent.runId),
+            outcome: scenario.outcome,
+            reason:
+              scenario.outcome === "cancelled"
+                ? "cancelled"
+                : "provider_unavailable",
+            outputStarted: false,
+            usage: { inputTokens: 0, outputTokens: 0 },
+            notDispatched: true as const,
+          };
+          const invalid = [
+            {
+              name: "nonzero input",
+              value: { ...stopped, usage: { inputTokens: 1, outputTokens: 0 } },
+            },
+            {
+              name: "nonzero output",
+              value: { ...stopped, usage: { inputTokens: 0, outputTokens: 1 } },
+            },
+            {
+              name: "cost receipt",
+              value: {
+                ...stopped,
+                usage: {
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  cost: {
+                    amount: 0,
+                    currency: "USD" as const,
+                    source: "provider_reported" as const,
+                  },
+                },
+              },
+            },
+            {
+              name: "completed outcome",
+              value: { ...stopped, outcome: "completed" as const },
+            },
+            {
+              name: "output started",
+              value: { ...stopped, outputStarted: true },
+            },
+            { name: "HTTP status", value: { ...stopped, status: 429 } },
+          ];
+          const beforeInvalid = await fullAccounting();
+          const beforeBusiness = await fixture.snapshot();
+          for (const conflict of invalid) {
+            await expect(
+              repositories.events.finishModelAttempt(conflict.value),
+              conflict.name,
+            ).rejects.toThrow();
+            expect(await fullAccounting()).toEqual(beforeInvalid);
+            expect(await fixture.snapshot()).toBe(beforeBusiness);
+          }
+          const receipt = await repositories.events.finishModelAttempt(stopped);
+          expect(receipt).toMatchObject({
+            kind: "usage",
+            measurement: { inputTokens: 0, outputTokens: 0 },
+          });
+          const settled = await ledger(fixture);
+          expect(settled.reservations[0]).toMatchObject({ state: "settled" });
+          expect(settled.usage).toEqual([
+            {
+              run_id: intent.runId,
+              input_tokens: "0",
+              output_tokens: "0",
+              cost_usd_micros: "0",
+              reserved_input_tokens: "0",
+              reserved_output_tokens: "0",
+              reserved_cost_usd_micros: "0",
+              unknown_attempts: "0",
+            },
+          ]);
+          expectOrganizationSpend(
+            settled.spend,
+            held.reservations[0]!,
+            "0",
+            "0",
+          );
+          expect(
+            (
+              await fixture.observer.query<{
+                unknown_input_attempts: string;
+                unknown_output_attempts: string;
+                unbounded_cost_attempts: string;
+              }>(
+                "SELECT unknown_input_attempts::text,unknown_output_attempts::text,unbounded_cost_attempts::text FROM run_usage WHERE run_id=$1",
+                [intent.runId],
+              )
+            ).rows,
+          ).toEqual([
+            {
+              unknown_input_attempts: "0",
+              unknown_output_attempts: "0",
+              unbounded_cost_attempts: "0",
+            },
+          ]);
+          expect(
+            (
+              await fixture.observer.query<{ cost_unknown: boolean }>(
+                "SELECT cost_unknown FROM model_budget_reservations WHERE run_id=$1 AND ordinal=1",
+                [intent.runId],
+              )
+            ).rows,
+          ).toEqual([{ cost_unknown: false }]);
+          const settledAccounting = await fullAccounting();
+          const settledBusiness = await fixture.snapshot();
+          expect(await repositories.events.finishModelAttempt(stopped)).toEqual(
+            receipt,
+          );
+          expect(await fullAccounting()).toEqual(settledAccounting);
+          expect(await fixture.snapshot()).toBe(settledBusiness);
+          const { notDispatched, ...withoutProof } = stopped;
+          expect(notDispatched).toBe(true);
+          await expect(
+            repositories.events.finishModelAttempt(withoutProof),
+          ).rejects.toThrow(/receipt identity conflict/u);
+          expect(await fullAccounting()).toEqual(settledAccounting);
+          expect(await fixture.snapshot()).toBe(settledBusiness);
+          const facts = await audits(fixture);
+          expect(facts.map((row) => [row.kind, row.payload.phase])).toEqual([
+            ["model_attempt", "start"],
+            ["model_attempt", "finish"],
+            ["usage", undefined],
+          ]);
+          expect(facts[1]!.payload).toMatchObject({
+            notDispatched: true,
+            usage: { inputTokens: 0, outputTokens: 0 },
+            outcome: scenario.outcome,
+            outputStarted: false,
+          });
+          expect(facts[1]!.payload).not.toHaveProperty("status");
+
+          const next = start(intent.runId, 2);
+          if (scenario.name === "finite") {
+            await repositories.events.startModelAttempt(next);
+          } else {
+            const { reservation, ...unbounded } = next;
+            expect(reservation).toEqual({ inputTokens: 7, outputTokens: 0 });
+            await repositories.events.startModelAttempt(unbounded);
+          }
+          const ordinary = {
+            ...withoutProof,
+            ordinal: 2,
+            finishedAt: new Date(attemptTime + 2125),
+          };
+          await repositories.events.finishModelAttempt(ordinary);
+          const unresolved = await ledger(fixture);
+          expect(
+            unresolved.reservations.find((row) => row.ordinal === "2"),
+          ).toMatchObject({ state: "unresolved" });
+          const ordinaryAccounting = await fullAccounting();
+          const ordinaryBusiness = await fixture.snapshot();
+          await expect(
+            repositories.events.finishModelAttempt({
+              ...ordinary,
+              notDispatched: true,
+            }),
+          ).rejects.toThrow(/receipt identity conflict/u);
+          expect(await fullAccounting()).toEqual(ordinaryAccounting);
+          expect(await fixture.snapshot()).toBe(ordinaryBusiness);
+        });
+      },
+    );
   },
 );

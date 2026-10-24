@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { providerTokenLimitsSchema } from "./provider-token-limits.js";
 import { runtimeConnectionIdSchema } from "./runtime-connection.js";
 
 import { thinkingEffortSchema } from "./model-thinking.js";
@@ -12,6 +13,7 @@ const id = z.string().min(1).max(200);
 const digest = z.string().regex(/^[0-9a-f]{64}$/u);
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const modelSchema = z.strictObject({
+  providerTokenLimits: providerTokenLimitsSchema.optional(),
   baseUrl: z.url(),
   model: id,
   contextWindow: positive,
@@ -126,8 +128,16 @@ export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
 }
 
 function normalizedModel(value: z.infer<typeof modelSchema>): ModelSpec {
-  const { temperature, thinking, supportsAudio, supportsPdf, supportsTools, pricing, ...model } =
-    value;
+  const {
+    temperature,
+    thinking,
+    supportsAudio,
+    supportsPdf,
+    supportsTools,
+    pricing,
+    providerTokenLimits,
+    ...model
+  } = value;
   const normalizedPricing =
     pricing === undefined
       ? undefined
@@ -150,5 +160,6 @@ function normalizedModel(value: z.infer<typeof modelSchema>): ModelSpec {
     ...(supportsPdf === undefined ? {} : { supportsPdf }),
     ...(supportsTools === undefined ? {} : { supportsTools }),
     ...(normalizedPricing === undefined ? {} : { pricing: normalizedPricing }),
+    ...(providerTokenLimits === undefined ? {} : { providerTokenLimits }),
   };
 }

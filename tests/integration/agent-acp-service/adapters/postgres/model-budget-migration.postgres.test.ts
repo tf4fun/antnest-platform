@@ -772,8 +772,20 @@ describe.skipIf(databaseUrl === undefined)(
       30_000,
     );
 
-    it.each(["unfinished", "finished_unknown", "purged_unfinished"] as const)(
-      "imports one unknown attempt for %s history and retains it across real Run purge",
+    it.each([
+      "unfinished",
+      "finished_unknown",
+      "purged_unfinished",
+      "not_dispatched_cancelled",
+      "not_dispatched_failed",
+      "not_dispatched_wrong_finish_id",
+      "not_dispatched_missing_finish",
+      "not_dispatched_usage_mismatch",
+      "not_dispatched_nonzero_usage",
+      "not_dispatched_false",
+      "not_dispatched_purged_run",
+    ] as const)(
+      "preserves proven zero or unknown accounting for %s history across real Run purge",
       async (history) => {
         await withHistoricalDatabase(async (pool) => {
           const sessionId = "historical-budget-" + history + "-session";
@@ -795,6 +807,47 @@ describe.skipIf(databaseUrl === undefined)(
             "model-attempt-usage",
             runId + ":1",
           );
+          const notDispatchedHistory = history.startsWith("not_dispatched_");
+          const purgedBeforeMigration =
+            history === "purged_unfinished" ||
+            history === "not_dispatched_purged_run";
+          const hasUsage =
+            history === "finished_unknown" || notDispatchedHistory;
+          const hasFinish =
+            hasUsage && history !== "not_dispatched_missing_finish";
+          const sourceInputTokens =
+            history === "not_dispatched_usage_mismatch" ||
+            history === "not_dispatched_nonzero_usage"
+              ? 1
+              : 0;
+          const measurement = notDispatchedHistory
+            ? { inputTokens: sourceInputTokens, outputTokens: 0 }
+            : {};
+          const finishUsage =
+            history === "not_dispatched_usage_mismatch"
+              ? { inputTokens: 0, outputTokens: 0 }
+              : measurement;
+          const storedFinishId =
+            history === "not_dispatched_wrong_finish_id"
+              ? deriveResourceId(
+                  "message",
+                  "model-attempt",
+                  runId + ":2:finish",
+                )
+              : finishId;
+          const provesZero =
+            history === "not_dispatched_cancelled" ||
+            history === "not_dispatched_failed";
+          const unmatchedStart =
+            !hasFinish ||
+            purgedBeforeMigration ||
+            history === "not_dispatched_wrong_finish_id" ||
+            history === "not_dispatched_usage_mismatch";
+          const unknownCost = provesZero
+            ? 0
+            : Number(hasUsage) + Number(unmatchedStart);
+          const unknownTokens =
+            Number(unmatchedStart) + Number(hasUsage && !notDispatchedHistory);
           const snapshot = {
             organizationId,
             providerConnectionId: "historical-provider",
@@ -833,13 +886,7 @@ describe.skipIf(databaseUrl === undefined)(
           };
           await pool.query(
             "INSERT INTO acp_sessions(id,organization_id,principal_id,agent_id,cwd,state,last_message_sequence,created_at,updated_at) VALUES($1,$2,'historical-owner',$3,'/workspace','active',$4,$5,$5)",
-            [
-              sessionId,
-              organizationId,
-              agentId,
-              history === "finished_unknown" ? 3 : 1,
-              createdAt,
-            ],
+            [sessionId, organizationId, agentId, hasUsage ? 3 : 1, createdAt],
           );
           await pool.query(
             "INSERT INTO client_mcp_revisions(id,session_id,revision,encrypted_sources,nonce,created_at) VALUES($1,$2,1,$3,$4,$5)",
@@ -873,8 +920,8 @@ describe.skipIf(databaseUrl === undefined)(
               JSON.stringify({ modelProfileId: snapshot.modelProfileId }),
             ],
           );
-          // These are the deterministic IDs and closed hidden payloads written by
-          // startModelAttempt/finishModelAttempt before budget accounting existed.
+          // Retain original deterministic IDs and hidden payloads. A local
+          // not-dispatched proof must not fabricate a Provider cost receipt.
           await pool.query(
             "INSERT INTO session_messages(id,session_id,run_id,sequence,kind,visible,payload,created_at,context_excluded) VALUES($1,$2,$3,1,'model_attempt',false,$4::jsonb,$5,true)",
             [
@@ -894,28 +941,41 @@ describe.skipIf(databaseUrl === undefined)(
               createdAt,
             ],
           );
-          if (history === "finished_unknown") {
+          if (hasFinish) {
             await pool.query(
               "INSERT INTO session_messages(id,session_id,run_id,sequence,kind,visible,payload,created_at,context_excluded) VALUES($1,$2,$3,2,'model_attempt',false,$4::jsonb,$5,true)",
               [
-                finishId,
+                storedFinishId,
                 sessionId,
                 runId,
                 JSON.stringify({
                   kind: "model_attempt",
                   phase: "finish",
                   ordinal: 1,
-                  outcome: "completed",
-                  reason: "completed",
+                  outcome: notDispatchedHistory
+                    ? history === "not_dispatched_cancelled"
+                      ? "cancelled"
+                      : "failed"
+                    : "completed",
+                  reason: notDispatchedHistory
+                    ? history === "not_dispatched_cancelled"
+                      ? "cancelled"
+                      : "provider_unavailable"
+                    : "completed",
                   durationMs: 0,
                   outputStarted: false,
-                  usage: {},
+                  usage: finishUsage,
+                  ...(notDispatchedHistory
+                    ? { notDispatched: history !== "not_dispatched_false" }
+                    : {}),
                   finishedAt: new Date(createdAt),
                   contextSize: 64_000,
                 }),
                 createdAt,
               ],
             );
+          }
+          if (hasUsage) {
             await pool.query(
               "INSERT INTO session_messages(id,session_id,run_id,sequence,kind,visible,payload,created_at) VALUES($1,$2,$3,3,'usage',true,$4::jsonb,$5)",
               [
@@ -924,9 +984,9 @@ describe.skipIf(databaseUrl === undefined)(
                 runId,
                 JSON.stringify({
                   kind: "usage",
-                  used: 0,
+                  used: sourceInputTokens,
                   size: 64_000,
-                  measurement: {},
+                  measurement,
                 }),
                 createdAt,
               ],
@@ -964,7 +1024,7 @@ describe.skipIf(databaseUrl === undefined)(
             }
             return facts;
           };
-          if (history === "purged_unfinished")
+          if (purgedBeforeMigration)
             await pool.query("DELETE FROM runs WHERE id=$1", [runId]);
           const applied = await checkedJournal(pool, 31);
           const before = await sourceFacts();
@@ -993,23 +1053,23 @@ describe.skipIf(databaseUrl === undefined)(
               )
             ).rows,
           ).toEqual(
-            history === "purged_unfinished"
+            purgedBeforeMigration
               ? []
               : [
                   {
                     run_id: runId,
                     organization_id: organizationId,
                     agent_id: agentId,
-                    input_tokens: "0",
+                    input_tokens: String(sourceInputTokens),
                     output_tokens: "0",
                     cost_usd_micros: "0",
                     reserved_input_tokens: "0",
                     reserved_output_tokens: "0",
                     reserved_cost_usd_micros: "0",
-                    unknown_attempts: "1",
-                    unknown_input_attempts: "1",
-                    unknown_output_attempts: "1",
-                    unbounded_cost_attempts: "1",
+                    unknown_attempts: String(unknownCost),
+                    unknown_input_attempts: String(unknownTokens),
+                    unknown_output_attempts: String(unknownTokens),
+                    unbounded_cost_attempts: String(unknownCost),
                   },
                 ],
           );
@@ -1033,23 +1093,23 @@ describe.skipIf(databaseUrl === undefined)(
               period_start: "2026-09-30",
               cost_usd_micros: "0",
               reserved_cost_usd_micros: "0",
-              unknown_attempts: "1",
-              unbounded_cost_attempts: "1",
+              unknown_attempts: String(unknownCost),
+              unbounded_cost_attempts: String(unknownCost),
             },
             {
               period: "monthly",
               period_start: "2026-09-01",
               cost_usd_micros: "0",
               reserved_cost_usd_micros: "0",
-              unknown_attempts: "1",
-              unbounded_cost_attempts: "1",
+              unknown_attempts: String(unknownCost),
+              unbounded_cost_attempts: String(unknownCost),
             },
           ]);
           expect(
             (
               await pool.query<{
                 start_id: string;
-                run_id: string;
+                run_id: string | null;
                 organization_id: string;
                 agent_id: string;
                 ordinal: string;
@@ -1059,15 +1119,42 @@ describe.skipIf(databaseUrl === undefined)(
               )
             ).rows,
           ).toEqual(
-            history !== "finished_unknown"
+            unmatchedStart
               ? [
                   {
                     start_id: startId,
-                    run_id: history === "purged_unfinished" ? null : runId,
+                    run_id: purgedBeforeMigration ? null : runId,
                     organization_id: organizationId,
                     agent_id: agentId,
                     ordinal: "1",
                     started_at: new Date(createdAt),
+                  },
+                ]
+              : [],
+          );
+          expect(
+            (
+              await pool.query<{
+                receipt_id: string;
+                run_id: string | null;
+                input_tokens: string | null;
+                output_tokens: string | null;
+                cost_usd_micros: string | null;
+              }>(
+                "SELECT receipt_id,run_id,input_tokens::text,output_tokens::text,cost_usd_micros::text FROM model_budget_baseline_receipts ORDER BY receipt_id",
+              )
+            ).rows,
+          ).toEqual(
+            hasUsage
+              ? [
+                  {
+                    receipt_id: usageId,
+                    run_id: purgedBeforeMigration ? null : runId,
+                    input_tokens: notDispatchedHistory
+                      ? String(sourceInputTokens)
+                      : null,
+                    output_tokens: notDispatchedHistory ? "0" : null,
+                    cost_usd_micros: provesZero ? "0" : null,
                   },
                 ]
               : [],
@@ -1084,10 +1171,11 @@ describe.skipIf(databaseUrl === undefined)(
               )
             ).rows,
           ).toEqual(
-            (history === "finished_unknown"
-              ? [startId, finishId, usageId]
-              : [startId]
-            ).map((id) => ({ id, run_id: null })),
+            [
+              startId,
+              ...(hasFinish ? [storedFinishId] : []),
+              ...(hasUsage ? [usageId] : []),
+            ].map((id) => ({ id, run_id: null })),
           );
           expect(await baselineFacts()).toEqual(baselines);
           expect(await accounting(pool)).toEqual(balances);

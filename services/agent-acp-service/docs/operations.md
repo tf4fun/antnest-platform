@@ -359,8 +359,12 @@ identity link retain their receipt-time basis. An unmatched hidden start is an
 independent unknown input/output/cost fact, even for a terminal or purged Run;
 only its exact hidden finish and atomic usage receipt prove completion. An
 empty usage receipt with that complete identity link is still unknown and is
-counted once. Stopping an old worker
-does not settle these facts as zero consumption.
+counted once. Stopping an old worker does not settle these facts as zero
+consumption. A complete canonical start/finish/usage pair can carry an internal
+`notDispatched` proof: failed/cancelled, no output or HTTP status, and matching
+zero-token measurements without a Provider cost. Only this original identity
+link imports known zero cost. Missing or mismatched receipts, contradictory
+usage and a lost Run association remain conservative.
 
 The independent `model_budget_history` row records the cutover time. Only a fresh
 installation with no prior migration history proves complete empty prehistory;

@@ -220,6 +220,16 @@ export class PostgresRunEventRepository implements RunEventRepository {
   ): Promise<SessionEvent> {
     const input = structuredClone(request);
     requireOrdinal(input.ordinal);
+    if (
+      input.notDispatched === true &&
+      (input.outcome === "completed" ||
+        input.outputStarted ||
+        input.status !== undefined ||
+        !isDeepStrictEqual(input.usage, { inputTokens: 0, outputTokens: 0 }))
+    )
+      return Promise.reject(
+        new Error("No-dispatch proof conflicts with the original model attempt"),
+      );
     const id = modelAttemptId(input.runId, input.ordinal, "finish");
     const event = {
       kind: "model_attempt",
@@ -230,6 +240,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       durationMs: input.durationMs,
       outputStarted: input.outputStarted,
       usage: input.usage,
+      ...(input.notDispatched === undefined ? {} : { notDispatched: input.notDispatched }),
       ...(input.status === undefined ? {} : { status: input.status }),
       finishedAt: input.finishedAt,
       contextSize: input.contextSize,
@@ -271,6 +282,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
         ordinal: input.ordinal,
         organizationId: locked.organizationId,
         usage: input.usage,
+        ...(input.notDispatched === undefined ? {} : { notDispatched: input.notDispatched }),
         ...(candidate.model.pricing === undefined ? {} : { pricing: candidate.model.pricing }),
       });
       await appendModelAttemptLocked(client, locked, id, event, input.finishedAt);

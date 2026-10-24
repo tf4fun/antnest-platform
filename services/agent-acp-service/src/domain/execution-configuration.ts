@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { providerTokenLimitsSchema } from "./provider-token-limits.js";
 import { modelFailoverSchema, modelRetryConfigurationSchema } from "./model-call-policy.js";
 import { organizationBudgetSchema, runBudgetSchema } from "./model-budget.js";
 import { isDeepStrictEqual } from "node:util";
@@ -64,6 +65,7 @@ const pricingSchema = z.strictObject({
 });
 
 export const executionModelSchema = z.strictObject({
+  provider_token_limits: providerTokenLimitsSchema.optional(),
   model_profile_id: identifier,
   connection_id: identifier,
   display_name: z.string().min(1).max(200),
@@ -658,6 +660,9 @@ function modelSpec(model: ExecutionModel, baseUrl: string): ModelSpec {
   const price = model.pricing;
   return {
     baseUrl,
+    ...(model.provider_token_limits === undefined
+      ? {}
+      : { providerTokenLimits: structuredClone(model.provider_token_limits) }),
     model: model.model,
     contextWindow: model.context_window,
     maxOutputTokens: model.max_output_tokens,

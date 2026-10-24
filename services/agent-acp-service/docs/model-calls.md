@@ -43,9 +43,29 @@ instead of requesting manual Tool approval; outstanding Tool proposals remain
 recorded as not executed. The Run emits one static final notice without calling
 another model. Failure to persist that notice retains the original persistence
 error, and cancellation or lost execution authority keeps its normal precedence.
-This rejection path does not complete the budget rollout: trustworthy request
-bounds, production reservations, detailed budget receipts,
-excess handling and soft-limit notifications remain separate delivery work.
+This rejection path does not complete the budget rollout: detailed budget
+receipts, excess handling, soft notifications and Controller/Console publication
+remain separate delivery work.
+
+Each physical attempt now prepares its exact serialized Provider request before
+persisting the start and reserving budget. Only observations matching the frozen
+candidate's organization, connection, model, protocol, endpoint and current
+credential revision can supply bounds. Editable context settings do not provide
+a hard input bound. Media and default/enabled reasoning remain unknown unless
+the observation proves their coverage; an explicitly disabled thinking request
+can use its observed output bound. A configured output cap above the observation
+is rejected, never silently reduced. Retry, fallback and judge prepare separately.
+See the [Provider limit contract](../../../contracts/agent-controller/provider-token-limits.md).
+
+Before send, after DNS preparation, the request rechecks current credential
+authority. Its monotonic dispatch observation distinguishes a known unsent call
+from an unknown result after send. A failed/cancelled call proven unsent after its
+original task and cleanup join records an internal `notDispatched` finish and
+zero tokens, releasing monetary and token reservations even without pricing.
+It does not fabricate a Provider cost receipt. Nonzero usage/output is never
+overwritten, and independent cleanup failures remain blocking. Once send is
+invoked, missing usage remains unresolved. Idempotent finish replay includes the
+dispatch proof and cannot release the same reservation twice.
 
 Run admission reads the latest durable organization policy under the same
 organization lock used by attempt reservations, settlements and publication.

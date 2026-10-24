@@ -8,7 +8,9 @@ import type {
   AuthenticatedModelRequest,
   ModelRequest,
   ModelResult,
+  PreparedModelTransportCall,
 } from "../../ports/model.js";
+import type { ProviderTokenLimits } from "../../domain/provider-token-limits.js";
 import { ModelError, ModelTransportCleanupError } from "../../ports/model.js";
 import { OpenAICompatibleModelError, invalidResponse } from "./errors.js";
 import { readStream, type StreamObservation } from "./openai-stream.js";
@@ -65,11 +67,70 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
   }
 
   public async complete(request: AuthenticatedModelRequest): Promise<ModelResult> {
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${request.credential}`,
-      "content-type": "application/json",
+    return this.prepare(request).complete(() => request.credential);
+  }
+
+  public prepare(request: ModelRequest, limits?: ProviderTokenLimits): PreparedModelTransportCall {
+    const captured: ModelRequest = {
+      ...request,
+      snapshot: structuredClone(request.snapshot),
+      messages: structuredClone(request.messages),
+      tools: structuredClone(request.tools),
     };
-    const body = JSON.stringify(toRequestBody(request));
+    const encoded = toRequestBody(captured);
+    if (
+      limits?.max_output_tokens !== undefined &&
+      captured.snapshot.executionSpec.model.maxOutputTokens > limits.max_output_tokens
+    )
+      throw new ModelError(
+        "model_unsupported_content",
+        "Frozen output limit exceeds the observed Provider limit",
+        false,
+      );
+    const messages = encoded.messages as Record<string, unknown>[];
+    const media = messages.some(
+      (message) =>
+        Array.isArray(message.content) &&
+        message.content.some((part: { type: string }) => part.type !== "text"),
+    );
+    const thinking = captured.snapshot.executionSpec.model.thinking;
+    const reasoning = thinking?.effort !== "off";
+    const reservation = Object.freeze({
+      ...(limits?.context_tokens === undefined || (media && limits.context_includes_media !== true)
+        ? {}
+        : { inputTokens: limits.context_tokens }),
+      ...(limits?.max_output_tokens === undefined ||
+      (reasoning && limits.output_includes_reasoning !== true)
+        ? {}
+        : { outputTokens: encoded.max_tokens as number }),
+    });
+    const body = JSON.stringify(encoded);
+    let consumed = false;
+    let dispatchState: "not_dispatched" | "possibly_dispatched" = "not_dispatched";
+    return {
+      reservation,
+      get dispatchState() {
+        return dispatchState;
+      },
+      complete: (credential) => {
+        if (consumed)
+          return Promise.reject(
+            new ModelError("model_unavailable", "Prepared request was already consumed", false),
+          );
+        consumed = true;
+        return this.completePrepared(captured, body, credential, () => {
+          dispatchState = "possibly_dispatched";
+        });
+      },
+    };
+  }
+
+  private async completePrepared(
+    request: ModelRequest,
+    body: string,
+    credential: () => string,
+    beforeSend: () => void,
+  ): Promise<ModelResult> {
     const endpoint = await this.destination.prepare(
       request.snapshot.executionSpec.model.baseUrl,
       request.signal,
@@ -97,8 +158,16 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
       throw error;
     };
     try {
+      // No await may separate this authority check/current secret read and send.
+      // Endpoint lookup and its cancellation have already joined above.
+      request.signal.throwIfAborted();
+      const headers: Record<string, string> = {
+        authorization: `Bearer ${credential()}`,
+        "content-type": "application/json",
+      };
       let response: Response;
       try {
+        beforeSend();
         response = await send(endpoint.url.toString(), {
           method: "POST",
           headers,
