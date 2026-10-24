@@ -51,6 +51,17 @@ still requires the receiver's fixed registration and the final sealed-authority 
 lease checks. Ordinary service credentials and service-only certificate identities
 do not grant access to this peer listener.
 
+The receiver file is a closed mapping from every other catalog member ID to one
+current SHA-256 token hash and optionally one next hash (`sha256:` followed by 64
+lowercase hexadecimal characters). Missing or unknown members, duplicate JSON
+keys, duplicate hashes and a local-member entry reject startup. These member
+grants are separate from the ordinary logical-service caller file. Outgoing token
+files are addressed only by validated catalog member IDs in a separate private
+directory and are reread on every request. A missing or invalid file never falls
+back to the previous token. TLS still validates the destination hostname and ACP
+service URI; in mTLS mode the receiver additionally verifies the ACP client
+certificate, and the dedicated member token remains mandatory.
+
 ## Local publication receipt
 
 The entrypoint first persists the authenticated private configuration as today.
