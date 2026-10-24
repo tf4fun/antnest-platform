@@ -49,8 +49,8 @@ function expectedDefinition(code: string, entry: CatalogEntry) {
 }
 
 describe("the canonical ACP error catalog", () => {
-  it("covers all 72 registered codes and exports the canonical capability version", () => {
-    expect(definitions).toHaveLength(72);
+  it("covers all 73 registered codes and exports the canonical capability version", () => {
+    expect(definitions).toHaveLength(73);
     expect(catalog.capability.name).toBe("antnest.dev/errors");
     expect(errorCapability).toStrictEqual({ version: catalog.capability.version });
     expect(errorCapability).toStrictEqual({ version: 1 });

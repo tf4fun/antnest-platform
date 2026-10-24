@@ -151,6 +151,32 @@ notifications, moving an existing handle to another ingress, permission and
 cancel traffic, tampered/foreign-scope handles, DELETE after execution lease
 loss, held cleanup preventing revocation ACK, and retained cleanup failures.
 
+## Original peer loss and Bridge retirement
+
+An authenticated DELETE with a valid original opaque handle may return HTTP 503
+with `code=acp_http_peer_disconnected`, `retryable=true`, and the static message
+`Original ACP HTTP peer disconnected`. This is a narrow retirement qualification,
+not the original owner's 202 cleanup receipt. It never proves remote cleanup,
+Run settlement, lease expiry, process death, or permission to replay a Prompt.
+
+Only the ingress that attempted the fixed original peer may emit this code, when
+that fetch obtained no Response and its complete native error cause consists
+only of refused/reset connections (`ECONNREFUSED`/`ECONNRESET`). The original
+DELETE upload must reach EOF with zero bytes. Its fetch and the same handle's
+non-DELETE relay tasks must have joined
+without independent cleanup failures. A live competing DELETE, an unfinished
+local task, caller cancellation, a deadline, TLS/authentication failure, unknown
+error, actual upstream HTTP response (including 503/404), or retained independent
+cleanup failure cannot qualify. Other handles are not cancelled by this rule.
+
+The Agent UI consumer is a separate pending batch. It must strictly validate the
+original DELETE response, join its original response body, SDK stream, requests,
+state watch and retry decisions, retain the original failed close promise, and
+only then allow one freshly authenticated Bridge replacement. It must not replay
+an old Prompt or reinterpret this qualification as successful cleanup. Normal
+owner fencing and authorization govern every subsequent admission. The producer
+alone does not complete browser recovery or #49.
+
 ## Remaining transport and integration batches
 
 HTTP connection handles must retain the original registration/incarnation/epoch,

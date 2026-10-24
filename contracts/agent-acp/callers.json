@@ -400,7 +400,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/owner-http.ts": {
-      "sha256": "9227f91f5678abc71bae95b1a3005e317787312cac6f8aea54126391086a265b",
+      "sha256": "cccb737803c20f363b55cc8ee0202ab797810011a40e652304e303d22e9cb49a",
       "routes": [
         "POST /internal/acp-peer/forward/http",
         "GET /internal/acp-peer/forward/http",

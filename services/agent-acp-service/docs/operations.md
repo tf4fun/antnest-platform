@@ -208,7 +208,17 @@ remains unresolved until the exact original registration is proven stopped and
 the ingress's physical connection and writes have joined. Independent local
 send or cleanup failures remain blocking even with that stop proof.
 HTTP/SSE connections retain their original opaque owner handle; takeover never
-rebinds it to another owner. State read/watch and
+rebinds it to another owner. If the original peer refuses/resets an authenticated
+original-handle DELETE before returning any response, an ingress may emit
+`acp_http_peer_disconnected` (HTTP 503) only after its same-handle non-DELETE
+pumps and original DELETE work have joined without independent cleanup errors.
+This records a failed original close with a narrow retirement qualification;
+it is not a 202 cleanup receipt or evidence of remote Run settlement. Ordinary
+503/404, timeout, TLS/auth failures, a nonempty DELETE, an unfinished task or a
+competing DELETE do not qualify. See the
+[original peer loss contract](../../../contracts/agent-acp/owner-forwarding.md#original-peer-loss-and-bridge-retirement).
+The Agent UI consumer and actual browser recovery remain a separate pending
+batch. State read/watch and
 Controller settlement can use a different ingress member. Settlement discovers
 the guarded target for a closed scope even after its execution lease expires, checks the closed
 operation and private publication under that member's control fence, and joins
