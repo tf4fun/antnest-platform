@@ -1,4 +1,10 @@
 import type { PoolClient } from "pg";
+import { z } from "zod";
+import {
+  runtimeRevisionSchema,
+  runtimeConnectionIdSchema,
+  runtimeMcpEndpointSchema,
+} from "../../domain/runtime-connection.js";
 import { parseOwnerInspection } from "../../application/owner-inspection.js";
 import { parseOwnerRegistration } from "../../application/owner-incarnation.js";
 import {
@@ -71,6 +77,7 @@ type Learning = {
   model_recovered: boolean;
   recovery_proof: { receipt_id: string; inspection: unknown } | null;
   recovery_runtime_cleared: boolean;
+  recovery_runtime_covered: boolean;
   intents: Intent[];
   candidate: Candidate | null;
   basis: Basis | null;
@@ -125,6 +132,14 @@ const inventory = `WITH scopes AS (
           AND p.organization_id=t.organization_id AND p.agent_id=t.agent_id
           AND p.execution_id=i.execution_id AND p.runtime_revision=i.runtime_revision
           AND p.mcp_endpoint=i.mcp_endpoint AND p.connection_id=i.connection_id AND p.body_sha256=i.body_sha256
+      )) AS recovery_runtime_covered,
+    NOT EXISTS(SELECT 1 FROM learning_maintenance_intents i WHERE i.task_id=t.id AND i.state<>'settled'
+      AND NOT EXISTS(SELECT 1 FROM learning_runtime_protections p
+        WHERE p.request_id=i.request_id AND p.task_id=t.id AND p.claim_id=t.claim_id AND p.generation=t.generation
+          AND i.claim_id=t.claim_id AND i.generation=t.generation AND i.action='install'
+          AND p.organization_id=t.organization_id AND p.agent_id=t.agent_id
+          AND p.execution_id=i.execution_id AND p.runtime_revision=i.runtime_revision
+          AND p.mcp_endpoint=i.mcp_endpoint AND p.connection_id=i.connection_id AND p.body_sha256=i.body_sha256
           AND p.retired_at IS NOT NULL)) AS recovery_runtime_cleared,
     EXISTS(SELECT 1 FROM learning_maintenance_intents i WHERE i.task_id=t.id AND i.state<>'settled') AS intent_unsettled
   FROM learning_tasks t WHERE t.authority_mode='owned'
@@ -171,6 +186,136 @@ export class PostgresAgentStartup {
       },
       { organizationBarrier: true },
     );
+  }
+
+  /** Durable classification only. The caller must separately join original local tasks. */
+  public async settlement(input: AgentOwnershipFence): Promise<{
+    localUncertain: boolean;
+    runtimeProtected: boolean;
+  }> {
+    const fence = ownershipFence(input);
+    return this.kernel.agentTransaction(
+      fence,
+      async (client) => {
+        const parameters = [fence.organizationId, fence.agentId];
+        const current = (await client.query<Row>(inventory, parameters)).rows;
+        const runs = (await client.query<SettlementRun>(settlementRuns, parameters)).rows;
+        const legacy = await client.query<{ uncertain: boolean }>(
+          `SELECT EXISTS(SELECT 1 FROM learning_tasks t
+          WHERE t.organization_id=$1 AND t.agent_id=$2 AND t.authority_mode<>'owned'
+            AND (t.state IN ('running','paused')
+              OR (t.state='pending' AND (t.claim_id IS NOT NULL OR t.generation<>0 OR t.started_at IS NOT NULL
+                OR t.model_calls<>0 OR t.input_tokens<>0 OR t.output_tokens<>0 OR t.model_time_ms<>0
+                OR EXISTS(SELECT 1 FROM learning_review_attempts e WHERE e.task_id=t.id)
+                OR EXISTS(SELECT 1 FROM learning_model_calls e WHERE e.task_id=t.id)
+                OR EXISTS(SELECT 1 FROM learning_evidence_snapshots e WHERE e.task_id=t.id)
+                OR EXISTS(SELECT 1 FROM learning_candidates e WHERE e.task_id=t.id)
+                OR EXISTS(SELECT 1 FROM learning_apply_bases e WHERE e.task_id=t.id)
+                OR EXISTS(SELECT 1 FROM learning_maintenance_intents e WHERE e.task_id=t.id)
+                OR EXISTS(SELECT 1 FROM learning_changes e WHERE e.task_id=t.id)))
+              OR EXISTS(SELECT 1 FROM learning_model_calls m WHERE m.task_id=t.id AND m.state<>'settled')
+              OR EXISTS(SELECT 1 FROM learning_maintenance_intents i WHERE i.task_id=t.id AND i.state<>'settled'))
+        ) AS uncertain`,
+          parameters,
+        );
+        return {
+          localUncertain:
+            legacy.rows[0]!.uncertain ||
+            runs.some((run) => !stoppedRun(run, fence)) ||
+            current.some((row) =>
+              row.learning.some((task) =>
+                validRecoveryProof(task) ? !task.recovery_runtime_covered : protectedLearning(task),
+              ),
+            ),
+          runtimeProtected:
+            runs.some((run) => run.runtime_protected) ||
+            current.some((row) => row.learning_protected),
+        };
+      },
+      { organizationBarrier: true },
+    );
+  }
+}
+
+type SettlementRun = {
+  active: boolean;
+  permission_pending: boolean;
+  runtime_protected: boolean;
+  scope_consistent: boolean;
+  temporary_consistent: boolean;
+  registration_id: string | null;
+  member_id: string | null;
+  incarnation_id: string | null;
+  epoch: string | null;
+  receipt_id: string | null;
+  inspection: unknown;
+  audit_consistent: boolean;
+  runtime: unknown;
+};
+
+// Do not filter by the current Runtime revision: old bindings remain protected.
+// The actual Run/Session defines a Temporary scope, even if copied metadata disagrees.
+const settlementRuns = `SELECT r.state IN ('admitting','running') AS active,
+  EXISTS(SELECT 1 FROM tool_permissions p WHERE p.run_id=r.id AND p.decision IS NULL) AS permission_pending,
+  (EXISTS(SELECT 1 FROM tool_attempts a WHERE a.run_id=r.id AND a.source='runtime' AND NOT a.runtime_call_stopped)
+    OR EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=r.id AND t.released_at IS NULL)) AS runtime_protected,
+  (r.organization_id=$1 AND r.agent_id=$2 AND s.organization_id=$1 AND s.agent_id=$2) AS scope_consistent,
+  NOT EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=r.id AND t.released_at IS NULL AND
+    (t.organization_id IS DISTINCT FROM r.organization_id OR t.agent_id IS DISTINCT FROM r.agent_id
+      OR t.execution_id IS DISTINCT FROM (r.execution_snapshot->'runtime'->>'executionId')
+      OR t.mcp_endpoint IS DISTINCT FROM (r.execution_snapshot->'runtime'->>'mcpEndpoint'))) AS temporary_consistent,
+  r.execution_owner_registration_id AS registration_id,r.execution_owner_member_id AS member_id,
+  r.execution_owner_incarnation_id AS incarnation_id,r.execution_owner_epoch::text AS epoch,
+  p.receipt_id,p.inspection,r.execution_snapshot->'runtime' AS runtime,
+  (a.run_id IS NULL OR (a.receipt_id=p.receipt_id AND a.organization_id=r.organization_id AND a.agent_id=r.agent_id
+    AND a.original_registration_id=r.execution_owner_registration_id AND a.original_member_id=r.execution_owner_member_id
+    AND a.original_incarnation_id=r.execution_owner_incarnation_id AND a.original_epoch=r.execution_owner_epoch)) AS audit_consistent
+FROM runs r JOIN acp_sessions s ON s.id=r.session_id
+LEFT JOIN owner_stop_receipts p ON p.registration_id=r.execution_owner_registration_id
+LEFT JOIN run_owner_recoveries a ON a.run_id=r.id
+WHERE ((r.organization_id=$1 AND r.agent_id=$2) OR (s.organization_id=$1 AND s.agent_id=$2)) AND (
+  r.state IN ('admitting','running')
+  OR EXISTS(SELECT 1 FROM tool_permissions p WHERE p.run_id=r.id AND p.decision IS NULL)
+  OR EXISTS(SELECT 1 FROM tool_attempts a WHERE a.run_id=r.id AND a.source='runtime' AND NOT a.runtime_call_stopped)
+  OR EXISTS(SELECT 1 FROM temporary_skill_scopes t WHERE t.run_id=r.id AND t.released_at IS NULL))`;
+
+const settlementRuntime = z.object({
+  revision: runtimeRevisionSchema,
+  executionId: z
+    .string()
+    .regex(/^[!-~]{1,200}$/u)
+    .refine((value) => !value.includes("/") && !value.includes("\\")),
+  mcpEndpoint: runtimeMcpEndpointSchema,
+  connectionId: runtimeConnectionIdSchema.optional(),
+});
+
+function stoppedRun(run: SettlementRun, fence: AgentOwnershipFence): boolean {
+  if (
+    run.active ||
+    run.permission_pending ||
+    !run.scope_consistent ||
+    !run.temporary_consistent ||
+    !run.audit_consistent ||
+    run.receipt_id === null
+  )
+    return false;
+  try {
+    if (!settlementRuntime.safeParse(run.runtime).success) return false;
+    const registration = parseOwnerRegistration({
+      registration_id: run.registration_id,
+      member_id: run.member_id,
+      incarnation_id: run.incarnation_id,
+    });
+    const original = ownershipFence({
+      ...fence,
+      ownerInstanceId: registration.incarnation_id,
+      epoch: run.epoch!,
+    });
+    if (BigInt(original.epoch) >= BigInt(fence.epoch)) return false;
+    const proof = parseOwnerInspection(run.inspection, registration);
+    return proof.state === "stopped" && proof.stop_receipt.receipt_id === run.receipt_id;
+  } catch {
+    return false;
   }
 }
 

@@ -40,7 +40,11 @@ import {
   type PublicExecutionConfiguration,
   type ExecutionAccessSnapshot,
 } from "./domain/execution-configuration.js";
-import { parseAgentSettlement } from "./domain/agent-settlement.js";
+import {
+  parseAgentSettlement,
+  type AgentSettlementRequest,
+  type AgentSettlementResult,
+} from "./domain/agent-settlement.js";
 import type { AcpApplicationPort } from "./ports/acp-application.js";
 import type { AgentSettlementPort } from "./ports/agent-settlement.js";
 import type { AgentExecutionStatePort } from "./ports/agent-execution-state.js";
@@ -114,7 +118,18 @@ export class OwnedAgentComponents {
           operationId: request.operation_id,
           minimumRevision: request.minimum_revision,
         });
-        return this.dispatch(scope, (entry) => entry.settlement.settle(request, signal));
+        let entry: Entry;
+        try {
+          entry = this.capture(scope);
+        } catch (error) {
+          if (
+            error instanceof AgentOwnershipLostError ||
+            (error instanceof DomainError && error.code === "agent_unavailable")
+          )
+            return this.settleProtected(request, signal);
+          throw error;
+        }
+        return entry.generation.dispatch(() => entry.settlement.settle(request, signal));
       },
     };
     this.executionState = {
@@ -157,6 +172,83 @@ export class OwnedAgentComponents {
       await worker.pauseAbandonedLearningTasks(scope);
       await this.options.legacy.permissions.cancelAbandoned(scope);
       await this.options.legacyRecovery.recoverLegacyScope(scope, this.options.ownershipSignal);
+    }
+  }
+
+  private async settleProtected(
+    request: AgentSettlementRequest,
+    signal?: AbortSignal,
+  ): Promise<AgentSettlementResult> {
+    const operation = {
+      organizationId: request.organization_id,
+      agentId: request.agent_id,
+      operationId: request.operation_id,
+      minimumRevision: request.minimum_revision,
+    };
+    const initial = this.options.directory.closedAgent(operation);
+    const deadline = Date.parse(request.deadline_at);
+    const waiting = new AbortController();
+    const lifetime = AbortSignal.any([
+      waiting.signal,
+      this.options.ownershipSignal,
+      ...(signal === undefined ? [] : [signal]),
+    ]);
+    const expired = () => lifetime.aborted || this.options.now().getTime() >= deadline;
+    const current = () => {
+      this.options.ownershipSignal.throwIfAborted();
+      const latest = this.options.directory.closedAgent(operation);
+      if (!isDeepStrictEqual(latest.agent.runtime, initial.agent.runtime))
+        throw new DomainError("agent_operation_conflict", "Runtime changed during settlement");
+      return latest;
+    };
+    if (expired()) return { applied_revision: current().revision, outcome: "not_settled" };
+    const timer = setTimeout(
+      () => waiting.abort(),
+      Math.max(0, Math.min(deadline - this.options.now().getTime(), 2_147_483_647)),
+    );
+    timer.unref();
+    try {
+      const outcome = await this.generations.runControl(
+        operation,
+        async (authority, original) => {
+          original.throwIfAborted();
+          const published = current();
+          const saved = await this.options.configuration.loadOwnedAuthority(authority.fence);
+          original.throwIfAborted();
+          const agent =
+            saved === null
+              ? undefined
+              : publicExecutionConfiguration(saved).agents.find(
+                  (candidate) => candidate.agent_id === operation.agentId,
+                );
+          if (
+            saved === null ||
+            saved.revision !== published.revision ||
+            !isDeepStrictEqual(agent, published.agent)
+          )
+            throw configurationUnavailable();
+          // The control generation has joined this process's original initializer,
+          // tasks and release. Durable proof independently covers remote predecessors.
+          const inventory = await this.inventory.settlement(authority.fence);
+          original.throwIfAborted();
+          current();
+          return inventory.localUncertain
+            ? ("not_settled" as const)
+            : inventory.runtimeProtected
+              ? ("runtime_barrier_required" as const)
+              : ("settled" as const);
+        },
+        lifetime,
+      );
+      const latest = current();
+      return { applied_revision: latest.revision, outcome: expired() ? "not_settled" : outcome };
+    } catch (error) {
+      const latest = current();
+      if (expired() || error instanceof AgentOwnershipLostError)
+        return { applied_revision: latest.revision, outcome: "not_settled" };
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

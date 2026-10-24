@@ -3,6 +3,7 @@ import {
   AgentGenerations,
   type AgentGeneration,
   type GenerationInitializer,
+  type AgentGenerationAuthority,
 } from "../../src/application/agent-generations.js";
 import {
   AgentOwnershipLostError,
@@ -63,6 +64,217 @@ afterEach(async () => {
 });
 
 describe("Agent generation lifetime", () => {
+  it("does not misreport ordinary ownership cancellation before the control callback as cleanup failure", async () => {
+    const { manager, leases } = fixture();
+    const cancelled = new AbortController();
+    leases.tryAcquire.mockImplementation((scope, owner) => {
+      queueMicrotask(() => queueMicrotask(() => cancelled.abort(new AgentOwnershipLostError())));
+      return Promise.resolve(lease(scope, "1", owner));
+    });
+    const operation = vi.fn().mockResolvedValue("must not run");
+    await expect(manager.runControl(scopeA, operation, cancelled.signal)).rejects.toBeInstanceOf(
+      AgentOwnershipLostError,
+    );
+    expect(operation).not.toHaveBeenCalled();
+    await manager.drain();
+    expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
+  });
+
+  it("retains an independent original control failure arriving after its public timeout", async () => {
+    const { manager } = fixture();
+    const original = held("late result");
+    const control = manager.runControl(scopeA, () => original.promise);
+    const denied = expect(control).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    await vi.advanceTimersByTimeAsync(10_001);
+    await denied;
+    const failure = new Error("late control cleanup failure");
+    original.reject(failure);
+    try {
+      await expect(manager.drain()).rejects.toMatchObject({ errors: [failure] });
+    } finally {
+      managers.splice(managers.indexOf(manager), 1);
+    }
+  });
+
+  it("rejects a late control release result when the monotonic deadline passed before its timer ran", async () => {
+    const { manager, leases } = fixture();
+    const release = held(true);
+    leases.release.mockReturnValueOnce(release.promise);
+    const control = manager.runControl(scopeA, () => Promise.resolve("protected"));
+    const denied = expect(control).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(leases.release).toHaveBeenCalledOnce();
+    vi.spyOn(performance, "now").mockReturnValue(10_001);
+    release.resolve(true);
+    await denied;
+  });
+
+  it("joins the old initializer before exclusive control and leaves healthy B dispatchable", async () => {
+    const { manager, leases, initialize } = fixture();
+    const original = held("old components");
+    const ready = manager.prepare(scopeA, () => original.promise);
+    void ready.catch(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    const input = { ...scopeA };
+    const operation = vi.fn((authority: AgentGenerationAuthority, signal: AbortSignal) => {
+      signal.throwIfAborted();
+      expect(authority.fence).toEqual(lease(scopeA, "2").fence);
+      expect(Object.isFrozen(authority)).toBe(true);
+      return Promise.resolve("protected");
+    });
+    leases.tryAcquire.mockImplementation((scope, owner) =>
+      Promise.resolve(lease(scope, "2", owner)),
+    );
+    const control = manager.runControl(input, operation);
+    input.agentId = scopeB.agentId;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(operation).not.toHaveBeenCalled();
+    expect(leases.tryAcquire).toHaveBeenCalledTimes(1);
+    await expect(manager.prepare(scopeA, initialize)).rejects.toBeInstanceOf(
+      AgentOwnershipLostError,
+    );
+    expect(() => manager.capture(scopeA)).toThrow(AgentOwnershipLostError);
+    const b = await manager.prepare(scopeB, initialize);
+    expect(await b.dispatch((value) => Promise.resolve(value))).toBe("components");
+    original.resolve("old components");
+    expect(await control).toBe("protected");
+    expect(operation).toHaveBeenCalledOnce();
+    expect(() => manager.capture(scopeA)).toThrow(AgentOwnershipLostError);
+    expect(await manager.prepare(scopeA, initialize)).toBeDefined();
+  });
+
+  it("cancels control admission while retaining the old initializer retirement barrier", async () => {
+    const { manager, leases, initialize } = fixture();
+    const original = held("late initialization");
+    void manager.prepare(scopeA, () => original.promise).catch(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    const cancelled = new AbortController();
+    const operation = vi.fn().mockResolvedValue("must not run");
+    const control = manager.runControl(scopeA, operation, cancelled.signal);
+    const denied = expect(control).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    cancelled.abort(new AgentOwnershipLostError());
+    await denied;
+    await expect(manager.prepare(scopeA, initialize)).rejects.toBeInstanceOf(
+      AgentOwnershipLostError,
+    );
+    expect(leases.tryAcquire).toHaveBeenCalledTimes(1);
+    expect(leases.release).not.toHaveBeenCalled();
+    original.resolve("late initialization");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(operation).not.toHaveBeenCalled();
+    expect(leases.release).toHaveBeenCalledOnce();
+    expect(await manager.prepare(scopeA, initialize)).toBeDefined();
+  });
+
+  it("control deadline rejects promptly but joins the original operation before releasing scope", async () => {
+    const { manager, leases, initialize } = fixture();
+    const original = held("late control result");
+    let signal: AbortSignal | undefined;
+    const control = manager.runControl(scopeA, (_authority, lifetime) => {
+      signal = lifetime;
+      return original.promise;
+    });
+    const denied = expect(control).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    await vi.advanceTimersByTimeAsync(10_001);
+    await denied;
+    expect(signal?.aborted).toBe(true);
+    expect(leases.release).not.toHaveBeenCalled();
+    await expect(manager.prepare(scopeA, initialize)).rejects.toBeInstanceOf(
+      AgentOwnershipLostError,
+    );
+    const b = await manager.prepare(scopeB, initialize);
+    expect(await b.dispatch(() => Promise.resolve("healthy"))).toBe("healthy");
+    original.resolve("late control result");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
+    expect(await manager.prepare(scopeA, initialize)).toBeDefined();
+  });
+
+  it("joins a late control acquisition receipt after timeout without running its operation", async () => {
+    const { manager, leases, initialize } = fixture();
+    const original = held<AgentLease | null>(lease(scopeA));
+    leases.tryAcquire.mockReturnValueOnce(original.promise);
+    const operation = vi.fn().mockResolvedValue("unexpected");
+    const denied = expect(manager.runControl(scopeA, operation)).rejects.toBeInstanceOf(
+      AgentOwnershipLostError,
+    );
+    await vi.advanceTimersByTimeAsync(10_001);
+    await denied;
+    expect(leases.release).not.toHaveBeenCalled();
+    await expect(manager.prepare(scopeA, initialize)).rejects.toBeInstanceOf(
+      AgentOwnershipLostError,
+    );
+    original.resolve(lease(scopeA));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(operation).not.toHaveBeenCalled();
+    expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
+  });
+
+  it("retains control scope through release and never exposes an application graph", async () => {
+    const { manager, leases, initialize } = fixture();
+    const release = held(true);
+    leases.release.mockReturnValueOnce(release.promise);
+    let delivered = false;
+    const control = manager
+      .runControl(scopeA, () => Promise.resolve("protected"))
+      .then((value) => {
+        delivered = true;
+        return value;
+      });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(delivered).toBe(false);
+    expect(() => manager.capture(scopeA)).toThrow(AgentOwnershipLostError);
+    await expect(manager.prepare(scopeA, initialize)).rejects.toBeInstanceOf(
+      AgentOwnershipLostError,
+    );
+    await expect(
+      manager.runControl(scopeA, () => Promise.resolve("duplicate")),
+    ).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    release.resolve(true);
+    expect(await control).toBe("protected");
+    expect(await manager.prepare(scopeA, initialize)).toBeDefined();
+  });
+
+  it("keeps a control retirement tombstone when the lease release receipt is unknown", async () => {
+    const { manager, leases, initialize } = fixture();
+    const failure = new Error("control release outcome unknown");
+    leases.release.mockRejectedValueOnce(failure);
+    try {
+      await expect(manager.runControl(scopeA, () => Promise.resolve("protected"))).rejects.toBe(
+        failure,
+      );
+      await expect(manager.prepare(scopeA, initialize)).rejects.toBeInstanceOf(
+        AgentOwnershipLostError,
+      );
+      await expect(
+        manager.runControl(scopeA, () => Promise.resolve("duplicate")),
+      ).rejects.toBeInstanceOf(AgentOwnershipLostError);
+      expect(leases.tryAcquire).toHaveBeenCalledOnce();
+    } finally {
+      await expect(manager.drain()).rejects.toBeInstanceOf(AggregateError);
+      managers.splice(managers.indexOf(manager), 1);
+    }
+  });
+
+  it("shutdown retains a held original control operation and its lease until joined", async () => {
+    const { manager, leases } = fixture();
+    const original = held("late control result");
+    const control = manager.runControl(scopeA, () => original.promise);
+    const denied = expect(control).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    await vi.advanceTimersByTimeAsync(0);
+    let drained = false;
+    const stopped = manager.drain().then(() => {
+      drained = true;
+    });
+    await denied;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(drained).toBe(false);
+    expect(leases.release).not.toHaveBeenCalled();
+    original.resolve("late control result");
+    await stopped;
+    expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
+  });
+
   it("bounds retained task diagnostics for a long-lived Agent", async () => {
     const { manager, initialize } = fixture();
     const generation = await manager.prepare(scopeA, initialize);

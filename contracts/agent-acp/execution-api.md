@@ -204,6 +204,15 @@ The result contains `applied_revision` and `outcome`, which is one of:
 - `not_settled`: the operation still matches, but local execution may still
   dispatch or waiting expired. Controller must not replace Runtime resources.
 
+The same guarantees apply when protected inventory prevented an application
+graph from being initialized. ACP must join its original local handles and
+validate the relevant predecessor stopping facts under current ownership;
+missing components, terminal labels and a barrier by themselves prove neither.
+Settlement checks all relevant original Runtime bindings in the scope, including
+an install binding different from the current configuration. A revision filter
+must not hide outstanding protection. Recheck the closed operation and Runtime
+binding after waiting; timeout never supplies a missing stop proof.
+
 No Run IDs, tool outcomes, admission deadlines, or client reference counts are
 returned to Controller. Runtime protection is durable in ACP and is cleared
 only for the old binding after its replacement, never by equal-snapshot replay.

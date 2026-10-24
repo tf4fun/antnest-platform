@@ -203,6 +203,31 @@ async function setupInstall(f: FencingFixture, state: "pending" | "unknown") {
 describe.skipIf(databaseUrl === undefined)(
   "stopped predecessor Learning recovery",
   () => {
+    it.each(["pending", "unknown"] as const)(
+      "separates stopped local Learning from its %s install Runtime protection",
+      async (state) => {
+        await withDatabase(async (f) => {
+          const value = await setupInstall(f, state);
+          const { next, recovery, input } = await takeover(f, value);
+          const inventory = new PostgresAgentStartup(f.kernelB);
+          expect(await inventory.settlement(next.authority.fence)).toEqual({
+            localUncertain: true,
+            runtimeProtected: false,
+          });
+          await recovery.recoverLearning(input);
+          const before = await facts(f);
+          expect(await inventory.settlement(next.authority.fence)).toEqual({
+            localUncertain: false,
+            runtimeProtected: true,
+          });
+          expect(await facts(f)).toBe(before);
+          await expect(
+            inventory.assertAvailable(next.authority.fence),
+          ).rejects.toBeInstanceOf(AgentOwnershipLostError);
+        });
+      },
+    );
+
     it.each(["running", "paused"] as const)(
       "cancels an actual %s claim without releasing its unknown cost or rewriting history",
       async (state) => {

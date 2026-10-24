@@ -21,6 +21,8 @@ import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/p
 import { createOwnedAgentRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/agent-repositories.js";
 import { createOwnedLearningRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/learning-repositories.js";
 import { learningPolicySchema } from "../../../../services/agent-acp-service/src/domain/learning-policy.js";
+import { buildLearningCandidatePackage } from "../../../../services/agent-acp-service/src/domain/learning-candidate-package.js";
+import { learningApplyRequestId } from "../../../../services/agent-acp-service/src/domain/learning-apply-request-id.js";
 import { publicExecutionConfiguration } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import type { OwnerInspection } from "../../../../services/agent-acp-service/src/application/owner-inspection.js";
@@ -40,6 +42,7 @@ import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports
 import {
   executionConfiguration,
   executionIdentity,
+  closedExecutionAgent,
 } from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 import { runtimeInformation } from "../../../../services/agent-acp-service/test/fixtures/runtime-information.js";
 import {
@@ -131,6 +134,12 @@ describe.skipIf(databaseUrl === undefined)(
   "production ACP warm admission",
   () => {
     it.each([
+      {
+        version: 2,
+        ownership: "owned",
+        proofSource: "remote",
+        learningState: "install",
+      },
       ...(
         [
           { version: 1, ownership: "legacy", proofSource: "none" },
@@ -258,6 +267,8 @@ describe.skipIf(databaseUrl === undefined)(
           | undefined;
         let recoveredLearning:
           Awaited<ReturnType<typeof learningFacts>> | undefined;
+        let installRequestId: string | undefined;
+        let originalInstall: unknown;
         let registrationOrigin: string | undefined;
         const modelRequests: Array<{
           boot: Boot;
@@ -1078,11 +1089,92 @@ describe.skipIf(databaseUrl === undefined)(
                 outputTokens: 100,
                 durationMs: 1000,
               });
-              await repositories.budget.settle(claim!, settled, {
-                inputTokens: 10,
-                outputTokens: 20,
-                durationMs: 30,
-              });
+              if (learningState === "install") {
+                const evidence = await repositories.evidence.readAndRecord(
+                  claim!,
+                );
+                const authenticated = evidence.items.find(
+                  (item) => item.kind === "authenticated_user",
+                );
+                expect(authenticated).toBeDefined();
+                const proposal = {
+                  decision: "propose" as const,
+                  name: "persist-once",
+                  description: "Persist once.",
+                  instructions: "unused",
+                  rules: [
+                    {
+                      text: authenticated!.text,
+                      evidenceIds: [authenticated!.evidenceId],
+                    },
+                  ],
+                };
+                const candidatePackage = buildLearningCandidatePackage(
+                  proposal,
+                  evidence,
+                );
+                await repositories.budget.settleReview(
+                  claim!,
+                  settled,
+                  { inputTokens: 10, outputTokens: 20, durationMs: 30 },
+                  proposal,
+                );
+                const candidateId = randomUUID();
+                await repositories.candidates.record({
+                  claim: claim!,
+                  candidateId,
+                  package: candidatePackage,
+                  expectedBaseDigest: null,
+                });
+                const runtime = configuration.agents[0]!.runtime;
+                await repositories.bases.recordAdmitted(claim!, candidateId, {
+                  kind: "policy",
+                  policyRevision: policy.revision,
+                  packagePath: candidatePackage.packagePath,
+                  expectedBaseDigest: null,
+                  targetDigest: candidatePackage.targetDigest,
+                  evidenceIds: candidatePackage.evidenceIds,
+                  executionId: runtime.runtime_execution_id,
+                });
+                installRequestId = learningApplyRequestId(
+                  claim!,
+                  candidateId,
+                  "install",
+                  1,
+                );
+                await repositories.intents.reserve({
+                  claim: claim!,
+                  requestId: installRequestId,
+                  action: "install",
+                  executionId: runtime.runtime_execution_id,
+                  revision: runtime.runtime_revision,
+                  mcpEndpoint: runtime.mcp_endpoint,
+                  connectionId: runtime.connection_id!,
+                  bodySha256: `sha256:${"a".repeat(64)}`,
+                  requestFacts: {
+                    candidate_id: candidateId,
+                    package_path: candidatePackage.packagePath,
+                    expected_base_digest: null,
+                    target_digest: candidatePackage.targetDigest,
+                  },
+                });
+                await repositories.intents.markUnknown(
+                  claim!,
+                  installRequestId,
+                );
+                originalInstall = (
+                  await pool.query(
+                    "SELECT * FROM learning_maintenance_intents WHERE request_id=$1",
+                    [installRequestId],
+                  )
+                ).rows;
+              } else {
+                await repositories.budget.settle(claim!, settled, {
+                  inputTokens: 10,
+                  outputTokens: 20,
+                  durationMs: 30,
+                });
+              }
               await repositories.budget.reserve(claim!, policy, randomUUID(), {
                 inputTokens: 100,
                 outputTokens: 100,
@@ -1238,7 +1330,159 @@ describe.skipIf(databaseUrl === undefined)(
             15_000,
           );
           expect((await http(second, "/status")).status).toBe(200);
-          if (unavailablePredecessor) {
+          if (learningState === "install") {
+            expect(predecessorLearning).toBeDefined();
+            expect(
+              (await learningFacts(predecessorLearning!.taskId)).task,
+            ).toMatchObject({
+              state: "cancelled",
+              cancel_reason: "worker_lost",
+            });
+            expect(inspectionRequests).toBe(1);
+            const protection = (
+              await pool.query(
+                "SELECT * FROM learning_runtime_protections WHERE request_id=$1",
+                [installRequestId],
+              )
+            ).rows;
+            expect(protection).toHaveLength(1);
+            const barrier = await http(
+              second,
+              "/rpc/agent-acp/get-runtime-barrier",
+              {
+                method: "POST",
+                headers: {
+                  ...workloadHeaders("agent-controller"),
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                  organization_id: configuration.organization_id,
+                  agent_id: "agent-1",
+                  expected_runtime_revision:
+                    configuration.agents[0]!.runtime.runtime_revision,
+                }),
+              },
+              true,
+            );
+            expect(barrier).toMatchObject({
+              status: 200,
+              body: {
+                barrier: {
+                  reason: "runtime_barrier_required",
+                  runtime_execution_id: runtimeExecutionId,
+                },
+              },
+            });
+            const closed = structuredClone(configuration);
+            closed.revision++;
+            closed.agents[0] = closedExecutionAgent(closed.agents[0]!);
+            closed.agents[0].operation_id = randomUUID();
+            publicationCount++;
+            expect(
+              await http(
+                second,
+                "/rpc/agent-acp/apply-execution-snapshot",
+                {
+                  method: "POST",
+                  headers: {
+                    ...workloadHeaders("agent-controller"),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify(closed),
+                },
+                true,
+              ),
+            ).toEqual({
+              status: 200,
+              body: {
+                organization_id: configuration.organization_id,
+                applied_revision: closed.revision,
+              },
+            });
+            const settlement = await http(
+              second,
+              "/rpc/agent-acp/settle-agent",
+              {
+                method: "POST",
+                headers: {
+                  ...workloadHeaders("agent-controller"),
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                  organization_id: configuration.organization_id,
+                  agent_id: "agent-1",
+                  minimum_revision: closed.revision,
+                  operation_id: closed.agents[0].operation_id,
+                  mode: "wait",
+                  deadline_at: new Date(Date.now() + 5000).toISOString(),
+                }),
+              },
+              true,
+            );
+            expect(settlement).toEqual({
+              status: 200,
+              body: {
+                applied_revision: closed.revision,
+                outcome: "runtime_barrier_required",
+              },
+            });
+            for (const [override, expected] of [
+              [
+                { deadline_at: new Date(Date.now() - 1000).toISOString() },
+                {
+                  status: 200,
+                  body: {
+                    applied_revision: closed.revision,
+                    outcome: "not_settled",
+                  },
+                },
+              ],
+              [{ operation_id: randomUUID() }, { status: 409 }],
+              [{ minimum_revision: closed.revision + 1 }, { status: 409 }],
+            ] as const) {
+              expect(
+                await http(
+                  second,
+                  "/rpc/agent-acp/settle-agent",
+                  {
+                    method: "POST",
+                    headers: {
+                      ...workloadHeaders("agent-controller"),
+                      "content-type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      organization_id: configuration.organization_id,
+                      agent_id: "agent-1",
+                      minimum_revision: closed.revision,
+                      operation_id: closed.agents[0].operation_id,
+                      mode: "wait",
+                      deadline_at: new Date(Date.now() + 5000).toISOString(),
+                      ...override,
+                    }),
+                  },
+                  true,
+                ),
+              ).toMatchObject(expected);
+            }
+            expect(
+              (
+                await pool.query(
+                  "SELECT * FROM learning_maintenance_intents WHERE request_id=$1",
+                  [installRequestId],
+                )
+              ).rows,
+            ).toEqual(originalInstall);
+            expect(
+              (
+                await pool.query(
+                  "SELECT * FROM learning_runtime_protections WHERE request_id=$1",
+                  [installRequestId],
+                )
+              ).rows,
+            ).toEqual(protection);
+            expect(await stored(before.sessionId)).toEqual(before.rows);
+            expect(modelRequests).toHaveLength(1);
+          } else if (unavailablePredecessor) {
             if (heldInspection)
               await within(
                 cancellationStarted.promise,
