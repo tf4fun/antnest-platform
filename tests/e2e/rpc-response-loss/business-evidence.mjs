@@ -6,6 +6,7 @@ import {
   assertErrorCapability,
 } from "../../support/acp-errors.mjs";
 import { replayRequest } from "../managed-mcp/protocol.mjs";
+import { assertCompletedModelAttempts } from "../../support/model-attempt-evidence.mjs";
 
 const plans = [
   { version: 1, kind: "apply" },
@@ -47,6 +48,7 @@ const eventKinds = new Set([
   "usage",
   "state",
   "environment_change",
+  "model_attempt",
 ]);
 const object = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -502,6 +504,7 @@ function inspectEvents(saved, phase, state, sessionSequences) {
     usage.map((event) => event.payload.measurement),
     "RPC Run usage differs from its durable events",
   );
+  assertCompletedModelAttempts(run, events.items);
   return users[0].id;
 }
 

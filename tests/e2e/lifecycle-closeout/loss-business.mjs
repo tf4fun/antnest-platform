@@ -6,6 +6,7 @@ import {
   assertErrorCapability,
 } from "../../support/acp-errors.mjs";
 import { checkPrivateACPConnection } from "../../support/private-acp-recorder.mjs";
+import { assertCompletedModelAttempts } from "../../support/model-attempt-evidence.mjs";
 
 const modes = ["live", "cold"];
 const summaryFields = [
@@ -37,6 +38,7 @@ const eventKinds = new Set([
   "usage",
   "state",
   "environment_change",
+  "model_attempt",
 ]);
 const object = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -718,6 +720,7 @@ function inspectExecution(
     usage.map((event) => event.payload.measurement),
     "Loss Run usage differs from durable events",
   );
+  assertCompletedModelAttempts(run, saved.events.items);
 }
 
 function inspectAudits(evidence, agent, context, runIds, identities) {

@@ -640,3 +640,182 @@ for (const [name, mutate] of [
     assert.throws(() => inspect(evidence));
   });
 }
+
+function modelAttemptExecutionCopies(evidence) {
+  const seen = new WeakSet();
+  const executions = [];
+  const visit = (value) => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (value.execution_snapshot && !value.execution_snapshot.executionSpec) {
+      const snapshot = value.execution_snapshot;
+      snapshot.executionSpec = {
+        systemPrompt: "Complete the original Foundation business prompt.",
+        contextPolicyVersion: "context-v1",
+        maxModelRequests: 4,
+        model: {
+          model: "foundation-model",
+          contextWindow: 8192,
+          maxOutputTokens: 1024,
+          supportsImages: false,
+        },
+        configuration: {
+          modelProfileId: snapshot.modelProfileId,
+          authorizationRevision: 1,
+          authorization: { mode: "auto", toolRules: [] },
+        },
+      };
+    }
+    if (value.run && Array.isArray(value.events?.items)) executions.push(value);
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(evidence);
+  return executions;
+}
+
+function withModelAttempts(evidence) {
+  const histories = new WeakSet();
+  for (const { run, events } of modelAttemptExecutionCopies(evidence)) {
+    const rows = events.items;
+    if (histories.has(rows)) continue;
+    histories.add(rows);
+    const snapshot = run.execution_snapshot;
+    const expanded = [];
+    let ordinal = 0;
+    for (const event of rows) {
+      event.sequence *= 3;
+      if (event.kind === "usage") {
+        ordinal += 1;
+        const startedAt = new Date(
+          Date.parse(run.created_at) + ordinal * 10,
+        ).toISOString();
+        const finishedAt = new Date(Date.parse(startedAt) + 1).toISOString();
+        const fact = (phase, sequence, payload, created_at) => ({
+          id: run.run_id + "-model-attempt-" + ordinal + "-" + phase,
+          sequence,
+          kind: "model_attempt",
+          visible: false,
+          payload: { kind: "model_attempt", phase, ordinal, ...payload },
+          created_at,
+        });
+        expanded.push(
+          fact(
+            "start",
+            event.sequence - 2,
+            {
+              modelProfileId: snapshot.modelProfileId,
+              providerConnectionId: snapshot.providerConnectionId,
+              model: snapshot.executionSpec.model.model,
+              purpose: "foreground",
+              startedAt,
+            },
+            startedAt,
+          ),
+          fact(
+            "finish",
+            event.sequence - 1,
+            {
+              outcome: "completed",
+              reason: "completed",
+              durationMs: 1,
+              finishedAt,
+              contextSize: snapshot.executionSpec.model.contextWindow,
+              usage: structuredClone(event.payload.measurement),
+              outputStarted: true,
+            },
+            finishedAt,
+          ),
+        );
+      }
+      expanded.push(event);
+    }
+    assert.equal(
+      ordinal,
+      2,
+      "fixture must retain its two original usage facts",
+    );
+    rows.splice(0, rows.length, ...expanded);
+  }
+  return evidence;
+}
+
+test("Foundation admits complete hidden model attempts without changing the original wire or summary", () => {
+  requireAPI();
+  const evidence = fixture();
+  const wire = structuredClone(evidence.private_connections);
+  withModelAttempts(evidence);
+  for (const execution of modelAttemptExecutionCopies(evidence))
+    assert.equal(
+      execution.events.items.filter((event) => event.kind === "model_attempt")
+        .length,
+      4,
+    );
+  const original = structuredClone(evidence);
+  assert.deepEqual(inspect(evidence), summary);
+  assert.deepEqual(evidence, original);
+  assert.deepEqual(evidence.private_connections, wire);
+});
+
+for (const [name, mutate] of [
+  [
+    "visible audit",
+    (rows) => {
+      rows[0].visible = true;
+    },
+  ],
+  [
+    "missing finish",
+    (rows, execution) => {
+      execution.events.items.splice(execution.events.items.indexOf(rows[1]), 1);
+    },
+  ],
+  [
+    "foreign model profile",
+    (rows) => {
+      rows[0].payload.modelProfileId = "foreign-model-profile";
+    },
+  ],
+  [
+    "foreign provider",
+    (rows) => {
+      rows[0].payload.providerConnectionId = "foreign-provider";
+    },
+  ],
+  [
+    "foreign model",
+    (rows) => {
+      rows[0].payload.model = "foreign-model";
+    },
+  ],
+  [
+    "changed usage",
+    (rows) => {
+      rows[1].payload.usage.outputTokens += 1;
+    },
+  ],
+  [
+    "changed context size",
+    (rows) => {
+      rows[1].payload.contextSize += 1;
+    },
+  ],
+])
+  test("Foundation rejects model attempt " + name + " without Trace", () => {
+    requireAPI();
+    const evidence = withModelAttempts(fixture());
+    const selectedRunId = saved(evidence).run.run_id;
+    const changed = new WeakSet();
+    for (const execution of modelAttemptExecutionCopies(evidence)) {
+      const rows = execution.events.items;
+      if (execution.run.run_id !== selectedRunId || changed.has(rows)) continue;
+      changed.add(rows);
+      mutate(
+        rows.filter((event) => event.kind === "model_attempt"),
+        execution,
+      );
+    }
+    assert.throws(
+      () => inspect(evidence),
+      "invalid hidden model audit must reject business evidence",
+    );
+  });

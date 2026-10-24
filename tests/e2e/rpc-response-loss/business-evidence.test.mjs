@@ -19,6 +19,87 @@ const tools = (e, index = 0, step = 0) =>
   );
 const clone = (value) => structuredClone(value);
 
+function executionCopies(evidence) {
+  const seen = new WeakSet();
+  const executions = [];
+  const visit = (value) => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (value.run && Array.isArray(value.events?.items)) executions.push(value);
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(evidence);
+  return executions;
+}
+
+function addModelAttempts(evidence) {
+  const histories = new WeakSet();
+  for (const execution of executionCopies(evidence)) {
+    const rows = execution.events.items;
+    if (histories.has(rows)) continue;
+    histories.add(rows);
+    const { run } = execution;
+    const snapshot = run.execution_snapshot;
+    const expanded = [];
+    let ordinal = 0;
+    for (const event of rows) {
+      event.sequence *= 3;
+      if (event.kind === "usage") {
+        ordinal += 1;
+        const startedAt = new Date(
+          Date.parse(run.created_at) + ordinal * 10,
+        ).toISOString();
+        const finishedAt = new Date(Date.parse(startedAt) + 1).toISOString();
+        const fact = (phase, sequence, payload, created_at) => ({
+          id: run.run_id + "-model-attempt-" + ordinal + "-" + phase,
+          sequence,
+          kind: "model_attempt",
+          visible: false,
+          context_excluded: true,
+          payload: { kind: "model_attempt", phase, ordinal, ...payload },
+          created_at,
+        });
+        expanded.push(
+          fact(
+            "start",
+            event.sequence - 2,
+            {
+              modelProfileId: snapshot.modelProfileId,
+              providerConnectionId: snapshot.providerConnectionId,
+              model: snapshot.executionSpec.model.model,
+              purpose: "foreground",
+              startedAt,
+            },
+            startedAt,
+          ),
+          fact(
+            "finish",
+            event.sequence - 1,
+            {
+              outcome: "completed",
+              reason: "completed",
+              durationMs: 1,
+              finishedAt,
+              contextSize: snapshot.executionSpec.model.contextWindow,
+              usage: clone(event.payload.measurement),
+              outputStarted: true,
+            },
+            finishedAt,
+          ),
+        );
+      }
+      expanded.push(event);
+    }
+    assert.equal(
+      ordinal,
+      2,
+      "fixture must retain its two original usage facts",
+    );
+    rows.splice(0, rows.length, ...expanded);
+  }
+  return evidence;
+}
+
 // Keep original checkpoint copies consistent so a changed Run revision must
 // be rejected by its Runtime binding, not an unrelated replay mismatch.
 function replaceExecutionRevision(evidence, index, step, revision) {
@@ -509,4 +590,180 @@ test("durable Tool identity must be Run-normalized rather than the Provider-loca
     raw = raw.replaceAll(normalized, run.input[0].text + "-tool");
   }
   assert.throws(() => inspect(JSON.parse(raw)));
+});
+
+test("RPC loss admits complete hidden model attempts without changing the original wire or summary", () => {
+  requireAPI();
+  const evidence = fixture();
+  const wire = clone(evidence.connections);
+  addModelAttempts(evidence);
+  for (const execution of executionCopies(evidence))
+    assert.equal(
+      execution.events.items.filter((event) => event.kind === "model_attempt")
+        .length,
+      4,
+    );
+  const before = clone(evidence);
+  assert.deepEqual(inspect(evidence), summary);
+  assert.deepEqual(evidence, before);
+  assert.deepEqual(evidence.connections, wire);
+});
+
+const attemptMutations = [
+  [
+    "visible or context-included audit",
+    [
+      (rows) => {
+        rows[0].visible = true;
+      },
+      (rows) => {
+        rows[0].context_excluded = false;
+      },
+    ],
+  ],
+  [
+    "missing finish or repeated ordinal",
+    [
+      (rows, execution) => {
+        execution.events.items.splice(
+          execution.events.items.indexOf(rows[1]),
+          1,
+        );
+      },
+      (rows) => {
+        rows[2].payload.ordinal = 1;
+        rows[3].payload.ordinal = 1;
+      },
+    ],
+  ],
+  [
+    "foreign frozen candidate",
+    [
+      (rows) => {
+        rows[0].payload.modelProfileId = "foreign-model-profile";
+      },
+      (rows) => {
+        rows[0].payload.providerConnectionId = "foreign-provider";
+      },
+      (rows) => {
+        rows[0].payload.model = "foreign-model";
+      },
+    ],
+  ],
+  [
+    "changed usage or context size",
+    [
+      (rows) => {
+        rows[1].payload.usage.outputTokens += 1;
+      },
+      (rows) => {
+        rows[1].payload.contextSize += 1;
+      },
+    ],
+  ],
+  [
+    "invalid phase or unfinished attempt",
+    [
+      (rows) => {
+        rows[1].payload.phase = "pending";
+      },
+      (rows) => {
+        rows[1].payload.outcome = "failed";
+        rows[1].payload.reason = "model_unavailable";
+      },
+      (rows) => {
+        rows[1].payload.outputStarted = false;
+      },
+    ],
+  ],
+  [
+    "invalid duration or timestamp",
+    [
+      (rows) => {
+        rows[1].payload.durationMs = -1;
+      },
+      (rows) => {
+        rows[1].payload.durationMs = Infinity;
+      },
+      (rows) => {
+        rows[0].payload.startedAt = "not-a-date";
+      },
+      (rows) => {
+        rows[1].payload.finishedAt = "not-a-date";
+      },
+    ],
+  ],
+];
+
+for (const [name, mutations] of attemptMutations)
+  test("RPC business rejects model attempt " + name + " without Trace", () => {
+    requireAPI();
+    for (const mutate of mutations) {
+      const evidence = addModelAttempts(fixture());
+      const selectedRunId = saved(evidence).run.run_id;
+      const changed = new WeakSet();
+      for (const execution of executionCopies(evidence)) {
+        const items = execution.events.items;
+        if (execution.run.run_id !== selectedRunId || changed.has(items))
+          continue;
+        changed.add(items);
+        mutate(
+          items.filter((event) => event.kind === "model_attempt"),
+          execution,
+        );
+      }
+      assert.throws(
+        () => inspect(evidence),
+        "invalid hidden model audit must independently reject business evidence",
+      );
+    }
+  });
+
+test("RPC business rejects a second model attempt started before the first usage was durable", () => {
+  requireAPI();
+  const evidence = fixture();
+  const wire = clone(evidence.connections);
+  addModelAttempts(evidence);
+  const selectedRunId = saved(evidence).run.run_id;
+  const changed = new WeakSet();
+  for (const execution of executionCopies(evidence)) {
+    const items = execution.events.items;
+    if (execution.run.run_id !== selectedRunId || changed.has(items)) continue;
+    changed.add(items);
+    const firstSequence = items[0].sequence;
+    const secondAttempt = items.filter(
+      (event) => event.kind === "model_attempt" && event.payload.ordinal === 2,
+    );
+    assert.equal(secondAttempt.length, 2);
+    const reordered = items.filter((event) => !secondAttempt.includes(event));
+    const firstUsageIndex = reordered.findIndex(
+      (event) => event.kind === "usage",
+    );
+    assert(firstUsageIndex >= 0);
+    reordered.splice(firstUsageIndex, 0, ...secondAttempt);
+    for (const [index, event] of reordered.entries())
+      event.sequence = firstSequence + index;
+    items.splice(0, items.length, ...reordered);
+    assert(
+      items.every(
+        (event, index) =>
+          Number.isSafeInteger(event.sequence) &&
+          event.sequence > 0 &&
+          (index === 0 || items[index - 1].sequence < event.sequence),
+      ),
+    );
+    const firstUsage = items.find((event) => event.kind === "usage");
+    assert(secondAttempt[1].sequence < firstUsage.sequence);
+  }
+  for (const selected of evidence.scenarios) {
+    const sequences = selected.runs.flatMap((execution) =>
+      execution.events.items.map((event) => event.sequence),
+    );
+    assert.equal(new Set(sequences).size, sequences.length);
+  }
+  assert.deepEqual(evidence.connections, wire);
+  assert.throws(
+    () => inspect(evidence),
+    "later attempt must wait for the original durable usage receipt",
+  );
 });

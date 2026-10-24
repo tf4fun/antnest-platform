@@ -5,6 +5,7 @@ import {
   assertAdmissionError,
 } from "../../support/acp-errors.mjs";
 import { checkPrivateACPConnection } from "../../support/private-acp-recorder.mjs";
+import { assertCompletedModelAttempts } from "../../support/model-attempt-evidence.mjs";
 
 const phases = ["c3-held-run", "c3-after-rebuild"];
 const summaryFields = [
@@ -30,6 +31,7 @@ const eventKinds = new Set([
   "usage",
   "state",
   "environment_change",
+  "model_attempt",
 ]);
 const object = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -399,6 +401,7 @@ function inspectExecution(saved, prompt, evidence, identities, sequences) {
     usage.map((event) => event.payload.measurement),
     "Run usage differs from its complete durable events",
   );
+  assertCompletedModelAttempts(run, events.items);
 }
 
 function inspectAudits(evidence, context) {
