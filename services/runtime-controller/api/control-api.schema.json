@@ -522,6 +522,12 @@
     },
     "runtime_connection": {
       "$ref": "../../../contracts/runtime/instance-connection.schema.json#/$defs/private_connection"
+    },
+    "acp_history_request": {
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation-history.schema.json#/$defs/request"
+    },
+    "acp_history_page": {
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation-history.schema.json#/$defs/response"
     }
   }
 }

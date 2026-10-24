@@ -48,7 +48,8 @@ within the shared two-second limit and respects an earlier parent deadline.
 Production composition loads the optional startup snapshot named by
 `ANTNEST_RUNTIME_ACP_MEMBERS_FILE` and connects this service to the existing
 PostgreSQL repository, Docker observer and authenticated probe client. Revision
-20 exposes only `POST /internal/acp-incarnations/register` and
+21 exposes `POST /internal/acp-incarnations/register`, member history at
+`POST /internal/acp-incarnations/history`, and
 `GET /internal/acp-incarnations/{registration_id}` to the verified
 `agent-acp-service` workload, without CCT. Existing lifecycle, Runtime inspection,
 image, observation and Skill routes remain Controller-only. The closed messages
@@ -62,15 +63,23 @@ The member catalog supplies each member's private container selector, network
 and logical probe origin; no request chooses them and the member network is not
 inferred from the Runtime management network. Registration uses its original
 member/incarnation/nonce tuple rather than an `Idempotency-Key`. The existing RC
-process, migration 14, Docker connection and probe client provide this producer;
+process, migrations 14/15, Docker connection and probe client provide this producer;
 it adds no service or image.
 
-ACP's private probe implementation and registration consumer, lease coordination,
-fenced writers, scoped recovery, configuration/revocation ACKs, peer forwarding,
-deployment and integration with two replicas remain subsequent delivery batches.
-The existing ACP global worker lock remains enabled until those consumers and
-integration checks pass; this RC producer does not enable multiple active ACP
-replicas. Its wiring does not establish completed component or remote-CI admission.
+Migration 15 preserves every original registration and stop receipt while adding
+a stable scope/member history identifier and contiguous sequence. Registration
+locks that member's history head, rechecks the exact tuple, and advances the head
+only when a new original registration commits. Exact retries do not allocate a
+sequence; rollback and cancellation do not leave holes. History reads capture a
+fixed head revision and page at most 64 tuples in sequence order, including all
+existing registrations. They use a separate 32KiB response bound and perform no
+platform calls. Original queries, rows, transaction rollback and connection
+release are joined before returning.
+
+History supplies original identities for existing stop inspection. A separate
+ACP participation ledger must serialize startup activation with publication ACK
+and survivor takeover; reading history twice is not that barrier. The ACP
+consumer and actual two-replica fault integration remain subsequent batches.
 
 ## Core Model
 

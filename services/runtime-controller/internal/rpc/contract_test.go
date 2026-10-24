@@ -109,6 +109,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 
 	expectedRoutes := map[string][]string{
 		"POST /internal/acp-incarnations/register":                                        {"200"},
+		"POST /internal/acp-incarnations/history":                                         {"200"},
 		"GET /internal/acp-incarnations/{registration_id}":                                {"200"},
 		"POST /internal/runtimes/{agent_id}/connection":                                   {"200"},
 		"GET /internal/runtime-images/resolve":                                            {"200"},
@@ -167,7 +168,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 				assertKnownSchemaReference(t, schema, response.SSE.Data)
 			}
 		}
-		if route.Method == "POST" && route.OperationID != "resolveRuntimeConnection" && route.OperationID != "registerAcpIncarnation" {
+		if route.Method == "POST" && route.OperationID != "resolveRuntimeConnection" && route.OperationID != "registerAcpIncarnation" && route.OperationID != "historyAcpIncarnations" {
 			if !slices.Contains(route.RequiredHeaders, "Idempotency-Key") {
 				t.Fatalf("mutation route %s omits Idempotency-Key", key)
 			}

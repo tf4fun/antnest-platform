@@ -88,15 +88,24 @@ the existing outbound sender credential for receiver `agent-acp-service` before
 using registration. In the current token profile this is the receiver-specific
 file under `ANTNEST_SERVICE_AUTH_TOKEN_DIR`; it is read for each probe. Keep
 credentials and the member catalog out of payload capture and public evidence.
-This uses the existing RC process, private PostgreSQL migration 14, Docker
+This uses the existing RC process, private PostgreSQL migrations 14/15, Docker
 connection and authenticated probe client, with no additional service or image.
 
-The two RC routes are documented in the [control API](../api/control-api.md).
-ACP's private probe implementation and registration consumer, lease coordinator,
-fenced writers, scoped recovery, configuration/revocation ACKs, peers, deployment
-and two-replica acceptance remain pending. The ACP global worker lock remains;
-this producer alone does not make multiple ACP replicas usable or claim passed
-component or remote-CI admission.
+The three RC routes are documented in the [control API](../api/control-api.md).
+Member history returns all registered incarnations for a configured member,
+including registrations from before this upgrade. Pages contain up to 64 tuples
+under a fixed history identifier/revision. Start with a null cursor and follow
+the exact returned continuation until null; never treat a partial page set as
+complete. Storage or deadline failures are errors, not empty history. The list
+does not inspect or stop platform processes.
+
+Migration 15 backfills original registrations without changing their binding,
+nonce digest or first stop receipt. Drain old Runtime Controller writers before
+applying the upgrade: the new non-null sequence prevents old registration INSERTs
+from bypassing the history head. Do not delete history rows or reset revisions.
+A stopped member still requires exact original stop inspections. ACP's separate
+participation ledger, survivor takeover and two-replica fault acceptance remain
+pending; this producer alone does not complete the multi-instance workflow.
 
 ### Runtime Images And Telemetry
 
