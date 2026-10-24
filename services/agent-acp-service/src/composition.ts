@@ -33,6 +33,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { PeerPublicationRequest } from "./ports/agent-peers.js";
 import { ProviderClients } from "./application/provider-clients.js";
 import { AgentSettlement } from "./application/agent-settlement.js";
+import { AgentAssignment } from "./application/agent-assignment.js";
 import { AgentExecutionState } from "./application/agent-execution-state.js";
 import { ExecutionAudits } from "./application/execution-audit.js";
 import { PostgresExecutionAudits } from "./adapters/postgres/execution-audit.js";
@@ -205,7 +206,10 @@ export async function startAgentAcpService(
     const acquiredWorkerLock = await telemetry.span(
       "postgres.worker_lock.acquire",
       { "db.system.name": "postgresql" },
-      () => PostgresWorkerLock.acquire(pool),
+      () =>
+        PostgresWorkerLock.acquire(pool, {
+          mode: peerAuthentication === undefined ? "exclusive" : "shared",
+        }),
     );
     workerLock = acquiredWorkerLock;
     ownership.signal.throwIfAborted();
@@ -606,6 +610,14 @@ export function buildComponents(
       recoveryRequired,
       now,
       registration,
+      ...(peerAuthentication === undefined
+        ? {}
+        : {
+            assignment: new AgentAssignment(
+              peerAuthentication.memberId,
+              peerAuthentication.membership.members.map((member) => member.member_id),
+            ),
+          }),
       ...(ownerInspection === undefined ? {} : { ownerInspection }),
       configuration: configurationRepository,
       legacy: repositories,

@@ -12,11 +12,13 @@ The process starts accepting ACP connections only after:
    validates the Runtime Controller registration receipt;
 3. private PostgreSQL migrations succeed;
 4. the private PostgreSQL database answers the local storage check;
-5. the process exclusively owns the database-scoped Run worker lock;
+5. the process holds the database compatibility lock (peer shared, non-peer exclusive);
 6. startup inventory/recovery and sealed configuration restoration complete.
 
-Registered owner mode isolates scopes containing protected owned work and runs
-legacy recovery only within approved organization/Agent scopes. With owner
+Registered non-peer mode isolates protected owned work and runs legacy recovery
+only within approved organization/Agent scopes. Peer mode classifies only its
+assigned inventory under an Agent fence, uses owned predecessor stop proofs and
+preserves unknown legacy work without running the old global recovery. With owner
 settings disabled, startup keeps the original global legacy recovery path.
 
 `GET /status` returns `ready` only after those gates and while the worker lock
@@ -129,16 +131,18 @@ generation manager uses a 30-second lease, 10-second renewal interval and
 10-second operation budget; these values are not configurable. Initialization
 uses an independent monotonic deadline with that budget. Expiry closes only the
 affected Agent's readiness, retaining and joining its original inspection and
-cleanup before releasing its lease. Healthy Agents can continue, while shutdown
+cleanup before releasing its lease. Healthy foreground Prompts can continue, while shutdown
 still waits for original cleanup; normal drain keeps renewing until work joins.
-Legacy
-compatibility writes still use held global worker-lock authority, while work
-cancellation uses the entry signal. Learning retains and joins original model
-work.
+Non-peer legacy compatibility writes use the exclusive worker-lock authority;
+peer Temporary cleanup uses the current Agent fence. Peer mode disables the
+legacy paused-Learning pipeline. Unknown legacy running reviews remain unchanged
+and can occupy the global review slot, preventing new background reviews.
+Work cancellation uses the entry signal; Learning retains original model work.
 
-The global worker lock, single-instance restriction and independent
-ownership-loss fail-stop channel remain. Independent Runtime isolation, cross-owner ACKs and peers,
-and two-replica integration remain pending.
+Non-peer mode retains exclusive startup; peer mode uses shared compatibility
+locking and fixed Agent assignment. The independent ownership-loss fail-stop
+channel remains. Non-owner forwarding, crash takeover and two-replica Docker
+integration remain pending.
 Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
 registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
 it covers stopped Run and Learning claim recovery, permanent proof reuse during Controller failure,
@@ -172,10 +176,20 @@ owning no Agent still participates. The entrypoint verifies the exact complete
 union and private configuration in the final database transaction. The peer leaf
 does not persist or redistribute the request.
 
-The global worker lock is still held. This publication channel does not enable a
-second production ACP process, non-owner request forwarding or crash takeover.
-Those behaviors and real two-replica Docker admission remain pending. An absent
-catalog member cannot be silently omitted from ACK.
+Peer mode uses the shared form of the same compatibility lock and assigns Agents
+by the complete pinned member catalog, independent of startup order. Non-peer
+processes retain the exclusive form, preventing mixed old/new execution. Stop
+all legacy processes before switching deployment modes; acquiring the shared
+lock is not evidence that an unknown historical execution stopped. Such scopes
+remain protected, and an accepting protected scope prevents a complete ACK.
+
+Two actual `main.ts` processes have a PostgreSQL integration test covering empty
+lease startup, one control publication, both owners' durable Prompts and resource
+cleanup. Its RC/Runtime peers are controlled fixtures. Non-owner request forwarding,
+crash takeover and actual two-replica Docker acceptance remain pending. Requests
+must reach the assigned owner during this stage; an absent catalog member cannot
+be omitted from ACK or have its Agents reassigned on a timeout. Membership remains
+pinned; changing the replica set requires a later migration/handoff design.
 
 ### PostgreSQL Migration And Recovery
 
@@ -197,16 +211,17 @@ The resulting `agent_busy` rejection is retryable under the existing error
 contract, but does not authorize replay of a recorded or uncertain Prompt.
 Cancellation requests and worker exit do not release a durable reservation;
 only a committed terminal transition does. Runtime stopping and unknown-effect
-barriers remain independent. The database-wide worker lock is still required:
+barriers remain independent. The database-wide compatibility lock is still required:
 durable admission alone does not enable additional ACP replicas or define lease
 ownership and handoff.
 
 Migration `0025_agent_leases.sql` adds the storage foundation for partitioned
 ownership. It creates an initially empty lease table and does not switch the
 service to multiple replicas. Registered owner mode now uses the lease
-coordinator, and composition still acquires the global worker lock. The optional
-peer listener confirms publications; lease timing is not configurable. The
-global lock remains required until the remaining ownership consumers are ready.
+coordinator. Non-peer composition acquires the exclusive worker lock; peer mode
+uses its shared form and fixed Agent assignment. The optional peer listener
+confirms publications. Lease timing is not configurable, and this stage does
+not yet supply non-owner forwarding or crash takeover.
 
 Migration `0026_run_execution_owner.sql` records the original registration,
 member, incarnation and epoch on each newly owned Run intent. The four private
@@ -222,7 +237,7 @@ the first recovering authority separately. A dedicated current-fence transaction
 records these facts with Run recovery; ordinary writers still reject another
 owner's Run. ACP stop proof cannot mark a Runtime stopped or release Temporary
 resources. Owned generation preparation consumes these tables before admission;
-the global worker lock remains required.
+the same-key shared/exclusive compatibility lock remains required.
 
 Migration `0029_learning_owner_recovery.sql` adds immutable Learning recovery
 associations and separately retained install Runtime protection. The dedicated
@@ -236,8 +251,8 @@ configuration. Protection INSERT/UPDATE requires a saved replacement before
 retirement and cannot rewrite its binding. Production startup discovers these
 claims after Run recovery and reuses accepted stop proofs without a new inspection
 request. It cancels the old claim before opening new foreground work, while any
-unresolved install protection still keeps its Runtime unavailable. Keep the global
-worker lock and single-replica deployment restriction.
+unresolved install protection still keeps its Runtime unavailable. Keep the
+compatibility lock and the peer-mode limitations described above.
 
 Migration `0030_peer_membership.sql` adds the immutable singleton
 `acp_peer_membership`. The peer storage adapter pins and compares the complete
@@ -282,8 +297,8 @@ timeouts and lost commit receipts remain failures, never permission to retry an
 effect. These callbacks must contain database work only. Existing transactions
 without this option retain their existing configured statement budgets.
 
-Independent Runtime isolation, cross-owner configuration/revocation
-ACKs and trusted peers, and two-replica integration remain required. The
+Non-owner forwarding, crash takeover and actual two-replica Docker integration
+remain required. The
 [ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
 those remaining gates. Lease rows must not be deleted to reset an epoch.
 
@@ -307,10 +322,12 @@ to preserve escaped bytes. Normal approval/execution tracing does not export
 these payloads. Administrative audit RPC responses follow the global RPC content
 capture setting and can therefore expose retained input and tool data to OTLP;
 see [execution audit](execution-audit.md) before enabling capture.
-After acquiring the exclusive worker lock, registered owner startup cancels
+After acquiring the exclusive worker lock, registered non-peer startup cancels
 abandoned legacy approvals only in inventory-approved scopes; protected owned
 work stays isolated. Owner-disabled startup retains global legacy cancellation
-before classifying interrupted Runs. Run completion also cancels orphan waits.
+before classifying interrupted Runs. Peer startup preserves unknown legacy
+approvals and execution; a new lease cannot replace a missing stop proof.
+Run completion also cancels orphan waits.
 This does not replay approved tools or resume an interrupted Tool loop.
 
 Approve modes need a client handler for standard `session/request_permission`.
@@ -593,8 +610,9 @@ Collector retention. This service adds no retention service.
   ownership loss or shutdown. Admission uncertainty uses the mode-specific path
   above; protected owned work requires valid predecessor proof and any independent
   Runtime or Learning recovery before reuse.
-- Run worker lock unavailable: startup fails because another replica owns Run
-  execution. A same-session heartbeat detects loss of the dedicated lock
+- Run worker lock unavailable: startup fails when shared/exclusive compatibility
+  modes conflict, or another non-peer worker holds the exclusive lock. Peer
+  members can share this lock. A same-session heartbeat detects loss of the dedicated lock
   connection; loss immediately closes admission, clears readiness and cancels
   startup recovery and local execution. It establishes the same absolute
   configured shutdown deadline as the first SIGTERM/SIGINT. `main` retains the

@@ -14,16 +14,22 @@ import { PeerAuthentication } from "../../../../services/agent-acp-service/src/a
 import { PeerServer } from "../../../../services/agent-acp-service/src/transport/peer-server.js";
 import { PostgresExecutionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-configuration.js";
 import { PostgresPeerMembership } from "../../../../services/agent-acp-service/src/adapters/postgres/peer-membership.js";
+import { PostgresWorkerLock } from "../../../../services/agent-acp-service/src/adapters/postgres/worker-lock.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
 import type { SessionOutputSnapshot } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import {
   executionConfiguration,
   executionIdentity,
   runtimeConfiguration,
+  closedExecutionAgent,
 } from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 import { testSecurityEnvironment } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { runtimeConnections } from "../../../../services/agent-acp-service/test/support/runtime-connections.js";
-import { withDatabase, registration } from "../support/run-fencing-fixture.js";
+import {
+  withDatabase,
+  registration,
+  type FencingFixture,
+} from "../support/run-fencing-fixture.js";
 
 async function port(): Promise<number> {
   const reservation = createServer();
@@ -50,6 +56,8 @@ async function withPeers(
     b: Components;
     configuration: ReturnType<typeof executionConfiguration>;
     release: (() => void)[];
+    db: FencingFixture;
+    owners: ReturnType<typeof registration>[];
   }) => Promise<void>,
 ) {
   await withDatabase(async (db) => {
@@ -64,7 +72,7 @@ async function withPeers(
     const configuration = executionConfiguration();
     configuration.agents.push({
       ...structuredClone(configuration.agents[0]!),
-      agent_id: "agent-2",
+      agent_id: allOnA ? "agent-2" : "agent-3",
       runtime: runtimeConfiguration(2),
     });
     try {
@@ -81,16 +89,7 @@ async function withPeers(
           randomBytes(32).toString("base64url"),
         ];
       const owners = [registration("acp-a"), registration("acp-b")];
-      await db.owner(
-        { organizationId: configuration.organization_id, agentId: "agent-1" },
-        owners[0],
-        "a",
-      );
-      await db.owner(
-        { organizationId: configuration.organization_id, agentId: "agent-2" },
-        owners[allOnA ? 0 : 1],
-        allOnA ? "a" : "b",
-      );
+      expect((await db.a.query("SELECT * FROM agent_leases")).rows).toEqual([]);
       for (const i of [0, 1]) {
         const current = join(directory, String(i));
         mkdirSync(current);
@@ -160,6 +159,8 @@ async function withPeers(
         b: components[1]!,
         configuration,
         release,
+        db,
+        owners,
       });
     } catch (error) {
       failures.push(error);
@@ -209,7 +210,7 @@ describe.skipIf(process.env.ANTNEST_ACP_TEST_DATABASE_URL === undefined)(
   "production aggregate peer publication with real HTTP and PostgreSQL",
   () => {
     it("confirms the complete union from two owning compositions and never saves or aggregates at the peer leaf", async () => {
-      await withPeers(false, async ({ a, b, configuration }) => {
+      await withPeers(false, async ({ a, b, configuration, db, owners }) => {
         const save = vi.spyOn(PostgresExecutionConfiguration.prototype, "save");
         const confirm = vi.spyOn(
           PostgresExecutionConfiguration.prototype,
@@ -221,16 +222,162 @@ describe.skipIf(process.env.ANTNEST_ACP_TEST_DATABASE_URL === undefined)(
         expect(save).toHaveBeenCalledOnce();
         expect(confirm).toHaveBeenCalledOnce();
         const fences = confirm.mock.calls[0]![1];
-        expect(fences.map((fence) => fence.agentId).sort()).toEqual([
-          "agent-1",
-          "agent-2",
-        ]);
+        expect(fences.map((fence) => fence.agentId).sort()).toEqual(
+          configuration.agents.map((agent) => agent.agent_id).sort(),
+        );
         expect(new Set(fences.map((fence) => fence.ownerInstanceId)).size).toBe(
           2,
         );
+        expect(fences).toEqual(
+          expect.arrayContaining([
+            {
+              organizationId: configuration.organization_id,
+              agentId: "agent-1",
+              ownerInstanceId: owners[0]!.incarnation_id,
+              epoch: "1",
+            },
+            {
+              organizationId: configuration.organization_id,
+              agentId: "agent-3",
+              ownerInstanceId: owners[1]!.incarnation_id,
+              epoch: "1",
+            },
+          ]),
+        );
+        expect(
+          (
+            await db.observer.query(
+              "SELECT agent_id, owner_instance_id, epoch::text FROM agent_leases ORDER BY agent_id",
+            )
+          ).rows,
+        ).toEqual([
+          {
+            agent_id: "agent-1",
+            owner_instance_id: owners[0]!.incarnation_id,
+            epoch: "1",
+          },
+          {
+            agent_id: "agent-3",
+            owner_instance_id: owners[1]!.incarnation_id,
+            epoch: "1",
+          },
+        ]);
         expect(
           b.directory.inspect(executionIdentity()).configuration.revision,
         ).toBe(1);
+      });
+    });
+
+    it.each(["admitting", "running"] as const)(
+      "protects unknown legacy %s work without withholding the healthy peer's Agent",
+      async (state) => {
+        await withPeers(false, async ({ a, b, configuration, db }) => {
+          const session = await db.session({
+            organizationId: configuration.organization_id,
+            agentId: "agent-1",
+          });
+          const input = db.input(session);
+          const runs = db.legacy();
+          await runs.createRunIntent(input);
+          if (state === "running")
+            await runs.acceptRun(db.acceptance(session, input.runId));
+          const before = await db.snapshot();
+          await expect(a.directory.apply(configuration)).rejects.toMatchObject({
+            code: "configuration_unavailable",
+          });
+          expect(await db.snapshot()).toBe(before);
+          expect(Object.values(await db.origin(input.runId))).toEqual([
+            null,
+            null,
+            null,
+            null,
+          ]);
+          await expect(
+            a.application.createSession({
+              binding: { ...executionIdentity(), connectionId: randomUUID() },
+              cwd: "/workspace",
+              additionalDirectories: [],
+              mcpServers: [],
+            }),
+          ).rejects.toMatchObject({ code: "agent_unavailable" });
+          await expect(
+            b.application.createSession({
+              binding: {
+                ...executionIdentity(),
+                connectionId: randomUUID(),
+                agentId: "agent-3",
+              },
+              cwd: "/workspace",
+              additionalDirectories: [],
+              mcpServers: [],
+            }),
+          ).resolves.toMatchObject({
+            sessionId: expect.any(String) as unknown,
+          });
+        });
+      },
+    );
+
+    it("preserves inventory-only legacy execution during shared startup", async () => {
+      await withPeers(false, async ({ a, b, configuration, db }) => {
+        const session = await db.session({
+          organizationId: configuration.organization_id,
+          agentId: "inventory-agent",
+        });
+        const input = db.input(session);
+        const runs = db.legacy();
+        await runs.createRunIntent(input);
+        await runs.acceptRun(db.acceptance(session, input.runId));
+        const before = await db.snapshot();
+        const worker = await PostgresWorkerLock.acquire(db.a, {
+          mode: "shared",
+        });
+        try {
+          await a.owned!.recoverStartup(worker);
+          await b.owned!.recoverStartup(worker);
+          expect(await db.snapshot()).toBe(before);
+          expect(Object.values(await db.origin(input.runId))).toEqual([
+            null,
+            null,
+            null,
+            null,
+          ]);
+        } finally {
+          await worker.release();
+        }
+      });
+    });
+
+    it("does not acquire another member's released Agent through lifecycle settlement", async () => {
+      await withPeers(true, async ({ a, b, configuration, db }) => {
+        configuration.agents = configuration.agents.map((agent) => ({
+          ...closedExecutionAgent(agent),
+          operation_id: "operation-1",
+        }));
+        await a.directory.apply(configuration);
+        await a.owned!.shutdown();
+        const before = (
+          await db.observer.query(
+            "SELECT * FROM agent_leases ORDER BY agent_id",
+          )
+        ).rows;
+        await expect(
+          b.settlement.settle({
+            organization_id: configuration.organization_id,
+            agent_id: "agent-1",
+            operation_id: "operation-1",
+            minimum_revision: 1,
+            mode: "wait",
+            deadline_at: new Date(Date.now() + 5000).toISOString(),
+          }),
+        ).resolves.toEqual({ applied_revision: 1, outcome: "not_settled" });
+        expect(
+          (
+            await db.observer.query(
+              "SELECT * FROM agent_leases ORDER BY agent_id",
+            )
+          ).rows,
+        ).toEqual(before);
       });
     });
 

@@ -2,11 +2,12 @@
 
 This contract defines the ownership facts that ACP processes must agree on.
 It follows [durable Run admission](run-admission.md). The first delivery batch
-provides lease storage and a fenced transaction primitive only. Connecting all
-service writes, recovery, configuration acknowledgements and peer forwarding
-remains separate work. The database-wide worker lock remains; the later
-[fixed assignment contract](owner-assignment.md) defines a guarded shared mode
-after Agent-scoped legacy recovery is fenced and two-process distribution passes.
+provided lease storage and a fenced transaction primitive. Production now connects
+fixed Agent generations, owned recovery and peer configuration acknowledgements.
+The [fixed assignment contract](owner-assignment.md) defines shared compatibility
+locking for peer mode and protection of unknown legacy work. Non-peer mode keeps
+the exclusive lock. Forwarding, crash takeover and Docker integration remain
+separate required work.
 
 ## Scope And Identity
 

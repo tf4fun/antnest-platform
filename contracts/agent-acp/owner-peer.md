@@ -3,12 +3,11 @@
 This extends [Agent ownership](agent-ownership.md) and
 [incarnation handoff](owner-handoff.md). The [operation manifest](owner-peer-contract.json)
 and [closed wire schemas](owner-peer.schema.json) define the first ACP peer batch:
-local publication/revocation receipts and the aggregate Controller ACK. They are
-planned until the ACP implementation and its production HTTP admission pass.
-The exclusive worker lock remains in the current production batch. The planned
-[fixed membership assignment](owner-assignment.md) batch defines the guarded
-shared-lock transition; forwarding and genuine two-replica failover remain
-separate required delivery gates.
+local publication/revocation receipts and the aggregate Controller ACK.
+Peer production also uses [fixed membership assignment](owner-assignment.md)
+and shared compatibility locking; non-peer mode retains the exclusive lock.
+Two real-main processes are covered with controlled dependency peers. Forwarding,
+genuine two-replica failover and Docker integration remain required delivery gates.
 
 ## Trusted membership and process binding
 

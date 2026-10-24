@@ -1,9 +1,11 @@
 # ACP Fixed Membership Assignment (#49)
 
-This planned batch follows [peer publication](owner-peer.md). The
+This batch follows [peer publication](owner-peer.md). The
 [deterministic vectors](owner-assignment-contract.json) define the first
-two-process startup and distribution stage. Service wiring and actual two-process
-acceptance remain required; this contract alone does not enable shared startup.
+two-process startup and distribution stage. Peer production uses this assignment
+and shared compatibility locking. The real-main PostgreSQL test covers two
+processes with controlled dependency peers; Docker acceptance, non-owner
+forwarding and stopped-member takeover remain separate required stages.
 
 The complete pinned catalog determines each Agent's preferred member. Sort its
 member IDs by ascending ASCII order. Encode `[organization_id, agent_id]` with
@@ -43,7 +45,9 @@ or stopping evidence exists; do not call ordinary restart recovery to manufactur
 `executor_state=quiescent`. Existing Runtime isolation admission itself requires
 the executor stopping boundary, so it cannot silently substitute for that missing
 proof. Healthy scopes continue independently. This unresolved migration case must
-remain visible in delivery and operations evidence.
+remain visible in delivery and operations evidence. A retained unknown legacy
+running Learning review can occupy the global review slot; healthy foreground
+Prompt availability does not imply continued background Learning admission.
 
 Startup keeps local restore independent from aggregate ACK: register and pin,
 acquire the appropriate compatibility lock, recover local assigned inventory and
