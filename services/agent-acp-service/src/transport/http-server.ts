@@ -185,6 +185,7 @@ export class AgentAcpHttpServer {
             ...options.httpForwarding,
             authentication: options.authentication,
             state: options.executionState,
+            settlement: options.settlement,
             ready: options.ready,
             maxBytes: options.maxConfigurationBytes ?? 16 * 1024 * 1024,
             ...(options.stateDeliveryTimeoutMs === undefined
@@ -555,6 +556,10 @@ export class AgentAcpHttpServer {
         this.options.settlement,
         this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
         this.options.ready,
+        this.controlOwner === undefined
+          ? undefined
+          : (input, signal) =>
+              this.controlOwner!.forwardSettlement(request, response, input, signal),
       );
       return;
     }

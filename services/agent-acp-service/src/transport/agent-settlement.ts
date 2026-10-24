@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { parseAgentSettlement } from "../domain/agent-settlement.js";
+import { parseAgentSettlement, type AgentSettlementRequest } from "../domain/agent-settlement.js";
 import { DomainError } from "../domain/errors.js";
 import type { AgentSettlementPort } from "../ports/agent-settlement.js";
 import { activeHttpSpan } from "../telemetry/http.js";
@@ -15,6 +15,7 @@ export async function settleAgent(
   service: AgentSettlementPort | undefined,
   maxBytes: number,
   ready: () => Promise<boolean>,
+  forward?: (input: AgentSettlementRequest, signal: AbortSignal) => Promise<boolean>,
 ): Promise<void> {
   const span = activeHttpSpan();
   span?.setAttributes({
@@ -30,6 +31,7 @@ export async function settleAgent(
     if (span !== undefined) rpcContent(span, "request", input);
     if (service === undefined || !(await ready()))
       throw new Error("Settlement service is unavailable");
+    if (await forward?.(input, disconnected.signal)) return;
     const result = await service.settle(input, disconnected.signal);
     span?.setAttributes({
       "antnest.organization.id": input.organization_id,
@@ -51,7 +53,7 @@ export async function settleAgent(
   }
 }
 
-function settlementError(error: unknown) {
+export function settlementError(error: unknown) {
   if (error instanceof RpcRequestError) return httpFailure(error.code);
   if (error instanceof DomainError && error.code === "invalid_agent_settlement")
     return httpFailure(error.code);

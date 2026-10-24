@@ -8,6 +8,7 @@ import {
   parseExecutionPublication,
 } from "../domain/execution-publication.js";
 import type { ExecutionIdentity } from "../domain/execution-configuration.js";
+import type { AgentSettlementRequest } from "../domain/agent-settlement.js";
 import { parsePeerIdentityReceipt } from "../domain/peer-receipt.js";
 import type { AgentLeases } from "../ports/agent-leases.js";
 import type { AgentPeers } from "../ports/agent-peers.js";
@@ -16,6 +17,7 @@ import type { AgentAssignment } from "./agent-assignment.js";
 import type { ExecutionDirectory } from "./execution-directory.js";
 import { parseOwnerRegistration, type OwnerRegistration } from "./owner-incarnation.js";
 import { peerDeadline } from "./peer-request.js";
+import { controlBodyDigest, type OwnerControlRequest } from "./owner-control-forwarding.js";
 
 export const OWNER_FORWARD_HEADER = "Antnest-ACP-Forward";
 export const OWNER_FORWARD_PATH = "/internal/acp-peer/forward/ws";
@@ -90,6 +92,66 @@ export class OwnerForwarding {
       peers: Pick<AgentPeers, "identify">;
     },
   ) {}
+
+  public async resolveSettlement(
+    input: AgentSettlementRequest,
+    signal: AbortSignal,
+  ): Promise<Extract<OwnerControlRequest, { operation: "settlement" }> | null> {
+    const { directory, assignment, registration, membershipSha256 } = this.options;
+    const scope = { organizationId: input.organization_id, agentId: input.agent_id };
+    const operation = {
+      ...scope,
+      operationId: input.operation_id,
+      minimumRevision: input.minimum_revision,
+    };
+    signal.throwIfAborted();
+    directory.closedAgent(operation);
+    const operationDeadline = peerDeadline(input.deadline_at);
+    // The existing local service validates the closed operation and returns
+    // not_settled without acquiring a lease once the business deadline expires.
+    if (Date.now() >= operationDeadline) return null;
+    const member = assignment.preferred(scope);
+    if (member === registration.member_id) return null;
+    const publication = directory.capturePublication(scope.organizationId);
+    const deadline = Math.min(operationDeadline, Date.now() + 10000);
+    if (Date.now() >= deadline) throw new PeerDeadlineError("Settlement owner discovery expired");
+    const discovery = {
+      request_id: randomUUID(),
+      deadline_at: new Date(deadline).toISOString(),
+      membership_sha256: membershipSha256,
+      source: registration,
+      target_member_id: member,
+      challenge: randomBytes(32).toString("hex"),
+    };
+    const receipt = parsePeerIdentityReceipt(
+      await this.options.peers.identify(member, discovery, signal),
+    );
+    signal.throwIfAborted();
+    if (
+      receipt.request_id !== discovery.request_id ||
+      receipt.challenge !== discovery.challenge ||
+      receipt.membership_sha256 !== membershipSha256 ||
+      receipt.registration.member_id !== member
+    )
+      throw unavailable();
+    publication.assertCurrent();
+    directory.closedAgent(operation);
+    if (Date.now() >= operationDeadline) return null;
+    if (Date.now() >= deadline) throw new PeerDeadlineError("Settlement owner discovery expired");
+    return Object.freeze({
+      operation: "settlement",
+      caller: "agent-controller",
+      scope: Object.freeze(scope),
+      request_id: discovery.request_id,
+      deadline_at: input.deadline_at,
+      membership_sha256: membershipSha256,
+      source: registration,
+      target: receipt.registration,
+      publication: executionPublication(publication.authority),
+      body_sha256: controlBodyDigest(input),
+      hop: 1,
+    });
+  }
 
   public async resolve(
     identity: ExecutionIdentity,

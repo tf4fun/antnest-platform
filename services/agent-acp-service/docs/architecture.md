@@ -942,7 +942,14 @@ Production component tests hold a real Provider transport close during legacy
 and owned shutdown, and expire Agent A's lease while Agent B completes a real
 foreground Run. Warm startup also consumes stopped Learning claim recovery before
 new foreground work, retaining original costs and history without replay.
-HTTP/SSE, state/control and source forwarding, crash takeover and two-replica Docker integration remain pending.
+HTTP/SSE, state read/watch and Controller settlement use the fixed authenticated
+owner boundary. Settlement preserves the original closed operation and deadline;
+it discovers the assigned member without a live execution lease and validates
+the private publication under the receiving generation. Its original tasks and
+lease release remain joined after cancellation. The original business deadline
+is unchanged; the finite relay reply has an absolute completion limit ten seconds
+after that deadline so joined cleanup can return `not_settled`. Registry source forwarding,
+surviving-member crash takeover and two-replica Docker integration remain pending.
 Foreground isolation does not establish another Agent's background claim recovery.
 
 ## Workspace Bridge Extension

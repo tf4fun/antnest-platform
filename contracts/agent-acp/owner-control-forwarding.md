@@ -1,10 +1,10 @@
 # Owner routing for state and control requests
 
 This contract extends the fixed peer boundary in [owner-peer.md](owner-peer.md).
-The ACP service batch is in development. State read/watch are implemented and
-have focused two-process acceptance; remote delivery remains pending. Settlement
-and source operations below define the pending contract and are not exposed by
-the peer listener yet. Final two-replica fault/browser acceptance is also pending.
+The ACP service batch is in development. State read/watch and settlement are
+implemented and have focused two-process acceptance; remote delivery remains
+pending. Source operations below define the pending contract and are not exposed
+by the peer listener yet. Final two-replica fault/browser acceptance is pending.
 
 | Operation         | Private POST route                           | Original caller    | Original public route                        |
 | ----------------- | -------------------------------------------- | ------------------ | -------------------------------------------- |
@@ -32,7 +32,7 @@ route. State and source additionally bind `identity` and the live owner `epoch`;
 the Registry actor supplies the source identity. Settlement instead binds
 `scope` (`organizationId`, `agentId`) and carries no execution epoch.
 Every scope must match the publication and original operation input. Unknown
-fields, caller/operation mismatches, foreign registrations, expired deadlines,
+fields, caller/operation mismatches, foreign registrations, expired admission deadlines,
 changed membership/publication, and extra hops are rejected before dispatch.
 
 State and source discovery is read-only and uses the current owner's complete
@@ -55,6 +55,21 @@ closed-operation settlement and protected recovery path. The original operation
 deadline and final outcome/status remain authoritative; no early success header
 or lease-expiry-only stop proof is introduced. User access revocation does not
 cancel this authorized lifecycle cleanup.
+Member discovery uses at most ten seconds within the original deadline; the
+settlement itself retains that original deadline. The ingress never acquires an
+execution lease. The receiver checks its complete registration, fixed assignment
+and complete private publication under its actual generation, before and after
+asynchronous reads. A protected control response joins the original task and
+lease release even after cancellation. Independent late task or cleanup failures
+remain failures rather than a successful `not_settled` result. A finite settlement
+reply is validated and its original reader is joined before sending success.
+An already-expired valid closed operation uses the original local settlement
+path and returns `not_settled` without a lease or peer discovery. A forwarded
+operation keeps its original business deadline at the owner. Its finite reply
+has a separate absolute completion limit of that deadline plus ten seconds, so
+the original cleanup and `not_settled` result can finish after business expiry.
+This does not extend business work or reset the budget at another hop. Expiry
+of the completion limit aborts transport and still joins original cleanup.
 
 Registry inspect splits the validated request by Agent, routes each part to its
 owner, and retains original ordering, omission rules and whole-request failure

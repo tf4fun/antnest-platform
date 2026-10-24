@@ -23,6 +23,7 @@ import {
   type OwnerRegistration,
 } from "../../../../services/agent-acp-service/src/application/owner-incarnation.js";
 import {
+  closedExecutionAgent,
   executionConfiguration,
   executionIdentity,
   runtimeConfiguration,
@@ -159,6 +160,7 @@ describe.skipIf(databaseUrl === undefined)(
       { mode: "direct-owner", transport: "http", version: 1 },
       { mode: "single-entry", transport: "http", version: 1 },
       { mode: "single-entry", transport: "http-state-watch", version: 1 },
+      { mode: "single-entry", transport: "http-settlement", version: 1 },
     ] as const)(
       "$mode / $transport / v$version",
       async ({ mode, transport, version }) => {
@@ -826,13 +828,24 @@ describe.skipIf(databaseUrl === undefined)(
               ).rows,
             ).toEqual(persisted.rows);
           }
-          for (const i of transport === "http-state-watch" ? [] : [0, 1]) {
+          for (const i of transport === "http-state-watch"
+            ? []
+            : transport === "http-settlement"
+              ? [1]
+              : [0, 1]) {
             const agentId = configuration.agents[i]!.agent_id;
-            const entryPort = ports[(mode === "single-entry" ? 0 : i) * 4]!;
+            const entryPort =
+              ports[
+                (transport === "http-settlement"
+                  ? i
+                  : mode === "single-entry"
+                    ? 0
+                    : i) * 4
+              ]!;
             const identity = { ...executionIdentity(), agentId };
             const connect = async () => {
               const connected =
-                transport === "http"
+                transport === "http" || transport === "http-settlement"
                   ? new AcpHttpClient(
                       `http://127.0.0.1:${entryPort}/v1/acp`,
                       identity,
@@ -948,7 +961,206 @@ describe.skipIf(databaseUrl === undefined)(
             ]);
             await client.close();
           }
-          if (transport !== "http-state-watch") {
+          if (transport === "http-settlement") {
+            const agentId = configuration.agents[1]!.agent_id;
+            const owner = registrations.get("acp-b");
+            if (owner === undefined)
+              throw new Error("Missing B settlement owner registration");
+            const facts = async () => ({
+              runs: (
+                await pool.query(
+                  "SELECT id,session_id,state,terminal_class,executor_state,tool_effect_state,execution_owner_registration_id,execution_owner_member_id,execution_owner_incarnation_id,execution_owner_epoch::text FROM runs ORDER BY id",
+                )
+              ).rows,
+              messages: (
+                await pool.query(
+                  "SELECT session_id,sequence,kind,payload->'content' AS content FROM session_messages ORDER BY session_id,sequence",
+                )
+              ).rows,
+              stopReceipts: (
+                await pool.query(
+                  "SELECT receipt_id,registration_id FROM owner_stop_receipts ORDER BY receipt_id",
+                )
+              ).rows,
+              runRecoveries: (
+                await pool.query(
+                  "SELECT run_id,receipt_id FROM run_owner_recoveries ORDER BY run_id",
+                )
+              ).rows,
+              learningRecoveries: (
+                await pool.query(
+                  "SELECT task_id,receipt_id FROM learning_owner_recoveries ORDER BY task_id",
+                )
+              ).rows,
+            });
+            const original = await facts();
+            const originalModels = structuredClone(modelRequests);
+            expect(original.runs).toHaveLength(1);
+            expect(original.runs[0]).toMatchObject({
+              state: "completed",
+              executor_state: "quiescent",
+              tool_effect_state: "none",
+              execution_owner_member_id: "acp-b",
+              execution_owner_epoch: "1",
+            });
+            expect(original.stopReceipts).toEqual([]);
+            expect(original.runRecoveries).toEqual([]);
+            expect(original.learningRecoveries).toEqual([]);
+            expect(originalModels).toHaveLength(1);
+
+            const closed = structuredClone(configuration);
+            closed.revision = 2;
+            closed.agents[1] = closedExecutionAgent(closed.agents[1]!);
+            closed.agents[1].operation_id = randomUUID();
+            const publication = await within(
+              tracked(
+                fetch(
+                  `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/apply-execution-snapshot`,
+                  {
+                    method: "POST",
+                    headers: {
+                      ...workloadHeaders("agent-controller"),
+                      "content-type": "application/json",
+                      connection: "close",
+                    },
+                    body: JSON.stringify(closed),
+                    signal: AbortSignal.timeout(15_000),
+                  },
+                ).then(async (response) => ({
+                  status: response.status,
+                  body: (await response.json()) as unknown,
+                })),
+              ),
+              "closed B Agent publication",
+              15_000,
+            );
+            expect(publication).toEqual({
+              status: 200,
+              body: {
+                organization_id: configuration.organization_id,
+                applied_revision: closed.revision,
+              },
+            });
+
+            // Expire the actual original lease without changing the original
+            // Run, owner identity or durable stop evidence. The production
+            // renewal/loss path must retire its original generation.
+            expect(
+              (
+                await pool.query(
+                  "UPDATE agent_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE organization_id=$1 AND agent_id=$2 AND owner_instance_id=$3 AND epoch=1 RETURNING epoch::text",
+                  [
+                    configuration.organization_id,
+                    agentId,
+                    owner.incarnation_id,
+                  ],
+                )
+              ).rows,
+            ).toEqual([{ epoch: "1" }]);
+            await expect
+              .poll(
+                async () => {
+                  const observed = await tracked(
+                    fetch(
+                      `http://127.0.0.1:${ports[4]!}/rpc/agent-acp/get-agent-execution-state`,
+                      {
+                        method: "POST",
+                        headers: {
+                          ...identityHeaders({
+                            ...executionIdentity(),
+                            agentId,
+                          }),
+                          "content-type": "application/json",
+                          connection: "close",
+                        },
+                        body: "{}",
+                        signal: AbortSignal.timeout(2000),
+                      },
+                    ).then(async (response) => {
+                      await response.arrayBuffer();
+                      return response.status;
+                    }),
+                  );
+                  return observed;
+                },
+                { timeout: 15_000, interval: 100 },
+              )
+              .toBe(503);
+            expect(
+              (
+                await pool.query(
+                  "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS live FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                  [configuration.organization_id, agentId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                owner_instance_id: owner.incarnation_id,
+                epoch: "1",
+                live: false,
+              },
+            ]);
+
+            const settlement = await within(
+              tracked(
+                fetch(
+                  `http://127.0.0.1:${ports[1]!}/rpc/agent-acp/settle-agent`,
+                  {
+                    method: "POST",
+                    headers: {
+                      ...workloadHeaders("agent-controller"),
+                      "content-type": "application/json",
+                      connection: "close",
+                    },
+                    body: JSON.stringify({
+                      organization_id: configuration.organization_id,
+                      agent_id: agentId,
+                      minimum_revision: closed.revision,
+                      operation_id: closed.agents[1].operation_id,
+                      mode: "wait",
+                      deadline_at: new Date(Date.now() + 8000).toISOString(),
+                    }),
+                    signal: AbortSignal.timeout(15_000),
+                  },
+                ).then(async (response) => ({
+                  status: response.status,
+                  body: (await response.json()) as unknown,
+                })),
+              ),
+              "non-owner settlement after original execution lease expired",
+              15_000,
+            );
+            expect(settlement).toEqual({
+              status: 200,
+              body: {
+                applied_revision: closed.revision,
+                outcome: "settled",
+              },
+            });
+            // Exactly the assigned B member acquired and released the next
+            // control fence. An ingress A acquisition would consume an epoch.
+            expect(
+              (
+                await pool.query(
+                  "SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS live FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
+                  [configuration.organization_id, agentId],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                owner_instance_id: owner.incarnation_id,
+                epoch: "2",
+                live: false,
+              },
+            ]);
+            expect(await facts()).toEqual(original);
+            expect(modelRequests).toEqual(originalModels);
+            expect(runtimeReads[1]).toBeGreaterThan(0);
+          }
+          if (
+            transport !== "http-state-watch" &&
+            transport !== "http-settlement"
+          ) {
             expect(modelRequests).toHaveLength(2);
             expect(
               modelRequests.every((request) => request.model === "test-model"),

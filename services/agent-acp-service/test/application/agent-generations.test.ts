@@ -36,6 +36,11 @@ function held<T>(fallback: T) {
   cleanup.push(() => result.resolve(fallback));
   return result;
 }
+function errorsIn(error: unknown): unknown[] {
+  return error instanceof AggregateError
+    ? error.errors.flatMap((item: unknown) => errorsIn(item))
+    : [error];
+}
 function fixture() {
   const leases = {
     tryAcquire: vi.fn<AgentLeases["tryAcquire"]>((scope, owner) =>
@@ -188,6 +193,170 @@ describe("Agent generation lifetime", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
     expect(await manager.prepare(scopeA, initialize)).toBeDefined();
+  });
+
+  it("joined control waits for its original operation and lease release after parent cancellation", async () => {
+    const { manager, leases } = fixture();
+    const original = held("original control result"),
+      release = held(true);
+    const cancelled = new AbortController();
+    leases.release.mockReturnValueOnce(release.promise);
+    let lifetime: AbortSignal | undefined,
+      settled = false;
+    const control = manager.runControl(
+      scopeA,
+      (_authority, signal) => {
+        lifetime = signal;
+        return original.promise;
+      },
+      cancelled.signal,
+      { joinOriginal: true },
+    );
+    void control.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(lifetime).toBeDefined();
+      cancelled.abort(new AgentOwnershipLostError());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(lifetime?.aborted).toBe(true);
+      expect(settled).toBe(false);
+      expect(leases.release).not.toHaveBeenCalled();
+      original.resolve("original control result");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
+      expect(settled).toBe(false);
+      release.resolve(true);
+      await expect(control).rejects.toBeInstanceOf(AgentOwnershipLostError);
+    } finally {
+      original.resolve("original control result");
+      release.resolve(true);
+      await Promise.allSettled([control]);
+      await manager.drain();
+    }
+  });
+
+  it("joined control, scope close and shutdown retain a held release failure after the deadline", async () => {
+    const { manager, leases } = fixture();
+    const release = held(true),
+      failure = new Error("original control release failed");
+    leases.release.mockReturnValueOnce(release.promise);
+    const control = manager.runControl(scopeA, () => Promise.resolve("protected"), undefined, {
+      joinOriginal: true,
+    });
+    let settled = false,
+      closed = false,
+      drained = false;
+    void control.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    const closing: Promise<void>[] = [];
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
+      await vi.advanceTimersByTimeAsync(10_001);
+      const close = manager.closeScope(scopeA),
+        stop = manager.drain();
+      closing.push(close, stop);
+      void close.then(
+        () => {
+          closed = true;
+        },
+        () => {
+          closed = true;
+        },
+      );
+      void stop.then(
+        () => {
+          drained = true;
+        },
+        () => {
+          drained = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      expect(closed).toBe(false);
+      expect(drained).toBe(false);
+      release.reject(failure);
+      const results = await Promise.allSettled([control, close, stop]);
+      for (const result of results) {
+        expect(result.status).toBe("rejected");
+        if (result.status === "rejected") expect(errorsIn(result.reason)).toContain(failure);
+      }
+    } finally {
+      release.reject(failure);
+      await Promise.allSettled([control, ...closing]);
+      try {
+        await expect(manager.drain()).rejects.toMatchObject({ errors: [failure] });
+      } finally {
+        managers.splice(managers.indexOf(manager), 1);
+      }
+    }
+  });
+
+  it("joined control exposes an independent original operation failure arriving after abort", async () => {
+    const { manager, leases } = fixture();
+    const original = held("late control result"),
+      release = held(true);
+    const failure = new Error("original operation failed after cancellation");
+    const cancelled = new AbortController();
+    leases.release.mockReturnValueOnce(release.promise);
+    let lifetime: AbortSignal | undefined,
+      settled = false;
+    const control = manager.runControl(
+      scopeA,
+      (_authority, signal) => {
+        lifetime = signal;
+        return original.promise;
+      },
+      cancelled.signal,
+      { joinOriginal: true },
+    );
+    void control.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(lifetime).toBeDefined();
+      cancelled.abort(new AgentOwnershipLostError());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(lifetime?.aborted).toBe(true);
+      expect(settled).toBe(false);
+      original.reject(failure);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(leases.release).toHaveBeenCalledExactlyOnceWith(lease(scopeA).fence);
+      expect(settled).toBe(false);
+      release.resolve(true);
+      const [result] = await Promise.allSettled([control]);
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(errorsIn(result.reason)).toContain(failure);
+    } finally {
+      original.reject(failure);
+      release.resolve(true);
+      await Promise.allSettled([control]);
+      try {
+        await expect(manager.drain()).rejects.toMatchObject({ errors: [failure] });
+      } finally {
+        managers.splice(managers.indexOf(manager), 1);
+      }
+    }
   });
 
   it("joins a late control acquisition receipt after timeout without running its operation", async () => {
