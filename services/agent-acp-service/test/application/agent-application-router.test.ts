@@ -137,6 +137,23 @@ const cases: { [K in keyof AcpApplicationPort]: Parameters<AcpApplicationPort[K]
 };
 
 describe("Agent application routing", () => {
+  it("rejects a mismatched forwarded epoch without closing the healthy current generation", async () => {
+    const { router, manager, generation, graphA, leases } = await setup();
+    const input = {
+      ...create(),
+      binding: { ...a, ownerFence: { ...generation.authority.fence, epoch: "2" } },
+    };
+    await expect(router.createSession(input)).rejects.toMatchObject({ code: "agent_unavailable" });
+    expect(graphA.createSession).not.toHaveBeenCalled();
+    expect(leases.release).not.toHaveBeenCalled();
+    expect(manager.capture(a)).toBe(generation);
+    await expect(
+      router.createSession({
+        ...create(),
+        binding: { ...a, ownerFence: generation.authority.fence },
+      }),
+    ).resolves.toEqual({ sessionId: "session-a" });
+  });
   it.each(Object.keys(cases) as Array<keyof AcpApplicationPort>)(
     "%s authorizes before routing once to the fixed Agent graph",
     async (method) => {

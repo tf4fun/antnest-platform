@@ -194,6 +194,15 @@
       },
       "request_body": "json",
       "notes": "Dedicated peer listener only. Requires the configured directional member credential; mTLS additionally verifies the ACP workload certificate. Ordinary service tokens and user CCTs cannot authorize peer calls. Source member, fixed membership digest, target identity and deadline are checked before dispatch."
+    },
+    "UPGRADE /internal/acp-peer/forward/ws": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "required"
+      },
+      "request_body": "none",
+      "notes": "Dedicated peer listener only. Directional member credentials and ACP mTLS identity authenticate the source. The original agent-ui CCT is required and reverified against the bound organization, principal and Agent. Fixed membership, target incarnation, full publication digest, lease epoch, deadline and one hop are checked before owner dispatch. Ordinary service credentials do not grant peer access."
     }
   },
   "guarded_sources": {
@@ -232,7 +241,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "c7401a7fdb85a2bfd1c55dad69ea8a678ae0c4cf75cd92658ac3dd7560f6c355",
+      "sha256": "1327fb62f792f60977b5e2b7bf3b42da9f600bdeb0fad599b3293ef2cc7ecf64",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -259,7 +268,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/request-authentication.ts": {
-      "sha256": "4d3a28b5ae8f5b47ace7819b4df011b832d762771ff32c20ba2407acda1c73dd",
+      "sha256": "cf3c29cd381a75f9b001245a91a86af78ed097645f90aba7ce69c107d6e11a11",
       "routes": [
         "DELETE /v1/acp",
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes",
@@ -303,10 +312,11 @@
       ]
     },
     "services/agent-acp-service/src/transport/peer-server.ts": {
-      "sha256": "a0921858c140ef7de3bc6548af2bb561ada248ca6c75c2cd0752bed815c70a42",
+      "sha256": "69e40b5e564f1c2562cef559bda3f46620fce30d0448591138e48623e39db63e",
       "routes": [
         "POST /internal/acp-peer/identity",
-        "POST /internal/acp-peer/publications/apply"
+        "POST /internal/acp-peer/publications/apply",
+        "UPGRADE /internal/acp-peer/forward/ws"
       ]
     }
   }

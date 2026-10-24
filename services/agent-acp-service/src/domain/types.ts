@@ -1,6 +1,7 @@
 import type { AdmittedConfiguration } from "./session-configuration.js";
 import type { ModelPricing } from "./usage.js";
 import type { ModelThinking } from "./model-thinking.js";
+import type { AgentOwnershipFence } from "./agent-ownership.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonObject = { [key: string]: JsonValue };
@@ -16,6 +17,8 @@ export type ConnectionBinding = {
   organizationId: string;
   principalId: string;
   agentId: string;
+  /** Set by authenticated peer admission; never accepted from ACP message params. */
+  ownerFence?: AgentOwnershipFence;
 };
 
 export type SessionState = "active" | "closed" | "deleted";

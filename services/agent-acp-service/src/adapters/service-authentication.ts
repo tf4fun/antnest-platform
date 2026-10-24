@@ -16,6 +16,8 @@ import {
 import type { IncomingMessage } from "node:http";
 import { Agent, fetch as undiciFetch } from "undici";
 import { strictObject } from "./strict-json.js";
+import { WebSocket } from "ws";
+import { Agent as HttpsAgent } from "node:https";
 
 export const SERVICE_AUTH_HEADER = "Antnest-Service-Authorization";
 export const SERVICES = [
@@ -161,6 +163,7 @@ export class ServiceAuthentication {
   private readonly receiver: Receiver;
   private readonly tokenDirectory: string;
   private readonly agents = new Set<Agent>();
+  private readonly peerSockets = new Set<WebSocket>();
   private readonly insecure: boolean;
   private readonly tls: SecureContextOptions | undefined;
 
@@ -358,8 +361,80 @@ export class ServiceAuthentication {
     };
   }
 
+  public connectPeer(
+    rawOrigin: string,
+    credentialFile: string,
+    headers: Record<string, string>,
+    maximum: number,
+    timeoutMs: number,
+  ): WebSocket {
+    const origin = new URL(rawOrigin);
+    if (
+      this.service !== "agent-acp-service" ||
+      !["http:", "https:"].includes(origin.protocol) ||
+      origin.username ||
+      origin.password ||
+      origin.pathname !== "/" ||
+      origin.search ||
+      origin.hash ||
+      (origin.protocol === "http:" && !this.insecure) ||
+      (origin.protocol === "https:" && !this.tls) ||
+      !Number.isSafeInteger(timeoutMs) ||
+      timeoutMs < 1 ||
+      timeoutMs > 10000
+    )
+      throw new Error("dependency_origin_invalid");
+    const token = new TextDecoder("utf-8", { fatal: true }).decode(
+      readCredential(credentialFile, 86),
+    );
+    if (!validateToken(token)) throw new Error("service_credential_invalid");
+    const allowed = new Set(["antnest-caller-context", "antnest-acp-forward"]);
+    if (Object.keys(headers).some((key) => !allowed.has(key.toLowerCase())))
+      throw new Error("dependency_origin_invalid");
+    origin.protocol = origin.protocol === "https:" ? "wss:" : "ws:";
+    origin.pathname = "/internal/acp-peer/forward/ws";
+    const tlsAgent =
+      origin.protocol === "wss:"
+        ? new HttpsAgent({
+            ...this.tls,
+            ...(this.mode === "token" ? { cert: undefined, key: undefined } : {}),
+            checkServerIdentity: (hostname, certificate) => {
+              const error = checkServerIdentity(hostname, certificate);
+              if (error) return error;
+              return certificateService(new X509Certificate(certificate.raw)) ===
+                "agent-acp-service"
+                ? undefined
+                : new Error("server_identity_invalid");
+            },
+          })
+        : undefined;
+    const socket = new WebSocket(origin, {
+      ...(tlsAgent === undefined ? {} : { agent: tlsAgent }),
+      headers: { ...headers, [SERVICE_AUTH_HEADER]: `Bearer ${token}` },
+      followRedirects: false,
+      handshakeTimeout: timeoutMs,
+      maxPayload: maximum * 2 + 1024,
+      perMessageDeflate: false,
+    });
+    this.peerSockets.add(socket);
+    socket.once("close", () => {
+      this.peerSockets.delete(socket);
+      tlsAgent?.destroy();
+    });
+    return socket;
+  }
+
   public close(): Promise<void> {
-    return Promise.all([...this.agents].map((agent) => agent.close())).then(() => undefined);
+    return Promise.all([
+      ...[...this.agents].map((agent) => agent.close()),
+      ...[...this.peerSockets].map(
+        (socket) =>
+          new Promise<void>((resolve) => {
+            socket.once("close", resolve);
+            socket.terminate();
+          }),
+      ),
+    ]).then(() => undefined);
   }
   private outgoingToken(receiver: string): string {
     const raw = readCredential(

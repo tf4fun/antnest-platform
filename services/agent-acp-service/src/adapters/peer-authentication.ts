@@ -106,6 +106,7 @@ export class PeerAuthentication {
   private readonly remoteMembers: readonly string[];
   private readonly fetchers = new Map<string, typeof fetch>();
   private readonly workload: ServiceAuthentication;
+  private readonly tokenDirectory: string;
 
   public constructor(options: {
     memberId: string;
@@ -117,6 +118,7 @@ export class PeerAuthentication {
     if (options.workload.service !== "agent-acp-service") throw invalid();
     this.memberId = options.memberId;
     this.workload = options.workload;
+    this.tokenDirectory = options.tokenDirectory;
     this.membership = parsePeerMembership(
       readCredential(options.membershipFile, 256 * 1024),
       options.memberId,
@@ -154,5 +156,22 @@ export class PeerAuthentication {
     const send = this.fetchers.get(memberId);
     if (send === undefined) throw invalid();
     return send;
+  }
+
+  public connect(
+    memberId: string,
+    headers: Record<string, string>,
+    maximum: number,
+    timeoutMs: number,
+  ) {
+    const member = this.membership.members.find((item) => item.member_id === memberId);
+    if (member === undefined || member.member_id === this.memberId) throw invalid();
+    return this.workload.connectPeer(
+      member.origin,
+      join(this.tokenDirectory, memberId),
+      headers,
+      maximum,
+      timeoutMs,
+    );
   }
 }

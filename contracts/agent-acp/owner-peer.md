@@ -6,8 +6,10 @@ and [closed wire schemas](owner-peer.schema.json) define the first ACP peer batc
 local publication/revocation receipts and the aggregate Controller ACK.
 Peer production also uses [fixed membership assignment](owner-assignment.md)
 and shared compatibility locking; non-peer mode retains the exclusive lock.
-Two real-main processes are covered with controlled dependency peers. Forwarding,
-genuine two-replica failover and Docker integration remain required delivery gates.
+Two real-main processes are covered with controlled dependency peers. The
+[WebSocket forwarding batch](owner-forwarding.md) adds single-entry v1/v2 traffic.
+HTTP/SSE, state/control/source forwarding, genuine two-replica failover and Docker
+integration remain required delivery gates.
 
 ## Trusted membership and process binding
 

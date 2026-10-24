@@ -220,6 +220,13 @@ export class ExecutionDirectory {
     );
   }
 
+  public capturePublication(organizationId: string): LocalExecutionPublication {
+    const capture = this.publications.get(organizationId);
+    if (capture === undefined) throw publicationUnavailable();
+    capture.assertCurrent();
+    return capture;
+  }
+
   public inspect(identity: ExecutionIdentity): {
     agent: AgentConfiguration;
     configuration: PublicExecutionConfiguration;

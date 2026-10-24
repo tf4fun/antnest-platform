@@ -35,6 +35,8 @@ import { PeerDeadlineError } from "./ports/agent-peers.js";
 import { ProviderClients } from "./application/provider-clients.js";
 import { AgentSettlement } from "./application/agent-settlement.js";
 import { AgentAssignment } from "./application/agent-assignment.js";
+import { OwnerForwarding } from "./application/owner-forwarding.js";
+import { PostgresAgentLeases } from "./adapters/postgres/agent-leases.js";
 import { AgentExecutionState } from "./application/agent-execution-state.js";
 import { ExecutionAudits } from "./application/execution-audit.js";
 import { PostgresExecutionAudits } from "./adapters/postgres/execution-audit.js";
@@ -259,17 +261,45 @@ export async function startAgentAcpService(
       throw ownershipLoss;
     }
 
+    const forwarding =
+      peerAuthentication === undefined || built.owned === undefined
+        ? undefined
+        : {
+            resolver: new OwnerForwarding({
+              registration: registeredOwner!,
+              membershipSha256: peerAuthentication.membership.sha256,
+              assignment: new AgentAssignment(
+                peerAuthentication.memberId,
+                peerAuthentication.membership.members.map((member) => member.member_id),
+              ),
+              directory: built.directory,
+              leases: new PostgresAgentLeases(new PostgresKernel(pool, telemetry)),
+              peers: new HttpAgentPeers(peerAuthentication),
+            }),
+            peers: peerAuthentication,
+            admit: (
+              request: Parameters<OwnedAgentComponents["admitForwardedExecution"]>[0],
+              signal: AbortSignal,
+            ) => built.owned!.admitForwardedExecution(request, signal),
+          };
     if (peerAuthentication !== undefined) {
       peerServer = new PeerServer({
         registration: registeredOwner!,
         authentication: peerAuthentication,
         apply: built.applyPeerPublication,
+        maxWebSocketPayloadBytes: config.maxWebSocketPayloadBytes,
+        forward: (request, target, signal) => {
+          if (listeningServer === undefined)
+            throw new DomainError("agent_unavailable", "ACP ingress is not ready");
+          return listeningServer.preparePeerWebSocket(request, target, signal);
+        },
       });
       await peerServer.listen(config.peer!.listen.host, config.peer!.listen.port);
       ownership.signal.throwIfAborted();
     }
     const server = new AgentAcpHttpServer({
       authentication: config.authentication,
+      ...(forwarding === undefined ? {} : { forwarding }),
       executionConfiguration: built.directory,
       settlement: built.settlement,
       executionState: built.executionState,

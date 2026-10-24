@@ -94,6 +94,17 @@ export class AgentApplicationRouter implements AcpApplicationPort {
     const dispatch = { invoked: false };
     try {
       return await generation.dispatch((application) => {
+        if (binding.ownerFence !== undefined) {
+          const expected = binding.ownerFence;
+          const actual = generation.authority.fence;
+          if (
+            expected.organizationId !== actual.organizationId ||
+            expected.agentId !== actual.agentId ||
+            expected.ownerInstanceId !== actual.ownerInstanceId ||
+            expected.epoch !== actual.epoch
+          )
+            throw unavailable();
+        }
         dispatch.invoked = true;
         return operation(application, generation);
       });

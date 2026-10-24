@@ -42,8 +42,23 @@ export class RequestAuthentication {
         ...(admitted.www_authenticate === null ? {} : { challenge: admitted.www_authenticate }),
       };
     if (admitted.caller === null) return { status: 401, code: "service_unauthenticated" };
+    return this.admitCaller(request, admitted.caller, upgrade);
+  }
+
+  /** Only the independently authenticated peer listener calls this in-process entry. */
+  public admitPeer(request: IncomingMessage, originalCaller: string, upgrade = false) {
+    return this.admitCaller(request, originalCaller, upgrade);
+  }
+
+  private async admitCaller(
+    request: IncomingMessage,
+    caller: string,
+    upgrade: boolean,
+  ): Promise<{ claims?: CallerClaims } | AuthenticationFailure> {
+    const policy = routePolicy(request, upgrade);
+    if (!policy.callers.includes(caller)) return { status: 403, code: "caller_not_allowed" };
     if (!policy.context) {
-      bindAuthenticatedRequest(request, admitted.caller);
+      bindAuthenticatedRequest(request, caller);
       return {};
     }
     const tokens = fields(request).filter(
@@ -58,7 +73,7 @@ export class RequestAuthentication {
       );
       for (const name of Object.keys(request.headers))
         if (name.toLowerCase().startsWith("x-antnest-")) delete request.headers[name];
-      bindAuthenticatedRequest(request, admitted.caller, claims);
+      bindAuthenticatedRequest(request, caller, claims);
       return { claims };
     } catch (error) {
       if (error instanceof CallerContextError && error.code === "identity_dependency_unavailable")

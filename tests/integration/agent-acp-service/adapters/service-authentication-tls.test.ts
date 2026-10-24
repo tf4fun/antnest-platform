@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import { randomBytes, createHash } from "node:crypto";
+import type { IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
 import { expect, it } from "vitest";
+import { WebSocket, WebSocketServer } from "ws";
 import { ServiceAuthentication } from "../../../../services/agent-acp-service/src/adapters/service-authentication.js";
 import { PeerAuthentication } from "../../../../services/agent-acp-service/src/adapters/peer-authentication.js";
 import { PeerServer } from "../../../../services/agent-acp-service/src/transport/peer-server.js";
@@ -17,6 +20,67 @@ it.each(["token", "mtls"] as const)(
     const clients: ServiceAuthentication[] = [];
     const servers: ReturnType<typeof createServer>[] = [];
     const peerServers: PeerServer[] = [];
+    const webSocketServers: WebSocketServer[] = [];
+    const webSockets: { socket: WebSocket; closed: Promise<void> }[] = [];
+    const upgradeSockets: { socket: Duplex; closed: Promise<void> }[] = [];
+    const webSocketErrors: unknown[] = [];
+    let closingWebSockets = false;
+    const watchWebSocket = (socket: WebSocket, expectedFailure = false) => {
+      const closed = new Promise<void>((resolve) => {
+        socket.once("close", () => resolve());
+      });
+      socket.on("error", (error) => {
+        if (!expectedFailure && !closingWebSockets) webSocketErrors.push(error);
+      });
+      const receipt = { socket, closed };
+      webSockets.push(receipt);
+      return receipt;
+    };
+    const observeUpgrades = (
+      server: ReturnType<typeof createServer>,
+      authenticate?: (
+        request: IncomingMessage,
+      ) => ReturnType<PeerAuthentication["authenticate"]>,
+    ) => {
+      const observed = {
+        attempts: 0,
+        accepted: 0,
+        admissions: [] as ReturnType<PeerAuthentication["authenticate"]>[],
+      };
+      const webSocketServer = new WebSocketServer({ noServer: true });
+      webSocketServers.push(webSocketServer);
+      webSocketServer.on("error", (error) => webSocketErrors.push(error));
+      server.on("upgrade", (request, socket, head) => {
+        const closed = new Promise<void>((resolve) => {
+          socket.once("close", () => resolve());
+        });
+        upgradeSockets.push({ socket, closed });
+        let denied = false;
+        socket.on("error", (error) => {
+          if (!denied && !closingWebSockets) webSocketErrors.push(error);
+        });
+        observed.attempts++;
+        try {
+          const admission = authenticate?.(request);
+          if (admission !== undefined) observed.admissions.push(admission);
+          if (admission !== undefined && admission.code !== null) {
+            denied = true;
+            socket.end(
+              `HTTP/1.1 ${admission.http_status} Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+            );
+            return;
+          }
+          webSocketServer.handleUpgrade(request, socket, head, (connection) => {
+            observed.accepted++;
+            watchWebSocket(connection);
+          });
+        } catch (error) {
+          webSocketErrors.push(error);
+          socket.destroy();
+        }
+      });
+      return observed;
+    };
     const openssl = (...arguments_: string[]) =>
       execFileSync("openssl", arguments_, {
         cwd: directory,
@@ -145,6 +209,7 @@ it.each(["token", "mtls"] as const)(
             response.end(admission.code ?? "ok");
           },
         );
+        const upgrades = observeUpgrades(server);
         servers.push(server);
         server.listen(0, "localhost");
         await once(server, "listening");
@@ -176,6 +241,20 @@ it.each(["token", "mtls"] as const)(
           }),
         ).rejects.toThrow();
         expect(requests).toBe(beforePeer);
+        expect(() =>
+          receiver.connectPeer(origin, pairFile, {}, 1024, 3000),
+        ).toThrow("dependency_origin_invalid");
+        const refusedPeer = watchWebSocket(
+          sender.connectPeer(origin, pairFile, {}, 1024, 3000),
+          true,
+        );
+        await expect(once(refusedPeer.socket, "open")).rejects.toThrow(
+          "server_identity_invalid",
+        );
+        await refusedPeer.closed;
+        expect(upgrades.attempts).toBe(0);
+        expect(upgrades.accepted).toBe(0);
+        expect(requests).toBe(beforePeer);
       }
       for (const certificate of ["agent-acp-service", "peer-wrong-host"]) {
         const receiver = new ServiceAuthentication({
@@ -196,6 +275,9 @@ it.each(["token", "mtls"] as const)(
             response.writeHead(admission?.http_status ?? 503);
             response.end(admission?.caller ?? "denied");
           },
+        );
+        const upgrades = observeUpgrades(server, (request) =>
+          holder.peer!.authenticate(request),
         );
         servers.push(server);
         server.listen(0, "127.0.0.1");
@@ -246,6 +328,16 @@ it.each(["token", "mtls"] as const)(
             send(origin, { signal: AbortSignal.timeout(3000) }),
           ).rejects.toThrow();
           expect(requests).toBe(0);
+          const refusedPeer = watchWebSocket(
+            sender.connectPeer(origin, pairFile, {}, 1024, 3000),
+            true,
+          );
+          await expect(once(refusedPeer.socket, "open")).rejects.toThrow();
+          await refusedPeer.closed;
+          expect(upgrades.attempts).toBe(0);
+          expect(upgrades.accepted).toBe(0);
+          expect(upgrades.admissions).toEqual([]);
+          expect(requests).toBe(0);
           continue;
         }
         expect(
@@ -253,6 +345,20 @@ it.each(["token", "mtls"] as const)(
             await send(origin, { signal: AbortSignal.timeout(3000) })
           ).text(),
         ).toBe("acp-a");
+        expect(accepted).toBe(1);
+        const connectedPeer = watchWebSocket(
+          sender.connectPeer(origin, pairFile, {}, 1024, 3000),
+        );
+        await once(connectedPeer.socket, "open");
+        expect(upgrades.attempts).toBe(1);
+        expect(upgrades.accepted).toBe(1);
+        expect(upgrades.admissions).toEqual([
+          expect.objectContaining({
+            code: null,
+            http_status: 200,
+            caller: "acp-a",
+          }),
+        ]);
         expect(accepted).toBe(1);
         const registration = {
           registration_id: "10000000-0000-4000-8000-000000000001",
@@ -307,6 +413,27 @@ it.each(["token", "mtls"] as const)(
         );
         expect(deniedStatus).toBe(401);
         expect(accepted).toBe(1);
+        const missingPair = watchWebSocket(
+          new WebSocket(
+            origin.replace("https:", "wss:") + "/internal/acp-peer/forward/ws",
+            {
+              ...sender.serverTLS,
+              handshakeTimeout: 3000,
+            },
+          ),
+          true,
+        );
+        await expect(once(missingPair.socket, "open")).rejects.toThrow(
+          "Unexpected server response: 401",
+        );
+        await missingPair.closed;
+        expect(upgrades.attempts).toBe(2);
+        expect(upgrades.accepted).toBe(1);
+        expect(upgrades.admissions[1]).toMatchObject({
+          code: "service_unauthenticated",
+          http_status: 401,
+        });
+        expect(accepted).toBe(1);
         if (mode === "mtls") {
           const other = new ServiceAuthentication(
             environment("identity-service"),
@@ -337,6 +464,31 @@ it.each(["token", "mtls"] as const)(
           );
           expect(wrongServiceStatus).toBe(403);
           expect(accepted).toBe(1);
+          const wrongServicePeer = watchWebSocket(
+            new WebSocket(
+              origin.replace("https:", "wss:") +
+                "/internal/acp-peer/forward/ws",
+              {
+                ...other.serverTLS,
+                headers: {
+                  "Antnest-Service-Authorization": `Bearer ${pairToken}`,
+                },
+                handshakeTimeout: 3000,
+              },
+            ),
+            true,
+          );
+          await expect(once(wrongServicePeer.socket, "open")).rejects.toThrow(
+            "Unexpected server response: 403",
+          );
+          await wrongServicePeer.closed;
+          expect(upgrades.attempts).toBe(3);
+          expect(upgrades.accepted).toBe(1);
+          expect(upgrades.admissions[2]).toMatchObject({
+            code: "caller_not_allowed",
+            http_status: 403,
+          });
+          expect(accepted).toBe(1);
         }
       }
       expect(
@@ -363,6 +515,25 @@ it.each(["token", "mtls"] as const)(
       ).toThrow("complete_tls_configuration_required");
     } finally {
       await Promise.all(peerServers.map((server) => server.close()));
+      closingWebSockets = true;
+      for (const { socket } of webSockets)
+        if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
+      for (const { socket } of upgradeSockets) socket.destroy();
+      await Promise.all([
+        ...webSockets.map(({ closed }) => closed),
+        ...upgradeSockets.map(({ closed }) => closed),
+      ]);
+      await Promise.all(
+        webSocketServers.map(
+          (server) =>
+            new Promise<void>((resolve) => {
+              server.close((error) => {
+                if (error !== undefined) webSocketErrors.push(error);
+                resolve();
+              });
+            }),
+        ),
+      );
       await Promise.all(clients.map((client) => client.close()));
       for (const server of servers) {
         server.closeAllConnections();
@@ -371,6 +542,7 @@ it.each(["token", "mtls"] as const)(
         );
       }
       rmSync(directory, { recursive: true, force: true });
+      expect(webSocketErrors).toEqual([]);
     }
   },
 );
