@@ -54,7 +54,11 @@ function finish(runId: string, ordinal: number, usage = failedUsage) {
   };
 }
 
-async function accept(fixture: FencingFixture, maximum?: number) {
+async function accept(
+  fixture: FencingFixture,
+  maximum?: number,
+  failover?: "never" | "before_output",
+) {
   const session = await fixture.session(scope("model-attempt-agent"));
   const owner = await fixture.owner(session.binding);
   const repositories = createOwnedRunRepositories(
@@ -66,8 +70,28 @@ async function accept(fixture: FencingFixture, maximum?: number) {
   const acceptance = fixture.acceptance(session, input.runId);
   if (maximum !== undefined)
     acceptance.snapshot.executionSpec.maxModelRequests = maximum;
+  const fallback = {
+    modelProfileId: "fallback-profile",
+    providerConnectionId: "fallback-provider",
+    model: {
+      ...acceptance.snapshot.executionSpec.model,
+      baseUrl: "https://fallback.example.test/v1",
+      model: "fallback-model",
+      contextWindow: 32_000,
+      maxOutputTokens: 1024,
+      pricing: {
+        currency: "USD" as const,
+        inputPerMillion: 3,
+        outputPerMillion: 4,
+      },
+    },
+  };
+  if (failover !== undefined) {
+    acceptance.snapshot.executionSpec.modelFailover = failover;
+    acceptance.snapshot.executionSpec.fallbackModels = [fallback];
+  }
   expect(await repositories.runs.acceptRun(acceptance)).toBe("accepted");
-  return { ...repositories, session, owner, runId: input.runId };
+  return { ...repositories, session, owner, runId: input.runId, fallback };
 }
 
 type MessageRow = {
@@ -121,6 +145,86 @@ describe.skipIf(databaseUrl === undefined)(
           visible: false,
           context_excluded: true,
         });
+      });
+    });
+
+    it("allows frozen fallback identity and atomically records its own context and usage", async () => {
+      await withDatabase(async (fixture) => {
+        const run = await accept(fixture, 5, "before_output");
+        await run.events.startModelAttempt(start(run.runId, 1));
+        await run.events.finishModelAttempt(finish(run.runId, 1));
+        const second = {
+          ...start(run.runId, 2),
+          modelProfileId: run.fallback.modelProfileId,
+          providerConnectionId: run.fallback.providerConnectionId,
+          model: run.fallback.model.model,
+        };
+        const before = await fixture.snapshot();
+        for (const changed of [
+          { modelProfileId: "unknown-fallback" },
+          { providerConnectionId: start(run.runId, 1).providerConnectionId },
+          { model: "unfrozen-fallback-model" },
+        ]) {
+          await expect(
+            run.events.startModelAttempt({ ...second, ...changed }),
+          ).rejects.toThrow();
+          expect(await fixture.snapshot()).toBe(before);
+        }
+        await run.events.startModelAttempt(second);
+        const pending = await fixture.snapshot();
+        await expect(
+          run.events.finishModelAttempt(finish(run.runId, 2, completedUsage)),
+        ).rejects.toThrow();
+        expect(await fixture.snapshot()).toBe(pending);
+        const completed = {
+          ...finish(run.runId, 2, completedUsage),
+          contextSize: 32_000,
+          outcome: "completed" as const,
+          reason: "completed",
+          status: 200,
+        };
+        const receipt = await run.events.finishModelAttempt(completed);
+        expect(receipt).toMatchObject({
+          kind: "usage",
+          size: 32_000,
+          measurement: completedUsage,
+          cost: { amount: 0.005, currency: "USD" },
+        });
+        expect(await run.events.finishModelAttempt(completed)).toEqual(receipt);
+        const rows = await messages(fixture, run.session.sessionId);
+        const audits = rows.filter((row) => row.kind === "model_attempt");
+        expect(audits).toHaveLength(4);
+        expect(audits[2]?.payload).toMatchObject({
+          phase: "start",
+          ordinal: 2,
+          modelProfileId: second.modelProfileId,
+          providerConnectionId: second.providerConnectionId,
+          model: second.model,
+        });
+        expect(audits[3]?.payload).toMatchObject({
+          phase: "finish",
+          contextSize: 32_000,
+        });
+        expect(
+          audits.every((row) => !row.visible && row.context_excluded),
+        ).toBe(true);
+        expect(rows.filter((row) => row.kind === "usage")).toHaveLength(2);
+      });
+    });
+
+    it("rejects a configured fallback when the frozen policy is never", async () => {
+      await withDatabase(async (fixture) => {
+        const run = await accept(fixture, 5, "never");
+        const before = await fixture.snapshot();
+        await expect(
+          run.events.startModelAttempt({
+            ...start(run.runId, 1),
+            modelProfileId: run.fallback.modelProfileId,
+            providerConnectionId: run.fallback.providerConnectionId,
+            model: run.fallback.model.model,
+          }),
+        ).rejects.toThrow();
+        expect(await fixture.snapshot()).toBe(before);
       });
     });
 

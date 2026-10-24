@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { modelRetryConfigurationSchema } from "./model-call-policy.js";
+import { modelFailoverSchema, modelRetryConfigurationSchema } from "./model-call-policy.js";
 import { isDeepStrictEqual } from "node:util";
 import { DomainError } from "./errors.js";
 import {
@@ -11,7 +11,7 @@ import {
   type SessionModel,
   type SessionConfiguration,
 } from "./session-configuration.js";
-import type { ModelSpec, RuntimeBinding } from "./types.js";
+import type { ModelCandidate, ModelSpec, RuntimeBinding } from "./types.js";
 import { resolveThinking, thinkingEfforts } from "./model-thinking.js";
 import {
   runtimeConnectionIdSchema,
@@ -74,6 +74,7 @@ export const executionModelSchema = z.strictObject({
   supports_images: z.boolean(),
   supports_audio: z.boolean().optional(),
   supports_pdf: z.boolean().optional(),
+  supports_tools: z.boolean().optional(),
   pricing: pricingSchema.optional(),
 });
 
@@ -131,6 +132,7 @@ const agentFieldsSchema = z.strictObject({
     ),
   max_model_requests: revision,
   model_retry: modelRetryConfigurationSchema.optional(),
+  failover: modelFailoverSchema.optional(),
   runtime: publicRuntimeSchema.nullable(),
 });
 
@@ -448,6 +450,41 @@ export function resolveExecutionConfiguration(
       ? undefined
       : selection.thinkingEffort;
   const thinking = resolveThinking(provider.provider_key, model.model, effort);
+  const fallbackModels: ModelCandidate[] = [];
+  if (agent.failover !== undefined) {
+    for (const id of agent.fallback_model_profile_ids ?? []) {
+      if (id === model.model_profile_id) continue;
+      const candidate = snapshot.models.find((item) => item.model_profile_id === id);
+      const connection = snapshot.providers.find(
+        (item) => item.connection_id === candidate?.connection_id,
+      );
+      if (
+        candidate === undefined ||
+        !candidate.enabled ||
+        connection === undefined ||
+        !connection.enabled
+      )
+        continue;
+      if (
+        thinking !== undefined &&
+        !thinkingEfforts(connection.provider_key, candidate.model).includes(thinking.effort)
+      )
+        continue;
+      const candidateThinking = resolveThinking(
+        connection.provider_key,
+        candidate.model,
+        thinking?.effort,
+      );
+      fallbackModels.push({
+        modelProfileId: candidate.model_profile_id,
+        providerConnectionId: connection.connection_id,
+        model: {
+          ...modelSpec(candidate, connection.base_url),
+          ...(candidateThinking === undefined ? {} : { thinking: candidateThinking }),
+        },
+      });
+    }
+  }
   return {
     organizationId: snapshot.organization_id,
     agentId: agent.agent_id,
@@ -476,6 +513,7 @@ export function resolveExecutionConfiguration(
       instructions: skill.instructions,
     })),
     maxModelRequests: agent.max_model_requests,
+    ...(agent.failover === undefined ? {} : { modelFailover: agent.failover, fallbackModels }),
     ...(agent.model_retry === undefined
       ? {}
       : {
@@ -623,6 +661,7 @@ function modelSpec(model: ExecutionModel, baseUrl: string): ModelSpec {
     ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
     ...(model.supports_audio === undefined ? {} : { supportsAudio: model.supports_audio }),
     ...(model.supports_pdf === undefined ? {} : { supportsPdf: model.supports_pdf }),
+    ...(model.supports_tools === undefined ? {} : { supportsTools: model.supports_tools }),
     ...(price === undefined
       ? {}
       : {

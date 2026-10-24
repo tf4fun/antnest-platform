@@ -18,7 +18,7 @@ import { ModelCallPolicy, ModelCallInterruptedError } from "./model-call-policy.
 import type { ToolPermissionPort } from "../ports/tool-permissions.js";
 import { planResult, type PlanEntry } from "../domain/plan.js";
 import { assertModelInputBudget } from "./context-budget.js";
-import { ModelError, type ModelPort } from "../ports/model.js";
+import { ModelError, ModelTransportCleanupError, type ModelPort } from "../ports/model.js";
 import type { RunEventPort } from "../ports/run-events.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
 import { RunEventPersistenceError } from "./durable-run-events.js";
@@ -322,7 +322,14 @@ export class TurnRunner {
           ? cancelled(currentEffect)
           : approvalError === undefined
             ? null
-            : failure(currentEffect, "tool_permission_failed"),
+            : failure(
+                currentEffect,
+                approvalError instanceof ModelTransportCleanupError ||
+                  (approvalError instanceof ModelError &&
+                    approvalError.code === "provider_unavailable")
+                  ? errorClass(approvalError)
+                  : "tool_permission_failed",
+              ),
       };
     }
     if (tool.source === "agent" && tool.sourceId === "plan" && tool.name === "update_plan") {

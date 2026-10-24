@@ -97,6 +97,16 @@ export class ProviderClients {
         }
         const signal = AbortSignal.any([request.signal, client.stop.signal]);
         signal.throwIfAborted();
+        if (
+          request.snapshot.organizationId !== organizationId ||
+          request.snapshot.providerConnectionId !== connectionId ||
+          request.snapshot.executionSpec.model.baseUrl !== client.routing.base_url
+        )
+          throw new ModelError(
+            "provider_unavailable",
+            "Provider routing does not match the frozen Run",
+            false,
+          );
         try {
           const result = await this.transport.complete({
             ...request,
@@ -120,6 +130,13 @@ export class ProviderClients {
               { cause: signal.reason },
             );
             error.usage = result.usage;
+            error.outputStarted =
+              [...result.content, ...(result.thought ?? [])].some(
+                (block) =>
+                  block.type !== "text" ||
+                  (typeof block.text === "string" && block.text.length > 0),
+              ) ||
+              (result.kind === "tool_calls" && result.calls.length > 0);
             throw error;
           }
           return result;

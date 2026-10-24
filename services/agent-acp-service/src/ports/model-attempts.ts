@@ -16,6 +16,7 @@ export type ModelAttemptFinished = {
   durationMs: number;
   outputStarted: boolean;
   usage: ModelUsage;
+  contextSize?: number;
   status?: number;
   finishedAt: Date;
 };

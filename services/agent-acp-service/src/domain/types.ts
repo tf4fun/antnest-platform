@@ -2,7 +2,7 @@ import type { AdmittedConfiguration } from "./session-configuration.js";
 import type { ModelPricing } from "./usage.js";
 import type { ModelThinking } from "./model-thinking.js";
 import type { AgentOwnershipFence } from "./agent-ownership.js";
-import type { ModelRetry } from "./model-call-policy.js";
+import type { ModelFailover, ModelRetry } from "./model-call-policy.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonObject = { [key: string]: JsonValue };
@@ -50,7 +50,14 @@ export type ModelSpec = {
   supportsImages: boolean;
   supportsAudio?: boolean;
   supportsPdf?: boolean;
+  supportsTools?: boolean;
   pricing?: ModelPricing;
+};
+
+export type ModelCandidate = {
+  modelProfileId: string;
+  providerConnectionId: string;
+  model: ModelSpec;
 };
 
 export type SkillInstruction = {
@@ -67,6 +74,8 @@ export type AgentExecutionSpec = {
   model: ModelSpec;
   maxModelRequests: number;
   modelRetry?: ModelRetry;
+  modelFailover?: ModelFailover;
+  fallbackModels?: ModelCandidate[];
 };
 
 export type RuntimeBinding = {

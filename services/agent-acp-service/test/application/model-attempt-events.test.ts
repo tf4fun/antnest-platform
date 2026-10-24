@@ -103,6 +103,18 @@ function observe(pending: Promise<unknown>) {
 }
 
 describe("durable model attempt events", () => {
+  it("persists the selected candidate context size instead of the original primary size", async () => {
+    const f = setup();
+    const finished = { ...f.finished, contextSize: 32_000 };
+    await f.events.finish("run-1", finished);
+    expect(f.repository.finishModelAttempt).toHaveBeenCalledExactlyOnceWith({
+      runId: "run-1",
+      ...finished,
+    });
+    expect(f.repository.appendUsage).not.toHaveBeenCalled();
+    expect(f.publish).toHaveBeenCalledExactlyOnceWith(f.receipt);
+  });
+
   it("keeps start audit private and publishes only usage returned by the atomic finish", async () => {
     const f = setup();
     await f.events.start("run-1", f.started);

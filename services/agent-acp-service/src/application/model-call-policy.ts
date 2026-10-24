@@ -1,4 +1,8 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
+import { DomainError } from "../domain/errors.js";
+import { normalizeEmbeddedResource } from "../domain/embedded-resource.js";
+import type { ModelCandidate, RunExecutionSnapshot } from "../domain/types.js";
 import {
   ModelError,
   ModelTransportCleanupError,
@@ -11,6 +15,7 @@ import {
 import type { ModelAttemptPort } from "../ports/model-attempts.js";
 import { RunEventPersistenceError } from "./durable-run-events.js";
 import { ModelRequestLimitError, type ModelRequestBudget } from "./model-request-budget.js";
+import { assertModelInputBudget } from "./context-budget.js";
 
 export type ModelCallPolicyOptions = {
   model: ModelPort;
@@ -70,6 +75,7 @@ export class ModelCallPolicy {
       capMs: 30000,
     };
     const reserve = purpose === "permission_judge" ? 1 : 0;
+    const candidates = candidateSnapshots(frozen, purpose);
     const timeout = new AbortController();
     const signal = AbortSignal.any([originalSignal, timeout.signal]);
     const expired = new ModelCallInterruptedError(undefined, undefined, true);
@@ -100,16 +106,19 @@ export class ModelCallPolicy {
     current();
     armDeadline();
     try {
-      for (let retry = 0; ; retry += 1) {
+      let candidateIndex = 0;
+      let retry = 0;
+      for (;;) {
         current();
+        const snapshot = candidates[candidateIndex]!;
         const ordinal = this.options.budget.nextAttempt(reserve);
         const started = clock.monotonic();
         try {
           await this.options.attempts.start(runId, {
             ordinal,
-            modelProfileId: frozen.snapshot.modelProfileId,
-            providerConnectionId: frozen.snapshot.providerConnectionId,
-            model: frozen.snapshot.executionSpec.model.model,
+            modelProfileId: snapshot.modelProfileId,
+            providerConnectionId: snapshot.providerConnectionId,
+            model: snapshot.executionSpec.model.model,
             purpose: purpose ?? "foreground",
             startedAt: new Date(clock.now()),
           });
@@ -125,7 +134,7 @@ export class ModelCallPolicy {
           // The ordinal is already reserved; only recheck time and cancellation
           // after the original start receipt, never consume the slot twice.
           current();
-          const request = immutableCopy(frozen);
+          const request = immutableCopy({ ...frozen, snapshot });
           current();
           result = await this.options.model.complete({
             ...request,
@@ -180,6 +189,7 @@ export class ModelCallPolicy {
             durationMs: Math.max(0, clock.monotonic() - started),
             outputStarted,
             usage: structuredClone(knownUsage ?? {}),
+            contextSize: snapshot.executionSpec.model.contextWindow,
             ...(status === undefined ? {} : { status }),
             finishedAt: new Date(clock.now()),
           });
@@ -222,7 +232,13 @@ export class ModelCallPolicy {
         )
           throw error;
         current();
-        if (retry >= policy.max) throw error;
+        if (retry >= policy.max) {
+          if (candidateIndex + 1 >= candidates.length) throw error;
+          if (!this.options.budget.canTake(reserve)) throw new ModelRequestLimitError();
+          candidateIndex += 1;
+          retry = 0;
+          continue;
+        }
         if (!this.options.budget.canTake(reserve)) throw new ModelRequestLimitError();
 
         const random = clock.random();
@@ -240,11 +256,82 @@ export class ModelCallPolicy {
           await clock.wait(left, signal);
         }
         current();
+        retry += 1;
       }
     } finally {
       clearTimeout(timer);
     }
   }
+}
+
+function candidateSnapshots(
+  input: Pick<ModelRequest, "snapshot" | "messages" | "tools">,
+  purpose: ModelRequest["purpose"],
+): RunExecutionSnapshot[] {
+  const primary = input.snapshot;
+  const select = (candidate: ModelCandidate): RunExecutionSnapshot => {
+    const model = { ...candidate.model };
+    if (purpose === "permission_judge") {
+      model.maxOutputTokens = Math.min(256, model.maxOutputTokens);
+      model.temperature = 0;
+    }
+    return {
+      ...primary,
+      modelProfileId: candidate.modelProfileId,
+      providerConnectionId: candidate.providerConnectionId,
+      executionSpec: { ...primary.executionSpec, model },
+    };
+  };
+  const snapshots = [
+    select({
+      modelProfileId: primary.modelProfileId,
+      providerConnectionId: primary.providerConnectionId,
+      model: primary.executionSpec.model,
+    }),
+  ];
+  if (primary.executionSpec.modelFailover !== "before_output") return snapshots;
+  const needsTools =
+    input.tools.length > 0 ||
+    input.messages.some(
+      (message) =>
+        message.role === "tool" ||
+        (message.role === "assistant" && (message.toolCalls?.length ?? 0) > 0),
+    );
+  const blocks = input.messages.flatMap((message) => [
+    ...message.content,
+    ...(message.role === "assistant" ? (message.thought ?? []) : []),
+  ]);
+  for (const candidate of primary.executionSpec.fallbackModels ?? []) {
+    const model = candidate.model;
+    if (needsTools && model.supportsTools !== true) continue;
+    if (!isDeepStrictEqual(model.thinking, primary.executionSpec.model.thinking)) continue;
+    if (
+      blocks.some(
+        (block) =>
+          (block.type === "image" && !model.supportsImages) ||
+          (block.type === "audio" && model.supportsAudio !== true) ||
+          (block.type === "resource" &&
+            "blob" in normalizeEmbeddedResource(block.resource) &&
+            model.supportsPdf !== true),
+      )
+    )
+      continue;
+    const snapshot = select(candidate);
+    try {
+      // Preserve the original input. This is the existing context estimate,
+      // not the hard token/cost admission bound owned by the budget ledger.
+      assertModelInputBudget(snapshot, input.tools, input.messages);
+    } catch (error) {
+      if (
+        error instanceof DomainError &&
+        (error.code === "invalid_context_budget" || error.code === "context_budget_exhausted")
+      )
+        continue;
+      throw error;
+    }
+    snapshots.push(snapshot);
+  }
+  return snapshots;
 }
 
 const defaultClock: Required<NonNullable<ModelCallPolicyOptions["clock"]>> = {

@@ -444,16 +444,19 @@ describe("RunExecutor", () => {
         errorClass: "persistence_interrupted",
       };
       const recovery = test.gate(stored);
-      const client = test.providers.acquire(
-        test.input.accepted.snapshot.organizationId,
-        test.input.accepted.snapshot.providerConnectionId,
-      );
-      const releaseClient = client.release.bind(client);
-      vi.spyOn(client, "release").mockImplementation(() => {
-        order.push("provider-finally");
-        releaseClient();
-      });
-      test.dependencies.providers = { acquire: () => client };
+      let acquired = 0;
+      test.dependencies.providers = {
+        acquire: (organizationId, connectionId) => {
+          const client = test.providers.acquire(organizationId, connectionId);
+          const ordinal = ++acquired;
+          const releaseClient = client.release.bind(client);
+          vi.spyOn(client, "release").mockImplementation(() => {
+            order.push(ordinal === 1 ? "preparation-finally" : "provider-finally");
+            releaseClient();
+          });
+          return client;
+        },
+      };
       const appendMessage = vi
         .spyOn(test.events, "appendAgentMessage")
         .mockRejectedValue(new Error("durable output unavailable"));
@@ -483,7 +486,7 @@ describe("RunExecutor", () => {
       await vi.runAllTimersAsync();
 
       expect(appendMessage).toHaveBeenCalledTimes(3);
-      expect(order).toEqual(["model-finally-start"]);
+      expect(order).toEqual(["preparation-finally", "model-finally-start"]);
       expect(releaseTemporary).not.toHaveBeenCalled();
       expect(test.recoverRun).not.toHaveBeenCalled();
       expect(test.finish).not.toHaveBeenCalled();
@@ -493,6 +496,7 @@ describe("RunExecutor", () => {
       modelFinally.resolve();
       await vi.advanceTimersByTimeAsync(0);
       expect(order).toEqual([
+        "preparation-finally",
         "model-finally-start",
         "model-finally-finished",
         "provider-finally",
@@ -508,6 +512,7 @@ describe("RunExecutor", () => {
       cleanup.resolve();
       await vi.advanceTimersByTimeAsync(0);
       expect(order).toEqual([
+        "preparation-finally",
         "model-finally-start",
         "model-finally-finished",
         "provider-finally",
@@ -532,6 +537,7 @@ describe("RunExecutor", () => {
       expect(result.resolved).toHaveBeenCalledExactlyOnceWith(stored);
       expect(result.rejected).not.toHaveBeenCalled();
       expect(test.complete).toHaveBeenCalledOnce();
+      expect(acquired).toBe(2);
       expect(test.tools.call).not.toHaveBeenCalled();
       expect(test.dependencies.runtimeConnections.releaseRun).toHaveBeenCalledExactlyOnceWith(
         test.input.accepted.runId,

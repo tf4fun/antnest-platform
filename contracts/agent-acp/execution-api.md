@@ -75,11 +75,14 @@ current access and new execution; it does not purge history.
   configuration for warm admission; they are never stored in Runs.
 - Model: `model_profile_id`, `connection_id`, `display_name`, `enabled`, model API
   ID, token limits, content capabilities, optional temperature and USD pricing.
+  Optional boolean `supports_tools` declares Tool capability for runtime fallback;
+  omission is unknown and does not change existing primary-model behavior.
   The model has no separate historical revision and carries no credentials.
 - Agent: `agent_id`, allowed `principal_ids`, `access_revision`, `accepting_runs`,
   nullable `unavailable_reason`, nullable lifecycle `operation_id`,
   `default_model_profile_id`, optional ordered `fallback_model_profile_ids`
-  (at most 31), default authorization, Agent execution settings,
+  (at most 31), optional `model_retry: {max, base_ms, cap_ms}` and
+  `failover: "never" | "before_output"`, default authorization, Agent execution settings,
   nullable `agent_spec_revision`, `execution_revision`, and `runtime` binding.
   An accepting Agent requires a current Runtime and execution revisions. A
   disabled/not-yet-built Agent can carry a null binding and revisions.
@@ -87,6 +90,27 @@ current access and new execution; it does not purge history.
   `mcp_endpoint` is the address, not identity. Publishing the same binding does
   not prove that uncertain commands stopped. Platform replacement confirms
   removal of the old binding before the new one is published as executable.
+
+Omitted retry/failover fields preserve zero retries and no runtime failover;
+they do not activate delivery defaults. Controller has not yet materialized and
+published the planned defaults of two retries and `before_output` for existing
+or newly created Agents. The [model-call policy contract](../agent-controller/model-call-policy.md)
+retains the full delivery requirements. ACP's explicit-policy implementation
+does not establish final fallback delivery: Controller defaults, spending
+ledgers/caps, circuit breaking, Console controls and final Docker integration
+acceptance remain pending under #52.
+
+At Run admission, ACP resolves the effective primary using the current Session
+override and existing model-availability rules, then freezes the ordered
+fallback candidates from that same publication. The plan contains complete
+parameters, media/Tool capabilities, exact thinking effort, prices and Provider
+identities, never credentials. `before_output` can advance only after the
+current candidate's retry allowance is exhausted before output; `never` disables
+that runtime switch without removing selection-time handling of an unavailable
+default. Runtime candidates must accept the original input, Tools, thinking and
+context; ACP skips incapable candidates instead of changing the input. The
+existing context estimate is not a hard token or monetary budget guarantee.
+Each attempt consumes the same Run model-request counter and original deadline.
 
 The [instance connection profile](../runtime/instance-connection.md) refines the
 private Runtime handoff for #30. Each accepting Agent's `runtime` additionally
@@ -174,6 +198,15 @@ after creation. Credential rotation changes only authentication. Changing the
 destination means creating a different connection, not mixing new credentials
 with an old Run's fixed endpoint. Provider/model retirement means
 disable, not physical deletion; historical records and references survive.
+ACP retains a primary availability/cancellation guard while preparing Runtime
+context, then obtains a fresh Provider handle for each model attempt. Credential
+injection must match the request's organization, connection ID and frozen base
+URL to the handle binding. The Run monitors the current foreground Provider
+through Tool work; selecting foreground B replaces A's monitor. A permission
+judge protects its own in-flight call without replacing the foreground watch. Revoking inactive A cannot
+cancel B, while current B's revocation still stops further work and joins its
+original tasks. Released attempt handles and current-Provider monitoring have
+distinct lifetimes; final Run cleanup removes the remaining monitor.
 
 ## Settle Agent
 
@@ -412,7 +445,8 @@ Session even after Agent removal.
 
 Default model and explicit Session selection resolve against the same current
 catalog. Run acceptance fixes the selected model parameters, Provider binding,
-and Runtime configuration, not its authentication. Session authorization can
+and Runtime configuration, plus any explicit ordered fallback plan and its
+capabilities/prices from the same publication, not authentication. Session authorization can
 override defaults but not organization, Agent, Session, or model ownership.
 
 ### Sealed warm admission

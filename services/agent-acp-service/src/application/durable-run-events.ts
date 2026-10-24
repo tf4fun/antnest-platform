@@ -43,7 +43,11 @@ export class DurableRunEvents implements RunEventPort {
   }
 
   public async finish(runId: string, fact: ModelAttemptFinished): Promise<void> {
-    const input = structuredClone({ runId, ...fact, contextSize: this.dependencies.contextSize });
+    const input = structuredClone({
+      runId,
+      ...fact,
+      contextSize: fact.contextSize ?? this.dependencies.contextSize,
+    });
     const event = await this.persist("model attempt finish", () =>
       this.dependencies.repository.finishModelAttempt(input),
     );
