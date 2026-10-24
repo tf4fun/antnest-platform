@@ -219,6 +219,129 @@ describe("publication revocation preserves authenticated ACP admission", () => {
     expect(application.cancelRun).not.toHaveBeenCalled();
   });
 
+  it("joins an adopted state watch after its final denied frame and original cleanup", async () => {
+    const entered = Promise.withResolvers<void>();
+    const releaseDenied = Promise.withResolvers<void>();
+    const deniedSent = Promise.withResolvers<void>();
+    const releaseCleanup = Promise.withResolvers<void>();
+    const caller = new AbortController();
+    let watching: AbortSignal | undefined;
+    let cleaned = false;
+    await start({
+      executionState: {
+        read: vi.fn(),
+        watch: async (_identity, send, signal) => {
+          watching = signal;
+          await send(
+            {
+              agent_id: owner.agentId,
+              access_allowed: true,
+              configuration_revision: "a".repeat(64),
+              availability: "ready",
+              active_session_id: null,
+              unavailable_reason: null,
+            },
+            signal,
+          );
+          entered.resolve();
+          await releaseDenied.promise;
+          signal.throwIfAborted();
+          await send(
+            {
+              agent_id: owner.agentId,
+              access_allowed: false,
+              configuration_revision: null,
+              availability: "offline",
+              active_session_id: null,
+              unavailable_reason: "access_denied",
+            },
+            signal,
+          );
+          deniedSent.resolve();
+          await releaseCleanup.promise;
+          signal.throwIfAborted();
+          cleaned = true;
+        },
+      },
+    });
+    let body: Promise<string> | undefined;
+    let revocation: Promise<void> | undefined;
+    let bodyFinished = false;
+    let acknowledged = false;
+    try {
+      const response = await fetch(
+        origin + "/rpc/agent-acp/watch-agent-execution-state",
+        {
+          method: "POST",
+          headers: {
+            ...identityHeaders(owner),
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+          signal: caller.signal,
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+      body = response.text();
+      void body.then(
+        () => {
+          bodyFinished = true;
+        },
+        () => {
+          bodyFinished = true;
+        },
+      );
+      await entered.promise;
+      revocation = server!.revokeAccess(revoked).then(() => {
+        acknowledged = true;
+      });
+      void revocation.catch(() => undefined);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(watching?.aborted).toBe(false);
+      expect(bodyFinished).toBe(false);
+      expect(acknowledged).toBe(false);
+      releaseDenied.resolve();
+      await Promise.race([deniedSent.promise, body]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(cleaned).toBe(false);
+      expect(bodyFinished).toBe(false);
+      expect(acknowledged).toBe(false);
+      releaseCleanup.resolve();
+      const [raw] = await Promise.all([body, revocation]);
+      const frames = [...raw.matchAll(/^data: (.+)$/gm)].map(
+        (match) => JSON.parse(match[1]!) as unknown,
+      );
+      expect(frames).toEqual([
+        {
+          agent_id: owner.agentId,
+          access_allowed: true,
+          configuration_revision: "a".repeat(64),
+          availability: "ready",
+          active_session_id: null,
+          unavailable_reason: null,
+        },
+        {
+          agent_id: owner.agentId,
+          access_allowed: false,
+          configuration_revision: null,
+          availability: "offline",
+          active_session_id: null,
+          unavailable_reason: "access_denied",
+        },
+      ]);
+      expect(raw).not.toContain("workspace_error");
+      expect(cleaned).toBe(true);
+      expect(bodyFinished).toBe(true);
+      expect(acknowledged).toBe(true);
+    } finally {
+      releaseDenied.resolve();
+      releaseCleanup.resolve();
+      caller.abort();
+      await Promise.allSettled([body, revocation]);
+    }
+  });
+
   it.each([
     ["authentication", "http"],
     ["authentication", "v1"],

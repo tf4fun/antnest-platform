@@ -26,6 +26,7 @@ export async function serveAgentExecutionState(
   maxBytes: number,
   ready: () => Promise<boolean>,
   deliveryTimeoutMs = DEFAULT_STATE_DELIVERY_TIMEOUT_MS,
+  onWatchStarted?: () => void,
 ): Promise<void> {
   const streaming = request.url === AGENT_EXECUTION_WATCH_PATH;
   const span = activeHttpSpan();
@@ -65,6 +66,9 @@ export async function serveAgentExecutionState(
       return Promise.resolve();
     };
     if (streaming) {
+      // The application owns the final revoked-state frame and the transport
+      // joins its actual delivery and cleanup before acknowledging publication.
+      onWatchStarted?.();
       await service.watch(identity, send, disconnected.signal);
       await finishResponse(response, disconnected.signal, deliveryTimeoutMs);
     } else {

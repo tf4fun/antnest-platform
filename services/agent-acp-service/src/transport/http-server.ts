@@ -94,6 +94,7 @@ type OwnedHttpRequest = {
   identity: ExecutionIdentity | null;
   response: ServerResponse;
   deleting: boolean;
+  stateWatch: boolean;
   finished: PromiseWithResolvers<void>;
 };
 
@@ -230,7 +231,7 @@ export class AgentAcpHttpServer {
     for (const request of this.requests) {
       if (request.identity === null || !isExecutionAccessRevoked(snapshot, request.identity))
         continue;
-      if (!request.deleting) request.response.destroy();
+      if (!request.deleting && !request.stateWatch) request.response.destroy();
       joins.push(request.finished.promise);
     }
     for (const binding of this.socketBindings) {
@@ -320,6 +321,7 @@ export class AgentAcpHttpServer {
       identity: null,
       response,
       deleting: request.method === "DELETE",
+      stateWatch: false,
       finished: Promise.withResolvers<void>(),
     };
     this.requests.add(original);
@@ -375,12 +377,13 @@ export class AgentAcpHttpServer {
       json(response, failure.status, failure.body);
       return;
     }
-    await this.handleAuthorizedHttp(request, response);
+    await this.handleAuthorizedHttp(request, response, original);
   }
 
   private async handleAuthorizedHttp(
     request: IncomingMessage,
     response: ServerResponse,
+    original: OwnedHttpRequest,
   ): Promise<void> {
     const sourceRoute = skillSourceRoute(request.url);
     if (sourceRoute !== undefined) {
@@ -446,6 +449,9 @@ export class AgentAcpHttpServer {
         this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
         this.options.ready,
         this.options.stateDeliveryTimeoutMs,
+        () => {
+          original.stateWatch = true;
+        },
       );
       return;
     }

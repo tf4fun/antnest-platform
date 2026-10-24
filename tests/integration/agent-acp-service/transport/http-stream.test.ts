@@ -873,9 +873,10 @@ describe("ACP v1 Streamable HTTP", () => {
     }
   });
 
-  it("publication revocation joins the original authorized state watch after disconnect", async () => {
+  it("publication revocation joins the original authorized state watch after client disconnect", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    const caller = new AbortController();
     let watching: AbortSignal | undefined;
     server = new AgentAcpHttpServer({
       authentication: testAuthentication(),
@@ -902,6 +903,7 @@ describe("ACP v1 Streamable HTTP", () => {
         method: "POST",
         headers: { ...headers(), "Content-Type": "application/json" },
         body: "{}",
+        signal: caller.signal,
       },
     )
       .then((response) => response.text())
@@ -910,16 +912,19 @@ describe("ACP v1 Streamable HTTP", () => {
     let joined = false;
     try {
       await entered.promise;
+      caller.abort();
+      await vi.waitFor(() => expect(watching?.aborted).toBe(true));
       revocation = server
         .revokeAccess({ organization_id: binding().organizationId, agents: [] })
         .then(() => {
           joined = true;
         });
-      await vi.waitFor(() => expect(watching?.aborted).toBe(true));
+      await new Promise<void>((resolve) => setImmediate(resolve));
       expect(joined).toBe(false);
       release.resolve();
       await Promise.all([revocation, pending]);
     } finally {
+      caller.abort();
       release.resolve();
       await Promise.allSettled([pending, revocation]);
     }

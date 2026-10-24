@@ -108,6 +108,10 @@ connections retain their existing initialize semantics; business operations stil
 perform Agent authorization. An already retired HTTP handle retains its original
 404 traffic response and authenticated 202 DELETE receipt. Publication cleanup
 continues to join all existing affected requests and connections.
+An adopted execution-state watch owns its final `access_allowed=false` frame and
+normal stream end. Publication waits for that original delivery and cleanup;
+transport revocation must not destroy the response first. Requests still waiting
+for authentication, body validation or readiness retain ordinary cancellation.
 
 ## Aggregate ACK and deadlines
 
