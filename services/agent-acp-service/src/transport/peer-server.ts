@@ -327,7 +327,7 @@ export class PeerServer {
         socket.destroy();
       } else if (!socket.destroyed) {
         const status =
-          error instanceof PeerFailure
+          error instanceof PeerFailure || error instanceof PeerDeadlineError
             ? failures[error.code].status
             : error instanceof DomainError && error.code === "access_denied"
               ? 403

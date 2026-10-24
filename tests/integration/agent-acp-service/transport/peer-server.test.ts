@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest, type ClientRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { once } from "node:events";
+import { WebSocket } from "ws";
 import { expect, it, vi } from "vitest";
 import {
   PeerServer,
@@ -19,6 +21,7 @@ import {
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import type { PeerPublicationRequest } from "../../../../services/agent-acp-service/src/ports/agent-peers.js";
 import { PeerDeadlineError } from "../../../../services/agent-acp-service/src/ports/agent-peers.js";
+import { encodeOwnerForward } from "../../../../services/agent-acp-service/src/application/owner-forwarding.js";
 
 const identityPath = "/internal/acp-peer/identity";
 const publicationPath = "/internal/acp-peer/publications/apply";
@@ -79,12 +82,18 @@ async function withPeer(
     send(body: unknown, options?: SendOptions): Exchange;
     reply(task: Exchange): Promise<Reply>;
     close(): Promise<void>;
+    connectForward(value: unknown): WebSocket;
   }) => Promise<void>,
-  options: { apply?: PeerServerOptions["apply"]; timeoutMs?: number } = {},
+  options: {
+    apply?: PeerServerOptions["apply"];
+    timeoutMs?: number;
+    forward?: PeerServerOptions["forward"];
+  } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), "acp-peer-server-"));
   const workload = new ServiceAuthentication(testSecurityEnvironment());
   const tasks: Exchange[] = [];
+  const sockets: { socket: WebSocket; closed: Promise<void> }[] = [];
   const release: Array<() => void> = [];
   const errors: unknown[] = [];
   let server: PeerServer | undefined;
@@ -167,6 +176,7 @@ async function withPeer(
       authentication,
       apply,
       timeoutMs: options.timeoutMs ?? 2000,
+      ...(options.forward === undefined ? {} : { forward: options.forward }),
     });
     await server.listen("127.0.0.1", 0);
     const port = server.address()!.port;
@@ -248,6 +258,26 @@ async function withPeer(
       publication,
       send,
       close,
+      connectForward(value) {
+        const socket = new WebSocket(
+          `ws://127.0.0.1:${port}/internal/acp-peer/forward/ws`,
+          {
+            headers: {
+              [SERVICE_AUTH_HEADER]: `Bearer ${current}`,
+              "Antnest-ACP-Forward": encodeOwnerForward(value),
+            },
+            handshakeTimeout: 2000,
+          },
+        );
+        socket.on("error", () => undefined);
+        sockets.push({
+          socket,
+          closed: new Promise<void>((resolve) =>
+            socket.once("close", () => resolve()),
+          ),
+        });
+        return socket;
+      },
       async reply(task) {
         const result = await bounded(task.result);
         await bounded(task.join());
@@ -259,10 +289,13 @@ async function withPeer(
     errors.push(error);
   } finally {
     for (const finish of release) finish();
+    for (const { socket } of sockets)
+      if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
     for (const task of tasks)
       task.request.destroy(new Error("Peer fixture cleanup"));
     for (const result of await Promise.allSettled([
       ...tasks.map((task) => task.join()),
+      ...sockets.map(({ closed }) => closed),
       close(),
     ]))
       if (result.status === "rejected") errors.push(result.reason);
@@ -397,6 +430,28 @@ it.each([
     expect(reply.body.code).toBe(code);
     expect(f.apply).not.toHaveBeenCalled();
   });
+});
+
+it("preserves the private deadline status when WebSocket admission expires", async () => {
+  await withPeer(
+    async (f) => {
+      const socket = f.connectForward({
+        ...f.publication(),
+        identity: {
+          organizationId: "org-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+        epoch: "1",
+        protocol: "v1",
+        caller: "agent-ui",
+      });
+      await expect(once(socket, "open")).rejects.toThrow(
+        "Unexpected server response: 504",
+      );
+    },
+    { forward: () => Promise.reject(new PeerDeadlineError()) },
+  );
 });
 
 it("preserves the private deadline status when publication admission expires", async () => {

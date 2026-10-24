@@ -58,6 +58,7 @@ import type { AgentExecutionStatePort } from "./ports/agent-execution-state.js";
 import type { SkillCommandsPort } from "./ports/skill-commands.js";
 import { ModelTransportCleanupError } from "./ports/model.js";
 import type { OwnerForwardRequest } from "./application/owner-forwarding.js";
+import { PeerDeadlineError } from "./ports/agent-peers.js";
 import { executionPublication } from "./domain/execution-publication.js";
 
 type Graph = ReturnType<typeof buildAgentComponents>;
@@ -639,7 +640,7 @@ export class OwnedAgentComponents {
       entry.signal.throwIfAborted();
       publication.assertCurrent();
       if (Date.now() >= Date.parse(request.deadline_at))
-        throw new DomainError("deadline_exceeded", "Forwarding admission expired");
+        throw new PeerDeadlineError("Forwarding admission expired");
       if (
         this.capture(identity) !== entry ||
         !isDeepStrictEqual(entry.generation.authority.registration, request.target) ||

@@ -11,6 +11,7 @@ import type { ExecutionIdentity } from "../domain/execution-configuration.js";
 import { parsePeerIdentityReceipt } from "../domain/peer-receipt.js";
 import type { AgentLeases } from "../ports/agent-leases.js";
 import type { AgentPeers } from "../ports/agent-peers.js";
+import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { AgentAssignment } from "./agent-assignment.js";
 import type { ExecutionDirectory } from "./execution-directory.js";
 import { parseOwnerRegistration, type OwnerRegistration } from "./owner-incarnation.js";
@@ -124,8 +125,7 @@ export class OwnerForwarding {
       throw unavailable();
     const lease = await this.options.leases.read(identity);
     signal.throwIfAborted();
-    if (Date.now() >= deadline)
-      throw new DomainError("deadline_exceeded", "Owner resolution expired");
+    if (Date.now() >= deadline) throw new PeerDeadlineError("Owner resolution expired");
     if (
       lease === null ||
       lease.expiresAt.getTime() <= lease.observedAt.getTime() ||
