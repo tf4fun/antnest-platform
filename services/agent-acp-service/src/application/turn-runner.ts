@@ -11,6 +11,7 @@ import type {
 import { boundToolResult } from "../domain/tool-result.js";
 import { boundedRawOutput } from "../domain/tool-presentation.js";
 import { DomainError } from "../domain/errors.js";
+import { ModelBudgetExceededError } from "../domain/model-budget.js";
 import { RunToolAuthorization } from "./run-tool-authorization.js";
 import { PermissionJudge } from "./permission-judge.js";
 import { ModelRequestBudget, ModelRequestLimitError } from "./model-request-budget.js";
@@ -147,6 +148,8 @@ export class TurnRunner {
           effectState = outcome.effectState;
           if (outcome.terminal !== null) {
             await this.closeUndispatched(input, inspected.calls.slice(index + 1));
+            if (outcome.terminal.errorClass === "budget_exceeded")
+              return await this.budgetExceeded(input, effectState);
             return outcome.terminal;
           }
           messages.push(outcome.message);
@@ -155,20 +158,39 @@ export class TurnRunner {
       input.signal.throwIfAborted();
       return completed(effectState, "max_turn_requests");
     } catch (error) {
-      assertAuthority(input.authoritySignal);
+      // Losing authority does not erase an independently failed durable write.
+      // No further event or business work is dispatched on this path.
       if (error instanceof RunEventPersistenceError) {
         throw error;
       }
+      assertAuthority(input.authoritySignal);
       effectState = combineEffects(effectState, effectFromError(error));
       if (input.signal.aborted) {
         return cancelled(effectState, unknownSourceFromError(error));
       }
+      if (error instanceof ModelBudgetExceededError)
+        return await this.budgetExceeded(input, effectState);
       if (error instanceof ModelRequestLimitError)
         return completed(effectState, "max_turn_requests");
       if (error instanceof ModelCallInterruptedError && error.deadlineExceeded)
         return failure(effectState, "run_deadline_exceeded", unknownSourceFromError(error));
       return failure(effectState, errorClass(error), unknownSourceFromError(error));
     }
+  }
+
+  private async budgetExceeded(
+    input: RunTurnInput,
+    effectState: ToolEffectState,
+  ): Promise<RunTurnResult> {
+    const isCancelled = () => input.signal.aborted;
+    assertAuthority(input.authoritySignal);
+    if (isCancelled()) return cancelled(effectState);
+    // A budget stop never spends another model call to produce its final notice.
+    await this.dependencies.events.agentMessage(input.runId, [
+      { type: "text", text: "Run stopped because the model budget does not permit another call." },
+    ]);
+    assertAuthority(input.authoritySignal);
+    return isCancelled() ? cancelled(effectState) : failure(effectState, "budget_exceeded");
   }
 
   private async completeModel(
@@ -315,7 +337,10 @@ export class TurnRunner {
       assertAuthority(input.authoritySignal);
       if (error instanceof RunEventPersistenceError) throw error;
       approvalError = error;
-      text = "Tool was not executed because permission could not be confirmed.";
+      text =
+        error instanceof ModelBudgetExceededError
+          ? "Tool was not executed because the model budget stopped this Run."
+          : "Tool was not executed because permission could not be confirmed.";
     }
     if (text !== null) {
       await this.dependencies.events.toolRejected(input.runId, call, text);
@@ -329,7 +354,8 @@ export class TurnRunner {
             ? null
             : failure(
                 currentEffect,
-                approvalError instanceof ModelTransportCleanupError ||
+                approvalError instanceof ModelBudgetExceededError ||
+                  approvalError instanceof ModelTransportCleanupError ||
                   (approvalError instanceof ModelError &&
                     approvalError.code === "provider_unavailable")
                   ? errorClass(approvalError)

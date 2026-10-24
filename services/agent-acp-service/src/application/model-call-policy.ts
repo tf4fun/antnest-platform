@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { DomainError } from "../domain/errors.js";
+import { ModelBudgetExceededError } from "../domain/model-budget.js";
 import { normalizeEmbeddedResource } from "../domain/embedded-resource.js";
 import type { ModelCandidate, RunExecutionSnapshot } from "../domain/types.js";
 import {
@@ -373,8 +374,11 @@ const defaultClock: Required<NonNullable<ModelCallPolicyOptions["clock"]>> = {
   random: () => Math.random(),
 };
 
-function persistenceFailure(operation: string, cause: unknown): RunEventPersistenceError {
-  return cause instanceof RunEventPersistenceError
+function persistenceFailure(
+  operation: string,
+  cause: unknown,
+): RunEventPersistenceError | ModelBudgetExceededError {
+  return cause instanceof RunEventPersistenceError || cause instanceof ModelBudgetExceededError
     ? cause
     : new RunEventPersistenceError(operation, cause);
 }

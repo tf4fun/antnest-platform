@@ -143,6 +143,7 @@ describe.skipIf(databaseUrl === undefined)(
         "0029_learning_owner_recovery.sql",
         "0030_peer_membership.sql",
         "0031_peer_participation.sql",
+        "0032_model_budget_ledger.sql",
       ]);
       expect(
         (

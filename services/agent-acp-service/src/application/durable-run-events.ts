@@ -12,6 +12,7 @@ import type { ModelAttemptStarted, ModelAttemptFinished } from "../ports/model-a
 import { planResult, planTool, type PlanEntry } from "../domain/plan.js";
 import { retryRunWrite } from "./run-write-retry.js";
 import { assertWorkerOwnership } from "./worker-ownership.js";
+import { ModelBudgetExceededError } from "../domain/model-budget.js";
 
 const MAX_RESULT_SUMMARY_CHARACTERS = 4_096;
 
@@ -238,6 +239,7 @@ export class DurableRunEvents implements RunEventPort {
       return await retryRunWrite(this.dependencies.ownershipSignal, persist);
     } catch (error) {
       assertWorkerOwnership(this.dependencies.ownershipSignal);
+      if (error instanceof ModelBudgetExceededError) throw error;
       throw new RunEventPersistenceError(operation, error);
     }
   }

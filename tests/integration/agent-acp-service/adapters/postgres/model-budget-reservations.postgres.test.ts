@@ -198,6 +198,113 @@ function expectOrganizationSpend(
 describe.skipIf(databaseUrl === undefined)(
   "owned model budget reservations in PostgreSQL",
   () => {
+    it.each([
+      {
+        name: "current daily",
+        cutoff: "current",
+        daily: true,
+        monthly: true,
+        denied: "organization_daily",
+      },
+      {
+        name: "current monthly",
+        cutoff: "current",
+        daily: false,
+        monthly: true,
+        denied: "organization_monthly",
+      },
+      {
+        name: "next complete day",
+        cutoff: "previous_day",
+        daily: true,
+        monthly: false,
+        denied: undefined,
+      },
+      {
+        name: "next complete month",
+        cutoff: "previous_month",
+        daily: true,
+        monthly: true,
+        denied: undefined,
+      },
+    ] as const)(
+      "enforces historical coverage only for the $name budget bucket",
+      async (scenario) => {
+        await withDatabase(async (fixture) => {
+          await configure(fixture);
+          const a = await accept(fixture, "a");
+          // A fresh schema has a proven empty prehistory. Simulate an old-schema
+          // cutover without inventing charges or attempts for purged history.
+          expect(
+            (
+              await fixture.observer.query(
+                "SELECT complete_before_cutover FROM model_budget_history",
+              )
+            ).rows,
+          ).toEqual([{ complete_before_cutover: true }]);
+          await fixture.observer.query(
+            `UPDATE model_budget_history SET complete_before_cutover=false,cutover_at=CASE $1
+           WHEN 'previous_day' THEN (date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC')-interval '1 second') AT TIME ZONE 'UTC'
+           WHEN 'previous_month' THEN (date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')-interval '1 second') AT TIME ZONE 'UTC'
+           ELSE clock_timestamp() END`,
+            [scenario.cutoff],
+          );
+          const policy = {
+            revision: 2,
+            unknown_cost: "deny",
+            run_caps: {},
+            daily: scenario.daily ? { hard_cost_usd_micros: 10 } : {},
+            monthly: scenario.monthly ? { hard_cost_usd_micros: 10 } : {},
+          };
+          await fixture.observer.query(
+            "UPDATE execution_configurations SET configuration=jsonb_set(configuration,'{organization_budget}',$2::jsonb) WHERE organization_id=$1",
+            [organizationId, JSON.stringify(policy)],
+          );
+          const history = (
+            await fixture.observer.query("SELECT * FROM model_budget_history")
+          ).rows;
+          const before = await ledger(fixture);
+          const original = await fixture.snapshot();
+          if (scenario.denied !== undefined) {
+            await expect(
+              a.events.startModelAttempt(start(a.runId)),
+            ).rejects.toMatchObject({
+              code: "budget_exceeded",
+              scope: scenario.denied,
+              retryable: false,
+            });
+            expect(await ledger(fixture)).toEqual(before);
+            expect(await fixture.snapshot()).toBe(original);
+            expect(await audits(fixture)).toEqual([]);
+            // An explicit allow policy keeps the history gap, not a fake zero
+            // charge or a fabricated unknown physical attempt.
+            await fixture.observer.query(
+              "UPDATE execution_configurations SET configuration=jsonb_set(configuration,'{organization_budget}',$2::jsonb) WHERE organization_id=$1",
+              [
+                organizationId,
+                JSON.stringify({
+                  ...policy,
+                  revision: 3,
+                  unknown_cost: "allow",
+                }),
+              ],
+            );
+          }
+          await a.events.startModelAttempt(start(a.runId));
+          const held = await ledger(fixture);
+          expect(held.reservations).toHaveLength(1);
+          expect(held.spend.every((row) => row.unknown_attempts === "0")).toBe(
+            true,
+          );
+          expectOrganizationSpend(held.spend, held.reservations[0]!, "0", "7");
+          expect(
+            (await fixture.observer.query("SELECT * FROM model_budget_history"))
+              .rows,
+          ).toEqual(history);
+        });
+      },
+    );
+
     it.each(["start", "finish"] as const)(
       "rolls back budget %s when the original lease expires while waiting for the Session",
       async (phase) => {

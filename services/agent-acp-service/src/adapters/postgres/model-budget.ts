@@ -30,6 +30,7 @@ type PeriodTotals = {
   cost_usd_micros: string;
   reserved_cost_usd_micros: string;
   unbounded_cost_attempts: string;
+  coverage_complete: boolean;
 };
 type Reservation = {
   organization_id: string;
@@ -125,7 +126,15 @@ export async function reserveModelBudget(
     [input.organizationId, period.day_start, period.month_start],
   );
   const buckets = await client.query<PeriodTotals>(
-    "SELECT period,period_start::text,cost_usd_micros::text,reserved_cost_usd_micros::text,unbounded_cost_attempts::text FROM organization_spend WHERE organization_id=$1 AND ((period='daily' AND period_start=$2::date) OR (period='monthly' AND period_start=$3::date)) ORDER BY period FOR UPDATE",
+    `SELECT spend.period,spend.period_start::text,spend.cost_usd_micros::text,
+     spend.reserved_cost_usd_micros::text,spend.unbounded_cost_attempts::text,
+     history.complete_before_cutover OR spend.period_start >= CASE spend.period
+       WHEN 'daily' THEN (history.cutover_at AT TIME ZONE 'UTC')::date+1
+       ELSE (date_trunc('month',history.cutover_at AT TIME ZONE 'UTC')+interval '1 month')::date
+     END AS coverage_complete
+     FROM organization_spend spend CROSS JOIN model_budget_history history
+     WHERE spend.organization_id=$1 AND ((spend.period='daily' AND spend.period_start=$2::date)
+       OR (spend.period='monthly' AND spend.period_start=$3::date)) ORDER BY spend.period FOR UPDATE OF spend`,
     [input.organizationId, period.day_start, period.month_start],
   );
   if (buckets.rows.length !== 2) throw new Error("Model budget periods are incomplete");
@@ -134,7 +143,8 @@ export async function reserveModelBudget(
       bucket.period === "daily" ? "organization_daily" : "organization_monthly",
       policy[bucket.period].hard_cost_usd_micros,
       BigInt(bucket.cost_usd_micros) + BigInt(bucket.reserved_cost_usd_micros),
-      policy.unknown_cost === "deny" && BigInt(bucket.unbounded_cost_attempts) > 0n
+      policy.unknown_cost === "deny" &&
+        (!bucket.coverage_complete || BigInt(bucket.unbounded_cost_attempts) > 0n)
         ? null
         : (cost ?? 0n),
     );

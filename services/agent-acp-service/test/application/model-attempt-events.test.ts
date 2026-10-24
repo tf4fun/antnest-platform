@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { WorkerOwnershipLostError } from "../../src/adapters/postgres/worker-lock.js";
+import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
 import {
   DurableRunEvents,
   RunEventPersistenceError,
@@ -103,6 +104,16 @@ function observe(pending: Promise<unknown>) {
 }
 
 describe("durable model attempt events", () => {
+  it("preserves a budget denial without retrying or publishing a persistence failure", async () => {
+    const f = setup();
+    const denied = new ModelBudgetExceededError("organization_daily", "10", "10");
+    f.repository.startModelAttempt.mockRejectedValue(denied);
+    await expect(f.events.start("run-1", f.started)).rejects.toBe(denied);
+    expect(f.repository.startModelAttempt).toHaveBeenCalledOnce();
+    expect(f.repository.finishModelAttempt).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+
   it("persists the selected candidate context size instead of the original primary size", async () => {
     const f = setup();
     const finished = { ...f.finished, contextSize: 32_000 };

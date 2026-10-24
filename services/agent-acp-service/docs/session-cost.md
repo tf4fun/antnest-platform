@@ -60,8 +60,9 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
    known cumulative cost. The caller does not append usage separately after
    finishing the attempt. Stable Run/ordinal/phase identities make identical
    retries return the saved receipt; conflicting reuse fails. Only the returned
-   usage projection is published. There is no second mutable total, attachment
-   table, spending ledger or per-token write.
+   usage projection is published. Session history is not updated by a second
+   per-token write. The independent model budget ledger settles in the same
+   transaction as the attempt finish and public usage receipt.
    An unrepresentable cumulative amount retains the last representable known
    baseline and the new receipt, never silently resetting the next sum to zero.
    As with unpriced calls, the projection is a partial amount, not a bill.
@@ -72,6 +73,23 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
 7. v1/v2 `usage_update` exposes only standard `used`, `size` and optional
    `cost: {amount, currency}`. Private measurement/source/rates are not leaked as
    extra ACP fields. Known cost can be partial and is not a reconciled bill.
+
+## Budget accounting rollout
+
+The budget ledger keeps integer microdollar charges and unresolved reservations
+independently of Run or Session deletion. It uses the frozen configured rates
+for estimates and valid Provider-reported receipts when available; these system
+budget amounts are not a reconciled external invoice. Unknown measurements stay
+unknown, and an organization policy controls whether monetary uncertainty can
+be admitted. A configured token cap still requires a safe token bound.
+
+Migration 0032 imports original per-call receipts and unmatched hidden starts,
+excludes Fork copies and retains a separate coverage boundary for history that
+may already have been purged. It never sums cumulative Session display costs.
+See [the rollout and coverage rules](operations.md) before deployment. The
+ledger and typed rejection path are delivery primitives: production request
+bounds, admission wiring, excess handling, soft notifications and the
+Controller/Console policy consumers still need their business acceptance.
 
 ## Verification
 

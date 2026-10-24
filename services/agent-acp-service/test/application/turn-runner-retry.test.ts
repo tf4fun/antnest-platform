@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { TurnRunner, type RunTurnInput } from "../../src/application/turn-runner.js";
 import { RunEventPersistenceError } from "../../src/application/durable-run-events.js";
+import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
 import {
   ModelError,
   ModelTransportCleanupError,
@@ -605,6 +606,185 @@ describe("TurnRunner production model retry wiring", () => {
       } finally {
         vi.useRealTimers();
       }
+    }
+  });
+
+  it.each(["foreground", "permission_judge", "after_tool"] as const)(
+    "stops on a %s budget rejection without dispatching an unreserved attempt",
+    async (stage) => {
+      const f = stage === "permission_judge" ? setup(8, true) : setup();
+      const denied = new ModelBudgetExceededError("run_cost", "1", "1");
+      if (stage === "foreground") {
+        f.events.start.mockRejectedValueOnce(denied);
+      } else {
+        f.complete.mockResolvedValueOnce(toolResponse());
+        f.events.start.mockResolvedValueOnce(undefined).mockRejectedValueOnce(denied);
+      }
+      await expect(f.run()).resolves.toMatchObject({
+        terminalClass: "failed",
+        executorState: "quiescent",
+        errorClass: "budget_exceeded",
+      });
+      const completedAttempts = stage === "foreground" ? 0 : 1;
+      const executedTools = stage === "after_tool" ? 1 : 0;
+      expect(f.complete).toHaveBeenCalledTimes(completedAttempts);
+      expect(
+        f.events.start.mock.calls.map(([runId, fact]) => [runId, fact.ordinal, fact.purpose]),
+      ).toEqual(
+        stage === "foreground"
+          ? [["run-1", 1, "foreground"]]
+          : [
+              ["run-1", 1, "foreground"],
+              ["run-1", 2, stage === "permission_judge" ? "permission_judge" : "foreground"],
+            ],
+      );
+      expect(f.events.finish).toHaveBeenCalledTimes(completedAttempts);
+      expect(
+        f.events.finish.mock.calls.map(([runId, fact]) => ({
+          runId,
+          ordinal: fact.ordinal,
+          outcome: fact.outcome,
+          usage: fact.usage,
+        })),
+      ).toEqual(
+        stage === "foreground"
+          ? []
+          : [
+              {
+                runId: "run-1",
+                ordinal: 1,
+                outcome: "completed",
+                usage: toolResponse().usage,
+              },
+            ],
+      );
+      expect(f.events.usage).not.toHaveBeenCalled();
+      expect(f.permission).not.toHaveBeenCalled();
+      expect(f.call).toHaveBeenCalledTimes(executedTools);
+      expect(f.events.toolStarted).toHaveBeenCalledTimes(executedTools);
+      expect(f.events.toolFinished).toHaveBeenCalledTimes(executedTools);
+      const notice = [
+        {
+          type: "text",
+          text: "Run stopped because the model budget does not permit another call.",
+        },
+      ];
+      expect(f.events.agentMessage).toHaveBeenCalledTimes(stage === "foreground" ? 1 : 2);
+      expect(f.events.agentMessage.mock.calls.at(-1)?.slice(0, 2)).toEqual(["run-1", notice]);
+      expect(
+        f.events.agentMessage.mock.calls.filter(([, content]) =>
+          content.some(
+            (block) =>
+              block.type === "text" &&
+              block.text === "Run stopped because the model budget does not permit another call.",
+          ),
+        ),
+      ).toHaveLength(1);
+      if (stage === "permission_judge") {
+        const proposals = f.events.agentMessage.mock.calls[0]![2];
+        expect(proposals).toHaveLength(1);
+        const proposal = proposals?.[0];
+        expect(proposal).toMatchObject({ name: "bash", arguments: { command: "pwd" } });
+        expect(proposal?.id).toMatch(/^[a-f0-9]{64}$/u);
+        expect(proposal?.id).not.toBe("provider-call-1");
+        expect(f.events.toolRejected).toHaveBeenCalledExactlyOnceWith(
+          "run-1",
+          proposal,
+          expect.any(String),
+        );
+      } else {
+        expect(f.events.toolRejected).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it("preserves a budget-notice persistence failure before any model or Tool dispatch", async () => {
+    const f = setup();
+    const persistence = new RunEventPersistenceError(
+      "model budget notice",
+      new Error("budget-notice-private-canary"),
+    );
+    f.events.start.mockRejectedValueOnce(new ModelBudgetExceededError("run_cost", "1", "1"));
+    f.events.agentMessage.mockRejectedValueOnce(persistence);
+    await expect(f.run()).rejects.toBe(persistence);
+    expect(f.events.start).toHaveBeenCalledOnce();
+    expect(f.events.finish).not.toHaveBeenCalled();
+    expect(f.complete).not.toHaveBeenCalled();
+    expect(f.permission).not.toHaveBeenCalled();
+    expect(f.call).not.toHaveBeenCalled();
+    expect(f.events.toolStarted).not.toHaveBeenCalled();
+    expect(f.events.toolFinished).not.toHaveBeenCalled();
+    expect(f.events.toolRejected).not.toHaveBeenCalled();
+    expect(f.events.usage).not.toHaveBeenCalled();
+    expect(f.events.agentMessage).toHaveBeenCalledExactlyOnceWith("run-1", [
+      { type: "text", text: "Run stopped because the model budget does not permit another call." },
+    ]);
+  });
+
+  it("retains the original budget-notice persistence failure when authority is lost during its write", async () => {
+    const f = setup(8, true);
+    const authority = new AbortController();
+    const authorityLoss = new Error("original authority loss during budget notice");
+    f.input.authoritySignal = authority.signal;
+    const entered = Promise.withResolvers<void>();
+    const notice = Promise.withResolvers<void>();
+    const sentinel = new RunEventPersistenceError(
+      "model budget notice",
+      new Error("budget-notice-authority-private-canary"),
+    );
+    f.complete.mockResolvedValueOnce(toolResponse());
+    f.events.start
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new ModelBudgetExceededError("run_cost", "1", "1"));
+    let noticeEntered = false;
+    f.events.agentMessage.mockResolvedValueOnce(undefined).mockImplementationOnce(() => {
+      noticeEntered = true;
+      entered.resolve();
+      return notice.promise;
+    });
+    let settled = false;
+    const original = f.run().finally(() => {
+      settled = true;
+    });
+    const observed = original.catch((error: unknown) => error);
+    try {
+      await Promise.race([entered.promise, original]);
+      expect(noticeEntered).toBe(true);
+      expect(settled).toBe(false);
+      expect(f.events.agentMessage).toHaveBeenCalledTimes(2);
+      expect(f.events.agentMessage.mock.calls[1]![1]).toEqual([
+        {
+          type: "text",
+          text: "Run stopped because the model budget does not permit another call.",
+        },
+      ]);
+      expect(f.complete).toHaveBeenCalledOnce();
+      expect(f.events.start).toHaveBeenCalledTimes(2);
+      expect(f.events.finish).toHaveBeenCalledOnce();
+      expect(f.permission).not.toHaveBeenCalled();
+      expect(f.call).not.toHaveBeenCalled();
+      authority.abort(authorityLoss);
+      expect(f.input.authoritySignal.reason).toBe(authorityLoss);
+      notice.reject(sentinel);
+      const actual: unknown = await observed;
+      expect(errorChain(actual)).toContain(sentinel);
+      expect(settled).toBe(true);
+      expect(f.complete).toHaveBeenCalledOnce();
+      expect(f.events.start).toHaveBeenCalledTimes(2);
+      expect(f.events.finish).toHaveBeenCalledOnce();
+      expect(f.events.finish.mock.calls[0]![1]).toMatchObject({
+        ordinal: 1,
+        outcome: "completed",
+        usage: toolResponse().usage,
+      });
+      expect(f.permission).not.toHaveBeenCalled();
+      expect(f.call).not.toHaveBeenCalled();
+      expect(f.events.toolStarted).not.toHaveBeenCalled();
+      expect(f.events.toolFinished).not.toHaveBeenCalled();
+      expect(f.events.usage).not.toHaveBeenCalled();
+    } finally {
+      notice.reject(sentinel);
+      await Promise.allSettled([notice.promise, original, observed]);
     }
   });
 });

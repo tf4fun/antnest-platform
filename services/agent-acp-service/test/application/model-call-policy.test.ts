@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ModelCallPolicy } from "../../src/application/model-call-policy.js";
+import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
 import {
   ModelRequestBudget,
   ModelRequestLimitError,
@@ -100,6 +101,17 @@ function setup(options: { retryMax?: number | null; maxRequests?: number } = {})
 }
 
 describe("Run model call policy", () => {
+  it("preserves a budget refusal before transport without retrying or manufacturing finish usage", async () => {
+    const f = setup({ retryMax: 8 });
+    const denied = new ModelBudgetExceededError("run_input", "100", "100");
+    f.attempts.start.mockRejectedValue(denied);
+    await expect(f.call()).rejects.toBe(denied);
+    expect(f.attempts.start).toHaveBeenCalledOnce();
+    expect(f.model.complete).not.toHaveBeenCalled();
+    expect(f.attempts.finish).not.toHaveBeenCalled();
+    expect(f.clock.wait).not.toHaveBeenCalled();
+  });
+
   it("honors Retry-After and records both original attempts and their distinct usage", async () => {
     const f = setup();
     const first = failure();

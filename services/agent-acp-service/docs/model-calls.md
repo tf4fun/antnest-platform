@@ -36,6 +36,17 @@ existing exact Provider/model capability table and is never silently dropped.
 Context compatibility uses the existing length/4 estimate and output reserve;
 it is not a proven hard token budget. Improved estimation remains under #51.
 
+Budget denial is non-retryable for foreground and permission-judge calls. A
+`budget_exceeded` decision at attempt admission dispatches no model request and
+writes no finish for that rejected attempt. The judge propagates this decision
+instead of requesting manual Tool approval; outstanding Tool proposals remain
+recorded as not executed. The Run emits one static final notice without calling
+another model. Failure to persist that notice retains the original persistence
+error, and cancellation or lost execution authority keeps its normal precedence.
+This rejection path does not complete the budget rollout: trustworthy request
+bounds, production reservations, Run admission, detailed budget receipts,
+excess handling and soft-limit notifications remain separate delivery work.
+
 The main turn and permission judge share one Run counter of physical model
 attempts, including failed and cancelled calls. Every admitted attempt reserves
 one ordinal and consumes one slot. A persisted start that is cancelled before
