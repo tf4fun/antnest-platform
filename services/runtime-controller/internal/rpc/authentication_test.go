@@ -155,7 +155,7 @@ func contractAuthenticationHandler(t *testing.T, route contractRoute) (*Handler,
 	incarnation := &incarnationRPCStub{}
 	handler, service, preparation := incarnationRPCHandler(t, incarnation)
 	caller := "agent-controller"
-	if route.OperationID == "registerAcpIncarnation" || route.OperationID == "inspectAcpIncarnation" {
+	if route.OperationID == "registerAcpIncarnation" || route.OperationID == "inspectAcpIncarnation" || route.OperationID == "historyAcpIncarnations" {
 		caller = "agent-acp-service"
 	}
 	return handler, service, preparation, incarnation, incarnationRPCToken(caller)
