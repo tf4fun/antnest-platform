@@ -228,12 +228,16 @@ describe.skipIf(process.env.ANTNEST_ACP_TEST_DATABASE_URL === undefined)(
         const before = (
           await f.observer.query("SELECT * FROM acp_peer_membership")
         ).rows;
-        for (const sql of [
-          "UPDATE acp_peer_membership SET membership_sha256=repeat('0',64)",
-          "DELETE FROM acp_peer_membership",
-          "TRUNCATE acp_peer_membership",
-        ])
-          await expect(f.b.query(sql)).rejects.toHaveProperty("code", "23514");
+        for (const [sql, code] of [
+          [
+            "UPDATE acp_peer_membership SET membership_sha256=repeat('0',64)",
+            "23514",
+          ],
+          ["DELETE FROM acp_peer_membership", "23514"],
+          ["TRUNCATE acp_peer_membership", "0A000"],
+          ["TRUNCATE acp_peer_membership CASCADE", "23514"],
+        ] as const)
+          await expect(f.b.query(sql)).rejects.toHaveProperty("code", code);
         expect(
           (await f.observer.query("SELECT * FROM acp_peer_membership")).rows,
         ).toEqual(before);
