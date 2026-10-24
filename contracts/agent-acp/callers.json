@@ -303,7 +303,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/peer-server.ts": {
-      "sha256": "0ba28effff449b7e3f45d1038934038b81f831b99bc0245cf19928ed50c56ba2",
+      "sha256": "a0921858c140ef7de3bc6548af2bb561ada248ca6c75c2cd0752bed815c70a42",
       "routes": [
         "POST /internal/acp-peer/identity",
         "POST /internal/acp-peer/publications/apply"

@@ -6,6 +6,7 @@ import { parsePeerIdentityReceipt, parsePeerPublicationReceipt } from "../domain
 import type { AgentOwnershipFence } from "../domain/agent-ownership.js";
 import type { ExecutionConfiguration } from "../domain/execution-configuration.js";
 import type { AgentPeers, PeerPublicationRequest } from "../ports/agent-peers.js";
+import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { LocalExecutionPublication } from "./execution-directory.js";
 import { parseOwnerRegistration, type OwnerRegistration } from "./owner-incarnation.js";
 
@@ -172,5 +173,7 @@ function unavailable(): DomainError {
   return new DomainError("configuration_unavailable", "Peer publication could not be confirmed");
 }
 function expired(): DomainError {
-  return new DomainError("deadline_exceeded", "Peer publication deadline exceeded");
+  const failure = unavailable();
+  failure.cause = new PeerDeadlineError("Peer publication deadline exceeded");
+  return failure;
 }

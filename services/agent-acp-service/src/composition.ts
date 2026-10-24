@@ -31,6 +31,7 @@ import { DomainError } from "./domain/errors.js";
 import { executionPublication } from "./domain/execution-publication.js";
 import { isDeepStrictEqual } from "node:util";
 import type { PeerPublicationRequest } from "./ports/agent-peers.js";
+import { PeerDeadlineError } from "./ports/agent-peers.js";
 import { ProviderClients } from "./application/provider-clients.js";
 import { AgentSettlement } from "./application/agent-settlement.js";
 import { AgentAssignment } from "./application/agent-assignment.js";
@@ -639,7 +640,7 @@ export function buildComponents(
       throw new DomainError("configuration_unavailable", "ACP peer publication context changed");
     const remaining = Date.parse(request.deadline_at) - Date.now();
     if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 10000)
-      throw new DomainError("deadline_exceeded", "ACP peer publication deadline exceeded");
+      throw new PeerDeadlineError("ACP peer publication deadline exceeded");
   };
   const localPeerReceipt = async (
     capture: LocalExecutionPublication,

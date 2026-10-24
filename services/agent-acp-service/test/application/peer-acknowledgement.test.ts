@@ -341,4 +341,15 @@ describe("complete peer publication acknowledgement", () => {
     expect(f.confirm).toHaveBeenCalledOnce();
     expect(f.captured.assertCurrent).toHaveBeenCalledTimes(2);
   });
+  it("reports an expired aggregate through the public configuration error while retaining the private deadline cause", async () => {
+    const f = setup();
+    await expect(
+      f.coordinator.confirm(f.captured, new Date(Date.now() - 1), new AbortController().signal),
+    ).rejects.toMatchObject({
+      code: "configuration_unavailable",
+      cause: { code: "deadline_exceeded" },
+    });
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.identify).not.toHaveBeenCalled();
+  });
 });

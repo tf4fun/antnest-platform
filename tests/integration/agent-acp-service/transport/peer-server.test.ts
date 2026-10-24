@@ -18,6 +18,7 @@ import {
   workloadHeaders,
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import type { PeerPublicationRequest } from "../../../../services/agent-acp-service/src/ports/agent-peers.js";
+import { PeerDeadlineError } from "../../../../services/agent-acp-service/src/ports/agent-peers.js";
 
 const identityPath = "/internal/acp-peer/identity";
 const publicationPath = "/internal/acp-peer/publications/apply";
@@ -396,6 +397,19 @@ it.each([
     expect(reply.body.code).toBe(code);
     expect(f.apply).not.toHaveBeenCalled();
   });
+});
+
+it("preserves the private deadline status when publication admission expires", async () => {
+  await withPeer(
+    async (f) => {
+      const reply = await f.reply(
+        f.send(f.publication(), { path: publicationPath }),
+      );
+      expect(reply.status).toBe(504);
+      expect(reply.body.code).toBe("deadline_exceeded");
+    },
+    { apply: () => Promise.reject(new PeerDeadlineError()) },
+  );
 });
 
 it("waits for the original operation after its request deadline and never sends a late success", async () => {

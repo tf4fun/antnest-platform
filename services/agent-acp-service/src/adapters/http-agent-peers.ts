@@ -13,6 +13,7 @@ import type {
 } from "../ports/agent-peers.js";
 import type { PeerAuthentication } from "./peer-authentication.js";
 import { strictObject } from "./strict-json.js";
+import { PeerDeadlineError } from "../ports/agent-peers.js";
 
 const media = /^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?$/iu;
 const unavailable = () =>
@@ -74,8 +75,7 @@ export class HttpAgentPeers implements AgentPeers {
     const expiresAt = peerDeadline(request.deadline_at);
     const remaining = expiresAt - Date.now();
     if (remaining > 10000) throw new DomainError("invalid_request", "Invalid peer deadline");
-    if (remaining <= 0)
-      throw new DomainError("deadline_exceeded", "Peer request deadline exceeded");
+    if (remaining <= 0) throw new PeerDeadlineError("Peer request deadline exceeded");
     signal.throwIfAborted();
     const body = JSON.stringify(request);
     if (Buffer.byteLength(body) > 16384)
@@ -193,7 +193,7 @@ export class HttpAgentPeers implements AgentPeers {
     const expired = signal.aborted || completion.timedOut || Date.now() >= expiresAt;
     if (failures.length > 0 || result === undefined || expired) {
       const error = expired
-        ? new DomainError("deadline_exceeded", "Peer request deadline exceeded")
+        ? new PeerDeadlineError("Peer request deadline exceeded")
         : unavailable();
       if (failures.length > 0)
         error.cause = new AggregateError(failures, "Peer HTTP operation and cleanup failed");

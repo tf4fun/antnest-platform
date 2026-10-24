@@ -14,6 +14,7 @@ import {
 import { parsePeerPublicationReceipt } from "../domain/peer-receipt.js";
 import { DomainError } from "../domain/errors.js";
 import type { PeerPublicationRequest } from "../ports/agent-peers.js";
+import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { PeerAuthentication } from "../adapters/peer-authentication.js";
 import { fields } from "../adapters/service-authentication.js";
 import { strictObject } from "../adapters/strict-json.js";
@@ -406,12 +407,9 @@ export class PeerServer {
 
 function failureCode(error: unknown): FailureCode {
   if (error instanceof PeerFailure) return error.code;
+  if (error instanceof PeerDeadlineError) return error.code;
   if (error instanceof DomainError) {
-    if (
-      error.code === "invalid_request" ||
-      error.code === "configuration_unavailable" ||
-      error.code === "deadline_exceeded"
-    )
+    if (error.code === "invalid_request" || error.code === "configuration_unavailable")
       return error.code;
   }
   return "internal_error";
