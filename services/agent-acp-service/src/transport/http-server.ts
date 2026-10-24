@@ -112,6 +112,8 @@ export class AgentAcpHttpServer {
   }>();
   private readonly requests = new Set<OwnedHttpRequest>();
   private readonly latestAccess = new Map<string, ExecutionAccessSnapshot>();
+  private readonly accessRevisions = new Map<string, number>();
+  private accessRevision = 0;
   private readonly capacity: ConnectionCapacity;
   private readonly id: () => string;
   private readonly telemetry: TelemetryPort;
@@ -223,6 +225,7 @@ export class AgentAcpHttpServer {
 
   public async revokeAccess(snapshot: ExecutionAccessSnapshot): Promise<void> {
     this.latestAccess.set(snapshot.organization_id, structuredClone(snapshot));
+    this.accessRevisions.set(snapshot.organization_id, ++this.accessRevision);
     const joins: Promise<unknown>[] = [this.httpTransport.revokeAccess(snapshot)];
     for (const request of this.requests) {
       if (request.identity === null || !isExecutionAccessRevoked(snapshot, request.identity))
@@ -246,7 +249,8 @@ export class AgentAcpHttpServer {
       );
   }
 
-  private accessRevoked(identity: ExecutionIdentity): boolean {
+  private accessRevoked(identity: ExecutionIdentity, since: number): boolean {
+    if ((this.accessRevisions.get(identity.organizationId) ?? 0) <= since) return false;
     const snapshot = this.latestAccess.get(identity.organizationId);
     return snapshot !== undefined && isExecutionAccessRevoked(snapshot, identity);
   }
@@ -333,6 +337,7 @@ export class AgentAcpHttpServer {
     listener: "workspace" | "control",
     original: OwnedHttpRequest,
   ): Promise<void> {
+    const accessRevision = this.accessRevision;
     const path = (request.url ?? "").split("?", 1)[0];
     const control =
       path === AGENT_SETTLEMENT_PATH ||
@@ -361,7 +366,11 @@ export class AgentAcpHttpServer {
     const identity = trustedIdentity(request.headers);
     original.identity = identity;
     if (response.destroyed) return;
-    if (identity !== null && request.method !== "DELETE" && this.accessRevoked(identity)) {
+    if (
+      identity !== null &&
+      request.method !== "DELETE" &&
+      this.accessRevoked(identity, accessRevision)
+    ) {
       const failure = httpFailure("access_denied");
       json(response, failure.status, failure.body);
       return;
@@ -492,6 +501,7 @@ export class AgentAcpHttpServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<number> {
+    const accessRevision = this.accessRevision;
     if ((request.url ?? "").split("?", 1)[0] === OWNER_PROBE_PATH)
       return rejectUpgrade(socket, 404, "Not Found");
     if (this.isClosing()) return rejectUpgrade(socket, 503, "Service Unavailable");
@@ -525,7 +535,8 @@ export class AgentAcpHttpServer {
     }
     if (socket.destroyed || this.isClosing())
       return rejectUpgrade(socket, 503, "Service Unavailable");
-    if (this.accessRevoked(identity)) return rejectUpgrade(socket, 403, "Forbidden");
+    if (this.accessRevoked(identity, accessRevision))
+      return rejectUpgrade(socket, 403, "Forbidden");
     const setup = Promise.withResolvers<void>();
     try {
       const lease = this.capacity.reserve(identity);

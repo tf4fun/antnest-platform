@@ -101,6 +101,14 @@ revocation receipt. Live members must apply the publication themselves; any use 
 an authoritative stopped-incarnation proof to retire an old process must identify
 that original registration and preserve the outstanding cleanup boundary.
 
+Transport admission captures the local publication sequence before awaiting
+authentication or readiness. A later denying publication for the same organization
+prevents that pending request from adopting a resource. Fresh authenticated ACP
+connections retain their existing initialize semantics; business operations still
+perform Agent authorization. An already retired HTTP handle retains its original
+404 traffic response and authenticated 202 DELETE receipt. Publication cleanup
+continues to join all existing affected requests and connections.
+
 ## Aggregate ACK and deadlines
 
 Capture the exact frozen local publication, authenticated private authority and
