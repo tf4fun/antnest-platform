@@ -230,6 +230,24 @@
       },
       "request_body": "none",
       "notes": "Dedicated directional member authentication only. Reverify the original agent-ui CCT. Creation checks the fixed membership, original registration, publication and epoch; continuation and DELETE use the authenticated original-owner handle, never a new lease. Each member joins its local HTTP relay and SDK cleanup before publication acknowledgement."
+    },
+    "POST /internal/acp-peer/control/state-read": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "required"
+      },
+      "request_body": "json",
+      "notes": "Dedicated directional member authentication. Reverify the original agent-ui CCT, fixed membership and complete source/target registrations, publication, live owner epoch and admission deadline. Forward state JSON/SSE without local fallback after dispatch; publication joins original streams and bounded delivery cleanup."
+    },
+    "POST /internal/acp-peer/control/state-watch": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "required"
+      },
+      "request_body": "json",
+      "notes": "Dedicated directional member authentication. Reverify the original agent-ui CCT, fixed membership and complete source/target registrations, publication, live owner epoch and admission deadline. Forward state JSON/SSE without local fallback after dispatch; publication joins original streams and bounded delivery cleanup."
     }
   },
   "guarded_sources": {
@@ -238,7 +256,7 @@
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
-      "sha256": "4d776e491e535b143012c8d8900339f02f7b2f21beec0deb24989243831d52d5",
+      "sha256": "8548b888792ecde4d577bda540ea5ff7fba8b69404887a25ccbae99fe628e739",
       "routes": [
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/watch-agent-execution-state"
@@ -268,7 +286,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "137674663280792460879fadfaa5bf70a675062b130da51d6d56a327f75dbe88",
+      "sha256": "ff3c1633ad52c018718b84330dcdd66ad08376c51631488f230c4c67ec1bc260",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -339,14 +357,16 @@
       ]
     },
     "services/agent-acp-service/src/transport/peer-server.ts": {
-      "sha256": "1c979a1bea54edd100b13fe855a397fc45168f92d29a85fcc7c16a3af16a8b57",
+      "sha256": "40ce586b749945363c3bbb0c34cb2abd1fb621645987cc5cf276a23a07336919",
       "routes": [
         "POST /internal/acp-peer/identity",
         "POST /internal/acp-peer/publications/apply",
         "UPGRADE /internal/acp-peer/forward/ws",
         "POST /internal/acp-peer/forward/http",
         "GET /internal/acp-peer/forward/http",
-        "DELETE /internal/acp-peer/forward/http"
+        "DELETE /internal/acp-peer/forward/http",
+        "POST /internal/acp-peer/control/state-read",
+        "POST /internal/acp-peer/control/state-watch"
       ]
     },
     "services/agent-acp-service/src/transport/owner-http.ts": {
@@ -355,6 +375,13 @@
         "POST /internal/acp-peer/forward/http",
         "GET /internal/acp-peer/forward/http",
         "DELETE /internal/acp-peer/forward/http"
+      ]
+    },
+    "services/agent-acp-service/src/transport/owner-control.ts": {
+      "sha256": "095936da0ff704737302e31599fed29ae91b16f46f050dcd45b97ae2f5316a21",
+      "routes": [
+        "POST /internal/acp-peer/control/state-read",
+        "POST /internal/acp-peer/control/state-watch"
       ]
     }
   }

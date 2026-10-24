@@ -43,6 +43,7 @@ import { createAcpV2Agent } from "./acp/v2/agent.js";
 import { SessionOutputStreams } from "./acp/session-output.js";
 import { AcpHttpTransport } from "./acp/http-transport.js";
 import { OwnerHttpTransport, type HttpOwnerForwardingOptions } from "./owner-http.js";
+import { OwnerControlTransport } from "./owner-control.js";
 import type { PermissionConnectionsPort } from "../ports/tool-permissions.js";
 import type { ExecutionConfigurationPort } from "../ports/execution-configuration.js";
 import type { AgentSettlementPort } from "../ports/agent-settlement.js";
@@ -151,6 +152,7 @@ export class AgentAcpHttpServer {
   private readonly telemetry: TelemetryPort;
   private readonly httpTransport: AcpHttpTransport;
   private readonly httpOwner: OwnerHttpTransport | undefined;
+  private readonly controlOwner: OwnerControlTransport | undefined;
   private closePromise: Promise<void> | undefined;
 
   public constructor(private readonly options: AgentAcpHttpServerOptions) {
@@ -175,6 +177,20 @@ export class AgentAcpHttpServer {
             capacity: this.capacity,
             authentication: options.authentication,
             report: (error) => this.report(error, "owner_http_forwarding"),
+          });
+    this.controlOwner =
+      options.httpForwarding === undefined
+        ? undefined
+        : new OwnerControlTransport({
+            ...options.httpForwarding,
+            authentication: options.authentication,
+            state: options.executionState,
+            ready: options.ready,
+            maxBytes: options.maxConfigurationBytes ?? 16 * 1024 * 1024,
+            ...(options.stateDeliveryTimeoutMs === undefined
+              ? {}
+              : { deliveryTimeoutMs: options.stateDeliveryTimeoutMs }),
+            report: (error) => this.report(error, "owner_control_forwarding"),
           });
     const handler = (request: IncomingMessage, response: ServerResponse) => {
       void observeHttpRequest(request, response, () =>
@@ -272,6 +288,7 @@ export class AgentAcpHttpServer {
     const joins: Promise<unknown>[] = [
       this.httpTransport.revokeAccess(snapshot),
       this.httpOwner?.revokeAccess(snapshot) ?? Promise.resolve(),
+      this.controlOwner?.revokeAccess(snapshot) ?? Promise.resolve(),
     ];
     for (const request of this.requests) {
       if (request.identity === null || !isExecutionAccessRevoked(snapshot, request.identity))
@@ -315,6 +332,7 @@ export class AgentAcpHttpServer {
     const results = await Promise.allSettled([
       this.httpTransport.drain(),
       this.httpOwner?.close(),
+      this.controlOwner?.close(),
       this.closeWebSockets(),
     ]);
     results.push(
@@ -511,6 +529,12 @@ export class AgentAcpHttpServer {
         () => {
           original.stateWatch = true;
         },
+        this.controlOwner === undefined
+          ? undefined
+          : (identity, signal) =>
+              this.controlOwner!.forwardState(request, response, identity, signal, () => {
+                original.stateWatch = true;
+              }),
       );
       return;
     }
@@ -572,6 +596,18 @@ export class AgentAcpHttpServer {
     if (this.httpOwner === undefined)
       throw new DomainError("agent_unavailable", "HTTP owner forwarding is unavailable");
     await this.httpOwner.handlePeer(request, response, member, signal, admitted);
+  }
+
+  public async handlePeerControl(
+    request: IncomingMessage,
+    response: ServerResponse,
+    member: string,
+    signal: AbortSignal,
+    admitted: () => void,
+  ): Promise<void> {
+    if (this.controlOwner === undefined)
+      throw new DomainError("agent_unavailable", "Owner control forwarding is unavailable");
+    await this.controlOwner.handlePeer(request, response, member, signal, admitted);
   }
 
   private async handleUpgrade(

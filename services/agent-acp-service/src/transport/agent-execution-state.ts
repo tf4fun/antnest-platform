@@ -15,6 +15,7 @@ import { recordBoundaryError, rpcContent } from "../telemetry/diagnostics.js";
 import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
 import { httpFailure } from "./public-error.js";
 import { trustedIdentity } from "./trusted-identity.js";
+import type { ExecutionIdentity } from "../domain/execution-configuration.js";
 
 export const AGENT_EXECUTION_STATE_PATH = "/rpc/agent-acp/get-agent-execution-state";
 export const AGENT_EXECUTION_WATCH_PATH = "/rpc/agent-acp/watch-agent-execution-state";
@@ -27,6 +28,7 @@ export async function serveAgentExecutionState(
   ready: () => Promise<boolean>,
   deliveryTimeoutMs = DEFAULT_STATE_DELIVERY_TIMEOUT_MS,
   onWatchStarted?: () => void,
+  forward?: (identity: ExecutionIdentity, signal: AbortSignal) => Promise<boolean>,
 ): Promise<void> {
   const streaming = request.url === AGENT_EXECUTION_WATCH_PATH;
   const span = activeHttpSpan();
@@ -54,6 +56,7 @@ export async function serveAgentExecutionState(
       );
     if (!streaming && span !== undefined) rpcContent(span, "request", input.data);
     if (service === undefined || !(await ready())) throw new Error("State service is unavailable");
+    if (forward !== undefined && (await forward(identity, disconnected.signal))) return;
     span?.setAttributes({
       "antnest.organization.id": identity.organizationId,
       "antnest.agent.id": identity.agentId,
@@ -121,16 +124,26 @@ async function writeState(
       "cache-control": "no-store",
       "x-accel-buffering": "no",
     });
-  if (!response.write(frame("workspace_state", state)))
+  await writeStateChunk(response, frame("workspace_state", state), signal, timeoutMs);
+}
+
+export async function writeStateChunk(
+  response: ServerResponse,
+  chunk: string | Uint8Array,
+  signal: AbortSignal,
+  timeoutMs = DEFAULT_STATE_DELIVERY_TIMEOUT_MS,
+): Promise<void> {
+  signal.throwIfAborted();
+  if (!response.write(chunk))
     await withDeliveryDeadline(signal, timeoutMs, async (bounded) => {
       await once(response, "drain", { signal: bounded });
     });
 }
 
-async function finishResponse(
+export async function finishResponse(
   response: ServerResponse,
   signal: AbortSignal,
-  timeoutMs: number,
+  timeoutMs = DEFAULT_STATE_DELIVERY_TIMEOUT_MS,
   body?: string,
 ): Promise<void> {
   await withDeliveryDeadline(signal, timeoutMs, async (bounded) => {

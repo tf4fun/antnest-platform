@@ -18,6 +18,7 @@ import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { PeerAuthentication } from "../adapters/peer-authentication.js";
 import { fields } from "../adapters/service-authentication.js";
 import { OWNER_HTTP_PATH } from "./owner-http.js";
+import { OWNER_CONTROL_PATHS } from "./owner-control.js";
 import { strictObject } from "../adapters/strict-json.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { Duplex } from "node:stream";
@@ -71,6 +72,7 @@ export type PeerServerOptions = {
     signal: AbortSignal,
     admitted: () => void,
   ) => Promise<void>;
+  forwardControl?: PeerServerOptions["forwardHttp"];
   forward?: (
     request: IncomingMessage,
     target: OwnerForwardRequest,
@@ -111,6 +113,7 @@ export class PeerServer {
   private readonly forwards = new Set<AbortController>();
   private readonly forward: PeerServerOptions["forward"];
   private readonly forwardHttp: PeerServerOptions["forwardHttp"];
+  private readonly forwardControl: PeerServerOptions["forwardControl"];
 
   public constructor(options: PeerServerOptions) {
     const timeoutMs = options.timeoutMs === undefined ? defaultTimeoutMs : options.timeoutMs;
@@ -128,6 +131,7 @@ export class PeerServer {
     this.timeoutMs = timeoutMs;
     this.forward = options.forward;
     this.forwardHttp = options.forwardHttp;
+    this.forwardControl = options.forwardControl;
     this.webSockets = new WebSocketServer({
       noServer: true,
       clientTracking: false,
@@ -451,6 +455,29 @@ export class PeerServer {
           clearTimeout(timer);
           owner.socket.transfer();
         });
+        return;
+      }
+      if (
+        this.forwardControl !== undefined &&
+        (request.url === OWNER_CONTROL_PATHS["state-read"] ||
+          request.url === OWNER_CONTROL_PATHS["state-watch"])
+      ) {
+        if (this.closed) throw new PeerFailure("configuration_unavailable");
+        if (request.method !== "POST") throw new PeerFailure("method_not_allowed");
+        if (request.headers.expect !== undefined) throw new PeerFailure("invalid_request");
+        if (authentication.caller === null) throw new PeerFailure("service_unauthenticated");
+        response.shouldKeepAlive = false;
+        response.setHeader("Connection", "close");
+        await this.forwardControl(
+          request,
+          response,
+          authentication.caller,
+          controller.signal,
+          () => {
+            clearTimeout(timer);
+            owner.socket.transfer();
+          },
+        );
         return;
       }
       if (request.url !== identityPath && request.url !== publicationPath)
