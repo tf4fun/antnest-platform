@@ -36,6 +36,7 @@ import { ProviderClients } from "./application/provider-clients.js";
 import { AgentSettlement } from "./application/agent-settlement.js";
 import { AgentAssignment } from "./application/agent-assignment.js";
 import { OwnerForwarding } from "./application/owner-forwarding.js";
+import { HttpOwnerHandles } from "./application/http-owner-handle.js";
 import { PostgresAgentLeases } from "./adapters/postgres/agent-leases.js";
 import { AgentExecutionState } from "./application/agent-execution-state.js";
 import { ExecutionAudits } from "./application/execution-audit.js";
@@ -293,6 +294,11 @@ export async function startAgentAcpService(
             throw new DomainError("agent_unavailable", "ACP ingress is not ready");
           return listeningServer.preparePeerWebSocket(request, target, signal);
         },
+        forwardHttp: (request, response, member, signal, admitted) => {
+          if (listeningServer === undefined)
+            throw new DomainError("agent_unavailable", "ACP ingress is not ready");
+          return listeningServer.handlePeerHttp(request, response, member, signal, admitted);
+        },
       });
       await peerServer.listen(config.peer!.listen.host, config.peer!.listen.port);
       ownership.signal.throwIfAborted();
@@ -300,6 +306,18 @@ export async function startAgentAcpService(
     const server = new AgentAcpHttpServer({
       authentication: config.authentication,
       ...(forwarding === undefined ? {} : { forwarding }),
+      ...(forwarding === undefined
+        ? {}
+        : {
+            httpForwarding: {
+              ...forwarding,
+              registration: registeredOwner!,
+              handles: new HttpOwnerHandles({
+                secretBox: new SecretBox(config.clientMcpKey),
+                membershipSha256: peerAuthentication!.membership.sha256,
+              }),
+            },
+          }),
       executionConfiguration: built.directory,
       settlement: built.settlement,
       executionState: built.executionState,

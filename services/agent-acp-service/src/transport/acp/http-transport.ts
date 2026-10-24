@@ -27,6 +27,15 @@ import type { LearningNoticePublisher } from "../../application/learning-notice-
 import { activeHttpSpan } from "../../telemetry/http.js";
 import { recordBoundaryError } from "../../telemetry/diagnostics.js";
 import { httpFailure } from "../public-error.js";
+import type { AgentOwnershipFence } from "../../domain/agent-ownership.js";
+
+export type HttpOwnerAdmission = {
+  fence: AgentOwnershipFence;
+  signal: AbortSignal;
+  assertCurrent(): void;
+  encodeConnectionId(sdkId: string): string;
+  admitted?(): void;
+};
 
 type Options = {
   permissions?: PermissionConnectionsPort;
@@ -51,6 +60,7 @@ export class AcpHttpTransport {
   private readonly capacityLeases = new Map<HttpConnection, { release(): void }>();
   private readonly capacity: ConnectionCapacity;
   private readonly closing = new Set<Promise<void>>();
+  private readonly cleanupFailures = new Map<ConnectionBinding, unknown>();
   private readonly telemetry: TelemetryPort;
   private stopped = false;
   private draining = false;
@@ -70,6 +80,9 @@ export class AcpHttpTransport {
     const errors = results.filter(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
+    for (const [binding, error] of this.cleanupFailures)
+      if (isExecutionAccessRevoked(snapshot, binding))
+        errors.push({ status: "rejected", reason: error });
     if (errors.length)
       throw new AggregateError(
         errors.map((result) => result.reason as unknown),
@@ -77,7 +90,11 @@ export class AcpHttpTransport {
       );
   }
 
-  public async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  public async handle(
+    request: IncomingMessage,
+    response: ServerResponse,
+    owner?: HttpOwnerAdmission,
+  ): Promise<void> {
     try {
       if (this.stopped || !(await this.available(request.method))) return reply(response, 503);
       if (!["POST", "GET", "DELETE"].includes(request.method ?? "")) {
@@ -88,7 +105,7 @@ export class AcpHttpTransport {
       if (identity === null) return reply(response, 401);
       if (this.isStopped() || (this.draining && request.method !== "DELETE") || response.destroyed)
         return reply(response, 503);
-      const entry = this.admit(request, response, identity);
+      const entry = this.admit(request, response, identity, owner);
       if (entry) await entry.handle(request, response);
     } catch (error) {
       const span = activeHttpSpan();
@@ -112,6 +129,11 @@ export class AcpHttpTransport {
   public async close(): Promise<void> {
     this.stop();
     await Promise.allSettled(this.closing);
+    if (this.cleanupFailures.size)
+      throw new AggregateError(
+        [...this.cleanupFailures.values()],
+        "HTTP connection cleanup failed",
+      );
   }
 
   /** Normal shutdown preserves existing cleanup receipts for one bounded window. */
@@ -167,6 +189,7 @@ export class AcpHttpTransport {
     request: IncomingMessage,
     response: ServerResponse,
     identity: ExecutionIdentity,
+    owner?: HttpOwnerAdmission,
   ): HttpConnection | undefined {
     const id = header(request, "acp-connection-id");
     if (id) {
@@ -195,16 +218,20 @@ export class AcpHttpTransport {
       reply(response, 400);
       return;
     }
+    owner?.signal.throwIfAborted();
+    owner?.assertCurrent();
     const lease = this.capacity.reserve(identity);
     let entry: HttpConnection;
     try {
       const binding: ConnectionBinding = {
         connectionId: randomUUID(),
         ...identity,
+        ...(owner === undefined ? {} : { ownerFence: owner.fence }),
       };
       entry = new HttpConnection(binding, {
         application: this.options.application,
         outputs: this.options.outputs,
+        ...(owner === undefined ? {} : { owner }),
         ...(this.options.permissions === undefined
           ? {}
           : { permissions: this.options.permissions }),
@@ -226,6 +253,7 @@ export class AcpHttpTransport {
     }
     this.entries.add(entry);
     this.capacityLeases.set(entry, lease);
+    entry.activateOwner();
     this.telemetry.count("antnest.acp.connections", {
       result: "accepted",
       protocol: "v1",
@@ -237,7 +265,7 @@ export class AcpHttpTransport {
   private retire(entry: HttpConnection): Promise<void> {
     if (entry.retired) return entry.retire();
     const closed = entry.retire();
-    this.trackClose(closed);
+    this.trackClose(closed, entry);
     if (entry.id === undefined || this.stopped) this.release(entry);
     return closed;
   }
@@ -247,7 +275,7 @@ export class AcpHttpTransport {
     if (entry.id) this.byId.delete(entry.id);
     const retired = entry.retired;
     const closed = entry.release(acknowledged);
-    if (!retired) this.trackClose(closed);
+    if (!retired) this.trackClose(closed, entry);
     this.closing.add(closed);
     // Removing the addressable ID cannot free capacity or shutdown ownership
     // while SDK cleanup or an already admitted response is still outstanding.
@@ -262,7 +290,7 @@ export class AcpHttpTransport {
     void closed.then(forget, forget);
   }
 
-  private trackClose(closed: Promise<void>): void {
+  private trackClose(closed: Promise<void>, entry: HttpConnection): void {
     this.closing.add(closed);
     void closed.then(
       () => {
@@ -270,6 +298,7 @@ export class AcpHttpTransport {
       },
       (error: unknown) => {
         this.closing.delete(closed);
+        this.cleanupFailures.set(entry.binding, error);
         this.telemetry.log("error", "acp_http_close_failed", {}, error);
       },
     );
@@ -282,6 +311,7 @@ export class AcpHttpTransport {
 }
 
 type ConnectionOptions = {
+  owner?: HttpOwnerAdmission;
   permissions?: PermissionConnectionsPort;
   notices?: Pick<LearningNoticePublisher, "subscribe">;
   skillCommands?: SkillCommandsPort;
@@ -298,6 +328,11 @@ type ConnectionOptions = {
 
 class HttpConnection {
   public id: string | undefined;
+  private sdkId: string | undefined;
+  private externalId: string | undefined;
+  private readonly ownerLost = () => {
+    void this.options.retire().catch(() => undefined);
+  };
   private readonly tasks = new ConnectionTasks();
   private readonly server: AcpServer;
   private readonly requests = new Set<ServerResponse>();
@@ -351,6 +386,12 @@ class HttpConnection {
     return this.cleanup !== undefined;
   }
 
+  public activateOwner(): void {
+    const signal = this.options.owner?.signal;
+    signal?.addEventListener("abort", this.ownerLost, { once: true });
+    if (signal?.aborted) this.ownerLost();
+  }
+
   public receiptExpired(): boolean {
     return this.expiresAt !== undefined && performance.now() >= this.expiresAt;
   }
@@ -367,7 +408,36 @@ class HttpConnection {
       });
     }
     if (this.retired) return new Response(null, { status: 404 });
-    return this.server.handleRequest(request);
+    if (this.sdkId === undefined) {
+      this.options.owner?.signal.throwIfAborted();
+      this.options.owner?.assertCurrent();
+      this.options.owner?.admitted?.();
+    } else if (request.headers.has("acp-connection-id")) {
+      // The validated adapter has already copied rawHeaders. Replace the final
+      // Fetch Request field, so neither parsed nor raw external IDs reach SDK.
+      const headers = new Headers(request.headers);
+      headers.set("acp-connection-id", this.sdkId);
+      request = new Request(request, { headers });
+    }
+    const result = await this.server.handleRequest(request);
+    const sdkId = result.headers.get("acp-connection-id");
+    if (sdkId === null) return result;
+    try {
+      if (this.sdkId === undefined) {
+        this.sdkId = sdkId;
+        this.externalId = this.options.owner?.encodeConnectionId(sdkId) ?? sdkId;
+      } else if (this.sdkId !== sdkId) throw new Error("HTTP SDK connection identity changed");
+      const headers = new Headers(result.headers);
+      headers.set("acp-connection-id", this.externalId!);
+      return new Response(result.body, {
+        status: result.status,
+        statusText: result.statusText,
+        headers,
+      });
+    } catch (error) {
+      await result.body?.cancel();
+      throw error;
+    }
   }
 
   public handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -376,7 +446,7 @@ class HttpConnection {
     this.requests.add(response);
     const span = activeHttpSpan();
     if (request.method === "GET" && span !== undefined) this.getSpans.set(response, span);
-    return new Promise((resolve) => {
+    const responseClosed = new Promise<void>((resolve) => {
       response.once("finish", () => {
         if (this.released) return;
         if (this.id === undefined) {
@@ -402,16 +472,18 @@ class HttpConnection {
         }
         resolve();
       });
-      const original = this.handler(request, response);
-      this.handlers.set(original, request.method === "DELETE");
-      const forget = () => this.handlers.delete(original);
-      void original.then(forget, forget);
     });
+    const original = this.handler(request, response);
+    this.handlers.set(original, request.method === "DELETE");
+    const forget = () => this.handlers.delete(original);
+    void original.then(forget, forget);
+    return Promise.all([responseClosed, original]).then(() => undefined);
   }
 
   public retire(): Promise<void> {
     if (this.cleanup !== undefined) return this.cleanup;
     clearTimeout(this.timer);
+    this.options.owner?.signal.removeEventListener("abort", this.ownerLost);
     this.closeResponses(true);
     const tasks = this.tasks.close();
     // DELETE calls retire itself; joining that handler here would self-join.

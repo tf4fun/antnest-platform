@@ -62,17 +62,22 @@ service credentials do not grant peer access, and user CCTs are rejected.
 Authentication precedes body parsing. The server checks the source member,
 fixed membership digest, target member or registration, and original deadline
 before dispatch; publication additionally requires a single hop. This listener
-also accepts the exact private `UPGRADE /internal/acp-peer/forward/ws` route
-under the `peer-member` profile. That route alone carries the original Agent UI
+also accepts exact private `UPGRADE /internal/acp-peer/forward/ws` and
+`POST/GET/DELETE /internal/acp-peer/forward/http` routes under the `peer-member`
+profile. These forwarding routes carry the original Agent UI
 CCT, which the owner independently verifies against the forwarded organization,
 principal and Agent. Its target registration, full private publication digest,
 lease epoch, deadline and one-hop envelope are checked before SDK admission;
 each business dispatch rechecks the captured epoch. Original SDK work and
-connection cleanup must join before an owner cleanup receipt. Missing receipts
-remain unknown and block the affected scope’s revocation acknowledgement.
+connection cleanup must join before an owner cleanup receipt. HTTP continuations
+use the authenticated original-owner handle without resolving a new lease;
+public DELETE retains its original CCT and 202 receipt. Each member joins its
+local HTTP relay and SDK work before its publication ACK; cleanup failures remain
+scoped even after a connection is removed. Missing WebSocket cleanup receipts
+remain unknown and block the affected scope's revocation acknowledgement.
 The identity/publication POST routes continue to reject CCTs. See the
-[forwarding contract](owner-forwarding.md) for the delivered WebSocket scope
-and pending HTTP/SSE and control paths.
+[forwarding contract](owner-forwarding.md) for HTTP/SSE and WebSocket scope
+and the remaining state, settlement and source paths.
 
 ACP and workspace routes require exactly one Identity-signed CCT with ACP
 audience and `agt`, then repeat current local Agent and Session authorization.

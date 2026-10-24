@@ -95,11 +95,12 @@ export class OwnerForwarding {
     identity: ExecutionIdentity,
     protocol: "v1" | "v2",
     signal: AbortSignal,
+    includeLocal = false,
   ): Promise<OwnerForwardRequest | null> {
     const { directory, assignment, registration, membershipSha256 } = this.options;
     directory.inspect(identity);
     const member = assignment.preferred(identity);
-    if (member === registration.member_id) return null;
+    if (member === registration.member_id && !includeLocal) return null;
     const publication = directory.capturePublication(identity.organizationId);
     const requestId = randomUUID();
     const deadline = Date.now() + 10000;
@@ -112,9 +113,10 @@ export class OwnerForwarding {
       target_member_id: member,
       challenge,
     };
-    const receipt = parsePeerIdentityReceipt(
-      await this.options.peers.identify(member, discovery, signal),
-    );
+    const receipt =
+      member === registration.member_id
+        ? { ...discovery, registration }
+        : parsePeerIdentityReceipt(await this.options.peers.identify(member, discovery, signal));
     signal.throwIfAborted();
     if (
       receipt.request_id !== requestId ||

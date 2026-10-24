@@ -203,11 +203,38 @@
       },
       "request_body": "none",
       "notes": "Dedicated peer listener only. Directional member credentials and ACP mTLS identity authenticate the source. The original agent-ui CCT is required and reverified against the bound organization, principal and Agent. Fixed membership, target incarnation, full publication digest, lease epoch, deadline and one hop are checked before owner dispatch. Ordinary service credentials do not grant peer access."
+    },
+    "POST /internal/acp-peer/forward/http": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "required"
+      },
+      "request_body": "json",
+      "notes": "Dedicated directional member authentication only. Reverify the original agent-ui CCT. Creation checks the fixed membership, original registration, publication and epoch; continuation and DELETE use the authenticated original-owner handle, never a new lease. Each member joins its local HTTP relay and SDK cleanup before publication acknowledgement."
+    },
+    "GET /internal/acp-peer/forward/http": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "required"
+      },
+      "request_body": "none",
+      "notes": "Dedicated directional member authentication only. Reverify the original agent-ui CCT. Creation checks the fixed membership, original registration, publication and epoch; continuation and DELETE use the authenticated original-owner handle, never a new lease. Each member joins its local HTTP relay and SDK cleanup before publication acknowledgement."
+    },
+    "DELETE /internal/acp-peer/forward/http": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "required"
+      },
+      "request_body": "none",
+      "notes": "Dedicated directional member authentication only. Reverify the original agent-ui CCT. Creation checks the fixed membership, original registration, publication and epoch; continuation and DELETE use the authenticated original-owner handle, never a new lease. Each member joins its local HTTP relay and SDK cleanup before publication acknowledgement."
     }
   },
   "guarded_sources": {
     "services/agent-acp-service/src/transport/acp/http-transport.ts": {
-      "sha256": "d0ff8edef67019bbc22be22a5094654f134c2d9323c5b6e3b1d366d012c9ece3",
+      "sha256": "fa30f7bb12016bcb82c5bd498e2990a7cc18a4e107eecf61665acfe04d3ba786",
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
@@ -241,7 +268,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "1327fb62f792f60977b5e2b7bf3b42da9f600bdeb0fad599b3293ef2cc7ecf64",
+      "sha256": "188216075e1e20c4c35185c591c638fecc52de53d46098db5676983dd1c43a7d",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -312,11 +339,22 @@
       ]
     },
     "services/agent-acp-service/src/transport/peer-server.ts": {
-      "sha256": "88cf04fa4d01a4c5927010f16e5a70a6a10dba1dec1adb952ab076139f71f00b",
+      "sha256": "1c979a1bea54edd100b13fe855a397fc45168f92d29a85fcc7c16a3af16a8b57",
       "routes": [
         "POST /internal/acp-peer/identity",
         "POST /internal/acp-peer/publications/apply",
-        "UPGRADE /internal/acp-peer/forward/ws"
+        "UPGRADE /internal/acp-peer/forward/ws",
+        "POST /internal/acp-peer/forward/http",
+        "GET /internal/acp-peer/forward/http",
+        "DELETE /internal/acp-peer/forward/http"
+      ]
+    },
+    "services/agent-acp-service/src/transport/owner-http.ts": {
+      "sha256": "f16d97dce509b0517bfe28196a07c67e5fd7a410432b062f86d1292cc4603f61",
+      "routes": [
+        "POST /internal/acp-peer/forward/http",
+        "GET /internal/acp-peer/forward/http",
+        "DELETE /internal/acp-peer/forward/http"
       ]
     }
   }

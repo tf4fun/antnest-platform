@@ -10,6 +10,8 @@ import {
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as acp from "@agentclientprotocol/sdk";
+import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { Pool } from "pg";
 import { describe, expect, it } from "vitest";
@@ -26,17 +28,89 @@ import {
   runtimeConfiguration,
 } from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 import { runtimeInformation } from "../../../../services/agent-acp-service/test/fixtures/runtime-information.js";
+import { identityHeaders } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import {
   testJwks,
   testSecurityEnvironment,
   workloadHeaders,
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
-import { AcpWireClient } from "../support/acp-wire-client.js";
+import { AcpWireClient, type WireFrame } from "../support/acp-wire-client.js";
 import { ProductionAcpChild } from "../support/production-acp-child.js";
 import { readBody, startPeer, within } from "../support/production-peers.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 const reply = "Two real ACP processes completed their assigned work.";
+
+type FixtureClient = Pick<AcpWireClient, "initialize" | "request" | "close">;
+
+class AcpHttpClient implements FixtureClient {
+  public readonly updates: acp.SessionUpdate[] = [];
+  private readonly connection: acp.ClientConnection;
+
+  public constructor(
+    url: string,
+    identity: ReturnType<typeof executionIdentity>,
+  ) {
+    this.connection = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        this.updates.push(params.update);
+      })
+      .connect(createHttpStream(url, { headers: identityHeaders(identity) }));
+  }
+
+  public async initialize(version: 1 | 2): Promise<WireFrame> {
+    if (version !== 1) throw new Error("The HTTP fixture only supports ACP v1");
+    const frame = await this.request(acp.methods.agent.initialize, {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+    expect(frame.error).toBeUndefined();
+    return frame;
+  }
+
+  public async request(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<WireFrame> {
+    try {
+      let result: Record<string, unknown>;
+      switch (method) {
+        case acp.methods.agent.initialize:
+          result = await this.connection.agent.request<Record<string, unknown>>(
+            acp.methods.agent.initialize,
+            params,
+          );
+          break;
+        case acp.methods.agent.session.new:
+          result = await this.connection.agent.request<Record<string, unknown>>(
+            acp.methods.agent.session.new,
+            params,
+          );
+          break;
+        case acp.methods.agent.session.prompt:
+          result = await this.connection.agent.request<Record<string, unknown>>(
+            acp.methods.agent.session.prompt,
+            params,
+          );
+          break;
+        default:
+          throw new Error(`Unsupported HTTP fixture request: ${method}`);
+      }
+      return { result };
+    } catch (error) {
+      if (!(error instanceof acp.RequestError)) throw error;
+      return {
+        error: error.toErrorResponse() as NonNullable<WireFrame["error"]>,
+      };
+    }
+  }
+
+  public async close(): Promise<void> {
+    this.connection.close();
+    await this.connection.closed;
+  }
+}
 
 async function availablePort(): Promise<number> {
   const server = createServer();
@@ -78,13 +152,15 @@ describe.skipIf(databaseUrl === undefined)(
   "two actual ACP main processes",
   () => {
     it.each([
-      { mode: "direct-owner", version: 1 },
-      { mode: "single-entry", version: 1 },
-      { mode: "direct-owner", version: 2 },
-      { mode: "single-entry", version: 2 },
+      { mode: "direct-owner", transport: "websocket", version: 1 },
+      { mode: "single-entry", transport: "websocket", version: 1 },
+      { mode: "direct-owner", transport: "websocket", version: 2 },
+      { mode: "single-entry", transport: "websocket", version: 2 },
+      { mode: "direct-owner", transport: "http", version: 1 },
+      { mode: "single-entry", transport: "http", version: 1 },
     ] as const)(
-      "$mode / v$version",
-      async ({ mode, version }) => {
+      "$mode / $transport / v$version",
+      async ({ mode, transport, version }) => {
         const root = mkdtempSync(join(tmpdir(), "acp-dual-main-"));
         const id = randomUUID().replaceAll("-", "");
         const schema = "dual_main_" + id;
@@ -100,7 +176,7 @@ describe.skipIf(databaseUrl === undefined)(
         const peers: Awaited<ReturnType<typeof startPeer>>[] = [];
         const handlers: ReturnType<typeof createMcpHandler>[] = [];
         const children: ProductionAcpChild[] = [];
-        const clients: AcpWireClient[] = [];
+        const clients: FixtureClient[] = [];
         const originals: Promise<unknown>[] = [];
         const errors: unknown[] = [];
         const ports: number[] = [];
@@ -421,21 +497,26 @@ describe.skipIf(databaseUrl === undefined)(
           expect(published).toMatchObject({ applied_revision: 1 });
           for (const i of [0, 1]) {
             const agentId = configuration.agents[i]!.agent_id;
+            const entryPort = ports[(mode === "single-entry" ? 0 : i) * 4]!;
+            const identity = { ...executionIdentity(), agentId };
+            const connect = async () => {
+              const connected =
+                transport === "http"
+                  ? new AcpHttpClient(
+                      `http://127.0.0.1:${entryPort}/v1/acp`,
+                      identity,
+                    )
+                  : await AcpWireClient.connect(
+                      `ws://127.0.0.1:${entryPort}/v${version}/acp`,
+                      identity,
+                    );
+              clients.push(connected);
+              if (closing) await connected.close();
+              return connected;
+            };
             const client = await within(
-              tracked(
-                AcpWireClient.connect(
-                  `ws://127.0.0.1:${ports[(mode === "single-entry" ? 0 : i) * 4]!}/v${version}/acp`,
-                  {
-                    ...executionIdentity(),
-                    agentId,
-                  },
-                ).then(async (connected) => {
-                  clients.push(connected);
-                  if (closing) await connected.close();
-                  return connected;
-                }),
-              ),
-              "real ACP WebSocket",
+              tracked(connect()),
+              `real ACP ${transport}`,
               5000,
             );
             await tracked(client.initialize(version));
@@ -457,6 +538,22 @@ describe.skipIf(databaseUrl === undefined)(
               }),
             );
             expect(response.error).toBeUndefined();
+            if (client instanceof AcpHttpClient) {
+              await expect
+                .poll(
+                  () =>
+                    client.updates
+                      .map((update) =>
+                        update.sessionUpdate === "agent_message_chunk" &&
+                        update.content.type === "text"
+                          ? update.content.text
+                          : "",
+                      )
+                      .join(""),
+                  { timeout: 10_000 },
+                )
+                .toBe(reply);
+            }
             await expect
               .poll(
                 async () =>

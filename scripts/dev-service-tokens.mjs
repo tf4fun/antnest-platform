@@ -66,9 +66,12 @@ export function deriveStaticPairs(catalogs) {
         if (
           route.authentication === "peer-member" &&
           (receiver !== "agent-acp-service" ||
-            !/^(?:POST|UPGRADE) \/internal\/acp-peer\/[a-z0-9/-]+$/u.test(
+            (!/^(?:POST|UPGRADE) \/internal\/acp-peer\/[a-z0-9/-]+$/u.test(
               path,
-            ) ||
+            ) &&
+              !/^(?:GET|DELETE) \/internal\/acp-peer\/forward\/http$/u.test(
+                path,
+              )) ||
             JSON.stringify(route.callers) !== '["agent-acp-service"]')
         )
           throw failure("catalog_invalid");
