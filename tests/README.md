@@ -120,6 +120,14 @@ project's containers, volumes and network on exit. It explicitly loads
 publications. Full-stack entry points select the same overlay before stage3,
 so application diagnostic ports remain suppressed.
 
+The ACP two-process PostgreSQL fixtures keep their TCP reservations listening
+while dependency peers acquire their own ports. They release each child's four
+reservations immediately before spawning its real `main` entrypoint, and join
+the original listener-close receipts. Shared [reservation tests](integration/agent-acp-service/support/reserved-tcp-port.test.ts)
+use real sockets to verify exclusion and release. Teardown still requires clean
+child exits, closed ACP ports, released database ownership and original peer
+cleanup; a reservation is not evidence that a child became ready.
+
 `make test-deployment-ports` renders all Compose profiles and both overlay orders,
 verifying the Gateway-only base and exact loopback diagnostic mappings. It needs
 the Compose CLI, but no running Engine. It also exercises the Stage 3a runner's

@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createConnection, createServer } from "node:net";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
@@ -42,6 +42,10 @@ import {
   type PublicationResponse,
 } from "../support/publication-replay.js";
 import { readBody, startPeer, within } from "../support/production-peers.js";
+import {
+  reserveTcpPort,
+  type TcpPortReservation,
+} from "../support/reserved-tcp-port.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 const reply = "Two real ACP processes completed their assigned work.";
@@ -117,24 +121,6 @@ class AcpHttpClient implements FixtureClient {
   }
 }
 
-async function availablePort(): Promise<number> {
-  const server = createServer();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address();
-    if (address === null || typeof address === "string")
-      throw new Error("No reserved port");
-    return address.port;
-  } finally {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  }
-}
-
 async function refused(port: number): Promise<void> {
   const socket = createConnection({ host: "127.0.0.1", port });
   let outcome = "pending";
@@ -188,6 +174,7 @@ describe.skipIf(databaseUrl === undefined)(
         const originals: Promise<unknown>[] = [];
         const errors: unknown[] = [];
         const ports: number[] = [];
+        const reservations: TcpPortReservation[] = [];
         const names = ["dual-main-a-" + id, "dual-main-b-" + id];
         const temporary: string[] = [];
         const registrations = new Map<string, OwnerRegistration>();
@@ -238,8 +225,10 @@ describe.skipIf(databaseUrl === undefined)(
             [],
           );
           while (ports.length < 8) {
-            const port = await availablePort();
-            if (!ports.includes(port)) ports.push(port);
+            const reservation = await reserveTcpPort();
+            reservations.push(reservation);
+            expect(ports).not.toContain(reservation.port);
+            ports.push(reservation.port);
           }
           const members = [0, 1].map((i) => ({
             member_id: i === 0 ? "acp-a" : "acp-b",
@@ -636,6 +625,10 @@ describe.skipIf(databaseUrl === undefined)(
               .digest("hex");
             expect(Number(BigInt("0x" + hash) % 2n)).toBe(i);
           }
+          const peerPorts = new Set(
+            peers.map((peer) => Number(new URL(peer.origin).port)),
+          );
+          expect(ports.filter((port) => peerPorts.has(port))).toEqual([]);
           const key = randomBytes(32).toString("base64"),
             cluster = randomUUID();
           const peerTokens = [
@@ -698,6 +691,8 @@ describe.skipIf(databaseUrl === undefined)(
               OTEL_TRACES_EXPORTER: "none",
               OTEL_METRICS_EXPORTER: "none",
             });
+            for (const reservation of reservations.slice(i * 4, i * 4 + 4))
+              await reservation.release();
             children.push(
               new ProductionAcpChild(
                 environment,
@@ -1795,6 +1790,9 @@ describe.skipIf(databaseUrl === undefined)(
           // Timed-out observations never replace their original operation receipts.
           await Promise.allSettled(originals);
           await collect(clients.map((client) => client.close()));
+          await collect(
+            reservations.map((reservation) => reservation.release()),
+          );
           try {
             expect(
               (
