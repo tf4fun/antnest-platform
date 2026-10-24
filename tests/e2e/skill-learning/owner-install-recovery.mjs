@@ -79,29 +79,45 @@ async function holdRuntimeUpdate({
   let releasing;
   const release = () =>
     (releasing ??= (async () => {
-      const rows = await active();
-      assert(rows.length <= 1, "ambiguous owned Runtime update blocker");
-      if (rows.length) {
-        const [{ cancelled }] =
-          await read(`SELECT pg_cancel_backend(pid) AS cancelled
+      const errors = [];
+      try {
+        const rows = await active();
+        assert(rows.length <= 1, "ambiguous owned Runtime update blocker");
+        if (rows.length) {
+          const [{ cancelled }] =
+            await read(`SELECT pg_cancel_backend(pid) AS cancelled
         FROM pg_stat_activity WHERE pid=${rows[0].pid} AND application_name=${literal(name)}`);
-        assert.equal(cancelled, true);
+          assert.equal(cancelled, true);
+        }
+      } catch (error) {
+        errors.push(error);
       }
+      // Observation or cancellation failure cannot abandon the original exec.
+      // Its PostgreSQL statement deadline remains a separate finite backstop.
       const result = await original;
-      await until(
-        async () => (await active()).length === 0,
-        "Runtime update blocker connection joined",
-        undefined,
-        5000,
-      );
-      assert(
-        result.error,
-        "Runtime update blocker ended without explicit release",
-      );
-      assert.match(
-        result.error.message,
-        /canceling statement due to user request/u,
-      );
+      try {
+        await until(
+          async () => (await active()).length === 0,
+          "Runtime update blocker connection joined",
+          undefined,
+          5000,
+        );
+      } catch (error) {
+        errors.push(error);
+      }
+      if (!result.error)
+        errors.push(
+          new Error("Runtime update blocker ended without explicit release"),
+        );
+      else if (
+        !/canceling statement due to user request/u.test(result.error.message)
+      )
+        errors.push(result.error);
+      if (errors.length)
+        throw new AggregateError(
+          errors,
+          "Runtime update blocker cleanup failed",
+        );
     })());
   try {
     const row = await until(
@@ -434,7 +450,7 @@ export async function verifyOwnerInstallRecovery({
     agentId: fixture.agentID,
     signal,
   });
-  let receipt, fenced;
+  let receipt, fenced, checkpointFailure;
   try {
     const automatic = await policy("auto");
     assert.equal(automatic.policy.mode, "auto");
@@ -503,9 +519,21 @@ export async function verifyOwnerInstallRecovery({
       blocker: { pid: blocker.pid, backend_start: blocker.backend_start },
       waiters,
     };
+  } catch (error) {
+    checkpointFailure = error;
   } finally {
-    await blocker.release();
+    try {
+      await blocker.release();
+    } catch (cleanupError) {
+      if (checkpointFailure)
+        throw new AggregateError(
+          [checkpointFailure, cleanupError],
+          "Runtime isolation checkpoint and cleanup failed",
+        );
+      throw cleanupError;
+    }
   }
+  if (checkpointFailure) throw checkpointFailure;
   assert.equal(receipt.policy_mode, "auto");
   assert.equal(receipt.manual, false);
   assert.equal(receipt.runtime_revision, install.runtime_revision);
