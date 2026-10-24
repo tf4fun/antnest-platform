@@ -2,7 +2,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, expect, test, vi } from "vitest";
 import BridgeApp from "./BridgeApp";
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(async () => {
+  cleanup();
+  await vi.dynamicImportSettled();
+  vi.unstubAllGlobals();
+});
 
 test.each(["antnest_csrf", "__Host-antnest_csrf"])("Bridge page uses HTTP/SSE and %s for authenticated mutations", async (cookieName) => {
   window.history.replaceState(null, "", "/workspace/agent-1/sessions/session-1");
@@ -71,8 +75,24 @@ test.each(["antnest_csrf", "__Host-antnest_csrf"])("Bridge page uses HTTP/SSE an
     }
     throw new Error(`Unexpected Bridge request ${url}`);
   }));
-  render(<BridgeApp />);
-  expect(await screen.findByText("Answer")).toBeTruthy();
+  const app = render(<BridgeApp />);
+  await waitFor(() => {
+    expect(eventSources).toEqual([expect.stringContaining("/agents/agent-1/events")]);
+    expect(screen.queryByText("Opening conversation") ?? screen.queryByText("Answer")).not.toBeNull();
+  });
+  // Join the real lazy renderer after its first render has started the import.
+  // The response assertion must not measure Vitest's cold module transformation.
+  await act(async () => { await import("./components/Conversation"); });
+  expect(await screen.findByText("Answer", {}, {
+    onTimeout(error) {
+      const thread = app.container.querySelector('[role="region"][aria-label="Conversation messages"]');
+      return new Error(`Initial Answer missing: ${JSON.stringify({
+        requests, viewProduced: typeof initialView !== "undefined", eventSources,
+        threadText: thread?.textContent?.slice(0, 500),
+        alerts: [...app.container.querySelectorAll('[role="alert"]')].map((node) => node.textContent),
+      })}`, { cause: error });
+    },
+  })).toBeTruthy();
   expect(screen.getAllByText("Question").length).toBeGreaterThan(0);
   expect(socket).not.toHaveBeenCalled();
   expect(requests.some((url) => url.includes("/v1/acp"))).toBe(false);
