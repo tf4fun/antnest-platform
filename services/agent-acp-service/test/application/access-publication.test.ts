@@ -46,10 +46,11 @@ describe("configuration publication access effects", () => {
     const execute = vi.fn<RunExecutionPort["execute"]>(() => done.promise);
     const supervisor = new RunSupervisor({ execute });
     const run = await supervisor.submit(submission(), () => Promise.resolve(accepted()));
+    const revocations: Promise<void>[] = [];
     try {
-      supervisor.revokeAccess(revoked);
+      revocations.push(supervisor.revokeAccess(revoked));
       expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(true);
-      supervisor.revokeAccess(executionConfiguration());
+      revocations.push(supervisor.revokeAccess(executionConfiguration()));
       expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(true);
       await expect(
         supervisor.submit(submission(), () => Promise.resolve(accepted())),
@@ -57,6 +58,7 @@ describe("configuration publication access effects", () => {
     } finally {
       done.resolve(completed);
       await run.completion;
+      await Promise.all(revocations);
     }
   });
 
@@ -70,13 +72,15 @@ describe("configuration publication access effects", () => {
       return gate.promise;
     });
     await accepting.promise;
+    const revocations: Promise<void>[] = [];
     try {
-      supervisor.revokeAccess(revoked);
+      revocations.push(supervisor.revokeAccess(revoked));
     } finally {
       gate.resolve(accepted());
       await (
         await pending
       ).completion;
+      await Promise.all(revocations);
     }
     expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(true);
   });
@@ -86,16 +90,18 @@ describe("configuration publication access effects", () => {
     const execute = vi.fn<RunExecutionPort["execute"]>(() => done.promise);
     const supervisor = new RunSupervisor({ execute });
     const run = await supervisor.submit(submission(), () => Promise.resolve(accepted()));
+    const revocations: Promise<void>[] = [];
     try {
       const changed = executionConfiguration();
       changed.agents[0]!.accepting_runs = false;
       delete changed.agents[0]!.runtime?.credential;
-      supervisor.revokeAccess(changed);
-      supervisor.revokeAccess({ ...revoked, organization_id: "organization-2" });
+      revocations.push(supervisor.revokeAccess(changed));
+      revocations.push(supervisor.revokeAccess({ ...revoked, organization_id: "organization-2" }));
       expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(false);
     } finally {
       done.resolve(completed);
       await run.completion;
+      await Promise.all(revocations);
     }
   });
 
@@ -114,8 +120,9 @@ describe("configuration publication access effects", () => {
       initialState: idle,
       onFailure,
     });
+    const revocations: Promise<void>[] = [];
     try {
-      streams.revokeAccess(revoked);
+      revocations.push(streams.revokeAccess(revoked));
       await attachment;
       blocked.resolve({ sequence: 1, events: [message("private")], state: idle });
       await streams.flush("session");
@@ -125,6 +132,7 @@ describe("configuration publication access effects", () => {
       streams.disconnect("connection");
       blocked.resolve({ sequence: 0, events: [], state: idle });
       await attachment;
+      await Promise.all(revocations);
     }
   });
 
@@ -151,9 +159,10 @@ describe("configuration publication access effects", () => {
       initialState: idle,
       onFailure: vi.fn(),
     });
+    const revocations: Promise<void>[] = [];
     try {
       await entered.promise;
-      streams.revokeAccess(revoked);
+      revocations.push(streams.revokeAccess(revoked));
       await attachment;
       blocked.resolve();
       await streams.flush("session");
@@ -162,6 +171,7 @@ describe("configuration publication access effects", () => {
       streams.disconnect("connection");
       blocked.resolve();
       await attachment;
+      await Promise.all(revocations);
     }
   });
 

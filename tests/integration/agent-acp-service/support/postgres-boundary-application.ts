@@ -135,10 +135,15 @@ export async function startBoundaryApplication(
     kernel,
     new SecretBox(encryptionKey),
   );
+  const revocations: Promise<PromiseSettledResult<void>[]>[] = [];
   const revoke = (snapshot: ExecutionAccessSnapshot) => {
-    supervisor.revokeAccess(snapshot);
     permissions.revokeAccess(snapshot);
-    outputs.revokeAccess(snapshot);
+    revocations.push(
+      Promise.allSettled([
+        supervisor.revokeAccess(snapshot),
+        outputs.revokeAccess(snapshot),
+      ]),
+    );
   };
   const connections = runtimeConnections();
   const directory = new ExecutionDirectory({
@@ -277,7 +282,16 @@ export async function startBoundaryApplication(
     for (const client of clients) await client.close();
     await server.close();
     await supervisor.shutdown();
+    const revoked = (await Promise.all(revocations)).flat();
     await connections.close();
+    const failed = revoked.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failed.length)
+      throw new AggregateError(
+        failed.map((result) => result.reason as unknown),
+        "Boundary fixture revocation cleanup failed",
+      );
   }
   try {
     await directory.apply(configuration);

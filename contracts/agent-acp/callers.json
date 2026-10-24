@@ -176,15 +176,33 @@
       "authentication": "deny",
       "caller_context": {},
       "request_body": "none"
+    },
+    "POST /internal/acp-peer/identity": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "none"
+      },
+      "request_body": "json",
+      "notes": "Dedicated peer listener only. Requires the configured directional member credential; mTLS additionally verifies the ACP workload certificate. Ordinary service tokens and user CCTs cannot authorize peer calls. Source member, fixed membership digest, target identity and deadline are checked before dispatch."
+    },
+    "POST /internal/acp-peer/publications/apply": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "none"
+      },
+      "request_body": "json",
+      "notes": "Dedicated peer listener only. Requires the configured directional member credential; mTLS additionally verifies the ACP workload certificate. Ordinary service tokens and user CCTs cannot authorize peer calls. Source member, fixed membership digest, target identity and deadline are checked before dispatch."
     }
   },
   "guarded_sources": {
     "services/agent-acp-service/src/transport/acp/http-transport.ts": {
-      "sha256": "b2988e16b21c33455bb900d2da23f370322d98c27c6682eec19463bd7ddc3554",
+      "sha256": "d0ff8edef67019bbc22be22a5094654f134c2d9323c5b6e3b1d366d012c9ece3",
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
-      "sha256": "29b53d4434602b23cd49030fec368719ea0e05fb42946d124cb715e9aa8eb91a",
+      "sha256": "4d776e491e535b143012c8d8900339f02f7b2f21beec0deb24989243831d52d5",
       "routes": [
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/watch-agent-execution-state"
@@ -214,7 +232,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "9b44b047117d6fea97cb336391ca75c9196e2c7f7cdff41d79f3afc09e2a37d0",
+      "sha256": "c7401a7fdb85a2bfd1c55dad69ea8a678ae0c4cf75cd92658ac3dd7560f6c355",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -266,7 +284,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/acp/validated-node-handler.ts": {
-      "sha256": "20b2bca7f0930285dcb6b20f321f67c1ec0911887a016226f8be57c93ee178d3",
+      "sha256": "ee80f664869ae7b6fa40a8434323ff674f87a980ea1cd6df69faed2647f2f57e",
       "routes": []
     },
     "services/agent-acp-service/src/transport/trusted-identity.ts": {
@@ -282,6 +300,13 @@
       "routes": [
         "POST /internal/acp-owner/incarnation/probe",
         "* /internal/acp-owner/incarnation/probe"
+      ]
+    },
+    "services/agent-acp-service/src/transport/peer-server.ts": {
+      "sha256": "a0921858c140ef7de3bc6548af2bb561ada248ca6c75c2cd0752bed815c70a42",
+      "routes": [
+        "POST /internal/acp-peer/identity",
+        "POST /internal/acp-peer/publications/apply"
       ]
     }
   }

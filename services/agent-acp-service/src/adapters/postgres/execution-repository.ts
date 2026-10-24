@@ -128,7 +128,7 @@ export class PostgresExecutionRepository
 
   public async listRecoveryWork(scope?: AgentOwnershipScope): Promise<RecoveryWork[]> {
     const fixed = scope === undefined ? undefined : ownershipScope(scope);
-    this.#authority.assertLegacyRecovery();
+    this.#authority.assertLegacyRecovery(fixed);
     return this.#authority.transaction(this.kernel, async (client) => {
       const result = await client.query<RecoveryWork & RunOwnerColumns>(
         `SELECT id, state AS kind, organization_id, agent_id, execution_owner_registration_id,

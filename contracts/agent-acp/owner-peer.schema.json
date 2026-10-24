@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.dev/contracts/agent-acp/owner-peer.schema.json",
+  "title": "ACP private owner peer coordination, version 1",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "member_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "deadline": {
+      "type": "string",
+      "maxLength": 40,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+    },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registration_id", "member_id", "incarnation_id"],
+      "properties": {
+        "registration_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "member_id": {
+          "$ref": "#/$defs/member_id"
+        },
+        "incarnation_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization_id", "revision", "authority_sha256"],
+      "properties": {
+        "organization_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "authority_sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "owned_agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "epoch"],
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 19,
+          "pattern": "^[1-9][0-9]*$",
+          "description": "Also enforce the semantic upper bound 9223372036854775807 before constructing a lease fence."
+        }
+      }
+    },
+    "identity_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "deadline_at",
+        "membership_sha256",
+        "source",
+        "target_member_id",
+        "challenge"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "deadline_at": {
+          "$ref": "#/$defs/deadline"
+        },
+        "membership_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "source": {
+          "$ref": "#/$defs/registration"
+        },
+        "target_member_id": {
+          "$ref": "#/$defs/member_id"
+        },
+        "challenge": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "identity_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "membership_sha256",
+        "challenge",
+        "registration"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "membership_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "challenge": {
+          "$ref": "#/$defs/digest"
+        },
+        "registration": {
+          "$ref": "#/$defs/registration"
+        }
+      }
+    },
+    "publication_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "deadline_at",
+        "membership_sha256",
+        "source",
+        "target",
+        "publication",
+        "hop"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "deadline_at": {
+          "$ref": "#/$defs/deadline"
+        },
+        "membership_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "source": {
+          "$ref": "#/$defs/registration"
+        },
+        "target": {
+          "$ref": "#/$defs/registration"
+        },
+        "publication": {
+          "$ref": "#/$defs/publication"
+        },
+        "hop": {
+          "const": 1
+        }
+      }
+    },
+    "publication_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "membership_sha256",
+        "publication",
+        "registration",
+        "status",
+        "revocation",
+        "owned_agents"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "membership_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "publication": {
+          "$ref": "#/$defs/publication"
+        },
+        "registration": {
+          "$ref": "#/$defs/registration"
+        },
+        "status": {
+          "const": "applied"
+        },
+        "revocation": {
+          "const": "joined"
+        },
+        "owned_agents": {
+          "type": "array",
+          "maxItems": 65536,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/owned_agent"
+          }
+        }
+      }
+    },
+    "membership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "cluster_id", "members"],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "cluster_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["member_id", "origin"],
+            "properties": {
+              "member_id": {
+                "$ref": "#/$defs/member_id"
+              },
+              "origin": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 2048,
+                "description": "Operator-owned canonical http(s) origin; no userinfo, path, query, fragment or redirects. Member ids and origins must both be unique."
+              }
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "retryable"],
+          "properties": {
+            "code": {
+              "enum": [
+                "service_unauthenticated",
+                "caller_not_allowed",
+                "invalid_request",
+                "unsupported_media_type",
+                "request_too_large",
+                "acp_peer_membership_conflict",
+                "acp_peer_incarnation_mismatch",
+                "acp_peer_hop_rejected",
+                "route_not_found",
+                "method_not_allowed"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "retryable": {
+              "const": false
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "retryable"],
+          "properties": {
+            "code": {
+              "enum": [
+                "configuration_unavailable",
+                "deadline_exceeded",
+                "internal_error"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "retryable": {
+              "const": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

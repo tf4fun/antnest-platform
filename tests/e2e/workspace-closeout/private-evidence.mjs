@@ -300,16 +300,16 @@ function workspaceAdmission(result, { requireTrace }) {
     ["session/load", "session/prompt", "session/prompt"],
     ["session/load", "session/prompt"],
     ["session/load"],
-    ["session/load", "session/prompt", "session/prompt"],
+    ["session/load", "session/prompt"],
   ];
   const sessions = [
     [first, second, first],
     [second, second, second],
     [second, second],
     [second],
-    [second, second, second],
+    [second, second],
   ];
-  assert.equal(work.observations.length, 12);
+  assert.equal(work.observations.length, 11);
   unique(work.observations.map(workspaceRequestKey));
   const notes = new Map(
     work.observations.map((row) => [workspaceRequestKey(row), row]),
@@ -337,20 +337,19 @@ function workspaceAdmission(result, { requireTrace }) {
       return projectWorkspaceRequest(connection, row, note);
     });
   });
-  assert.equal(rows.length, 17);
+  assert.equal(rows.length, 16);
   equal(
     rows.filter((row) => row.phase).map((row) => row.phase),
     phases,
   );
   equal(
     rows.filter((row) => row.rejection).map((row) => row.rejection),
-    ["agent_busy", "runtime_barrier_required", "access_denied"],
+    ["agent_busy", "runtime_barrier_required"],
   );
   equal(
     rows.filter((row) => row.probe).map((row) => row.rejection),
-    ["access_denied"],
+    [],
   );
-  assert.equal(rows.at(-1).probe, true);
   const requests = requireTrace ? result.request_traces : [];
   if (requireTrace) assert.equal(requests.length, rows.length);
   const prompts = [],
@@ -754,6 +753,54 @@ function workspaceAdmission(result, { requireTrace }) {
   const offboarding = work.offboarding[0],
     offboard = requireTrace ? result.offboarding_traces[0] : undefined,
     revoked = work.business.revocation;
+  const probe = revoked.closed_connection_probe,
+    connection = connections[4];
+  assert(probe, "original no-wire revocation probe required");
+  equal(Object.keys(probe).sort(), [
+    "agentId",
+    "cleanup_joined",
+    "close",
+    "connectionTraceID",
+    "deadline_at",
+    "method",
+    "post_close_request_sent",
+    "raw_frame_count_after",
+    "raw_frame_count_before",
+    "request_count_after",
+    "request_count_before",
+    "sessionId",
+    "started_at",
+    "version",
+  ]);
+  assert.equal(probe.version, 1);
+  assert.equal(probe.agentId, result.agent_id);
+  assert.equal(probe.connectionTraceID, connection.connectionTraceID);
+  assert.equal(probe.sessionId, second);
+  assert.equal(probe.method, "session/prompt");
+  assert.equal(
+    probe.started_at,
+    work.watch_windows[1].revocationStart.observedAt,
+  );
+  assert(Number.isSafeInteger(probe.started_at));
+  assert.equal(probe.deadline_at, probe.started_at + 30000);
+  equal(probe.close, connection.close_receipt);
+  assert.equal(probe.close.localClose, false);
+  // The service may revoke with socket.destroy(); 1006 is valid only with
+  // this original remote receipt and every independent business check below.
+  assert([1000, 1005, 1006].includes(probe.close.code));
+  assert(
+    Number.isSafeInteger(probe.close.at) &&
+      probe.close.at >= probe.started_at &&
+      probe.close.at <= probe.deadline_at,
+    "old connection closed outside the revocation window",
+  );
+  assert.equal(probe.cleanup_joined, true);
+  assert.equal(connection.closed, true);
+  assert.equal(probe.request_count_before, connection.requests.length);
+  assert.equal(probe.request_count_after, probe.request_count_before);
+  assert.equal(probe.raw_frame_count_before, connection.raw_frames.length);
+  assert.equal(probe.raw_frame_count_after, probe.raw_frame_count_before);
+  assert.equal(probe.post_close_request_sent, false);
   assert.equal(offboarding.agentID, result.agent_id);
   equal(revoked.request, {
     path: `/api/admin/directory/users/${login.principal.user_id}/active`,
@@ -798,9 +845,11 @@ function workspaceAdmission(result, { requireTrace }) {
   const inventory = {
     connections: 5,
     initializations: 5,
-    business_requests: 12,
+    business_requests: 11,
     original_business_requests: 11,
+    wire_requests: 16,
     revocation_probes: 1,
+    revocation_probe_wire_requests: 0,
     sessions: 2,
     login_sessions: 1,
     runs: 3,

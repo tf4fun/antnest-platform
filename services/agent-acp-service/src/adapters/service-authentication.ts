@@ -268,10 +268,36 @@ export class ServiceAuthentication {
   }
 
   public fetchFor(receiver: string, rawOrigin: string): typeof fetch {
+    if (!SERVICES.includes(receiver) || receiver === this.service)
+      throw new Error("dependency_origin_invalid");
+    return this.createFetcher(
+      receiver,
+      rawOrigin,
+      this.mode === "token" ? () => this.outgoingToken(receiver) : undefined,
+    );
+  }
+
+  public fetchForPeer(rawOrigin: string, credentialFile: string): typeof fetch {
+    if (this.service !== "agent-acp-service") throw new Error("dependency_origin_invalid");
+    return this.createFetcher("agent-acp-service", rawOrigin, () => {
+      const raw = readCredential(credentialFile, 86);
+      try {
+        const token = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+        if (!validateToken(token)) throw new Error("service_credential_invalid");
+        return token;
+      } catch {
+        throw new Error("service_credential_invalid");
+      }
+    });
+  }
+
+  private createFetcher(
+    receiver: string,
+    rawOrigin: string,
+    readToken: (() => string) | undefined,
+  ): typeof fetch {
     const origin = new URL(rawOrigin);
     if (
-      !SERVICES.includes(receiver) ||
-      receiver === this.service ||
       !["http:", "https:"].includes(origin.protocol) ||
       origin.username ||
       origin.password ||
@@ -282,7 +308,7 @@ export class ServiceAuthentication {
       (origin.protocol === "https:" && !this.tls)
     )
       throw new Error("dependency_origin_invalid");
-    if (this.mode === "token") this.outgoingToken(receiver);
+    readToken?.();
     const agent = new Agent({
       connect: {
         ...this.tls,
@@ -309,8 +335,8 @@ export class ServiceAuthentication {
       )
         throw new Error("dependency_origin_invalid");
       request.headers.delete(SERVICE_AUTH_HEADER);
-      if (this.mode === "token")
-        request.headers.set(SERVICE_AUTH_HEADER, `Bearer ${this.outgoingToken(receiver)}`);
+      if (readToken !== undefined)
+        request.headers.set(SERVICE_AUTH_HEADER, `Bearer ${readToken()}`);
       return (await undiciFetch(url.toString(), {
         method: request.method,
         headers: Object.fromEntries(request.headers),

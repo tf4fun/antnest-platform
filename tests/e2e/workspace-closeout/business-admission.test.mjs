@@ -43,6 +43,8 @@ function admit(result) {
   assert.equal(typeof implementation.inspectWorkspaceBusiness, "function");
   return implementation.inspectWorkspaceBusiness(result);
 }
+const revocationProbe = (result) =>
+  result.private_workspace.business.revocation.closed_connection_probe;
 test("Workspace business admits full protocol and resource proof without any collected Trace", async () => {
   const result = await fixture(),
     original = structuredClone(result);
@@ -51,7 +53,10 @@ test("Workspace business admits full protocol and resource proof without any col
   for (const [key, count] of Object.entries({
     connections: 5,
     initializations: 5,
-    business_requests: 12,
+    business_requests: 11,
+    wire_requests: 16,
+    revocation_probes: 1,
+    revocation_probe_wire_requests: 0,
     sessions: 2,
     runs: 3,
     provider_requests: 5,
@@ -100,6 +105,45 @@ for (const [name, mutate] of [
       r.private_connections.push(structuredClone(r.private_connections[0])),
   ],
   ["unrecorded request", (r) => r.private_connections[0].requests.pop()],
+  [
+    "missing no-wire revocation receipt",
+    (r) =>
+      delete r.private_workspace.business.revocation.closed_connection_probe,
+  ],
+  [
+    "local cleanup substituted for remote old-connection closure",
+    (r) => (revocationProbe(r).close.localClose = true),
+  ],
+  [
+    "old-connection closure predates revocation",
+    (r) => {
+      const probe = revocationProbe(r);
+      probe.close.at = probe.started_at - 1;
+    },
+  ],
+  [
+    "old-connection closure exceeds its bound",
+    (r) => {
+      const probe = revocationProbe(r);
+      probe.close.at = probe.deadline_at + 1;
+    },
+  ],
+  [
+    "old-connection cleanup is unfinished",
+    (r) => (revocationProbe(r).cleanup_joined = false),
+  ],
+  [
+    "post-close probe emitted a request",
+    (r) => revocationProbe(r).request_count_after++,
+  ],
+  [
+    "post-close probe emitted a raw frame",
+    (r) => revocationProbe(r).raw_frame_count_after++,
+  ],
+  [
+    "post-close probe has a wire receipt",
+    (r) => (revocationProbe(r).requestId = "invented"),
+  ],
   [
     "replaced login",
     (r) =>
@@ -183,6 +227,10 @@ for (const [name, mutate] of [
         r.private_connections[0].authority_scope),
   ],
   ["missing denied Resolve", (r) => r.private_authority_receipts.pop()],
+  [
+    "fresh same-scope connection was authorized",
+    (r) => (r.private_authority_receipts.at(-1).receipts[0].status = 200),
+  ],
   [
     "wrong cancellation Session",
     (r) => (r.private_notifications[0].sessionId = "foreign"),

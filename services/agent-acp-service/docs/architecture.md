@@ -19,9 +19,9 @@ resolution, without cloning or scanning the organization's Agent list.
 Commits for the same Agent remain ordered; a configuration publication waits
 for earlier Agent commits and blocks later commits until publication finishes.
 The [connection admission contract](../../../contracts/agent-acp/connection-admission.md)
-defines the shared HTTP/WebSocket quotas. These quotas remain process-local;
-the global database worker lock and single-instance restriction remain with
-registered owner mode.
+defines the shared HTTP/WebSocket quotas. These quotas remain process-local.
+Non-peer mode retains an exclusive database worker lock; registered peer mode
+uses the same key's shared compatibility lock and fixed Agent assignment.
 
 Run admission also reserves one durable slot per `(organization_id, agent_id)`.
 The intent transaction reads that scope from its locked Session, and PostgreSQL
@@ -34,7 +34,7 @@ retain the reservation until a terminal state commits. Terminal `unresolved`
 still requires the independent Runtime barrier checks before new effects.
 See the [durable admission contract](../../../contracts/agent-acp/run-admission.md).
 This persistence invariant alone does not provide leases, stale-owner fencing or
-multi-replica recovery; the exclusive worker lock remains in place.
+multi-replica recovery; partitioned execution also requires the peer ownership path below.
 
 The [Agent ownership contract](../../../contracts/agent-acp/agent-ownership.md)
 has a separate storage foundation: `agent_leases` persists one process
@@ -62,9 +62,22 @@ when timer callbacks are delayed. Normal drain keeps renewing until original
 work finishes. Local task diagnostics retain only the latest 16 failures; callers
 still receive their original operation failures. Production uses a 30-second
 lease, 10-second renewal interval and 10-second operation budget, without
-configuration settings for these values. Legacy compatibility writer authority
-still comes from the held global worker lock; work cancellation uses the entry
-signal, and Learning retains and joins original model work.
+configuration settings for these values. Non-peer legacy compatibility writer
+authority comes from the exclusive worker lock. Peer legacy Temporary cleanup
+uses the current Agent fence. Work cancellation uses the entry signal, and
+Learning retains and joins original model work.
+
+Peer production activates the [fixed membership stage](../../../contracts/agent-acp/owner-assignment.md).
+The full pinned member catalog determines each Agent's preferred member;
+publication, startup inventory and lifecycle settlement cannot acquire another
+member's scope. Fenced legacy authority preserves original null owner fields;
+it does not prove that historical execution stopped. New Prompts use the owned
+factory. Shared worker locks reject the old global Learning recovery helper.
+Unknown legacy execution remains protected without manufacturing quiescence,
+and peer mode does not start the legacy paused-Learning pipeline. A retained
+legacy running review can still occupy the global review slot; healthy foreground
+Prompts can continue. Versioned Skill Registry projection delivery remains an
+idempotent metadata outbox, rather than a fenced execution operation.
 
 `AgentApplicationRouter` implements the existing application port against those
 prepared graphs. It copies request data before authorization, routes by the trusted
@@ -73,17 +86,40 @@ Before invocation, missing ownership returns retryable `agent_unavailable`; afte
 invocation, ownership loss preserves the non-retryable recovery classification and
 closes only that Agent. `PromptCoordinator` has a scope-bound loss notification
 separate from the global persistence-failure callback; it does not await its own
-generation's close. Startup inventory isolates protected owned work and permits
-only approved scoped legacy recovery. `loadOwnedAuthority` rechecks sealed
+generation's close. Peer startup classifies assigned inventory under a current
+fence and recovers owned predecessors only with their stop proofs. Non-peer mode
+retains approved scoped legacy recovery. `loadOwnedAuthority` rechecks sealed
 configuration under the fixed fence before use.
 
 The ACK checks every accepting Agent outside configuration publication. Failure
 does not withdraw healthy applied configuration, but an organization-wide ACK
 does not guarantee that Controller independently marks a healthy new Agent ready.
-Predecessor Learning claim/global review-slot recovery, independent Runtime
-isolation, cross-owner ACKs and peers, and two-replica integration
-remain pending. The global worker lock and
-single-instance restriction stay in place.
+Before that check, publication joins the revoked Agents' original Runs, session
+output reads and sends, HTTP handlers, WebSocket tasks and retired generations.
+Closed responses alone are not completion receipts. Revocation starts during
+publication, but its join runs outside the publication queue so later revisions
+can progress. A later grant does not bypass an earlier unfinished revocation.
+Original Learning model transport cleanup failures are retained per organization
+and fail its ACK, as well as shutdown; unrelated healthy Agent execution remains
+available.
+
+Optional peer mode connects the private listener and membership pin to production
+bootstrap. Publication captures the frozen complete private authority inside the
+organization queue, then collects every member's receipt outside that queue using
+the original apply deadline. Each member reports only its own prepared accepting
+generations after original revocations have joined. A zero-owner member still
+checks the sealed authority and supplies a receipt. The sole aggregator verifies
+the complete fence union with the original authority in one final transaction;
+peer leaf application neither saves nor aggregates. Shutdown and failed startup
+join original peer handlers before shared resource cleanup.
+
+The composition tests cover original revocation joins and unknown legacy
+protection. `dual-process-publication.postgres.test.ts` additionally starts two
+actual `main.ts` processes from empty leases, publishes through one control
+endpoint, executes one durable Prompt per owner and checks original exits and
+resource cleanup. Its authenticated RC, Identity, Provider and Runtime peers
+are controlled fixtures. Non-owner forwarding, live-peer takeover and actual
+two-replica Docker integration remain pending; absent members stay in the catalog.
 
 ## Optional Incarnation Bootstrap
 
@@ -103,8 +139,8 @@ validated optional owner configuration
   -> independent Runtime Controller-only probe listener
   -> Runtime Controller registration and validated matching receipt
   -> PostgreSQL migration and readiness check
-  -> existing global worker lock
-  -> protected-owned inventory and approved scoped legacy recovery
+  -> same-key compatibility lock (peer shared / non-peer exclusive)
+  -> assigned owned stop-proof recovery and legacy protection in peer mode
   -> fixed Agent generations and sealed configuration restoration
   -> ordinary control/workspace listeners
 ```
@@ -185,10 +221,10 @@ Normal drain closes readiness but retains renewal while joining original work.
 
 Bootstrap is optional. Its validated identity now binds production Agent leases,
 fenced writers and scoped background work. Without owner settings, startup
-retains the legacy path. The global worker lock, single-instance restriction and
-independent ownership-loss fail-stop channel remain; connected generations and
-scoped recovery do not complete independent Runtime isolation, cross-owner ACKs
-and peers, or two-replica integration.
+retains the legacy path. Non-peer mode remains exclusive; peer mode partitions
+Agents under the shared compatibility lock. The independent ownership-loss
+fail-stop channel remains. Non-owner forwarding, crash takeover and actual
+two-replica Docker integration remain required.
 
 ## Mission
 
@@ -509,6 +545,7 @@ owner_stop_receipts
 run_owner_recoveries
 learning_owner_recoveries
 learning_runtime_protections
+acp_peer_membership
 ```
 
 There are no cross-service foreign keys, views, triggers, or SQL queries.
@@ -530,9 +567,10 @@ The original cancellation signals and copied request/decision payload survive
 lock or approval waits. Global startup cancellation remains legacy-only: it
 rejects a selected owned Run and updates only its locked set of pending requests.
 Registered owner mode captures the generation in production and cancels abandoned
-legacy permissions only within approved scopes. Predecessor Run recovery uses the
-dedicated stopped-proof transaction. Independent Runtime isolation,
-cross-owner ACKs and peers, and two-replica integration remain pending.
+legacy permissions only within approved scopes in non-peer mode. Peer mode
+preserves unknown legacy permissions. Predecessor Run recovery uses the dedicated
+stopped-proof transaction. Non-owner forwarding, crash takeover and actual
+two-replica Docker integration remain pending.
 
 ## Module Map
 
@@ -651,9 +689,10 @@ model request, Tool dispatch or accepted prompt.
   The service emits idle/cancelled only after local executors become quiescent
   or records unresolved if that cannot be proven.
 
-The service permits one active Run worker per service database. Startup acquires a
+Non-peer mode permits one active Run worker per service database. Startup acquires a
 PostgreSQL session advisory lock on a dedicated connection before recovery and
-holds it until shutdown. A second worker fails startup; lock-connection loss
+holds it until shutdown. Peer workers share that key; non-peer workers require
+exclusive ownership. Conflicting lock modes fail startup. Lock-connection loss
 is detected by a same-session heartbeat and immediately closes admission,
 clears readiness and cancels startup recovery and local execution. Agent-local
 ownership loss still closes only the affected Agent. The global worker lock
@@ -701,10 +740,11 @@ to authenticate the encrypted configuration on the fenced transaction's own
 connection. It captures the fence before waiting and rejects a lease that
 expired during the wait; public projection alone is never executable authority.
 
-Registered owner startup now uses this inventory, approved scoped legacy
-recovery, fixed Agent components and scoped background dispatch. Owner-disabled
-startup keeps the global legacy path. A successful scoped cleanup does not
-prove that a previous owned executor has stopped.
+Registered non-peer startup uses this inventory and approved scoped legacy
+recovery. Peer startup classifies assigned inventory under a fence, preserves
+unknown legacy work, and uses existing stop proofs for owned recovery. Both use
+fixed Agent components and scoped background dispatch. Owner-disabled startup
+keeps the global legacy path. A lease or cleanup does not prove an executor stopped.
 
 Live ACP delivery uses a per-connection ordered output stream, not a second
 event journal. A single PostgreSQL statement reads visible messages after a
@@ -885,14 +925,16 @@ its original execution identity and frozen policy. Pause/resume preserves that
 claim and budget. A successor cannot resume a predecessor's claim or write its
 late receipts. Global startup recovery locks its selected running tasks, rejects
 owned work, and updates only the validated legacy set. Production now connects
-fixed generation dispatch and scoped legacy recovery. Legacy compatibility
-writes still use global worker-lock authority, while work cancellation uses
-the entry signal and Learning retains and joins original model work.
+fixed generation dispatch and scoped recovery. Non-peer legacy compatibility
+writes use exclusive worker-lock authority. Peer mode disables legacy paused
+recovery and fences Temporary writes; unknown legacy running reviews can retain
+the global review slot. Work cancellation uses the entry signal and Learning
+retains and joins original model work.
 Production component tests hold a real Provider transport close during legacy
 and owned shutdown, and expire Agent A's lease while Agent B completes a real
 foreground Run. Warm startup also consumes stopped Learning claim recovery before
-new foreground work, retaining original costs and history without replay. Actual
-Runtime isolation, cross-owner ACKs and peers, and two-replica integration remain pending.
+new foreground work, retaining original costs and history without replay.
+Non-owner forwarding, crash takeover and two-replica Docker integration remain pending.
 Foreground isolation does not establish another Agent's background claim recovery.
 
 ## Workspace Bridge Extension

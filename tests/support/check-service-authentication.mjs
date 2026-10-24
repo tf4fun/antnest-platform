@@ -232,6 +232,17 @@ export async function checkRepository({
         );
       if (access.authentication === "public" && service !== "edge-gateway")
         errors.push(`${service}: ${route} cannot use public authentication`);
+      if (
+        access.authentication === "peer-member" &&
+        (service !== "agent-acp-service" ||
+          !/^(?:POST|UPGRADE) \/internal\/acp-peer\/[a-z0-9/-]+$/u.test(
+            route,
+          ) ||
+          JSON.stringify(callers) !== '["agent-acp-service"]')
+      )
+        errors.push(
+          `${service}: ${route} invalid peer-member credential boundary`,
+        );
       if (access.authentication === "delegate" && !route.startsWith("* "))
         errors.push(
           `${service}: ${route} cannot delegate an exact business route`,

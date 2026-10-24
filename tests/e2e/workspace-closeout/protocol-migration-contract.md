@@ -48,10 +48,11 @@ The cancel is one actual `session/cancel` notification, without a request ID or
 invented reply. Preserve its original notification receipt and complete server
 transaction evidence. It is separate from the eleven business requests. The
 post-revocation private Prompt probe and denied new connection are separate.
-The probe is one additional actual RPC with an `access_denied` response and
-zero execution effects; a denied Resolve must not count as a successful
-connection or initialize. Archive all twelve business wire requests, retaining
-the original eleven scenario requests as their own inventory.
+The probe follows the original connection's remote termination and joined
+cleanup. Its rejected wrapper call must add no wire request or response. Archive
+that independent termination/probe receipt separately from the eleven business
+wire requests and five initializes: sixteen actual wire requests in total. A
+denied Resolve must not count as a successful connection or initialize.
 
 Every initialized connection preserves actual wire request IDs, raw responses
 and notifications, original request inputs/results and the complete cleanup
@@ -102,10 +103,15 @@ The live state watch must emit the complete sanitized terminal view:
 `configuration_revision: null` and `unavailable_reason: access_denied`, with
 the original `agent_id`, then reach remote EOF within the observed revocation
 window. It is neither `workspace_error` nor a local cleanup cancellation.
-Using the existing connection and its original CCT, send one actual Prompt and
-require its wire `access_denied` JSON-RPC response. Preserve that response and
-prove no new Run, Provider or Tool activity. Only after these observations may
-the consumer close and join the idle private WebSocket.
+Before local cleanup, wait for the existing private connection's actual remote
+close. Require `localClose: false` and an observed close time after the original
+revocation trigger and within its thirty-second window. Join `closeAndWait()`
+and preserve that original close receipt; local close or cleanup alone cannot
+prove remote revocation. Then call Prompt for the same Session through the old
+client and require rejection with unchanged outgoing request and raw-frame
+inventories. This wrapper guard probe has no request ID, JSON-RPC rejection or
+Trace requirement. Preserve its independent receipt and prove no new Run,
+Provider or Tool activity.
 
 A new connection attempt must preserve Identity's actual workspace Resolve
 denial, including status, original body and actual exported Identity HTTP
@@ -115,7 +121,8 @@ response header; preserve its observed absence, and require a matching Trace
 if a header is present. A generic thrown Error, dependency 503, network failure,
 caller abort or expired CCT cannot substitute for the original revocation
 evidence. ACP's existing `1008 caller_context_expired` policy is unchanged;
-this migration adds no new idle-WebSocket revocation behavior.
+the private owner closes and joins revoked connections under its publication
+contract, without a new client-side idle policy.
 
 Automatic offboarding disables the Runtime while retaining the workspace and
 current Skill set. Preserve the original owner `active: false` request and its
@@ -131,9 +138,10 @@ sees the retained unknown call across revisions; it requires
 `runtime_barrier_required`. Each operation accepts its exact expected outcome,
 never `not_settled` or a choice of either success outcome.
 
-Collect all five initialize, eleven original business and one revocation-probe
-request traces, the actual cancel notification, both state watches, offboarding
-and all four explicit lifecycle operations. Include the real connection Links
+Collect the sixteen actual request traces (five initialize and eleven business
+requests), the actual cancel notification, both state watches, offboarding
+and all four explicit lifecycle operations. Keep the no-wire revocation probe's
+termination receipt separately; it has no request trace. Include the real connection Links
 and original Identity
 sources. Private ACP ancestry starts at its exported CLIENT and actual ACP
 receiver; no retired Gateway forwarding or public watch Resolve chain is

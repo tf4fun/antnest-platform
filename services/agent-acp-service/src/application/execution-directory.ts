@@ -23,6 +23,10 @@ import type {
 import type { RuntimeBinding } from "../domain/types.js";
 import type { ProviderClients } from "./provider-clients.js";
 import { InvalidationListeners } from "./invalidation-listeners.js";
+import {
+  executionPublication,
+  parseExecutionPublication,
+} from "../domain/execution-publication.js";
 
 export type ExecutionDirectoryDependencies = {
   repository: ExecutionConfigurationRepository;
@@ -30,6 +34,7 @@ export type ExecutionDirectoryDependencies = {
   runtimeConnections: RuntimeConnectionAuthority;
   onApplied: (configuration: PublicExecutionConfiguration) => Promise<void>;
   beforeAck?: (configuration: PublicExecutionConfiguration) => Promise<void>;
+  beforePeerAck?: (publication: LocalExecutionPublication, deadline: Date) => Promise<void>;
   onUnavailable: (organizationId: string) => void;
   onPublished?: (organizationId: string) => void;
   onInvalidAuthority?: (organizationId: string) => void;
@@ -42,10 +47,17 @@ export type ClosedAgentOperation = {
   operationId: string;
 };
 
+export type LocalExecutionPublication = Readonly<{
+  configuration: PublicExecutionConfiguration;
+  authority: ExecutionConfiguration;
+  assertCurrent: () => void;
+}>;
+
 class SupersededRestoration extends Error {}
 
 export class ExecutionDirectory {
   private readonly configurations = new Map<string, PublicExecutionConfiguration>();
+  private readonly publications = new Map<string, LocalExecutionPublication>();
   private readonly pending = new Map<
     string,
     { publication: Promise<void> | undefined; agents: Map<string, Promise<void>> }
@@ -129,9 +141,11 @@ export class ExecutionDirectory {
   public async apply(
     input: unknown,
   ): Promise<{ organization_id: string; applied_revision: number }> {
+    const deadline = new Date(Date.now() + 10000);
     const configuration = parseExecutionConfiguration(input);
     const beforeAck = this.dependencies.beforeAck;
-    if (beforeAck === undefined)
+    const beforePeerAck = this.dependencies.beforePeerAck;
+    if (beforeAck === undefined && beforePeerAck === undefined)
       return this.authorized(configuration.organization_id, undefined, () =>
         this.applyCurrent(configuration),
       );
@@ -140,8 +154,11 @@ export class ExecutionDirectory {
       undefined,
       async () => {
         const applied = await this.applyCurrent(configuration);
-        const publication = this.configurations.get(applied.organization_id);
-        if (publication === undefined || publication.revision !== applied.applied_revision)
+        const publication = this.publications.get(applied.organization_id);
+        if (
+          publication === undefined ||
+          publication.configuration.revision !== applied.applied_revision
+        )
           throw new DomainError(
             "configuration_unavailable",
             "Execution configuration is unavailable",
@@ -151,13 +168,41 @@ export class ExecutionDirectory {
     );
     // Owner proof may await Agent work. Release the publication boundary first
     // so healthy Agents and later configuration changes can continue.
-    await beforeAck(publication);
-    if (
-      this.configurations.get(applied.organization_id) !== publication ||
-      this.pending.get(applied.organization_id)?.publication !== undefined
-    )
-      throw new DomainError("configuration_unavailable", "Execution configuration is unavailable");
+    await beforeAck?.(publication.configuration);
+    await beforePeerAck?.(publication, deadline);
+    publication.assertCurrent();
     return applied;
+  }
+
+  /** Peer leaf: read the sealed publication, apply locally, and never aggregate or persist it. */
+  public async applyPeerPublication(input: unknown): Promise<LocalExecutionPublication> {
+    const expected = parseExecutionPublication(input);
+    return this.authorized(expected.organization_id, undefined, async () => {
+      const stored = await this.dependencies.repository.loadAuthority(expected.organization_id);
+      if (stored === null || !isDeepStrictEqual(executionPublication(stored), expected))
+        throw publicationUnavailable();
+      // Own this capture: neither an adapter nor a later caller may mutate the
+      // private payload that the final aggregate transaction must confirm.
+      const authority = parseExecutionConfiguration(stored);
+      if (!isDeepStrictEqual(executionPublication(authority), expected))
+        throw publicationUnavailable();
+      freezeAuthority(authority);
+      this.dependencies.clients.validate(authority);
+      const connections = this.dependencies.runtimeConnections.prepare(authority);
+      try {
+        await this.publish(authority, connections, async () => {
+          const current = await this.dependencies.repository.loadAuthority(
+            expected.organization_id,
+          );
+          if (!isDeepStrictEqual(current, authority)) throw publicationUnavailable();
+        });
+      } finally {
+        connections.rollback();
+      }
+      const capture = this.publications.get(expected.organization_id);
+      if (capture === undefined) throw publicationUnavailable();
+      return capture;
+    });
   }
 
   // Serialize local commits per Agent. A configuration publication waits for
@@ -291,7 +336,11 @@ export class ExecutionDirectory {
         throw error;
       }
       // Equal-revision replay still verifies private identity and sender files.
-      if (applied?.revision === next.revision && this.dependencies.beforeAck === undefined) {
+      if (
+        applied?.revision === next.revision &&
+        this.dependencies.beforeAck === undefined &&
+        this.dependencies.beforePeerAck === undefined
+      ) {
         connections.commit();
         return { organization_id: organizationId, applied_revision: next.revision };
       }
@@ -308,7 +357,9 @@ export class ExecutionDirectory {
     beforeCommit?: () => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const next = freezeExecutionConfiguration(publicExecutionConfiguration(incoming));
+    const authority = parseExecutionConfiguration(incoming);
+    freezeAuthority(authority);
+    const next = freezeExecutionConfiguration(publicExecutionConfiguration(authority));
     const organizationId = incoming.organization_id;
     try {
       this.dependencies.clients.apply(incoming);
@@ -318,6 +369,18 @@ export class ExecutionDirectory {
       signal?.throwIfAborted();
       connections.commit();
       this.configurations.set(organizationId, next);
+      const capture: LocalExecutionPublication = Object.freeze({
+        configuration: next,
+        authority,
+        assertCurrent: () => {
+          if (
+            this.publications.get(organizationId) !== capture ||
+            this.pending.get(organizationId)?.publication !== undefined
+          )
+            throw publicationUnavailable();
+        },
+      });
+      this.publications.set(organizationId, capture);
       this.changes.invalidate(organizationId);
       this.dependencies.onPublished?.(organizationId);
     } catch (error) {
@@ -328,6 +391,7 @@ export class ExecutionDirectory {
 
   private withdraw(organizationId: string): void {
     this.configurations.delete(organizationId);
+    this.publications.delete(organizationId);
     this.dependencies.runtimeConnections.revokePublication(organizationId);
     try {
       this.dependencies.onUnavailable(organizationId);
@@ -396,4 +460,14 @@ export class ExecutionDirectory {
         this.pending.delete(organizationId);
     }
   }
+}
+
+function publicationUnavailable(): DomainError {
+  return new DomainError("configuration_unavailable", "Execution publication changed");
+}
+
+function freezeAuthority(value: unknown): void {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return;
+  for (const child of Object.values(value)) freezeAuthority(child);
+  Object.freeze(value);
 }

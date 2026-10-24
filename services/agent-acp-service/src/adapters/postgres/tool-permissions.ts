@@ -100,7 +100,7 @@ export class PostgresToolPermissions implements PermissionRepository {
 
   public async cancelAbandoned(scope?: AgentOwnershipScope): Promise<void> {
     const fixed = scope === undefined ? undefined : ownershipScope(scope);
-    this.#authority.assertLegacyRecovery();
+    this.#authority.assertLegacyRecovery(fixed);
     await this.#authority.transaction(this.kernel, async (client) => {
       const pending = await client.query<
         RunOwnerColumns & { run_id: string; tool_call_id: string }

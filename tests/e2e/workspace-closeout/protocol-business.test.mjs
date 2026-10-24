@@ -64,16 +64,16 @@ test("Workspace retains original physical, audit and revocation proof without ne
     f.state.offboarding.disabledEvent.operation_request_id,
     "automatic-disable-request",
   );
-  assert.equal(f.requests.length, 17);
+  assert.equal(f.requests.length, 16);
   assert.equal(f.state.lifecycle.length, 4);
 });
 
-test("the actual Workspace business keeps five initialized connections, all seventeen RPCs and its physical recovery assertions", async () => {
+test("the actual Workspace business keeps sixteen wire RPCs and a separate no-wire revocation probe", async () => {
   const f = workspaceBusinessFixture();
   const result = await workspaceProtocolBusiness(f.input, f.work);
   assert.equal(f.clients.length, 5);
-  assert.equal(f.requests.length, 17);
-  assert.equal(f.observations.length, 12);
+  assert.equal(f.requests.length, 16);
+  assert.equal(f.observations.length, 11);
   assert.deepEqual(
     f.clients.map((client) => client.requests.map((row) => row.method)),
     [
@@ -81,7 +81,7 @@ test("the actual Workspace business keeps five initialized connections, all seve
       ["initialize", "session/load", "session/prompt", "session/prompt"],
       ["initialize", "session/load", "session/prompt"],
       ["initialize", "session/load"],
-      ["initialize", "session/load", "session/prompt", "session/prompt"],
+      ["initialize", "session/load", "session/prompt"],
     ],
   );
   assert.deepEqual(
@@ -104,6 +104,23 @@ test("the actual Workspace business keeps five initialized connections, all seve
   );
   assert.equal(f.state.deniedConnections.length, 1);
   assert.equal(f.state.probeRejected, true);
+  const probe = f.state.business.revocation.closed_connection_probe;
+  assert.equal(probe.close.localClose, false);
+  assert(probe.close.at >= probe.started_at);
+  assert(probe.close.at <= probe.deadline_at);
+  assert.equal(probe.cleanup_joined, true);
+  assert.equal(probe.post_close_request_sent, false);
+  assert.equal(probe.request_count_before, 3);
+  assert.equal(probe.request_count_after, 3);
+  assert.equal(probe.raw_frame_count_before, probe.raw_frame_count_after);
+  const remote = f.events.findIndex(([kind]) => kind === "remote-client-close");
+  const joined = f.events.findIndex(
+    ([kind, index]) => kind === "client-close" && index === 5,
+  );
+  assert(
+    remote >= 0 && joined > remote,
+    "remote closure must precede local cleanup",
+  );
   assert.equal(f.watches[0].closure.kind, "local-close");
   assert.equal(f.watches[1].closure.kind, "transport-end");
   assert.equal(f.state.offboarding.requestID, "automatic-disable-request");
@@ -174,7 +191,7 @@ test("revoked admission must not add an execution audit", async () => {
   assert.equal(f.state.deleted, false);
 });
 
-for (const phase of ["busy", "barrier", "revoked"])
+for (const phase of ["busy", "barrier"])
   test(`${phase} rejection validation retains the original Error and archive failures`, async () => {
     const f = workspaceBusinessFixture(),
       open = f.work.open;
@@ -191,9 +208,7 @@ for (const phase of ["busy", "barrier", "revoked"])
         const target =
           phase === "busy"
             ? f.clients.length === 2 && !f.state.cancelled
-            : phase === "barrier"
-              ? f.clients.length === 2 && f.state.cancelled
-              : f.state.revoked;
+            : f.clients.length === 2 && f.state.cancelled;
         return call[0] === "prompt" && target
           ? Promise.reject(original)
           : request(...call);
@@ -210,3 +225,126 @@ for (const phase of ["busy", "barrier", "revoked"])
       },
     );
   });
+
+for (const mode of ["local", "before-trigger", "late", "missing"])
+  test(`revocation rejects ${mode} old-connection closure evidence`, async () => {
+    const f = workspaceBusinessFixture(),
+      open = f.work.open;
+    f.work.open = async (...args) => {
+      const client = await open(...args),
+        wait = client.waitForClose;
+      if (client.index === 5)
+        client.waitForClose = async (...call) => {
+          if (mode === "missing")
+            throw new Error("original remote close is missing");
+          const receipt = await wait(...call);
+          if (mode === "local") receipt.localClose = true;
+          else
+            receipt.at =
+              f.state.revocationBegin.observedAt +
+              (mode === "before-trigger" ? -1 : 30_001);
+          return receipt;
+        };
+      return client;
+    };
+    await assert.rejects(workspaceProtocolBusiness(f.input, f.work));
+    assert.equal(f.state.deleted, false);
+    assert.equal(f.state.deniedConnections.length, 0);
+  });
+
+for (const wire of ["request", "frame"])
+  test(`a post-close probe must not add a wire ${wire}`, async () => {
+    const f = workspaceBusinessFixture(),
+      open = f.work.open;
+    f.work.open = async (...args) => {
+      const client = await open(...args),
+        request = client.request,
+        snapshot = client.snapshot;
+      let extraFrame = false;
+      if (client.index === 5) {
+        client.snapshot = () => {
+          const value = snapshot();
+          if (extraFrame)
+            value.raw_frames.push({ id: "unexpected", result: {} });
+          return value;
+        };
+        client.request = async (...call) => {
+          try {
+            return await request(...call);
+          } finally {
+            if (f.state.revoked) {
+              if (wire === "request")
+                client.requests.push({
+                  requestId: "unexpected",
+                  method: "session/prompt",
+                });
+              else extraFrame = true;
+            }
+          }
+        };
+      }
+      return client;
+    };
+    await assert.rejects(workspaceProtocolBusiness(f.input, f.work));
+    assert.equal(f.state.deleted, false);
+  });
+
+test("revocation joins the original old-connection cleanup before its probes", async () => {
+  const f = workspaceBusinessFixture(),
+    open = f.work.open;
+  const entered = Promise.withResolvers(),
+    cleanup = Promise.withResolvers();
+  f.work.open = async (...args) => {
+    const client = await open(...args),
+      close = client.closeAndWait;
+    if (client.index === 5)
+      client.closeAndWait = async () => {
+        const result = await close();
+        entered.resolve();
+        await cleanup.promise;
+        return result;
+      };
+    return client;
+  };
+  const business = workspaceProtocolBusiness(f.input, f.work);
+  try {
+    await Promise.race([
+      entered.promise,
+      business.then(() => {
+        throw new Error(
+          "business completed before original cleanup was joined",
+        );
+      }),
+    ]);
+    assert.equal(f.state.probeRejected, false);
+    assert.equal(f.state.deniedConnections.length, 0);
+    assert.equal(f.state.deleted, false);
+    cleanup.resolve();
+    await business;
+  } finally {
+    cleanup.resolve();
+    await business;
+  }
+});
+
+test("revocation keeps an original old-connection cleanup failure", async () => {
+  const f = workspaceBusinessFixture(),
+    open = f.work.open;
+  const sentinel = new Error("original old-connection cleanup failed");
+  f.work.open = async (...args) => {
+    const client = await open(...args),
+      close = client.closeAndWait;
+    if (client.index === 5)
+      client.closeAndWait = async () => {
+        await close();
+        if (f.state.revoked) throw sentinel;
+      };
+    return client;
+  };
+  await assert.rejects(
+    workspaceProtocolBusiness(f.input, f.work),
+    (error) => error === sentinel,
+  );
+  assert.equal(f.state.deleted, false);
+  assert.equal(f.state.deniedConnections.length, 0);
+});

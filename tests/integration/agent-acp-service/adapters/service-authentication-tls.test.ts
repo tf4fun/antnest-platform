@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createServer } from "node:https";
+import { createServer, request as httpsRequest } from "node:https";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,8 @@ import { once } from "node:events";
 import { randomBytes, createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { ServiceAuthentication } from "../../../../services/agent-acp-service/src/adapters/service-authentication.js";
+import { PeerAuthentication } from "../../../../services/agent-acp-service/src/adapters/peer-authentication.js";
+import { PeerServer } from "../../../../services/agent-acp-service/src/transport/peer-server.js";
 
 it.each(["token", "mtls"] as const)(
   "verifies real %s TLS peers and refuses a trusted certificate with another service URI",
@@ -14,6 +16,7 @@ it.each(["token", "mtls"] as const)(
     const directory = mkdtempSync(join(tmpdir(), "antnest-acp-tls-test-"));
     const clients: ServiceAuthentication[] = [];
     const servers: ReturnType<typeof createServer>[] = [];
+    const peerServers: PeerServer[] = [];
     const openssl = (...arguments_: string[]) =>
       execFileSync("openssl", arguments_, {
         cwd: directory,
@@ -48,10 +51,11 @@ it.each(["token", "mtls"] as const)(
         "agent-acp-service",
         "identity-service",
         "antnest-runtime",
+        "peer-wrong-host",
       ].entries()) {
         writeFileSync(
           join(directory, name + ".ext"),
-          `basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=DNS:localhost,IP:127.0.0.1,URI:antnest://service/${name}\n`,
+          `basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=${name === "peer-wrong-host" ? "DNS:wrong.internal,URI:antnest://service/agent-acp-service" : `DNS:localhost,IP:127.0.0.1,URI:antnest://service/${name}`}\n`,
         );
         openssl(
           "req",
@@ -120,6 +124,9 @@ it.each(["token", "mtls"] as const)(
         environment("agent-acp-service"),
       );
       clients.push(sender);
+      const pairToken = randomBytes(32).toString("base64url");
+      const pairFile = join(directory, "peer-pair-token");
+      writeFileSync(pairFile, pairToken, { mode: 0o600 });
       for (const service of ["identity-service", "antnest-runtime"]) {
         const receiver = new ServiceAuthentication(
           environment(service),
@@ -159,6 +166,178 @@ it.each(["token", "mtls"] as const)(
           ).rejects.toThrow();
           expect(requests).toBe(0);
         }
+        const beforePeer = requests;
+        expect(() => receiver.fetchForPeer(origin, pairFile)).toThrow(
+          "dependency_origin_invalid",
+        );
+        await expect(
+          sender.fetchForPeer(origin, pairFile)(origin, {
+            signal: AbortSignal.timeout(3000),
+          }),
+        ).rejects.toThrow();
+        expect(requests).toBe(beforePeer);
+      }
+      for (const certificate of ["agent-acp-service", "peer-wrong-host"]) {
+        const receiver = new ServiceAuthentication({
+          ...environment(certificate),
+          ANTNEST_TLS_SERVER_NAME:
+            certificate === "peer-wrong-host" ? "wrong.internal" : "localhost",
+        });
+        clients.push(receiver);
+        const holder: { peer?: PeerAuthentication } = {};
+        let requests = 0;
+        let accepted = 0;
+        const server = createServer(
+          receiver.serverTLS!,
+          (request, response) => {
+            requests++;
+            const admission = holder.peer?.authenticate(request);
+            if (admission?.code === null) accepted++;
+            response.writeHead(admission?.http_status ?? 503);
+            response.end(admission?.caller ?? "denied");
+          },
+        );
+        servers.push(server);
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const address = server.address();
+        if (!address || typeof address === "string")
+          throw new Error("No listener");
+        const origin = `https://127.0.0.1:${address.port}`;
+        const roster = join(directory, "peer-membership.json");
+        const callers = join(directory, "peer-callers.json");
+        const peerTokens = join(directory, "peer-tokens-" + certificate);
+        mkdirSync(peerTokens);
+        writeFileSync(
+          join(peerTokens, "acp-a"),
+          randomBytes(32).toString("base64url"),
+          { mode: 0o600 },
+        );
+        writeFileSync(
+          callers,
+          JSON.stringify({
+            "acp-a": [
+              `sha256:${createHash("sha256").update(pairToken).digest("hex")}`,
+            ],
+          }),
+          { mode: 0o600 },
+        );
+        writeFileSync(
+          roster,
+          JSON.stringify({
+            version: 1,
+            cluster_id: "10000000-0000-4000-8000-000000000001",
+            members: [
+              { member_id: "acp-a", origin: "https://acp-a.internal:8083" },
+              { member_id: "acp-b", origin },
+            ],
+          }),
+        );
+        holder.peer = new PeerAuthentication({
+          memberId: "acp-b",
+          membershipFile: roster,
+          callersFile: callers,
+          tokenDirectory: peerTokens,
+          workload: receiver,
+        });
+        const send = sender.fetchForPeer(origin, pairFile);
+        if (certificate === "peer-wrong-host") {
+          await expect(
+            send(origin, { signal: AbortSignal.timeout(3000) }),
+          ).rejects.toThrow();
+          expect(requests).toBe(0);
+          continue;
+        }
+        expect(
+          await (
+            await send(origin, { signal: AbortSignal.timeout(3000) })
+          ).text(),
+        ).toBe("acp-a");
+        expect(accepted).toBe(1);
+        const registration = {
+          registration_id: "10000000-0000-4000-8000-000000000001",
+          member_id: "acp-b",
+          incarnation_id: "10000000-0000-4000-8000-000000000002",
+        };
+        const peerServer = new PeerServer({
+          registration,
+          authentication: holder.peer,
+          apply: () => Promise.reject(new Error("Identity must not publish")),
+        });
+        peerServers.push(peerServer);
+        await peerServer.listen("127.0.0.1", 0);
+        const peerOrigin = `https://127.0.0.1:${peerServer.address()!.port}`;
+        const peerResponse = await sender.fetchForPeer(peerOrigin, pairFile)(
+          peerOrigin + "/internal/acp-peer/identity",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal: AbortSignal.timeout(3000),
+            body: JSON.stringify({
+              request_id: "10000000-0000-4000-8000-000000000003",
+              deadline_at: new Date(Date.now() + 2000).toISOString(),
+              membership_sha256: holder.peer.membership.sha256,
+              source: { ...registration, member_id: "acp-a" },
+              target_member_id: "acp-b",
+              challenge: "a".repeat(64),
+            }),
+          },
+        );
+        expect(peerResponse.status).toBe(200);
+        expect(await peerResponse.json()).toHaveProperty(
+          "registration",
+          registration,
+        );
+        const deniedStatus = await new Promise<number | undefined>(
+          (resolve, reject) => {
+            const request = httpsRequest(
+              origin,
+              { ...sender.serverTLS },
+              (response) => {
+                response.resume();
+                response.once("end", () => resolve(response.statusCode));
+              },
+            );
+            request.on("error", reject);
+            request.setTimeout(3000, () =>
+              request.destroy(new Error("test deadline")),
+            );
+            request.end();
+          },
+        );
+        expect(deniedStatus).toBe(401);
+        expect(accepted).toBe(1);
+        if (mode === "mtls") {
+          const other = new ServiceAuthentication(
+            environment("identity-service"),
+            "identity-service",
+          );
+          clients.push(other);
+          const wrongServiceStatus = await new Promise<number | undefined>(
+            (resolve, reject) => {
+              const request = httpsRequest(
+                origin,
+                {
+                  ...other.serverTLS,
+                  headers: {
+                    "Antnest-Service-Authorization": `Bearer ${pairToken}`,
+                  },
+                },
+                (response) => {
+                  response.resume();
+                  response.once("end", () => resolve(response.statusCode));
+                },
+              );
+              request.on("error", reject);
+              request.setTimeout(3000, () =>
+                request.destroy(new Error("test deadline")),
+              );
+              request.end();
+            },
+          );
+          expect(wrongServiceStatus).toBe(403);
+          expect(accepted).toBe(1);
+        }
       }
       expect(
         () =>
@@ -183,6 +362,7 @@ it.each(["token", "mtls"] as const)(
           }),
       ).toThrow("complete_tls_configuration_required");
     } finally {
+      await Promise.all(peerServers.map((server) => server.close()));
       await Promise.all(clients.map((client) => client.close()));
       for (const server of servers) {
         server.closeAllConnections();

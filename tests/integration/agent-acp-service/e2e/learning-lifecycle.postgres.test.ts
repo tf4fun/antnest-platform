@@ -139,6 +139,7 @@ describe.skipIf(databaseUrl === undefined)(
         let registration: OwnerRegistration | undefined;
         let createdSchema = false;
         let automatic = false;
+        let retirementAck: { status: number; body: unknown } | undefined;
         const providerSecret = randomBytes(32).toString("base64url");
         const requests: Array<{ review: boolean; messages: unknown }> = [];
         const runtimeReads: string[] = [];
@@ -737,6 +738,34 @@ describe.skipIf(databaseUrl === undefined)(
             await prompt("agent-2");
             expect(requests).toHaveLength(4);
             expect(failures).toEqual([]);
+            const response = await track(
+              fetch(
+                serviceOrigin(service!, true) +
+                  "/rpc/agent-acp/apply-execution-snapshot",
+                {
+                  method: "POST",
+                  headers: {
+                    ...workloadHeaders("agent-controller"),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    ...configuration,
+                    revision: 2,
+                    agents: configuration.agents.filter(
+                      (agent) => agent.agent_id !== "agent-1",
+                    ),
+                  }),
+                  signal: AbortSignal.any([
+                    abort.signal,
+                    AbortSignal.timeout(5000),
+                  ]),
+                },
+              ),
+            );
+            retirementAck = {
+              status: response.status,
+              body: (await response.json()) as unknown,
+            };
             await Promise.all(clients.map((client) => client.close()));
             shutdown = track(service!.shutdown());
           }
@@ -780,6 +809,15 @@ describe.skipIf(databaseUrl === undefined)(
               ).toBe(true);
             } else expect(causes).toEqual([cleanupError]);
             expectedShutdownFailure.value = shutdownError;
+          }
+          if (action === "loss") {
+            expect(retirementAck?.status).toBe(
+              closeFailure === "none" ? 200 : 503,
+            );
+            if (closeFailure !== "none")
+              expect(retirementAck?.body).toMatchObject({
+                code: "configuration_unavailable",
+              });
           }
           expect(workerRelease).toHaveBeenCalledTimes(1);
           if (ownership === "owned")

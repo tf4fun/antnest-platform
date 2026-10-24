@@ -8,6 +8,7 @@ import {
   AgentOwnershipLostError,
   ownershipFence,
   type AgentOwnershipFence,
+  type AgentOwnershipScope,
 } from "../../domain/agent-ownership.js";
 import type { PostgresKernel } from "./kernel.js";
 import { lockRuntimeBarrierOrganization } from "./runtime-barrier.js";
@@ -28,7 +29,7 @@ export type RunOwnerColumns = {
 
 type Mode =
   | Readonly<{ kind: "legacy"; workerOwnership: AbortSignal }>
-  | Readonly<{ kind: "owned"; authority: RunOwnerAuthority }>;
+  | Readonly<{ kind: "owned" | "fenced_legacy"; authority: RunOwnerAuthority }>;
 
 // Each repository captures one explicit mode. An owned failure can never select
 // the legacy branch or substitute a newer lease observed after the operation.
@@ -45,22 +46,37 @@ export class RunWriteAuthority {
   }
 
   public static owned(input: RunOwnerAuthority): RunWriteAuthority {
+    return RunWriteAuthority.registered(input, "owned");
+  }
+
+  public static fencedLegacy(input: RunOwnerAuthority): RunWriteAuthority {
+    return RunWriteAuthority.registered(input, "fenced_legacy");
+  }
+
+  private static registered(
+    input: RunOwnerAuthority,
+    kind: "owned" | "fenced_legacy",
+  ): RunWriteAuthority {
     try {
       const registration = parseOwnerRegistration(input.registration);
       const fence = ownershipFence(input.fence);
       if (fence.ownerInstanceId !== registration.incarnation_id) throw new TypeError();
       const authority = Object.freeze({ registration, fence });
-      return new RunWriteAuthority(Object.freeze({ kind: "owned", authority }));
+      return new RunWriteAuthority(Object.freeze({ kind, authority }));
     } catch {
       throw new TypeError("Invalid Run ownership authority");
     }
+  }
+
+  public get rowMode(): "owned" | "legacy" {
+    return this.mode.kind === "owned" ? "owned" : "legacy";
   }
 
   public async transaction<T>(
     kernel: PostgresKernel,
     operation: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
-    if (this.mode.kind === "owned")
+    if (this.mode.kind !== "legacy")
       return kernel.agentTransaction(this.mode.authority.fence, operation);
     const signal = this.mode.workerOwnership;
     assertWorkerOwnership(signal);
@@ -100,7 +116,7 @@ export class RunWriteAuthority {
     organizationId: string,
     operation: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
-    if (this.mode.kind === "owned") {
+    if (this.mode.kind !== "legacy") {
       const { fence } = this.mode.authority;
       if (organizationId !== fence.organizationId)
         return Promise.reject(new AgentOwnershipLostError());
@@ -112,8 +128,12 @@ export class RunWriteAuthority {
     });
   }
 
-  public assertLegacyRecovery(): void {
-    if (this.mode.kind !== "legacy") throw new AgentOwnershipLostError();
+  public assertLegacyRecovery(scope?: AgentOwnershipScope): void {
+    if (this.mode.kind === "owned") throw new AgentOwnershipLostError();
+    if (this.mode.kind === "fenced_legacy") {
+      if (scope === undefined) throw new AgentOwnershipLostError();
+      this.assertSession({ organization_id: scope.organizationId, agent_id: scope.agentId });
+    }
   }
 
   public assertRun(row: RunOwnerColumns): void {
@@ -129,7 +149,7 @@ export class RunWriteAuthority {
   }
 
   public origin(): readonly [string | null, string | null, string | null, string | null] {
-    if (this.mode.kind === "legacy") return [null, null, null, null];
+    if (this.mode.kind !== "owned") return [null, null, null, null];
     const { registration, fence } = this.mode.authority;
     return [
       registration.registration_id,

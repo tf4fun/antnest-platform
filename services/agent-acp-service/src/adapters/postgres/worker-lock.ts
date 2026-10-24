@@ -10,6 +10,7 @@ const WORKER_LOCK = 2_026_083_002;
 const DEFAULT_PROBE_INTERVAL_MS = 1_000;
 
 export type WorkerLockOptions = {
+  mode?: "exclusive" | "shared";
   probeIntervalMs?: number;
 };
 
@@ -34,6 +35,7 @@ export class PostgresWorkerLock {
   private constructor(
     private readonly client: PoolClient,
     private readonly probeIntervalMs: number,
+    private readonly mode: "exclusive" | "shared",
   ) {
     client.on("error", this.onClientError);
     this.monitor = this.monitorSession();
@@ -43,10 +45,15 @@ export class PostgresWorkerLock {
     pool: Pool,
     options: WorkerLockOptions = {},
   ): Promise<PostgresWorkerLock> {
+    const mode: unknown = options.mode === undefined ? "exclusive" : options.mode;
+    if (mode !== "exclusive" && mode !== "shared")
+      throw new Error("Invalid Agent ACP worker lock mode");
     const client = await pool.connect();
     try {
       const result = await client.query<{ acquired: boolean }>(
-        "SELECT pg_try_advisory_lock($1) AS acquired",
+        mode === "shared"
+          ? "SELECT pg_try_advisory_lock_shared($1) AS acquired"
+          : "SELECT pg_try_advisory_lock($1) AS acquired",
         [WORKER_LOCK],
       );
       if (result.rows[0]?.acquired !== true) {
@@ -55,6 +62,7 @@ export class PostgresWorkerLock {
       return new PostgresWorkerLock(
         client,
         Math.max(10, options.probeIntervalMs ?? DEFAULT_PROBE_INTERVAL_MS),
+        mode,
       );
     } catch (error) {
       client.release();
@@ -71,6 +79,8 @@ export class PostgresWorkerLock {
   }
 
   public pauseAbandonedLearningTasks(scope?: AgentOwnershipScope): Promise<number> {
+    if (this.mode === "shared")
+      return Promise.reject(new Error("Shared worker locks cannot authorize legacy recovery"));
     const fixed = scope === undefined ? undefined : ownershipScope(scope);
     if (!this.isHeld()) return Promise.reject(new WorkerOwnershipLostError());
     const key =
@@ -144,7 +154,9 @@ export class PostgresWorkerLock {
     try {
       if (shouldUnlock) {
         const result = await this.client.query<{ unlocked: boolean }>(
-          "SELECT pg_advisory_unlock($1) AS unlocked",
+          this.mode === "shared"
+            ? "SELECT pg_advisory_unlock_shared($1) AS unlocked"
+            : "SELECT pg_advisory_unlock($1) AS unlocked",
           [WORKER_LOCK],
         );
         if (result.rows[0]?.unlocked !== true) {

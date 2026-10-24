@@ -104,6 +104,13 @@ test("fresh credentials match every static receiver grant without a global Runti
   const manifest = provisionTokens({ output });
   const pairs = deriveStaticPairs(catalogs());
   assert.equal(pairs.length, 25);
+  assert(
+    !pairs.some(
+      ({ caller, receiver }) =>
+        caller === "agent-acp-service" && receiver === caller,
+    ),
+    "member credentials must not create a logical-service self token",
+  );
   assert.deepEqual(manifest.pairs, pairs);
   assert.equal(manifest.version, contract.version);
   assert.equal(manifest.skill_learning, false);
@@ -152,6 +159,14 @@ test("fresh credentials match every static receiver grant without a global Runti
   }
   assert(!existsSync(join(output, "antnest-runtime")));
   assert.deepEqual(JSON.parse(bytes(output, "edge-gateway/callers.json")), {});
+});
+
+test("peer-member profiles cannot hide ordinary workspace grants from provisioning", async () => {
+  const { deriveStaticPairs } = await helper();
+  const value = catalogs();
+  value["agent-acp-service"].routes["POST /v1/acp"].authentication =
+    "peer-member";
+  assert.throws(() => deriveStaticPairs(value), /catalog_invalid/u);
 });
 
 test("generated directories and files retain private modes", async (t) => {

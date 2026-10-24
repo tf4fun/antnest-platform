@@ -12,7 +12,11 @@ import { ConnectionCapacity } from "../../application/connection-capacity.js";
 import { ConnectionTasks } from "./connection-tasks.js";
 import type { AcpApplicationPort } from "../../ports/acp-application.js";
 import type { SkillCommandsPort } from "../../ports/skill-commands.js";
-import type { ExecutionIdentity } from "../../domain/execution-configuration.js";
+import {
+  isExecutionAccessRevoked,
+  type ExecutionAccessSnapshot,
+  type ExecutionIdentity,
+} from "../../domain/execution-configuration.js";
 import { trustedIdentity } from "../trusted-identity.js";
 import { promptCapabilities } from "./capabilities.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
@@ -56,6 +60,21 @@ export class AcpHttpTransport {
   public constructor(private readonly options: Options) {
     this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
     this.capacity = options.capacity ?? new ConnectionCapacity();
+  }
+
+  public async revokeAccess(snapshot: ExecutionAccessSnapshot): Promise<void> {
+    const revoked = [...this.entries].filter((entry) =>
+      isExecutionAccessRevoked(snapshot, entry.binding),
+    );
+    const results = await Promise.allSettled(revoked.map((entry) => this.retire(entry)));
+    const errors = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (errors.length)
+      throw new AggregateError(
+        errors.map((result) => result.reason as unknown),
+        "Revoked HTTP connection cleanup failed",
+      );
   }
 
   public async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -282,6 +301,7 @@ class HttpConnection {
   private readonly tasks = new ConnectionTasks();
   private readonly server: AcpServer;
   private readonly requests = new Set<ServerResponse>();
+  private readonly handlers = new Map<Promise<void>, boolean>();
   private readonly deletes = new Set<ServerResponse>();
   private readonly getSpans = new Map<ServerResponse, Span>();
   private readonly handler: ReturnType<typeof createValidatedNodeHttpHandler>;
@@ -382,7 +402,10 @@ class HttpConnection {
         }
         resolve();
       });
-      this.handler(request, response);
+      const original = this.handler(request, response);
+      this.handlers.set(original, request.method === "DELETE");
+      const forget = () => this.handlers.delete(original);
+      void original.then(forget, forget);
     });
   }
 
@@ -391,9 +414,15 @@ class HttpConnection {
     clearTimeout(this.timer);
     this.closeResponses(true);
     const tasks = this.tasks.close();
-    this.cleanup = Promise.allSettled([this.server.close(), tasks]).then(([closed]) => {
-      if (closed.status === "rejected") throw closed.reason;
-    });
+    // DELETE calls retire itself; joining that handler here would self-join.
+    const originals = [...this.handlers]
+      .filter(([, deleting]) => !deleting)
+      .map(([original]) => original);
+    this.cleanup = Promise.allSettled([this.server.close(), tasks, ...originals]).then(
+      ([closed]) => {
+        if (closed.status === "rejected") throw closed.reason;
+      },
+    );
     if (!this.released && this.id !== undefined) {
       this.expiresAt = performance.now() + this.options.closeReceiptTimeoutMs;
       this.timer = setTimeout(this.options.release, this.options.closeReceiptTimeoutMs);
@@ -412,7 +441,11 @@ class HttpConnection {
     const cleanup = this.retire();
     if (this.requests.size === 0) this.drained.resolve();
     this.completion ??= (async () => {
-      const [result] = await Promise.allSettled([cleanup, this.drained.promise]);
+      const [result] = await Promise.allSettled([
+        cleanup,
+        this.drained.promise,
+        ...this.handlers.keys(),
+      ]);
       clearTimeout(this.timer);
       if (result.status === "rejected") throw result.reason;
     })();

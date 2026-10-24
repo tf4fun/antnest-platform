@@ -2,10 +2,12 @@
 
 This contract defines the ownership facts that ACP processes must agree on.
 It follows [durable Run admission](run-admission.md). The first delivery batch
-provides lease storage and a fenced transaction primitive only. Connecting all
-service writes, recovery, configuration acknowledgements and peer forwarding
-remains separate work. The database-wide worker lock remains until those
-batches and explicit two-replica integration pass.
+provided lease storage and a fenced transaction primitive. Production now connects
+fixed Agent generations, owned recovery and peer configuration acknowledgements.
+The [fixed assignment contract](owner-assignment.md) defines shared compatibility
+locking for peer mode and protection of unknown legacy work. Non-peer mode keeps
+the exclusive lock. Forwarding, crash takeover and Docker integration remain
+separate required work.
 
 ## Scope And Identity
 
@@ -396,6 +398,10 @@ actually joined. A kill has no such receipt. Budget expiry retains failure and
 protection facts; it does not count unexecuted cleanup as passed.
 
 ## Remaining Peer And Integration Batches
+
+The private publication/revocation receipt, complete-member aggregate ACK and
+subsequent forwarding boundaries are specified in [owner peer coordination](owner-peer.md).
+They remain pending production consumers and do not remove the global worker lock.
 
 The next peer contract must define a separate authenticated listener and exact
 operations. The intended model is one owner terminating the complete ACP

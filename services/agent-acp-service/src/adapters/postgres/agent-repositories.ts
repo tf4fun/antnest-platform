@@ -23,6 +23,14 @@ export function createLegacyAgentRepositories(
   return repositories(kernel, box, RunWriteAuthority.legacy(workerOwnership));
 }
 
+export function createFencedLegacyAgentRepositories(
+  kernel: PostgresKernel,
+  box: SecretBox,
+  input: RunOwnerAuthority,
+) {
+  return repositories(kernel, box, RunWriteAuthority.fencedLegacy(input));
+}
+
 function repositories(kernel: PostgresKernel, box: SecretBox, authority: RunWriteAuthority) {
   return Object.freeze({
     ...createBoundRunRepositories(kernel, authority),

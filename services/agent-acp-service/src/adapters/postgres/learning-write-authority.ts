@@ -37,7 +37,7 @@ export class LearningWriteAuthority {
   }
 
   public get mode(): "owned" | "legacy" {
-    return this.#authority.scope() === null ? "legacy" : "owned";
+    return this.#authority.rowMode;
   }
 
   public scope() {

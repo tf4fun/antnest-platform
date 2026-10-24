@@ -12,8 +12,8 @@ export function createValidatedNodeHttpHandler(
   server: Pick<AcpServer, "handleRequest">,
   maximum: number,
 ) {
-  return (request: IncomingMessage, response: ServerResponse): void => {
-    void handle(server, request, response, maximum);
+  return (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    return handle(server, request, response, maximum);
   };
 }
 async function handle(

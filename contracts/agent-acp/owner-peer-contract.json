@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "status": "implemented",
+  "issue": 49,
+  "receiver": "agent-acp-service",
+  "listener": "peer",
+  "schema": "owner-peer.schema.json",
+  "semantics": "owner-peer.md",
+  "activation": "The optional ACP peer listener implements these exact member-authenticated operations. Fixed peer membership uses shared worker admission and per-Agent ownership; non-peer deployments retain exclusive admission. User forwarding and replica-crash recovery have separate admission criteria.",
+  "workload_header": "Antnest-Service-Authorization",
+  "aggregate_deadline_ms": 10000,
+  "operations": {
+    "identity": {
+      "method": "POST",
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": "none",
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "query_parameters": [],
+      "success_status": 200,
+      "error": "error",
+      "request_bytes_max": 16384,
+      "path": "/internal/acp-peer/identity",
+      "request": "identity_request",
+      "response": "identity_receipt",
+      "response_bytes_max": 8192
+    },
+    "publish": {
+      "method": "POST",
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": "none",
+      "cache_control": "no-store",
+      "capture_payload": false,
+      "query_parameters": [],
+      "success_status": 200,
+      "error": "error",
+      "request_bytes_max": 16384,
+      "path": "/internal/acp-peer/publications/apply",
+      "request": "publication_request",
+      "response": "publication_receipt",
+      "response_bytes_max": 16777216,
+      "hop_max": 1,
+      "idempotency": ["target", "membership_sha256", "publication"]
+    }
+  }
+}

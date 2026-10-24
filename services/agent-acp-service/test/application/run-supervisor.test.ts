@@ -34,6 +34,41 @@ function acceptedRun(sessionId = "session-1"): AcceptedAcpRun {
 }
 
 describe("RunSupervisor ownership", () => {
+  it("joins the original revoked execution without waiting for an unrelated Agent", async () => {
+    const held = Promise.withResolvers<ExecuteRunResult>();
+    const healthy = Promise.withResolvers<ExecuteRunResult>();
+    const supervisor = new RunSupervisor({
+      execute: ({ accepted }) =>
+        accepted.sessionId === "revoked" ? held.promise : healthy.promise,
+    });
+    const original = await supervisor.submit(input("revoked"), () =>
+      Promise.resolve(acceptedRun("revoked")),
+    );
+    const other = await supervisor.submit(input("healthy", "agent-2"), () =>
+      Promise.resolve(acceptedRun("healthy")),
+    );
+    let joined = false;
+    const revocation = Promise.resolve(
+      supervisor.revokeAccess({
+        organization_id: "organization-1",
+        agents: [{ agent_id: "agent-2", principal_ids: [binding().principalId] }],
+      }),
+    ).then(() => {
+      joined = true;
+    });
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(joined).toBe(false);
+      held.resolve(cancelled);
+      await revocation;
+      expect(supervisor.occupancy(input("healthy", "agent-2").binding).busy).toBe(true);
+    } finally {
+      held.resolve(cancelled);
+      healthy.resolve(completed);
+      await Promise.all([original.completion, other.completion, revocation, supervisor.shutdown()]);
+    }
+  });
+
   it.each([
     [false, true, true],
     [true, true, true],
@@ -60,23 +95,30 @@ describe("RunSupervisor ownership", () => {
       const submission = supervisor.submit(input(), accept).catch((error: unknown) => error);
       await entered.promise;
       const settled = vi.fn();
-      const revoke = () =>
-        supervisor.revokeAccess({ organization_id: "organization-1", agents: [] });
+      const revocations: Promise<void>[] = [];
+      const revoke = () => {
+        revocations.push(
+          supervisor.revokeAccess({ organization_id: "organization-1", agents: [] }),
+        );
+      };
       if (!cancelFirst) revoke();
       const settlement = supervisor
         .quiesceAgent(input().binding, "cancel", new AbortController().signal)
         .then(settled);
       if (cancelFirst) revoke();
       if (regrant)
-        supervisor.revokeAccess({
-          organization_id: "organization-1",
-          agents: [{ agent_id: "agent-1", principal_ids: [binding().principalId] }],
-        });
+        revocations.push(
+          supervisor.revokeAccess({
+            organization_id: "organization-1",
+            agents: [{ agent_id: "agent-1", principal_ids: [binding().principalId] }],
+          }),
+        );
       await Promise.resolve();
       expect(settled).not.toHaveBeenCalled();
       released.resolve();
       const error = await submission;
       await settlement;
+      await Promise.all(revocations);
       expect(error).toMatchObject({ code: "access_denied" });
       if (cancelFirst) {
         expect((error as Error).cause).toBe(originalSignal!.reason);
@@ -113,10 +155,11 @@ describe("RunSupervisor ownership", () => {
         .catch((error: unknown) => error);
       await entered.promise;
       const stopping = kind === "shutdown" ? supervisor.shutdown() : undefined;
-      supervisor.revokeAccess({ organization_id: "organization-1", agents: [] });
+      const revoked = supervisor.revokeAccess({ organization_id: "organization-1", agents: [] });
       released.resolve();
       const error = await submission;
       await stopping;
+      await revoked;
       expect(error).toBe(kind === "shutdown" ? originalSignal!.reason : original);
       expect(supervisor.occupancy(input().binding).busy).toBe(false);
     },

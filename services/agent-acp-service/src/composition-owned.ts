@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { buildAgentComponents } from "./composition-agent.js";
 import { buildLearningPipeline } from "./composition-learning.js";
 import { AgentGenerations, type AgentGeneration } from "./application/agent-generations.js";
+import type { AgentAssignment } from "./application/agent-assignment.js";
 import { AgentApplicationRouter } from "./application/agent-application-router.js";
 import { AgentSettlement } from "./application/agent-settlement.js";
 import { AgentExecutionState } from "./application/agent-execution-state.js";
@@ -11,6 +12,7 @@ import { TemporarySkills } from "./application/temporary-skills.js";
 import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
 import type { LearningPausedRecovery } from "./application/learning-paused-recovery.js";
 import type { OwnerRegistration } from "./application/owner-incarnation.js";
+import type { LocalExecutionPublication } from "./application/execution-directory.js";
 import type { OwnerInspection } from "./application/owner-inspection.js";
 import { PostgresAgentLeases } from "./adapters/postgres/agent-leases.js";
 import { PostgresAgentStartup } from "./adapters/postgres/agent-startup.js";
@@ -22,6 +24,7 @@ import {
 } from "./adapters/runtime-controller-incarnations.js";
 import {
   createLegacyAgentRepositories,
+  createFencedLegacyAgentRepositories,
   createOwnedAgentRepositories,
 } from "./adapters/postgres/agent-repositories.js";
 import {
@@ -33,7 +36,11 @@ import { SecretBox } from "./adapters/postgres/secret-box.js";
 import type { PostgresWorkerLock } from "./adapters/postgres/worker-lock.js";
 import { RuntimeSkillTemporaryClient } from "./adapters/runtime-skill-temporary-client.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
-import { AgentOwnershipLostError, type AgentOwnershipScope } from "./domain/agent-ownership.js";
+import {
+  AgentOwnershipLostError,
+  type AgentOwnershipScope,
+  type AgentOwnershipFence,
+} from "./domain/agent-ownership.js";
 import { DomainError } from "./domain/errors.js";
 import {
   publicExecutionConfiguration,
@@ -61,6 +68,7 @@ type Options = Omit<
   | "retainModelRequest"
 > & {
   registration: OwnerRegistration;
+  assignment?: AgentAssignment;
   ownerInspection?: Pick<RuntimeControllerIncarnations, "inspect">;
   configuration: PostgresExecutionConfiguration;
   legacy: ReturnType<typeof createLegacyAgentRepositories>;
@@ -90,6 +98,8 @@ export class OwnedAgentComponents {
   private readonly inventory: PostgresAgentStartup;
   private readonly entries = new Map<string, Entry>();
   private readonly cleanupFailures: unknown[] = [];
+  private readonly modelCleanupFailures = new Map<string, ModelTransportCleanupError[]>();
+  private readonly retiring = new Map<string, Set<Promise<void>>>();
   private started = false;
   private stopped = false;
   private shutdownPromise: Promise<void> | undefined;
@@ -165,6 +175,29 @@ export class OwnedAgentComponents {
   public async recoverStartup(worker: PostgresWorkerLock): Promise<void> {
     for (const scope of await this.inventory.inspect()) {
       this.options.ownershipSignal.throwIfAborted();
+      if (this.options.assignment !== undefined) {
+        if (!this.options.assignment.owns(scope)) continue;
+        try {
+          await this.generations.runControl(
+            scope,
+            async (authority, original) => {
+              const signal = AbortSignal.any([this.options.ownershipSignal, original]);
+              await this.recoverPredecessors(authority, signal);
+              const state = await this.inventory.settlement(authority.fence);
+              signal.throwIfAborted();
+              if (state.localUncertain || state.runtimeProtected) this.reportUnavailable(scope);
+            },
+            this.options.ownershipSignal,
+          );
+        } catch (error) {
+          this.options.ownershipSignal.throwIfAborted();
+          if (!(error instanceof AgentOwnershipLostError)) throw error;
+          this.reportUnavailable(scope);
+        }
+        // A current lease cannot supply a missing original stop proof. Legacy
+        // inventory remains unchanged, including scopes absent from publication.
+        continue;
+      }
       if (scope.protected) {
         this.reportUnavailable(scope);
         continue;
@@ -186,6 +219,8 @@ export class OwnedAgentComponents {
       minimumRevision: request.minimum_revision,
     };
     const initial = this.options.directory.closedAgent(operation);
+    if (this.options.assignment !== undefined && !this.options.assignment.owns(operation))
+      return { applied_revision: initial.revision, outcome: "not_settled" };
     const deadline = Date.parse(request.deadline_at);
     const waiting = new AbortController();
     const lifetime = AbortSignal.any([
@@ -252,25 +287,54 @@ export class OwnedAgentComponents {
     }
   }
 
-  public revoke(snapshot: ExecutionAccessSnapshot): void {
+  public revoke(snapshot: ExecutionAccessSnapshot): Promise<void> {
+    const originals: Promise<void>[] = [];
     for (const entry of this.entries.values()) {
       if (entry.scope.organizationId !== snapshot.organization_id) continue;
-      entry.graph.supervisor.revokeAccess(snapshot);
+      originals.push(entry.graph.supervisor.revokeAccess(snapshot));
     }
+    return Promise.all(originals).then(() => undefined);
+  }
+
+  public async joinRetirements(organizationId: string): Promise<void> {
+    const pending = this.retiring.get(organizationId);
+    while (pending !== undefined && pending.size > 0) {
+      const results = await Promise.allSettled([...pending]);
+      const errors = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (errors.length)
+        throw new AggregateError(
+          errors.map((result) => result.reason as unknown),
+          "Retired Agent cleanup failed",
+        );
+    }
+    // Generation drain joins original calls but leaves their result to the
+    // caller. A failed native cleanup must also prevent publication ACKs.
+    const failures = this.modelCleanupFailures.get(organizationId);
+    if (failures?.length) throw new AggregateError(failures, "Retired Agent model cleanup failed");
   }
 
   public async prepare(next: PublicExecutionConfiguration): Promise<void> {
     this.options.ownershipSignal.throwIfAborted();
     if (this.stopped) throw unavailable();
-    this.revoke(next);
+    // Publication's revocation barrier owns the join outside this preparation.
+    void this.revoke(next);
     for (const entry of this.entries.values())
       if (entry.scope.organizationId === next.organization_id)
         entry.graph.learningGate.syncOrganization(next.organization_id, next.agents);
-    const agentIds = new Set(next.agents.map((agent) => agent.agent_id));
+    const assigned = next.agents.filter(
+      (agent) =>
+        this.options.assignment?.owns({
+          organizationId: next.organization_id,
+          agentId: agent.agent_id,
+        }) ?? true,
+    );
+    const agentIds = new Set(assigned.map((agent) => agent.agent_id));
     for (const entry of this.entries.values())
       if (entry.scope.organizationId === next.organization_id && !agentIds.has(entry.scope.agentId))
         this.retire(entry);
-    for (const agent of next.agents) {
+    for (const agent of assigned) {
       const scope = { organizationId: next.organization_id, agentId: agent.agent_id };
       try {
         const generation = await this.generations.prepare(scope, async (captured) => {
@@ -278,6 +342,10 @@ export class OwnedAgentComponents {
           signal.throwIfAborted();
           await this.recoverPredecessors(captured.authority, signal);
           await this.inventory.assertAvailable(captured.authority.fence);
+          if (this.options.assignment !== undefined) {
+            const state = await this.inventory.settlement(captured.authority.fence);
+            if (state.localUncertain || state.runtimeProtected) throw new AgentOwnershipLostError();
+          }
           const original = await this.options.configuration.loadOwnedAuthority(
             captured.authority.fence,
           );
@@ -397,6 +465,80 @@ export class OwnedAgentComponents {
     }
   }
 
+  public async localPublicationFences(
+    publication: LocalExecutionPublication,
+    signal: AbortSignal,
+  ): Promise<readonly AgentOwnershipFence[]> {
+    const organizationId = publication.authority.organization_id;
+    signal.throwIfAborted();
+    publication.assertCurrent();
+    await this.joinRetirements(organizationId);
+    signal.throwIfAborted();
+    const accepting = new Set(
+      publication.configuration.agents
+        .filter((agent) => agent.accepting_runs)
+        .map((agent) => agent.agent_id),
+    );
+    const captured: Entry[] = [];
+    for (const entry of this.entries.values()) {
+      if (
+        entry.scope.organizationId !== organizationId ||
+        !accepting.has(entry.scope.agentId) ||
+        entry.stopping
+      )
+        continue;
+      try {
+        captured.push(this.capture(entry.scope));
+      } catch (error) {
+        if (
+          !(error instanceof AgentOwnershipLostError) &&
+          !(error instanceof DomainError && error.code === "agent_unavailable")
+        )
+          throw error;
+      }
+    }
+    // A non-owner still proves its sealed view and completed revocations.
+    const originals =
+      captured.length === 0
+        ? [this.options.configuration.loadAuthority(organizationId)]
+        : captured.map((entry) =>
+            entry.generation.dispatch(() =>
+              this.options.configuration.loadOwnedAuthority(entry.generation.authority.fence),
+            ),
+          );
+    const results = await Promise.allSettled(originals);
+    // Capture may itself observe an expired generation and start retirement.
+    await this.joinRetirements(organizationId);
+    signal.throwIfAborted();
+    const failures = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (
+      failures.length ||
+      results.some(
+        (result) =>
+          result.status === "fulfilled" && !isDeepStrictEqual(result.value, publication.authority),
+      )
+    ) {
+      const failure = configurationUnavailable();
+      if (failures.length)
+        failure.cause = new AggregateError(failures.map((result) => result.reason as unknown));
+      throw failure;
+    }
+    const fences = captured.map((entry) => {
+      if (
+        this.capture(entry.scope) !== entry ||
+        !isDeepStrictEqual(entry.generation.authority.registration, this.options.registration)
+      )
+        throw configurationUnavailable();
+      return Object.freeze({ ...entry.generation.authority.fence });
+    });
+    publication.assertCurrent();
+    return Object.freeze(
+      fences.sort((a, b) => (a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0)),
+    );
+  }
+
   public async beforeAck(next: PublicExecutionConfiguration): Promise<void> {
     const captured = next.agents
       .filter((agent) => agent.accepting_runs)
@@ -512,14 +654,20 @@ export class OwnedAgentComponents {
     const learningRepositories = learningEnabled
       ? createOwnedLearningRepositories(kernel, generation.authority, callbacks)
       : undefined;
-    // Until multi-instance stop-proof recovery is delivered, the retained
-    // global worker lock owns legacy writes. Agent loss cancels dispatch but
-    // must still allow the original legacy claim's cancellation receipt.
-    const legacy = createLegacyAgentRepositories(
-      kernel,
-      new SecretBox(config.clientMcpKey),
-      this.options.ownershipSignal,
-    );
+    // Peer compatibility cleanup uses this Agent's current fence without
+    // changing the historical record's null owner identity.
+    const legacy =
+      this.options.assignment === undefined
+        ? createLegacyAgentRepositories(
+            kernel,
+            new SecretBox(config.clientMcpKey),
+            this.options.ownershipSignal,
+          )
+        : createFencedLegacyAgentRepositories(
+            kernel,
+            new SecretBox(config.clientMcpKey),
+            generation.authority,
+          );
     const signer =
       config.skillMaintenanceSigning === undefined
         ? undefined
@@ -553,7 +701,12 @@ export class OwnedAgentComponents {
       // Observe the original result before generation tracking deletes it.
       // Business errors and expected cancellation are owned by the caller.
       void original.catch((error: unknown) => {
-        if (error instanceof ModelTransportCleanupError) this.cleanupFailures.push(error);
+        if (error instanceof ModelTransportCleanupError) {
+          this.cleanupFailures.push(error);
+          const failures = this.modelCleanupFailures.get(scope.organizationId) ?? [];
+          failures.push(error);
+          this.modelCleanupFailures.set(scope.organizationId, failures);
+        }
       });
       generation.retainRun(original);
     };
@@ -575,21 +728,22 @@ export class OwnedAgentComponents {
       gate: graph.learningGate,
       report: (outcome) => telemetry.count("antnest.acp.skill_temporary_cleanup", { outcome }),
     });
-    const legacyPipeline = learningEnabled
-      ? buildLearningPipeline({
-          ...this.options,
-          learningRepositories: createLegacyLearningRepositories(
-            kernel,
-            this.options.ownershipSignal,
-            callbacks,
-          ),
-          rawTools: graph.rawTools,
-          gate: graph.learningGate,
-          temporarySkills: legacyTemporary,
-          recoveryScope: scope,
-          retainModelRequest,
-        })
-      : undefined;
+    const legacyPipeline =
+      learningEnabled && this.options.assignment === undefined
+        ? buildLearningPipeline({
+            ...this.options,
+            learningRepositories: createLegacyLearningRepositories(
+              kernel,
+              this.options.ownershipSignal,
+              callbacks,
+            ),
+            rawTools: graph.rawTools,
+            gate: graph.learningGate,
+            temporarySkills: legacyTemporary,
+            recoveryScope: scope,
+            retainModelRequest,
+          })
+        : undefined;
     const entry: Entry = {
       scope,
       generation,
@@ -625,8 +779,10 @@ export class OwnedAgentComponents {
         busy: (binding) => graph.supervisor.occupancy(binding).busy,
       }),
     };
-    signal.addEventListener("abort", () => this.stopEntry(entry), { once: true });
-    if (signal.aborted) this.stopEntry(entry);
+    // Automatic expiry/renewal loss also owns the manager's original close.
+    // Register it without awaiting from the generation's own abort callback.
+    signal.addEventListener("abort", () => this.retire(entry, signal.reason), { once: true });
+    if (signal.aborted) this.retire(entry, signal.reason);
     return entry;
   }
 
@@ -676,7 +832,17 @@ export class OwnedAgentComponents {
   }
   private retire(entry: Entry, cause: unknown = new AgentOwnershipLostError()): void {
     this.stopEntry(entry);
-    void this.generations.closeScope(entry.scope, cause);
+    const pending = this.retiring.get(entry.scope.organizationId) ?? new Set<Promise<void>>();
+    this.retiring.set(entry.scope.organizationId, pending);
+    const original = this.generations.closeScope(entry.scope, cause);
+    if (pending.has(original)) return;
+    pending.add(original);
+    void original.then(
+      () => pending.delete(original),
+      (error: unknown) => {
+        this.cleanupFailures.push(error);
+      },
+    );
   }
   private stopEntry(entry: Entry): void {
     if (entry.stopping) return;

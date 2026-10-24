@@ -107,6 +107,7 @@ describe("production execution configuration composition", () => {
     );
     const accept = vi.fn().mockRejectedValue(new Error("unexpected acceptance"));
     const configuration = executionConfiguration();
+    const publications: Promise<unknown>[] = [];
     try {
       await components.directory.apply(configuration);
       const submission = components.supervisor
@@ -120,12 +121,36 @@ describe("production execution configuration composition", () => {
       const revoked = structuredClone(configuration);
       revoked.revision++;
       revoked.agents[0]!.principal_ids = [];
-      await components.directory.apply(revoked);
-      await components.directory.apply({ ...configuration, revision: revoked.revision + 1 });
+      let acknowledged = 0;
+      publications.push(
+        components.directory
+          .apply(revoked)
+          .then((result) => {
+            acknowledged++;
+            return result;
+          })
+          .catch((error: unknown) => error),
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(acknowledged).toBe(0);
+      publications.push(
+        components.directory
+          .apply({ ...configuration, revision: revoked.revision + 1 })
+          .then((result) => {
+            acknowledged++;
+            return result;
+          })
+          .catch((error: unknown) => error),
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(acknowledged).toBe(0);
       expect(settled).not.toHaveBeenCalled();
       released.resolve();
       const error = await submission;
       await settlement;
+      const [superseded, current] = await Promise.all(publications);
+      expect(superseded).toMatchObject({ code: "configuration_unavailable" });
+      expect(current).toMatchObject({ applied_revision: revoked.revision + 1 });
       expect(error).toMatchObject({ code: "access_denied" });
       expect((error as Error).cause).toBe(originalSignal!.reason);
       expect(settled).toHaveBeenCalledWith(true);
@@ -134,6 +159,7 @@ describe("production execution configuration composition", () => {
       expect(components.supervisor.occupancy(binding()).busy).toBe(false);
     } finally {
       released.resolve();
+      await Promise.allSettled(publications);
       await components.supervisor.shutdown();
       await pool.end();
     }
@@ -340,6 +366,7 @@ describe("production execution configuration composition", () => {
       const lifetime = new AbortController();
       const pendingOutput = Promise.withResolvers<SessionOutputSnapshot>();
       let attachment: Promise<boolean> | undefined;
+      let publication: Promise<unknown> | undefined;
       try {
         await expect(
           components.application.assertAccess({ binding: binding() }),
@@ -395,12 +422,10 @@ describe("production execution configuration composition", () => {
           });
           await expect(components.directory.apply(changed)).rejects.toThrow("Publication failed");
         } else {
-          await expect(components.directory.apply(changed)).resolves.toHaveProperty(
-            "applied_revision",
-            3,
-          );
+          publication = components.directory.apply(changed);
+          void publication.catch(() => undefined);
         }
-        expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(true);
+        await vi.waitFor(() => expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(true));
         expect(getEventListeners(lifetime.signal, "abort")).toHaveLength(0);
         await attachment;
         pendingOutput.resolve({
@@ -421,6 +446,12 @@ describe("production execution configuration composition", () => {
         ).rejects.toMatchObject({
           code: failPublication ? "configuration_not_ready" : "access_denied",
         });
+        // Admission closes immediately; ACK waits for the original Run and
+        // output read, independently of the cancelled attachment.
+        finish.resolve(completed);
+        await running.completion;
+        if (publication !== undefined)
+          await expect(publication).resolves.toHaveProperty("applied_revision", 3);
         await components.directory.apply({ ...executionConfiguration(), revision: 4 });
         await components.application.assertAccess({ binding: binding() });
         expect(execute.mock.calls[0]?.[0].signal.aborted).toBe(true);
@@ -432,6 +463,7 @@ describe("production execution configuration composition", () => {
         lifetime.abort();
         pendingOutput.resolve({ sequence: 0, events: [], state: { kind: "state", state: "idle" } });
         await attachment;
+        await Promise.allSettled([publication]);
         await components.supervisor.shutdown();
         await pool.end();
       }

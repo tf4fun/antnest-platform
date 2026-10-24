@@ -143,7 +143,7 @@ test(
 );
 
 test(
-  "Stage2 preserves the acknowledged request when the actual peer dies before completion",
+  "Stage2 preserves remote closure and rejects a post-cleanup Prompt without new wire",
   { timeout: 10000 },
   async (t) => {
     const f = await open(t),
@@ -152,9 +152,26 @@ test(
     const completion = c.prompt(session.sessionId);
     void completion.catch(() => {});
     await f.entered;
+    const startedAt = Date.now(),
+      deadline = startedAt + 5000;
     f.terminate();
+    const receipt = await c.waitForClose(5000);
+    assert.equal(receipt.localClose, false);
+    assert(receipt.at >= startedAt && receipt.at <= deadline);
+    assert.equal(c.snapshot().closed, false);
     await assert.rejects(completion, /clos|disconnect|ended/iu);
     await c.closeAndWait();
+    const beforeProbe = c.snapshot(),
+      wireBeforeProbe = structuredClone(f.wire);
+    await assert.rejects(
+      c.request("prompt", {
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "must not reach the closed peer" }],
+      }),
+      /Stage2 connection is closing/u,
+    );
+    assert.deepEqual(c.snapshot(), beforeProbe);
+    assert.deepEqual(f.wire, wireBeforeProbe);
     const row = c
       .snapshot()
       .evidence.find((item) => item.method === "session/prompt");
@@ -176,9 +193,46 @@ test(
     void completion.catch(() => {});
     await f.entered;
     await c.closeAndWait();
+    assert.equal((await c.waitForClose(1000)).localClose, true);
     await assert.rejects(completion, /clos|disconnect|ended/iu);
     assert.equal(c.snapshot().closed, true);
     assert(c.snapshot().evidence.at(-1).completion_failure);
+  },
+);
+
+test(
+  "Stage2 retains an original cleanup failure after the no-wire Prompt probe",
+  { timeout: 10000 },
+  async (t) => {
+    const original = new Error("Stage2 cleanup archive failed");
+    let fail = false;
+    const f = await open(t, {
+      expectedCleanupFailure: true,
+      client: {
+        preserve() {
+          if (fail) throw original;
+        },
+      },
+    });
+    const c = f.client,
+      { sessionId } = await c.newSession();
+    fail = true;
+    const cleanup = c.closeAndWait();
+    await assert.rejects(cleanup, (error) => error === original);
+    assert.equal(c.closeAndWait(), cleanup);
+    const beforeProbe = c.snapshot(),
+      wireBeforeProbe = structuredClone(f.wire);
+    assert.equal(beforeProbe.closed, true);
+    await assert.rejects(
+      c.request("prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "must not hide the cleanup failure" }],
+      }),
+      /Stage2 connection is closing/u,
+    );
+    assert.deepEqual(c.snapshot(), beforeProbe);
+    assert.deepEqual(f.wire, wireBeforeProbe);
+    await assert.rejects(c.closeAndWait(), (error) => error === original);
   },
 );
 
