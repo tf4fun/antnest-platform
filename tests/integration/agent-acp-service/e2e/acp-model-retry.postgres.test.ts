@@ -276,7 +276,8 @@ describe.skipIf(databaseUrl === undefined)(
             });
             expect(requests).toHaveLength(3);
             expect(requests).toEqual([requests[0], requests[0], requests[0]]);
-            expect(JSON.parse(requests[0]!).model).toBe(modelName);
+            const requestBody: unknown = JSON.parse(requests[0]!);
+            expect(requestBody).toMatchObject({ model: modelName });
             expect(app.model.complete).toHaveBeenCalledTimes(3);
             expect(app.createIntent).toHaveBeenCalledOnce();
             expect(app.acceptRun).toHaveBeenCalledOnce();
