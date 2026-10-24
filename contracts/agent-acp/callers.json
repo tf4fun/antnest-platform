@@ -257,6 +257,24 @@
       },
       "request_body": "json",
       "notes": "Directional member credentials authenticate the fixed peer listener. Reapply the original agent-controller route policy without a user CCT. Validate the body digest, closed operation, fixed assignment, full registrations, private publication and original lifecycle deadline. No ingress lease acquisition; the owner joins its original control task and lease release."
+    },
+    "POST /internal/acp-peer/control/source-inspect": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "none"
+      },
+      "request_body": "json",
+      "notes": "Directional member credentials authenticate the fixed peer listener. Reapply the original skill-registry policy without a user CCT. Validate the body digest, actor/Agent scope, full registrations, private publication, original live epoch and shared 8.5-second deadline. The original owner retains its source-read gate and Runtime authority; cancellation joins original work and independent cleanup failures prevent retirement ACK."
+    },
+    "POST /internal/acp-peer/control/source-artifact": {
+      "callers": ["agent-acp-service"],
+      "authentication": "peer-member",
+      "caller_context": {
+        "agent-acp-service": "none"
+      },
+      "request_body": "json",
+      "notes": "Directional member credentials authenticate the fixed peer listener. Reapply the original skill-registry policy without a user CCT. Validate the body digest, actor/Agent scope, full registrations, private publication, original live epoch and shared 8.5-second deadline. The original owner retains its source-read gate and Runtime authority; cancellation joins original work and independent cleanup failures prevent retirement ACK."
     }
   },
   "guarded_sources": {
@@ -295,7 +313,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "21cb1adbebcd4ddcfacbebe8fc97d0ab121baac9c756af7ee592281bcd5250a4",
+      "sha256": "5724a9df815f3770c60c33f4327c42eb5e9d58dc6b8c21def7ba13d0d1bb6096",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -315,7 +333,7 @@
       "routes": []
     },
     "services/agent-acp-service/src/transport/skill-sources.ts": {
-      "sha256": "ee414915736074973843f0a3d24f15c63c1d338e5176deab2bdf877e39d6cfbe",
+      "sha256": "19b021caa7e48acad56df58f8107729966f6c0c0ec0ced1cc1acc4e8e2d5015a",
       "routes": [
         "POST /internal/skill-sources/inspect",
         "POST /internal/skill-sources/artifact"
@@ -366,7 +384,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/peer-server.ts": {
-      "sha256": "15b88f6f2b2d494b2089611c74789c6e3b84e396f0add0116ed56fe87fa46384",
+      "sha256": "c71ff0735ee13e3226a4bdf4db177fd6a195d236d57b3b4bb986b83ba48452c6",
       "routes": [
         "POST /internal/acp-peer/identity",
         "POST /internal/acp-peer/publications/apply",
@@ -376,11 +394,13 @@
         "DELETE /internal/acp-peer/forward/http",
         "POST /internal/acp-peer/control/state-read",
         "POST /internal/acp-peer/control/state-watch",
-        "POST /internal/acp-peer/control/settlement"
+        "POST /internal/acp-peer/control/settlement",
+        "POST /internal/acp-peer/control/source-inspect",
+        "POST /internal/acp-peer/control/source-artifact"
       ]
     },
     "services/agent-acp-service/src/transport/owner-http.ts": {
-      "sha256": "4a9373cb21104ba324455e73e9a76545bb8fb29bd56f84eb37b4ea57fbdf32ed",
+      "sha256": "9227f91f5678abc71bae95b1a3005e317787312cac6f8aea54126391086a265b",
       "routes": [
         "POST /internal/acp-peer/forward/http",
         "GET /internal/acp-peer/forward/http",
@@ -388,11 +408,18 @@
       ]
     },
     "services/agent-acp-service/src/transport/owner-control.ts": {
-      "sha256": "a60d0752653dd1f585c9535fbe61ebc5fec5b77f5ad097c85618e29b935b7b12",
+      "sha256": "e3b3154fbc2947e6c6487a773d9dca2cbe0923c8793a2d2785744f9ee94b365e",
       "routes": [
         "POST /internal/acp-peer/control/state-read",
         "POST /internal/acp-peer/control/state-watch",
         "POST /internal/acp-peer/control/settlement"
+      ]
+    },
+    "services/agent-acp-service/src/transport/owner-sources.ts": {
+      "sha256": "41f737777e3b93bd540274c25a87c1733c4f4a40ee87c9a79585c69d51161751",
+      "routes": [
+        "POST /internal/acp-peer/control/source-inspect",
+        "POST /internal/acp-peer/control/source-artifact"
       ]
     }
   }

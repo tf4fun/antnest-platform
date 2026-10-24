@@ -9,6 +9,13 @@ import {
 } from "../domain/skill-source.js";
 import type { ExecutionIdentity, AgentConfiguration } from "../domain/execution-configuration.js";
 import type { RuntimeBinding } from "../domain/types.js";
+import type { AgentOwnershipFence } from "../domain/agent-ownership.js";
+
+export type SourceReadAuthority = Readonly<{
+  fence: AgentOwnershipFence;
+  signal: AbortSignal;
+  assertCurrent(): void;
+}>;
 
 type Binding = NonNullable<AgentConfiguration["runtime"]>;
 type Dependencies = {
@@ -19,7 +26,11 @@ type Dependencies = {
   };
   repository: {
     read(organizationId: string, key: SkillSourceKey): Promise<SkillSourceRecord | null>;
-    remove(projection: SkillProjection): Promise<void>;
+    remove(
+      projection: SkillProjection,
+      fence?: AgentOwnershipFence,
+      assertCurrent?: () => void,
+    ): Promise<void>;
   };
   runtime: {
     verify(
@@ -30,7 +41,7 @@ type Dependencies = {
   };
   gate: {
     beginSourceRead(
-      scope: { organizationId: string; agentId: string },
+      scope: { organizationId: string; agentId: string; ownerFence?: AgentOwnershipFence },
       signal: AbortSignal,
     ): Promise<{ signal: AbortSignal; finish(): void }>;
   };
@@ -42,12 +53,22 @@ export class SkillSources {
   public async inspect(
     input: SkillSourceInspect,
     signal: AbortSignal,
+    authority?: SourceReadAuthority,
   ): Promise<{ items: SkillProjection[] }> {
     const items: SkillProjection[] = [];
     for (const key of input.sources) {
       try {
         items.push(
-          (await this.current(input.organization_id, input.actor_id, key, signal)).projection,
+          (
+            await this.current(
+              input.organization_id,
+              input.actor_id,
+              key,
+              signal,
+              undefined,
+              authority,
+            )
+          ).projection,
         );
       } catch (error) {
         if (
@@ -64,11 +85,19 @@ export class SkillSources {
   public async artifact(
     input: SkillSourceArtifact,
     signal: AbortSignal,
+    authority?: SourceReadAuthority,
   ): Promise<SkillSourceRecord> {
-    return this.current(input.organization_id, input.actor_id, input.skill_ref, signal, {
-      sequence: input.skill_ref.sequence,
-      digest: input.expected_digest,
-    });
+    return this.current(
+      input.organization_id,
+      input.actor_id,
+      input.skill_ref,
+      signal,
+      {
+        sequence: input.skill_ref.sequence,
+        digest: input.expected_digest,
+      },
+      authority,
+    );
   }
 
   private async current(
@@ -77,12 +106,25 @@ export class SkillSources {
     key: SkillSourceKey,
     signal: AbortSignal,
     expected?: { sequence: number; digest: string },
+    authority?: SourceReadAuthority,
   ): Promise<SkillSourceRecord> {
-    signal.throwIfAborted();
+    if (authority !== undefined) signal = AbortSignal.any([signal, authority.signal]);
     const identity = { organizationId, principalId: actorId, agentId: key.agent_id };
+    const currentAuthority = () => {
+      signal.throwIfAborted();
+      authority?.assertCurrent();
+      if (
+        authority !== undefined &&
+        (authority.fence.organizationId !== organizationId ||
+          authority.fence.agentId !== key.agent_id)
+      )
+        throw new SkillSourceError("source_unavailable");
+    };
     try {
+      currentAuthority();
       const before = this.dependencies.directory.inspect(identity).agent;
       let record = await this.dependencies.repository.read(organizationId, key);
+      currentAuthority();
       if (record === null || !record.projection.active || record.projection.owner_id !== actorId)
         throw new SkillSourceError("not_found");
       if (
@@ -98,15 +140,21 @@ export class SkillSources {
       )
         throw new SkillSourceError("source_unavailable");
       const slot = await this.dependencies.gate.beginSourceRead(
-        { organizationId, agentId: key.agent_id },
+        {
+          organizationId,
+          agentId: key.agent_id,
+          ...(authority === undefined ? {} : { ownerFence: authority.fence }),
+        },
         signal,
       );
       try {
         slot.signal.throwIfAborted();
+        currentAuthority();
         // Admission may have waited for another read. Never dispatch against an
         // authorization, source selection or Runtime binding captured before it.
         const admitted = await this.dependencies.repository.read(organizationId, key);
         slot.signal.throwIfAborted();
+        currentAuthority();
         if (
           admitted === null ||
           !admitted.projection.active ||
@@ -141,13 +189,21 @@ export class SkillSources {
           signal,
         );
         slot.signal.throwIfAborted();
+        currentAuthority();
         if (outcome === "unknown") throw new SkillSourceError("source_unavailable");
         if (outcome === "changed") {
-          await this.dependencies.repository.remove(record.projection);
+          if (authority === undefined) await this.dependencies.repository.remove(record.projection);
+          else
+            await this.dependencies.repository.remove(
+              record.projection,
+              authority.fence,
+              currentAuthority,
+            );
           throw new SkillSourceError("content_changed");
         }
         const latest = await this.dependencies.repository.read(organizationId, key);
         slot.signal.throwIfAborted();
+        currentAuthority();
         if (latest === null || !latest.projection.active || latest.projection.owner_id !== actorId)
           throw new SkillSourceError("not_found");
         if (
@@ -173,7 +229,7 @@ export class SkillSources {
       if (error instanceof SkillSourceError) throw error;
       if (error instanceof DomainError && error.code === "access_denied")
         throw new SkillSourceError("not_found");
-      throw new SkillSourceError("source_unavailable");
+      throw new SkillSourceError("source_unavailable", { cause: error });
     }
   }
 }

@@ -461,7 +461,9 @@ export class PeerServer {
         this.forwardControl !== undefined &&
         (request.url === OWNER_CONTROL_PATHS["state-read"] ||
           request.url === OWNER_CONTROL_PATHS["state-watch"] ||
-          request.url === OWNER_CONTROL_PATHS.settlement)
+          request.url === OWNER_CONTROL_PATHS.settlement ||
+          request.url === OWNER_CONTROL_PATHS["source-inspect"] ||
+          request.url === OWNER_CONTROL_PATHS["source-artifact"])
       ) {
         if (this.closed) throw new PeerFailure("configuration_unavailable");
         if (request.method !== "POST") throw new PeerFailure("method_not_allowed");

@@ -5,11 +5,16 @@ import {
   SkillSourceError,
   skillSourceArtifactSchema,
   skillSourceInspectSchema,
+  type SkillSourceArtifact,
+  type SkillSourceInspect,
 } from "../domain/skill-source.js";
 import { authenticatedCaller } from "./trusted-identity.js";
 import { readRpcRequest, RpcRequestError } from "./rpc-request.js";
 
 const PREFIX = "/internal/skill-sources/";
+export type SourceOperation =
+  | { route: "inspect"; input: SkillSourceInspect }
+  | { route: "artifact"; input: SkillSourceArtifact };
 export function skillSourceRoute(
   rawUrl: string | undefined,
 ): "inspect" | "artifact" | "invalid" | undefined {
@@ -28,6 +33,8 @@ export async function serveSkillSource(
       }
     | undefined,
   ready: () => Promise<boolean>,
+  forward?: (operation: SourceOperation, signal: AbortSignal, deadline: number) => Promise<boolean>,
+  lifetime?: { signal: AbortSignal; deadline: number },
 ): Promise<void> {
   if (options === undefined || authenticatedCaller(request) !== "skill-registry") {
     json(response, "unauthorized");
@@ -47,7 +54,12 @@ export async function serveSkillSource(
     if (!response.writableEnded) disconnected.abort();
   };
   response.once("close", close);
-  const signal = AbortSignal.any([disconnected.signal, AbortSignal.timeout(8500)]);
+  const deadline = lifetime?.deadline ?? Date.now() + 8500;
+  const signal = AbortSignal.any([
+    disconnected.signal,
+    AbortSignal.timeout(Math.max(0, Math.min(8500, deadline - Date.now()))),
+    ...(lifetime === undefined ? [] : [lifetime.signal]),
+  ]);
   try {
     const maximum = route === "inspect" ? 8192 : 4096;
     const parsed = await readRpcRequest(request, maximum);
@@ -63,9 +75,13 @@ export async function serveSkillSource(
     if (!(await ready())) throw new SkillSourceError("source_unavailable");
     if (route === "inspect") {
       const input = skillSourceInspectSchema.parse(parsed);
-      jsonBody(response, 200, await options.service.inspect(input, signal));
+      if (await forward?.({ route, input }, signal, deadline)) return;
+      const value = await options.service.inspect(input, signal);
+      signal.throwIfAborted();
+      jsonBody(response, 200, value);
     } else {
       const input = skillSourceArtifactSchema.parse(parsed);
+      if (await forward?.({ route, input }, signal, deadline)) return;
       const value = await options.service.artifact(input, signal);
       signal.throwIfAborted();
       response.writeHead(200, {
@@ -80,16 +96,20 @@ export async function serveSkillSource(
       response.end(value.package.artifact);
     }
   } catch (error) {
-    if (error instanceof RpcRequestError) {
-      json(response, error.code);
-      return;
-    }
-    const failure =
-      error instanceof SkillSourceError ? error : new SkillSourceError("source_unavailable");
-    json(response, failure.code);
+    sourceFailure(response, error);
   } finally {
     response.off("close", close);
   }
+}
+
+export function sourceFailure(response: ServerResponse, error: unknown): void {
+  if (error instanceof RpcRequestError) {
+    json(response, error.code);
+    return;
+  }
+  const failure =
+    error instanceof SkillSourceError ? error : new SkillSourceError("source_unavailable");
+  json(response, failure.code);
 }
 
 function json(response: ServerResponse, code: string): void {
