@@ -82,6 +82,7 @@ describe.skipIf(databaseUrl === undefined)(
       "temporary",
       "foreign-temporary",
       "bad-runtime",
+      "missing-connection",
     ] as const) {
       it(`classifies ${variant} by original Run identity and proof, without rewriting facts`, async () => {
         await withDatabase(async (f) => {
@@ -141,6 +142,11 @@ describe.skipIf(databaseUrl === undefined)(
           if (variant === "bad-runtime")
             await f.observer.query(
               "UPDATE runs SET execution_snapshot=jsonb_set(execution_snapshot,'{runtime}','null'::jsonb) WHERE id=$1",
+              [value.input.runId],
+            );
+          if (variant === "missing-connection")
+            await f.observer.query(
+              "UPDATE runs SET execution_snapshot=execution_snapshot #- '{runtime,connectionId}' WHERE id=$1",
               [value.input.runId],
             );
           if (variant !== "no-proof") {

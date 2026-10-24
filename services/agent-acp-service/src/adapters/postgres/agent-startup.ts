@@ -286,7 +286,7 @@ const settlementRuntime = z.object({
     .regex(/^[!-~]{1,200}$/u)
     .refine((value) => !value.includes("/") && !value.includes("\\")),
   mcpEndpoint: runtimeMcpEndpointSchema,
-  connectionId: runtimeConnectionIdSchema.optional(),
+  connectionId: runtimeConnectionIdSchema,
 });
 
 function stoppedRun(run: SettlementRun, fence: AgentOwnershipFence): boolean {
