@@ -397,6 +397,10 @@ protection facts; it does not count unexecuted cleanup as passed.
 
 ## Remaining Peer And Integration Batches
 
+The private publication/revocation receipt, complete-member aggregate ACK and
+subsequent forwarding boundaries are specified in [owner peer coordination](owner-peer.md).
+They remain pending production consumers and do not remove the global worker lock.
+
 The next peer contract must define a separate authenticated listener and exact
 operations. The intended model is one owner terminating the complete ACP
 session, with fixed-path, single-hop ingress forwarding. It must preserve
