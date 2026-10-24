@@ -1,4 +1,5 @@
 import type { ModelUsage } from "../domain/usage.js";
+import type { ModelReservation } from "../domain/model-budget.js";
 
 export type ModelAttemptStarted = {
   ordinal: number;
@@ -7,6 +8,7 @@ export type ModelAttemptStarted = {
   model: string;
   purpose: "foreground" | "permission_judge" | "skill_learning";
   startedAt: Date;
+  reservation?: ModelReservation;
 };
 
 export type ModelAttemptFinished = {

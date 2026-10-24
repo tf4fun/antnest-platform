@@ -6,6 +6,7 @@ import { admittedConfigurationSchema } from "./session-configuration.js";
 import type { ModelSpec, RunExecutionSnapshot } from "./types.js";
 import { modelPricingSchema } from "./usage.js";
 import { modelFailoverSchema, modelRetrySchema } from "./model-call-policy.js";
+import { runBudgetSchema } from "./model-budget.js";
 
 const id = z.string().min(1).max(200);
 const digest = z.string().regex(/^[0-9a-f]{64}$/u);
@@ -54,6 +55,7 @@ const schema = z
       model: modelSchema,
       maxModelRequests: positive,
       modelRetry: modelRetrySchema.optional(),
+      runBudget: runBudgetSchema.optional(),
       modelFailover: modelFailoverSchema.optional(),
       fallbackModels: z
         .array(
@@ -99,7 +101,7 @@ const schema = z
 
 export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
   const parsed = schema.parse(value);
-  const { configuration, modelRetry, modelFailover, fallbackModels, ...executionSpec } =
+  const { configuration, modelRetry, runBudget, modelFailover, fallbackModels, ...executionSpec } =
     parsed.executionSpec;
   return {
     ...parsed,
@@ -108,6 +110,7 @@ export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
       model: normalizedModel(executionSpec.model),
       ...(configuration === undefined ? {} : { configuration }),
       ...(modelRetry === undefined ? {} : { modelRetry }),
+      ...(runBudget === undefined ? {} : { runBudget }),
       ...(modelFailover === undefined ? {} : { modelFailover }),
       ...(fallbackModels === undefined
         ? {}

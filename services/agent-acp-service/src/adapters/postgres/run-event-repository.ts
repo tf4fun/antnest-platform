@@ -2,6 +2,7 @@ import { deriveResourceId } from "../../domain/resource-id.js";
 import type { PoolClient } from "pg";
 import { isDeepStrictEqual } from "node:util";
 import { projectUsage } from "../../domain/usage.js";
+import { reserveModelBudget, settleModelBudget } from "./model-budget.js";
 
 import type {
   ToolEffectState,
@@ -167,8 +168,9 @@ export class PostgresRunEventRepository implements RunEventRepository {
       model: input.model,
       purpose: input.purpose,
       startedAt: input.startedAt,
+      ...(input.reservation === undefined ? {} : { reservation: input.reservation }),
     };
-    return this.#authority.transaction(this.kernel, async (client) => {
+    return this.modelTransaction(input.runId, async (client) => {
       const locked = await lockSessionRun(client, input.runId, this.#authority);
       if (await storedModelAttempt(client, locked, id, event, input.startedAt)) return;
       requireRunning(locked.state);
@@ -177,10 +179,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
         [input.runId],
       );
       const frozen = requireRow(row.rows[0], "Run snapshot is missing").execution_snapshot;
-      if (
-        frozenModelCandidate(frozen, input) === undefined ||
-        input.ordinal > frozen.executionSpec.maxModelRequests
-      )
+      const candidate = frozenModelCandidate(frozen, input);
+      if (candidate === undefined || input.ordinal > frozen.executionSpec.maxModelRequests)
         throw new Error("Model attempt does not match the frozen Run");
       const previous = await client.query<{ ordinal: string | null }>(
         `SELECT max((payload->>'ordinal')::bigint)::text AS ordinal FROM session_messages
@@ -200,6 +200,17 @@ export class PostgresRunEventRepository implements RunEventRepository {
         );
         if (prior.rowCount !== 1) throw new Error("Previous model attempt is unfinished");
       }
+      await reserveModelBudget(client, {
+        runId: input.runId,
+        ordinal: input.ordinal,
+        organizationId: locked.organizationId,
+        agentId: locked.agentId,
+        ...(frozen.executionSpec.runBudget === undefined
+          ? {}
+          : { runBudget: frozen.executionSpec.runBudget }),
+        ...(input.reservation === undefined ? {} : { reservation: input.reservation }),
+        ...(candidate.model.pricing === undefined ? {} : { pricing: candidate.model.pricing }),
+      });
       await appendModelAttemptLocked(client, locked, id, event, input.startedAt);
     });
   }
@@ -230,7 +241,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       contextSize: input.contextSize,
       createdAt: input.finishedAt,
     };
-    return this.#authority.transaction(this.kernel, async (client) => {
+    return this.modelTransaction(input.runId, async (client) => {
       const locked = await lockSessionRun(client, input.runId, this.#authority);
       const receipt = await storedModelAttempt(client, locked, id, event, input.finishedAt);
       const usageReceipt = await storedUsage(client, locked, usage);
@@ -255,6 +266,13 @@ export class PostgresRunEventRepository implements RunEventRepository {
       const candidate = frozenModelCandidate(original.execution_snapshot, original.payload);
       if (candidate === undefined || input.contextSize !== candidate.model.contextWindow)
         throw new Error("Model attempt context does not match its frozen candidate");
+      await settleModelBudget(client, {
+        runId: input.runId,
+        ordinal: input.ordinal,
+        organizationId: locked.organizationId,
+        usage: input.usage,
+        ...(candidate.model.pricing === undefined ? {} : { pricing: candidate.model.pricing }),
+      });
       await appendModelAttemptLocked(client, locked, id, event, input.finishedAt);
       return appendUsageLocked(client, { ...locked, nextSequence: locked.nextSequence + 1 }, usage);
     });
@@ -304,6 +322,35 @@ export class PostgresRunEventRepository implements RunEventRepository {
       await appendLocked(client, locked, input.id, "tool_call", event, input.createdAt);
       return event;
     });
+  }
+
+  private async modelTransaction<T>(
+    runId: string,
+    operation: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    const identity = (
+      await this.kernel.query<{ organization_id: string }>(
+        "SELECT organization_id FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows[0];
+    if (identity === undefined) throw new Error("Run does not exist");
+    return this.#authority.organizationTransaction(
+      this.kernel,
+      identity.organization_id,
+      async (client) => {
+        // The pre-lock lookup is only a lock key, never admission authority.
+        const current = (
+          await client.query<{ organization_id: string }>(
+            "SELECT organization_id FROM runs WHERE id=$1",
+            [runId],
+          )
+        ).rows[0];
+        if (current?.organization_id !== identity.organization_id)
+          throw new Error("Run organization changed");
+        return operation(client);
+      },
+    );
   }
 
   public async appendRejectedToolCall(request: AppendRejectedToolCallInput): Promise<SessionEvent> {
@@ -790,7 +837,7 @@ async function lockSessionRun(
   client: PoolClient,
   runId: string,
   authority: RunWriteAuthority,
-): Promise<LockedRun & { state: string }> {
+): Promise<LockedRun & { state: string; organizationId: string; agentId: string }> {
   const identity = await client.query<{ session_id: string }>(
     "SELECT session_id FROM runs WHERE id = $1",
     [runId],
@@ -825,6 +872,8 @@ async function lockSessionRun(
     runId,
     sessionId,
     state: runRow.state,
+    organizationId: runRow.organization_id,
+    agentId: runRow.agent_id,
     nextSequence: Number(sessionRow.last_message_sequence) + 1,
   };
 }
