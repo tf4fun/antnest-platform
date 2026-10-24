@@ -51,6 +51,7 @@ export type AgentAcpConfig = {
   skillDiscovery?: { registryUrl: string };
   runTimeoutMs: number;
   providerAllowPrivateEndpoints: boolean;
+  providerCircuit: { failureThreshold: number; cooldownMs: number };
   maxWebSocketPayloadBytes: number;
   maxConfigurationBytes: number;
   connectionLimits: ConnectionCapacityLimits;
@@ -160,6 +161,18 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     authentication,
     dependencyFetchers,
     connectionLimits,
+    providerCircuit: {
+      failureThreshold: parseInteger(
+        environment.ANTNEST_ACP_PROVIDER_CIRCUIT_FAILURE_THRESHOLD ?? "3",
+        "ANTNEST_ACP_PROVIDER_CIRCUIT_FAILURE_THRESHOLD",
+        1,
+        100,
+      ),
+      cooldownMs: parseDuration(
+        environment.ANTNEST_ACP_PROVIDER_CIRCUIT_COOLDOWN ?? "30s",
+        "ANTNEST_ACP_PROVIDER_CIRCUIT_COOLDOWN",
+      ),
+    },
     providerAllowPrivateEndpoints: parseBoolean(
       environment.ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS ?? "false",
       "ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS",

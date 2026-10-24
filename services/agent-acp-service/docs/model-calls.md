@@ -126,7 +126,40 @@ independent Provider credentials, candidate pricing, hidden attempt receipts,
 replay without new model requests and original resource cleanup. Component
 checks do not substitute for the final Docker business acceptance.
 
-The Provider circuit breaker, Run/organization spending ledgers and
+## Provider circuit delivery contract
+
+Each current organization/Provider connection has a circuit in
+one ACP process. Foreground calls and permission judges across Runs share it;
+separate organizations, connections and replacement clients do not. This is a
+local transport-health optimization, not a distributed budget or a promise of
+one global probe across ACP replicas. Restarting ACP resets local health.
+
+The operator defaults are three consecutive retryable Provider failures
+and a 30-second cooldown. `ANTNEST_ACP_PROVIDER_CIRCUIT_FAILURE_THRESHOLD` accepts
+integers from 1 through 100; `ANTNEST_ACP_PROVIDER_CIRCUIT_COOLDOWN` uses existing
+`ms`/`s`/`m` duration syntax from 1 ms through 60 minutes. Successful calls reset
+the failure count. Counted failures are retryable HTTP 408/429/5xx or a retryable
+transport/endpoint-unavailable failure without an HTTP status. Caller cancellation, authorization loss, HTTP 400/401,
+non-retryable errors, persistence errors and cleanup failures are neutral health
+observations. They retain their existing blocking behavior for the Run.
+
+The policy obtains a circuit permit before consuming a physical request
+slot or persisting an attempt start. An open circuit skips to the next frozen,
+compatible fallback only under `before_output`; otherwise it returns typed
+`model_unavailable`. Skipping creates no synthetic attempt or usage measurement.
+Opening on the current failure skips remaining retries without another backoff.
+The original deadline, streaming boundary and authorization still apply.
+
+After cooldown, only one half-open probe may proceed. Its permit remains held
+until the original model task, transport cleanup and attempt finish/usage receipt
+have settled. A successful probe closes the circuit; a failed or neutral probe
+starts another cooldown. A stale result from an older circuit generation cannot
+reset health or release a newer probe. Preparing context or holding a Provider
+revocation signal does not acquire a probe; circuit state never revokes access.
+Replacing a removed Provider creates fresh health state without reviving old
+handles or admitting an old Run to a different endpoint.
+
+Run/organization spending ledgers and
 caps, Controller default publication, Console controls and final Docker business
 acceptance remain pending under the
 [model-call policy contract](../../../contracts/agent-controller/model-call-policy.md).

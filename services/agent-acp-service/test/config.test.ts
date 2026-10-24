@@ -131,6 +131,68 @@ describe("loadConfig", () => {
     });
   });
 
+  it("defaults the Provider circuit to three failures and a thirty-second cooldown", () => {
+    const config = loadConfig({ ...testSecurityEnvironment(), ...requiredEnvironment() });
+    expect(config.providerCircuit).toEqual({ failureThreshold: 3, cooldownMs: 30_000 });
+  });
+
+  it("loads explicit Provider circuit threshold and duration overrides", () => {
+    const config = loadConfig({
+      ...testSecurityEnvironment(),
+      ...requiredEnvironment(),
+      ANTNEST_ACP_PROVIDER_CIRCUIT_FAILURE_THRESHOLD: "7",
+      ANTNEST_ACP_PROVIDER_CIRCUIT_COOLDOWN: "750ms",
+    });
+    expect(config.providerCircuit).toEqual({ failureThreshold: 7, cooldownMs: 750 });
+  });
+
+  it.each([1, 100])("accepts the Provider circuit failure threshold boundary %i", (threshold) => {
+    const config = loadConfig({
+      ...testSecurityEnvironment(),
+      ...requiredEnvironment(),
+      ANTNEST_ACP_PROVIDER_CIRCUIT_FAILURE_THRESHOLD: String(threshold),
+    });
+    expect(config.providerCircuit).toEqual({ failureThreshold: threshold, cooldownMs: 30_000 });
+  });
+
+  it.each([
+    ["1ms", 1],
+    ["60m", 3_600_000],
+  ] as const)("accepts the Provider circuit cooldown boundary %s", (cooldown, milliseconds) => {
+    const config = loadConfig({
+      ...testSecurityEnvironment(),
+      ...requiredEnvironment(),
+      ANTNEST_ACP_PROVIDER_CIRCUIT_COOLDOWN: cooldown,
+    });
+    expect(config.providerCircuit).toEqual({ failureThreshold: 3, cooldownMs: milliseconds });
+  });
+
+  it.each(["0", "101", "1.5", "", " ", "-1"])(
+    "rejects the invalid Provider circuit failure threshold %j",
+    (threshold) => {
+      expect(() =>
+        loadConfig({
+          ...testSecurityEnvironment(),
+          ...requiredEnvironment(),
+          ANTNEST_ACP_PROVIDER_CIRCUIT_FAILURE_THRESHOLD: threshold,
+        }),
+      ).toThrow(ConfigError);
+    },
+  );
+
+  it.each(["0ms", "3600001ms", "61m", "", " ", "forever"])(
+    "rejects the invalid Provider circuit cooldown %j",
+    (cooldown) => {
+      expect(() =>
+        loadConfig({
+          ...testSecurityEnvironment(),
+          ...requiredEnvironment(),
+          ANTNEST_ACP_PROVIDER_CIRCUIT_COOLDOWN: cooldown,
+        }),
+      ).toThrow(ConfigError);
+    },
+  );
+
   it("loads an Ed25519 maintenance signer only with a complete identity", () => {
     const config = loadConfig({
       ...testSecurityEnvironment(),

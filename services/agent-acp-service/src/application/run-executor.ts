@@ -6,6 +6,7 @@ import { commandReply, type SessionCommand } from "../domain/slash-commands.js";
 import { type RunExecutionInput, type ExecuteRunResult } from "../ports/acp-application.js";
 import type { ProviderClients } from "./provider-clients.js";
 import type { ModelPort } from "../ports/model.js";
+import type { ProviderCircuitPort } from "../ports/provider-circuit.js";
 import { RunModelClient } from "./run-model-client.js";
 import type { ExecutionRepository } from "../ports/execution-repository.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
@@ -21,7 +22,7 @@ export type RunExecutorDependencies = {
   permissions?: ToolPermissionPort;
   executions: ExecutionRepository;
   contextBuilder: Pick<ContextBuilder, "build">;
-  providers: Pick<ProviderClients, "acquire">;
+  providers: Pick<ProviderClients, "acquire"> & Partial<ProviderCircuitPort>;
   tools: ToolCatalogPort;
   events: RunEventRepository;
   ownershipSignal: AbortSignal;
@@ -223,7 +224,15 @@ export class RunExecutor implements RunExecutionPort {
       contextSize: input.accepted.snapshot.executionSpec.model.contextWindow,
       runtimeWorkspace: context.runtimeWorkspace,
     });
+    const tryModelAttempt = this.dependencies.providers.tryModelAttempt;
     const runner = new TurnRunner({
+      ...(tryModelAttempt === undefined
+        ? {}
+        : {
+            providerCircuit: {
+              tryModelAttempt: tryModelAttempt.bind(this.dependencies.providers),
+            },
+          }),
       ...(this.dependencies.permissions === undefined
         ? {}
         : { permissions: this.dependencies.permissions }),

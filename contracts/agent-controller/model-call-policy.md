@@ -135,6 +135,9 @@ this configuration contract does not claim those are currently emitted.
 
 A per-Provider-connection circuit breaker is also required by #52. Its bounded
 failure threshold, cooldown and half-open probe ownership belong to the ACP batch.
+ACP documents its per-process defaults of three failures and a 30-second cooldown,
+operator overrides and original-task ownership in [model calls](../../services/agent-acp-service/docs/model-calls.md#provider-circuit-delivery-contract).
+This local health state does not establish one global probe across replicas.
 It must not replace the shared spending ledger, bypass capability checks, replay
 output or reset a Run deadline. Unknown outcomes and shutdown retain original work.
 
