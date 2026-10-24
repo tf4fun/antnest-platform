@@ -587,10 +587,10 @@ test("RC grants and the private ACP probe allow only their owning workload calle
   assert.equal(read(manifestPath).status, "planned");
 });
 
-test("RC revision 20 binds registration and inspection to the frozen shared wire", () => {
+test("RC revision 21 binds registration and inspection to the frozen shared wire", () => {
   const contract = read(controlContractPath);
   const manifest = read(manifestPath);
-  assert.equal(contract.revision, 20);
+  assert.equal(contract.revision, 21);
   for (const [name, operationID, responseAlias] of [
     ["register", "registerAcpIncarnation", "acp_registration"],
     ["inspect", "inspectAcpIncarnation", "acp_inspection"],

@@ -24,9 +24,10 @@ const acpIncarnationResponseBytes = 8192
 type AcpIncarnationService interface {
 	Register(context.Context, acpincarnation.RegisterRequest) (acpincarnation.Registration, error)
 	Inspect(context.Context, string) (acpincarnation.Inspection, error)
+	History(context.Context, acpincarnation.HistoryRequest) (acpincarnation.HistoryPage, error)
 }
 
-// NewHandlerWithAcpIncarnations adds two ACP-only routes. The existing service
+// NewHandlerWithAcpIncarnations adds ACP-only registration, inspection and history routes. The existing service
 // port and its Controller-only authorization remain separate.
 func NewHandlerWithAcpIncarnations(
 	service Service, hub *observation.Hub, heartbeat, requestTimeout time.Duration,
@@ -45,6 +46,8 @@ func NewHandlerWithAcpIncarnations(
 	h.acpRegisterMux = http.NewServeMux()
 	h.acpRegisterMux.Handle("POST /internal/acp-incarnations/register", telemetry.RPCHandler("POST /internal/acp-incarnations/register", http.HandlerFunc(h.registerAcpIncarnation)))
 	h.acpRegisterMux.HandleFunc("/internal/acp-incarnations/register", h.methodNotAllowed)
+	h.acpRegisterMux.Handle("POST /internal/acp-incarnations/history", telemetry.RPCHandler("POST /internal/acp-incarnations/history", http.HandlerFunc(h.historyAcpIncarnations)))
+	h.acpRegisterMux.HandleFunc("/internal/acp-incarnations/history", h.methodNotAllowed)
 	h.acpInspectMux = http.NewServeMux()
 	h.acpInspectMux.Handle("GET /internal/acp-incarnations/{registration_id}", telemetry.RPCHandler("GET /internal/acp-incarnations/{registration_id}", http.HandlerFunc(h.inspectAcpIncarnation)))
 	h.acpInspectMux.HandleFunc("/internal/acp-incarnations/{registration_id}", h.methodNotAllowed)
@@ -55,7 +58,7 @@ func acpIncarnationRoute(r *http.Request) (register, matched bool) {
 	if r.URL.EscapedPath() != r.URL.Path {
 		return false, false
 	}
-	if r.URL.Path == "/internal/acp-incarnations/register" {
+	if r.URL.Path == "/internal/acp-incarnations/register" || r.URL.Path == "/internal/acp-incarnations/history" {
 		return true, true
 	}
 	const prefix = "/internal/acp-incarnations/"

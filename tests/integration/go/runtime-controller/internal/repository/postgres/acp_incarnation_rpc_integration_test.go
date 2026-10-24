@@ -208,6 +208,20 @@ WHERE controller_scope=$1 AND registration_id=$2`, scope, registration.Registrat
 	if replayed != registration || dockerTransport.calls.Load() != platformCalls || probeCalls.Load() != 1 {
 		t.Fatal("durable registration replay consulted unavailable platform facts or replaced its receipt")
 	}
+	readHistory := func() acpincarnation.HistoryPage {
+		t.Helper()
+		response := acpIncarnationRPCCall(t, ctx, client, rc.server.URL, http.MethodPost, "/internal/acp-incarnations/history", acpincarnation.HistoryRequest{MemberID: input.MemberID}, "agent-acp-service")
+		var page acpincarnation.HistoryPage
+		response.decode(t, http.StatusOK, &page)
+		if len(response.fields) != 6 || !acpincarnation.ValidHistoryPage(acpincarnation.HistoryRequest{MemberID: input.MemberID}, page) || page.SnapshotRevision != "1" || page.AfterSequence != "0" || len(page.Items) != 1 || page.Items[0].Sequence != "1" || page.Items[0].Registration != registration || page.NextCursor != nil {
+			t.Fatal("real HTTP history did not return the complete original PostgreSQL registration")
+		}
+		if dockerTransport.calls.Load() != platformCalls || probeCalls.Load() != 1 {
+			t.Fatal("history depended on unavailable platform or process liveness")
+		}
+		return page
+	}
+	originalHistory := readHistory()
 	inspectPath := "/internal/acp-incarnations/" + registration.RegistrationID
 	stateMu.Lock()
 	platformState.unavailable = false
@@ -263,6 +277,9 @@ WHERE controller_scope=$1 AND registration_id=$2`, scope, registration.Registrat
 		response.decode(t, http.StatusOK, &original)
 		if original.State != "stopped" || original.RegistrationID != stopped.RegistrationID || original.MemberID != stopped.MemberID || original.IncarnationID != stopped.IncarnationID || original.StopReceipt == nil || *original.StopReceipt != *stopped.StopReceipt || dockerTransport.calls.Load() != platformCalls || probeCalls.Load() != 1 {
 			t.Fatal("persisted first stop depended on a replacement or unavailable platform")
+		}
+		if page := readHistory(); page.HistoryID != originalHistory.HistoryID {
+			t.Fatal("original registration disappeared from history after permanent stop")
 		}
 	}
 	if acpIncarnationRows(t, database, ctx) != firstStop || fixtureErrors.Load() != 0 {

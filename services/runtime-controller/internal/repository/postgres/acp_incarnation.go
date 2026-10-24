@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -39,13 +40,35 @@ func (r *Repository) RegisterVerified(ctx context.Context, candidate acpincarnat
 	}
 	candidate.Binding.StartedAt = started
 	return r.acpIncarnationTransaction(ctx, func(tx *sql.Tx) (acpincarnation.Record, error) {
-		_, err := tx.ExecContext(ctx, `INSERT INTO runtime_controller.acp_incarnation_registrations
-(controller_scope,registration_id,member_id,incarnation_id,nonce_digest,engine_id,container_id,started_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-ON CONFLICT (controller_scope,member_id,incarnation_id) DO NOTHING`,
+		// A member's history position is assigned only under its durable head
+		// lock. Registration and head advancement share this transaction, so a
+		// snapshot can never expose a revision with an uncommitted earlier hole.
+		if err := ensureAcpHistoryHead(ctx, tx, candidate.Scope, candidate.Registration.MemberID); err != nil {
+			return acpincarnation.Record{}, err
+		}
+		var revision int64
+		if err := tx.QueryRowContext(ctx, "SELECT revision FROM runtime_controller.acp_incarnation_histories WHERE controller_scope=$1 AND member_id=$2 FOR UPDATE", candidate.Scope, candidate.Registration.MemberID).Scan(&revision); err != nil {
+			return acpincarnation.Record{}, err
+		}
+		existing, err := readAcpIncarnation(ctx, tx.QueryRowContext(ctx, `SELECT `+acpIncarnationColumns+` FROM runtime_controller.acp_incarnation_registrations WHERE controller_scope=$1 AND member_id=$2 AND incarnation_id=$3`, candidate.Scope, candidate.Registration.MemberID, candidate.Registration.IncarnationID))
+		if err != nil {
+			return acpincarnation.Record{}, err
+		}
+		if existing != nil {
+			if existing.Binding != candidate.Binding || subtle.ConstantTimeCompare(existing.NonceDigest[:], candidate.NonceDigest[:]) != 1 {
+				return acpincarnation.Record{}, acpincarnation.ErrConflict
+			}
+			return *existing, nil
+		}
+		if revision == math.MaxInt64 {
+			return acpincarnation.Record{}, fmt.Errorf("ACP member history sequence is exhausted")
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO runtime_controller.acp_incarnation_registrations
+(controller_scope,registration_id,member_id,incarnation_id,nonce_digest,engine_id,container_id,started_at,history_sequence)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 			candidate.Scope, candidate.Registration.RegistrationID, candidate.Registration.MemberID,
 			candidate.Registration.IncarnationID, candidate.NonceDigest[:], candidate.Binding.EngineID,
-			candidate.Binding.ContainerID, candidate.Binding.StartedAt)
+			candidate.Binding.ContainerID, candidate.Binding.StartedAt, revision+1)
 		if err != nil {
 			var constraint *pgconn.PgError
 			if errors.As(err, &constraint) && constraint.Code == "23505" &&
@@ -55,8 +78,11 @@ ON CONFLICT (controller_scope,member_id,incarnation_id) DO NOTHING`,
 			}
 			return acpincarnation.Record{}, err
 		}
-		// A fresh statement sees the concurrent INSERT winner after its commit.
-		// No conflict branch may replace that winner's identity or platform binding.
+		if _, err = tx.ExecContext(ctx, "UPDATE runtime_controller.acp_incarnation_histories SET revision=$3 WHERE controller_scope=$1 AND member_id=$2", candidate.Scope, candidate.Registration.MemberID, revision+1); err != nil {
+			return acpincarnation.Record{}, err
+		}
+		// Read the original stored binding, never reconstruct an idempotency
+		// receipt from a caller's candidate or increment a retry's revision.
 		stored, err := readAcpIncarnation(ctx, tx.QueryRowContext(ctx,
 			`SELECT `+acpIncarnationColumns+` FROM runtime_controller.acp_incarnation_registrations
 WHERE controller_scope=$1 AND member_id=$2 AND incarnation_id=$3`,
@@ -142,20 +168,25 @@ func readAcpIncarnation(ctx context.Context, row *sql.Row) (*acpincarnation.Reco
 // Own the connection until transaction cleanup has actually completed.
 // sql.Tx.Rollback returning ErrTxDone can precede its cancellation goroutine's
 // driver rollback. sql.Conn.Close waits for the transaction's connection release.
-func (r *Repository) acpIncarnationTransaction(ctx context.Context, operation func(*sql.Tx) (acpincarnation.Record, error)) (value acpincarnation.Record, err error) {
-	connection, err := r.database.Conn(ctx)
+func (r *Repository) acpIncarnationTransaction(ctx context.Context, operation func(*sql.Tx) (acpincarnation.Record, error)) (acpincarnation.Record, error) {
+	return acpRegistryTransaction(ctx, r.database, operation)
+}
+
+func acpRegistryTransaction[T any](ctx context.Context, database *sql.DB, operation func(*sql.Tx) (T, error)) (value T, err error) {
+	var zero T
+	connection, err := database.Conn(ctx)
 	if err != nil {
-		return acpincarnation.Record{}, err
+		return zero, err
 	}
 	defer func() {
 		err = errors.Join(err, connection.Close(), ctx.Err())
 		if err != nil {
-			value = acpincarnation.Record{}
+			value = zero
 		}
 	}()
 	tx, err := connection.BeginTx(ctx, nil)
 	if err != nil {
-		return acpincarnation.Record{}, err
+		return zero, err
 	}
 	defer func() {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
@@ -164,13 +195,13 @@ func (r *Repository) acpIncarnationTransaction(ctx context.Context, operation fu
 	}()
 	value, err = operation(tx)
 	if err != nil {
-		return acpincarnation.Record{}, err
+		return zero, err
 	}
 	if err = ctx.Err(); err != nil {
-		return acpincarnation.Record{}, err
+		return zero, err
 	}
 	if err = tx.Commit(); err != nil {
-		return acpincarnation.Record{}, err
+		return zero, err
 	}
 	return value, nil
 }

@@ -505,10 +505,10 @@ test("wire grammar leaves signed-bigint range, contiguous sequence and cursor ec
   );
 });
 
-test("the separate planned manifest freezes the history operation, page size and non-authority semantics", () => {
+test("the implemented manifest freezes the history operation, page size and non-authority semantics", () => {
   const manifest = read(manifestPath);
   assert.equal(manifest.version, 1);
-  assert.equal(manifest.status, "planned");
+  assert.equal(manifest.status, "implemented");
   assert.equal(manifest.issue, 49);
   assert.equal(manifest.schema, "owner-incarnation-history.schema.json");
   assert.deepEqual(Object.keys(manifest.operations), ["history"]);
@@ -540,22 +540,75 @@ test("the separate planned manifest freezes the history operation, page size and
   assert.equal(manifest.authority.history_is_admission_barrier, false);
 });
 
-test("the planned history manifest grants no active Runtime Controller caller or route access", () => {
-  assert.equal(read(manifestPath).status, "planned");
+test("the implemented history route has exact RC grants, revision 21 aliases and manifest limits", () => {
+  const manifest = read(manifestPath);
+  assert.equal(manifest.status, "implemented");
   const callers = read("services/runtime-controller/api/callers.json");
-  for (const route of Object.keys(callers.routes))
-    assert.equal(
-      route.endsWith(` ${routePath}`),
-      false,
-      `planned route granted: ${route}`,
-    );
+  assert.deepEqual(
+    Object.keys(callers.routes)
+      .filter((route) => route.endsWith(` ${routePath}`))
+      .sort(),
+    [`* ${routePath}`, `POST ${routePath}`],
+  );
+  assert.deepEqual(callers.routes[`POST ${routePath}`], {
+    callers: ["agent-acp-service"],
+    authentication: "workload",
+    caller_context: { "agent-acp-service": "none" },
+    request_body: "json",
+  });
+  assert.deepEqual(callers.routes[`* ${routePath}`], {
+    callers: [],
+    authentication: "deny",
+    caller_context: {},
+    request_body: "none",
+  });
   const contract = read(
     "services/runtime-controller/api/control-contract.json",
   );
+  assert.equal(contract.revision, 21);
+  const matches = contract.routes.filter((route) => route.path === routePath);
+  assert.equal(matches.length, 1);
+  const [route] = matches;
+  assert.equal(route.method, "POST");
+  assert.equal(route.operation_id, "historyAcpIncarnations");
+  assert.deepEqual(route.required_headers, ["Antnest-Service-Authorization"]);
   assert.equal(
-    contract.routes.some((route) => route.path === routePath),
-    false,
+    route.request_body,
+    "control-api.schema.json#/$defs/acp_history_request",
   );
+  assert.deepEqual(route.responses, {
+    200: {
+      content_type: "application/json",
+      body: "control-api.schema.json#/$defs/acp_history_page",
+    },
+  });
+  const wire = manifest.operations.history;
+  assert.equal(route.path, wire.path);
+  assert.equal(route.method, wire.method);
+  for (const field of [
+    "request_bytes_max",
+    "response_bytes_max",
+    "deadline_ms",
+    "cache_control",
+    "capture_payload",
+  ])
+    assert.equal(route[field], wire[field], `history.${field}`);
+  assert.deepEqual(
+    Object.keys(route.query_parameters ?? {}),
+    wire.query_parameters,
+  );
+  assert.deepEqual(Object.keys(route.path_parameters ?? {}), []);
+  assert.deepEqual([...route.errors].sort(), [...wire.errors].sort());
+  const schema = read(
+    "services/runtime-controller/api/control-api.schema.json",
+  );
+  for (const [alias, definition] of [
+    ["acp_history_request", "request"],
+    ["acp_history_page", "response"],
+  ])
+    assert.deepEqual(schema.$defs[alias], {
+      $ref: `${schemaID}#/$defs/${definition}`,
+    });
 });
 
 test("history documentation requires existing-registration migration, original inspection and a separate participation barrier", () => {
