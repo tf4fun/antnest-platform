@@ -84,7 +84,7 @@ const forkQueries = [
       convert_to('fork-message', 'UTF8') || decode('00', 'hex') ||
       convert_to($2 || ':' || sequence::text, 'UTF8')
     ), 'hex'), 1, 32) AS copied_id
-    FROM session_messages WHERE session_id = $1
+    FROM session_messages WHERE session_id = $1 AND kind <> 'model_attempt'
   ) source ORDER BY sequence`,
   `INSERT INTO context_checkpoints(
     id, session_id, through_sequence, summary, token_count, created_at

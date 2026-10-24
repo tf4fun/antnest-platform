@@ -28,6 +28,35 @@ describe("shared execution snapshot contract", () => {
     expect(parseExecutionConfiguration(fixture)).toEqual(fixture);
   });
 
+  it.each([
+    { max: 0, base_ms: 1, cap_ms: 1 },
+    { max: 2, base_ms: 200, cap_ms: 30000 },
+    { max: 8, base_ms: 30000, cap_ms: 30000 },
+  ])("admits explicit same-model retry through the complete wire snapshot: %j", (model_retry) => {
+    const fixture = executionConfiguration();
+    fixture.agents[0]!.model_retry = model_retry;
+    const original = structuredClone(fixture);
+    expect(validator(fixture), JSON.stringify(validator.errors)).toBe(true);
+    expect(parseExecutionConfiguration(fixture)).toEqual(original);
+    expect(fixture).toEqual(original);
+  });
+
+  it.each([
+    { max: 9, base_ms: 200, cap_ms: 30000 },
+    { max: "2", base_ms: 200, cap_ms: 30000 },
+    { max: 2, base_ms: 0, cap_ms: 30000 },
+    { max: 2, base_ms: 200, cap_ms: 30001 },
+    { max: 2, base_ms: 200, cap_ms: 30000, secret: "not-a-policy-field" },
+    null,
+  ])("rejects invalid retry wire data without coercing or dropping it: %j", (model_retry) => {
+    const fixture = executionConfiguration();
+    const input = { ...fixture, agents: [{ ...fixture.agents[0], model_retry }] };
+    const original = structuredClone(input);
+    expect(validator(input)).toBe(false);
+    expect(() => parseExecutionConfiguration(input)).toThrow();
+    expect(input).toEqual(original);
+  });
+
   it("requires the retired Skill body channel to be empty in both validators", () => {
     const fixture = executionConfiguration();
     fixture.agents[0]!.skill_instructions = [

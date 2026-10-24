@@ -20,6 +20,8 @@ describe("Admitted execution authorization", () => {
         }),
       );
       const events = {
+        start: vi.fn<RunEventPort["start"]>(() => Promise.resolve()),
+        finish: vi.fn<RunEventPort["finish"]>(() => Promise.resolve()),
         agentMessage: vi.fn(),
         agentThought: vi.fn(),
         usage: vi.fn(),
@@ -47,6 +49,7 @@ describe("Admitted execution authorization", () => {
           usage: { inputTokens: 1, outputTokens: 1 },
         });
       const frozen = snapshot();
+      frozen.deadlineAt = new Date(Date.now() + 60_000);
       frozen.executionSpec.configuration = {
         modelProfileId: "p1",
         authorization: { mode, toolRules: [] },
@@ -85,7 +88,8 @@ describe("Admitted execution authorization", () => {
       expect(
         model.mock.calls.filter(([request]) => request.purpose === "permission_judge"),
       ).toHaveLength(mode === "smart_approve" ? 1 : 0);
-      expect(events.usage).toHaveBeenCalledTimes(mode === "smart_approve" ? 3 : 2);
+      expect(events.finish).toHaveBeenCalledTimes(mode === "smart_approve" ? 3 : 2);
+      expect(events.usage).not.toHaveBeenCalled();
       expect(events.agentMessage).toHaveBeenCalledTimes(2);
     },
   );

@@ -18,7 +18,7 @@ const snapshot: RunExecutionSnapshot = {
   modelProfileId: "profile-1",
   configurationRevision: 1,
   accessRevision: "access-1",
-  deadlineAt: new Date("2026-08-30T00:10:00Z"),
+  deadlineAt: new Date(Date.now() + 60_000),
   agentSpecRevision: "config-1",
   executionRevision: "execution-1",
   runtimeMcpSourceDigest: "a".repeat(64),
@@ -207,7 +207,11 @@ describe("TurnRunner", () => {
       terminalClass: "failed",
       errorClass: "model_invalid_response",
     });
-    expect(events.usage).toHaveBeenCalledExactlyOnceWith("run-1", error.usage);
+    expect(events.finish).toHaveBeenCalledExactlyOnceWith(
+      "run-1",
+      expect.objectContaining({ usage: error.usage }),
+    );
+    expect(events.usage).not.toHaveBeenCalled();
     expect(call).not.toHaveBeenCalled();
   });
 
@@ -232,7 +236,11 @@ describe("TurnRunner", () => {
       events: events.port,
     });
     await expect(run(runner)).rejects.toBe(failure);
-    expect(events.usage).toHaveBeenCalledExactlyOnceWith("run-1", usage);
+    expect(events.finish).toHaveBeenCalledExactlyOnceWith(
+      "run-1",
+      expect.objectContaining({ usage }),
+    );
+    expect(events.usage).not.toHaveBeenCalled();
   });
   it("preserves a typed model content failure without retaining the provider message", async () => {
     const complete = vi
@@ -260,7 +268,7 @@ describe("TurnRunner", () => {
   it("propagates permission-judge accounting failures to recovery before any Tool effect", async () => {
     const events = createEvents();
     const failure = new RunEventPersistenceError("usage", new Error("write failed"));
-    events.usage.mockResolvedValueOnce(undefined).mockRejectedValueOnce(failure);
+    events.finish.mockResolvedValueOnce(undefined).mockRejectedValueOnce(failure);
     const snap = structuredClone(snapshot);
     snap.executionSpec.configuration = {
       modelProfileId: "p",
@@ -313,6 +321,7 @@ describe("TurnRunner", () => {
     expect(call).not.toHaveBeenCalled();
     expect(request).not.toHaveBeenCalled();
     expect(events.toolStarted).not.toHaveBeenCalled();
+    expect(events.usage).not.toHaveBeenCalled();
   });
   it.each(["cancel", "failure", "authority"] as const)(
     "drains a blocked progress write before %s handling without accepting late callbacks",
@@ -626,7 +635,7 @@ describe("TurnRunner", () => {
     }
   });
 
-  it.each(["usage", "agentThought", "agentMessage"] as const)(
+  it.each(["finish", "agentThought", "agentMessage"] as const)(
     "honors cancellation during %s persistence before choosing the terminal result",
     async (operation) => {
       const controller = new AbortController();
@@ -659,6 +668,7 @@ describe("TurnRunner", () => {
           authoritySignal: new AbortController().signal,
         }),
       ).resolves.toMatchObject({ terminalClass: "cancelled", toolEffectState: "none" });
+      expect(events.usage).not.toHaveBeenCalled();
     },
   );
 
@@ -1274,7 +1284,11 @@ function createEvents() {
   const agentMessage = vi.fn<RunEventPort["agentMessage"]>(() => Promise.resolve());
   const agentThought = vi.fn<RunEventPort["agentThought"]>(() => Promise.resolve());
   const usage = vi.fn<RunEventPort["usage"]>(() => Promise.resolve());
+  const start = vi.fn<RunEventPort["start"]>(() => Promise.resolve());
+  const finish = vi.fn<RunEventPort["finish"]>(() => Promise.resolve());
   const port: RunEventPort = {
+    start,
+    finish,
     updatePlan,
     toolProgress,
     toolStarted,
@@ -1286,6 +1300,8 @@ function createEvents() {
   };
   return {
     port,
+    start,
+    finish,
     updatePlan,
     toolProgress,
     toolStarted,

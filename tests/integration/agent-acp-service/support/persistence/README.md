@@ -34,5 +34,8 @@ ACP PostgreSQL suite discovers these checks without a separate platform target.
 
 `wire.mjs` and `evidence.mjs` retain the existing wire and durability assertions.
 The proxy releases its database listener if control-listener startup fails.
+Both TCP forwarding directions disable Nagle buffering so individual protocol
+frames do not add delayed-ACK stalls to ordinary, unarmed traffic. Fault holds,
+backpressure, commit selection and the original business deadlines are unchanged.
 Its unit tests also run under `make test-repo`. Confirmed external SDK defects
 are non-blocking and require no new investigation or workaround.

@@ -37,9 +37,11 @@ const lock = [
   ),
 ];
 const insert = events.match(
-  /`(INSERT INTO session_messages\([\s\S]*?\$8\))`/u,
+  /`(INSERT INTO session_messages\([^`]*?\$8\))`/u,
 )[1];
-const update = query("UPDATE acp_sessions SET last_message_sequence");
+const update = query(
+  "UPDATE acp_sessions SET last_message_sequence = $2, updated_at = $3 WHERE id = $1",
+);
 const storedUsage = query(
   "SELECT run_id, session_id, kind, visible, payload, created_at FROM session_messages",
 );

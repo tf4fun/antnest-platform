@@ -76,7 +76,7 @@ const replyQueries = [...appendQueries.keys()]
   .concat("COMMIT");
 const usageQueries = [
   ...replyQueries.slice(0, 5),
-  "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'usage' ORDER BY sequence DESC LIMIT 1",
+  "SELECT payload FROM session_messages WHERE session_id=$1 AND kind='usage' ORDER BY sequence DESC LIMIT 1",
   ...replyQueries.slice(5),
 ];
 const [sessionRead, outputRead, configurationRead] = [...outputQueries.keys()];

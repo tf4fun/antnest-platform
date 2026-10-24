@@ -2,12 +2,13 @@ import type { ContentBlock, ModelToolDefinition, ToolEffectState } from "../doma
 import type { ModelToolCall, ModelUsage } from "./model.js";
 import type { ToolResultPresentation } from "../domain/tool-presentation.js";
 import type { PlanEntry } from "../domain/plan.js";
+import type { ModelAttemptPort } from "./model-attempts.js";
 
 export type ToolCompletionDetails = ToolResultPresentation & {
   runtimeCallStopped?: boolean;
 };
 
-export interface RunEventPort {
+export interface RunEventPort extends ModelAttemptPort {
   updatePlan(runId: string, call: ModelToolCall, entries: PlanEntry[]): Promise<boolean>;
   toolProgress(runId: string, toolCallId: string, content: ContentBlock[]): Promise<void>;
   toolStarted(

@@ -9,6 +9,8 @@ import { snapshot } from "../support/fixtures.js";
 
 function fixture() {
   const events = {
+    start: vi.fn<RunEventPort["start"]>(() => Promise.resolve()),
+    finish: vi.fn<RunEventPort["finish"]>(() => Promise.resolve()),
     updatePlan: vi.fn<RunEventPort["updatePlan"]>(() => Promise.resolve(true)),
     agentMessage: vi.fn(),
     agentThought: vi.fn(),
@@ -52,7 +54,7 @@ function fixture() {
       runner.run({
         runId: "run",
         sessionId: "session",
-        snapshot: snapshot(),
+        snapshot: { ...snapshot(), deadlineAt: new Date(Date.now() + 60_000) },
         context: [],
         signal: signal.signal,
         authoritySignal: authority.signal,

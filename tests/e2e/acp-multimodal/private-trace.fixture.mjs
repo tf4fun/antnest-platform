@@ -30,7 +30,7 @@ const owningSource = (name) =>
     "utf8",
   );
 const actualAppendQuery = owningSource("run-event-repository").match(
-  /`(INSERT INTO session_messages\([\s\S]*?\$8\))`/u,
+  /`(INSERT INTO session_messages\([^`]*?\$8\))`/u,
 )[1];
 const actualSessionQuery = owningSource("session-repository").match(
   /`(SELECT id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id,[\s\S]*?FROM acp_sessions WHERE id = \$1)`/u,

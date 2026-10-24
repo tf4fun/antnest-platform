@@ -201,6 +201,7 @@ export class RunExecutor implements RunExecutionPort {
       tools: this.dependencies.tools,
       catalog: context.tools,
       events,
+      now: this.dependencies.now,
     });
     return withWorkerOwnership(this.dependencies.ownershipSignal, () =>
       runner.run({

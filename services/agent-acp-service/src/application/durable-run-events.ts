@@ -8,6 +8,7 @@ import type { ModelUsage } from "../ports/model.js";
 import type { ModelToolCall } from "../ports/model.js";
 import type { RunEventPort, ToolCompletionDetails } from "../ports/run-events.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
+import type { ModelAttemptStarted, ModelAttemptFinished } from "../ports/model-attempts.js";
 import { planResult, planTool, type PlanEntry } from "../domain/plan.js";
 import { retryRunWrite } from "./run-write-retry.js";
 import { assertWorkerOwnership } from "./worker-ownership.js";
@@ -33,6 +34,21 @@ export class RunEventPersistenceError extends Error {
 
 export class DurableRunEvents implements RunEventPort {
   public constructor(private readonly dependencies: DurableRunEventsDependencies) {}
+
+  public async start(runId: string, fact: ModelAttemptStarted): Promise<void> {
+    const input = structuredClone({ runId, ...fact });
+    await this.persist("model attempt start", () =>
+      this.dependencies.repository.startModelAttempt(input),
+    );
+  }
+
+  public async finish(runId: string, fact: ModelAttemptFinished): Promise<void> {
+    const input = structuredClone({ runId, ...fact, contextSize: this.dependencies.contextSize });
+    const event = await this.persist("model attempt finish", () =>
+      this.dependencies.repository.finishModelAttempt(input),
+    );
+    await this.publish(event);
+  }
 
   public async updatePlan(
     runId: string,
