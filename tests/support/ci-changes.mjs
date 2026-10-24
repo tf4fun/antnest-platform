@@ -618,6 +618,17 @@ function stage3aProfile(profile = "") {
 
 function tierC() {
   const families = {
+    "ACP survivor": [
+      [
+        "e2e-acp-survivor",
+        "two replicas, stopped owner and browser recovery",
+        {
+          browser: true,
+          paths: ["contracts/agent-acp/**"],
+          ...foundation("acp-survivor/run.mjs"),
+        },
+      ],
+    ],
     "Stage 3a": [
       ["e2e-stage3-local", "base", stage3aProfile()],
       ...["acp-restart", "acp-restart-auto", "rpc-response-loss"].map(
@@ -753,7 +764,14 @@ function tierC() {
       setup: options.browser ? ["agent-ui-web", "chromium"] : [],
       images: options.images ?? platformImages,
       pull: observed,
-      paths: ["services/**", ...runtime, "tests/e2e/**", ...go, ...compose],
+      paths: [
+        "services/**",
+        ...runtime,
+        "tests/e2e/**",
+        ...go,
+        ...compose,
+        ...(options.paths ?? []),
+      ],
       run: [...(options.before ?? []), options.run ?? `make ${target}`],
       ...(options.strict ? { strict: true } : {}),
     })),
@@ -1213,6 +1231,11 @@ export const shards = [
     id: "c-agent-readiness",
     name: "Acknowledged Agent readiness (100 first Prompts)",
     suites: ["c-agent-readiness"],
+  },
+  {
+    id: "c-acp-survivor",
+    name: "Two ACP replicas and stopped-owner recovery",
+    suites: ["c-acp-survivor"],
   },
   {
     id: "c-skill-delivery",
