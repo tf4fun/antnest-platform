@@ -140,6 +140,7 @@ describe.skipIf(databaseUrl === undefined)(
         "0026_run_execution_owner.sql",
         "0027_learning_claim_owner.sql",
         "0028_owner_stop_recovery.sql",
+        "0029_learning_owner_recovery.sql",
       ]);
       expect(
         (

@@ -11,6 +11,7 @@ import { TemporarySkills } from "./application/temporary-skills.js";
 import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
 import type { LearningPausedRecovery } from "./application/learning-paused-recovery.js";
 import type { OwnerRegistration } from "./application/owner-incarnation.js";
+import type { OwnerInspection } from "./application/owner-inspection.js";
 import { PostgresAgentLeases } from "./adapters/postgres/agent-leases.js";
 import { PostgresAgentStartup } from "./adapters/postgres/agent-startup.js";
 import { PostgresOwnerRecovery } from "./adapters/postgres/owner-recovery.js";
@@ -225,33 +226,63 @@ export class OwnedAgentComponents {
   ): Promise<void> {
     const recovery = new PostgresOwnerRecovery(this.options.kernel, authority);
     let stage: "list" | "inspect" | "recover" = "list";
+    let kind: "run" | "learning" = "run";
     let reason = "recovery_unavailable";
+    type Stopped = Extract<OwnerInspection, { state: "stopped" }>;
+    const proofs = new Map<string, Stopped>();
+    const inspect = async (item: { registration: OwnerRegistration; inspection?: Stopped }) => {
+      signal.throwIfAborted();
+      stage = "inspect";
+      reason = "inspection_unavailable";
+      const identity = JSON.stringify([
+        item.registration.registration_id,
+        item.registration.member_id,
+        item.registration.incarnation_id,
+      ]);
+      let inspection = item.inspection ?? proofs.get(identity);
+      if (inspection === undefined) {
+        const inspector = this.options.ownerInspection;
+        if (inspector === undefined) throw new AgentOwnershipLostError();
+        // Inventory SQL has completed. Join this original authenticated request
+        // and its cleanup before recovery SQL; permanent proof needs no RPC.
+        const observed = await inspector.inspect(item.registration, signal);
+        if (observed.state !== "stopped") {
+          reason = observed.state === "running" ? "predecessor_running" : "predecessor_unknown";
+          throw new AgentOwnershipLostError();
+        }
+        inspection = observed;
+      }
+      signal.throwIfAborted();
+      proofs.set(identity, inspection);
+      stage = "recover";
+      reason = "recovery_unavailable";
+      return inspection;
+    };
     try {
       signal.throwIfAborted();
       const work = await recovery.listPredecessors();
       for (const item of work) {
+        const inspection = await inspect(item);
         signal.throwIfAborted();
-        stage = "inspect";
-        reason = "inspection_unavailable";
-        let inspection = item.inspection;
-        if (inspection === undefined) {
-          const inspector = this.options.ownerInspection;
-          if (inspector === undefined) throw new AgentOwnershipLostError();
-          // The inventory transaction has finished. Join the authenticated
-          // request and its original cleanup before recovery SQL. A permanent
-          // proof revalidated in that inventory does not need another RPC.
-          const observed = await inspector.inspect(item.registration, signal);
-          if (observed.state !== "stopped") {
-            reason = observed.state === "running" ? "predecessor_running" : "predecessor_unknown";
-            throw new AgentOwnershipLostError();
-          }
-          inspection = observed;
-        }
-        signal.throwIfAborted();
-        stage = "recover";
-        reason = "recovery_unavailable";
         await recovery.recoverRun({
           runId: item.runId,
+          inspection,
+          recoveredAt: this.options.now(),
+        });
+      }
+      signal.throwIfAborted();
+      kind = "learning";
+      stage = "list";
+      // Discover after Run recovery so a shared predecessor's newly accepted
+      // permanent proof can be reused from the same durable inventory.
+      const learning = await recovery.listLearningPredecessors();
+      for (const item of learning) {
+        const inspection = await inspect(item);
+        signal.throwIfAborted();
+        await recovery.recoverLearning({
+          taskId: item.taskId,
+          claimId: item.claimId,
+          generation: item.generation,
           inspection,
           recoveredAt: this.options.now(),
         });
@@ -264,6 +295,7 @@ export class OwnedAgentComponents {
         organization_id: authority.fence.organizationId,
         agent_id: authority.fence.agentId,
         stage,
+        kind,
         reason,
         cleanup_failed: cleanupFailed,
       });

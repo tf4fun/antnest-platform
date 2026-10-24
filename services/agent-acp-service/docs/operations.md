@@ -126,12 +126,11 @@ cancellation uses the entry signal. Learning retains and joins original model
 work.
 
 The global worker lock, single-instance restriction and independent
-ownership-loss fail-stop channel remain. Predecessor Learning claim/global
-review-slot recovery, independent Runtime isolation, cross-owner ACKs and peers,
+ownership-loss fail-stop channel remain. Independent Runtime isolation, cross-owner ACKs and peers,
 and two-replica integration remain pending.
 Warm production admission uses real ACP startup, PostgreSQL, authenticated HTTP
 registration/probes and v1/v2 WebSockets with controlled model and Runtime peers;
-it covers stopped Run recovery, permanent proof reuse during Controller failure,
+it covers stopped Run and Learning claim recovery, permanent proof reuse during Controller failure,
 unavailable predecessor isolation and independent foreground execution.
 it does not establish a real Runtime Controller/Runtime deployment or two replicas.
 See the [owner handoff contract](../../../contracts/agent-acp/owner-handoff.md).
@@ -181,8 +180,22 @@ the first recovering authority separately. A dedicated current-fence transaction
 records these facts with Run recovery; ordinary writers still reject another
 owner's Run. ACP stop proof cannot mark a Runtime stopped or release Temporary
 resources. Owned generation preparation consumes these tables before admission;
-predecessor Learning recovery remains pending and the global worker lock remains
-required.
+the global worker lock remains required.
+
+Migration `0029_learning_owner_recovery.sql` adds immutable Learning recovery
+associations and separately retained install Runtime protection. The dedicated
+storage operation requires a current Agent fence and a complete original-owner
+stop proof. It retains unknown model charges and original install requests;
+protection retirement records isolation through a valid replacement publication,
+not a fabricated Runtime receipt. Historical install intents with missing Runtime
+revision or connection identity, or with an invalid execution ID, are rejected
+without partial recovery; do not backfill them from the source Run or current
+configuration. Protection INSERT/UPDATE requires a saved replacement before
+retirement and cannot rewrite its binding. Production startup discovers these
+claims after Run recovery and reuses accepted stop proofs without a new inspection
+request. It cancels the old claim before opening new foreground work, while any
+unresolved install protection still keeps its Runtime unavailable. Keep the global
+worker lock and single-replica deployment restriction.
 
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
@@ -217,8 +230,7 @@ effect. These callbacks must contain database work only. Existing transactions
 without this option retain their existing configured statement budgets.
 
 Independent Runtime isolation, cross-owner configuration/revocation
-ACKs and trusted peers, two-replica integration, and predecessor Learning
-claim/global review-slot recovery remain required. The
+ACKs and trusted peers, and two-replica integration remain required. The
 [ownership contract](../../../contracts/agent-acp/agent-ownership.md) records
 those remaining gates. Lease rows must not be deleted to reset an epoch.
 

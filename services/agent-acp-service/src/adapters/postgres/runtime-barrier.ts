@@ -11,6 +11,90 @@ import type {
   RuntimeBarrierState,
 } from "../../ports/runtime-barrier.js";
 import type { PostgresKernel } from "./kernel.js";
+import {
+  runtimeRevisionSchema,
+  runtimeConnectionIdSchema,
+  runtimeMcpEndpointSchema,
+} from "../../domain/runtime-connection.js";
+
+export type LearningInstallRecoveryIntent = {
+  request_id: string;
+  task_id: string;
+  claim_id: string;
+  generation: number;
+  action: string;
+  state: string;
+  execution_id: string;
+  runtime_revision: string | null;
+  mcp_endpoint: string;
+  connection_id: string | null;
+  body_sha256: string;
+};
+
+// Called while the recovery transaction holds organization, current lease,
+// review-admission, task and intent locks. Never derive this binding from a Run.
+export async function protectLearningRuntimeIntent(
+  client: PoolClient,
+  scope: { organizationId: string; agentId: string },
+  intent: LearningInstallRecoveryIntent,
+  acceptedAt: Date,
+): Promise<void> {
+  if (intent.action !== "install" || !["pending", "unknown"].includes(intent.state))
+    throw new Error("Learning intent cannot be recovered as an install");
+  if (
+    !/^[!-~]{1,200}$/u.test(intent.execution_id) ||
+    intent.execution_id.includes("/") ||
+    intent.execution_id.includes("\\")
+  )
+    throw new Error("Learning install execution identity is invalid");
+  const revision = runtimeRevisionSchema.parse(intent.runtime_revision);
+  const connection = runtimeConnectionIdSchema.parse(intent.connection_id);
+  runtimeMcpEndpointSchema.parse(intent.mcp_endpoint);
+  const saved = (
+    await client.query<{ configuration: unknown }>(
+      "SELECT configuration FROM execution_configurations WHERE organization_id=$1",
+      [scope.organizationId],
+    )
+  ).rows[0];
+  let replaced = false;
+  if (saved !== undefined) {
+    const configuration = parsePublicExecutionConfiguration(saved.configuration);
+    if (configuration.organization_id !== scope.organizationId)
+      throw new Error("Learning Runtime configuration scope conflicts");
+    const agent = configuration.agents.find((value) => value.agent_id === scope.agentId);
+    replaced =
+      agent?.accepting_runs === true &&
+      agent.runtime !== null &&
+      agent.runtime.runtime_revision !== revision;
+  }
+  await client.query(
+    `INSERT INTO learning_runtime_protections(request_id,task_id,claim_id,generation,organization_id,agent_id,
+      execution_id,runtime_revision,mcp_endpoint,connection_id,body_sha256,accepted_at,retired_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $13 THEN $12::timestamptz ELSE NULL END)`,
+    [
+      intent.request_id,
+      intent.task_id,
+      intent.claim_id,
+      intent.generation,
+      scope.organizationId,
+      scope.agentId,
+      intent.execution_id,
+      revision,
+      intent.mcp_endpoint,
+      connection,
+      intent.body_sha256,
+      acceptedAt,
+      replaced,
+    ],
+  );
+  if (!replaced)
+    await client.query(
+      `INSERT INTO runtime_barrier_cycles(barrier_id,organization_id,agent_id,runtime_revision,runtime_execution_id)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(organization_id,agent_id,runtime_revision)
+      WHERE retired_at IS NULL DO NOTHING`,
+      [randomUUID(), scope.organizationId, scope.agentId, revision, intent.execution_id],
+    );
+}
 
 // Two-int advisory locks are separate from the bigint migration, worker and
 // learning locks. A hash collision only serializes two organizations.
@@ -92,7 +176,10 @@ export async function retireClearedRuntimeBarriers(
            AND session.agent_id = barrier.agent_id
            AND run.execution_snapshot->'runtime'->>'revision' = barrier.runtime_revision
            AND ${protectedRun}
-       )`,
+       )
+       AND NOT EXISTS (SELECT 1 FROM learning_runtime_protections protection
+         WHERE protection.organization_id=barrier.organization_id AND protection.agent_id=barrier.agent_id
+           AND protection.runtime_revision=barrier.runtime_revision AND protection.retired_at IS NULL)`,
     [scope.organizationId, scope.agentId, scope.runtimeRevision],
   );
 }
@@ -101,6 +188,16 @@ export async function retireReplacedRuntimeBarriers(
   client: PoolClient,
   incoming: PublicExecutionConfiguration,
 ): Promise<void> {
+  await client.query(
+    `UPDATE learning_runtime_protections protection SET retired_at=now()
+      FROM jsonb_array_elements($2::jsonb) AS incoming_agent(value)
+      WHERE protection.organization_id=$1 AND protection.retired_at IS NULL
+        AND protection.agent_id=incoming_agent.value->>'agent_id'
+        AND incoming_agent.value->>'accepting_runs'='true'
+        AND incoming_agent.value->'runtime'->>'runtime_revision' IS NOT NULL
+        AND incoming_agent.value->'runtime'->>'runtime_revision'<>protection.runtime_revision`,
+    [incoming.organization_id, JSON.stringify(incoming.agents)],
+  );
   // Only a successfully saved replacement publication promises isolation
   // of the old revision. Closure, removal and same-revision changes do not.
   await client.query(
@@ -161,7 +258,9 @@ export class PostgresRuntimeBarrierReader implements RuntimeBarrierReader {
              AND run.state IN ('completed', 'cancelled', 'failed', 'unresolved')
              AND run.terminal_class = run.state AND run.executor_state = 'quiescent'
              AND ${protectedRun}
-         ) AS has_terminal_protection
+         ) OR EXISTS (SELECT 1 FROM learning_runtime_protections protection
+           WHERE protection.organization_id=configuration.organization_id AND protection.agent_id=$2
+             AND protection.runtime_revision=$3 AND protection.retired_at IS NULL) AS has_terminal_protection
        FROM execution_configurations AS configuration
        LEFT JOIN runtime_barrier_cycles AS barrier
          ON barrier.organization_id = configuration.organization_id

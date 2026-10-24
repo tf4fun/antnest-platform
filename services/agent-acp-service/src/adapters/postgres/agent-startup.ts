@@ -1,4 +1,6 @@
 import type { PoolClient } from "pg";
+import { parseOwnerInspection } from "../../application/owner-inspection.js";
+import { parseOwnerRegistration } from "../../application/owner-incarnation.js";
 import {
   AgentOwnershipLostError,
   ownershipFence,
@@ -66,6 +68,9 @@ type Learning = {
   review_prompt_version: LearningReviewPromptVersion;
   has_children: boolean;
   model_unsettled: boolean;
+  model_recovered: boolean;
+  recovery_proof: { receipt_id: string; inspection: unknown } | null;
+  recovery_runtime_cleared: boolean;
   intents: Intent[];
   candidate: Candidate | null;
   basis: Basis | null;
@@ -75,6 +80,7 @@ type Row = {
   organization_id: string;
   agent_id: string;
   run_protected: boolean;
+  learning_protected: boolean;
   learning: Learning[];
 };
 
@@ -94,11 +100,39 @@ const inventory = `WITH scopes AS (
      OR EXISTS(SELECT 1 FROM learning_maintenance_intents e WHERE e.task_id=t.id)
      OR EXISTS(SELECT 1 FROM learning_changes e WHERE e.task_id=t.id)) AS has_children,
     EXISTS(SELECT 1 FROM learning_model_calls m WHERE m.task_id=t.id AND m.state<>'settled') AS model_unsettled,
+    (t.state='cancelled' AND t.cancel_reason='worker_lost'
+      AND NOT EXISTS(SELECT 1 FROM learning_model_calls m WHERE m.task_id=t.id AND
+        (m.state='reserved' OR m.claim_id<>t.claim_id OR m.generation<>t.generation))
+      AND EXISTS(SELECT 1 FROM learning_owner_recoveries a
+        JOIN owner_stop_receipts p ON p.receipt_id=a.receipt_id
+        WHERE a.task_id=t.id AND a.claim_id=t.claim_id AND a.generation=t.generation
+          AND a.organization_id=t.organization_id AND a.agent_id=t.agent_id
+          AND a.original_registration_id=t.claim_owner_registration_id
+          AND a.original_member_id=t.claim_owner_member_id
+          AND a.original_incarnation_id=t.claim_owner_incarnation_id
+          AND a.original_epoch=t.claim_owner_epoch
+          AND p.registration_id=t.claim_owner_registration_id
+          AND p.inspection->>'state'='stopped'
+          AND p.inspection->>'member_id'=t.claim_owner_member_id
+          AND p.inspection->>'incarnation_id'=t.claim_owner_incarnation_id)) AS model_recovered,
+    (SELECT jsonb_build_object('receipt_id',a.receipt_id,'inspection',p.inspection)
+      FROM learning_owner_recoveries a JOIN owner_stop_receipts p ON p.receipt_id=a.receipt_id
+      WHERE a.task_id=t.id) AS recovery_proof,
+    NOT EXISTS(SELECT 1 FROM learning_maintenance_intents i WHERE i.task_id=t.id AND i.state<>'settled'
+      AND NOT EXISTS(SELECT 1 FROM learning_runtime_protections p
+        WHERE p.request_id=i.request_id AND p.task_id=t.id AND p.claim_id=t.claim_id AND p.generation=t.generation
+          AND i.claim_id=t.claim_id AND i.generation=t.generation AND i.action='install'
+          AND p.organization_id=t.organization_id AND p.agent_id=t.agent_id
+          AND p.execution_id=i.execution_id AND p.runtime_revision=i.runtime_revision
+          AND p.mcp_endpoint=i.mcp_endpoint AND p.connection_id=i.connection_id AND p.body_sha256=i.body_sha256
+          AND p.retired_at IS NOT NULL)) AS recovery_runtime_cleared,
     EXISTS(SELECT 1 FROM learning_maintenance_intents i WHERE i.task_id=t.id AND i.state<>'settled') AS intent_unsettled
   FROM learning_tasks t WHERE t.authority_mode='owned'
     AND ($1::text IS NULL OR (t.organization_id=$1 AND t.agent_id=$2))
 )
 SELECT s.organization_id,s.agent_id,
+  EXISTS(SELECT 1 FROM learning_runtime_protections p WHERE p.organization_id=s.organization_id
+    AND p.agent_id=s.agent_id AND p.retired_at IS NULL) AS learning_protected,
   EXISTS(SELECT 1 FROM runs r WHERE r.organization_id=s.organization_id AND r.agent_id=s.agent_id
     AND r.execution_owner_registration_id IS NOT NULL AND (
       r.state IN ('admitting','running')
@@ -146,7 +180,8 @@ function rows(input: Row[]): readonly AgentStartupScope[] {
       Object.freeze({
         organizationId: row.organization_id,
         agentId: row.agent_id,
-        protected: row.run_protected || row.learning.some(protectedLearning),
+        protected:
+          row.run_protected || row.learning_protected || row.learning.some(protectedLearning),
       }),
     ),
   );
@@ -154,7 +189,9 @@ function rows(input: Row[]): readonly AgentStartupScope[] {
 
 function protectedLearning(task: Learning): boolean {
   if (task.claim_id !== null && ["pending", "running", "paused"].includes(task.state)) return true;
-  if (task.model_unsettled) return true;
+  const recovered = validRecoveryProof(task);
+  if (task.model_unsettled && !recovered) return true;
+  if (task.model_recovered) return !recovered || !task.recovery_runtime_cleared;
   if (
     task.claim_id === null &&
     (task.generation !== 0 ||
@@ -264,5 +301,24 @@ function protectedLearning(task: Learning): boolean {
     // Incomplete or contradictory history protects this Agent; it is not proof
     // of a stopped predecessor and must never be normalized during inventory.
     return true;
+  }
+}
+
+function validRecoveryProof(task: Learning): boolean {
+  if (!task.model_recovered || task.recovery_proof === null) return false;
+  try {
+    const registration = parseOwnerRegistration({
+      registration_id: task.claim_owner_registration_id,
+      member_id: task.claim_owner_member_id,
+      incarnation_id: task.claim_owner_incarnation_id,
+    });
+    const inspection = parseOwnerInspection(task.recovery_proof.inspection, registration);
+    return (
+      inspection.state === "stopped" &&
+      inspection.stop_receipt.receipt_id === task.recovery_proof.receipt_id
+    );
+  } catch {
+    // Invalid durable evidence isolates only its owning scope.
+    return false;
   }
 }

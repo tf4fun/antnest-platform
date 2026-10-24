@@ -8,6 +8,11 @@ import {
 import { AgentOwnershipLostError, ownershipFence } from "../../domain/agent-ownership.js";
 import { finishLockedRun } from "./execution-repository.js";
 import type { PostgresKernel } from "./kernel.js";
+import type { LearningTaskAuthorityRow } from "./learning-write-authority.js";
+import {
+  protectLearningRuntimeIntent,
+  type LearningInstallRecoveryIntent,
+} from "./runtime-barrier.js";
 import { interruptLockedToolAttempts } from "./run-event-repository.js";
 import { rejectLockedRunIntent } from "./run-repository.js";
 import {
@@ -22,6 +27,14 @@ export type RecoverPredecessorRun = {
   recoveredAt: Date;
 };
 
+export type RecoverPredecessorLearning = {
+  taskId: string;
+  claimId: string;
+  generation: number;
+  inspection: OwnerInspection;
+  recoveredAt: Date;
+};
+
 export class PostgresOwnerRecovery {
   readonly #authority: RunWriteAuthority;
 
@@ -30,6 +43,230 @@ export class PostgresOwnerRecovery {
     authority: RunOwnerAuthority,
   ) {
     this.#authority = RunWriteAuthority.owned(authority);
+  }
+
+  public async recoverLearning(
+    request: RecoverPredecessorLearning,
+  ): Promise<"recovered" | "terminal"> {
+    const input = structuredClone(request);
+    if (!(input.recoveredAt instanceof Date) || !Number.isFinite(input.recoveredAt.getTime()))
+      throw new TypeError("Invalid recovery time");
+    const scope = this.#authority.scope()!;
+    const current = this.#authority.origin();
+    return this.#authority.organizationTransaction(
+      this.kernel,
+      scope.organizationId,
+      async (client) => {
+        await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [2_026_092_902]);
+        const task = (
+          await client.query<LearningTaskAuthorityRow & { cancel_reason: string | null }>(
+            "SELECT * FROM learning_tasks WHERE id=$1 FOR UPDATE",
+            [input.taskId],
+          )
+        ).rows[0];
+        if (
+          task === undefined ||
+          task.authority_mode !== "owned" ||
+          task.claim_id !== input.claimId ||
+          task.generation !== input.generation
+        )
+          throw new AgentOwnershipLostError();
+        this.#authority.assertSession(task);
+        const original = originalOwner({
+          organization_id: task.organization_id,
+          agent_id: task.agent_id,
+          execution_owner_registration_id: task.claim_owner_registration_id,
+          execution_owner_member_id: task.claim_owner_member_id,
+          execution_owner_incarnation_id: task.claim_owner_incarnation_id,
+          execution_owner_epoch: task.claim_owner_epoch,
+        });
+        if (
+          original[0] === current[0] ||
+          original[2] === current[2] ||
+          BigInt(original[3]) >= BigInt(current[3]!)
+        )
+          throw new AgentOwnershipLostError();
+        const inspection = parseOwnerInspection(input.inspection, {
+          registration_id: original[0],
+          member_id: original[1],
+          incarnation_id: original[2],
+        });
+        if (inspection.state !== "stopped") throw new Error("Predecessor stop is not proven");
+        const existingProof = await checkedProof(client, inspection);
+        const audit = (
+          await client.query<{
+            claim_id: string;
+            generation: number;
+            receipt_id: string;
+            organization_id: string;
+            agent_id: string;
+            original_registration_id: string;
+            original_member_id: string;
+            original_incarnation_id: string;
+            original_epoch: string;
+          }>("SELECT * FROM learning_owner_recoveries WHERE task_id=$1", [input.taskId])
+        ).rows[0];
+        if (
+          audit !== undefined &&
+          (!existingProof ||
+            audit.receipt_id !== inspection.stop_receipt.receipt_id ||
+            audit.claim_id !== input.claimId ||
+            audit.generation !== input.generation ||
+            audit.organization_id !== scope.organizationId ||
+            audit.agent_id !== scope.agentId ||
+            !isDeepStrictEqual(
+              [
+                audit.original_registration_id,
+                audit.original_member_id,
+                audit.original_incarnation_id,
+                audit.original_epoch,
+              ],
+              original,
+            ))
+        )
+          throw new Error("Learning recovery receipt identity conflict");
+        if (!["running", "paused"].includes(task.state)) {
+          if (
+            audit !== undefined &&
+            (task.state !== "cancelled" || task.cancel_reason !== "worker_lost")
+          )
+            throw new Error("Learning recovery history is inconsistent");
+          if (["completed", "cancelled", "failed", "skipped"].includes(task.state))
+            return "terminal";
+          throw new AgentOwnershipLostError();
+        }
+        if (audit !== undefined) throw new Error("Learning recovery history is inconsistent");
+        const calls = await client.query<{ claim_id: string; generation: number }>(
+          "SELECT claim_id,generation FROM learning_model_calls WHERE task_id=$1 ORDER BY call_index FOR UPDATE",
+          [input.taskId],
+        );
+        if (
+          calls.rows.some(
+            (call) => call.claim_id !== input.claimId || call.generation !== input.generation,
+          )
+        )
+          throw new Error("Learning model history has a different claim");
+        const intents = await client.query<LearningInstallRecoveryIntent>(
+          "SELECT * FROM learning_maintenance_intents WHERE task_id=$1 ORDER BY request_id FOR UPDATE",
+          [input.taskId],
+        );
+        if (
+          intents.rows.some(
+            (intent) => intent.claim_id !== input.claimId || intent.generation !== input.generation,
+          )
+        )
+          throw new Error("Learning maintenance history has a different claim");
+        await client.query(
+          "INSERT INTO owner_stop_receipts(receipt_id,registration_id,inspection,accepted_at) VALUES($1,$2,$3::jsonb,$4) ON CONFLICT DO NOTHING",
+          [
+            inspection.stop_receipt.receipt_id,
+            inspection.registration_id,
+            JSON.stringify(inspection),
+            input.recoveredAt,
+          ],
+        );
+        if (!(await checkedProof(client, inspection)))
+          throw new Error("Stop receipt was not persisted");
+        await client.query(
+          `INSERT INTO learning_owner_recoveries(task_id,claim_id,generation,receipt_id,organization_id,agent_id,
+          original_registration_id,original_member_id,original_incarnation_id,original_epoch,
+          recovering_registration_id,recovering_member_id,recovering_incarnation_id,recovering_epoch,accepted_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::bigint,$11,$12,$13,$14::bigint,$15)`,
+          [
+            input.taskId,
+            input.claimId,
+            input.generation,
+            inspection.stop_receipt.receipt_id,
+            scope.organizationId,
+            scope.agentId,
+            ...original,
+            ...current,
+            input.recoveredAt,
+          ],
+        );
+        for (const intent of intents.rows) {
+          if (intent.state !== "settled")
+            await protectLearningRuntimeIntent(client, scope, intent, input.recoveredAt);
+        }
+        await client.query(
+          "UPDATE learning_model_calls SET state='unknown' WHERE task_id=$1 AND claim_id=$2 AND generation=$3 AND state='reserved'",
+          [input.taskId, input.claimId, input.generation],
+        );
+        await client.query(
+          "UPDATE learning_tasks SET state='cancelled',cancel_reason='worker_lost',pause_reason=NULL,updated_at=$2 WHERE id=$1",
+          [input.taskId, input.recoveredAt],
+        );
+        return "recovered";
+      },
+    );
+  }
+
+  public async listLearningPredecessors(): Promise<
+    readonly Readonly<{
+      taskId: string;
+      claimId: string;
+      generation: number;
+      registration: OwnerRegistration;
+      inspection?: Extract<OwnerInspection, { state: "stopped" }>;
+    }>[]
+  > {
+    const scope = this.#authority.scope()!;
+    const current = this.#authority.origin();
+    return this.#authority.organizationTransaction(
+      this.kernel,
+      scope.organizationId,
+      async (client) => {
+        const result = await client.query<
+          RunOwnerColumns & {
+            task_id: string;
+            claim_id: string;
+            generation: number;
+            accepted_inspection: unknown;
+            accepted_receipt_id: string | null;
+          }
+        >(
+          `SELECT t.id AS task_id,t.claim_id,t.generation,t.organization_id,t.agent_id,
+            t.claim_owner_registration_id AS execution_owner_registration_id,
+            t.claim_owner_member_id AS execution_owner_member_id,
+            t.claim_owner_incarnation_id AS execution_owner_incarnation_id,
+            t.claim_owner_epoch::text AS execution_owner_epoch,
+            p.inspection AS accepted_inspection,p.receipt_id AS accepted_receipt_id
+          FROM learning_tasks t LEFT JOIN owner_stop_receipts p
+            ON p.registration_id=t.claim_owner_registration_id
+          WHERE t.organization_id=$1 AND t.agent_id=$2 AND t.authority_mode='owned'
+            AND t.state IN ('running','paused') AND t.claim_id IS NOT NULL
+            AND t.claim_owner_incarnation_id IS DISTINCT FROM $3 ORDER BY t.created_at,t.id`,
+          [scope.organizationId, scope.agentId, current[2]],
+        );
+        return Object.freeze(
+          result.rows.map((row) => {
+            const [registration_id, member_id, incarnation_id] = originalOwner(row);
+            const registration = parseOwnerRegistration({
+              registration_id,
+              member_id,
+              incarnation_id,
+            });
+            const inspection =
+              row.accepted_receipt_id === null
+                ? undefined
+                : parseOwnerInspection(row.accepted_inspection, registration);
+            if (
+              inspection !== undefined &&
+              (inspection.state !== "stopped" ||
+                inspection.stop_receipt.receipt_id !== row.accepted_receipt_id)
+            )
+              throw new Error("Invalid accepted Learning predecessor stop proof");
+            return Object.freeze({
+              taskId: row.task_id,
+              claimId: row.claim_id,
+              generation: row.generation,
+              registration,
+              ...(inspection === undefined ? {} : { inspection }),
+            });
+          }),
+        );
+      },
+    );
   }
 
   public async listPredecessors(): Promise<
