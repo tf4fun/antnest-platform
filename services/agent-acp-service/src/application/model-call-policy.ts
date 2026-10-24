@@ -13,11 +13,13 @@ import {
   type ModelDelta,
 } from "../ports/model.js";
 import type { ModelAttemptPort } from "../ports/model-attempts.js";
+import type { ProviderCircuitPort } from "../ports/provider-circuit.js";
 import { RunEventPersistenceError } from "./durable-run-events.js";
 import { ModelRequestLimitError, type ModelRequestBudget } from "./model-request-budget.js";
 import { assertModelInputBudget } from "./context-budget.js";
 
 export type ModelCallPolicyOptions = {
+  providerCircuit?: ProviderCircuitPort;
   model: ModelPort;
   budget: ModelRequestBudget;
   attempts: ModelAttemptPort;
@@ -111,152 +113,182 @@ export class ModelCallPolicy {
       for (;;) {
         current();
         const snapshot = candidates[candidateIndex]!;
-        const ordinal = this.options.budget.nextAttempt(reserve);
-        const started = clock.monotonic();
-        try {
-          await this.options.attempts.start(runId, {
-            ordinal,
-            modelProfileId: snapshot.modelProfileId,
-            providerConnectionId: snapshot.providerConnectionId,
-            model: snapshot.executionSpec.model.model,
-            purpose: purpose ?? "foreground",
-            startedAt: new Date(clock.now()),
-          });
-        } catch (error) {
-          throw persistenceFailure("model attempt start", error);
-        }
-
-        let result: ModelResult | undefined;
-        let failure: { error: unknown } | undefined;
-        let knownUsage: ModelUsage | undefined;
-        let outputStarted = false;
-        try {
-          // The ordinal is already reserved; only recheck time and cancellation
-          // after the original start receipt, never consume the slot twice.
-          current();
-          const request = immutableCopy({ ...frozen, snapshot });
-          current();
-          result = await this.options.model.complete({
-            ...request,
-            ...(purpose === undefined ? {} : { purpose }),
-            signal,
-            ...(onDelta === undefined
-              ? {}
-              : {
-                  onDelta: async (delta: ModelDelta) => {
-                    outputStarted ||= delta.text.length > 0;
-                    signal.throwIfAborted();
-                    await onDelta(delta);
-                  },
-                }),
-          });
-          knownUsage = result.usage;
-          outputStarted ||= hasOutput(result);
-          current();
-        } catch (originalError) {
-          const error = interrupted(originalError, result);
-          failure = { error };
-          if (error instanceof ModelError) {
-            knownUsage = error.usage ?? knownUsage;
-            outputStarted ||= error.outputStarted;
-            error.outputStarted = outputStarted;
-          }
-        }
-
-        const cancelled = signal.aborted || clock.monotonic() >= deadline;
-        const cleanupFailed = failure?.error instanceof ModelTransportCleanupError;
-        const error = failure?.error;
-        const status = error instanceof ModelError ? error.status : undefined;
-        try {
-          await this.options.attempts.finish(runId, {
-            ordinal,
-            outcome: cleanupFailed
-              ? "failed"
-              : cancelled
-                ? "cancelled"
-                : failure === undefined
-                  ? "completed"
-                  : "failed",
-            reason: cleanupFailed
-              ? "model_cleanup_failed"
-              : cancelled
-                ? timeout.signal.aborted || clock.monotonic() >= deadline
-                  ? "deadline_exceeded"
-                  : "cancelled"
-                : failure === undefined
-                  ? "completed"
-                  : failureReason(error),
-            durationMs: Math.max(0, clock.monotonic() - started),
-            outputStarted,
-            usage: structuredClone(knownUsage ?? {}),
-            contextSize: snapshot.executionSpec.model.contextWindow,
-            ...(status === undefined ? {} : { status }),
-            finishedAt: new Date(clock.now()),
-          });
-        } catch (accountingError) {
-          const accounting = persistenceFailure("model attempt finish", accountingError);
-          if (error instanceof ModelTransportCleanupError) {
-            throw new ModelTransportCleanupError(
-              new AggregateError(
-                [error, accounting],
-                "Model cleanup and attempt persistence failed",
-              ),
-              knownUsage,
-              outputStarted,
-            );
-          }
-          if (failure !== undefined)
-            throw new RunEventPersistenceError(
-              "model attempt finish",
-              new AggregateError([error, accounting], "Model attempt and persistence failed"),
-            );
-          throw accounting;
-        }
-
-        if (failure === undefined) {
-          try {
-            current();
-          } catch (error) {
-            throw interrupted(error, result);
-          }
-          if (result === undefined) throw new Error("Model attempt completed without a result");
-          return result;
-        }
-        if (
-          !(error instanceof ModelError) ||
-          error instanceof ModelTransportCleanupError ||
-          !error.retryable ||
-          outputStarted ||
-          error.status === 400 ||
-          error.status === 401
-        )
-          throw error;
-        current();
-        if (retry >= policy.max) {
-          if (candidateIndex + 1 >= candidates.length) throw error;
-          if (!this.options.budget.canTake(reserve)) throw new ModelRequestLimitError();
+        if (!this.options.budget.canTake(reserve)) throw new ModelRequestLimitError();
+        const permit = this.options.providerCircuit?.tryModelAttempt(
+          snapshot.organizationId,
+          snapshot.providerConnectionId,
+          snapshot.executionSpec.model.baseUrl,
+        );
+        if (this.options.providerCircuit !== undefined && permit === undefined) {
+          if (candidateIndex + 1 >= candidates.length)
+            throw new ModelError("model_unavailable", "Eligible Provider circuits are open", false);
           candidateIndex += 1;
           retry = 0;
           continue;
         }
-        if (!this.options.budget.canTake(reserve)) throw new ModelRequestLimitError();
+        try {
+          const ordinal = this.options.budget.nextAttempt(reserve);
+          const started = clock.monotonic();
+          try {
+            await this.options.attempts.start(runId, {
+              ordinal,
+              modelProfileId: snapshot.modelProfileId,
+              providerConnectionId: snapshot.providerConnectionId,
+              model: snapshot.executionSpec.model.model,
+              purpose: purpose ?? "foreground",
+              startedAt: new Date(clock.now()),
+            });
+          } catch (error) {
+            throw persistenceFailure("model attempt start", error);
+          }
 
-        const random = clock.random();
-        const fraction = Number.isFinite(random) ? Math.max(0, Math.min(1, random)) : 0;
-        const ceiling = Math.min(policy.capMs, policy.baseMs * 2 ** retry);
-        const retryAfter = Number.isNaN(error.retryAfterMs)
-          ? 0
-          : Math.max(0, error.retryAfterMs ?? 0);
-        const milliseconds = Math.min(policy.capMs, Math.max(ceiling * fraction, retryAfter));
-        const wakeAt = Math.min(deadline, clock.monotonic() + milliseconds);
-        for (;;) {
+          let result: ModelResult | undefined;
+          let failure: { error: unknown } | undefined;
+          let knownUsage: ModelUsage | undefined;
+          let outputStarted = false;
+          try {
+            // The ordinal is already reserved; only recheck time and cancellation
+            // after the original start receipt, never consume the slot twice.
+            current();
+            const request = immutableCopy({ ...frozen, snapshot });
+            current();
+            result = await this.options.model.complete({
+              ...request,
+              ...(purpose === undefined ? {} : { purpose }),
+              signal,
+              ...(onDelta === undefined
+                ? {}
+                : {
+                    onDelta: async (delta: ModelDelta) => {
+                      outputStarted ||= delta.text.length > 0;
+                      signal.throwIfAborted();
+                      await onDelta(delta);
+                    },
+                  }),
+            });
+            knownUsage = result.usage;
+            outputStarted ||= hasOutput(result);
+            current();
+          } catch (originalError) {
+            const error = interrupted(originalError, result);
+            failure = { error };
+            if (error instanceof ModelError) {
+              knownUsage = error.usage ?? knownUsage;
+              outputStarted ||= error.outputStarted;
+              error.outputStarted = outputStarted;
+            }
+          }
+
+          const cancelled = signal.aborted || clock.monotonic() >= deadline;
+          const cleanupFailed = failure?.error instanceof ModelTransportCleanupError;
+          const error = failure?.error;
+          const status = error instanceof ModelError ? error.status : undefined;
+          try {
+            await this.options.attempts.finish(runId, {
+              ordinal,
+              outcome: cleanupFailed
+                ? "failed"
+                : cancelled
+                  ? "cancelled"
+                  : failure === undefined
+                    ? "completed"
+                    : "failed",
+              reason: cleanupFailed
+                ? "model_cleanup_failed"
+                : cancelled
+                  ? timeout.signal.aborted || clock.monotonic() >= deadline
+                    ? "deadline_exceeded"
+                    : "cancelled"
+                  : failure === undefined
+                    ? "completed"
+                    : failureReason(error),
+              durationMs: Math.max(0, clock.monotonic() - started),
+              outputStarted,
+              usage: structuredClone(knownUsage ?? {}),
+              contextSize: snapshot.executionSpec.model.contextWindow,
+              ...(status === undefined ? {} : { status }),
+              finishedAt: new Date(clock.now()),
+            });
+          } catch (accountingError) {
+            const accounting = persistenceFailure("model attempt finish", accountingError);
+            if (error instanceof ModelTransportCleanupError) {
+              throw new ModelTransportCleanupError(
+                new AggregateError(
+                  [error, accounting],
+                  "Model cleanup and attempt persistence failed",
+                ),
+                knownUsage,
+                outputStarted,
+              );
+            }
+            if (failure !== undefined)
+              throw new RunEventPersistenceError(
+                "model attempt finish",
+                new AggregateError([error, accounting], "Model attempt and persistence failed"),
+              );
+            throw accounting;
+          }
+
+          const circuitOpen =
+            permit?.settle(
+              signal.aborted || clock.monotonic() >= deadline || cleanupFailed
+                ? "neutral"
+                : failure === undefined
+                  ? "success"
+                  : providerHealthFailure(error)
+                    ? "failure"
+                    : "neutral",
+            ) ?? false;
+
+          if (failure === undefined) {
+            try {
+              current();
+            } catch (error) {
+              throw interrupted(error, result);
+            }
+            if (result === undefined) throw new Error("Model attempt completed without a result");
+            return result;
+          }
+          if (
+            !(error instanceof ModelError) ||
+            error instanceof ModelTransportCleanupError ||
+            !error.retryable ||
+            outputStarted ||
+            error.status === 400 ||
+            error.status === 401
+          )
+            throw error;
           current();
-          const left = wakeAt - clock.monotonic();
-          if (left <= 0) break;
-          await clock.wait(left, signal);
+          if (circuitOpen || retry >= policy.max) {
+            if (candidateIndex + 1 >= candidates.length) throw error;
+            if (!this.options.budget.canTake(reserve)) throw new ModelRequestLimitError();
+            candidateIndex += 1;
+            retry = 0;
+            continue;
+          }
+          if (!this.options.budget.canTake(reserve)) throw new ModelRequestLimitError();
+
+          const random = clock.random();
+          const fraction = Number.isFinite(random) ? Math.max(0, Math.min(1, random)) : 0;
+          const ceiling = Math.min(policy.capMs, policy.baseMs * 2 ** retry);
+          const retryAfter = Number.isNaN(error.retryAfterMs)
+            ? 0
+            : Math.max(0, error.retryAfterMs ?? 0);
+          const milliseconds = Math.min(policy.capMs, Math.max(ceiling * fraction, retryAfter));
+          const wakeAt = Math.min(deadline, clock.monotonic() + milliseconds);
+          for (;;) {
+            current();
+            const left = wakeAt - clock.monotonic();
+            if (left <= 0) break;
+            await clock.wait(left, signal);
+          }
+          current();
+          retry += 1;
+        } finally {
+          // Includes budget/start failures and the original finish receipt. A
+          // cancelled or unaccounted probe must not mark a Provider healthy.
+          permit?.settle("neutral");
         }
-        current();
-        retry += 1;
       }
     } finally {
       clearTimeout(timer);
@@ -345,6 +377,25 @@ function persistenceFailure(operation: string, cause: unknown): RunEventPersiste
   return cause instanceof RunEventPersistenceError
     ? cause
     : new RunEventPersistenceError(operation, cause);
+}
+
+function providerHealthFailure(error: unknown): boolean {
+  if (
+    !(error instanceof ModelError) ||
+    error instanceof ModelTransportCleanupError ||
+    !error.retryable
+  )
+    return false;
+  if (error.code === "model_http_error")
+    return (
+      error.status === 408 ||
+      error.status === 429 ||
+      (error.status !== undefined && error.status >= 500 && error.status <= 599)
+    );
+  return (
+    error.status === undefined &&
+    (error.code === "model_unavailable" || error.code === "provider_endpoint_unavailable")
+  );
 }
 
 function failureReason(error: unknown): string {

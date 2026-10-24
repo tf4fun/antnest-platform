@@ -452,8 +452,10 @@ on A cannot detach B's watch: B revocation still stops the Tool, while A
 revocation does not cancel B's Tool. Original cleanup remains joined.
 
 The [model call implementation](model-calls.md) defines bounded retries and
-capable fallback. Controller has not yet published the delivery defaults of two
-retries and `before_output`. Spending ledgers/caps, circuit breaking, Console
+capable fallback with per-process Provider circuits shared across Runs and judges.
+Circuit admission precedes physical-call accounting; a half-open probe remains
+owned through transport cleanup and the durable finish/usage receipt. Controller has not yet published the delivery defaults of two
+retries and `before_output`. Spending ledgers/caps, Console
 controls and final Docker integration admission remain pending; this ACP
 implementation is not final fallback delivery or completion of #52.
 

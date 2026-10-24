@@ -68,6 +68,10 @@ async function withApplication(
     requests: CapturedRequest[];
     candidates: ModelCandidate[];
   }) => Promise<void>,
+  options: {
+    maximumRequests?: number;
+    providerCircuit?: { failureThreshold: number; cooldownMs: number };
+  } = {},
 ): Promise<void> {
   const schema = `model_fallback_${randomUUID().replaceAll("-", "")}`;
   const pool = new Pool({
@@ -116,7 +120,7 @@ async function withApplication(
       expect(body.model).toBe(
         index === 0 ? "fallback-model-a" : "fallback-model-b",
       );
-      if (requests.length > 2)
+      if (requests.length > (options.maximumRequests ?? 2))
         throw new Error("Unexpected additional physical fallback attempt");
       if (index === 0) {
         await end(
@@ -260,7 +264,12 @@ async function withApplication(
       agent.failover = "before_output";
       agent.model_retry = { max: 0, base_ms: 1, cap_ms: 1 };
     }
-    app = await startBoundaryApplication(pool, undefined, { configuration });
+    app = await startBoundaryApplication(pool, undefined, {
+      configuration,
+      ...(options.providerCircuit === undefined
+        ? {}
+        : { providerCircuit: options.providerCircuit }),
+    });
     const transport = new OpenAICompatibleModel({
       destination: { allowPrivateEndpoints: true },
     });
@@ -692,6 +701,295 @@ describe.skipIf(databaseUrl === undefined)(
           expect(JSON.stringify(client.frames)).not.toContain(secret);
         await client.close();
       });
+    });
+
+    it("shares one Provider circuit across four Runs and skips open A without a fake attempt", async () => {
+      await withApplication(
+        503,
+        "json",
+        async ({ app, pool, requests, candidates }) => {
+          const [primary, fallback] = candidates;
+          if (primary === undefined || fallback === undefined)
+            throw new Error("Missing frozen circuit candidates");
+          const measurement = {
+            inputTokens: 7,
+            outputTokens: 3,
+            cost: {
+              amount: 33 / 1_000_000,
+              currency: "USD",
+              source: "estimated",
+              pricing: fallback.model.pricing,
+            },
+          };
+          const completed: Awaited<ReturnType<typeof prompt>>[] = [];
+          const histories: Message[][] = [];
+          const versions = [1, 2, 1, 2] as const;
+          for (const [index, version] of versions.entries()) {
+            const current = await prompt(app, pool, version, "completed");
+            completed.push(current);
+            const { client, run } = current;
+            expect(run.error_class).toBeNull();
+            expect(run.execution_snapshot.modelProfileId).toBe(
+              primary.modelProfileId,
+            );
+            expect(run.execution_snapshot.providerConnectionId).toBe(
+              primary.providerConnectionId,
+            );
+            expect(run.execution_snapshot.executionSpec.model).toStrictEqual(
+              primary.model,
+            );
+            expect(run.execution_snapshot.executionSpec).toMatchObject({
+              modelRetry: { max: 0, baseMs: 1, capMs: 1 },
+              modelFailover: "before_output",
+              fallbackModels: [fallback],
+            });
+            const expected = index < 3 ? [primary, fallback] : [fallback];
+            const messages = (
+              await pool.query<Message>(
+                "SELECT kind,visible,context_excluded,payload FROM session_messages WHERE run_id=$1 ORDER BY sequence",
+                [run.id],
+              )
+            ).rows;
+            histories.push(messages);
+            const attempts = messages.filter(
+              (message) => message.kind === "model_attempt",
+            );
+            expect(attempts).toHaveLength(expected.length * 2);
+            expect(
+              attempts.every(
+                (message) => !message.visible && message.context_excluded,
+              ),
+            ).toBe(true);
+            expect(
+              attempts.map((message) => [
+                message.payload.ordinal,
+                message.payload.phase,
+              ]),
+            ).toEqual(
+              expected.flatMap((_, ordinal) => [
+                [ordinal + 1, "start"],
+                [ordinal + 1, "finish"],
+              ]),
+            );
+            expect(
+              attempts
+                .filter((message) => message.payload.phase === "start")
+                .map((message) => message.payload),
+            ).toMatchObject(
+              expected.map((candidate, ordinal) => ({
+                ordinal: ordinal + 1,
+                purpose: "foreground",
+                modelProfileId: candidate.modelProfileId,
+                providerConnectionId: candidate.providerConnectionId,
+                model: candidate.model.model,
+              })),
+            );
+            expect(
+              attempts
+                .filter((message) => message.payload.phase === "finish")
+                .map((message) => message.payload),
+            ).toMatchObject(
+              expected.map((candidate, ordinal) =>
+                candidate.providerConnectionId === primary.providerConnectionId
+                  ? {
+                      ordinal: ordinal + 1,
+                      outcome: "failed",
+                      reason: "model_http_error",
+                      status: 503,
+                      outputStarted: false,
+                      contextSize: primary.model.contextWindow,
+                      usage: {},
+                    }
+                  : {
+                      ordinal: ordinal + 1,
+                      outcome: "completed",
+                      reason: "completed",
+                      outputStarted: true,
+                      contextSize: fallback.model.contextWindow,
+                      usage: measurement,
+                    },
+              ),
+            );
+            expect(
+              messages
+                .filter((message) => message.kind === "usage")
+                .map((message) => [
+                  message.payload.size,
+                  message.payload.measurement,
+                ]),
+            ).toEqual(
+              expected.map((candidate) =>
+                candidate.providerConnectionId === primary.providerConnectionId
+                  ? [primary.model.contextWindow, {}]
+                  : [fallback.model.contextWindow, measurement],
+              ),
+            );
+            const visibleReplies = messages.filter(
+              (message) => message.kind === "agent_message" && message.visible,
+            );
+            expect(visibleReplies).toHaveLength(1);
+            expect(visibleReplies[0]!.payload.content).toEqual([
+              { type: "text", text: reply },
+            ]);
+            await expect.poll(() => replyText(client.frames)).toBe(reply);
+            await client.close();
+            expect(requests).toHaveLength(index < 3 ? (index + 1) * 2 : 7);
+          }
+
+          expect(new Set(completed.map(({ run }) => run.id)).size).toBe(4);
+          expect(
+            new Set(completed.map(({ sessionId }) => sessionId)).size,
+          ).toBe(4);
+          const expectedCalls = [
+            primary,
+            fallback,
+            primary,
+            fallback,
+            primary,
+            fallback,
+            fallback,
+          ];
+          expect(requests.map((request) => request.path)).toEqual([
+            "/a/v1/chat/completions",
+            "/b/v1/chat/completions",
+            "/a/v1/chat/completions",
+            "/b/v1/chat/completions",
+            "/a/v1/chat/completions",
+            "/b/v1/chat/completions",
+            "/b/v1/chat/completions",
+          ]);
+          expect(
+            requests.filter(
+              (request) => request.path === "/a/v1/chat/completions",
+            ),
+          ).toHaveLength(3);
+          expect(
+            requests.filter(
+              (request) => request.path === "/b/v1/chat/completions",
+            ),
+          ).toHaveLength(4);
+          expect(app.model.complete).toHaveBeenCalledTimes(7);
+          for (const [
+            index,
+            [request],
+          ] of app.model.complete.mock.calls.entries()) {
+            const candidate = expectedCalls[index]!;
+            expect(request.snapshot.modelProfileId).toBe(
+              candidate.modelProfileId,
+            );
+            expect(request.snapshot.providerConnectionId).toBe(
+              candidate.providerConnectionId,
+            );
+            expect(request.snapshot.executionSpec.model).toStrictEqual(
+              candidate.model,
+            );
+            expect(request.credential).toBe(
+              candidate.providerConnectionId === primary.providerConnectionId
+                ? secrets[0]
+                : secrets[1],
+            );
+          }
+          const candidateModel = app.model.complete.mock.calls[6]![0].snapshot;
+          expect(candidateModel).toMatchObject({
+            modelProfileId: fallback.modelProfileId,
+            providerConnectionId: fallback.providerConnectionId,
+          });
+          expect(candidateModel.executionSpec.model).toStrictEqual(
+            fallback.model,
+          );
+          expect(candidateModel.executionSpec.model.pricing).toStrictEqual(
+            fallback.model.pricing,
+          );
+          expect(app.createIntent).toHaveBeenCalledTimes(4);
+          expect(app.acceptRun).toHaveBeenCalledTimes(4);
+          expect(app.tools.call).not.toHaveBeenCalled();
+          expect(
+            (await pool.query("SELECT id FROM tool_attempts")).rows,
+          ).toEqual([]);
+          const runs = (
+            await pool.query<{
+              id: string;
+              session_id: string;
+              state: string;
+              executor_state: string;
+              terminal_class: string;
+            }>(
+              "SELECT id,session_id,state,executor_state,terminal_class FROM runs ORDER BY id",
+            )
+          ).rows;
+          expect(runs).toHaveLength(4);
+          expect(runs.map((run) => run.id).sort()).toEqual(
+            completed.map(({ run }) => run.id).sort(),
+          );
+          expect(runs.map((run) => run.session_id).sort()).toEqual(
+            completed.map(({ sessionId }) => sessionId).sort(),
+          );
+          expect(
+            runs.every(
+              (run) =>
+                run.state === "completed" &&
+                run.terminal_class === "completed" &&
+                run.executor_state === "quiescent",
+            ),
+          ).toBe(true);
+          expect(
+            (
+              await pool.query<{ id: string }>("SELECT id FROM acp_sessions")
+            ).rows
+              .map((session) => session.id)
+              .sort(),
+          ).toEqual(completed.map(({ sessionId }) => sessionId).sort());
+
+          const fourth = completed[3]!;
+          const replay = await app.connect(2);
+          const loaded = await replay.request("session/resume", {
+            ...sessionParameters,
+            sessionId: fourth.sessionId,
+            replayFrom: { type: "start" },
+          });
+          expect(loaded.error).toBeUndefined();
+          await expect.poll(() => replyText(replay.frames)).toBe(reply);
+          await replay.close();
+          const wire = JSON.stringify([
+            ...completed.flatMap(({ client }) => client.frames),
+            ...replay.frames,
+          ]);
+          expect(wire).not.toContain("model_attempt");
+          expect(wire).not.toContain(privateError);
+          expect(JSON.stringify(histories)).not.toContain(privateError);
+          for (const secret of secrets) {
+            expect(wire).not.toContain(secret);
+            expect(
+              JSON.stringify({
+                histories,
+                snapshots: completed.map(({ run }) => run.execution_snapshot),
+              }),
+            ).not.toContain(secret);
+          }
+          expect(requests).toHaveLength(7);
+          expect(app.model.complete).toHaveBeenCalledTimes(7);
+          expect(app.createIntent).toHaveBeenCalledTimes(4);
+          expect(app.acceptRun).toHaveBeenCalledTimes(4);
+          expect(app.tools.call).not.toHaveBeenCalled();
+          expect(
+            (
+              await pool.query<Message>(
+                "SELECT kind,visible,context_excluded,payload FROM session_messages WHERE run_id=$1 ORDER BY sequence",
+                [fourth.run.id],
+              )
+            ).rows,
+          ).toStrictEqual(histories[3]);
+          expect(
+            (await pool.query<{ id: string }>("SELECT id FROM runs")).rows
+              .map((run) => run.id)
+              .sort(),
+          ).toEqual(completed.map(({ run }) => run.id).sort());
+        },
+        {
+          maximumRequests: 7,
+          providerCircuit: { failureThreshold: 3, cooldownMs: 3_600_000 },
+        },
+      );
     });
   },
 );

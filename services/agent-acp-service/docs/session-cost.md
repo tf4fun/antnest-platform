@@ -101,7 +101,8 @@ failed-attempt unknown measurements, successful known usage, hidden audit and
 unchanged Session replay through real HTTP Provider connections and PostgreSQL.
 Each attempt uses its frozen candidate identity and pricing. That component
 coverage does not replace final Docker acceptance. Controller's two-retry and
-before-output failover defaults are not yet published. Circuit breaking,
+before-output failover defaults are not yet published. Provider circuits skip
+unavailable connections without recording synthetic attempts or usage.
 Run/organization spending reservations and caps, Console policy controls and the
 final #52 integration remain pending; the existing Session projection does not
 implement them.

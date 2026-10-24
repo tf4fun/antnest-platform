@@ -606,7 +606,7 @@ export function buildComponents(
     }),
     telemetry,
   );
-  const providers = new ProviderClients(model);
+  const providers = new ProviderClients(model, config.providerCircuit);
   const legacyModelRequests = new Set<Promise<unknown>>();
   const legacyModelCleanupFailures: ModelTransportCleanupError[] = [];
   const retainLegacyModelRequest = (original: Promise<unknown>): void => {

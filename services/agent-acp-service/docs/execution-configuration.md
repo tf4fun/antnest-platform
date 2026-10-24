@@ -34,8 +34,9 @@ inactive A after selection moves to B cannot cancel B, while revoking current B
 still stops its work and waits for original cleanup.
 
 The [ACP model call implementation](model-calls.md) freezes and filters runtime
-candidates. Controller default publication, spending ledgers/caps, circuit
-breaking, Console policy controls and final Docker integration remain pending.
+candidates and applies per-process Provider circuit admission without changing
+revocation signals. Controller default publication, spending ledgers/caps,
+Console policy controls and final Docker integration remain pending.
 The ACP implementation alone does not establish final fallback delivery or
 complete #52.
 

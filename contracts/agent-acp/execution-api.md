@@ -97,7 +97,7 @@ published the planned defaults of two retries and `before_output` for existing
 or newly created Agents. The [model-call policy contract](../agent-controller/model-call-policy.md)
 retains the full delivery requirements. ACP's explicit-policy implementation
 does not establish final fallback delivery: Controller defaults, spending
-ledgers/caps, circuit breaking, Console controls and final Docker integration
+ledgers/caps, Console controls and final Docker integration
 acceptance remain pending under #52.
 
 At Run admission, ACP resolves the effective primary using the current Session

@@ -6,6 +6,8 @@ import {
   type ProviderRouting,
 } from "../domain/execution-configuration.js";
 import { ModelError, type AuthenticatedModelTransport, type ModelPort } from "../ports/model.js";
+import type { ProviderCircuitPermit, ProviderCircuitPort } from "../ports/provider-circuit.js";
+import { ProviderCircuit, type ProviderCircuitOptions } from "./provider-circuit.js";
 
 export interface ProviderClientHandle extends ModelPort {
   readonly signal: AbortSignal;
@@ -17,12 +19,19 @@ type Client = {
   credentialRevision: string;
   secret: string;
   stop: AbortController;
+  circuit: ProviderCircuit;
 };
 
-export class ProviderClients {
+export class ProviderClients implements ProviderCircuitPort {
   private readonly organizations = new Map<string, Map<string, Client>>();
+  private readonly circuitOptions: ProviderCircuitOptions;
 
-  public constructor(private readonly transport: AuthenticatedModelTransport) {}
+  public constructor(
+    private readonly transport: AuthenticatedModelTransport,
+    circuitOptions: ProviderCircuitOptions = {},
+  ) {
+    this.circuitOptions = { ...circuitOptions };
+  }
 
   public validate(snapshot: ExecutionConfiguration): void {
     const clients = this.organizations.get(snapshot.organization_id);
@@ -72,6 +81,7 @@ export class ProviderClients {
           credentialRevision: provider.credential_revision,
           secret: "",
           stop: new AbortController(),
+          circuit: new ProviderCircuit(this.circuitOptions),
         };
       }
       if ("credential" in provider) {
@@ -81,6 +91,17 @@ export class ProviderClients {
       clients.set(provider.connection_id, client);
     }
     if (clients.size === 0) this.organizations.delete(snapshot.organization_id);
+  }
+
+  public tryModelAttempt(
+    organizationId: string,
+    connectionId: string,
+    baseUrl: string,
+  ): ProviderCircuitPermit | undefined {
+    const client = this.organizations.get(organizationId)?.get(connectionId);
+    if (client === undefined || client.stop.signal.aborted || client.routing.base_url !== baseUrl)
+      throw new ModelError("provider_unavailable", "Provider client is unavailable", false);
+    return client.circuit.tryAcquire();
   }
 
   public acquire(organizationId: string, connectionId: string): ProviderClientHandle {

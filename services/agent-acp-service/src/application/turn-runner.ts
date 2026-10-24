@@ -16,6 +16,7 @@ import { PermissionJudge } from "./permission-judge.js";
 import { ModelRequestBudget, ModelRequestLimitError } from "./model-request-budget.js";
 import { ModelCallPolicy, ModelCallInterruptedError } from "./model-call-policy.js";
 import type { ToolPermissionPort } from "../ports/tool-permissions.js";
+import type { ProviderCircuitPort } from "../ports/provider-circuit.js";
 import { planResult, type PlanEntry } from "../domain/plan.js";
 import { assertModelInputBudget } from "./context-budget.js";
 import { ModelError, ModelTransportCleanupError, type ModelPort } from "../ports/model.js";
@@ -27,6 +28,7 @@ import { ToolProgress } from "./tool-progress.js";
 import { ToolPreflight, ToolPreflightError, type PreparedToolCall } from "./tool-preflight.js";
 
 export type TurnRunnerDependencies = {
+  providerCircuit?: ProviderCircuitPort;
   permissions?: ToolPermissionPort;
   model: ModelPort;
   tools: Pick<ToolCatalogPort, "call">;
@@ -58,6 +60,9 @@ export class TurnRunner {
       model: this.dependencies.model,
       budget,
       attempts: this.dependencies.events,
+      ...(this.dependencies.providerCircuit === undefined
+        ? {}
+        : { providerCircuit: this.dependencies.providerCircuit }),
       ...(this.dependencies.now === undefined
         ? {}
         : { clock: { now: () => this.dependencies.now!().getTime() } }),
