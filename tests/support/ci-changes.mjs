@@ -724,6 +724,7 @@ function tierC() {
       ...[
         "skill-learning-cleanup",
         "skill-learning-install-after-rename-disable",
+        "skill-learning-install-after-rename-owner-restart",
         "skill-learning-install-after-rename-foreground",
         "skill-learning-install-held-disable",
         "skill-learning-install-held-foreground",
@@ -1252,6 +1253,7 @@ export const shards = [
       "c-skill-learning-install-held-foreground",
       "c-skill-learning-install-pre-dispatch-disable",
       "c-skill-learning-install-after-rename-disable",
+      "c-skill-learning-install-after-rename-owner-restart",
       "c-skill-learning-install-after-rename-foreground",
       "c-skill-learning-install-lost",
       "c-skill-learning-lifecycle-rebuild",
