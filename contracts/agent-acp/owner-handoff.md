@@ -1,5 +1,12 @@
 # ACP Owner Incarnations And Execution Handoff (#49)
 
+[Member registration history](owner-incarnation-history.md) defines complete
+discovery of original registrations, including all existing registrations after
+migration. History is not stop proof: consumers still use the exact original
+`InspectAcpIncarnation` inspection and a separate shared participation barrier
+before publication acknowledgement or survivor takeover. This history producer
+and the ACP participation consumer have independent delivery gates.
+
 This contract extends [Agent ownership](agent-ownership.md) and
 [durable Run admission](run-admission.md). It defines the missing stop proof
 needed to recover an Agent after its lease moves to another ACP process.
