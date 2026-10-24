@@ -82,6 +82,18 @@ async function setup() {
 }
 
 describe("Agent lifecycle settlement", () => {
+  it("keeps an older Runtime binding protected when the current revision differs", async () => {
+    const test = await setup();
+    await test.directory.apply(test.closed);
+    test.protection.hasUnstoppedRuntimeCalls.mockImplementation((scope) =>
+      Promise.resolve(scope.runtimeRevision === null),
+    );
+    await expect(test.service.settle(request())).resolves.toEqual({
+      outcome: "runtime_barrier_required",
+      applied_revision: 2,
+    });
+  });
+
   it("requires confirmed temporary cleanup before the durable lifecycle protection check", async () => {
     const test = await setup();
     await test.directory.apply(test.closed);
@@ -155,7 +167,7 @@ describe("Agent lifecycle settlement", () => {
         {
           organizationId: "organization-1",
           agentId: "agent-1",
-          runtimeRevision: test.closed.agents[0]!.runtime!.runtime_revision,
+          runtimeRevision: null,
         },
         expect.any(AbortSignal),
       );

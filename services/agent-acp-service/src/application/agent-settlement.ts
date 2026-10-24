@@ -81,7 +81,7 @@ export class AgentSettlement implements AgentSettlementPort {
           {
             organizationId: operation.organizationId,
             agentId: operation.agentId,
-            runtimeRevision,
+            runtimeRevision: null,
           },
           stopWaiting,
         );

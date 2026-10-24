@@ -3,12 +3,14 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { RuntimeConnections } from "../../../../services/agent-acp-service/src/adapters/runtime-connections.js";
 import { PostgresKernel } from "../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { PostgresAgentLeases } from "../../../../services/agent-acp-service/src/adapters/postgres/agent-leases.js";
+import { PostgresAgentStartup } from "../../../../services/agent-acp-service/src/adapters/postgres/agent-startup.js";
+import { lockRuntimeBarrierOrganization } from "../../../../services/agent-acp-service/src/adapters/postgres/runtime-barrier.js";
 import { PostgresOwnerRecovery } from "../../../../services/agent-acp-service/src/adapters/postgres/owner-recovery.js";
 import { PostgresWorkerLock } from "../../../../services/agent-acp-service/src/adapters/postgres/worker-lock.js";
 import type { AgentOwnershipFence } from "../../../../services/agent-acp-service/src/domain/agent-ownership.js";
@@ -21,6 +23,8 @@ import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/p
 import { createOwnedAgentRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/agent-repositories.js";
 import { createOwnedLearningRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/learning-repositories.js";
 import { learningPolicySchema } from "../../../../services/agent-acp-service/src/domain/learning-policy.js";
+import { buildLearningCandidatePackage } from "../../../../services/agent-acp-service/src/domain/learning-candidate-package.js";
+import { learningApplyRequestId } from "../../../../services/agent-acp-service/src/domain/learning-apply-request-id.js";
 import { publicExecutionConfiguration } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import type { OwnerInspection } from "../../../../services/agent-acp-service/src/application/owner-inspection.js";
@@ -40,6 +44,7 @@ import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports
 import {
   executionConfiguration,
   executionIdentity,
+  closedExecutionAgent,
 } from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 import { runtimeInformation } from "../../../../services/agent-acp-service/test/fixtures/runtime-information.js";
 import {
@@ -131,6 +136,12 @@ describe.skipIf(databaseUrl === undefined)(
   "production ACP warm admission",
   () => {
     it.each([
+      {
+        version: 2,
+        ownership: "owned",
+        proofSource: "remote",
+        learningState: "install",
+      },
       ...(
         [
           { version: 1, ownership: "legacy", proofSource: "none" },
@@ -227,6 +238,7 @@ describe.skipIf(databaseUrl === undefined)(
         const services: RunningAgentAcpService[] = [];
         const clients: AcpWireClient[] = [];
         const pending: Promise<unknown>[] = [];
+        const lockClients = new Set<PoolClient>();
         const peers: Array<Awaited<ReturnType<typeof startPeer>>> = [];
         const failures: unknown[] = [];
         const ownershipLost = vi.fn();
@@ -235,6 +247,10 @@ describe.skipIf(databaseUrl === undefined)(
         const close = vi.spyOn(RuntimeConnections.prototype, "close");
         const probeListen = vi.spyOn(OwnerProbeServer.prototype, "listen");
         const releaseLease = vi.spyOn(PostgresAgentLeases.prototype, "release");
+        const settlementInventory = vi.spyOn(
+          PostgresAgentStartup.prototype,
+          "settlement",
+        );
         const releaseWorker = vi.spyOn(PostgresWorkerLock.prototype, "release");
         const endPool = vi.spyOn(Pool.prototype, "end");
         const registrations: OwnerRegistration[] = [];
@@ -258,6 +274,8 @@ describe.skipIf(databaseUrl === undefined)(
           | undefined;
         let recoveredLearning:
           Awaited<ReturnType<typeof learningFacts>> | undefined;
+        let installRequestId: string | undefined;
+        let originalInstall: unknown;
         let registrationOrigin: string | undefined;
         const modelRequests: Array<{
           boot: Boot;
@@ -312,6 +330,45 @@ describe.skipIf(databaseUrl === undefined)(
           pending.push(promise);
           void promise.catch(() => undefined);
           return promise;
+        }
+
+        async function lockClient() {
+          const client = await pool.connect();
+          lockClients.add(client);
+          await client.query("BEGIN");
+          // Observe live lock waits instead of the transaction's first stats snapshot.
+          await client.query("SET LOCAL stats_fetch_consistency = 'none'");
+          const { rows } = await client.query<{ pid: number }>(
+            "SELECT pg_backend_pid() AS pid",
+          );
+          return { client, pid: rows[0]!.pid };
+        }
+
+        async function unlock(client: PoolClient) {
+          if (!lockClients.delete(client)) return;
+          try {
+            await client.query("ROLLBACK");
+            client.release();
+          } catch (error) {
+            client.release(true);
+            throw error;
+          }
+        }
+
+        async function blockedBy(
+          client: PoolClient,
+          blocker: number,
+          query: string,
+        ) {
+          await client.query("SELECT pg_stat_clear_snapshot()");
+          return (
+            await client.query<{ pid: number; backend_start: Date }>(
+              `SELECT pid,backend_start FROM pg_stat_activity
+               WHERE datname=current_database() AND wait_event_type='Lock'
+                 AND query=$1 AND $2::integer=ANY(pg_blocking_pids(pid))`,
+              [query, blocker],
+            )
+          ).rows;
         }
 
         function senderDirectories(): string[] {
@@ -1078,11 +1135,92 @@ describe.skipIf(databaseUrl === undefined)(
                 outputTokens: 100,
                 durationMs: 1000,
               });
-              await repositories.budget.settle(claim!, settled, {
-                inputTokens: 10,
-                outputTokens: 20,
-                durationMs: 30,
-              });
+              if (learningState === "install") {
+                const evidence = await repositories.evidence.readAndRecord(
+                  claim!,
+                );
+                const authenticated = evidence.items.find(
+                  (item) => item.kind === "authenticated_user",
+                );
+                expect(authenticated).toBeDefined();
+                const proposal = {
+                  decision: "propose" as const,
+                  name: "persist-once",
+                  description: "Persist once.",
+                  instructions: "unused",
+                  rules: [
+                    {
+                      text: authenticated!.text,
+                      evidenceIds: [authenticated!.evidenceId],
+                    },
+                  ],
+                };
+                const candidatePackage = buildLearningCandidatePackage(
+                  proposal,
+                  evidence,
+                );
+                await repositories.budget.settleReview(
+                  claim!,
+                  settled,
+                  { inputTokens: 10, outputTokens: 20, durationMs: 30 },
+                  proposal,
+                );
+                const candidateId = randomUUID();
+                await repositories.candidates.record({
+                  claim: claim!,
+                  candidateId,
+                  package: candidatePackage,
+                  expectedBaseDigest: null,
+                });
+                const runtime = configuration.agents[0]!.runtime;
+                await repositories.bases.recordAdmitted(claim!, candidateId, {
+                  kind: "policy",
+                  policyRevision: policy.revision,
+                  packagePath: candidatePackage.packagePath,
+                  expectedBaseDigest: null,
+                  targetDigest: candidatePackage.targetDigest,
+                  evidenceIds: candidatePackage.evidenceIds,
+                  executionId: runtime.runtime_execution_id,
+                });
+                installRequestId = learningApplyRequestId(
+                  claim!,
+                  candidateId,
+                  "install",
+                  1,
+                );
+                await repositories.intents.reserve({
+                  claim: claim!,
+                  requestId: installRequestId,
+                  action: "install",
+                  executionId: runtime.runtime_execution_id,
+                  revision: runtime.runtime_revision,
+                  mcpEndpoint: runtime.mcp_endpoint,
+                  connectionId: runtime.connection_id!,
+                  bodySha256: `sha256:${"a".repeat(64)}`,
+                  requestFacts: {
+                    candidate_id: candidateId,
+                    package_path: candidatePackage.packagePath,
+                    expected_base_digest: null,
+                    target_digest: candidatePackage.targetDigest,
+                  },
+                });
+                await repositories.intents.markUnknown(
+                  claim!,
+                  installRequestId,
+                );
+                originalInstall = (
+                  await pool.query(
+                    "SELECT * FROM learning_maintenance_intents WHERE request_id=$1",
+                    [installRequestId],
+                  )
+                ).rows;
+              } else {
+                await repositories.budget.settle(claim!, settled, {
+                  inputTokens: 10,
+                  outputTokens: 20,
+                  durationMs: 30,
+                });
+              }
               await repositories.budget.reserve(claim!, policy, randomUUID(), {
                 inputTokens: 100,
                 outputTokens: 100,
@@ -1238,7 +1376,384 @@ describe.skipIf(databaseUrl === undefined)(
             15_000,
           );
           expect((await http(second, "/status")).status).toBe(200);
-          if (unavailablePredecessor) {
+          if (learningState === "install") {
+            expect(predecessorLearning).toBeDefined();
+            expect(
+              (await learningFacts(predecessorLearning!.taskId)).task,
+            ).toMatchObject({
+              state: "cancelled",
+              cancel_reason: "worker_lost",
+            });
+            expect(inspectionRequests).toBe(1);
+            const protection = (
+              await pool.query(
+                "SELECT * FROM learning_runtime_protections WHERE request_id=$1",
+                [installRequestId],
+              )
+            ).rows;
+            expect(protection).toHaveLength(1);
+            const barrier = await http(
+              second,
+              "/rpc/agent-acp/get-runtime-barrier",
+              {
+                method: "POST",
+                headers: {
+                  ...workloadHeaders("agent-controller"),
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                  organization_id: configuration.organization_id,
+                  agent_id: "agent-1",
+                  expected_runtime_revision:
+                    configuration.agents[0]!.runtime.runtime_revision,
+                }),
+              },
+              true,
+            );
+            expect(barrier).toMatchObject({
+              status: 200,
+              body: {
+                barrier: {
+                  reason: "runtime_barrier_required",
+                  runtime_execution_id: runtimeExecutionId,
+                },
+              },
+            });
+            const closed = structuredClone(configuration);
+            closed.revision++;
+            closed.agents[0] = closedExecutionAgent(closed.agents[0]!);
+            closed.agents[0].operation_id = randomUUID();
+            publicationCount++;
+            expect(
+              await http(
+                second,
+                "/rpc/agent-acp/apply-execution-snapshot",
+                {
+                  method: "POST",
+                  headers: {
+                    ...workloadHeaders("agent-controller"),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify(closed),
+                },
+                true,
+              ),
+            ).toEqual({
+              status: 200,
+              body: {
+                organization_id: configuration.organization_id,
+                applied_revision: closed.revision,
+              },
+            });
+            const settlement = await http(
+              second,
+              "/rpc/agent-acp/settle-agent",
+              {
+                method: "POST",
+                headers: {
+                  ...workloadHeaders("agent-controller"),
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                  organization_id: configuration.organization_id,
+                  agent_id: "agent-1",
+                  minimum_revision: closed.revision,
+                  operation_id: closed.agents[0].operation_id,
+                  mode: "wait",
+                  deadline_at: new Date(Date.now() + 5000).toISOString(),
+                }),
+              },
+              true,
+            );
+            expect(settlement).toEqual({
+              status: 200,
+              body: {
+                applied_revision: closed.revision,
+                outcome: "runtime_barrier_required",
+              },
+            });
+            for (const [override, expected] of [
+              [
+                { deadline_at: new Date(Date.now() - 1000).toISOString() },
+                {
+                  status: 200,
+                  body: {
+                    applied_revision: closed.revision,
+                    outcome: "not_settled",
+                  },
+                },
+              ],
+              [{ operation_id: randomUUID() }, { status: 409 }],
+              [{ minimum_revision: closed.revision + 1 }, { status: 409 }],
+            ] as const) {
+              expect(
+                await http(
+                  second,
+                  "/rpc/agent-acp/settle-agent",
+                  {
+                    method: "POST",
+                    headers: {
+                      ...workloadHeaders("agent-controller"),
+                      "content-type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      organization_id: configuration.organization_id,
+                      agent_id: "agent-1",
+                      minimum_revision: closed.revision,
+                      operation_id: closed.agents[0].operation_id,
+                      mode: "wait",
+                      deadline_at: new Date(Date.now() + 5000).toISOString(),
+                      ...override,
+                    }),
+                  },
+                  true,
+                ),
+              ).toMatchObject(expected);
+            }
+
+            const advisorySql =
+              "SELECT pg_advisory_xact_lock($1::integer, hashtext($2::text))";
+            const releaseSql =
+              "SELECT organization_id FROM agent_leases WHERE organization_id=$1 AND agent_id=$2 FOR UPDATE";
+            async function holdSettlement(
+              snapshot: typeof closed,
+              deadlineMs: number,
+            ) {
+              const organization = await lockClient();
+              await lockRuntimeBarrierOrganization(
+                organization.client,
+                snapshot.organization_id,
+              );
+              const response = http(
+                second,
+                "/rpc/agent-acp/settle-agent",
+                {
+                  method: "POST",
+                  headers: {
+                    ...workloadHeaders("agent-controller"),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    organization_id: snapshot.organization_id,
+                    agent_id: "agent-1",
+                    minimum_revision: snapshot.revision,
+                    operation_id: snapshot.agents[0]!.operation_id,
+                    mode: "wait",
+                    deadline_at: new Date(
+                      Date.now() + deadlineMs,
+                    ).toISOString(),
+                  }),
+                },
+                true,
+              );
+              await expect
+                .poll(
+                  () =>
+                    blockedBy(
+                      organization.client,
+                      organization.pid,
+                      advisorySql,
+                    ),
+                  {
+                    timeout: 2000,
+                  },
+                )
+                .toHaveLength(1);
+              const originalRead = await blockedBy(
+                organization.client,
+                organization.pid,
+                advisorySql,
+              );
+              // Compatible with the original authority/inventory FOR SHARE reads,
+              // but holds the final lease.release() FOR UPDATE after they finish.
+              const lease = await lockClient();
+              const saved = (
+                await lease.client.query<{
+                  owner_instance_id: string;
+                  epoch: string;
+                  current: boolean;
+                }>(
+                  `SELECT owner_instance_id,epoch::text,expires_at>clock_timestamp() AS current
+                   FROM agent_leases WHERE organization_id=$1 AND agent_id=$2 FOR KEY SHARE`,
+                  [snapshot.organization_id, "agent-1"],
+                )
+              ).rows[0]!;
+              expect(saved.current).toBe(true);
+              expect(saved.owner_instance_id).toBe(
+                registrations[1]!.incarnation_id,
+              );
+              const fence: AgentOwnershipFence = {
+                organizationId: snapshot.organization_id,
+                agentId: "agent-1",
+                ownerInstanceId: saved.owner_instance_id,
+                epoch: saved.epoch,
+              };
+              const releaseIndex = () =>
+                releaseLease.mock.calls.findIndex(
+                  ([candidate]) =>
+                    candidate.organizationId === fence.organizationId &&
+                    candidate.agentId === fence.agentId &&
+                    candidate.ownerInstanceId === fence.ownerInstanceId &&
+                    candidate.epoch === fence.epoch,
+                );
+              expect(releaseIndex()).toBe(-1);
+              return {
+                organization,
+                lease,
+                originalRead,
+                fence,
+                response,
+                releaseIndex,
+              };
+            }
+
+            // An actual publication can change the operation after inventory has
+            // completed, while the original control generation still owns release.
+            const publicationRace = await holdSettlement(closed, 4500);
+            await unlock(publicationRace.organization.client);
+            await expect
+              .poll(
+                () =>
+                  blockedBy(
+                    publicationRace.lease.client,
+                    publicationRace.lease.pid,
+                    releaseSql,
+                  ),
+                { timeout: 2000 },
+              )
+              .toHaveLength(1);
+            expect(publicationRace.releaseIndex()).toBeGreaterThanOrEqual(0);
+            const republished = structuredClone(closed);
+            republished.revision++;
+            republished.agents[0]!.operation_id = randomUUID();
+            publicationCount++;
+            expect(
+              await http(
+                second,
+                "/rpc/agent-acp/apply-execution-snapshot",
+                {
+                  method: "POST",
+                  headers: {
+                    ...workloadHeaders("agent-controller"),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify(republished),
+                },
+                true,
+              ),
+            ).toEqual({
+              status: 200,
+              body: {
+                organization_id: republished.organization_id,
+                applied_revision: republished.revision,
+              },
+            });
+            await unlock(publicationRace.lease.client);
+            expect(await publicationRace.response).toMatchObject({
+              status: 409,
+            });
+
+            // A public deadline must not discard either the original SQL or the
+            // later lease release. Shutdown must join both before shared cleanup.
+            const inventoryCalls = settlementInventory.mock.calls.length;
+            const cancellation = await holdSettlement(republished, 3000);
+            expect(await cancellation.response).toEqual({
+              status: 200,
+              body: {
+                applied_revision: republished.revision,
+                outcome: "not_settled",
+              },
+            });
+            expect(
+              await blockedBy(
+                cancellation.organization.client,
+                cancellation.organization.pid,
+                advisorySql,
+              ),
+            ).toEqual(cancellation.originalRead);
+            expect(cancellation.releaseIndex()).toBe(-1);
+            expect(settlementInventory).toHaveBeenCalledTimes(inventoryCalls);
+            const workerReleasesBeforeShutdown =
+              releaseWorker.mock.calls.length;
+            const poolEndsBeforeShutdown = endPool.mock.calls.length;
+            let shutdownJoined = false;
+            const shutdown = track(
+              second.shutdown().then(() => {
+                shutdownJoined = true;
+              }),
+            );
+            await unlock(cancellation.organization.client);
+            await expect
+              .poll(
+                () =>
+                  blockedBy(
+                    cancellation.lease.client,
+                    cancellation.lease.pid,
+                    releaseSql,
+                  ),
+                { timeout: 2000 },
+              )
+              .toHaveLength(1);
+            const releaseResult =
+              releaseLease.mock.results[cancellation.releaseIndex()]!;
+            expect(releaseResult.type).toBe("return");
+            if (releaseResult.type !== "return")
+              throw new Error("Original release did not return a Promise");
+            let releaseJoined = false;
+            const originalRelease = track(
+              releaseResult.value.then((result) => {
+                releaseJoined = true;
+                return result;
+              }),
+            );
+            expect(releaseJoined).toBe(false);
+            expect(shutdownJoined).toBe(false);
+            expect(releaseWorker).toHaveBeenCalledTimes(
+              workerReleasesBeforeShutdown,
+            );
+            expect(endPool).toHaveBeenCalledTimes(poolEndsBeforeShutdown);
+            expect(settlementInventory).toHaveBeenCalledTimes(inventoryCalls);
+            await unlock(cancellation.lease.client);
+            expect(await originalRelease).toBe(true);
+            await shutdown;
+            expect(shutdownJoined).toBe(true);
+            expect(
+              (
+                await pool.query(
+                  `SELECT owner_instance_id,epoch::text,expires_at<=clock_timestamp() AS expired
+               FROM agent_leases WHERE organization_id=$1 AND agent_id=$2`,
+                  [
+                    cancellation.fence.organizationId,
+                    cancellation.fence.agentId,
+                  ],
+                )
+              ).rows,
+            ).toEqual([
+              {
+                owner_instance_id: cancellation.fence.ownerInstanceId,
+                epoch: cancellation.fence.epoch,
+                expired: true,
+              },
+            ]);
+            expect(
+              (
+                await pool.query(
+                  "SELECT * FROM learning_maintenance_intents WHERE request_id=$1",
+                  [installRequestId],
+                )
+              ).rows,
+            ).toEqual(originalInstall);
+            expect(
+              (
+                await pool.query(
+                  "SELECT * FROM learning_runtime_protections WHERE request_id=$1",
+                  [installRequestId],
+                )
+              ).rows,
+            ).toEqual(protection);
+            expect(await stored(before.sessionId)).toEqual(before.rows);
+            expect(modelRequests).toHaveLength(1);
+          } else if (unavailablePredecessor) {
             if (heldInspection)
               await within(
                 cancellationStarted.promise,
@@ -1663,6 +2178,8 @@ describe.skipIf(databaseUrl === undefined)(
               failures.push(error);
             }
           };
+          // Release test-owned database blockers before joining service cleanup.
+          for (const client of lockClients) await settle(() => unlock(client));
           await settle(async () => {
             const results = await Promise.allSettled(
               clients.map((client) => client.close()),
@@ -1704,6 +2221,7 @@ describe.skipIf(databaseUrl === undefined)(
           close.mockRestore();
           probeListen.mockRestore();
           releaseLease.mockRestore();
+          settlementInventory.mockRestore();
           releaseWorker.mockRestore();
           endPool.mockRestore();
           for (const restore of restoreFetch) restore();

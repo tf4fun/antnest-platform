@@ -287,6 +287,20 @@ These are consumer requirements. Run recovery, Learning recovery, startup
 availability, Runtime barrier consumers and real handoff integration are
 separate delivery evidence; one completed storage writer is not the workflow.
 
+Lifecycle settlement may use an exclusive control path when protected inventory
+prevents an Agent application graph from opening. Absence of that graph is not
+stopping evidence. The control path reserves the same scope retirement barrier,
+joins the current process's original initializer, execution and cleanup handles,
+then obtains and rechecks a fixed current fence. It validates the applied closed
+operation and every relevant predecessor identity, full stop proof and committed
+recovery fact before reporting local quiescence. A platform stop proof establishes
+that an old process stopped; it does not claim that process joined gracefully.
+
+Both `settled` and `runtime_barrier_required` require local dispatch to have
+ended. Remaining Runtime, Temporary or install protection selects the latter;
+unknown model costs remain accounted for. Missing proof, an unfinished original
+handle or deadline expiry cannot become a successful settlement outcome.
+
 ## Delivery And Admission
 
 1. Freeze this shared stop-proof contract and the exact producer wire contract.

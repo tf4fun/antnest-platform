@@ -373,6 +373,15 @@ organization and lease barriers. Capture caller inputs before waiting and read
 fresh work after the wait. This only admits scopes without protected predecessor
 work; it is not the stopping proof required to recover an occupied scope.
 
+Startup inventory's protected flag combines local execution uncertainty with
+remote Runtime protection. It cannot be mapped directly to lifecycle settlement,
+and application admission must not be a prerequisite for protected settlement.
+An exclusive lifecycle control operation shares the Agent's scope barrier with
+application generations. It admits no user dispatch, joins retired local work,
+and uses its own fixed current fence to validate durable stopping facts. Scope
+retirement remains occupied through the original control operation and lease
+release, including cancellation, late results and failed cleanup.
+
 Expiry or process loss is not evidence that remote Runtime effects have stopped.
 Recovery must follow [Run recovery](execution-api.md#runtime-barrier-recovery-50-pending)
 without replaying uncertain effects or fabricating quiescence and cleanup.

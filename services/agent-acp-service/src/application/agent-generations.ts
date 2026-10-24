@@ -282,6 +282,7 @@ export class AgentGenerations<T> {
   private readonly timing: Timing;
   private readonly leases: AgentLeases;
   private readonly slots = new Map<string, Slot<T>>();
+  private readonly controls = new Map<string, { cancel(): void; settled: Promise<void> }>();
   private readonly cleanupFailures: unknown[] = [];
   private stopped = false;
   private stopping: Promise<void> | undefined;
@@ -313,6 +314,7 @@ export class AgentGenerations<T> {
     if (this.stopped) return Promise.reject(new AgentOwnershipLostError());
     const scope = ownershipScope(input);
     const key = JSON.stringify(scope);
+    if (this.controls.has(key)) return Promise.reject(new AgentOwnershipLostError());
     const existing = this.slots.get(key);
     if (existing !== undefined)
       return existing.closed
@@ -378,8 +380,138 @@ export class AgentGenerations<T> {
       });
     return slot.ready.promise;
   }
+
+  /** Exclusive lifecycle work; never exposes a user application generation. */
+  public runControl<R>(
+    input: AgentOwnershipScope,
+    operation: (authority: AgentGenerationAuthority, signal: AbortSignal) => Promise<R>,
+    signal?: AbortSignal,
+  ): Promise<R> {
+    if (this.stopped || signal?.aborted) return Promise.reject(new AgentOwnershipLostError());
+    const scope = ownershipScope(input);
+    const key = JSON.stringify(scope);
+    if (this.controls.has(key)) return Promise.reject(new AgentOwnershipLostError());
+    const result = Promise.withResolvers<R>();
+    const finished = Promise.withResolvers<void>();
+    void result.promise.catch(() => {});
+    void finished.promise.catch(() => {});
+    const cancellation = new AbortController();
+    let generation: ManagedGeneration<R> | undefined;
+    const startedAt = performance.now();
+    const cancel = () => {
+      const error = new AgentOwnershipLostError();
+      cancellation.abort(error);
+      generation?.lose(error);
+      result.reject(error);
+    };
+    const control = { cancel, settled: finished.promise };
+    // Reserve before joining the old slot. Publication and other requests must
+    // not acquire another same-scope generation in the retirement window.
+    this.controls.set(key, control);
+    const budget = setTimeout(cancel, this.timing.operationTimeoutMs);
+    budget.unref();
+    signal?.addEventListener("abort", cancel, { once: true });
+    const assertCurrent = () => {
+      cancellation.signal.throwIfAborted();
+      if (this.stopped || performance.now() - startedAt >= this.timing.operationTimeoutMs)
+        throw new AgentOwnershipLostError();
+    };
+    void (async () => {
+      let value!: R;
+      let succeeded = false;
+      let cleanupFailure: { error: unknown } | undefined;
+      try {
+        const previous = this.slots.get(key);
+        if (previous !== undefined) {
+          try {
+            await this.close(previous, new AgentOwnershipLostError());
+          } catch (error) {
+            // close() already retained this release failure. Keep both scope
+            // barriers rather than treating an unknown release as permission.
+            cleanupFailure = { error };
+            throw error;
+          }
+        }
+        assertCurrent();
+        const acquiredAt = performance.now();
+        const receipt = await this.leases.tryAcquire(
+          scope,
+          this.registration.incarnation_id,
+          this.timing.leaseDurationMs,
+        );
+        if (receipt === null) throw new AgentOwnershipLostError();
+        const fence = ownershipFence(receipt.fence);
+        if (
+          fence.organizationId !== scope.organizationId ||
+          fence.agentId !== scope.agentId ||
+          fence.ownerInstanceId !== this.registration.incarnation_id
+        )
+          throw new AgentOwnershipLostError();
+        generation = new ManagedGeneration<R>(
+          Object.freeze({ registration: this.registration, fence }),
+          this.leases,
+          this.timing,
+          deadline(receipt, acquiredAt, this.timing.leaseDurationMs),
+          acquiredAt + this.timing.renewIntervalMs,
+          cancel,
+        );
+        // Even a late acquisition belongs to this original operation and must
+        // be released. Cancellation can reject the public result before then.
+        assertCurrent();
+        await generation.initialize(async (captured) => {
+          const lifetime = AbortSignal.any([cancellation.signal, captured.signal]);
+          lifetime.throwIfAborted();
+          value = await operation(captured.authority, lifetime);
+          lifetime.throwIfAborted();
+          assertCurrent();
+          return value;
+        });
+        succeeded = true;
+      } catch (error) {
+        // A public timeout is not the end of the original operation. Preserve
+        // any independent late failure; the original cancellation reasons are
+        // already represented by the rejected public result.
+        if (
+          cancellation.signal.aborted &&
+          cleanupFailure === undefined &&
+          !(error instanceof AgentOwnershipLostError) &&
+          error !== cancellation.signal.reason &&
+          error !== generation?.signal.reason
+        )
+          this.cleanupFailures.push(error);
+        result.reject(error);
+      } finally {
+        try {
+          await generation?.drain();
+        } catch (error) {
+          cleanupFailure = { error };
+          this.cleanupFailures.push(error);
+          result.reject(error);
+        }
+        clearTimeout(budget);
+        signal?.removeEventListener("abort", cancel);
+        if (cleanupFailure !== undefined) finished.reject(cleanupFailure.error);
+        else {
+          this.controls.delete(key);
+          finished.resolve();
+          if (succeeded && !cancellation.signal.aborted) {
+            try {
+              assertCurrent();
+              result.resolve(value);
+            } catch (error) {
+              result.reject(error);
+            }
+          }
+        }
+      }
+    })();
+    return result.promise;
+  }
+
   public capture(input: AgentOwnershipScope): AgentGeneration<T> {
-    const slot = this.slots.get(JSON.stringify(ownershipScope(input)));
+    const key = JSON.stringify(ownershipScope(input));
+    if (this.controls.has(key)) throw new AgentOwnershipLostError();
+    const slot = this.slots.get(key);
     if (slot === undefined || slot.closed || slot.generation === undefined)
       throw new AgentOwnershipLostError();
     slot.generation.assertDispatch();
@@ -389,15 +521,23 @@ export class AgentGenerations<T> {
     input: AgentOwnershipScope,
     cause: unknown = new AgentOwnershipLostError(),
   ): Promise<void> {
-    const slot = this.slots.get(JSON.stringify(ownershipScope(input)));
+    const key = JSON.stringify(ownershipScope(input));
+    const control = this.controls.get(key);
+    if (control !== undefined) {
+      control.cancel();
+      return control.settled;
+    }
+    const slot = this.slots.get(key);
     return slot === undefined ? Promise.resolve() : this.close(slot, cause);
   }
   public drain(): Promise<void> {
     this.stopped = true;
+    for (const control of this.controls.values()) control.cancel();
     this.stopping ??= (async () => {
-      await Promise.allSettled(
-        [...this.slots.values()].map((slot) => this.close(slot, undefined, true)),
-      );
+      await Promise.allSettled([
+        ...[...this.slots.values()].map((slot) => this.close(slot, undefined, true)),
+        ...[...this.controls.values()].map((control) => control.settled),
+      ]);
       if (this.cleanupFailures.length > 0)
         throw new AggregateError(this.cleanupFailures, "Agent generation cleanup failed");
     })();
