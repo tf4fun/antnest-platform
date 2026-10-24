@@ -268,7 +268,7 @@
       "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "188216075e1e20c4c35185c591c638fecc52de53d46098db5676983dd1c43a7d",
+      "sha256": "137674663280792460879fadfaa5bf70a675062b130da51d6d56a327f75dbe88",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -350,7 +350,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/owner-http.ts": {
-      "sha256": "f16d97dce509b0517bfe28196a07c67e5fd7a410432b062f86d1292cc4603f61",
+      "sha256": "0f124967e9883f54fc002a6955f4902eeefb48b2ffea151c3c0965d94f2657a2",
       "routes": [
         "POST /internal/acp-peer/forward/http",
         "GET /internal/acp-peer/forward/http",

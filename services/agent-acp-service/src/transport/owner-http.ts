@@ -88,7 +88,6 @@ export class OwnerHttpTransport {
       transport: AcpHttpTransport;
       capacity: ConnectionCapacity;
       authentication: RequestAuthentication;
-      revoked(identity: ExecutionIdentity): boolean;
       report(error: unknown): void;
     },
   ) {}
@@ -306,7 +305,6 @@ export class OwnerHttpTransport {
     try {
       signal.throwIfAborted();
       if ((this.stopped && request.method !== "DELETE") || response.destroyed) throw unavailable();
-      if (request.method !== "DELETE" && this.options.revoked(identity)) throw denied();
       await operation(signal);
     } catch (error) {
       this.options.report(error);

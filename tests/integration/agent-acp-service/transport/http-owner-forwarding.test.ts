@@ -553,6 +553,33 @@ it("rejects tampered handles, foreign CCT identity and a different original regi
   await response.text();
 });
 
+it("preserves retired HTTP handle 404 and original DELETE 202 across both revoked members", async () => {
+  const f = await start();
+  const id = await f.open();
+  const snapshot = { organization_id: f.identity.organizationId, agents: [] };
+  await Promise.all([
+    f.ingress.revokeAccess(snapshot),
+    f.owner.revokeAccess(snapshot),
+  ]);
+  for (const member of ["a", "b"] as const) {
+    for (const method of ["GET", "POST"] as const) {
+      const response = await f.send(
+        member,
+        method,
+        id,
+        method === "POST" ? newSession : undefined,
+      );
+      await response.text();
+      expect(response.status).toBe(404);
+    }
+  }
+  const deleted = await f.send("a", "DELETE", id);
+  expect(deleted.status).toBe(202);
+  await deleted.text();
+  expect(f.appA.createSession).not.toHaveBeenCalled();
+  expect(f.appB.createSession).not.toHaveBeenCalled();
+});
+
 it("preserves private missing/invalid CCT 401 and Identity dependency 503 before owner admission", async () => {
   const f = await start();
   for (const token of [undefined, "invalid-context"]) {

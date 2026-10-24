@@ -174,7 +174,6 @@ export class AgentAcpHttpServer {
             transport: this.httpTransport,
             capacity: this.capacity,
             authentication: options.authentication,
-            revoked: (identity) => this.accessRevoked(identity),
             report: (error) => this.report(error, "owner_http_forwarding"),
           });
     const handler = (request: IncomingMessage, response: ServerResponse) => {

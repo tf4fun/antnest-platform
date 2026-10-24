@@ -102,6 +102,13 @@ joins the original request, response reader, upload and downstream write tasks.
 streams are distinct, and session messages and permission responses also use
 that field. A connection-level receiver cannot substitute for a session receiver.
 
+Owner discovery can reject an unauthorized Agent before ACP initialize. An HTTP
+`403` with `code=access_denied` and `retryable=false` retains that classification
+through the Agent UI adapter after its original response and transport cleanup.
+It must not become a generic dependency 503 or trigger replay. The Agent UI
+consumer implementation and its peer-mode browser acceptance are a separate
+pending service batch; this ACP producer does not complete that workflow.
+
 Public DELETE still requires its original authenticated identity and CCT, and
 the existing empty-body validation. It addresses the original transport without
 requiring a current execution lease. Preserve the SDK's 202 close receipt,
