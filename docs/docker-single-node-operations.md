@@ -207,6 +207,10 @@ With the `stage3` and `observability` profiles, the deployment runs one
 resident container per service plus PostgreSQL, Temporal, Jaeger and the
 restricted Runtime telemetry ingress. Explicit debug also starts the diagnostic
 relay; both helpers are read-only, nonroot and have no workload credentials.
+This default deployment does not configure ACP peer mode. Its complete member
+catalog, direction-specific credentials and private listeners are described in
+the [ACP operations guide](../services/agent-acp-service/docs/operations.md#optional-peer-publication).
+The two-replica Docker acceptance fixture is not a production deployment profile.
 Exporter dependencies keep Jaeger alive until their normal shutdown finishes;
 use the same Compose selection for stop/down instead of stopping the collector first.
 `temporal-databases`, `temporal-schema`, and `temporal-namespace` are additional

@@ -21,7 +21,13 @@ and networks are gone. Failures retain private partial evidence under
 `artifacts/verification/acp-survivor/` and return a nonzero exit status.
 Trace identifiers are retained when available and are auxiliary diagnostics.
 
-The profile and model fixture tests are included in `make test-repo`:
+Acceptance requires evidence for the exact candidate commit and CI run: every
+required business check, `business_completed: true`, the survivor's normal exit
+code `0`, and `cleanup: verified`. Fixture tests and Compose rendering alone do
+not satisfy this gate. Successful one-shot database initialization is checked
+separately from the complete, healthy resident service inventory.
+
+The profile, model and deployment fixture tests are included in `make test-repo`:
 
 ```sh
 node --test --test-concurrency=1 tests/e2e/acp-survivor/*.test.mjs
