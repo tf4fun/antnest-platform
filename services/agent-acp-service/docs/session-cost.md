@@ -96,13 +96,15 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
    Jaeger ancestry. Tests use deterministic USD rates; no external Provider
    spend is required.
 
-The [same-model retry path](model-calls.md) also covers failed-attempt unknown
-measurements, successful known usage, hidden audit and unchanged Session replay
-through real HTTP Provider connections and PostgreSQL. That component coverage
-does not replace final Docker acceptance. Controller's two-retry default is not
-yet published. Fallback, circuit breaking, Run/organization spending reservations
-and caps, Console policy controls and the final #52 integration remain pending;
-the existing Session projection does not implement them.
+The [same-model retry and before-output fallback paths](model-calls.md) also cover
+failed-attempt unknown measurements, successful known usage, hidden audit and
+unchanged Session replay through real HTTP Provider connections and PostgreSQL.
+Each attempt uses its frozen candidate identity and pricing. That component
+coverage does not replace final Docker acceptance. Controller's two-retry and
+before-output failover defaults are not yet published. Circuit breaking,
+Run/organization spending reservations and caps, Console policy controls and the
+final #52 integration remain pending; the existing Session projection does not
+implement them.
 
 Prior deployment evidence used the retired Gateway ACP/state routes. That
 recorded coverage remains historical. Gateway 24 requires a separate consumer
