@@ -44,8 +44,23 @@ recorded as not executed. The Run emits one static final notice without calling
 another model. Failure to persist that notice retains the original persistence
 error, and cancellation or lost execution authority keeps its normal precedence.
 This rejection path does not complete the budget rollout: trustworthy request
-bounds, production reservations, Run admission, detailed budget receipts,
+bounds, production reservations, detailed budget receipts,
 excess handling and soft-limit notifications remain separate delivery work.
+
+Run admission reads the latest durable organization policy under the same
+organization lock used by attempt reservations, settlements and publication.
+It rejects when known UTC daily or monthly spending plus outstanding reservations
+has reached that period's hard threshold, including a zero threshold. This is
+an entry gate, not a reservation for the Run's first call: a zero-price primary
+alone cannot prove every future fallback, judge or returned receipt is free.
+An absent hard cap and a soft-only cap do not close the gate. Unbounded historical
+usage or incomplete period coverage blocks a configured hard cap under `deny`;
+`allow` retains that uncertainty but never waives known exhausted spending.
+Cancellation takes precedence. A rejection commits `budget_exceeded` on the
+original intent without publishing its Prompt or starting a model, then releases
+the original Runtime pin. An unknown commit receipt retains the pin for recovery;
+it is not converted to a confirmed budget rejection. Each actual attempt still
+requires the separate safe-bound reservation before dispatch.
 
 The main turn and permission judge share one Run counter of physical model
 attempts, including failed and cancelled calls. Every admitted attempt reserves

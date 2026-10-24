@@ -10,6 +10,7 @@ import {
 
 import type { EnvironmentChangeFact, SessionRecord } from "../../domain/types.js";
 import { DomainError } from "../../domain/errors.js";
+import { ModelBudgetExceededError } from "../../domain/model-budget.js";
 import type {
   AcceptRunInput,
   CreateRunIntentInput,
@@ -18,6 +19,7 @@ import type {
 } from "../../ports/run-repository.js";
 import type { PostgresKernel } from "./kernel.js";
 import { RunWriteAuthority, type RunOwnerColumns } from "./run-write-authority.js";
+import { assertModelBudgetAdmission } from "./model-budget.js";
 
 type LockedSession = {
   organization_id: string;
@@ -256,11 +258,26 @@ export class PostgresRunRepository implements RunRepository {
 
   public async acceptRun(request: AcceptRunInput): Promise<"accepted" | "cancelled"> {
     const input = structuredClone(request);
-    return this.#authority.transaction(this.kernel, async (client) => {
+    // Resolve only the lock key before the transaction. The locked Session and
+    // Run remain the authority; a caller's snapshot cannot choose another org.
+    const identity = requireRow(
+      (
+        await this.kernel.query<{ organization_id: string }>(
+          "SELECT organization_id FROM runs WHERE id=$1",
+          [input.runId],
+        )
+      ).rows[0],
+      "Run intent does not exist",
+    );
+    const outcome = await this.#authority.organizationTransaction<
+      "accepted" | "cancelled" | ModelBudgetExceededError
+    >(this.kernel, identity.organization_id, async (client) => {
       const { session: sessionRow, run: runRow } = requireRow(
         await this.lockRun(client, input.runId),
         "Run intent does not exist",
       );
+      if (runRow.organization_id !== identity.organization_id)
+        throw new Error("Run organization changed during admission");
       if (runRow.state !== "admitting") {
         throw new Error("Run intent is no longer admitting");
       }
@@ -287,6 +304,17 @@ export class PostgresRunRepository implements RunRepository {
           ],
         );
         return "cancelled";
+      }
+
+      try {
+        await assertModelBudgetAdmission(client, runRow.organization_id);
+      } catch (error) {
+        if (!(error instanceof ModelBudgetExceededError)) throw error;
+        // Commit this exact rejection before exposing a DomainError. Only that
+        // receipt permits PromptCoordinator to release its original Runtime pin.
+        // A lost COMMIT/rollback receipt remains an ordinary recovery failure.
+        await rejectLockedRunIntent(client, input.runId, error.code, input.acceptedAt);
+        return error;
       }
 
       let sequence = Number(sessionRow.last_message_sequence);
@@ -327,6 +355,8 @@ export class PostgresRunRepository implements RunRepository {
       );
       return "accepted";
     });
+    if (outcome instanceof ModelBudgetExceededError) throw outcome;
+    return outcome;
   }
 
   public async rejectRun(

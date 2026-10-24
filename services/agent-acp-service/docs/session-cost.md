@@ -87,8 +87,13 @@ Migration 0032 imports original per-call receipts and unmatched hidden starts,
 excludes Fork copies and retains a separate coverage boundary for history that
 may already have been purged. It never sums cumulative Session display costs.
 See [the rollout and coverage rules](operations.md) before deployment. The
-ledger and typed rejection path are delivery primitives: production request
-bounds, admission wiring, excess handling, soft notifications and the
+Run admission now checks current UTC organization spending and unresolved
+reservations against daily/monthly hard thresholds, before accepting the Prompt.
+An exhausted threshold rejects the original intent atomically; confirmed
+rejection releases its Runtime pin, while unknown commit receipts retain it.
+See [model-call admission](model-calls.md) for zero-cap and unknown-history rules.
+The ledger and rejection path still need production request
+bounds, per-call reservations, excess handling, soft notifications and the
 Controller/Console policy consumers still need their business acceptance.
 
 ## Verification
@@ -121,9 +126,9 @@ Each attempt uses its frozen candidate identity and pricing. That component
 coverage does not replace final Docker acceptance. Controller's two-retry and
 before-output failover defaults are not yet published. Provider circuits skip
 unavailable connections without recording synthetic attempts or usage.
-Run/organization spending reservations and caps, Console policy controls and the
-final #52 integration remain pending; the existing Session projection does not
-implement them.
+Per-call safe spending reservations, the remaining cap enforcement, Console policy
+controls and final #52 integration remain pending; the Session display projection
+does not implement enforcement.
 
 Prior deployment evidence used the retired Gateway ACP/state routes. That
 recorded coverage remains historical. Gateway 24 requires a separate consumer

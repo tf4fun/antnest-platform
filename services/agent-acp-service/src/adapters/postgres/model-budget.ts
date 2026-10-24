@@ -57,6 +57,56 @@ export async function currentModelBudget(
     : organizationBudgetSchema.parse(budget);
 }
 
+/** Admission holds organization -> lease -> Session/Run. It does not reserve a call. */
+export async function assertModelBudgetAdmission(
+  client: PoolClient,
+  organizationId: string,
+): Promise<void> {
+  const policy = await currentModelBudget(client, organizationId);
+  if (
+    policy.daily.hard_cost_usd_micros === undefined &&
+    policy.monthly.hard_cost_usd_micros === undefined
+  )
+    return;
+  const periods = await client.query<PeriodTotals>(
+    `WITH captured AS (SELECT clock_timestamp() AT TIME ZONE 'UTC' AS moment),
+     periods AS (
+       SELECT 'daily' AS period,moment::date AS period_start FROM captured
+       UNION ALL
+       SELECT 'monthly',date_trunc('month',moment)::date FROM captured
+     )
+     SELECT periods.period,periods.period_start::text,
+       COALESCE(spend.cost_usd_micros,0)::text AS cost_usd_micros,
+       COALESCE(spend.reserved_cost_usd_micros,0)::text AS reserved_cost_usd_micros,
+       COALESCE(spend.unbounded_cost_attempts,0)::text AS unbounded_cost_attempts,
+       history.complete_before_cutover OR periods.period_start >= CASE periods.period
+         WHEN 'daily' THEN (history.cutover_at AT TIME ZONE 'UTC')::date+1
+         ELSE (date_trunc('month',history.cutover_at AT TIME ZONE 'UTC')+interval '1 month')::date
+       END AS coverage_complete
+     FROM periods CROSS JOIN model_budget_history history
+     LEFT JOIN organization_spend spend ON spend.organization_id=$1
+       AND spend.period=periods.period AND spend.period_start=periods.period_start
+     ORDER BY periods.period`,
+    [organizationId],
+  );
+  if (periods.rows.length !== 2) throw new Error("Model budget history is unavailable");
+  for (const period of periods.rows) {
+    const cap = policy[period.period].hard_cost_usd_micros;
+    if (cap === undefined) continue;
+    const used = BigInt(period.cost_usd_micros) + BigInt(period.reserved_cost_usd_micros);
+    if (
+      used >= BigInt(cap) ||
+      (policy.unknown_cost === "deny" &&
+        (!period.coverage_complete || BigInt(period.unbounded_cost_attempts) > 0n))
+    )
+      throw new ModelBudgetExceededError(
+        period.period === "daily" ? "organization_daily" : "organization_monthly",
+        cap.toString(),
+        used.toString(),
+      );
+  }
+}
+
 /** Caller holds org, current lease and the original Session/Run, in that order. */
 export async function reserveModelBudget(
   client: PoolClient,

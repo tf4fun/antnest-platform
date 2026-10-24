@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { AccessService } from "../../src/application/access-service.js";
 import { DomainError } from "../../src/domain/errors.js";
+import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
 import { AgentOwnershipLostError } from "../../src/domain/agent-ownership.js";
 
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
@@ -167,6 +168,53 @@ describe("PromptCoordinator", () => {
     ]);
     expect(test.recoveryRequired).toHaveBeenCalledOnce();
   });
+
+  it("releases the original Runtime pin after a confirmed budget rejection without rejecting the Run twice", async () => {
+    const test = await setup();
+    const budget = new ModelBudgetExceededError("organization_daily", "10", "10");
+    test.repository.acceptRun.mockRejectedValueOnce(budget);
+    try {
+      await expect(test.coordinator.accept(test.input)).rejects.toBe(budget);
+      expect(test.repository.acceptRun).toHaveBeenCalledOnce();
+      expect(test.repository.rejectRun).not.toHaveBeenCalled();
+      expect(test.recoveryRequired).not.toHaveBeenCalled();
+      expect(test.ownershipLost).not.toHaveBeenCalled();
+      await closeAgent(test);
+      expect(readdirSync(test.connections.directory)).toEqual([]);
+    } finally {
+      const intent = test.repository.createRunIntent.mock.calls[0]?.[0];
+      if (intent !== undefined) test.directory.releaseRuntimeRun(intent.runId);
+    }
+  });
+
+  it("retains the original Runtime pin when an unknown commit receipt has a budget error cause", async () => {
+    const test = await setup();
+    const budget = new ModelBudgetExceededError("organization_daily", "10", "10");
+    const failure = new Error("commit acknowledgement lost after budget rejection", {
+      cause: budget,
+    });
+    test.repository.acceptRun.mockRejectedValueOnce(failure);
+    try {
+      await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+        name: RunRecoveryRequiredError.name,
+        cause: failure,
+      });
+      expect(test.repository.acceptRun).toHaveBeenCalledOnce();
+      expect(test.repository.rejectRun).not.toHaveBeenCalled();
+      expect(test.recoveryRequired).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ cause: failure }),
+      );
+      expect(test.ownershipLost).not.toHaveBeenCalled();
+      await closeAgent(test);
+      expect(readdirSync(test.connections.directory)).toEqual([
+        test.configuration.agents[0]!.runtime!.connection_id,
+      ]);
+    } finally {
+      const intent = test.repository.createRunIntent.mock.calls[0]?.[0];
+      if (intent !== undefined) test.directory.releaseRuntimeRun(intent.runId);
+    }
+  });
+
   it.each(["intent", "acceptance"])(
     "does not block another user's Agent access behind the %s persistence receipt",
     async (stage) => {
