@@ -1,0 +1,608 @@
+{
+  "valid": [
+    {
+      "name": "legacy-empty",
+      "definition": "template_policy",
+      "value": {}
+    },
+    {
+      "name": "retry-disabled",
+      "definition": "model_retry",
+      "value": {
+        "max": 0,
+        "base_ms": 200,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-bounded",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 200,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "full-template",
+      "definition": "template_policy",
+      "value": {
+        "model_retry": {
+          "max": 2,
+          "base_ms": 200,
+          "cap_ms": 30000
+        },
+        "failover": "before_output",
+        "run_budget": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        }
+      }
+    },
+    {
+      "name": "zero-budget",
+      "definition": "run_budget",
+      "value": {
+        "max_input_tokens": 0,
+        "max_output_tokens": 0,
+        "max_cost_usd_micros": 0
+      }
+    },
+    {
+      "name": "maximum-budget",
+      "definition": "run_budget",
+      "value": {
+        "max_cost_usd_micros": 9007199254740991
+      }
+    },
+    {
+      "name": "organization",
+      "definition": "organization_budget",
+      "value": {
+        "revision": 3,
+        "unknown_cost": "deny",
+        "run_caps": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        },
+        "daily": {
+          "soft_cost_usd_micros": 1000000,
+          "hard_cost_usd_micros": 2000000
+        },
+        "monthly": {
+          "hard_cost_usd_micros": 10000000
+        }
+      }
+    },
+    {
+      "name": "organization-legacy",
+      "definition": "organization_budget",
+      "value": {
+        "revision": 0,
+        "unknown_cost": "allow",
+        "run_caps": {},
+        "daily": {},
+        "monthly": {}
+      }
+    },
+    {
+      "name": "policy-query",
+      "definition": "policy_query",
+      "value": {
+        "organization_id": "org-1"
+      }
+    },
+    {
+      "name": "policy-update",
+      "definition": "policy_update_request",
+      "value": {
+        "unknown_cost": "deny",
+        "run_caps": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        },
+        "daily": {
+          "soft_cost_usd_micros": 1000000,
+          "hard_cost_usd_micros": 2000000
+        },
+        "monthly": {
+          "hard_cost_usd_micros": 10000000
+        },
+        "request_id": "request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": 3
+      }
+    },
+    {
+      "name": "policy-read",
+      "definition": "policy",
+      "value": {
+        "revision": 3,
+        "unknown_cost": "deny",
+        "run_caps": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        },
+        "daily": {
+          "soft_cost_usd_micros": 1000000,
+          "hard_cost_usd_micros": 2000000
+        },
+        "monthly": {
+          "hard_cost_usd_micros": 10000000
+        },
+        "organization_id": "org-1"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "retry-max-0",
+      "definition": "model_retry",
+      "value": {
+        "max": -1,
+        "base_ms": 200,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-max-1",
+      "definition": "model_retry",
+      "value": {
+        "max": 1.5,
+        "base_ms": 200,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-max-2",
+      "definition": "model_retry",
+      "value": {
+        "max": 9,
+        "base_ms": 200,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-max-3",
+      "definition": "model_retry",
+      "value": {
+        "max": "2",
+        "base_ms": 200,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-max-4",
+      "definition": "model_retry",
+      "value": {
+        "max": null,
+        "base_ms": 200,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-base_ms-0",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 0,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-base_ms-1",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 30001,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-base_ms-2",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": "200",
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-base_ms-3",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": null,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-cap_ms-0",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 200,
+        "cap_ms": 0
+      }
+    },
+    {
+      "name": "retry-cap_ms-1",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 200,
+        "cap_ms": 30001
+      }
+    },
+    {
+      "name": "retry-cap_ms-2",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 200,
+        "cap_ms": "200"
+      }
+    },
+    {
+      "name": "retry-cap_ms-3",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 200,
+        "cap_ms": null
+      }
+    },
+    {
+      "name": "retry-missing-max",
+      "definition": "model_retry",
+      "value": {
+        "base_ms": 200,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-missing-base_ms",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "cap_ms": 30000
+      }
+    },
+    {
+      "name": "retry-missing-cap_ms",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 200
+      }
+    },
+    {
+      "name": "retry-extra",
+      "definition": "model_retry",
+      "value": {
+        "max": 2,
+        "base_ms": 200,
+        "cap_ms": 30000,
+        "secret": "synthetic"
+      }
+    },
+    {
+      "name": "failover-enum",
+      "definition": "template_policy",
+      "value": {
+        "failover": "always"
+      }
+    },
+    {
+      "name": "failover-null",
+      "definition": "template_policy",
+      "value": {
+        "failover": null
+      }
+    },
+    {
+      "name": "budget-float-dollars",
+      "definition": "run_budget",
+      "value": {
+        "max_cost_usd": 0.25
+      }
+    },
+    {
+      "name": "budget-secret",
+      "definition": "run_budget",
+      "value": {
+        "api_key": "synthetic"
+      }
+    },
+    {
+      "name": "organization-unknown-policy",
+      "definition": "organization_budget",
+      "value": {
+        "revision": 3,
+        "unknown_cost": "zero",
+        "run_caps": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        },
+        "daily": {
+          "soft_cost_usd_micros": 1000000,
+          "hard_cost_usd_micros": 2000000
+        },
+        "monthly": {
+          "hard_cost_usd_micros": 10000000
+        }
+      }
+    },
+    {
+      "name": "organization-null",
+      "definition": "organization_budget",
+      "value": {
+        "revision": 3,
+        "unknown_cost": "deny",
+        "run_caps": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        },
+        "daily": null,
+        "monthly": {
+          "hard_cost_usd_micros": 10000000
+        }
+      }
+    },
+    {
+      "name": "organization-negative-revision",
+      "definition": "organization_budget",
+      "value": {
+        "revision": -1,
+        "unknown_cost": "deny",
+        "run_caps": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        },
+        "daily": {
+          "soft_cost_usd_micros": 1000000,
+          "hard_cost_usd_micros": 2000000
+        },
+        "monthly": {
+          "hard_cost_usd_micros": 10000000
+        }
+      }
+    },
+    {
+      "name": "policy-missing-actor",
+      "definition": "policy_update_request",
+      "value": {
+        "unknown_cost": "deny",
+        "run_caps": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        },
+        "daily": {
+          "soft_cost_usd_micros": 1000000,
+          "hard_cost_usd_micros": 2000000
+        },
+        "monthly": {
+          "hard_cost_usd_micros": 10000000
+        },
+        "request_id": "request-1",
+        "organization_id": "org-1",
+        "expected_revision": 3
+      }
+    },
+    {
+      "name": "policy-negative-expected",
+      "definition": "policy_update_request",
+      "value": {
+        "unknown_cost": "deny",
+        "run_caps": {
+          "max_input_tokens": 12000,
+          "max_output_tokens": 2000,
+          "max_cost_usd_micros": 500000
+        },
+        "daily": {
+          "soft_cost_usd_micros": 1000000,
+          "hard_cost_usd_micros": 2000000
+        },
+        "monthly": {
+          "hard_cost_usd_micros": 10000000
+        },
+        "request_id": "request-1",
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1",
+        "expected_revision": -1
+      }
+    },
+    {
+      "name": "policy-query-cross-fields",
+      "definition": "policy_query",
+      "value": {
+        "organization_id": "org-1",
+        "actor_principal_id": "admin-1"
+      }
+    },
+    {
+      "name": "budget-max_input_tokens-0",
+      "definition": "run_budget",
+      "value": {
+        "max_input_tokens": -1
+      }
+    },
+    {
+      "name": "budget-max_input_tokens-1",
+      "definition": "run_budget",
+      "value": {
+        "max_input_tokens": 0.5
+      }
+    },
+    {
+      "name": "budget-max_input_tokens-2",
+      "definition": "run_budget",
+      "value": {
+        "max_input_tokens": 9007199254740992
+      }
+    },
+    {
+      "name": "budget-max_input_tokens-3",
+      "definition": "run_budget",
+      "value": {
+        "max_input_tokens": "1"
+      }
+    },
+    {
+      "name": "budget-max_input_tokens-4",
+      "definition": "run_budget",
+      "value": {
+        "max_input_tokens": null
+      }
+    },
+    {
+      "name": "budget-max_output_tokens-0",
+      "definition": "run_budget",
+      "value": {
+        "max_output_tokens": -1
+      }
+    },
+    {
+      "name": "budget-max_output_tokens-1",
+      "definition": "run_budget",
+      "value": {
+        "max_output_tokens": 0.5
+      }
+    },
+    {
+      "name": "budget-max_output_tokens-2",
+      "definition": "run_budget",
+      "value": {
+        "max_output_tokens": 9007199254740992
+      }
+    },
+    {
+      "name": "budget-max_output_tokens-3",
+      "definition": "run_budget",
+      "value": {
+        "max_output_tokens": "1"
+      }
+    },
+    {
+      "name": "budget-max_output_tokens-4",
+      "definition": "run_budget",
+      "value": {
+        "max_output_tokens": null
+      }
+    },
+    {
+      "name": "budget-max_cost_usd_micros-0",
+      "definition": "run_budget",
+      "value": {
+        "max_cost_usd_micros": -1
+      }
+    },
+    {
+      "name": "budget-max_cost_usd_micros-1",
+      "definition": "run_budget",
+      "value": {
+        "max_cost_usd_micros": 0.5
+      }
+    },
+    {
+      "name": "budget-max_cost_usd_micros-2",
+      "definition": "run_budget",
+      "value": {
+        "max_cost_usd_micros": 9007199254740992
+      }
+    },
+    {
+      "name": "budget-max_cost_usd_micros-3",
+      "definition": "run_budget",
+      "value": {
+        "max_cost_usd_micros": "1"
+      }
+    },
+    {
+      "name": "budget-max_cost_usd_micros-4",
+      "definition": "run_budget",
+      "value": {
+        "max_cost_usd_micros": null
+      }
+    },
+    {
+      "name": "period-soft_cost_usd_micros-0",
+      "definition": "period_caps",
+      "value": {
+        "soft_cost_usd_micros": -1
+      }
+    },
+    {
+      "name": "period-soft_cost_usd_micros-1",
+      "definition": "period_caps",
+      "value": {
+        "soft_cost_usd_micros": 0.5
+      }
+    },
+    {
+      "name": "period-soft_cost_usd_micros-2",
+      "definition": "period_caps",
+      "value": {
+        "soft_cost_usd_micros": 9007199254740992
+      }
+    },
+    {
+      "name": "period-soft_cost_usd_micros-3",
+      "definition": "period_caps",
+      "value": {
+        "soft_cost_usd_micros": "1"
+      }
+    },
+    {
+      "name": "period-soft_cost_usd_micros-4",
+      "definition": "period_caps",
+      "value": {
+        "soft_cost_usd_micros": null
+      }
+    },
+    {
+      "name": "period-hard_cost_usd_micros-0",
+      "definition": "period_caps",
+      "value": {
+        "hard_cost_usd_micros": -1
+      }
+    },
+    {
+      "name": "period-hard_cost_usd_micros-1",
+      "definition": "period_caps",
+      "value": {
+        "hard_cost_usd_micros": 0.5
+      }
+    },
+    {
+      "name": "period-hard_cost_usd_micros-2",
+      "definition": "period_caps",
+      "value": {
+        "hard_cost_usd_micros": 9007199254740992
+      }
+    },
+    {
+      "name": "period-hard_cost_usd_micros-3",
+      "definition": "period_caps",
+      "value": {
+        "hard_cost_usd_micros": "1"
+      }
+    },
+    {
+      "name": "period-hard_cost_usd_micros-4",
+      "definition": "period_caps",
+      "value": {
+        "hard_cost_usd_micros": null
+      }
+    }
+  ]
+}
