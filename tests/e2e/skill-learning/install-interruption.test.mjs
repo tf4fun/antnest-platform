@@ -18,6 +18,8 @@ import { runtimeStatus } from "../lifecycle-closeout/runtime-status.mjs";
 import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { learningImageOverlay } from "./development-settings.mjs";
 import { skillClientArgs } from "./client-container.mjs";
+import { prepareOwnerProfile } from "../security/owner-profile.mjs";
+import { verifyOwnerInstallRecovery } from "./owner-install-recovery.mjs";
 import {
   candidateCommand,
   candidateEnvironment,
@@ -28,6 +30,12 @@ import {
 // the candidate survives, and the identical install resent later records the
 // change exactly once without renaming the active package a second time.
 const scenarios = {
+  "after-rename-owner-restart": {
+    gate: "observe",
+    stop: "owner-restart",
+    runtime: true,
+    owned: true,
+  },
   // The Runtime installed the Skill; ACP is still waiting for the receipt.
   "held-disable": { gate: "response", stop: "disable" },
   "held-foreground": { gate: "response", stop: "foreground" },
@@ -65,6 +73,7 @@ const overlay = [
   "tests/e2e/skill-learning/compose.yaml",
   "-f",
   "tests/e2e/skill-learning/install-gate.compose.yaml",
+  ...(scenario.owned ? ["-f", "tests/e2e/security/owner.compose.yaml"] : []),
 ];
 const evidenceDir = fileURLToPath(
   new URL("../../../artifacts/verification/skill-learning/", import.meta.url),
@@ -75,6 +84,8 @@ const learnedRule =
   "For the fixture task, inspect the target before editing it.";
 
 const titles = {
+  "after-rename-owner-restart":
+    "owner process loss protects an installed Skill until Controller replaces its Runtime and admits one new Prompt",
   "held-disable":
     "Agent Disable completes while ACP waits for an installed Skill receipt; Enable settles the resend once",
   "held-foreground":
@@ -100,6 +111,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
   const ownedImages = [];
   try {
     config = await configuration(abort.signal);
+    if (scenario.owned) prepareOwnerProfile(config);
     const keys = generateKeyPairSync("ed25519");
     const rawPublic = keys.publicKey
       .export({ format: "der", type: "spki" })
@@ -315,7 +327,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
         ),
       ),
     });
-    const client = async (label, script, env = []) => {
+    const client = async (label, script, env = [], grants = []) => {
       const clientName = `${config.project}-skill-install-${label}`;
       const started = Date.now();
       try {
@@ -324,7 +336,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
             "run",
             "--name",
             clientName,
-            ...skillClientArgs(config, { privateACP: true }),
+            ...skillClientArgs(config, { privateACP: true, grants }),
             "-e",
             `ANTNEST_E2E_AGENT_ID=${fixture.agentID}`,
             ...env.flatMap((value) => ["-e", value]),
@@ -440,6 +452,28 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
     }
 
     const evidence = { scenario: name, agentId: fixture.agentID };
+    if (scenario.owned) {
+      evidence.recovery = await verifyOwnerInstallRecovery({
+        config,
+        docker,
+        fixture,
+        acpContainer,
+        postgres,
+        modelContainer,
+        client,
+        active,
+        installedPackage,
+        sourceSessionId: pending.session_id,
+        signal: abort.signal,
+      });
+      await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
+      await writeFile(
+        `${evidenceDir}${config.project}.install-${name}.json`,
+        JSON.stringify(evidence),
+        { flag: "wx", mode: 0o600 },
+      );
+      return;
+    }
     if (scenario.stop === "lost") {
       assert.deepEqual(await gate("drop", "POST"), { dropped: true });
     } else if (scenario.stop === "foreground") {

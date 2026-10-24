@@ -404,6 +404,10 @@ e2e-skill-learning-install-pre-dispatch-disable:
 	ANTNEST_E2E_INSTALL_INTERRUPTION=pre-dispatch-disable node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
 .PHONY: e2e-skill-learning-install-after-rename-disable
+.PHONY: e2e-skill-learning-install-after-rename-owner-restart
+e2e-skill-learning-install-after-rename-owner-restart:
+	ANTNEST_E2E_INSTALL_INTERRUPTION=after-rename-owner-restart node --test tests/e2e/skill-learning/install-interruption.test.mjs
+
 e2e-skill-learning-install-after-rename-disable:
 	ANTNEST_E2E_INSTALL_INTERRUPTION=after-rename-disable node --test tests/e2e/skill-learning/install-interruption.test.mjs
 
