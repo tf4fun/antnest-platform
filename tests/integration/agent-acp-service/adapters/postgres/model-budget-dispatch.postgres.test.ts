@@ -18,6 +18,7 @@ import type {
   RunBudget,
 } from "../../../../../services/agent-acp-service/src/domain/model-budget.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
+import type { SessionEvent } from "../../../../../services/agent-acp-service/src/ports/acp-application.js";
 import type {
   ModelRequest,
   ModelResult,
@@ -72,6 +73,15 @@ type Captured = {
   reservations: Reservation[];
   audits: Audit[];
 };
+type SoftNotice = {
+  id: string;
+  session_id: string;
+  run_session_id: string;
+  kind: string;
+  visible: boolean;
+  context_excluded: boolean;
+  payload: { content: { type: string; text?: string }[] };
+};
 type BudgetPolicy = Partial<
   Pick<OrganizationBudget, "run_caps" | "daily" | "monthly">
 >;
@@ -80,6 +90,7 @@ type ChainFixture = {
   runId: string;
   request: ModelRequest;
   captures: Captured[];
+  notifications: SessionEvent[];
   complete: () => Promise<ModelResult>;
   preparations: MockInstance<RunModelClient["prepare"]>;
   finishes: MockInstance<RunEventRepository["finishModelAttempt"]>;
@@ -119,6 +130,43 @@ async function audits(db: FencingFixture, runId: string): Promise<Audit[]> {
       [runId],
     )
   ).rows;
+}
+
+async function softNotices(f: ChainFixture): Promise<SoftNotice[]> {
+  return (
+    await f.db.observer.query<SoftNotice>(
+      `SELECT m.id,m.session_id,r.session_id AS run_session_id,m.kind,m.visible,m.context_excluded,m.payload
+       FROM session_messages m JOIN runs r ON r.id=m.run_id
+       WHERE m.run_id=$1 AND m.kind='agent_message' ORDER BY m.sequence`,
+      [f.runId],
+    )
+  ).rows;
+}
+
+function expectSoftNotices(rows: SoftNotice[], limit: string): void {
+  expect(rows).toHaveLength(2);
+  for (const period of ["daily", "monthly"]) {
+    const matching = rows.filter((row) =>
+      row.payload.content.some((block) =>
+        block.text?.includes("organization_" + period),
+      ),
+    );
+    expect(matching).toHaveLength(1);
+    const notice = matching[0];
+    if (notice === undefined)
+      throw new Error("Expected a committed soft budget notice");
+    expect(notice).toMatchObject({
+      kind: "agent_message",
+      visible: true,
+      context_excluded: true,
+    });
+    expect(notice.session_id).toBe(notice.run_session_id);
+    const text = notice.payload.content
+      .map((block) => block.text ?? "")
+      .join(" ");
+    expect(text).toMatch(/soft|warning/iu);
+    expect(text).toContain(limit);
+  }
 }
 
 async function committedFacts(db: FencingFixture, runId: string) {
@@ -210,6 +258,7 @@ async function withChain(
     runBudget?: RunBudget;
     image?: boolean;
     fallback?: boolean;
+    primarySuccess?: boolean;
     noSend?: "cancel" | "rotate";
     noPricing?: boolean;
     actualUsage?: { inputTokens: number; outputTokens: number };
@@ -225,6 +274,7 @@ async function withChain(
     const sockets = new Set<Socket>();
     const socketJoins: Promise<void>[] = [];
     const captures: Captured[] = [];
+    const notifications: SessionEvent[] = [];
     const stop = new AbortController();
     let releaseResponse: () => void = () => undefined;
     const responseGate = options.holdResponse
@@ -271,7 +321,7 @@ async function withChain(
         expect(captures.length).toBeLessThanOrEqual(options.fallback ? 2 : 1);
         expect(committed.reservations.at(-1)?.state).toBe("reserved");
         await responseGate;
-        if (options.fallback && index === 0) {
+        if (options.fallback && index === 0 && !options.primarySuccess) {
           await end(response, 429, {
             error: { message: "synthetic Provider throttling" },
           });
@@ -437,7 +487,10 @@ async function withChain(
       restorePreparation = () => preparations.mockRestore();
       const events = new DurableRunEvents({
         repository: repositories.events,
-        publish: () => Promise.resolve(),
+        publish: (event) => {
+          notifications.push(structuredClone(event));
+          return Promise.resolve();
+        },
         id: () => randomUUID(),
         now: () => new Date(),
         contextSize: frozen.executionSpec.model.contextWindow,
@@ -521,6 +574,7 @@ async function withChain(
         runId: intent.runId,
         request,
         captures,
+        notifications,
         complete,
         preparations,
         finishes,
@@ -1106,6 +1160,203 @@ describe.skipIf(databaseUrl === undefined)(
             } finally {
               f.releaseResponse();
               await original.catch(() => undefined);
+            }
+          },
+        );
+      },
+      duration,
+    );
+
+    it(
+      "publishes committed soft warnings while the original HTTP response is held and completes without fallback",
+      async () => {
+        await withChain(
+          {
+            fallback: true,
+            primarySuccess: true,
+            holdResponse: true,
+            organizationBudget: {
+              daily: { soft_cost_usd_micros: 8256 },
+              monthly: { soft_cost_usd_micros: 8256 },
+            },
+          },
+          async (f) => {
+            let settled = false;
+            const original = f.complete();
+            const observed = original.then(
+              () => {
+                settled = true;
+              },
+              () => {
+                settled = true;
+              },
+            );
+            try {
+              await expect
+                .poll(() => f.captures.length, { timeout: 2000 })
+                .toBe(1);
+              expect(settled).toBe(false);
+              expect(f.finishes).not.toHaveBeenCalled();
+              expect(
+                (await audits(f.db, f.runId)).map((row) => [
+                  row.kind,
+                  row.payload.phase,
+                ]),
+              ).toEqual([["model_attempt", "start"]]);
+              const held = await ledger(f.db, f.runId);
+              expect(held.usage[0]).toMatchObject({
+                input_tokens: "0",
+                output_tokens: "0",
+                cost_usd_micros: "0",
+                reserved_cost_usd_micros: "8256",
+              });
+              const warnings = await softNotices(f);
+              expectSoftNotices(warnings, "8256");
+              expect(
+                f.notifications.filter(
+                  (event) => event.kind === "agent_message",
+                ),
+              ).toEqual(
+                warnings.map((row) => ({
+                  kind: "agent_message",
+                  messageId: row.id,
+                  content: row.payload.content,
+                })),
+              );
+              expect(
+                f.notifications.some((event) => event.kind === "usage"),
+              ).toBe(false);
+              expect(settled).toBe(false);
+              expect(f.finishes).not.toHaveBeenCalled();
+              f.releaseResponse();
+              await expect(original).resolves.toMatchObject({
+                kind: "message",
+                content: [{ type: "text", text: "completed" }],
+              });
+              await observed;
+              expect(settled).toBe(true);
+              expect(f.captures.map((capture) => capture.body.model)).toEqual([
+                "budget-model-a",
+              ]);
+              expect(f.preparations).toHaveBeenCalledOnce();
+              expect(f.finishes).toHaveBeenCalledOnce();
+              expect(await softNotices(f)).toEqual(warnings);
+              expect(
+                f.notifications.filter(
+                  (event) => event.kind === "agent_message",
+                ),
+              ).toHaveLength(2);
+              const saved = await ledger(f.db, f.runId);
+              expect(saved.usage[0]).toMatchObject({
+                input_tokens: "80",
+                output_tokens: "20",
+                cost_usd_micros: "100",
+                reserved_cost_usd_micros: "0",
+              });
+              expectSpend(saved.spend, "100", "0", "0");
+              expect(
+                (await audits(f.db, f.runId)).map((row) => row.kind),
+              ).toEqual(["model_attempt", "model_attempt", "usage"]);
+            } finally {
+              f.releaseResponse();
+              await Promise.allSettled([original, observed]);
+            }
+          },
+        );
+      },
+      duration,
+    );
+
+    it(
+      "warns at actual settlement under a soft policy lowered during HTTP without denying or repeating the call",
+      async () => {
+        await withChain(
+          {
+            fallback: true,
+            primarySuccess: true,
+            holdResponse: true,
+            actualUsage: { inputTokens: 8936, outputTokens: 64 },
+            organizationBudget: {
+              daily: { soft_cost_usd_micros: 10000 },
+              monthly: { soft_cost_usd_micros: 10000 },
+            },
+          },
+          async (f) => {
+            const frozen = structuredClone(f.request.snapshot);
+            let settled = false;
+            const original = f.complete();
+            const observed = original.then(
+              () => {
+                settled = true;
+              },
+              () => {
+                settled = true;
+              },
+            );
+            try {
+              await expect
+                .poll(() => f.captures.length, { timeout: 2000 })
+                .toBe(1);
+              expect(await softNotices(f)).toEqual([]);
+              expect(f.notifications).toEqual([]);
+              expect(f.finishes).not.toHaveBeenCalled();
+              await f.publishBudget({
+                daily: { soft_cost_usd_micros: 9000 },
+                monthly: { soft_cost_usd_micros: 9000 },
+              });
+              expect(await softNotices(f)).toEqual([]);
+              expect(settled).toBe(false);
+              expect(f.finishes).not.toHaveBeenCalled();
+              expect(f.request.snapshot).toEqual(frozen);
+              expectSpend(
+                (await ledger(f.db, f.runId)).spend,
+                "0",
+                "8256",
+                "0",
+              );
+              f.releaseResponse();
+              await expect(original).resolves.toMatchObject({
+                kind: "message",
+                content: [{ type: "text", text: "completed" }],
+              });
+              await observed;
+              expect(settled).toBe(true);
+              const warnings = await softNotices(f);
+              expectSoftNotices(warnings, "9000");
+              expect(
+                f.notifications.filter(
+                  (event) => event.kind === "agent_message",
+                ),
+              ).toEqual(
+                warnings.map((row) => ({
+                  kind: "agent_message",
+                  messageId: row.id,
+                  content: row.payload.content,
+                })),
+              );
+              expect(
+                f.notifications.filter((event) => event.kind === "usage"),
+              ).toHaveLength(1);
+              expect(f.captures.map((capture) => capture.body.model)).toEqual([
+                "budget-model-a",
+              ]);
+              expect(f.preparations).toHaveBeenCalledOnce();
+              expect(f.finishes).toHaveBeenCalledOnce();
+              expect(f.request.snapshot).toEqual(frozen);
+              const saved = await ledger(f.db, f.runId);
+              expect(saved.usage[0]).toMatchObject({
+                input_tokens: "8936",
+                output_tokens: "64",
+                cost_usd_micros: "9000",
+                reserved_cost_usd_micros: "0",
+              });
+              expectSpend(saved.spend, "9000", "0", "0");
+              expect(
+                (await audits(f.db, f.runId)).map((row) => row.kind),
+              ).toEqual(["model_attempt", "model_attempt", "usage"]);
+            } finally {
+              f.releaseResponse();
+              await Promise.allSettled([original, observed]);
             }
           },
         );

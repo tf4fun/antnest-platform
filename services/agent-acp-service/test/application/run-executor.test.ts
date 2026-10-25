@@ -1078,7 +1078,9 @@ function setup() {
 
 function eventRepository(): RunEventRepository {
   return {
-    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+      Promise.resolve({ warnings: [] }),
+    ),
     finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
       Promise.resolve({
         event: {
@@ -1087,6 +1089,7 @@ function eventRepository(): RunEventRepository {
           size: input.contextSize,
         },
         settlement: {},
+        warnings: [],
       }),
     ),
     appendAgentMessage: vi.fn<RunEventRepository["appendAgentMessage"]>((input) =>
@@ -1151,6 +1154,7 @@ function stopAtModelBudget(
           size: input.contextSize,
         },
         settlement: { exceeded: structuredClone(budget) },
+        warnings: [],
       }),
     );
   }

@@ -9,6 +9,7 @@ import {
   DurableRunEvents,
   RunEventPersistenceError,
 } from "../../src/application/durable-run-events.js";
+import type { BudgetWarningNotice } from "../../src/domain/model-budget-warning.js";
 import type { ResourceIdGenerator } from "../../src/domain/resource-id.js";
 import type { SessionEvent, SessionEventPublisher } from "../../src/ports/acp-application.js";
 import type { ModelAttemptFinished, ModelAttemptStarted } from "../../src/ports/model-attempts.js";
@@ -31,10 +32,10 @@ function setup() {
   const repository = {
     startModelAttempt: vi
       .fn<RunEventRepository["startModelAttempt"]>()
-      .mockResolvedValue(undefined),
+      .mockResolvedValue({ warnings: [] }),
     finishModelAttempt: vi
       .fn<RunEventRepository["finishModelAttempt"]>()
-      .mockResolvedValue({ event: receipt, settlement: {} }),
+      .mockResolvedValue({ event: receipt, settlement: {}, warnings: [] }),
     appendPlan: vi.fn<RunEventRepository["appendPlan"]>(),
     appendAgentMessage: vi.fn<RunEventRepository["appendAgentMessage"]>(),
     appendAgentThought: vi.fn<RunEventRepository["appendAgentThought"]>(),
@@ -112,7 +113,11 @@ describe("durable model attempt events", () => {
     const settlement = {
       exceeded: { scope: "run_cost" as const, limit: "100", used: "101" },
     };
-    f.repository.finishModelAttempt.mockResolvedValue({ event: f.receipt, settlement });
+    f.repository.finishModelAttempt.mockResolvedValue({
+      event: f.receipt,
+      settlement,
+      warnings: [],
+    });
     await expect(f.events.finish("run-1", f.finished)).resolves.toEqual(settlement);
     expect(f.publish).toHaveBeenCalledExactlyOnceWith(f.receipt);
     expect(f.repository.finishModelAttempt).toHaveBeenCalledOnce();
@@ -128,6 +133,176 @@ describe("durable model attempt events", () => {
     expect(f.repository.finishModelAttempt).not.toHaveBeenCalled();
     expect(f.publish).not.toHaveBeenCalled();
   });
+
+  it.each(cases)(
+    "publishes committed $operation warnings in order without another message write",
+    async ({ operation, repositoryMethod }) => {
+      const f = setup();
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const warnings: BudgetWarningNotice[] = [
+        {
+          kind: "agent_message",
+          messageId: "daily-budget-warning-1",
+          content: [{ type: "text", text: "Organization daily model budget warning." }],
+        },
+        {
+          kind: "agent_message",
+          messageId: "monthly-budget-warning-1",
+          content: [{ type: "text", text: "Organization monthly model budget warning." }],
+        },
+      ];
+      const settlement: ModelBudgetSettlement = {
+        exceeded: { scope: "run_cost", limit: "10", used: "11" },
+      };
+      if (operation === "start")
+        f.repository.startModelAttempt.mockImplementation(async () => {
+          entered.resolve();
+          await release.promise;
+          return { warnings };
+        });
+      else
+        f.repository.finishModelAttempt.mockImplementation(async () => {
+          entered.resolve();
+          await release.promise;
+          return { event: f.receipt, settlement, warnings };
+        });
+      const result = observe(Promise.resolve().then(() => f.invoke(operation)));
+      try {
+        await Promise.race([
+          entered.promise,
+          result.settled.then(() => {
+            throw new Error("Original warning receipt gate was bypassed");
+          }),
+        ]);
+        expect(f.repository[repositoryMethod]).toHaveBeenCalledOnce();
+        expect(f.publish).not.toHaveBeenCalled();
+        expect(result.resolved).not.toHaveBeenCalled();
+        expect(result.rejected).not.toHaveBeenCalled();
+
+        release.resolve();
+        await result.settled;
+        expect(result.rejected).not.toHaveBeenCalled();
+        expect(result.resolved).toHaveBeenCalledExactlyOnceWith(
+          operation === "start" ? undefined : settlement,
+        );
+        expect(f.publish.mock.calls).toEqual(
+          (operation === "start" ? warnings : [f.receipt, ...warnings]).map((event) => [event]),
+        );
+        expect(f.repository[repositoryMethod]).toHaveBeenCalledOnce();
+        expect(f.repository.startModelAttempt).toHaveBeenCalledTimes(operation === "start" ? 1 : 0);
+        expect(f.repository.finishModelAttempt).toHaveBeenCalledTimes(
+          operation === "finish" ? 1 : 0,
+        );
+        expect(f.repository.appendAgentMessage).not.toHaveBeenCalled();
+        expect(f.repository.appendUsage).not.toHaveBeenCalled();
+        expect(f.id).not.toHaveBeenCalled();
+        expect(f.now).not.toHaveBeenCalled();
+      } finally {
+        release.resolve();
+        f.ownership.abort(new WorkerOwnershipLostError());
+        await result.settled;
+      }
+    },
+  );
+
+  it("rejects a legacy undefined start receipt inside persistence before publication", async () => {
+    const f = setup();
+    // Deliberately damaged storage data must fail despite the repository's static type.
+    const malformed = undefined as unknown as Awaited<
+      ReturnType<RunEventRepository["startModelAttempt"]>
+    >;
+    f.repository.startModelAttempt.mockResolvedValue(malformed);
+    vi.useFakeTimers({ loopLimit: 20 });
+    const result = observe(Promise.resolve().then(() => f.events.start("run-1", f.started)));
+    try {
+      await vi.runAllTimersAsync();
+      await result.settled;
+      expect(f.repository.startModelAttempt).toHaveBeenCalledTimes(3);
+      expect(result.resolved).not.toHaveBeenCalled();
+      expect(result.rejected).toHaveBeenCalledOnce();
+      expect(result.rejected.mock.calls[0]![0]).toBeInstanceOf(RunEventPersistenceError);
+      expect(f.publish).not.toHaveBeenCalled();
+      expect(f.repository.finishModelAttempt).not.toHaveBeenCalled();
+      expect(f.repository.appendAgentMessage).not.toHaveBeenCalled();
+      expect(f.repository.appendUsage).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      f.ownership.abort(new WorkerOwnershipLostError());
+      try {
+        await vi.runAllTimersAsync();
+        await result.settled;
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    }
+  });
+
+  it.each(
+    cases.flatMap(({ operation, repositoryMethod }) => [
+      { operation, repositoryMethod, name: "missing warnings", warnings: undefined },
+      { operation, repositoryMethod, name: "null warnings", warnings: null },
+      { operation, repositoryMethod, name: "non-array warnings", warnings: {} },
+      {
+        operation,
+        repositoryMethod,
+        name: "malformed warning event",
+        warnings: [
+          {
+            kind: "agent_message",
+            messageId: "valid-warning-1",
+            content: [{ type: "text", text: "This valid prefix must not publish." }],
+          },
+          { kind: "agent_message", messageId: "warning-1", content: "PRIVATE_BAD_WARNING" },
+        ],
+      },
+    ]),
+  )(
+    "rejects $operation $name inside persistence without publishing a valid prefix",
+    async ({ operation, repositoryMethod, warnings }) => {
+      const f = setup();
+      const malformed: unknown = {
+        ...(operation === "finish" ? { event: f.receipt, settlement: {} } : {}),
+        ...(warnings === undefined ? {} : { warnings }),
+      };
+      if (operation === "start")
+        f.repository.startModelAttempt.mockResolvedValue(
+          malformed as Awaited<ReturnType<RunEventRepository["startModelAttempt"]>>,
+        );
+      else
+        f.repository.finishModelAttempt.mockResolvedValue(
+          malformed as Awaited<ReturnType<RunEventRepository["finishModelAttempt"]>>,
+        );
+      vi.useFakeTimers({ loopLimit: 20 });
+      const result = observe(Promise.resolve().then(() => f.invoke(operation)));
+      try {
+        await vi.runAllTimersAsync();
+        await result.settled;
+        expect(f.repository[repositoryMethod]).toHaveBeenCalledTimes(3);
+        expect(result.resolved).not.toHaveBeenCalled();
+        expect(result.rejected).toHaveBeenCalledOnce();
+        expect(result.rejected.mock.calls[0]![0]).toBeInstanceOf(RunEventPersistenceError);
+        expect(f.publish).not.toHaveBeenCalled();
+        expect(f.repository.startModelAttempt).toHaveBeenCalledTimes(operation === "start" ? 3 : 0);
+        expect(f.repository.finishModelAttempt).toHaveBeenCalledTimes(
+          operation === "finish" ? 3 : 0,
+        );
+        expect(f.repository.appendAgentMessage).not.toHaveBeenCalled();
+        expect(f.repository.appendUsage).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        f.ownership.abort(new WorkerOwnershipLostError());
+        try {
+          await vi.runAllTimersAsync();
+          await result.settled;
+        } finally {
+          vi.clearAllTimers();
+          vi.useRealTimers();
+        }
+      }
+    },
+  );
 
   it("persists the selected candidate context size instead of the original primary size", async () => {
     const f = setup();
@@ -179,11 +354,15 @@ describe("durable model attempt events", () => {
           throw new Error("first original persistence receipt failed");
         }
       };
-      if (operation === "start") f.repository.startModelAttempt.mockImplementation(write);
+      if (operation === "start")
+        f.repository.startModelAttempt.mockImplementation(async (input) => {
+          await write(input);
+          return { warnings: [] };
+        });
       else
         f.repository.finishModelAttempt.mockImplementation(async (input) => {
           await write(input);
-          return { event: f.receipt, settlement: {} };
+          return { event: f.receipt, settlement: {}, warnings: [] };
         });
       const expected = structuredClone(
         operation === "start"
@@ -303,11 +482,15 @@ describe("durable model attempt events", () => {
         entered.resolve();
         await release.promise;
       };
-      if (operation === "start") f.repository.startModelAttempt.mockImplementation(write);
+      if (operation === "start")
+        f.repository.startModelAttempt.mockImplementation(async () => {
+          await write();
+          return { warnings: [] };
+        });
       else
         f.repository.finishModelAttempt.mockImplementation(async () => {
           await write();
-          return { event: f.receipt, settlement: {} };
+          return { event: f.receipt, settlement: {}, warnings: [] };
         });
       const lost = new WorkerOwnershipLostError();
       const result = observe(Promise.resolve().then(() => f.invoke(operation)));
@@ -340,16 +523,20 @@ describe("durable model attempt events", () => {
 
   it.each([
     { name: "legacy raw usage event", make: (event: SessionEvent): unknown => event },
-    { name: "missing settlement", make: (event: SessionEvent): unknown => ({ event }) },
+    {
+      name: "missing settlement",
+      make: (event: SessionEvent): unknown => ({ event, warnings: [] }),
+    },
     {
       name: "null settlement",
-      make: (event: SessionEvent): unknown => ({ event, settlement: null }),
+      make: (event: SessionEvent): unknown => ({ event, settlement: null, warnings: [] }),
     },
     {
       name: "unknown settlement field",
       make: (event: SessionEvent): unknown => ({
         event,
         settlement: { unexpected: true },
+        warnings: [],
       }),
     },
     {
@@ -357,6 +544,7 @@ describe("durable model attempt events", () => {
       make: (event: SessionEvent): unknown => ({
         event,
         settlement: { exceeded: { scope: "unexpected_scope", limit: "1", used: "2" } },
+        warnings: [],
       }),
     },
     {
@@ -364,14 +552,16 @@ describe("durable model attempt events", () => {
       make: (event: SessionEvent): unknown => ({
         event,
         settlement: { exceeded: null },
+        warnings: [],
       }),
     },
-    { name: "missing usage event", make: (): unknown => ({ settlement: {} }) },
+    { name: "missing usage event", make: (): unknown => ({ settlement: {}, warnings: [] }) },
     {
       name: "non-usage event",
       make: (): unknown => ({
         event: { kind: "agent_message", messageId: "unexpected-message", content: [] },
         settlement: {},
+        warnings: [],
       }),
     },
     { name: "null receipt", make: (): unknown => null },

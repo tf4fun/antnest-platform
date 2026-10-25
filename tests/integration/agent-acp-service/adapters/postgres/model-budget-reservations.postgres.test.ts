@@ -733,7 +733,7 @@ describe.skipIf(databaseUrl === undefined)(
         const before = await fixture.snapshot();
         await expect(
           winner.events.startModelAttempt(starts[winnerIndex]!),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ warnings: [] });
         expect(await ledger(fixture)).toEqual(held);
         expect(await fixture.snapshot()).toBe(before);
         const conflict = {

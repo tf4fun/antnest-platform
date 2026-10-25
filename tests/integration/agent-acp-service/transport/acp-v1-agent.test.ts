@@ -15,6 +15,8 @@ import type {
   AcpApplicationPort,
   AcceptedAcpRun,
   ExecuteRunResult,
+  SessionEvent,
+  DeliveredSessionEvent,
 } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import { createAcpV1Agent } from "../../../../services/agent-acp-service/src/transport/acp/v1/agent.js";
 import type { LearningChangeItem } from "../../../../services/agent-acp-service/src/adapters/postgres/learning-change-read.js";
@@ -1961,6 +1963,223 @@ describe("ACP v1 agent mapping", () => {
     );
   });
 
+  it("reads an admission soft notice before completion and replays its original message without executing again", async () => {
+    const text =
+      "Organization daily model budget warning. Limit: 10; used: 10.";
+    const warning: DeliveredSessionEvent = {
+      kind: "agent_message",
+      messageId: "admission-soft-warning-1",
+      content: [{ type: "text", text }],
+      delivery: {
+        sequence: 1,
+        runId: "run-1",
+        messageId: "admission-soft-warning-1",
+      },
+    };
+    const completed: ExecuteRunResult = {
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+    };
+    const completion = Promise.withResolvers<ExecuteRunResult>();
+    const notifications: acp.SessionNotification[] = [];
+    const replayed: acp.SessionNotification[] = [];
+    const execute = vi.fn<OutputApplication["execute"]>(
+      () => completion.promise,
+    );
+    // The shared hook seeds the original memory store during acceptance. This
+    // checks first-read/replay mapping, not PostgreSQL or Provider behavior.
+    const application = createApplication({ execute }, [warning]);
+    const acceptedCompletions: Promise<ExecuteRunResult>[] = [];
+    const originalAccept = application.acceptPrompt.bind(application);
+    const acceptPrompt = vi.fn<typeof originalAccept>(async (input) => {
+      const accepted = await originalAccept(input);
+      acceptedCompletions.push(accepted.completion);
+      return accepted;
+    });
+    application.acceptPrompt = acceptPrompt;
+    const agent = createAcpV1Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    const client = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        notifications.push(params);
+      });
+    try {
+      await client.connectWith(agent, async (context) => {
+        let prompt: Promise<acp.PromptResponse> | undefined;
+        let observed: Promise<void> | undefined;
+        const resolved = vi.fn<(value: acp.PromptResponse) => void>();
+        const rejected = vi.fn<(error: unknown) => void>();
+        try {
+          await context.request(acp.methods.agent.initialize, {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            _meta: {
+              "antnest.dev/bridge": {
+                intentReceipt: 1,
+                targetCancel: 1,
+                deliveryMark: 1,
+              },
+            },
+          });
+          prompt = context.request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [
+              { type: "text", text: "held with only an admission notice" },
+            ],
+          });
+          observed = prompt.then(resolved, rejected);
+          await vi.waitFor(() =>
+            expect(
+              notifications.some(
+                ({ update }) => update.sessionUpdate === "agent_message_chunk",
+              ),
+            ).toBe(true),
+          );
+          expect(resolved).not.toHaveBeenCalled();
+          expect(rejected).not.toHaveBeenCalled();
+          const first = await application.readSessionOutput({
+            binding,
+            sessionId: "session-1",
+            afterSequence: 0,
+          });
+          expect(first.events).toEqual([warning]);
+          expect(first.state).toMatchObject({
+            kind: "state",
+            state: "running",
+          });
+          expect(
+            notifications.filter(
+              ({ update }) => update.sessionUpdate === "agent_message_chunk",
+            ),
+          ).toEqual([
+            expect.objectContaining({
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "admission-soft-warning-1",
+                content: { type: "text", text },
+              },
+              _meta: {
+                "antnest.dev/delivery": {
+                  kind: "part",
+                  sequence: 1,
+                  runId: "run-1",
+                  messageId: "admission-soft-warning-1",
+                  partIndex: 0,
+                  partCount: 1,
+                },
+              },
+            }),
+          ]);
+          completion.resolve(completed);
+          await expect(prompt).resolves.toEqual({ stopReason: "end_turn" });
+          await observed;
+          expect(resolved).toHaveBeenCalledExactlyOnceWith({
+            stopReason: "end_turn",
+          });
+          expect(rejected).not.toHaveBeenCalled();
+          expect(
+            notifications.filter(
+              ({ update }) => update.sessionUpdate === "agent_message_chunk",
+            ),
+          ).toHaveLength(1);
+        } finally {
+          completion.resolve(completed);
+          await Promise.allSettled([
+            completion.promise,
+            ...acceptedCompletions,
+            ...(prompt === undefined ? [] : [prompt]),
+            ...(observed === undefined ? [] : [observed]),
+          ]);
+        }
+      });
+
+      const resumeSession = vi
+        .spyOn(application, "resumeSession")
+        .mockImplementation(async (input) => {
+          const output = await application.readSessionOutput({
+            binding: input.binding,
+            sessionId: input.sessionId,
+            afterSequence: 0,
+          });
+          return {
+            sequence: output.sequence,
+            appendVersion: 1,
+            replay: output.events,
+          };
+        });
+      const replayAgent = createAcpV1Agent({
+        binding: { ...binding, connectionId: "admission-warning-replay" },
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      const replayClient = acp
+        .client()
+        .onNotification(acp.methods.client.session.update, ({ params }) => {
+          replayed.push(params);
+        });
+      await replayClient.connectWith(replayAgent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          _meta: {
+            "antnest.dev/bridge": {
+              intentReceipt: 1,
+              targetCancel: 1,
+              deliveryMark: 1,
+            },
+          },
+        });
+        await context.request(acp.methods.agent.session.load, {
+          sessionId: "session-1",
+          cwd: "/workspace",
+          mcpServers: [],
+        });
+      });
+      expect(
+        replayed.filter(
+          ({ update }) => update.sessionUpdate === "agent_message_chunk",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "admission-soft-warning-1",
+            content: { type: "text", text },
+          },
+          _meta: {
+            "antnest.dev/delivery": {
+              kind: "part",
+              sequence: 1,
+              runId: "run-1",
+              messageId: "admission-soft-warning-1",
+              partIndex: 0,
+              partCount: 1,
+            },
+          },
+        }),
+      ]);
+      expect(resumeSession).toHaveBeenCalledOnce();
+      expect(acceptPrompt).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+      expect(
+        (
+          await application.readSessionOutput({
+            binding,
+            sessionId: "session-1",
+            afterSequence: 0,
+          })
+        ).events,
+      ).toEqual([warning]);
+    } finally {
+      completion.resolve(completed);
+      await Promise.allSettled([completion.promise, ...acceptedCompletions]);
+    }
+  });
+
   it.each([
     ["failed", -32022, "model_error"],
     ["unresolved", -32023, "tool_effect_unknown"],
@@ -2108,6 +2327,7 @@ describe("ACP v1 agent mapping", () => {
 
 function createApplication(
   overrides: Partial<OutputApplication> = {},
+  admissionEvents: readonly SessionEvent[] = [],
 ): AcpApplicationPort {
   return withOutputHistory(
     {
@@ -2146,6 +2366,7 @@ function createApplication(
       ...overrides,
     },
     { title: "hi", updatedAt: "2026-08-30T00:00:01.000Z" },
+    admissionEvents,
   );
 }
 

@@ -47,7 +47,7 @@ The original `{scope, limit, used}` fact travels through foreground and judge
 failures into the durable terminal outcome and one static final notice. Token
 amounts and USD microdollars remain exact integer strings, and unknown amounts
 render as `unknown` in the notice. The notice spends no model call.
-Soft notifications and Controller/Console publication remain separate delivery work.
+Controller/Console publication remains separate delivery work.
 
 Each physical attempt now prepares its exact serialized Provider request before
 persisting the start and reserving budget. Only observations matching the frozen
@@ -104,6 +104,28 @@ non-budget outcome. Old records with no structured fact keep their old response
 shape. Public projection uses the [closed error contract](../../../contracts/agent-acp/errors.md#safe-messages-data-and-fallback):
 v1 retains the distinction between admission and accepted terminal numeric codes;
 v2 delivers the final notice through its existing output/replay mechanism.
+
+Soft thresholds warn when known charges plus unreleased monetary reservations
+reach the configured UTC daily/monthly threshold. Only accepted, authorized Runs
+claim warnings, and pending cancellation does not claim one. The original Prompt
+precedes an admission warning; hidden start precedes reservation warnings; hidden
+finish and usage precede settlement warnings. Each notice is visible to the
+original Session but excluded from model context. It neither invokes a model nor
+changes the independent retry, fallback, Tool, hard-limit or cleanup decisions.
+
+Each organization/period bucket retains one warning receipt without Run/Session
+foreign keys. The receipt, static assistant message and original operation commit
+atomically; a failed message insert rolls back all of them. Exact attempt replay
+uses an immutable start/finish warning manifest and its matching period receipt
+and message, without consulting newer policy. Unknown consumption and historical
+coverage remain explicit; pre-call reservations are never described as money
+already spent. Restart, policy changes and Session purge do not reset warnings.
+
+Admission observers retain their pre-admission output cursor and immediately read
+the committed notice. Attempt receipts wake the existing durable output stream
+after commit, before waiting for a Provider response. Stable message IDs preserve
+identity on reconnect/replay; a network notification is not an exactly-once delivery
+promise. See the [shared budget contract](../../../contracts/agent-controller/model-call-policy.md#budget-enforcement-and-recovery).
 
 The main turn and permission judge share one Run counter of physical model
 attempts, including failed and cancelled calls. Every admitted attempt reserves
@@ -228,9 +250,9 @@ revocation signal does not acquire a probe; circuit state never revokes access.
 Replacing a removed Provider creates fresh health state without reviving old
 handles or admitting an old Run to a different endpoint.
 
-Run/organization spending ledgers and
-caps, Controller default publication, Console controls and final Docker business
-acceptance remain pending under the
+ACP now owns the durable Run/organization ledger, hard caps and soft notices
+described above. Controller default and policy publication, Console controls and
+final Docker business acceptance remain pending under the
 [model-call policy contract](../../../contracts/agent-controller/model-call-policy.md).
 The floating-point Session cost projection is not a spending ledger. This ACP
 batch does not complete #52.

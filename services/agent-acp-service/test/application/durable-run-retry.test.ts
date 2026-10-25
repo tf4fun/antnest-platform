@@ -140,7 +140,9 @@ function eventRepository(
     return receipt;
   };
   return {
-    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+      Promise.resolve({ warnings: [] }),
+    ),
     finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
       Promise.resolve({
         event: {
@@ -149,6 +151,7 @@ function eventRepository(
           size: input.contextSize,
         },
         settlement: {},
+        warnings: [],
       }),
     ),
     appendPlan: vi.fn<RunEventRepository["appendPlan"]>(async (input) => {

@@ -22,7 +22,9 @@ describe("DurableRunEvents", () => {
       }),
     );
     const repository: RunEventRepository = {
-      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+        Promise.resolve({ warnings: [] }),
+      ),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
           event: {
@@ -31,6 +33,7 @@ describe("DurableRunEvents", () => {
             size: input.contextSize,
           },
           settlement: {},
+          warnings: [],
         }),
       ),
       appendAgentMessage: vi.fn(),
@@ -79,7 +82,9 @@ describe("DurableRunEvents", () => {
 
   it("does not let a half-open live publisher block durable execution", async () => {
     const repository: RunEventRepository = {
-      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+        Promise.resolve({ warnings: [] }),
+      ),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
           event: {
@@ -88,6 +93,7 @@ describe("DurableRunEvents", () => {
             size: input.contextSize,
           },
           settlement: {},
+          warnings: [],
         }),
       ),
       appendAgentMessage: vi.fn(() =>
@@ -127,7 +133,9 @@ describe("DurableRunEvents", () => {
 
   it("classifies repository failure separately from best-effort publication", async () => {
     const repository: RunEventRepository = {
-      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+        Promise.resolve({ warnings: [] }),
+      ),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
           event: {
@@ -136,6 +144,7 @@ describe("DurableRunEvents", () => {
             size: input.contextSize,
           },
           settlement: {},
+          warnings: [],
         }),
       ),
       appendAgentMessage: vi.fn(() => Promise.reject(new Error("database unavailable"))),

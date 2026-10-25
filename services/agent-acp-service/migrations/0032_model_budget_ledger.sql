@@ -48,6 +48,7 @@ CREATE TABLE organization_spend (
     reserved_cost_usd_micros numeric NOT NULL DEFAULT 0 CHECK (reserved_cost_usd_micros >= 0 AND reserved_cost_usd_micros = trunc(reserved_cost_usd_micros)),
     unbounded_cost_attempts numeric NOT NULL DEFAULT 0 CHECK (unbounded_cost_attempts >= 0 AND unbounded_cost_attempts = trunc(unbounded_cost_attempts)),
     unknown_attempts numeric NOT NULL DEFAULT 0 CHECK (unknown_attempts >= 0 AND unknown_attempts = trunc(unknown_attempts)),
+    warning_receipt jsonb CHECK (warning_receipt IS NULL OR jsonb_typeof(warning_receipt) = 'object'),
     PRIMARY KEY (organization_id, period, period_start),
     CHECK (period <> 'monthly' OR EXTRACT(DAY FROM period_start) = 1)
 );
@@ -71,6 +72,7 @@ CREATE TABLE model_budget_reservations (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     settled_at timestamptz NULL,
     settlement jsonb CHECK (settlement IS NULL OR jsonb_typeof(settlement) = 'object'),
+    warning_receipts jsonb NOT NULL DEFAULT '{"start":[],"finish":[]}'::jsonb CHECK (jsonb_typeof(warning_receipts) = 'object'),
     PRIMARY KEY (run_id, ordinal),
     CHECK (month_start = date_trunc('month', day_start)::date)
 );

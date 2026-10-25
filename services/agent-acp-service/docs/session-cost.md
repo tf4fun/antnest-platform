@@ -107,8 +107,13 @@ original `{scope, limit, used}` in `runs.budget_reason`; audit detail exposes th
 optional fact and exact terminal retries cannot replace it. Token values and USD
 microdollars are decimal strings, with null for unknown amounts. The final notice
 uses those same values without another model call. Legacy rows omit the optional
-field. Soft notifications and Controller/Console policy consumers still need
-their business acceptance.
+field. Soft thresholds compare known charges plus unresolved reservations and
+record one warning per organization/UTC period. That receipt survives execution
+purge; its static visible notice is excluded from model context and commits with
+the original admission/reservation/settlement. Exact attempt replay preserves the
+same message and does not reassess newer policy. Unknown accounting is explicit
+in the notice. Controller/Console policy consumers and the full cross-service
+workflow still need their business acceptance.
 
 ## Verification
 
@@ -140,9 +145,9 @@ Each attempt uses its frozen candidate identity and pricing. That component
 coverage does not replace final Docker acceptance. Controller's two-retry and
 before-output failover defaults are not yet published. Provider circuits skip
 unavailable connections without recording synthetic attempts or usage.
-The remaining cap enforcement, Controller/Console policy
-controls and final #52 integration remain pending; the Session display projection
-does not implement enforcement.
+ACP enforces caps through the durable ledger described above. Controller/Console
+policy controls and final #52 integration remain pending; the Session display
+projection does not implement enforcement.
 
 Prior deployment evidence used the retired Gateway ACP/state routes. That
 recorded coverage remains historical. Gateway 24 requires a separate consumer

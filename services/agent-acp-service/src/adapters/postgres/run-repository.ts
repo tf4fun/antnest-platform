@@ -24,6 +24,7 @@ import type {
 import type { PostgresKernel } from "./kernel.js";
 import { RunWriteAuthority, type RunOwnerColumns } from "./run-write-authority.js";
 import { assertModelBudgetAdmission } from "./model-budget.js";
+import { appendModelBudgetWarnings } from "./model-budget-warning.js";
 
 type LockedSession = {
   organization_id: string;
@@ -361,6 +362,11 @@ export class PostgresRunRepository implements RunRepository {
           input.sessionTitle ?? null,
         ],
       );
+      await appendModelBudgetWarnings(client, {
+        runId: input.runId,
+        source: "admission",
+        createdAt: input.acceptedAt,
+      });
       return "accepted";
     });
     if (outcome instanceof ModelBudgetExceededError) throw outcome;

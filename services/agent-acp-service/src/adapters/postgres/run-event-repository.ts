@@ -7,6 +7,7 @@ import {
   settleModelBudget,
   storedModelBudgetSettlement,
 } from "./model-budget.js";
+import { appendModelBudgetWarnings, storedModelBudgetWarnings } from "./model-budget-warning.js";
 
 import type {
   ToolEffectState,
@@ -24,6 +25,7 @@ import type {
   AppendRejectedToolCallInput,
   FinishToolAttemptInput,
   ModelAttemptReceipt,
+  ModelAttemptStartReceipt,
   RunEventRepository,
   StartToolAttemptInput,
 } from "../../ports/run-event-repository.js";
@@ -160,7 +162,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
 
   public startModelAttempt(
     request: Parameters<RunEventRepository["startModelAttempt"]>[0],
-  ): Promise<void> {
+  ): Promise<ModelAttemptStartReceipt> {
     const input = structuredClone(request);
     requireOrdinal(input.ordinal);
     const id = modelAttemptId(input.runId, input.ordinal, "start");
@@ -177,7 +179,16 @@ export class PostgresRunEventRepository implements RunEventRepository {
     };
     return this.modelTransaction(input.runId, async (client) => {
       const locked = await lockSessionRun(client, input.runId, this.#authority);
-      if (await storedModelAttempt(client, locked, id, event, input.startedAt)) return;
+      if (await storedModelAttempt(client, locked, id, event, input.startedAt))
+        return {
+          warnings: await storedModelBudgetWarnings(client, {
+            runId: input.runId,
+            sessionId: locked.sessionId,
+            organizationId: locked.organizationId,
+            ordinal: input.ordinal,
+            source: "start",
+          }),
+        };
       requireRunning(locked.state);
       const row = await client.query<{ execution_snapshot: RunExecutionSnapshot }>(
         "SELECT execution_snapshot FROM runs WHERE id=$1",
@@ -217,6 +228,14 @@ export class PostgresRunEventRepository implements RunEventRepository {
         ...(candidate.model.pricing === undefined ? {} : { pricing: candidate.model.pricing }),
       });
       await appendModelAttemptLocked(client, locked, id, event, input.startedAt);
+      return {
+        warnings: await appendModelBudgetWarnings(client, {
+          runId: input.runId,
+          ordinal: input.ordinal,
+          source: "start",
+          createdAt: input.startedAt,
+        }),
+      };
     });
   }
 
@@ -266,6 +285,13 @@ export class PostgresRunEventRepository implements RunEventRepository {
           throw new Error("Model attempt receipt is incomplete");
         return {
           event: usageReceipt,
+          warnings: await storedModelBudgetWarnings(client, {
+            runId: input.runId,
+            sessionId: locked.sessionId,
+            organizationId: locked.organizationId,
+            ordinal: input.ordinal,
+            source: "finish",
+          }),
           settlement: await storedModelBudgetSettlement(
             client,
             input.runId,
@@ -307,7 +333,16 @@ export class PostgresRunEventRepository implements RunEventRepository {
         { ...locked, nextSequence: locked.nextSequence + 1 },
         usage,
       );
-      return { event: usageEvent, settlement };
+      return {
+        event: usageEvent,
+        settlement,
+        warnings: await appendModelBudgetWarnings(client, {
+          runId: input.runId,
+          ordinal: input.ordinal,
+          source: "finish",
+          createdAt: input.finishedAt,
+        }),
+      };
     });
   }
 

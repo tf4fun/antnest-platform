@@ -17,6 +17,7 @@ import {
   modelBudgetSettlementSchema,
   type ModelBudgetSettlement,
 } from "../domain/model-budget.js";
+import { budgetWarningNoticesSchema } from "../domain/model-budget-warning.js";
 
 const MAX_RESULT_SUMMARY_CHARACTERS = 4_096;
 
@@ -42,9 +43,13 @@ export class DurableRunEvents implements RunEventPort {
 
   public async start(runId: string, fact: ModelAttemptStarted): Promise<void> {
     const input = structuredClone({ runId, ...fact });
-    await this.persist("model attempt start", () =>
-      this.dependencies.repository.startModelAttempt(input),
-    );
+    const warnings = await this.persist("model attempt start", async () => {
+      const raw: unknown = await this.dependencies.repository.startModelAttempt(input);
+      if (typeof raw !== "object" || raw === null || !("warnings" in raw))
+        throw new Error("Model attempt start receipt is invalid");
+      return budgetWarningNoticesSchema.parse(raw.warnings);
+    });
+    for (const warning of warnings) await this.publish(warning);
   }
 
   public async finish(runId: string, fact: ModelAttemptFinished): Promise<ModelBudgetSettlement> {
@@ -71,9 +76,11 @@ export class DurableRunEvents implements RunEventPort {
       return {
         event: stored.event,
         settlement: modelBudgetSettlementSchema.parse(stored.settlement),
+        warnings: budgetWarningNoticesSchema.parse(stored.warnings),
       };
     });
     await this.publish(receipt.event);
+    for (const warning of receipt.warnings) await this.publish(warning);
     return receipt.settlement;
   }
 

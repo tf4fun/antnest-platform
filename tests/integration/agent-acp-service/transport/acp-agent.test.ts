@@ -12,6 +12,8 @@ import {
   RunRecoveryRequiredError,
   type AcpApplicationPort,
   type AcceptedAcpRun,
+  type ExecuteRunResult,
+  type SessionEvent,
 } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import type { ConnectionBinding } from "../../../../services/agent-acp-service/src/domain/types.js";
 import { DomainError } from "../../../../services/agent-acp-service/src/domain/errors.js";
@@ -755,6 +757,195 @@ describe("ACP v2 agent mapping", () => {
     },
   );
 
+  it("delivers an admission soft notice on the first v2 snapshot before completion and replays it without another execution", async () => {
+    const text =
+      "Organization daily model budget warning. Limit: 10; used: 10.";
+    const warning: SessionEvent = {
+      kind: "agent_message",
+      messageId: "admission-soft-warning-1",
+      content: [{ type: "text", text }],
+    };
+    const completed: ExecuteRunResult = {
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+    };
+    const completion = Promise.withResolvers<ExecuteRunResult>();
+    const idle = Promise.withResolvers<void>();
+    const updates: acp.SessionUpdate[] = [];
+    const replayed: acp.SessionUpdate[] = [];
+    const execute = vi.fn<OutputApplication["execute"]>(
+      () => completion.promise,
+    );
+    // The shared acceptance hook writes the original memory store. This is a
+    // protocol mapping/replay check, not PostgreSQL or actual Provider evidence.
+    const application = createApplication({ execute }, [warning]);
+    const acceptedCompletions: Promise<ExecuteRunResult>[] = [];
+    const originalAccept = application.acceptPrompt.bind(application);
+    const acceptPrompt = vi.fn<typeof originalAccept>(async (input) => {
+      const accepted = await originalAccept(input);
+      acceptedCompletions.push(accepted.completion);
+      return accepted;
+    });
+    application.acceptPrompt = acceptPrompt;
+    const agent = createAcpV2Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    const client = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        updates.push(params.update);
+        if (
+          params.update.sessionUpdate === "state_update" &&
+          params.update.state === "idle"
+        )
+          idle.resolve();
+      });
+    try {
+      await client.connectWith(agent, async (context) => {
+        try {
+          await context.request(acp.methods.agent.initialize, {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            info: { name: "admission-warning", version: "1" },
+          });
+          await expect(
+            context.request(acp.methods.agent.session.prompt, {
+              sessionId: "session-1",
+              prompt: [
+                { type: "text", text: "held with only an admission notice" },
+              ],
+            }),
+          ).resolves.toEqual({ messageId: "user-message-1" });
+          await vi.waitFor(() =>
+            expect(
+              updates.some(
+                (update) => update.sessionUpdate === "agent_message",
+              ),
+            ).toBe(true),
+          );
+          expect(
+            updates.filter(
+              (update) => update.sessionUpdate === "agent_message",
+            ),
+          ).toEqual([
+            {
+              sessionUpdate: "agent_message",
+              messageId: "admission-soft-warning-1",
+              content: [{ type: "text", text }],
+            },
+          ]);
+          expect(
+            updates.some((update) => update.sessionUpdate === "usage_update"),
+          ).toBe(false);
+          expect(
+            updates.some(
+              (update) =>
+                update.sessionUpdate === "state_update" &&
+                update.state === "idle",
+            ),
+          ).toBe(false);
+          const first = await application.readSessionOutput({
+            binding,
+            sessionId: "session-1",
+            afterSequence: 0,
+          });
+          expect(first.events).toEqual([warning]);
+          expect(first.state).toMatchObject({
+            kind: "state",
+            state: "running",
+          });
+          completion.resolve(completed);
+          await Promise.all(acceptedCompletions);
+          await idle.promise;
+          expect(
+            updates.filter(
+              (update) => update.sessionUpdate === "agent_message",
+            ),
+          ).toHaveLength(1);
+          expect(updates).toContainEqual({
+            sessionUpdate: "state_update",
+            state: "idle",
+            stopReason: "end_turn",
+          });
+          await expect(
+            context.request(acp.methods.agent.session.list, {}),
+          ).resolves.toMatchObject({ sessions: [] });
+        } finally {
+          completion.resolve(completed);
+          await Promise.allSettled([
+            completion.promise,
+            ...acceptedCompletions,
+          ]);
+        }
+      });
+
+      const resumeSession = vi
+        .spyOn(application, "resumeSession")
+        .mockImplementation(async (input) => {
+          const output = await application.readSessionOutput({
+            binding: input.binding,
+            sessionId: input.sessionId,
+            afterSequence: 0,
+          });
+          return {
+            sequence: output.sequence,
+            replay: input.replayFromStart
+              ? [...output.events, output.state]
+              : [],
+          };
+        });
+      const replayAgent = createAcpV2Agent({
+        binding: { ...binding, connectionId: "admission-warning-replay" },
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      const replayClient = acp
+        .client()
+        .onNotification(acp.methods.client.session.update, ({ params }) => {
+          replayed.push(params.update);
+        });
+      await replayClient.connectWith(replayAgent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          info: { name: "admission-warning-replay", version: "1" },
+        });
+        await context.request(acp.methods.agent.session.resume, {
+          sessionId: "session-1",
+          cwd: "/workspace",
+          mcpServers: [],
+          replayFrom: { type: "start" },
+        });
+      });
+      expect(
+        replayed.filter((update) => update.sessionUpdate === "agent_message"),
+      ).toEqual([
+        {
+          sessionUpdate: "agent_message",
+          messageId: "admission-soft-warning-1",
+          content: [{ type: "text", text }],
+        },
+      ]);
+      expect(resumeSession).toHaveBeenCalledOnce();
+      expect(acceptPrompt).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+      expect(
+        (
+          await application.readSessionOutput({
+            binding,
+            sessionId: "session-1",
+            afterSequence: 0,
+          })
+        ).events,
+      ).toEqual([warning]);
+    } finally {
+      completion.resolve(completed);
+      await Promise.allSettled([completion.promise, ...acceptedCompletions]);
+    }
+  });
+
   it("replays durable history only when resume starts at the beginning", async () => {
     const updates: acp.SessionUpdate[] = [];
     const resumeSession = vi.fn<AcpApplicationPort["resumeSession"]>(() =>
@@ -1350,6 +1541,7 @@ describe("ACP v2 agent mapping", () => {
 
 function createApplication(
   overrides: Partial<OutputApplication> = {},
+  admissionEvents: readonly SessionEvent[] = [],
 ): AcpApplicationPort {
   return withOutputHistory(
     {
@@ -1388,6 +1580,7 @@ function createApplication(
       ...overrides,
     },
     { title: "hi", updatedAt: "2026-08-30T00:00:01.000Z" },
+    admissionEvents,
   );
 }
 
