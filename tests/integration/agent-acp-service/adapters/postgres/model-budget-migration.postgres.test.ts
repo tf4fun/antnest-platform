@@ -630,7 +630,13 @@ describe.skipIf(databaseUrl === undefined)(
               "session_messages",
             ]) {
               const rows = await pool.query<{ value: string }>(
-                "SELECT to_jsonb(stored)::text AS value FROM " +
+                // 0032 adds a nullable reason; every original field must remain exact.
+                // An actual populated value wins over this legacy NULL default.
+                "SELECT (" +
+                  (table === "runs"
+                    ? "jsonb_build_object('budget_reason', NULL) || "
+                    : "") +
+                  "to_jsonb(stored))::text AS value FROM " +
                   table +
                   " AS stored ORDER BY id",
               );
@@ -1001,7 +1007,13 @@ describe.skipIf(databaseUrl === undefined)(
               "session_messages",
             ]) {
               const rows = await pool.query<{ value: string }>(
-                "SELECT to_jsonb(stored)::text AS value FROM " +
+                // 0032 adds a nullable reason; every original field must remain exact.
+                // An actual populated value wins over this legacy NULL default.
+                "SELECT (" +
+                  (table === "runs"
+                    ? "jsonb_build_object('budget_reason', NULL) || "
+                    : "") +
+                  "to_jsonb(stored))::text AS value FROM " +
                   table +
                   " AS stored ORDER BY id",
               );

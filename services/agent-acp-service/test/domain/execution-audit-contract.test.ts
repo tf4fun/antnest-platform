@@ -90,3 +90,45 @@ describe("administrative audit shared contract", () => {
     expect(validator("execution-audit")({ ...detail, credential: "secret" })).toBe(false);
   });
 });
+
+it("preserves exact optional budget facts in the shared audit contract", () => {
+  const legacy = {
+    run_id: "r",
+    session_id: "s",
+    agent_id: "a",
+    principal_id: "p",
+    state: "failed",
+    created_at: "2026-09-14T00:00:00Z",
+    updated_at: "2026-09-14T00:00:00Z",
+    input: [],
+    execution_snapshot: null,
+    terminal_class: null,
+    executor_state: null,
+    tool_effect_state: null,
+    stop_reason: null,
+    error_class: "budget_exceeded",
+    usage_measurements: [],
+  };
+  const shared = validator("execution-audit");
+  const facts = [
+    { scope: "run_cost", limit: "10", used: "90071992547409910001" },
+    { scope: "unknown_cost", limit: null, used: null },
+  ];
+  for (const value of [legacy, ...facts.map((budget_reason) => ({ ...legacy, budget_reason }))]) {
+    expect(shared(value), JSON.stringify(shared.errors)).toBe(true);
+    expect(auditDetailSchema.safeParse(value).success).toBe(true);
+  }
+  for (const budget_reason of [
+    null,
+    {},
+    { ...facts[0], used: "2\n" },
+    { ...facts[0], used: "01" },
+    { ...facts[0], limit: 10 },
+    { ...facts[0], secret: "private" },
+    { ...facts[0], scope: "private" },
+  ]) {
+    const value = { ...legacy, budget_reason };
+    expect(shared(value)).toBe(false);
+    expect(auditDetailSchema.safeParse(value).success).toBe(false);
+  }
+});

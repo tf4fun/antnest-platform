@@ -10,7 +10,11 @@ import {
 
 import type { EnvironmentChangeFact, SessionRecord } from "../../domain/types.js";
 import { DomainError } from "../../domain/errors.js";
-import { ModelBudgetExceededError } from "../../domain/model-budget.js";
+import {
+  budgetFactSchema,
+  ModelBudgetExceededError,
+  type ModelBudgetFact,
+} from "../../domain/model-budget.js";
 import type {
   AcceptRunInput,
   CreateRunIntentInput,
@@ -313,7 +317,11 @@ export class PostgresRunRepository implements RunRepository {
         // Commit this exact rejection before exposing a DomainError. Only that
         // receipt permits PromptCoordinator to release its original Runtime pin.
         // A lost COMMIT/rollback receipt remains an ordinary recovery failure.
-        await rejectLockedRunIntent(client, input.runId, error.code, input.acceptedAt);
+        await rejectLockedRunIntent(client, input.runId, error.code, input.acceptedAt, {
+          scope: error.scope,
+          limit: error.limit,
+          used: error.used,
+        });
         return error;
       }
 
@@ -415,7 +423,11 @@ export async function rejectLockedRunIntent(
   runId: string,
   errorClass: string,
   capturedAt: Date,
+  budget?: ModelBudgetFact,
 ): Promise<"failed" | "cancelled"> {
+  const reason = budget === undefined ? undefined : budgetFactSchema.parse(budget);
+  if (reason !== undefined && errorClass !== "budget_exceeded")
+    throw new Error("Budget facts require a budget rejection");
   const result = await client.query<{ state: "failed" | "cancelled" }>(
     `UPDATE runs
           SET state = CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
@@ -424,10 +436,11 @@ export async function rejectLockedRunIntent(
               executor_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'quiescent' END,
               tool_effect_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'none' END,
               error_class = CASE WHEN cancel_requested_at IS NULL THEN $2 ELSE NULL END,
+              budget_reason = CASE WHEN cancel_requested_at IS NULL THEN $4::jsonb ELSE NULL END,
               updated_at = $3
         WHERE id = $1 AND state = 'admitting'
         RETURNING state`,
-    [runId, errorClass, capturedAt],
+    [runId, errorClass, capturedAt, reason === undefined ? null : JSON.stringify(reason)],
   );
   if (result.rowCount !== 1) {
     throw new Error("Run intent is no longer admitting");

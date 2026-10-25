@@ -32,7 +32,7 @@ export type RunBudget = z.infer<typeof runBudgetSchema>;
 export type OrganizationBudget = z.infer<typeof organizationBudgetSchema>;
 export type ModelReservation = Readonly<{ inputTokens?: number; outputTokens?: number }>;
 
-const budgetFactSchema = z.strictObject({
+export const budgetFactSchema = z.strictObject({
   scope: z.enum([
     "run_input",
     "run_output",
@@ -43,13 +43,15 @@ const budgetFactSchema = z.strictObject({
   ]),
   limit: z
     .string()
-    .regex(/^(0|[1-9][0-9]*)$/u)
+    .regex(/^(0|[1-9][0-9]*)(?![\s\S])/u)
     .nullable(),
   used: z
     .string()
-    .regex(/^(0|[1-9][0-9]*)$/u)
+    .regex(/^(0|[1-9][0-9]*)(?![\s\S])/u)
     .nullable(),
 });
+export type ModelBudgetFact = z.infer<typeof budgetFactSchema>;
+
 export const modelBudgetSettlementSchema = z.strictObject({
   exceeded: budgetFactSchema.optional(),
 });

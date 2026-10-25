@@ -1,5 +1,6 @@
 import { RunRecoveryRequiredError } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import { DomainError } from "../../../../services/agent-acp-service/src/domain/errors.js";
+import { ModelBudgetExceededError } from "../../../../services/agent-acp-service/src/domain/model-budget.js";
 import { sessionConfigurationView } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import { v1Configuration } from "../../../../services/agent-acp-service/src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
@@ -148,6 +149,74 @@ describe("ACP v1 agent mapping", () => {
         ).resolves.toMatchObject({ sessionId: "session-1" });
         expect(execute).not.toHaveBeenCalled();
       });
+    },
+  );
+
+  it.each(["typed budget", "forged budget"] as const)(
+    "projects only approved budget admission details for %s",
+    async (kind) => {
+      const budget = {
+        scope: "organization_daily" as const,
+        limit: "9007199254740991",
+        used: "9007199254740992",
+      };
+      const failure =
+        kind === "typed budget"
+          ? new ModelBudgetExceededError(
+              budget.scope,
+              budget.limit,
+              budget.used,
+            )
+          : Object.assign(
+              new DomainError("agent_busy", "PRIVATE_BUDGET_DETAIL"),
+              {
+                ...budget,
+                budget,
+              },
+            );
+      const execute = vi.fn<OutputApplication["execute"]>();
+      const acceptPrompt = vi.fn<OutputApplication["acceptPrompt"]>(() =>
+        Promise.reject(failure),
+      );
+      const agent = createAcpV1Agent({
+        binding,
+        application: createApplication({ acceptPrompt, execute }),
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      await acp.client().connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const result: unknown = await context
+          .request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [
+              { type: "text", text: "refused before budget acceptance" },
+            ],
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        expect(result).toMatchObject({
+          code: kind === "typed budget" ? -32043 : -32030,
+        });
+        expect((result as { data: unknown }).data).toEqual(
+          kind === "typed budget"
+            ? { code: "budget_exceeded", retryable: false, details: { budget } }
+            : { code: "agent_busy", retryable: true, retry_after_ms: 1000 },
+        );
+        expect(JSON.stringify(result)).not.toContain("PRIVATE_BUDGET_DETAIL");
+        await expect(
+          context.request(acp.methods.agent.session.new, {
+            cwd: "/workspace",
+            mcpServers: [],
+          }),
+        ).resolves.toMatchObject({ sessionId: "session-1" });
+      });
+      expect(acceptPrompt).toHaveBeenCalledOnce();
+      expect(execute).not.toHaveBeenCalled();
     },
   );
 
@@ -1937,6 +2006,102 @@ describe("ACP v1 agent mapping", () => {
           data: { code: errorClass, retryable: false },
         });
       });
+    },
+  );
+
+  it.each([
+    {
+      terminalClass: "failed",
+      code: -32022,
+      errorClass: "budget_exceeded",
+      hasBudget: true,
+    },
+    {
+      terminalClass: "unresolved",
+      code: -32023,
+      errorClass: "budget_exceeded",
+      hasBudget: true,
+    },
+    {
+      terminalClass: "failed",
+      code: -32022,
+      errorClass: "budget_exceeded",
+      hasBudget: false,
+    },
+    {
+      terminalClass: "unresolved",
+      code: -32023,
+      errorClass: "budget_exceeded",
+      hasBudget: false,
+    },
+    {
+      terminalClass: "failed",
+      code: -32022,
+      errorClass: "model_error",
+      hasBudget: true,
+    },
+    {
+      terminalClass: "unresolved",
+      code: -32023,
+      errorClass: "tool_effect_unknown",
+      hasBudget: true,
+    },
+  ] as const)(
+    "keeps accepted $terminalClass/$errorClass classification and approved budget details (budget=$hasBudget)",
+    async ({ terminalClass, code, errorClass, hasBudget }) => {
+      const budget = { scope: "run_cost" as const, limit: "10", used: "11" };
+      const execute = vi.fn<OutputApplication["execute"]>(() =>
+        Promise.resolve(
+          terminalClass === "failed"
+            ? {
+                terminalClass,
+                executorState: "quiescent",
+                toolEffectState: "none",
+                errorClass,
+                ...(hasBudget ? { budget } : {}),
+              }
+            : {
+                terminalClass,
+                executorState: "quiescent",
+                toolEffectState: "unknown",
+                unknownEffectSource: "unclassified",
+                errorClass,
+                ...(hasBudget ? { budget } : {}),
+              },
+        ),
+      );
+      const application = createApplication({ execute });
+      const acceptPrompt = vi.spyOn(application, "acceptPrompt");
+      const agent = createAcpV1Agent({
+        binding,
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      await acp.client().connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const result: unknown = await context
+          .request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text: "accepted budget outcome" }],
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        expect(result).toMatchObject({ code });
+        expect((result as { data: unknown }).data).toEqual({
+          code: errorClass,
+          retryable: false,
+          ...(errorClass === "budget_exceeded" && hasBudget
+            ? { details: { budget } }
+            : {}),
+        });
+      });
+      expect(acceptPrompt).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
     },
   );
 });

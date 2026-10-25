@@ -22,6 +22,98 @@ const validateErrorData = ajv.compile({
   $ref: `${schema.$id}#/$defs/errorData`,
 });
 
+test("budget errors carry only closed, exact decimal accounting facts", () => {
+  for (const scope of [
+    "run_input",
+    "run_output",
+    "run_cost",
+    "organization_daily",
+    "organization_monthly",
+    "unknown_cost",
+  ]) {
+    const budget =
+      scope === "unknown_cost"
+        ? { scope, limit: null, used: null }
+        : { scope, limit: "9007199254740991", used: "90071992547409910001" };
+    const data = {
+      code: "budget_exceeded",
+      retryable: false,
+      details: { budget },
+    };
+    const original = structuredClone(data);
+    assert.equal(
+      validateErrorData(data),
+      true,
+      JSON.stringify(validateErrorData.errors),
+    );
+    assert.deepEqual(data, original);
+  }
+});
+
+test("budget details cannot leak fields, coerce values or turn an accepted failure into retry", () => {
+  const original = {
+    code: "budget_exceeded",
+    retryable: false,
+    details: { budget: { scope: "run_cost", limit: "10", used: "11" } },
+  };
+  for (const change of [
+    (v) => {
+      v.code = "agent_busy";
+    },
+    (v) => {
+      v.retryable = true;
+    },
+    (v) => {
+      v.retry_after_ms = 1000;
+    },
+    (v) => {
+      v.details.secret = "private";
+    },
+    (v) => {
+      v.details.budget.secret = "private";
+    },
+    (v) => {
+      v.details.budget.scope = "credential";
+    },
+    (v) => {
+      delete v.details.budget.used;
+    },
+    (v) => {
+      v.details.budget.limit = 10;
+    },
+    (v) => {
+      v.details.budget.used = "01";
+    },
+    (v) => {
+      v.details.budget.used = "-1";
+    },
+    (v) => {
+      v.details.budget.used = "1e9";
+    },
+    (v) => {
+      v.details.budget.used = "1.5";
+    },
+  ]) {
+    const invalid = structuredClone(original);
+    change(invalid);
+    assert.equal(validateErrorData(invalid), false, JSON.stringify(invalid));
+  }
+  assert.equal(
+    validateErrorData({ code: "budget_exceeded", retryable: false }),
+    true,
+  );
+  assert.equal(
+    validateErrorData({
+      code: "budget_exceeded",
+      retryable: false,
+      details: {},
+    }),
+    true,
+  );
+  assert.equal(catalog.errors.budget_exceeded.json_rpc_code, -32043);
+  assert.equal(catalog.terminal_outcomes.failed.json_rpc_code, -32022);
+});
+
 test("the shared ACP error catalog satisfies its complete schema", () => {
   assert.equal(
     validateCatalog(catalog),

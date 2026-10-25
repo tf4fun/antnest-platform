@@ -15,6 +15,7 @@ import {
 } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import type { ConnectionBinding } from "../../../../services/agent-acp-service/src/domain/types.js";
 import { DomainError } from "../../../../services/agent-acp-service/src/domain/errors.js";
+import { ModelBudgetExceededError } from "../../../../services/agent-acp-service/src/domain/model-budget.js";
 
 const binding: ConnectionBinding = {
   connectionId: "connection-1",
@@ -144,6 +145,53 @@ describe("ACP v2 agent mapping", () => {
       });
     },
   );
+
+  it("maps a typed budget admission refusal without accepting or closing the v2 connection", async () => {
+    const budget = { scope: "run_cost" as const, limit: "10", used: "11" };
+    const failure = new ModelBudgetExceededError(
+      budget.scope,
+      budget.limit,
+      budget.used,
+    );
+    const execute = vi.fn<OutputApplication["execute"]>();
+    const acceptPrompt = vi.fn<OutputApplication["acceptPrompt"]>(() =>
+      Promise.reject(failure),
+    );
+    const agent = createAcpV2Agent({
+      binding,
+      application: createApplication({ acceptPrompt, execute }),
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    await acp.client().connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "budget-contract", version: "1" },
+      });
+      const result: unknown = await context
+        .request(acp.methods.agent.session.prompt, {
+          sessionId: "session-1",
+          prompt: [{ type: "text", text: "refused before budget acceptance" }],
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(result).toMatchObject({ code: -32043 });
+      expect((result as { data: unknown }).data).toEqual({
+        code: "budget_exceeded",
+        retryable: false,
+        details: { budget },
+      });
+      await expect(
+        context.request(acp.methods.agent.session.new, {
+          cwd: "/workspace",
+          mcpServers: [],
+        }),
+      ).resolves.toMatchObject({ sessionId: "session-1" });
+    });
+    expect(acceptPrompt).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+  });
 
   it.each(["acceptPrompt"] as const)(
     "returns a safe non-retryable database_error for uncertain %s persistence",
@@ -527,6 +575,185 @@ describe("ACP v2 agent mapping", () => {
       mcpServers: [],
     });
   });
+
+  it.each(["failed", "unresolved"] as const)(
+    "keeps an accepted %s budget outcome asynchronous and delivers one stored notice per subscription",
+    async (terminalClass) => {
+      const budget = { scope: "run_cost" as const, limit: "10", used: "11" };
+      const notice =
+        "Model budget exceeded. No further model or tool work will be started. Scope: run_cost; limit: 10; used: 11.";
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const idle = Promise.withResolvers<void>();
+      const originals: ReturnType<OutputApplication["execute"]>[] = [];
+      const updates: acp.SessionUpdate[] = [];
+      const replayed: acp.SessionUpdate[] = [];
+      const execute = vi.fn<OutputApplication["execute"]>(({ publish }) => {
+        const original = Promise.resolve().then(async () => {
+          started.resolve();
+          await release.promise;
+          await publish({
+            kind: "agent_message",
+            messageId: "budget-notice-1",
+            content: [{ type: "text", text: notice }],
+          });
+          const outcome: Awaited<ReturnType<OutputApplication["execute"]>> =
+            terminalClass === "failed"
+              ? {
+                  terminalClass,
+                  executorState: "quiescent",
+                  toolEffectState: "none",
+                  errorClass: "budget_exceeded",
+                  budget,
+                }
+              : {
+                  terminalClass,
+                  executorState: "quiescent",
+                  toolEffectState: "unknown",
+                  unknownEffectSource: "unclassified",
+                  errorClass: "budget_exceeded",
+                  budget,
+                };
+          return outcome;
+        });
+        originals.push(original);
+        void original.catch(() => undefined);
+        return original;
+      });
+      // withOutputHistory stores events in memory. This proves v2 mapping and
+      // delivery/replay ownership, rather than PostgreSQL persistence.
+      const application = createApplication({ execute });
+      const acceptPrompt = vi.spyOn(application, "acceptPrompt");
+      const agent = createAcpV2Agent({
+        binding,
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      const client = acp
+        .client()
+        .onNotification(acp.methods.client.session.update, ({ params }) => {
+          updates.push(params.update);
+          if (
+            params.update.sessionUpdate === "state_update" &&
+            params.update.state === "idle"
+          )
+            idle.resolve();
+        });
+      try {
+        await client.connectWith(agent, async (context) => {
+          try {
+            await context.request(acp.methods.agent.initialize, {
+              protocolVersion: acp.PROTOCOL_VERSION,
+              info: { name: "budget-contract", version: "1" },
+            });
+            const accepted = await context.request(
+              acp.methods.agent.session.prompt,
+              {
+                sessionId: "session-1",
+                prompt: [
+                  { type: "text", text: "accepted before budget settlement" },
+                ],
+              },
+            );
+            expect(accepted).toEqual({ messageId: "user-message-1" });
+            await started.promise;
+            expect(
+              updates.filter(
+                (update) => update.sessionUpdate === "agent_message",
+              ),
+            ).toEqual([]);
+            release.resolve();
+            await Promise.all(originals);
+            await idle.promise;
+            expect(
+              updates.filter(
+                (update) => update.sessionUpdate === "agent_message",
+              ),
+            ).toEqual([
+              {
+                sessionUpdate: "agent_message",
+                messageId: "budget-notice-1",
+                content: [{ type: "text", text: notice }],
+              },
+            ]);
+            await expect(
+              context.request(acp.methods.agent.session.list, {}),
+            ).resolves.toMatchObject({
+              sessions: [],
+            });
+          } finally {
+            release.resolve();
+            await Promise.allSettled(originals);
+          }
+        });
+
+        const saved = await application.readSessionOutput({
+          binding,
+          sessionId: "session-1",
+          afterSequence: 0,
+        });
+        expect(saved.events).toEqual([
+          {
+            kind: "agent_message",
+            messageId: "budget-notice-1",
+            content: [{ type: "text", text: notice }],
+          },
+        ]);
+        const resumeSession = vi
+          .spyOn(application, "resumeSession")
+          .mockImplementation(async (input) => {
+            const output = await application.readSessionOutput({
+              binding: input.binding,
+              sessionId: input.sessionId,
+              afterSequence: 0,
+            });
+            return {
+              sequence: output.sequence,
+              replay: input.replayFromStart
+                ? [...output.events, output.state]
+                : [],
+            };
+          });
+        const replayAgent = createAcpV2Agent({
+          binding: { ...binding, connectionId: "budget-replay-connection" },
+          application,
+          promptCapabilities: { image: false, embeddedContext: false },
+        });
+        const replayClient = acp
+          .client()
+          .onNotification(acp.methods.client.session.update, ({ params }) => {
+            replayed.push(params.update);
+          });
+        await replayClient.connectWith(replayAgent, async (context) => {
+          await context.request(acp.methods.agent.initialize, {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            info: { name: "budget-replay", version: "1" },
+          });
+          await context.request(acp.methods.agent.session.resume, {
+            sessionId: "session-1",
+            cwd: "/workspace",
+            mcpServers: [],
+            replayFrom: { type: "start" },
+          });
+        });
+        expect(
+          replayed.filter((update) => update.sessionUpdate === "agent_message"),
+        ).toEqual([
+          {
+            sessionUpdate: "agent_message",
+            messageId: "budget-notice-1",
+            content: [{ type: "text", text: notice }],
+          },
+        ]);
+        expect(resumeSession).toHaveBeenCalledOnce();
+        expect(acceptPrompt).toHaveBeenCalledOnce();
+        expect(execute).toHaveBeenCalledOnce();
+      } finally {
+        release.resolve();
+        await Promise.allSettled(originals);
+      }
+    },
+  );
 
   it("replays durable history only when resume starts at the beginning", async () => {
     const updates: acp.SessionUpdate[] = [];

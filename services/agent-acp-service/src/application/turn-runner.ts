@@ -11,7 +11,11 @@ import type {
 import { boundToolResult } from "../domain/tool-result.js";
 import { boundedRawOutput } from "../domain/tool-presentation.js";
 import { DomainError } from "../domain/errors.js";
-import { ModelBudgetExceededError } from "../domain/model-budget.js";
+import {
+  budgetFactSchema,
+  ModelBudgetExceededError,
+  type ModelBudgetFact,
+} from "../domain/model-budget.js";
 import { RunToolAuthorization } from "./run-tool-authorization.js";
 import { PermissionJudge } from "./permission-judge.js";
 import { ModelRequestBudget, ModelRequestLimitError } from "./model-request-budget.js";
@@ -153,7 +157,7 @@ export class TurnRunner {
           if (outcome.terminal !== null) {
             await this.closeUndispatched(input, inspected.calls.slice(index + 1));
             if (outcome.terminal.errorClass === "budget_exceeded")
-              return await this.budgetExceeded(input, effectState);
+              return await this.budgetExceeded(input, effectState, outcome.terminal.budget);
             return outcome.terminal;
           }
           messages.push(outcome.message);
@@ -173,7 +177,11 @@ export class TurnRunner {
         return cancelled(effectState, unknownSourceFromError(error));
       }
       if (error instanceof ModelBudgetExceededError)
-        return await this.budgetExceeded(input, effectState);
+        return await this.budgetExceeded(input, effectState, {
+          scope: error.scope,
+          limit: error.limit,
+          used: error.used,
+        });
       if (error instanceof ModelRequestLimitError)
         return completed(effectState, "max_turn_requests");
       if (error instanceof ModelCallInterruptedError && error.deadlineExceeded)
@@ -185,16 +193,27 @@ export class TurnRunner {
   private async budgetExceeded(
     input: RunTurnInput,
     effectState: ToolEffectState,
+    originalBudget?: ModelBudgetFact,
   ): Promise<RunTurnResult> {
+    const budget =
+      originalBudget === undefined ? undefined : budgetFactSchema.parse(originalBudget);
     const isCancelled = () => input.signal.aborted;
     assertAuthority(input.authoritySignal);
     if (isCancelled()) return cancelled(effectState);
     // A budget stop never spends another model call to produce its final notice.
     await this.dependencies.events.agentMessage(input.runId, [
-      { type: "text", text: "Run stopped because the model budget does not permit another call." },
+      {
+        type: "text",
+        text:
+          budget === undefined
+            ? "Run stopped because the model budget does not permit another call."
+            : `Model budget exceeded. No further model or tool work will be started. Scope: ${budget.scope}; limit: ${budget.limit ?? "unknown"}; used: ${budget.used ?? "unknown"}.`,
+      },
     ]);
     assertAuthority(input.authoritySignal);
-    return isCancelled() ? cancelled(effectState) : failure(effectState, "budget_exceeded");
+    return isCancelled()
+      ? cancelled(effectState)
+      : failure(effectState, "budget_exceeded", "unclassified", budget);
   }
 
   private async completeModel(
@@ -384,6 +403,14 @@ export class TurnRunner {
                     approvalError.code === "provider_unavailable")
                   ? errorClass(approvalError)
                   : "tool_permission_failed",
+                "unclassified",
+                approvalError instanceof ModelBudgetExceededError
+                  ? {
+                      scope: approvalError.scope,
+                      limit: approvalError.limit,
+                      used: approvalError.used,
+                    }
+                  : undefined,
               ),
       };
     }
@@ -565,6 +592,7 @@ function failure(
   effect: ToolEffectState,
   errorClass: string,
   unknownEffectSource: UnknownEffectSource = "unclassified",
+  budget?: ModelBudgetFact,
 ): RunTurnResult {
   if (effect === "unknown") {
     return {
@@ -573,6 +601,7 @@ function failure(
       toolEffectState: "unknown",
       unknownEffectSource,
       errorClass,
+      ...(budget === undefined ? {} : { budget }),
     };
   }
   return {
@@ -580,6 +609,7 @@ function failure(
     executorState: "quiescent",
     toolEffectState: effect,
     errorClass,
+    ...(budget === undefined ? {} : { budget }),
   };
 }
 

@@ -306,3 +306,15 @@ DROP FUNCTION antnest_budget_import_cost(jsonb);
 DROP FUNCTION antnest_budget_import_id(text,text);
 DROP FUNCTION antnest_budget_import_tokens(jsonb);
 DROP FUNCTION antnest_budget_import_number(jsonb,numeric);
+
+
+-- Admission rejection and accepted execution share the original budget fact.
+-- NULL keeps pre-budget terminal records and non-budget outcomes unchanged.
+ALTER TABLE runs ADD COLUMN budget_reason jsonb;
+ALTER TABLE runs ADD CONSTRAINT runs_budget_reason_check CHECK (
+    budget_reason IS NULL OR (
+        jsonb_typeof(budget_reason) = 'object'
+        AND error_class IS NOT DISTINCT FROM 'budget_exceeded'
+        AND state IN ('failed', 'unresolved')
+    )
+);

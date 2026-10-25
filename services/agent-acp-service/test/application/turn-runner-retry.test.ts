@@ -75,6 +75,15 @@ function errorChain(value: unknown): unknown[] {
   return [...seen];
 }
 
+function budgetNotice(budget: Pick<ModelBudgetExceededError, "scope" | "limit" | "used">) {
+  return [
+    {
+      type: "text",
+      text: `Model budget exceeded. No further model or tool work will be started. Scope: ${budget.scope}; limit: ${budget.limit ?? "unknown"}; used: ${budget.used ?? "unknown"}.`,
+    },
+  ];
+}
+
 function setup(maxModelRequests = 8, smartApprove = false) {
   const current = snapshot();
   current.deadlineAt = new Date(Date.now() + 60000);
@@ -624,6 +633,7 @@ describe("TurnRunner production model retry wiring", () => {
         terminalClass: "failed",
         executorState: "quiescent",
         errorClass: "budget_exceeded",
+        budget: { scope: denied.scope, limit: denied.limit, used: denied.used },
       });
       const completedAttempts = stage === "foreground" ? 0 : 1;
       const executedTools = stage === "after_tool" ? 1 : 0;
@@ -663,21 +673,12 @@ describe("TurnRunner production model retry wiring", () => {
       expect(f.call).toHaveBeenCalledTimes(executedTools);
       expect(f.events.toolStarted).toHaveBeenCalledTimes(executedTools);
       expect(f.events.toolFinished).toHaveBeenCalledTimes(executedTools);
-      const notice = [
-        {
-          type: "text",
-          text: "Run stopped because the model budget does not permit another call.",
-        },
-      ];
+      const notice = budgetNotice(denied);
       expect(f.events.agentMessage).toHaveBeenCalledTimes(stage === "foreground" ? 1 : 2);
       expect(f.events.agentMessage.mock.calls.at(-1)?.slice(0, 2)).toEqual(["run-1", notice]);
       expect(
         f.events.agentMessage.mock.calls.filter(([, content]) =>
-          content.some(
-            (block) =>
-              block.type === "text" &&
-              block.text === "Run stopped because the model budget does not permit another call.",
-          ),
+          content.some((block) => block.type === "text" && block.text === notice[0]!.text),
         ),
       ).toHaveLength(1);
       if (stage === "permission_judge") {
@@ -695,6 +696,39 @@ describe("TurnRunner production model retry wiring", () => {
       } else {
         expect(f.events.toolRejected).not.toHaveBeenCalled();
       }
+    },
+  );
+
+  it.each([
+    { scope: "run_input", limit: "0", used: "1" },
+    { scope: "run_output", limit: "10", used: "11" },
+    { scope: "run_cost", limit: "9007199254740993", used: "9007199254740995" },
+    { scope: "organization_daily", limit: "1000000", used: "1000001" },
+    { scope: "organization_monthly", limit: null, used: "9007199254740995" },
+    { scope: "unknown_cost", limit: null, used: null },
+  ] as const)(
+    "preserves the original $scope budget fact in the outcome and one persisted notice",
+    async (budget) => {
+      const f = setup();
+      f.events.start.mockRejectedValueOnce(
+        new ModelBudgetExceededError(budget.scope, budget.limit, budget.used),
+      );
+      await expect(f.run()).resolves.toMatchObject({
+        terminalClass: "failed",
+        executorState: "quiescent",
+        errorClass: "budget_exceeded",
+        budget,
+      });
+      expect(f.events.start).toHaveBeenCalledOnce();
+      expect(f.events.finish).not.toHaveBeenCalled();
+      expect(f.complete).not.toHaveBeenCalled();
+      expect(f.permission).not.toHaveBeenCalled();
+      expect(f.call).not.toHaveBeenCalled();
+      expect(f.events.toolStarted).not.toHaveBeenCalled();
+      expect(f.events.toolFinished).not.toHaveBeenCalled();
+      expect(f.events.toolRejected).not.toHaveBeenCalled();
+      expect(f.events.usage).not.toHaveBeenCalled();
+      expect(f.events.agentMessage).toHaveBeenCalledExactlyOnceWith("run-1", budgetNotice(budget));
     },
   );
 
@@ -716,9 +750,10 @@ describe("TurnRunner production model retry wiring", () => {
     expect(f.events.toolFinished).not.toHaveBeenCalled();
     expect(f.events.toolRejected).not.toHaveBeenCalled();
     expect(f.events.usage).not.toHaveBeenCalled();
-    expect(f.events.agentMessage).toHaveBeenCalledExactlyOnceWith("run-1", [
-      { type: "text", text: "Run stopped because the model budget does not permit another call." },
-    ]);
+    expect(f.events.agentMessage).toHaveBeenCalledExactlyOnceWith(
+      "run-1",
+      budgetNotice({ scope: "run_cost", limit: "1", used: "1" }),
+    );
   });
 
   it("retains the original budget-notice persistence failure when authority is lost during its write", async () => {
@@ -752,12 +787,9 @@ describe("TurnRunner production model retry wiring", () => {
       expect(noticeEntered).toBe(true);
       expect(settled).toBe(false);
       expect(f.events.agentMessage).toHaveBeenCalledTimes(2);
-      expect(f.events.agentMessage.mock.calls[1]![1]).toEqual([
-        {
-          type: "text",
-          text: "Run stopped because the model budget does not permit another call.",
-        },
-      ]);
+      expect(f.events.agentMessage.mock.calls[1]![1]).toEqual(
+        budgetNotice({ scope: "run_cost", limit: "1", used: "1" }),
+      );
       expect(f.complete).toHaveBeenCalledOnce();
       expect(f.events.start).toHaveBeenCalledTimes(2);
       expect(f.events.finish).toHaveBeenCalledOnce();
@@ -792,9 +824,7 @@ describe("TurnRunner production model retry wiring", () => {
     return { exceeded: { scope: "run_cost" as const, limit: "1", used: "2" } };
   }
 
-  const finishBudgetNotice = [
-    { type: "text", text: "Run stopped because the model budget does not permit another call." },
-  ];
+  const finishBudgetNotice = budgetNotice(finishExceededReceipt().exceeded);
 
   it("closes every normalized Tool proposal when the foreground finish receipt exceeds the budget", async () => {
     const f = setup();
@@ -807,6 +837,7 @@ describe("TurnRunner production model retry wiring", () => {
       terminalClass: "failed",
       executorState: "quiescent",
       errorClass: "budget_exceeded",
+      budget: finishExceededReceipt().exceeded,
     });
     expect(f.complete).toHaveBeenCalledOnce();
     expect(f.events.start).toHaveBeenCalledOnce();
@@ -853,6 +884,7 @@ describe("TurnRunner production model retry wiring", () => {
       terminalClass: "failed",
       executorState: "quiescent",
       errorClass: "budget_exceeded",
+      budget: finishExceededReceipt().exceeded,
     });
     expect(f.complete).toHaveBeenCalledTimes(2);
     expect(f.complete.mock.calls.map(([request]) => request.purpose)).toEqual([
@@ -899,6 +931,7 @@ describe("TurnRunner production model retry wiring", () => {
       terminalClass: "failed",
       executorState: "quiescent",
       errorClass: "budget_exceeded",
+      budget: finishExceededReceipt().exceeded,
     });
     expect(f.complete).toHaveBeenCalledOnce();
     expect(f.events.start).toHaveBeenCalledOnce();
@@ -943,6 +976,7 @@ describe("TurnRunner production model retry wiring", () => {
         terminalClass: "failed",
         executorState: "quiescent",
         errorClass: "budget_exceeded",
+        budget: finishExceededReceipt().exceeded,
       });
       expect(settled).toBe(true);
       expect(f.complete).toHaveBeenCalledOnce();

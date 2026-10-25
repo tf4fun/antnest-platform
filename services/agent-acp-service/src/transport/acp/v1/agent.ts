@@ -10,7 +10,7 @@ import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
 import { errorCapability } from "../../../domain/error-catalog.js";
 import { RunRecoveryRequiredError } from "../../../ports/acp-application.js";
-import { publicError } from "../../public-error.js";
+import { budgetErrorDetails, publicError } from "../../public-error.js";
 import { availableCommands } from "../../../domain/slash-commands.js";
 import type { SkillCommand } from "../../../domain/skill-commands.js";
 import type { SkillCommandsPort } from "../../../ports/skill-commands.js";
@@ -610,6 +610,7 @@ function promptResponse(result: ExecuteRunResult): acp.PromptResponse {
       throw new acp.RequestError(-32022, "Agent Run failed", {
         code: result.errorClass,
         retryable: false,
+        ...terminalBudgetDetails(result),
       });
     case "unresolved":
       // Confirm cancellation on the wire without rewriting the durable unknown
@@ -619,8 +620,16 @@ function promptResponse(result: ExecuteRunResult): acp.PromptResponse {
       throw new acp.RequestError(-32023, "Agent Run outcome is unresolved", {
         code: result.errorClass,
         retryable: false,
+        ...terminalBudgetDetails(result),
       });
   }
+}
+
+function terminalBudgetDetails(
+  result: Extract<ExecuteRunResult, { terminalClass: "failed" | "unresolved" }>,
+) {
+  const details = budgetErrorDetails(result.errorClass, result.budget);
+  return details === undefined ? {} : { details };
 }
 
 function toAcpUpdates(event: SessionEvent): acp.SessionUpdate[] {

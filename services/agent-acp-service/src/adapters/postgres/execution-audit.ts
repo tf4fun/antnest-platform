@@ -4,6 +4,7 @@ import type {
   AuditPermission,
   AuditSummary,
 } from "../../domain/execution-audit.js";
+import { budgetFactSchema } from "../../domain/model-budget.js";
 import type {
   AuditEventQuery,
   AuditListQuery,
@@ -50,10 +51,12 @@ export class PostgresExecutionAudits implements ExecutionAuditRepository {
     runId: string,
     signal: AbortSignal,
   ): Promise<AuditDetail | null> {
-    const result = await this.kernel.read<AuditDetail>(
+    const result = await this.kernel.read<
+      Omit<AuditDetail, "budget_reason"> & { budget_reason: unknown }
+    >(
       `SELECT ${summaryColumns}, r.input_prompt AS input, r.execution_snapshot,
          r.terminal_class, r.executor_state, r.tool_effect_state, r.unknown_effect_source,
-         r.stop_reason, r.error_class,
+         r.stop_reason, r.error_class, r.budget_reason,
          COALESCE((SELECT jsonb_agg(m.payload->'measurement' ORDER BY m.sequence)
            FROM session_messages m WHERE m.run_id = r.id AND m.session_id = r.session_id
            AND m.kind = 'usage' AND m.payload ? 'measurement'), '[]'::jsonb) AS usage_measurements
@@ -62,7 +65,16 @@ export class PostgresExecutionAudits implements ExecutionAuditRepository {
       [organizationId, runId],
       signal,
     );
-    return result.rows[0] ?? null;
+    const row = result.rows[0];
+    if (row === undefined) return null;
+    const { budget_reason, ...detail } = row;
+    if (budget_reason === null) return detail;
+    if (
+      row.error_class !== "budget_exceeded" ||
+      (row.state !== "failed" && row.state !== "unresolved")
+    )
+      throw new Error("Audit has inconsistent budget facts");
+    return { ...detail, budget_reason: budgetFactSchema.parse(budget_reason) };
   }
 
   public async events(query: AuditEventQuery, signal: AbortSignal): Promise<AuditEvent[] | null> {

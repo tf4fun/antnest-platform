@@ -149,9 +149,14 @@ history, with each unexecuted proposal rejected. Cancellation, lost authority an
 independent persistence/cleanup failures retain their normal precedence.
 
 `budget_exceeded` already exists in the [ACP error catalog](../agent-acp/errors.json)
-and remains HTTP 422 / JSON-RPC -32043, non-retryable. Detailed budget facts and
-the final assistant notice require the ACP producer and consumer acceptance;
-this configuration contract does not claim those are currently emitted.
+and remains HTTP 422 / JSON-RPC -32043 for admission, non-retryable. Accepted v1
+failures retain -32022/-32023. The [error details contract](../agent-acp/errors.md#safe-messages-data-and-fallback)
+defines the original `{scope, limit, used}` fact; ACP stores it with admission
+rejection or terminal outcome, exposes it in audit and validated public errors,
+and writes one static final notice through the existing v1/v2 output stream.
+Soft notifications, Controller policy publication and Console configuration
+remain separate delivery work. The cross-service Docker acceptance below is
+still required before closing #52.
 
 A per-Provider-connection circuit breaker is also required by #52. Its bounded
 failure threshold, cooldown and half-open probe ownership belong to the ACP batch.

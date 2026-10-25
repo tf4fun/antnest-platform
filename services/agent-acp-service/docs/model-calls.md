@@ -43,9 +43,11 @@ instead of requesting manual Tool approval; outstanding Tool proposals remain
 recorded as not executed. The Run emits one static final notice without calling
 another model. Failure to persist that notice retains the original persistence
 error, and cancellation or lost execution authority keeps its normal precedence.
-This rejection path does not complete the budget rollout: detailed public
-budget facts, soft notifications and Controller/Console publication
-remain separate delivery work.
+The original `{scope, limit, used}` fact travels through foreground and judge
+failures into the durable terminal outcome and one static final notice. Token
+amounts and USD microdollars remain exact integer strings, and unknown amounts
+render as `unknown` in the notice. The notice spends no model call.
+Soft notifications and Controller/Console publication remain separate delivery work.
 
 Each physical attempt now prepares its exact serialized Provider request before
 persisting the start and reserving budget. Only observations matching the frozen
@@ -93,6 +95,15 @@ original intent without publishing its Prompt or starting a model, then releases
 the original Runtime pin. An unknown commit receipt retains the pin for recovery;
 it is not converted to a confirmed budget rejection. Each actual attempt still
 requires the separate safe-bound reservation before dispatch.
+
+The rejection transaction also stores the original budget fact on the admitting
+Run; accepted failed/unresolved outcomes save it in their terminal transaction.
+Fresh recovery and administrative audit reads return that original fact. Exact
+terminal retries cannot modify or omit it, and invalid facts cannot accompany a
+non-budget outcome. Old records with no structured fact keep their old response
+shape. Public projection uses the [closed error contract](../../../contracts/agent-acp/errors.md#safe-messages-data-and-fallback):
+v1 retains the distinction between admission and accepted terminal numeric codes;
+v2 delivers the final notice through its existing output/replay mechanism.
 
 The main turn and permission judge share one Run counter of physical model
 attempts, including failed and cancelled calls. Every admitted attempt reserves

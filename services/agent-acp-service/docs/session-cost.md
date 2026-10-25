@@ -102,8 +102,13 @@ from actual consumption and remaining reservations. Strictly excessive totals
 stop subsequent Model and Tool dispatch after commit; exact replay reuses that
 decision without another charge or a new policy assessment. The original UTC
 periods remain authoritative for settlement, including a call crossing midnight.
-Detailed public reasons, soft notifications and the Controller/Console policy
-consumers still need their business acceptance.
+Run admission rejection and accepted budget terminal outcomes preserve their
+original `{scope, limit, used}` in `runs.budget_reason`; audit detail exposes this
+optional fact and exact terminal retries cannot replace it. Token values and USD
+microdollars are decimal strings, with null for unknown amounts. The final notice
+uses those same values without another model call. Legacy rows omit the optional
+field. Soft notifications and Controller/Console policy consumers still need
+their business acceptance.
 
 ## Verification
 
