@@ -65,10 +65,19 @@ func BuildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, o
 func projectExecutionAgent(source ports.ExecutionAgentSource) ports.ExecutionAgent {
 	agent := source.Agent
 	spec := source.Spec.Snapshot
+	retry := spec.ModelRetry.Clone()
+	if retry == nil {
+		retry = &domain.ModelRetryPolicy{Max: 2, BaseMS: 200, CapMS: 30000}
+	}
+	failover := spec.Failover
+	if failover == "" {
+		failover = "before_output"
+	}
 	result := ports.ExecutionAgent{AgentID: agent.AgentID, PrincipalIDs: []string{}, AccessRevision: agent.AccessRevision,
 		DefaultModelProfileID: spec.ModelProfileID, DefaultAuthorization: source.Authorization, AuthorizationRevision: source.AuthorizationRevision,
 		FallbackModelProfileIDs: slices.Clone(spec.FallbackModelProfileIDs),
-		AgentSpecRevision:       executionNullable(agent.AgentSpecRevisionID), ExecutionRevision: executionNullable(agent.ExecutionRevisionID), OperationID: executionNullable(agent.ActiveOperationRequestID),
+		ModelRetry:              retry, Failover: failover, RunBudget: spec.RunBudget.Clone(),
+		AgentSpecRevision: executionNullable(agent.AgentSpecRevisionID), ExecutionRevision: executionNullable(agent.ExecutionRevisionID), OperationID: executionNullable(agent.ActiveOperationRequestID),
 		SystemPrompt: spec.SystemPrompt, ContextPolicyVersion: spec.ContextPolicyVersion, MaxModelRequests: spec.MaxModelRequests, SkillInstructions: []ports.ExecutionSkill{}}
 	result.DefaultAuthorization.ToolRules = append([]domain.ToolRule{}, source.Authorization.ToolRules...)
 	if source.OwnerAccessGranted && !agent.IdentityRevoked() && agent.DesiredState != domain.DesiredDeleted {

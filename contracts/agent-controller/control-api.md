@@ -744,3 +744,19 @@ current lifecycle checks. Controller recovery, Console/Agent UI consumption and
 real auto/manual kill-mid-tool Docker acceptance remain separate delivery batches.
 Policy configuration/persistence and the frozen wire vectors do not complete
 issue #50.
+
+
+## Template model-call policy
+
+Control contract revision 44 adds optional `model_retry`, `failover` and
+`run_budget` to Template create/revise/read and frozen Agent configuration.
+The [model-call policy contract](model-call-policy.md) defines the closed shapes,
+exact integer units, retry bounds and explicit-zero semantics. Null values are
+invalid. Create/revise replace each provided policy object; omitted fields remain
+omitted in immutable Template and AgentSpec history and legacy request fingerprints.
+Current execution publication fills missing retry/failover values for existing
+Agents as well as new ones, without modifying accepted Runs. See the Controller
+[policy and migration guide](../../services/agent-controller/docs/model-call-policy.md).
+This revision adds no organization policy route or caller grant. Provider
+observations, organization budgets and Console controls have separate delivery
+batches.
