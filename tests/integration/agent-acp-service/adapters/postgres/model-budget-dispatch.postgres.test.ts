@@ -13,12 +13,19 @@ import {
   parseExecutionConfiguration,
   publicExecutionConfiguration,
 } from "../../../../../services/agent-acp-service/src/domain/execution-configuration.js";
-import type { RunBudget } from "../../../../../services/agent-acp-service/src/domain/model-budget.js";
+import type {
+  OrganizationBudget,
+  RunBudget,
+} from "../../../../../services/agent-acp-service/src/domain/model-budget.js";
 import { runSnapshot } from "../../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import type {
   ModelRequest,
   ModelResult,
 } from "../../../../../services/agent-acp-service/src/ports/model.js";
+import type {
+  FinishModelAttemptInput,
+  RunEventRepository,
+} from "../../../../../services/agent-acp-service/src/ports/run-event-repository.js";
 import { executionConfiguration } from "../../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 import {
   type FencingFixture,
@@ -65,6 +72,23 @@ type Captured = {
   reservations: Reservation[];
   audits: Audit[];
 };
+type BudgetPolicy = Partial<
+  Pick<OrganizationBudget, "run_caps" | "daily" | "monthly">
+>;
+type ChainFixture = {
+  db: FencingFixture;
+  runId: string;
+  request: ModelRequest;
+  captures: Captured[];
+  complete: () => Promise<ModelResult>;
+  preparations: MockInstance<RunModelClient["prepare"]>;
+  finishes: MockInstance<RunEventRepository["finishModelAttempt"]>;
+  finish: (
+    input: FinishModelAttemptInput,
+  ) => ReturnType<RunEventRepository["finishModelAttempt"]>;
+  releaseResponse: () => void;
+  publishBudget: (policy: BudgetPolicy) => Promise<void>;
+};
 
 async function ledger(db: FencingFixture, runId: string) {
   const [reservations, usage, spend] = await Promise.all([
@@ -95,6 +119,33 @@ async function audits(db: FencingFixture, runId: string): Promise<Audit[]> {
       [runId],
     )
   ).rows;
+}
+
+async function committedFacts(db: FencingFixture, runId: string) {
+  const [reservations, usage, spend, messages] = await Promise.all([
+    db.observer.query<{ fact: unknown }>(
+      "SELECT to_jsonb(r) AS fact FROM model_budget_reservations r WHERE run_id=$1 ORDER BY ordinal",
+      [runId],
+    ),
+    db.observer.query<{ fact: unknown }>(
+      "SELECT to_jsonb(u) AS fact FROM run_usage u WHERE run_id=$1",
+      [runId],
+    ),
+    db.observer.query<{ fact: unknown }>(
+      "SELECT to_jsonb(s) AS fact FROM organization_spend s WHERE organization_id=$1 ORDER BY period,period_start",
+      [organizationId],
+    ),
+    db.observer.query<{ fact: unknown }>(
+      "SELECT to_jsonb(m) AS fact FROM session_messages m WHERE run_id=$1 ORDER BY sequence",
+      [runId],
+    ),
+  ]);
+  return {
+    reservations: reservations.rows,
+    usage: usage.rows,
+    spend: spend.rows,
+    messages: messages.rows,
+  };
 }
 
 function expectSpend(
@@ -161,15 +212,11 @@ async function withChain(
     fallback?: boolean;
     noSend?: "cancel" | "rotate";
     noPricing?: boolean;
+    actualUsage?: { inputTokens: number; outputTokens: number };
+    organizationBudget?: BudgetPolicy;
+    holdResponse?: boolean;
   },
-  work: (fixture: {
-    db: FencingFixture;
-    runId: string;
-    request: ModelRequest;
-    captures: Captured[];
-    complete: () => Promise<ModelResult>;
-    preparations: MockInstance<RunModelClient["prepare"]>;
-  }) => Promise<void>,
+  work: (fixture: ChainFixture) => Promise<void>,
 ): Promise<void> {
   await withDatabase(async (db) => {
     const failures: unknown[] = [];
@@ -179,6 +226,12 @@ async function withChain(
     const socketJoins: Promise<void>[] = [];
     const captures: Captured[] = [];
     const stop = new AbortController();
+    let releaseResponse: () => void = () => undefined;
+    const responseGate = options.holdResponse
+      ? new Promise<void>((resolve) => {
+          releaseResponse = resolve;
+        })
+      : Promise.resolve();
     let runId: string | undefined;
     const server = createServer((incoming, response) => {
       const task = (async () => {
@@ -217,6 +270,7 @@ async function withChain(
         });
         expect(captures.length).toBeLessThanOrEqual(options.fallback ? 2 : 1);
         expect(committed.reservations.at(-1)?.state).toBe("reserved");
+        await responseGate;
         if (options.fallback && index === 0) {
           await end(response, 429, {
             error: { message: "synthetic Provider throttling" },
@@ -229,7 +283,10 @@ async function withChain(
                 message: { role: "assistant", content: "completed" },
               },
             ],
-            usage: { prompt_tokens: 80, completion_tokens: 20 },
+            usage: {
+              prompt_tokens: options.actualUsage?.inputTokens ?? 80,
+              completion_tokens: options.actualUsage?.outputTokens ?? 20,
+            },
           });
         }
       })().catch((error: unknown) => {
@@ -257,6 +314,7 @@ async function withChain(
       }
     };
     let restorePreparation: (() => void) | undefined;
+    let restoreFinish: (() => void) | undefined;
     try {
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
@@ -323,9 +381,9 @@ async function withChain(
         organization_budget: {
           revision: 1,
           unknown_cost: options.unknownCost ?? "allow",
-          run_caps: {},
-          daily: {},
-          monthly: {},
+          run_caps: options.organizationBudget?.run_caps ?? {},
+          daily: options.organizationBudget?.daily ?? {},
+          monthly: options.organizationBudget?.monthly ?? {},
         },
       });
       const published = publicExecutionConfiguration(configuration);
@@ -347,6 +405,8 @@ async function withChain(
         db.kernelA,
         owner.authority,
       );
+      const finishes = vi.spyOn(repositories.events, "finishModelAttempt");
+      restoreFinish = () => finishes.mockRestore();
       const intent = db.input(session);
       runId = intent.runId;
       await repositories.runs.createRunIntent(intent);
@@ -437,6 +497,25 @@ async function withChain(
         void original.catch(() => undefined);
         return original;
       };
+      let currentPublication = published;
+      const publishBudget = async (policy: BudgetPolicy) => {
+        const previous = currentPublication.organization_budget!;
+        const latest = {
+          ...currentPublication,
+          revision: currentPublication.revision + 1,
+          organization_budget: {
+            ...previous,
+            ...structuredClone(policy),
+            revision: previous.revision + 1,
+          },
+        };
+        const updated = await db.observer.query(
+          "UPDATE execution_configurations SET revision=$2,configuration=$3::jsonb WHERE organization_id=$1",
+          [organizationId, latest.revision, JSON.stringify(latest)],
+        );
+        expect(updated.rowCount).toBe(1);
+        currentPublication = latest;
+      };
       await work({
         db,
         runId: intent.runId,
@@ -444,16 +523,22 @@ async function withChain(
         captures,
         complete,
         preparations,
+        finishes,
+        finish: (input) => repositories.events.finishModelAttempt(input),
+        releaseResponse,
+        publishBudget,
       });
     } catch (error) {
       failures.push(error);
     } finally {
+      releaseResponse();
       stop.abort(new Error("Model budget component fixture is closing"));
       await Promise.allSettled(originals);
       // Failure here remains a cleanup failure; forced teardown below cannot
       // stand in for the original per-completion transport close.
       await collect(expect.poll(() => sockets.size, { timeout: 2000 }).toBe(0));
       restorePreparation?.();
+      restoreFinish?.();
       if (server.listening) {
         const closing = new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
@@ -478,6 +563,97 @@ async function withChain(
         "Model budget dispatch or original cleanup failed",
       );
   });
+}
+
+async function expectReceiptReplay(
+  f: ChainFixture,
+  settlement: {
+    exceeded?: { scope: string; limit: string; used: string };
+  },
+): Promise<void> {
+  expect(f.finishes).toHaveBeenCalledTimes(1);
+  const original = f.finishes.mock.results[0];
+  const input = f.finishes.mock.calls[0]?.[0];
+  if (original?.type !== "return" || input === undefined)
+    throw new Error("Original model finish did not return its receipt");
+  const receipt = await original.value;
+  expect(receipt).toMatchObject({ event: { kind: "usage" } });
+  expect(receipt).toHaveProperty("settlement", settlement);
+  expect(
+    (
+      await f.db.observer.query<{ settlement: unknown }>(
+        "SELECT settlement FROM model_budget_reservations WHERE run_id=$1 AND ordinal=1",
+        [f.runId],
+      )
+    ).rows,
+  ).toEqual([{ settlement }]);
+  const before = await committedFacts(f.db, f.runId);
+  await expect(f.finish(structuredClone(input))).resolves.toStrictEqual(
+    receipt,
+  );
+  expect(await committedFacts(f.db, f.runId)).toEqual(before);
+  expect(f.finishes).toHaveBeenCalledTimes(2);
+  expect(f.captures).toHaveLength(1);
+}
+
+async function expectCommittedOverspend(
+  f: ChainFixture,
+  original: Promise<ModelResult>,
+  scope: "run_cost" | "organization_daily" | "organization_monthly",
+): Promise<void> {
+  const exceeded = { scope, limit: "8256", used: "9000" };
+  await expect(original).rejects.toMatchObject({
+    code: "budget_exceeded",
+    ...exceeded,
+    retryable: false,
+  });
+  expect(f.captures).toHaveLength(1);
+  expect(f.captures[0]!.reservations).toEqual([
+    {
+      ordinal: "1",
+      input_tokens: "8192",
+      output_tokens: "64",
+      cost_usd_micros: "8256",
+      state: "reserved",
+      cost_unknown: false,
+    },
+  ]);
+  const saved = await ledger(f.db, f.runId);
+  expect(saved.reservations).toHaveLength(1);
+  expect(saved.reservations[0]).toMatchObject({
+    state: "settled",
+    cost_unknown: false,
+  });
+  expect(saved.usage).toEqual([
+    {
+      input_tokens: "8936",
+      output_tokens: "64",
+      cost_usd_micros: "9000",
+      reserved_input_tokens: "0",
+      reserved_output_tokens: "0",
+      reserved_cost_usd_micros: "0",
+      unknown_attempts: "0",
+    },
+  ]);
+  expectSpend(saved.spend, "9000", "0", "0");
+  const messages = await audits(f.db, f.runId);
+  expect(messages.map((row) => row.kind)).toEqual([
+    "model_attempt",
+    "model_attempt",
+    "usage",
+  ]);
+  expect(messages[1]).toMatchObject({
+    visible: false,
+    context_excluded: true,
+    payload: {
+      phase: "finish",
+      ordinal: 1,
+      outcome: "completed",
+      outputStarted: true,
+      usage: { inputTokens: 8936, outputTokens: 64 },
+    },
+  });
+  await expectReceiptReplay(f, { exceeded });
 }
 
 describe.skipIf(databaseUrl === undefined)(
@@ -817,6 +993,120 @@ describe.skipIf(databaseUrl === undefined)(
                 )
               ).rows,
             ).toEqual([{ deadline: deadline.toISOString() }]);
+          },
+        );
+      },
+      duration,
+    );
+
+    it(
+      "commits actual Run overspend and replays its original durable stop receipt without dispatch or accounting again",
+      async () => {
+        await withChain(
+          {
+            runBudget: { max_cost_usd_micros: 8256 },
+            actualUsage: { inputTokens: 8936, outputTokens: 64 },
+          },
+          async (f) => {
+            await expectCommittedOverspend(f, f.complete(), "run_cost");
+          },
+        );
+      },
+      duration,
+    );
+
+    it.each([
+      { period: "daily", scope: "organization_daily" },
+      { period: "monthly", scope: "organization_monthly" },
+    ] as const)(
+      "commits actual $period overspend before stopping and preserves its exact finish receipt",
+      async (scenario) => {
+        await withChain(
+          {
+            organizationBudget:
+              scenario.period === "daily"
+                ? { daily: { hard_cost_usd_micros: 8256 } }
+                : { monthly: { hard_cost_usd_micros: 8256 } },
+            actualUsage: { inputTokens: 8936, outputTokens: 64 },
+          },
+          async (f) => {
+            await expectCommittedOverspend(f, f.complete(), scenario.scope);
+          },
+        );
+      },
+      duration,
+    );
+
+    it(
+      "allows actual usage equal to the cap and independently rejects the next reservation",
+      async () => {
+        await withChain(
+          {
+            runBudget: { max_cost_usd_micros: 8256 },
+            actualUsage: { inputTokens: 8192, outputTokens: 64 },
+          },
+          async (f) => {
+            await expect(f.complete()).resolves.toMatchObject({
+              kind: "message",
+              content: [{ type: "text", text: "completed" }],
+            });
+            const saved = await ledger(f.db, f.runId);
+            expect(saved.usage[0]).toMatchObject({
+              input_tokens: "8192",
+              output_tokens: "64",
+              cost_usd_micros: "8256",
+              reserved_input_tokens: "0",
+              reserved_output_tokens: "0",
+              reserved_cost_usd_micros: "0",
+              unknown_attempts: "0",
+            });
+            expectSpend(saved.spend, "8256", "0", "0");
+            const before = await committedFacts(f.db, f.runId);
+            await expect(f.complete()).rejects.toMatchObject({
+              code: "budget_exceeded",
+              scope: "run_cost",
+              limit: "8256",
+              retryable: false,
+            });
+            expect(f.captures).toHaveLength(1);
+            expect(await committedFacts(f.db, f.runId)).toEqual(before);
+            await expectReceiptReplay(f, {});
+          },
+        );
+      },
+      duration,
+    );
+
+    it(
+      "settles against the latest organization cap lowered after dispatch without changing the frozen Run cap",
+      async () => {
+        await withChain(
+          {
+            runBudget: { max_cost_usd_micros: 10000 },
+            organizationBudget: {
+              run_caps: { max_cost_usd_micros: 10000 },
+            },
+            actualUsage: { inputTokens: 8936, outputTokens: 64 },
+            holdResponse: true,
+          },
+          async (f) => {
+            const original = f.complete();
+            try {
+              await expect
+                .poll(() => f.captures.length, { timeout: 2000 })
+                .toBe(1);
+              await f.publishBudget({
+                run_caps: { max_cost_usd_micros: 8256 },
+              });
+              expect(
+                f.request.snapshot.executionSpec.runBudget?.max_cost_usd_micros,
+              ).toBe(10000);
+              f.releaseResponse();
+              await expectCommittedOverspend(f, original, "run_cost");
+            } finally {
+              f.releaseResponse();
+              await original.catch(() => undefined);
+            }
           },
         );
       },

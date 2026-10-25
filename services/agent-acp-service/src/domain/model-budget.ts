@@ -32,6 +32,29 @@ export type RunBudget = z.infer<typeof runBudgetSchema>;
 export type OrganizationBudget = z.infer<typeof organizationBudgetSchema>;
 export type ModelReservation = Readonly<{ inputTokens?: number; outputTokens?: number }>;
 
+const budgetFactSchema = z.strictObject({
+  scope: z.enum([
+    "run_input",
+    "run_output",
+    "run_cost",
+    "organization_daily",
+    "organization_monthly",
+    "unknown_cost",
+  ]),
+  limit: z
+    .string()
+    .regex(/^(0|[1-9][0-9]*)$/u)
+    .nullable(),
+  used: z
+    .string()
+    .regex(/^(0|[1-9][0-9]*)$/u)
+    .nullable(),
+});
+export const modelBudgetSettlementSchema = z.strictObject({
+  exceeded: budgetFactSchema.optional(),
+});
+export type ModelBudgetSettlement = z.infer<typeof modelBudgetSettlementSchema>;
+
 export class ModelBudgetExceededError extends DomainError {
   public constructor(
     public readonly scope:

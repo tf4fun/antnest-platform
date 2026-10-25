@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { DomainError } from "../domain/errors.js";
-import { ModelBudgetExceededError } from "../domain/model-budget.js";
+import { ModelBudgetExceededError, type ModelBudgetSettlement } from "../domain/model-budget.js";
 import { normalizeEmbeddedResource } from "../domain/embedded-resource.js";
 import type { ModelCandidate, RunExecutionSnapshot } from "../domain/types.js";
 import {
@@ -52,6 +52,19 @@ export class ModelCallInterruptedError extends ModelError {
       this.usage = structuredClone(response.usage);
       this.outputStarted = hasOutput(response);
     }
+  }
+}
+
+/** The original usage has committed; the response is history, never permission to dispatch. */
+export class ModelCallBudgetExceededError extends ModelBudgetExceededError {
+  public readonly response: ModelResult | undefined;
+  public constructor(
+    fact: NonNullable<ModelBudgetSettlement["exceeded"]>,
+    response: ModelResult | undefined,
+  ) {
+    super(fact.scope, fact.limit, fact.used);
+    this.name = "ModelCallBudgetExceededError";
+    this.response = response === undefined ? undefined : structuredClone(response);
   }
 }
 
@@ -204,8 +217,9 @@ export class ModelCallPolicy {
             knownUsage === undefined &&
             status === undefined &&
             (!callEntered || prepared?.dispatchState === "not_dispatched");
+          let settlement: ModelBudgetSettlement | void;
           try {
-            await this.options.attempts.finish(runId, {
+            settlement = await this.options.attempts.finish(runId, {
               ordinal,
               outcome: cleanupFailed
                 ? "failed"
@@ -263,6 +277,21 @@ export class ModelCallPolicy {
                     ? "failure"
                     : "neutral",
             ) ?? false;
+
+          if (
+            settlement?.exceeded !== undefined &&
+            !cleanupFailed &&
+            (failure === undefined || error instanceof ModelError)
+          ) {
+            try {
+              current();
+            } catch (error) {
+              throw interrupted(error, result);
+            }
+            // The original complete/cleanup and durable finish have joined. Do
+            // not return a Tool proposal or enter retry/fallback after overspend.
+            throw new ModelCallBudgetExceededError(settlement.exceeded, result);
+          }
 
           if (failure === undefined) {
             try {

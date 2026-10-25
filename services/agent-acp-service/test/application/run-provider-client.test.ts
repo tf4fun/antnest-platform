@@ -57,7 +57,10 @@ function setup() {
   const events = {
     startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
     finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
-      Promise.resolve({ kind: "usage", used: 5, size: input.contextSize }),
+      Promise.resolve({
+        event: { kind: "usage", used: 5, size: input.contextSize },
+        settlement: {},
+      }),
     ),
     appendAgentMessage: vi.fn<RunEventRepository["appendAgentMessage"]>((input) =>
       Promise.resolve({ kind: "agent_message", messageId: input.id, content: input.content }),

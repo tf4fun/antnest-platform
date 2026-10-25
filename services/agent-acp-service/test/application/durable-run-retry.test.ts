@@ -143,9 +143,12 @@ function eventRepository(
     startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
     finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
       Promise.resolve({
-        kind: "usage",
-        used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
-        size: input.contextSize,
+        event: {
+          kind: "usage",
+          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+          size: input.contextSize,
+        },
+        settlement: {},
       }),
     ),
     appendPlan: vi.fn<RunEventRepository["appendPlan"]>(async (input) => {

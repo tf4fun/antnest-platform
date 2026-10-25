@@ -25,9 +25,12 @@ describe("DurableRunEvents", () => {
       startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
-          kind: "usage",
-          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
-          size: input.contextSize,
+          event: {
+            kind: "usage",
+            used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+            size: input.contextSize,
+          },
+          settlement: {},
         }),
       ),
       appendAgentMessage: vi.fn(),
@@ -79,9 +82,12 @@ describe("DurableRunEvents", () => {
       startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
-          kind: "usage",
-          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
-          size: input.contextSize,
+          event: {
+            kind: "usage",
+            used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+            size: input.contextSize,
+          },
+          settlement: {},
         }),
       ),
       appendAgentMessage: vi.fn(() =>
@@ -124,9 +130,12 @@ describe("DurableRunEvents", () => {
       startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
-          kind: "usage",
-          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
-          size: input.contextSize,
+          event: {
+            kind: "usage",
+            used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+            size: input.contextSize,
+          },
+          settlement: {},
         }),
       ),
       appendAgentMessage: vi.fn(() => Promise.reject(new Error("database unavailable"))),

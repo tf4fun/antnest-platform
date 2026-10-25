@@ -4,10 +4,12 @@ import {
   knownTokenCount,
   legacyOrganizationBudget,
   ModelBudgetExceededError,
+  modelBudgetSettlementSchema,
   organizationBudgetSchema,
   priceTokenReservation,
   runBudgetSchema,
   type ModelReservation,
+  type ModelBudgetSettlement,
   type OrganizationBudget,
   type RunBudget,
 } from "../../domain/model-budget.js";
@@ -17,6 +19,7 @@ type RunTotals = {
   input_tokens: string;
   output_tokens: string;
   cost_usd_micros: string;
+  unknown_attempts: string;
   reserved_input_tokens: string;
   reserved_output_tokens: string;
   reserved_cost_usd_micros: string;
@@ -249,8 +252,9 @@ export async function settleModelBudget(
     usage: ModelUsage;
     notDispatched?: true;
     pricing?: ModelPricing;
+    runBudget?: RunBudget;
   },
-): Promise<void> {
+): Promise<ModelBudgetSettlement> {
   const reservation = (
     await client.query<Reservation>(
       "SELECT organization_id,input_tokens::text,output_tokens::text,cost_usd_micros::text,cost_unknown,state,day_start::text,month_start::text FROM model_budget_reservations WHERE run_id=$1 AND ordinal=$2 FOR UPDATE",
@@ -306,15 +310,107 @@ export async function settleModelBudget(
     ],
   );
   if (buckets.rowCount !== 2) throw new Error("Original model budget periods are unavailable");
+  // Decide only after replacing the original reservation with actual usage.
+  // Return the decision after COMMIT; throwing a budget error here would lose
+  // consumption that has already happened at the Provider.
+  const settlement = await assessSettlement(client, input, reservation);
   await client.query(
-    "UPDATE model_budget_reservations SET state=$3,cost_unknown=$4,settled_at=clock_timestamp() WHERE run_id=$1 AND ordinal=$2",
+    "UPDATE model_budget_reservations SET state=$3,cost_unknown=$4,settled_at=clock_timestamp(),settlement=$5::jsonb WHERE run_id=$1 AND ordinal=$2",
     [
       input.runId,
       input.ordinal,
       tokensIn === null || tokensOut === null || cost === null ? "unresolved" : "settled",
       cost === null,
+      JSON.stringify(settlement),
     ],
   );
+  return settlement;
+}
+
+export async function storedModelBudgetSettlement(
+  client: PoolClient,
+  runId: string,
+  ordinal: number,
+  organizationId: string,
+): Promise<ModelBudgetSettlement> {
+  const row = (
+    await client.query<{ settlement: unknown }>(
+      "SELECT settlement FROM model_budget_reservations WHERE run_id=$1 AND ordinal=$2 AND organization_id=$3 AND state IN ('unresolved','settled') AND settled_at IS NOT NULL",
+      [runId, ordinal, organizationId],
+    )
+  ).rows[0];
+  // Never invent a successful decision for an incomplete or damaged receipt.
+  return modelBudgetSettlementSchema.parse(row?.settlement);
+}
+
+async function assessSettlement(
+  client: PoolClient,
+  input: { runId: string; organizationId: string; runBudget?: RunBudget },
+  reservation: Reservation,
+): Promise<ModelBudgetSettlement> {
+  const policy = await currentModelBudget(client, input.organizationId);
+  const frozen = runBudgetSchema.parse(input.runBudget ?? {});
+  const run = (
+    await client.query<RunTotals>(
+      "SELECT input_tokens::text,output_tokens::text,cost_usd_micros::text,reserved_input_tokens::text,reserved_output_tokens::text,reserved_cost_usd_micros::text,unknown_attempts::text,unknown_input_attempts::text,unknown_output_attempts::text,unbounded_cost_attempts::text FROM run_usage WHERE run_id=$1 AND organization_id=$2",
+      [input.runId, input.organizationId],
+    )
+  ).rows[0];
+  if (run === undefined) throw new Error("Original Run budget totals are unavailable");
+  const exceeded = (
+    scope: ModelBudgetExceededError["scope"],
+    cap: number | undefined,
+    used: bigint,
+    unknown = false,
+  ): ModelBudgetSettlement["exceeded"] =>
+    cap !== undefined && (used > BigInt(cap) || unknown)
+      ? { scope, limit: cap.toString(), used: used.toString() }
+      : undefined;
+  const runExceeded =
+    exceeded(
+      "run_input",
+      minimum(frozen.max_input_tokens, policy.run_caps.max_input_tokens),
+      BigInt(run.input_tokens) + BigInt(run.reserved_input_tokens),
+      BigInt(run.unknown_input_attempts) > 0n,
+    ) ??
+    exceeded(
+      "run_output",
+      minimum(frozen.max_output_tokens, policy.run_caps.max_output_tokens),
+      BigInt(run.output_tokens) + BigInt(run.reserved_output_tokens),
+      BigInt(run.unknown_output_attempts) > 0n,
+    ) ??
+    exceeded(
+      "run_cost",
+      minimum(frozen.max_cost_usd_micros, policy.run_caps.max_cost_usd_micros),
+      BigInt(run.cost_usd_micros) + BigInt(run.reserved_cost_usd_micros),
+    );
+  if (runExceeded !== undefined) return { exceeded: runExceeded };
+  const periods = await client.query<PeriodTotals>(
+    `SELECT spend.period,spend.period_start::text,spend.cost_usd_micros::text,
+     spend.reserved_cost_usd_micros::text,spend.unbounded_cost_attempts::text,
+     history.complete_before_cutover OR spend.period_start >= CASE spend.period
+       WHEN 'daily' THEN (history.cutover_at AT TIME ZONE 'UTC')::date+1
+       ELSE (date_trunc('month',history.cutover_at AT TIME ZONE 'UTC')+interval '1 month')::date
+     END AS coverage_complete
+     FROM organization_spend spend CROSS JOIN model_budget_history history
+     WHERE spend.organization_id=$1 AND ((spend.period='daily' AND spend.period_start=$2::date)
+       OR (spend.period='monthly' AND spend.period_start=$3::date)) ORDER BY spend.period`,
+    [input.organizationId, reservation.day_start, reservation.month_start],
+  );
+  if (periods.rows.length !== 2) throw new Error("Original model budget periods are unavailable");
+  for (const period of periods.rows) {
+    const fact = exceeded(
+      period.period === "daily" ? "organization_daily" : "organization_monthly",
+      policy[period.period].hard_cost_usd_micros,
+      BigInt(period.cost_usd_micros) + BigInt(period.reserved_cost_usd_micros),
+      policy.unknown_cost === "deny" &&
+        (!period.coverage_complete || BigInt(period.unbounded_cost_attempts) > 0n),
+    );
+    if (fact !== undefined) return { exceeded: fact };
+  }
+  if (policy.unknown_cost === "deny" && BigInt(run.unknown_attempts) > 0n)
+    return { exceeded: { scope: "unknown_cost", limit: null, used: null } };
+  return {};
 }
 
 function minimum(left: number | undefined, right: number | undefined): number | undefined {

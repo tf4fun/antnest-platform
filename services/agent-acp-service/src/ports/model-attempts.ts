@@ -1,5 +1,5 @@
 import type { ModelUsage } from "../domain/usage.js";
-import type { ModelReservation } from "../domain/model-budget.js";
+import type { ModelReservation, ModelBudgetSettlement } from "../domain/model-budget.js";
 
 export type ModelAttemptStarted = {
   ordinal: number;
@@ -27,5 +27,5 @@ export type ModelAttemptFinished = {
 
 export interface ModelAttemptPort {
   start(runId: string, fact: ModelAttemptStarted): Promise<void>;
-  finish(runId: string, fact: ModelAttemptFinished): Promise<void>;
+  finish(runId: string, fact: ModelAttemptFinished): Promise<ModelBudgetSettlement | void>;
 }

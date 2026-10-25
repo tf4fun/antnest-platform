@@ -184,7 +184,7 @@ describe.skipIf(databaseUrl === undefined)(
           status: 200,
         };
         const receipt = await run.events.finishModelAttempt(completed);
-        expect(receipt).toMatchObject({
+        expect(receipt.event).toMatchObject({
           kind: "usage",
           size: 32_000,
           measurement: completedUsage,
@@ -312,9 +312,11 @@ describe.skipIf(databaseUrl === undefined)(
           status: 200,
         };
         await run.events.startModelAttempt(first);
-        const failedReceipt = await run.events.finishModelAttempt(failed);
+        const { event: failedReceipt } =
+          await run.events.finishModelAttempt(failed);
         await run.events.startModelAttempt(second);
-        const completedReceipt = await run.events.finishModelAttempt(completed);
+        const { event: completedReceipt } =
+          await run.events.finishModelAttempt(completed);
 
         expect(failedReceipt).toMatchObject({
           kind: "usage",
@@ -590,13 +592,13 @@ describe.skipIf(databaseUrl === undefined)(
           reason: "completed",
           status: 200,
         });
-        expect(unknown).toEqual({
+        expect(unknown.event).toEqual({
           kind: "usage",
           used: 0,
           size: 64_000,
           measurement: {},
         });
-        expect(zero).toEqual({
+        expect(zero.event).toEqual({
           kind: "usage",
           used: 0,
           size: 64_000,

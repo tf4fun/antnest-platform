@@ -565,4 +565,147 @@ describe("Run model call policy", () => {
       await observed;
     }
   });
+
+  function policyFinishExceededReceipt() {
+    return { exceeded: { scope: "run_cost" as const, limit: "1", used: "2" } };
+  }
+
+  it("joins the original held complete before writing or acting on an exceeded finish receipt", async () => {
+    const f = setup();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<ModelResult>();
+    let providerSettled = false;
+    const provider = release.promise.finally(() => {
+      providerSettled = true;
+    });
+    f.model.complete.mockImplementationOnce(() => {
+      entered.resolve();
+      return provider;
+    });
+    f.attempts.finish.mockResolvedValueOnce(policyFinishExceededReceipt());
+    let settled = false;
+    const original = f.call().finally(() => {
+      settled = true;
+    });
+    const observed = original.catch((error: unknown) => error);
+    try {
+      await Promise.race([entered.promise, original]);
+      expect(providerSettled).toBe(false);
+      expect(settled).toBe(false);
+      expect(f.attempts.start).toHaveBeenCalledOnce();
+      expect(f.attempts.finish).not.toHaveBeenCalled();
+      expect(f.clock.wait).not.toHaveBeenCalled();
+      release.resolve(success());
+      await expect(original).rejects.toMatchObject({
+        code: "budget_exceeded",
+        scope: "run_cost",
+      });
+      expect(providerSettled).toBe(true);
+      expect(settled).toBe(true);
+      expect(f.model.complete).toHaveBeenCalledOnce();
+      expect(f.attempts.finish).toHaveBeenCalledOnce();
+      expect(f.attempts.finish.mock.calls[0]![1]).toMatchObject({
+        ordinal: 1,
+        outcome: "completed",
+        usage: success().usage,
+      });
+      expect(f.clock.wait).not.toHaveBeenCalled();
+    } finally {
+      release.resolve(success());
+      await Promise.allSettled([release.promise, provider, original, observed]);
+    }
+  });
+
+  it("rejects the same original cleanup error even when its finish receipt reports an exceeded budget", async () => {
+    const f = setup();
+    const cleanup = new ModelTransportCleanupError(
+      new Error("receipt-independent-cleanup-private-canary"),
+      failedUsage,
+      true,
+    );
+    f.model.complete.mockRejectedValueOnce(cleanup);
+    f.attempts.finish.mockResolvedValueOnce(policyFinishExceededReceipt());
+    await expect(f.call()).rejects.toBe(cleanup);
+    expect(f.model.complete).toHaveBeenCalledOnce();
+    expect(f.attempts.start).toHaveBeenCalledOnce();
+    expect(f.attempts.finish).toHaveBeenCalledOnce();
+    expect(f.attempts.finish.mock.calls[0]![1]).toMatchObject({
+      ordinal: 1,
+      outcome: "failed",
+      reason: "model_cleanup_failed",
+      outputStarted: true,
+      usage: failedUsage,
+    });
+    expect(f.clock.wait).not.toHaveBeenCalled();
+  });
+
+  it("preserves both original cleanup and finish-persistence failures in the AggregateError cause", async () => {
+    const f = setup();
+    const cleanupSentinel = new Error("receipt-cleanup-private-canary");
+    const cleanup = new ModelTransportCleanupError(cleanupSentinel, failedUsage, true);
+    const persistence = new Error("receipt-finish-persistence-private-canary");
+    f.model.complete.mockRejectedValueOnce(cleanup);
+    f.attempts.finish.mockRejectedValueOnce(persistence);
+    const actual: unknown = await f.call().catch((error: unknown) => error);
+    expect(actual).toBeInstanceOf(ModelTransportCleanupError);
+    if (!(actual instanceof ModelTransportCleanupError))
+      throw new Error("Expected original cleanup-failure semantics");
+    expect(actual.cause).toBeInstanceOf(AggregateError);
+    expect(errorChain(actual)).toContain(cleanup);
+    expect(errorChain(actual)).toContain(cleanupSentinel);
+    expect(errorChain(actual)).toContain(persistence);
+    expect(errorChain(actual).some((error) => error instanceof ModelBudgetExceededError)).toBe(
+      false,
+    );
+    expect(actual.usage).toEqual(failedUsage);
+    expect(actual.outputStarted).toBe(true);
+    expect(f.model.complete).toHaveBeenCalledOnce();
+    expect(f.attempts.start).toHaveBeenCalledOnce();
+    expect(f.attempts.finish).toHaveBeenCalledOnce();
+    expect(f.clock.wait).not.toHaveBeenCalled();
+  });
+
+  it("gives original cancellation priority after joining a held exceeded finish receipt without retry", async () => {
+    const f = setup();
+    const entered = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<ReturnType<typeof policyFinishExceededReceipt>>();
+    f.attempts.finish.mockImplementationOnce(() => {
+      entered.resolve();
+      return receipt.promise;
+    });
+    let settled = false;
+    const original = f.call().finally(() => {
+      settled = true;
+    });
+    const observed = original.catch((error: unknown) => error);
+    const cancellation = new Error("original cancellation while finish is held");
+    try {
+      await Promise.race([entered.promise, original]);
+      f.abort.abort(cancellation);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(f.model.complete).toHaveBeenCalledOnce();
+      expect(f.attempts.finish).toHaveBeenCalledOnce();
+      receipt.resolve(policyFinishExceededReceipt());
+      const actual: unknown = await observed;
+      expect(actual).toBeInstanceOf(Error);
+      expect(errorChain(actual)).toContain(cancellation);
+      expect(errorChain(actual).some((error) => error instanceof ModelBudgetExceededError)).toBe(
+        false,
+      );
+      expect(settled).toBe(true);
+      expect(f.model.complete).toHaveBeenCalledOnce();
+      expect(f.attempts.start).toHaveBeenCalledOnce();
+      expect(f.attempts.finish).toHaveBeenCalledOnce();
+      expect(f.attempts.finish.mock.calls[0]![1]).toMatchObject({
+        ordinal: 1,
+        usage: success().usage,
+      });
+      expect(f.clock.wait).not.toHaveBeenCalled();
+    } finally {
+      f.abort.abort(cancellation);
+      receipt.resolve(policyFinishExceededReceipt());
+      await Promise.allSettled([receipt.promise, original, observed]);
+    }
+  });
 });

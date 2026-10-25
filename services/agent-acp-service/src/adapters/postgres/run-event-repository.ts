@@ -2,7 +2,11 @@ import { deriveResourceId } from "../../domain/resource-id.js";
 import type { PoolClient } from "pg";
 import { isDeepStrictEqual } from "node:util";
 import { projectUsage } from "../../domain/usage.js";
-import { reserveModelBudget, settleModelBudget } from "./model-budget.js";
+import {
+  reserveModelBudget,
+  settleModelBudget,
+  storedModelBudgetSettlement,
+} from "./model-budget.js";
 
 import type {
   ToolEffectState,
@@ -19,6 +23,7 @@ import type {
   AppendToolProgressInput,
   AppendRejectedToolCallInput,
   FinishToolAttemptInput,
+  ModelAttemptReceipt,
   RunEventRepository,
   StartToolAttemptInput,
 } from "../../ports/run-event-repository.js";
@@ -217,7 +222,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
 
   public finishModelAttempt(
     request: Parameters<RunEventRepository["finishModelAttempt"]>[0],
-  ): Promise<SessionEvent> {
+  ): Promise<ModelAttemptReceipt> {
     const input = structuredClone(request);
     requireOrdinal(input.ordinal);
     if (
@@ -259,7 +264,15 @@ export class PostgresRunEventRepository implements RunEventRepository {
       if (receipt || usageReceipt !== undefined) {
         if (!receipt || usageReceipt === undefined)
           throw new Error("Model attempt receipt is incomplete");
-        return usageReceipt;
+        return {
+          event: usageReceipt,
+          settlement: await storedModelBudgetSettlement(
+            client,
+            input.runId,
+            input.ordinal,
+            locked.organizationId,
+          ),
+        };
       }
       requireRunning(locked.state);
       const started = await client.query<{
@@ -277,16 +290,24 @@ export class PostgresRunEventRepository implements RunEventRepository {
       const candidate = frozenModelCandidate(original.execution_snapshot, original.payload);
       if (candidate === undefined || input.contextSize !== candidate.model.contextWindow)
         throw new Error("Model attempt context does not match its frozen candidate");
-      await settleModelBudget(client, {
+      const settlement = await settleModelBudget(client, {
         runId: input.runId,
         ordinal: input.ordinal,
         organizationId: locked.organizationId,
         usage: input.usage,
+        ...(original.execution_snapshot.executionSpec.runBudget === undefined
+          ? {}
+          : { runBudget: original.execution_snapshot.executionSpec.runBudget }),
         ...(input.notDispatched === undefined ? {} : { notDispatched: input.notDispatched }),
         ...(candidate.model.pricing === undefined ? {} : { pricing: candidate.model.pricing }),
       });
       await appendModelAttemptLocked(client, locked, id, event, input.finishedAt);
-      return appendUsageLocked(client, { ...locked, nextSequence: locked.nextSequence + 1 }, usage);
+      const usageEvent = await appendUsageLocked(
+        client,
+        { ...locked, nextSequence: locked.nextSequence + 1 },
+        usage,
+      );
+      return { event: usageEvent, settlement };
     });
   }
 

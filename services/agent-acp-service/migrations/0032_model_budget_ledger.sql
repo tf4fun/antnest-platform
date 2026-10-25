@@ -70,6 +70,7 @@ CREATE TABLE model_budget_reservations (
     month_start date NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     settled_at timestamptz NULL,
+    settlement jsonb CHECK (settlement IS NULL OR jsonb_typeof(settlement) = 'object'),
     PRIMARY KEY (run_id, ordinal),
     CHECK (month_start = date_trunc('month', day_start)::date)
 );

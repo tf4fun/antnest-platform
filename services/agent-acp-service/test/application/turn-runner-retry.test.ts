@@ -787,4 +787,309 @@ describe("TurnRunner production model retry wiring", () => {
       await Promise.allSettled([notice.promise, original, observed]);
     }
   });
+
+  function finishExceededReceipt() {
+    return { exceeded: { scope: "run_cost" as const, limit: "1", used: "2" } };
+  }
+
+  const finishBudgetNotice = [
+    { type: "text", text: "Run stopped because the model budget does not permit another call." },
+  ];
+
+  it("closes every normalized Tool proposal when the foreground finish receipt exceeds the budget", async () => {
+    const f = setup();
+    const returned = toolResponse();
+    if (returned.kind !== "tool_calls") throw new Error("Expected Tool proposals");
+    returned.calls.push({ id: "provider-call-2", name: "bash", arguments: { command: "ls" } });
+    f.complete.mockResolvedValueOnce(returned);
+    f.events.finish.mockResolvedValueOnce(finishExceededReceipt());
+    await expect(f.run()).resolves.toMatchObject({
+      terminalClass: "failed",
+      executorState: "quiescent",
+      errorClass: "budget_exceeded",
+    });
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect(f.events.start).toHaveBeenCalledOnce();
+    expect(f.events.finish).toHaveBeenCalledOnce();
+    expect(f.events.finish.mock.calls[0]![1]).toMatchObject({
+      ordinal: 1,
+      outcome: "completed",
+      usage: returned.usage,
+    });
+    expect(f.call).not.toHaveBeenCalled();
+    expect(f.permission).not.toHaveBeenCalled();
+    expect(f.events.toolStarted).not.toHaveBeenCalled();
+    expect(f.events.toolFinished).not.toHaveBeenCalled();
+    expect(f.events.agentMessage).toHaveBeenCalledTimes(2);
+    const proposals = f.events.agentMessage.mock.calls[0]![2];
+    if (proposals === undefined) throw new Error("Expected persisted undispatched proposals");
+    expect(proposals.map((call) => ({ name: call.name, arguments: call.arguments }))).toEqual([
+      { name: "bash", arguments: { command: "pwd" } },
+      { name: "bash", arguments: { command: "ls" } },
+    ]);
+    expect(new Set(proposals.map((call) => call.id)).size).toBe(2);
+    expect(f.events.toolRejected).toHaveBeenCalledTimes(2);
+    for (const proposal of proposals) {
+      expect(proposal.id).toMatch(/^[a-f0-9]{64}$/u);
+      expect(["provider-call-1", "provider-call-2"]).not.toContain(proposal.id);
+      expect(f.events.toolRejected).toHaveBeenCalledWith("run-1", proposal, expect.any(String));
+    }
+    expect(f.events.agentMessage.mock.calls[1]![1]).toEqual(finishBudgetNotice);
+    expect(
+      f.events.agentMessage.mock.calls.filter(([, content]) =>
+        content.some((block) => block.text === finishBudgetNotice[0]!.text),
+      ),
+    ).toHaveLength(1);
+    expect(f.events.usage).not.toHaveBeenCalled();
+  });
+
+  it("does not consume a judge allow verdict after its finish receipt exceeds the budget", async () => {
+    const f = setup(8, true);
+    f.complete
+      .mockResolvedValueOnce(toolResponse())
+      .mockImplementationOnce((request) => Promise.resolve(judgeResponse(request)));
+    f.events.finish.mockResolvedValueOnce(undefined).mockResolvedValueOnce(finishExceededReceipt());
+    await expect(f.run()).resolves.toMatchObject({
+      terminalClass: "failed",
+      executorState: "quiescent",
+      errorClass: "budget_exceeded",
+    });
+    expect(f.complete).toHaveBeenCalledTimes(2);
+    expect(f.complete.mock.calls.map(([request]) => request.purpose)).toEqual([
+      undefined,
+      "permission_judge",
+    ]);
+    expect(f.events.start.mock.calls.map(([, fact]) => [fact.ordinal, fact.purpose])).toEqual([
+      [1, "foreground"],
+      [2, "permission_judge"],
+    ]);
+    expect(f.events.finish).toHaveBeenCalledTimes(2);
+    expect(f.events.finish.mock.calls[1]![1]).toMatchObject({
+      ordinal: 2,
+      outcome: "completed",
+      usage: { inputTokens: 13, outputTokens: 4 },
+    });
+    expect(f.call).not.toHaveBeenCalled();
+    expect(f.permission).not.toHaveBeenCalled();
+    expect(f.events.toolStarted).not.toHaveBeenCalled();
+    expect(f.events.toolFinished).not.toHaveBeenCalled();
+    expect(f.events.toolRejected).toHaveBeenCalledOnce();
+    expect(f.events.agentMessage).toHaveBeenCalledTimes(2);
+    expect(f.events.agentMessage.mock.calls.at(-1)?.[1]).toEqual(finishBudgetNotice);
+    expect(f.events.usage).not.toHaveBeenCalled();
+  });
+
+  it("stops retries and fallback after a failed physical attempt reports usage and an exceeded finish receipt", async () => {
+    const f = setup();
+    f.input.snapshot.executionSpec.modelFailover = "before_output";
+    f.input.snapshot.executionSpec.fallbackModels = [
+      {
+        modelProfileId: "profile-b",
+        providerConnectionId: "connection-b",
+        model: {
+          ...structuredClone(f.input.snapshot.executionSpec.model),
+          baseUrl: "https://fallback.example.test/v1",
+          model: "fallback-model",
+        },
+      },
+    ];
+    f.complete.mockRejectedValue(retryable());
+    f.events.finish.mockResolvedValueOnce(finishExceededReceipt());
+    await expect(f.run()).resolves.toMatchObject({
+      terminalClass: "failed",
+      executorState: "quiescent",
+      errorClass: "budget_exceeded",
+    });
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect(f.events.start).toHaveBeenCalledOnce();
+    expect(f.events.finish).toHaveBeenCalledOnce();
+    expect(f.events.finish.mock.calls[0]![1]).toMatchObject({
+      ordinal: 1,
+      outcome: "failed",
+      status: 429,
+      usage: failedUsage,
+    });
+    expect(f.call).not.toHaveBeenCalled();
+    expect(f.permission).not.toHaveBeenCalled();
+    expect(f.events.toolStarted).not.toHaveBeenCalled();
+    expect(f.events.agentMessage).toHaveBeenCalledExactlyOnceWith("run-1", finishBudgetNotice);
+    expect(f.events.usage).not.toHaveBeenCalled();
+  });
+
+  it("waits for the original held finish receipt before deciding the exceeded-budget terminal result", async () => {
+    const f = setup();
+    const entered = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<ReturnType<typeof finishExceededReceipt>>();
+    f.events.finish.mockImplementationOnce(() => {
+      entered.resolve();
+      return receipt.promise;
+    });
+    let settled = false;
+    const original = f.run().finally(() => {
+      settled = true;
+    });
+    const observed = original.catch((error: unknown) => error);
+    try {
+      await Promise.race([entered.promise, original]);
+      expect(settled).toBe(false);
+      expect(f.complete).toHaveBeenCalledOnce();
+      expect(f.events.start).toHaveBeenCalledOnce();
+      expect(f.events.finish).toHaveBeenCalledOnce();
+      expect(f.events.agentMessage).not.toHaveBeenCalled();
+      expect(f.permission).not.toHaveBeenCalled();
+      expect(f.call).not.toHaveBeenCalled();
+      receipt.resolve(finishExceededReceipt());
+      await expect(original).resolves.toMatchObject({
+        terminalClass: "failed",
+        executorState: "quiescent",
+        errorClass: "budget_exceeded",
+      });
+      expect(settled).toBe(true);
+      expect(f.complete).toHaveBeenCalledOnce();
+      expect(f.events.finish).toHaveBeenCalledOnce();
+      expect(f.events.agentMessage).toHaveBeenCalledTimes(2);
+      expect(f.events.agentMessage.mock.calls[0]![1]).toEqual(response().content);
+      expect(f.events.agentMessage.mock.calls[1]!.slice(0, 2)).toEqual([
+        "run-1",
+        finishBudgetNotice,
+      ]);
+      expect(f.permission).not.toHaveBeenCalled();
+      expect(f.call).not.toHaveBeenCalled();
+      expect(f.events.usage).not.toHaveBeenCalled();
+    } finally {
+      receipt.resolve(finishExceededReceipt());
+      await Promise.allSettled([receipt.promise, original, observed]);
+    }
+  });
+
+  it("retains independent model-cleanup failure semantics when the finish receipt also reports an exceeded budget", async () => {
+    const f = setup();
+    const cleanup = new ModelTransportCleanupError(
+      new Error("finish-receipt-cleanup-private-canary"),
+      failedUsage,
+    );
+    f.complete.mockRejectedValueOnce(cleanup);
+    f.events.finish.mockResolvedValueOnce(finishExceededReceipt());
+    await expect(f.run()).resolves.toMatchObject({
+      terminalClass: "failed",
+      executorState: "quiescent",
+      errorClass: cleanup.code,
+    });
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect(f.events.start).toHaveBeenCalledOnce();
+    expect(f.events.finish).toHaveBeenCalledOnce();
+    expect(f.events.finish.mock.calls[0]![1]).toMatchObject({
+      ordinal: 1,
+      outcome: "failed",
+      reason: "model_cleanup_failed",
+      usage: failedUsage,
+    });
+    expect(f.permission).not.toHaveBeenCalled();
+    expect(f.call).not.toHaveBeenCalled();
+    expect(f.events.toolStarted).not.toHaveBeenCalled();
+    expect(f.events.usage).not.toHaveBeenCalled();
+  });
+
+  it("preserves the original static-budget-notice persistence failure after an exceeded finish receipt", async () => {
+    const f = setup();
+    const sentinel = new Error("finish-receipt-notice-private-canary");
+    const persistence = new RunEventPersistenceError("model budget notice", sentinel);
+    f.complete.mockResolvedValueOnce(response());
+    f.events.finish.mockResolvedValueOnce(finishExceededReceipt());
+    f.events.agentMessage.mockImplementation((_runId, content) =>
+      content.some((block) => block.type === "text" && block.text === finishBudgetNotice[0]!.text)
+        ? Promise.reject(persistence)
+        : Promise.resolve(),
+    );
+    const actual: unknown = await f.run().catch((error: unknown) => error);
+    expect(actual).toBeInstanceOf(RunEventPersistenceError);
+    expect(errorChain(actual)).toContain(persistence);
+    expect(errorChain(actual)).toContain(sentinel);
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect(f.events.start).toHaveBeenCalledOnce();
+    expect(f.events.finish).toHaveBeenCalledOnce();
+    expect(f.events.finish.mock.calls[0]![1]).toMatchObject({
+      ordinal: 1,
+      outcome: "completed",
+      usage: response().usage,
+    });
+    expect(f.events.agentMessage).toHaveBeenCalledTimes(2);
+    expect(f.events.agentMessage.mock.calls[0]![1]).toEqual(response().content);
+    expect(f.events.agentMessage.mock.calls[1]!.slice(0, 2)).toEqual(["run-1", finishBudgetNotice]);
+    expect(f.permission).not.toHaveBeenCalled();
+    expect(f.call).not.toHaveBeenCalled();
+    expect(f.events.toolStarted).not.toHaveBeenCalled();
+    expect(f.events.usage).not.toHaveBeenCalled();
+  });
+
+  it.each(["foreground", "permission_judge"] as const)(
+    "joins a held %s finish and retains its independent persistence failure after authority is lost",
+    async (purpose) => {
+      const judge = purpose === "permission_judge";
+      const f = setup(8, judge);
+      if (judge) {
+        f.complete
+          .mockResolvedValueOnce(toolResponse())
+          .mockImplementationOnce((request) => Promise.resolve(judgeResponse(request)));
+        f.events.finish.mockResolvedValueOnce(undefined);
+      }
+      const attempts = judge ? 2 : 1;
+      const authority = new AbortController();
+      const authorityLoss = new Error("authority lost while original finish is held");
+      f.input.authoritySignal = authority.signal;
+      const sentinel = new Error("original-finish-persistence-private-canary");
+      const persistence = new RunEventPersistenceError("model attempt finish", sentinel);
+      const entered = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      f.events.finish.mockImplementationOnce(() => {
+        entered.resolve();
+        return finish.promise;
+      });
+      let settled = false;
+      const original = f.run().finally(() => {
+        settled = true;
+      });
+      const observed = original.catch((error: unknown) => error);
+      try {
+        await Promise.race([entered.promise, observed]);
+        expect(settled).toBe(false);
+        expect(f.complete).toHaveBeenCalledTimes(attempts);
+        expect(f.events.finish).toHaveBeenCalledTimes(attempts);
+        expect(f.events.start.mock.calls.map(([, fact]) => fact.purpose)).toEqual(
+          judge ? ["foreground", "permission_judge"] : ["foreground"],
+        );
+        expect(f.events.finish.mock.calls[0]![1]).toMatchObject({
+          ordinal: 1,
+          outcome: "completed",
+        });
+        expect(f.events.agentMessage).toHaveBeenCalledTimes(judge ? 1 : 0);
+        const originalMessages = structuredClone(f.events.agentMessage.mock.calls);
+        authority.abort(authorityLoss);
+        expect(settled).toBe(false);
+        expect(f.events.agentMessage.mock.calls).toEqual(originalMessages);
+        expect(f.events.agentThought).not.toHaveBeenCalled();
+        expect(f.permission).not.toHaveBeenCalled();
+        expect(f.call).not.toHaveBeenCalled();
+        finish.reject(persistence);
+        const actual: unknown = await observed;
+        expect(settled).toBe(true);
+        expect(actual).toBe(persistence);
+        expect(errorChain(actual)).toContain(sentinel);
+        expect(f.complete).toHaveBeenCalledTimes(attempts);
+        expect(f.events.start).toHaveBeenCalledTimes(attempts);
+        expect(f.events.finish).toHaveBeenCalledTimes(attempts);
+        expect(f.events.agentMessage.mock.calls).toEqual(originalMessages);
+        expect(f.events.agentThought).not.toHaveBeenCalled();
+        expect(f.events.toolRejected).not.toHaveBeenCalled();
+        expect(f.events.toolStarted).not.toHaveBeenCalled();
+        expect(f.permission).not.toHaveBeenCalled();
+        expect(f.call).not.toHaveBeenCalled();
+        expect(f.events.usage).not.toHaveBeenCalled();
+      } finally {
+        authority.abort(authorityLoss);
+        finish.reject(persistence);
+        await Promise.allSettled([finish.promise, original, observed]);
+      }
+    },
+  );
 });

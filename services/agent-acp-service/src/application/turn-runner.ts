@@ -15,7 +15,11 @@ import { ModelBudgetExceededError } from "../domain/model-budget.js";
 import { RunToolAuthorization } from "./run-tool-authorization.js";
 import { PermissionJudge } from "./permission-judge.js";
 import { ModelRequestBudget, ModelRequestLimitError } from "./model-request-budget.js";
-import { ModelCallPolicy, ModelCallInterruptedError } from "./model-call-policy.js";
+import {
+  ModelCallPolicy,
+  ModelCallInterruptedError,
+  ModelCallBudgetExceededError,
+} from "./model-call-policy.js";
 import type { ToolPermissionPort } from "../ports/tool-permissions.js";
 import type { ProviderCircuitPort } from "../ports/provider-circuit.js";
 import { planResult, type PlanEntry } from "../domain/plan.js";
@@ -232,10 +236,30 @@ export class TurnRunner {
       completed = { response, output };
     } catch (error) {
       try {
+        if (error instanceof RunEventPersistenceError) throw error;
         assertAuthority(input.authoritySignal);
-        if (error instanceof ModelCallInterruptedError && error.response?.kind === "tool_calls") {
+        if (error instanceof ModelCallBudgetExceededError && error.response !== undefined) {
+          const response = error.response;
+          if (response.thought !== undefined && !output.kinds.has("thought")) {
+            await this.dependencies.events.agentThought(input.runId, response.thought);
+            assertAuthority(input.authoritySignal);
+          }
+          if (
+            response.kind === "message" &&
+            response.content.length > 0 &&
+            !output.kinds.has("message")
+          ) {
+            await this.dependencies.events.agentMessage(input.runId, response.content);
+            assertAuthority(input.authoritySignal);
+          }
+        }
+        if (
+          (error instanceof ModelCallInterruptedError ||
+            error instanceof ModelCallBudgetExceededError) &&
+          error.response?.kind === "tool_calls"
+        ) {
           // Keep returned proposals as undispatched history. This path never
-          // re-enters authorization or the Tool loop after cancellation/deadline.
+          // re-enters authorization or the Tool loop after a budget stop, cancellation or deadline.
           const calls = error.response.calls.map((call) => ({
             ...call,
             id: createHash("sha256")
@@ -334,8 +358,8 @@ export class TurnRunner {
       text = await authorization.check(input, prepared);
       input.signal.throwIfAborted();
     } catch (error) {
-      assertAuthority(input.authoritySignal);
       if (error instanceof RunEventPersistenceError) throw error;
+      assertAuthority(input.authoritySignal);
       approvalError = error;
       text =
         error instanceof ModelBudgetExceededError

@@ -97,8 +97,13 @@ The same fixed body is sent after admission; editable model context limits are
 not trustworthy hard bounds. A canonical internal finish proof that the original
 call never invoked send settles zero and releases its reservation without claiming
 a Provider-reported price. Missing proof or any dispatched request with missing
-usage retains its uncertainty. Excess handling, soft notifications and the
-Controller/Console policy consumers still need their business acceptance.
+usage retains its uncertainty. The same transaction now stores the decision made
+from actual consumption and remaining reservations. Strictly excessive totals
+stop subsequent Model and Tool dispatch after commit; exact replay reuses that
+decision without another charge or a new policy assessment. The original UTC
+periods remain authoritative for settlement, including a call crossing midnight.
+Detailed public reasons, soft notifications and the Controller/Console policy
+consumers still need their business acceptance.
 
 ## Verification
 

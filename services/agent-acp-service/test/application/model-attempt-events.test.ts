@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { WorkerOwnershipLostError } from "../../src/adapters/postgres/worker-lock.js";
-import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
+import {
+  ModelBudgetExceededError,
+  type ModelBudgetSettlement,
+} from "../../src/domain/model-budget.js";
 import {
   DurableRunEvents,
   RunEventPersistenceError,
@@ -31,7 +34,7 @@ function setup() {
       .mockResolvedValue(undefined),
     finishModelAttempt: vi
       .fn<RunEventRepository["finishModelAttempt"]>()
-      .mockResolvedValue(receipt),
+      .mockResolvedValue({ event: receipt, settlement: {} }),
     appendPlan: vi.fn<RunEventRepository["appendPlan"]>(),
     appendAgentMessage: vi.fn<RunEventRepository["appendAgentMessage"]>(),
     appendAgentThought: vi.fn<RunEventRepository["appendAgentThought"]>(),
@@ -92,7 +95,7 @@ function setup() {
     started,
     finished,
     receipt,
-    invoke: (operation: Operation) =>
+    invoke: (operation: Operation): Promise<void | ModelBudgetSettlement> =>
       operation === "start" ? events.start("run-1", started) : events.finish("run-1", finished),
   };
 }
@@ -104,6 +107,18 @@ function observe(pending: Promise<unknown>) {
 }
 
 describe("durable model attempt events", () => {
+  it("returns the committed budget decision separately from the public usage event", async () => {
+    const f = setup();
+    const settlement = {
+      exceeded: { scope: "run_cost" as const, limit: "100", used: "101" },
+    };
+    f.repository.finishModelAttempt.mockResolvedValue({ event: f.receipt, settlement });
+    await expect(f.events.finish("run-1", f.finished)).resolves.toEqual(settlement);
+    expect(f.publish).toHaveBeenCalledExactlyOnceWith(f.receipt);
+    expect(f.repository.finishModelAttempt).toHaveBeenCalledOnce();
+    expect(f.repository.appendUsage).not.toHaveBeenCalled();
+  });
+
   it("preserves a budget denial without retrying or publishing a persistence failure", async () => {
     const f = setup();
     const denied = new ModelBudgetExceededError("organization_daily", "10", "10");
@@ -168,7 +183,7 @@ describe("durable model attempt events", () => {
       else
         f.repository.finishModelAttempt.mockImplementation(async (input) => {
           await write(input);
-          return f.receipt;
+          return { event: f.receipt, settlement: {} };
         });
       const expected = structuredClone(
         operation === "start"
@@ -209,7 +224,9 @@ describe("durable model attempt events", () => {
         expect(inputs[1]).toBe(inputs[0]);
         expect(snapshots).toStrictEqual([expected, expected]);
         expect(result.rejected).not.toHaveBeenCalled();
-        expect(result.resolved).toHaveBeenCalledExactlyOnceWith(undefined);
+        expect(result.resolved).toHaveBeenCalledExactlyOnceWith(
+          operation === "start" ? undefined : {},
+        );
         expect(f.publish.mock.calls).toEqual(operation === "start" ? [] : [[f.receipt]]);
         expect(f.repository.appendUsage).not.toHaveBeenCalled();
         expect(f.id).not.toHaveBeenCalled();
@@ -290,7 +307,7 @@ describe("durable model attempt events", () => {
       else
         f.repository.finishModelAttempt.mockImplementation(async () => {
           await write();
-          return f.receipt;
+          return { event: f.receipt, settlement: {} };
         });
       const lost = new WorkerOwnershipLostError();
       const result = observe(Promise.resolve().then(() => f.invoke(operation)));
@@ -320,4 +337,74 @@ describe("durable model attempt events", () => {
       }
     },
   );
+
+  it.each([
+    { name: "legacy raw usage event", make: (event: SessionEvent): unknown => event },
+    { name: "missing settlement", make: (event: SessionEvent): unknown => ({ event }) },
+    {
+      name: "null settlement",
+      make: (event: SessionEvent): unknown => ({ event, settlement: null }),
+    },
+    {
+      name: "unknown settlement field",
+      make: (event: SessionEvent): unknown => ({
+        event,
+        settlement: { unexpected: true },
+      }),
+    },
+    {
+      name: "invalid exceeded scope",
+      make: (event: SessionEvent): unknown => ({
+        event,
+        settlement: { exceeded: { scope: "unexpected_scope", limit: "1", used: "2" } },
+      }),
+    },
+    {
+      name: "null exceeded fact",
+      make: (event: SessionEvent): unknown => ({
+        event,
+        settlement: { exceeded: null },
+      }),
+    },
+    { name: "missing usage event", make: (): unknown => ({ settlement: {} }) },
+    {
+      name: "non-usage event",
+      make: (): unknown => ({
+        event: { kind: "agent_message", messageId: "unexpected-message", content: [] },
+        settlement: {},
+      }),
+    },
+    { name: "null receipt", make: (): unknown => null },
+    { name: "undefined receipt", make: (): unknown => undefined },
+  ])("fails closed on a malformed repository finish receipt: $name", async ({ make }) => {
+    const f = setup();
+    // This cast is restricted to deliberately damaged storage-boundary data.
+    // A production repository is required to return the complete typed receipt.
+    const malformed = make(f.receipt) as Awaited<
+      ReturnType<RunEventRepository["finishModelAttempt"]>
+    >;
+    f.repository.finishModelAttempt.mockResolvedValue(malformed);
+    vi.useFakeTimers({ loopLimit: 20 });
+    const result = observe(Promise.resolve().then(() => f.events.finish("run-1", f.finished)));
+    try {
+      await vi.runAllTimersAsync();
+      await result.settled;
+      expect(f.repository.finishModelAttempt).toHaveBeenCalled();
+      expect(result.resolved).not.toHaveBeenCalled();
+      expect(result.rejected).toHaveBeenCalledOnce();
+      expect(result.rejected.mock.calls[0]![0]).toBeInstanceOf(RunEventPersistenceError);
+      expect(f.publish).not.toHaveBeenCalled();
+      expect(f.repository.appendUsage).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      f.ownership.abort(new WorkerOwnershipLostError());
+      try {
+        await vi.runAllTimersAsync();
+        await result.settled;
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    }
+  });
 });

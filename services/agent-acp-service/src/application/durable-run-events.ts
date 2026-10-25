@@ -12,7 +12,11 @@ import type { ModelAttemptStarted, ModelAttemptFinished } from "../ports/model-a
 import { planResult, planTool, type PlanEntry } from "../domain/plan.js";
 import { retryRunWrite } from "./run-write-retry.js";
 import { assertWorkerOwnership } from "./worker-ownership.js";
-import { ModelBudgetExceededError } from "../domain/model-budget.js";
+import {
+  ModelBudgetExceededError,
+  modelBudgetSettlementSchema,
+  type ModelBudgetSettlement,
+} from "../domain/model-budget.js";
 
 const MAX_RESULT_SUMMARY_CHARACTERS = 4_096;
 
@@ -43,16 +47,34 @@ export class DurableRunEvents implements RunEventPort {
     );
   }
 
-  public async finish(runId: string, fact: ModelAttemptFinished): Promise<void> {
+  public async finish(runId: string, fact: ModelAttemptFinished): Promise<ModelBudgetSettlement> {
     const input = structuredClone({
       runId,
       ...fact,
       contextSize: fact.contextSize ?? this.dependencies.contextSize,
     });
-    const event = await this.persist("model attempt finish", () =>
-      this.dependencies.repository.finishModelAttempt(input),
-    );
-    await this.publish(event);
+    const receipt = await this.persist("model attempt finish", async () => {
+      const stored = await this.dependencies.repository.finishModelAttempt(input);
+      // Validate the storage boundary at runtime even when the adapter's static
+      // type claims a complete receipt (e.g. a stale or damaged implementation).
+      const raw: unknown = stored;
+      if (
+        typeof raw !== "object" ||
+        raw === null ||
+        !("event" in raw) ||
+        typeof raw.event !== "object" ||
+        raw.event === null ||
+        !("kind" in raw.event) ||
+        raw.event.kind !== "usage"
+      )
+        throw new Error("Model attempt usage receipt is invalid");
+      return {
+        event: stored.event,
+        settlement: modelBudgetSettlementSchema.parse(stored.settlement),
+      };
+    });
+    await this.publish(receipt.event);
+    return receipt.settlement;
   }
 
   public async updatePlan(

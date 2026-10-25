@@ -1,10 +1,11 @@
 # Model retry, failover and budget policy (#52)
 
-This is a planned shared contract. The [schema](model-call-policy.schema.json),
+The shared [schema](model-call-policy.schema.json),
 [manifest](model-call-policy.json) and [golden vectors](model-call-policy-fixtures.json)
-define configuration shapes for later owning-service batches. They do not add a
-live Controller route, change current Template or execution schemas, or enable
-retry, fallback, accounting or enforcement. The original #52 criteria remain open.
+define configuration shapes for owning-service batches. ACP implements retry,
+fallback, circuit breaking and budget accounting/enforcement; Controller policy
+publication and Console controls remain separate deliveries. These artifacts do
+not add a live Controller route or establish complete #52 acceptance.
 
 ## Configuration and compatibility
 
@@ -128,6 +129,25 @@ An unfinished or crashed call retains its reservation until accounting resolves;
 ACP process death, a stopped Runtime or a quiescent Run alone does not prove zero
 provider consumption. Tightening policy affects future admission and attempts,
 without rewriting already admitted attempts or losing their reservations.
+
+Settlement preserves actual consumption before stopping business work. In the
+same transaction it compares updated charges plus unresolved reservations with
+the minimum of frozen Run and latest organization caps. The attempt's original
+day/month buckets also determine its settlement decision after a boundary passes;
+later calls still reserve in their current UTC buckets. Actual totals strictly
+above a cap stop execution; equality can complete the current response, while
+subsequent consumption must independently pass admission. Unknown consumption
+retains its reservation and follows the latest unknown-cost policy.
+
+The immutable settlement decision commits with the usage and original finish
+receipt. An exact finish replay returns that same decision without charging again
+or recomputing under a newer policy; missing or malformed decisions fail closed.
+Only after the original model task, cleanup and durable finish have joined does
+ACP consume the decision. An exceeded budget stops retries, fallback, permission
+approval and Tool dispatch. Original returned content and Tool proposals remain
+history, with each unexecuted proposal rejected. Cancellation, lost authority and
+independent persistence/cleanup failures retain their normal precedence.
+
 `budget_exceeded` already exists in the [ACP error catalog](../agent-acp/errors.json)
 and remains HTTP 422 / JSON-RPC -32043, non-retryable. Detailed budget facts and
 the final assistant notice require the ACP producer and consumer acceptance;

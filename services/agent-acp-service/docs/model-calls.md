@@ -43,8 +43,8 @@ instead of requesting manual Tool approval; outstanding Tool proposals remain
 recorded as not executed. The Run emits one static final notice without calling
 another model. Failure to persist that notice retains the original persistence
 error, and cancellation or lost execution authority keeps its normal precedence.
-This rejection path does not complete the budget rollout: detailed budget
-receipts, excess handling, soft notifications and Controller/Console publication
+This rejection path does not complete the budget rollout: detailed public
+budget facts, soft notifications and Controller/Console publication
 remain separate delivery work.
 
 Each physical attempt now prepares its exact serialized Provider request before
@@ -66,6 +66,18 @@ It does not fabricate a Provider cost receipt. Nonzero usage/output is never
 overwritten, and independent cleanup failures remain blocking. Once send is
 invoked, missing usage remains unresolved. Idempotent finish replay includes the
 dispatch proof and cannot release the same reservation twice.
+
+The original finish transaction now persists a budget settlement decision with
+the actual usage. It releases only resolved reservations, checks frozen Run caps
+against current organization caps, and checks the original day/month buckets even
+after midnight. Strictly excessive totals or denied unknown consumption stop the
+Run after commit; equality can complete this response but does not grant another
+call. Exact finish replay returns the original decision without another charge.
+The original request, cleanup and finish receipt must all settle before this
+decision can stop the Run. No retry, fallback, permission approval or Tool dispatch
+follows an exceeded decision. Returned content and Tool proposals remain durable
+history; proposals are individually marked unexecuted. Cleanup/persistence failures
+and cancellation retain their independent outcomes.
 
 Run admission reads the latest durable organization policy under the same
 organization lock used by attempt reservations, settlements and publication.

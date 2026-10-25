@@ -199,6 +199,141 @@ describe.skipIf(databaseUrl === undefined)(
   "owned model budget reservations in PostgreSQL",
   () => {
     it.each([
+      null,
+      { unexpected: true },
+      { exceeded: { scope: "run_cost", limit: "1", used: "-1" } },
+    ])(
+      "rejects an incomplete or malformed committed settlement receipt %j without charging again",
+      async (settlement) => {
+        await withDatabase(async (db) => {
+          await configure(db);
+          const a = await accept(db, "a");
+          await a.events.startModelAttempt(start(a.runId));
+          const original = finish(a.runId);
+          await a.events.finishModelAttempt(original);
+          await db.observer.query(
+            "UPDATE model_budget_reservations SET settlement=$2::jsonb WHERE run_id=$1",
+            [a.runId, settlement === null ? null : JSON.stringify(settlement)],
+          );
+          const before = await ledger(db);
+          const business = await db.snapshot();
+          await expect(a.events.finishModelAttempt(original)).rejects.toThrow();
+          expect(await ledger(db)).toEqual(before);
+          expect(await db.snapshot()).toBe(business);
+        });
+      },
+    );
+
+    it("returns a token overspend receipt after committing the original consumption", async () => {
+      await withDatabase(async (db) => {
+        await configure(db);
+        const a = await accept(db, "a");
+        await db.observer.query(
+          `UPDATE execution_configurations SET configuration=jsonb_set(configuration,
+           '{organization_budget,run_caps}', '{"max_input_tokens":7}'::jsonb) WHERE organization_id=$1`,
+          [organizationId],
+        );
+        await a.events.startModelAttempt(start(a.runId));
+        const original = {
+          ...finish(a.runId),
+          usage: modelUsage(
+            { prompt_tokens: 8, completion_tokens: 0 },
+            { currency: "USD", inputPerMillion: 1, outputPerMillion: 1 },
+          ),
+        };
+        const receipt = await a.events.finishModelAttempt(original);
+        expect(receipt.settlement).toEqual({
+          exceeded: { scope: "run_input", limit: "7", used: "8" },
+        });
+        const stored = await ledger(db);
+        expect(stored.usage[0]).toMatchObject({
+          input_tokens: "8",
+          cost_usd_micros: "8",
+          reserved_input_tokens: "0",
+        });
+        expect(await a.events.finishModelAttempt(original)).toEqual(receipt);
+        expect(await ledger(db)).toEqual(stored);
+      });
+    });
+
+    it.each(["allow", "deny"] as const)(
+      "retains unknown consumption under the latest %s policy",
+      async (policy) => {
+        await withDatabase(async (db) => {
+          await configure(db);
+          const a = await accept(db, "a");
+          await a.events.startModelAttempt(start(a.runId));
+          await db.observer.query(
+            "UPDATE execution_configurations SET configuration=jsonb_set(configuration, '{organization_budget,unknown_cost}', $2::jsonb) WHERE organization_id=$1",
+            [organizationId, JSON.stringify(policy)],
+          );
+          const receipt = await a.events.finishModelAttempt({
+            ...finish(a.runId),
+            usage: {},
+          });
+          expect(receipt.settlement).toEqual(
+            policy === "allow"
+              ? {}
+              : {
+                  exceeded: { scope: "unknown_cost", limit: null, used: null },
+                },
+          );
+          const stored = await ledger(db);
+          expect(stored.usage[0]).toMatchObject({
+            cost_usd_micros: "0",
+            reserved_cost_usd_micros: "7",
+            unknown_attempts: "1",
+          });
+          expect(stored.reservations[0]?.state).toBe("unresolved");
+        });
+      },
+    );
+
+    it("keeps a crossed-period overspend and its exact replay decision in the original buckets", async () => {
+      await withDatabase(async (db) => {
+        await configure(db);
+        const a = await accept(db, "a");
+        await a.events.startModelAttempt(start(a.runId));
+        await db.observer.query(
+          "UPDATE model_budget_reservations SET day_start='2000-01-31',month_start='2000-01-01' WHERE run_id=$1",
+          [a.runId],
+        );
+        await db.observer.query(
+          "UPDATE organization_spend SET period_start=CASE period WHEN 'daily' THEN '2000-01-31'::date ELSE '2000-01-01'::date END WHERE organization_id=$1",
+          [organizationId],
+        );
+        const original = {
+          ...finish(a.runId),
+          usage: modelUsage(
+            { prompt_tokens: 11, completion_tokens: 0 },
+            { currency: "USD", inputPerMillion: 1, outputPerMillion: 1 },
+          ),
+        };
+        const receipt = await a.events.finishModelAttempt(original);
+        expect(receipt.settlement).toEqual({
+          exceeded: { scope: "organization_daily", limit: "10", used: "11" },
+        });
+        const stored = await ledger(db);
+        expect(stored.spend).toHaveLength(2);
+        for (const bucket of stored.spend) {
+          expect(bucket).toMatchObject({
+            cost_usd_micros: "11",
+            reserved_cost_usd_micros: "0",
+          });
+          expect(bucket.period_start).toBe(
+            bucket.period === "daily" ? "2000-01-31" : "2000-01-01",
+          );
+        }
+        await db.observer.query(
+          "UPDATE execution_configurations SET configuration=jsonb_set(configuration, '{organization_budget,daily}', '{}'::jsonb) WHERE organization_id=$1",
+          [organizationId],
+        );
+        expect(await a.events.finishModelAttempt(original)).toEqual(receipt);
+        expect(await ledger(db)).toEqual(stored);
+      });
+    });
+
+    it.each([
       {
         name: "current daily",
         cutoff: "current",
@@ -820,7 +955,7 @@ describe.skipIf(databaseUrl === undefined)(
             expect(await fixture.snapshot()).toBe(beforeBusiness);
           }
           const receipt = await repositories.events.finishModelAttempt(stopped);
-          expect(receipt).toMatchObject({
+          expect(receipt.event).toMatchObject({
             kind: "usage",
             measurement: { inputTokens: 0, outputTokens: 0 },
           });
