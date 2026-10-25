@@ -81,8 +81,17 @@ async function intent(fixture: FencingFixture) {
 }
 
 async function admissionFacts(fixture: FencingFixture, runId: string) {
-  return (
-    await fixture.observer.query(
+  const row = (
+    await fixture.observer.query<{
+      state: string;
+      error_class: string | null;
+      pending_user_message_id: string | null;
+      execution_snapshot: unknown;
+      last_message_sequence: string;
+      append_version: string;
+      messages: number;
+      reservations: number;
+    }>(
       `SELECT r.state,r.error_class,r.pending_user_message_id,r.execution_snapshot,
        s.last_message_sequence::text,s.append_version::text,
        (SELECT count(*)::int FROM session_messages WHERE run_id=r.id) AS messages,
@@ -91,6 +100,9 @@ async function admissionFacts(fixture: FencingFixture, runId: string) {
       [runId],
     )
   ).rows[0];
+  if (row === undefined)
+    throw new Error("Original admission facts are missing");
+  return row;
 }
 
 describe.skipIf(databaseUrl === undefined)(
@@ -466,7 +478,7 @@ describe.skipIf(databaseUrl === undefined)(
             .poll(
               async () =>
                 (
-                  await fixture.observer.query(
+                  await fixture.observer.query<{ expired: boolean }>(
                     "SELECT expires_at<=clock_timestamp() AS expired FROM agent_leases WHERE organization_id=$1 AND agent_id=$2",
                     [organizationId, test.session.binding.agentId],
                   )
