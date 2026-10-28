@@ -25,6 +25,22 @@ const run = {
   created_at: at(0),
 };
 
+test("priority readiness timing uses only its own image barrier", () => {
+  const readiness =
+    "Tier C / Acknowledged Agent readiness (100 first Prompts) / Run";
+  const result = workflowTiming(run, [
+    job("Select suites", 0, 10),
+    job("Image / temporal", 10, 60),
+    job("Image / antnest-runtime-skill-gate", 10, 300),
+    { ...job(readiness, 63, 500), created_at: at(62) },
+    { ...job("Tier C / Agent lifecycle / Run", 303, 400), created_at: at(302) },
+    job("Integration checks", 500, 505),
+  ]);
+  assert.equal(result.jobs[3].dependencyReadyOffsetMs, 60000);
+  assert.equal(result.jobs[3].preCreationSchedulingMs, 2000);
+  assert.equal(result.jobs[4].dependencyReadyOffsetMs, 300000);
+});
+
 test("critical path uses elapsed wall time, not summed parallel runner time", () => {
   const result = workflowTiming(run, [
     job("Select suites", 0, 10),

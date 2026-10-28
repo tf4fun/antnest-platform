@@ -1249,6 +1249,7 @@ export const shards = [
   {
     id: "c-agent-readiness",
     name: "Acknowledged Agent readiness (100 first Prompts)",
+    priority: true,
     suites: ["c-agent-readiness"],
   },
   {
@@ -1373,6 +1374,37 @@ export function matrices(selected) {
   };
 }
 
+export function workflowPlan(selected, resolved = []) {
+  const { plain, imaged, optional } = matrices(selected);
+  const priorityIds = new Set(
+    shards.filter((shard) => shard.priority).map((shard) => shard.id),
+  );
+  const priority = {
+    include: optional.include.filter((row) => priorityIds.has(row.id)),
+  };
+  const priorityImages = new Set(
+    priority.include.flatMap((row) => row.images.split(",").filter(Boolean)),
+  );
+  const builds = resolved
+    .filter((image) => image.build)
+    .map(({ name, ref, publish }) => ({ name, ref, publish }));
+  return {
+    plain,
+    imaged,
+    priority,
+    optional: {
+      include: optional.include.filter((row) => !priorityIds.has(row.id)),
+    },
+    optionalParallel: priority.include.length ? 5 : 6,
+    priorityBuilds: {
+      include: builds.filter((image) => priorityImages.has(image.name)),
+    },
+    builds: {
+      include: builds.filter((image) => !priorityImages.has(image.name)),
+    },
+  };
+}
+
 const zeroSha = /^0+$/u;
 
 export function changedFiles(base, head, git = execFileSync) {
@@ -1408,7 +1440,8 @@ function main() {
     all,
     only: only?.length ? only : undefined,
   });
-  const { plain, imaged, optional } = matrices(selected);
+  const { plain, imaged, optional, priority, optionalParallel } =
+    workflowPlan(selected);
   const lines = [
     `suites=${JSON.stringify(plain)}`,
     `plain=${plain.include.length}`,
@@ -1416,6 +1449,9 @@ function main() {
     `imaged=${imaged.include.length}`,
     `optional_suites=${JSON.stringify(optional)}`,
     `optional=${optional.include.length}`,
+    `priority_suites=${JSON.stringify(priority)}`,
+    `priority=${priority.include.length}`,
+    `optional_parallel=${optionalParallel}`,
   ];
   let resolved = [];
   if (values["resolve-images"]) {
@@ -1426,11 +1462,13 @@ function main() {
       suiteImages(selected, { allImages: values["all-images"] }),
       { tree, readBlob, exists: imageExists },
     );
-    const builds = resolved.filter((image) => image.build);
+    const { builds, priorityBuilds } = workflowPlan(selected, resolved);
     lines.push(
       `images=${JSON.stringify(Object.fromEntries(resolved.map(({ name, ref, build }) => [name, { ref, build }])))}`,
-      `builds=${JSON.stringify({ include: builds.map(({ name, ref, publish }) => ({ name, ref, publish })) })}`,
-      `building=${builds.length}`,
+      `builds=${JSON.stringify(builds)}`,
+      `building=${builds.include.length}`,
+      `priority_builds=${JSON.stringify(priorityBuilds)}`,
+      `priority_building=${priorityBuilds.include.length}`,
     );
   }
   if (process.env.GITHUB_OUTPUT)

@@ -161,14 +161,14 @@ root cause or justify weakening the serial scenario or two-second delay.
 
 ## Scheduling decision and remaining risks
 
-Tier C remains capped at six jobs, with its original ordering. A fixed-duration
+At measured revision `a149b56`, Tier C retained six jobs and its original ordering. A fixed-duration
 baseline simulation gave 37m01s for the original order versus 35m08s longest-first,
 but it retained the duplicate lifecycle component work and ignored contention.
 For the integrated sample both orders finish at 34m09s, already bounded by the
 first-wave readiness job. This is an evaluation, not an executed optimization;
 there is no measured basis to claim a gain from reordering this candidate.
 
-The existing image matrix is still a global dependency barrier. Readiness's own
+At that revision the image matrix was a global dependency barrier. Readiness's own
 image dependencies finish at +2m54s versus the global +8m53s: a 5m59s eligibility
 gap, **not measured savings**. Service image workflows and Integration both build
 images; existing input-hashed reuse is retained, but no new cross-workflow reuse
@@ -186,3 +186,35 @@ client failure. The integrated candidate passes the scenario without changed
 business assertions. The original cause remains unknown; it is not declared
 fixed or dismissed as flaky. Opt-in bounded source locations now improve a
 recurrence's public feedback while keeping raw assertions and inventories private.
+
+## Execution-speed priority follow-up
+
+The next candidate changes scheduling, not test content. The measured critical
+path, `c-agent-readiness`, now occupies a dedicated one-slot Tier C matrix that
+depends only on Select suites and the images that shard actually needs. Other
+Tier C shards retain the complete image barrier and five slots when priority work
+is selected, or six slots when it is not. Total Tier C concurrency remains at most
+six, including during partial selections. The other shards retain their order.
+
+`workflowPlan` partitions selected shards and required image builds without
+duplication. Cached release images retain their input-hashed references; missing
+images and local-only fixtures retain the same builds, publication policy and
+run-local artifacts. Both image matrices share the same build steps. The required
+aggregate still rejects failed, cancelled, missing or unexpectedly skipped work
+in either image group or either Tier C group. Timing attribution follows each
+group's actual dependency barrier.
+
+Using only the frozen `a149b56` durations, a one-plus-five-slot simulation puts
+priority completion at +37m03s and other Tier C completion at +34m52s. That model
+ignores contention, queueing and cache drift: it is not an achieved saving. The
+new candidate requires its own remote measurement. Coverage, serial readiness
+rounds, two-second publication delay, business deadlines and independent cleanup
+are unchanged.
+
+Defect investigation is deliberately outside this speed batch. The separate
+[Identity PostgreSQL failure](https://github.com/tf4fun/antnest-platform/issues/355)
+and [ACP recovery assertion](https://github.com/tf4fun/antnest-platform/issues/356)
+retain their evidence and unknown causes. No test is disabled or admitted because
+it has a tracking issue; failed or superseded runs are not successful performance
+samples. Uncommitted Go diagnostic follow-up work was deferred rather than added
+to this scheduling change.

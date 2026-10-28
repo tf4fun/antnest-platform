@@ -31,7 +31,60 @@ import {
   shards,
   suiteImages,
   suites,
+  workflowPlan,
 } from "./ci-changes.mjs";
+
+test("priority scheduling preserves every shard and build while reserving one of six Tier C slots", () => {
+  const resolved = Object.keys(images).map((name) => ({
+    name,
+    ref: `test/${name}`,
+    build: true,
+    publish: false,
+  }));
+  const plan = workflowPlan(suites, resolved);
+  assert.deepEqual(
+    plan.priority.include.map((row) => row.id),
+    ["c-agent-readiness"],
+  );
+  assert.equal(plan.optionalParallel, 5);
+  const planned = [
+    plan.plain,
+    plan.imaged,
+    plan.optional,
+    plan.priority,
+  ].flatMap((group) => group.include.map((row) => row.id));
+  assert.deepEqual(
+    planned.sort(),
+    matrix(suites)
+      .include.map((row) => row.id)
+      .sort(),
+  );
+  assert.equal(new Set(planned).size, planned.length);
+  const needed = plan.priority.include[0].images.split(",");
+  assert.deepEqual(
+    plan.priorityBuilds.include.map((row) => row.name).sort(),
+    needed.sort(),
+  );
+  assert(plan.builds.include.every((row) => !needed.includes(row.name)));
+  assert.equal(
+    plan.builds.include.length + plan.priorityBuilds.include.length,
+    resolved.length,
+  );
+  const cached = workflowPlan(
+    suites,
+    resolved.map((row) => ({ ...row, build: false })),
+  );
+  assert.deepEqual(cached.priorityBuilds.include, []);
+  assert.deepEqual(cached.builds.include, []);
+  assert.equal(cached.priority.include.length, 1);
+  const ordinary = workflowPlan(
+    suites.filter((suite) => suite.id !== "c-agent-readiness"),
+    resolved,
+  );
+  assert.equal(ordinary.optionalParallel, 6);
+  assert.deepEqual(ordinary.priority.include, []);
+  assert.deepEqual(ordinary.priorityBuilds.include, []);
+});
 import { temporaryStorageRoot } from "./storage.mjs";
 
 test("ACP survivor admission runs the actual two-replica and browser scenario", () => {

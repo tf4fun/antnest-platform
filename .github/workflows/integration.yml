@@ -44,6 +44,11 @@ jobs:
       imaged: ${{ steps.select.outputs.imaged }}
       optional_suites: ${{ steps.select.outputs.optional_suites }}
       optional: ${{ steps.select.outputs.optional }}
+      priority_suites: ${{ steps.select.outputs.priority_suites }}
+      priority: ${{ steps.select.outputs.priority }}
+      optional_parallel: ${{ steps.select.outputs.optional_parallel }}
+      priority_builds: ${{ steps.select.outputs.priority_builds }}
+      priority_building: ${{ steps.select.outputs.priority_building }}
       images: ${{ steps.select.outputs.images }}
       builds: ${{ steps.select.outputs.builds }}
       building: ${{ steps.select.outputs.building }}
@@ -108,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.builds) }}
-    steps:
+    steps: &image-build-steps
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
@@ -163,7 +168,43 @@ jobs:
           docker tag "antnest/$NAME:local" "$REF"
           docker push "$REF"
 
-  # Shards without images start at once; the others wait for the image job.
+  priority-images:
+    name: Image / ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.mode == 'full' && needs.changes.outputs.priority_building != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.priority_builds) }}
+    steps: *image-build-steps
+
+  # Priority Tier C work does not wait for unrelated fixture images.
+  priority-suite:
+    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
+    needs: [changes, priority-images]
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      needs.changes.outputs.mode == 'full' &&
+      needs.changes.outputs.priority != '0' &&
+      (needs.priority-images.result == 'success' || needs.priority-images.result == 'skipped')
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.changes.outputs.priority_suites) }}
+    uses: ./.github/workflows/_suite.yml
+    with:
+      suite: ${{ toJSON(matrix) }}
+      images: ${{ needs.changes.outputs.images }}
+
+  # Shards without images start at once; other shards retain the full barrier.
   suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
     needs: changes
@@ -181,12 +222,13 @@ jobs:
 
   image-suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
-    needs: [changes, images]
+    needs: [changes, images, priority-images]
     if: >-
       !cancelled() && needs.changes.result == 'success' &&
       needs.changes.outputs.mode == 'full' &&
       needs.changes.outputs.imaged != '0' &&
-      (needs.images.result == 'success' || needs.images.result == 'skipped')
+      (needs.images.result == 'success' || needs.images.result == 'skipped') &&
+      (needs.priority-images.result == 'success' || needs.priority-images.result == 'skipped')
     permissions:
       contents: read
       actions: read
@@ -203,19 +245,20 @@ jobs:
   # leaves runners available for the other required shards.
   optional-suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
-    needs: [changes, images]
+    needs: [changes, images, priority-images]
     if: >-
       !cancelled() && needs.changes.result == 'success' &&
       needs.changes.outputs.mode == 'full' &&
       needs.changes.outputs.optional != '0' &&
-      (needs.images.result == 'success' || needs.images.result == 'skipped')
+      (needs.images.result == 'success' || needs.images.result == 'skipped') &&
+      (needs.priority-images.result == 'success' || needs.priority-images.result == 'skipped')
     permissions:
       contents: read
       actions: read
       packages: read
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: ${{ fromJSON(needs.changes.outputs.optional_parallel) }}
       matrix: ${{ fromJSON(needs.changes.outputs.optional_suites) }}
     uses: ./.github/workflows/_suite.yml
     with:
@@ -254,7 +297,16 @@ jobs:
     # naming keeps selection failures on the required check even before the
     # mode output exists.
     name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'Integration checks (not run)' || github.event_name == 'workflow_dispatch' && inputs.suites != '' && 'Integration checks (partial)' || 'Integration checks' }}
-    needs: [changes, images, suite, image-suite, optional-suite]
+    needs:
+      [
+        changes,
+        images,
+        priority-images,
+        suite,
+        image-suite,
+        optional-suite,
+        priority-suite,
+      ]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -269,6 +321,10 @@ jobs:
           IMAGE_SUITE: ${{ needs.image-suite.result }}
           OPTIONAL_SUITE: ${{ needs.optional-suite.result }}
           BUILDING: ${{ needs.changes.outputs.building }}
+          PRIORITY_IMAGES: ${{ needs.priority-images.result }}
+          PRIORITY_BUILDING: ${{ needs.changes.outputs.priority_building }}
+          PRIORITY_SUITE: ${{ needs.priority-suite.result }}
+          PRIORITY: ${{ needs.changes.outputs.priority }}
           PLAIN: ${{ needs.changes.outputs.plain }}
           IMAGED: ${{ needs.changes.outputs.imaged }}
           OPTIONAL: ${{ needs.changes.outputs.optional }}
@@ -291,6 +347,8 @@ jobs:
             if [ "$2" = 0 ]; then [ "$1" = skipped ]; else [ "$1" = success ]; fi
           }
           expect "$IMAGES" "$BUILDING"
+          expect "$PRIORITY_IMAGES" "$PRIORITY_BUILDING"
+          expect "$PRIORITY_SUITE" "$PRIORITY"
           expect "$SUITE" "$PLAIN"
           expect "$IMAGE_SUITE" "$IMAGED"
           expect "$OPTIONAL_SUITE" "$OPTIONAL"

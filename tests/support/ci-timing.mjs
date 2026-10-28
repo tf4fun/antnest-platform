@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { images, shards } from "./ci-changes.mjs";
+import { images, shards, suites, workflowPlan } from "./ci-changes.mjs";
 import { markdownCell } from "./ci-failure.mjs";
 
 const allowedNames = new Set([
@@ -12,6 +12,15 @@ const allowedNames = new Set([
   ),
   ...Object.keys(images).map((name) => `Image / ${name}`),
 ]);
+const priority = workflowPlan(suites).priority.include;
+const priorityNames = new Set(
+  priority.map((row) => `Tier ${row.tier} / ${row.name} / Run`),
+);
+const priorityImages = new Set(
+  priority.flatMap((row) =>
+    row.images.split(",").map((name) => `Image / ${name}`),
+  ),
+);
 const conclusions = new Set([
   "success",
   "failure",
@@ -65,17 +74,21 @@ export function workflowTiming(run, jobs) {
           : null,
       };
     });
-  const predecessors = rows.filter(
-    (row) => row.name === "Select suites" || row.name.startsWith("Image / "),
-  );
-  if (
-    predecessors.some((row) => row.name === "Select suites") &&
-    predecessors.every(
-      (row) => row.conclusion === "success" && row.finishOffsetMs !== null,
-    )
-  ) {
-    const ready = Math.max(...predecessors.map((row) => row.finishOffsetMs));
-    for (const row of rows.filter((row) => row.name.startsWith("Tier C / "))) {
+  for (const row of rows.filter((row) => row.name.startsWith("Tier C / "))) {
+    const predecessors = rows.filter(
+      (dependency) =>
+        dependency.name === "Select suites" ||
+        (dependency.name.startsWith("Image / ") &&
+          (!priorityNames.has(row.name) ||
+            priorityImages.has(dependency.name))),
+    );
+    if (
+      predecessors.some((row) => row.name === "Select suites") &&
+      predecessors.every(
+        (row) => row.conclusion === "success" && row.finishOffsetMs !== null,
+      )
+    ) {
+      const ready = Math.max(...predecessors.map((row) => row.finishOffsetMs));
       row.dependencyReadyOffsetMs = ready;
       const created =
         row.startOffsetMs !== null && row.createdToStartMs !== null
@@ -124,7 +137,7 @@ export function timingMarkdown(report) {
     `Candidate: ${report.candidate}; attempt: ${report.attempt}; gate: ${report.gateConclusion}.`,
     `Clock origin: ${report.clockOrigin}. Reruns exclude inter-attempt idle time; their pre-start queue time is unavailable.`,
     `Integration gate wall time: ${seconds(report.integrationGateWallMs)} s. Accumulated runner time: ${seconds(report.totalRunnerMs)} s (parallel, not wall time or savings).`,
-    "Other workflows, including Repository checks, are outside this measurement. Tier C eligibility follows Select suites and the complete image matrix. Pre-creation scheduling includes matrix admission and GitHub orchestration; created-to-start includes dispatch/provisioning. Neither isolates matrix-slot acquisition or runner queueing; null is not zero.",
+    "Other workflows, including Repository checks, are outside this measurement. Priority Tier C eligibility follows Select suites and its own image builds; other Tier C shards retain the full image barrier. Pre-creation scheduling includes matrix admission and GitHub orchestration; created-to-start includes dispatch/provisioning. Neither isolates matrix-slot acquisition or runner queueing; null is not zero.",
     "",
     "| Job | Start (s) | Finish (s) | Dependency-ready (s) | Pre-creation scheduling (s) | Created-to-start (s) | Setup (s) | Build (s) | Test (s) | Finalization (s) |",
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
