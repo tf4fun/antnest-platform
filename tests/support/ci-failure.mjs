@@ -22,10 +22,20 @@ export function sourceCatalog() {
   ).split("\0");
   cachedCatalog = [];
   for (const file of files) {
-    if (!/(?:_test\.go|\.test\.[cm]?[jt]sx?)$/u.test(file)) continue;
+    const testSource = /(?:_test\.go|\.test\.[cm]?[jt]sx?)$/u.test(file);
+    const e2eSource = /^tests\/e2e\/.*\.mjs$/u.test(file);
+    if (!testSource && !e2eSource) continue;
     const path = resolve(root, file);
     if (!lstatSync(path).isFile()) continue;
     const source = readFileSync(path, "utf8");
+    if (e2eSource)
+      cachedCatalog.push({
+        name: null,
+        file,
+        line: 1,
+        lineCount: source.split("\n").length,
+      });
+    if (!testSource) continue;
     const pattern = file.endsWith(".go")
       ? /^func\s+(Test\w+)\s*\(/gmu
       : /\b(?:test|it)(?:\.(?:only|skip|concurrent))?\(\s*(["'])([^\n]*?)\1/gu;
@@ -38,9 +48,19 @@ export function sourceCatalog() {
         line: source.slice(0, match.index).split("\n").length,
       });
     }
-    cachedCatalog.push({ name: null, file, line: 1 });
+    if (!e2eSource) cachedCatalog.push({ name: null, file, line: 1 });
   }
   return cachedCatalog;
+}
+
+function knownLocation(entry, file, line) {
+  return (
+    entry.name === null &&
+    entry.file === file &&
+    Number.isSafeInteger(line) &&
+    line > 0 &&
+    line <= entry.lineCount
+  );
 }
 
 export const markdownCell = (value) =>
@@ -122,6 +142,15 @@ export class FailureObserver {
         const event = JSON.parse(line);
         if (event.ci_failure) {
           matches = reportedFailures(line, this.catalog);
+        } else if (event.status === "failed" && event.source) {
+          const { file, line: sourceLine } = event.source;
+          matches = this.catalog()
+            .filter((entry) => knownLocation(entry, file, sourceLine))
+            .map((entry) => ({
+              ...entry,
+              name: "[E2E failure]",
+              line: sourceLine,
+            }));
         } else {
           if (event.Action !== "fail" || typeof event.Test !== "string") return;
           matches = this.catalog().filter(
@@ -195,6 +224,8 @@ export function reportedFailures(output, catalog = sourceCatalog) {
         (entry) =>
           entry.file === row.file &&
           ((entry.name === row.name && entry.line === row.line) ||
+            (row.name === "[E2E failure]" &&
+              knownLocation(entry, row.file, row.line)) ||
             (row.name === "[dynamic test name omitted]" && row.line === 1)),
       );
       if (!known) continue;

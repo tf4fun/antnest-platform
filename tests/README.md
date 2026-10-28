@@ -117,6 +117,11 @@ cleanup admission decisions. Raw shard, Go-component and dependency logs, privat
 JSON, and client-private evidence are excluded from the public evidence upload;
 sanitized outcomes and timings remain available.
 
+ACP restart failures additionally opt into a bounded location in their public
+client source. The shard validates the repository-relative file and line against
+tracked E2E source before publishing it live; raw assertion values, absolute
+paths and private failure inventories remain withheld.
+
 The post-gate `Report workflow timing` job records the exact candidate and attempt,
 per-job setup/build/test/finalization, start/finish offsets, integration-gate wall
 time and accumulated parallel runner time. This initial measurement covers only

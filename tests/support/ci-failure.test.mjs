@@ -19,6 +19,35 @@ const entry = {
 const catalog = () => [entry];
 const secret = "Bearer secret-canary-123456";
 
+test("E2E failures publish only bounded locations in tracked source", () => {
+  const file = "tests/e2e/acp-restart/client.mjs";
+  const source = () => [{ name: null, file, line: 1, lineCount: 100 }];
+  const reports = [];
+  const observer = new FailureObserver({
+    catalog: source,
+    report: (row) => reports.push(row),
+    now: () => 123,
+  });
+  for (const location of [
+    { file, line: 42 },
+    { file, line: 101 },
+    { file, line: -1 },
+    { file: secret, line: 1 },
+  ])
+    observer.write(
+      JSON.stringify({ status: "failed", source: location, error: secret }) +
+        "\n",
+    );
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].file, file);
+  assert.equal(reports[0].line, 42);
+  assert(!JSON.stringify(reports).includes(secret));
+  assert.deepEqual(
+    reportedFailures(JSON.stringify({ ci_failure: reports[0] }), source),
+    reports,
+  );
+});
+
 test("Go failures publish only source-known test identities, never subtest inputs or errors", () => {
   const reports = [];
   const observer = new FailureObserver({

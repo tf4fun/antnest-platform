@@ -892,6 +892,10 @@ try {
         directory: "/tmp/restart-traces",
         error,
         stage,
+        publicSource: {
+          file: "tests/e2e/acp-restart/client.mjs",
+          url: import.meta.url,
+        },
         inventory: {
           connections: [...connections.values()],
           requests,

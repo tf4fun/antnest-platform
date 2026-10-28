@@ -85,3 +85,37 @@ test("failed diagnostic collection retains the business failure and reports no r
     evidence_failures: [{ error_type: "RangeError" }],
   });
 });
+
+test("opt-in source locations expose only bounded lines in a configured public file", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "antnest-file-location-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const error = new Error("PRIVATE_ASSERTION_VALUE");
+  const publicSource = {
+    file: "tests/e2e/acp-files/failure-evidence.test.mjs",
+    url: import.meta.url,
+  };
+  const result = await entry()({
+    directory,
+    error,
+    stage: "test",
+    inventory: {},
+    publicSource,
+    fetchStatus: async () => new Response("{}"),
+  });
+  assert.equal(result.source.file, publicSource.file);
+  assert(Number.isSafeInteger(result.source.line) && result.source.line > 0);
+  assert(!JSON.stringify(result).includes("PRIVATE_ASSERTION_VALUE"));
+  assert(!JSON.stringify(result).includes(import.meta.url));
+  const missing = await mkdtemp(join(tmpdir(), "antnest-file-location-"));
+  t.after(() => rm(missing, { recursive: true, force: true }));
+  error.stack = `Error: PRIVATE_ASSERTION_VALUE\n    at ${import.meta.url}:999999:1`;
+  const unavailable = await entry()({
+    directory: missing,
+    error,
+    stage: "test",
+    inventory: {},
+    publicSource,
+    fetchStatus: async () => new Response("{}"),
+  });
+  assert.equal(unavailable.source, undefined);
+});
