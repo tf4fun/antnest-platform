@@ -55,12 +55,16 @@ as passed. This policy supersedes historical strict Trace admission requirements
 ## Test source and evidence storage
 
 Never author, stage, or keep project test scripts, fixtures, source snapshots,
-test manifests, recovery inputs, or lasting verification evidence in `.cache/`.
+test manifests, recovery inputs, or verification evidence in `.cache/`.
 It is not a transfer directory for files that must survive cache deletion.
 Service unit tests belong in their service; integration and E2E sources belong
 in root `tests/integration/` and `tests/e2e/`; shared tooling belongs in
-`tests/support/`. Durable private evidence and backups belong in
-`artifacts/verification/`, excluded from Git and Docker build contexts.
+`tests/support/`. Verification logs, screenshots and CI run artifacts are
+temporary debug/process output, not permanent archives: keep only the minimal
+active-batch logs in `artifacts/verification/` (excluded from Git and Docker
+build contexts) until the remote PR evidence is confirmed, then delete them.
+Unique uncommitted-code backups (patches, diffs, sole-source recovery inputs)
+are kept separately from run output and are not discarded with it.
 
 When recovering a cached test source, verify its destination and preservation
 record, then remove that individual cache original immediately. Do not leave
