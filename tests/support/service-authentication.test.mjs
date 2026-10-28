@@ -400,3 +400,124 @@ func unrelated(mux *http.ServeMux) { reg(mux, "POST /internal/not-a-route") }
   });
   assert.deepEqual(result.errors, []);
 });
+
+test("literal-returning policyRoutes methods resolve only to the calling receiver type", async () => {
+  const { discoverRoutes } = await checker();
+  const sources = {
+    "services/runtime-controller/probe/first.go": {
+      service: "runtime-controller",
+      source: `package probe
+import "net/http"
+
+type routeDef struct{ pattern string }
+
+type firstPolicy struct{}
+func (h *firstPolicy) policyRoutes() []routeDef {
+	return []routeDef{{pattern: "GET /internal/first"}}
+}
+
+func registerFirst(mux *http.ServeMux) {
+	h := &firstPolicy{}
+	for _, route := range h.policyRoutes() {
+		mux.Handle(route.pattern, http.NotFoundHandler())
+	}
+}
+`,
+    },
+    "services/runtime-controller/probe/second.go": {
+      service: "runtime-controller",
+      source: `package probe
+import "net/http"
+
+type secondPolicy struct{}
+func (h *secondPolicy) policyRoutes() []routeDef {
+	return []routeDef{{pattern: "GET /internal/second"}}
+}
+
+func registerSecond(mux *http.ServeMux) {
+	h := &secondPolicy{}
+	for _, route := range h.policyRoutes() {
+		mux.Handle(route.pattern, http.NotFoundHandler())
+	}
+}
+`,
+    },
+  };
+  const discovered = discoverRoutes(sources);
+  assert.deepEqual(
+    discovered["services/runtime-controller/probe/first.go"].routes,
+    ["GET /internal/first"],
+  );
+  assert.deepEqual(
+    discovered["services/runtime-controller/probe/second.go"].routes,
+    ["GET /internal/second"],
+  );
+});
+
+test("typed parameter receivers resolve their own policyRoutes literal", async () => {
+  const { discoverRoutes } = await checker();
+  const sources = {
+    "services/runtime-controller/probe/param.go": {
+      service: "runtime-controller",
+      source: `package probe
+import "net/http"
+
+type routeDef struct{ pattern string }
+
+type firstPolicy struct{}
+func (h *firstPolicy) policyRoutes() []routeDef {
+	return []routeDef{{pattern: "GET /internal/first"}}
+}
+
+type thirdPolicy struct{}
+func (h *thirdPolicy) policyRoutes() []routeDef {
+	return []routeDef{{pattern: "GET /internal/third"}}
+}
+
+func register(mux *http.ServeMux, h *thirdPolicy) {
+	for _, route := range h.policyRoutes() {
+		mux.Handle(route.pattern, http.NotFoundHandler())
+	}
+}
+`,
+    },
+  };
+  const discovered = discoverRoutes(sources);
+  assert.deepEqual(
+    discovered["services/runtime-controller/probe/param.go"].routes,
+    ["GET /internal/third"],
+  );
+});
+
+test("an unresolvable receiver fails closed instead of borrowing a same-named method", async () => {
+  const { discoverRoutes } = await checker();
+  const sources = {
+    "services/runtime-controller/probe/lost.go": {
+      service: "runtime-controller",
+      source: `package probe
+import "net/http"
+
+type routeDef struct{ pattern string }
+
+type firstPolicy struct{}
+func (h *firstPolicy) policyRoutes() []routeDef {
+	return []routeDef{{pattern: "GET /internal/first"}}
+}
+
+func registerLost(mux *http.ServeMux) {
+	var h = missing()
+	for _, route := range h.policyRoutes() {
+		mux.Handle(route.pattern, http.NotFoundHandler())
+	}
+}
+`,
+    },
+  };
+  const discovered = discoverRoutes(sources);
+  assert(
+    discovered["services/runtime-controller/probe/lost.go"].errors.some(
+      (error) => error.includes("unresolved registration"),
+    ),
+    JSON.stringify(discovered["services/runtime-controller/probe/lost.go"]),
+  );
+});
