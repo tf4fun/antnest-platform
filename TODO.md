@@ -21,6 +21,8 @@ Issue 状态最后核对于 2026-10-16：136 个 issue，78 个已关闭，58 �
 
 - #39 实现与定向验证推进中（2026-10-21）：独立工作树 .worktrees/observation-retention-fencing 已实现显式 epoch fencing、独立 READ COMMITTED 分批清理、正数行数上限、schema 13 持久 pruned_through 与 List/Watch 游标边界。热路径 DELETE 原反例已转绿；配置、epoch/floor、pruner 生命周期及取消健康标记回归通过，真实 PG 的升级、fencing、批量/年龄/数量、空 journal/HTTP 场景通过。原 50 append + 50 裸 SERIALIZABLE completion 压力与无裁剪对照均出现 10 次 40001，不能归因清理；原件和源码 SHA 保留，追加的四项 race 定向测试均通过：99+1 有/无裁剪各100次裸写全成功且原始40001为零；50+50生产API全部提交、逐Agent终态与唯一fact一致；裁剪在completion存续期间先提交删除5000行且floor正确。完整准入只跑后续远程 CI，尚未完成交付。证据：artifacts/verification/reliability-20261021/issue-39/。
 
+- #350 readiness 观测批次（2026-10-28）：为原 100 轮串行验收增加创建、ACK/ready、首个 Prompt、删除及资源回收计时；保留两秒发布延迟、原业务准入与独立清理。159 项定向回归通过，完整远程 CI 与真实分阶段数据仍待验收；本批不做并发或耗时收益承诺，PostgreSQL 和调度优化仍未完成。
+
 - #33 已合并并关闭（2026-10-21）：PR #269（https://github.com/tf4fun/antnest-platform/pull/269）候选 999f6d13 经完整远程 integration 39580346269 的 28 个 job 全部通过，54 项 GitHub 检查为 50 成功／4 跳过、零待执行。Draft 跳过业务的旧 run 不计准入。远程 RC PostgreSQL 17 包／346 测试／396 子场景通过，4 项 Docker 专用跳过如实保留；真实 RC HTTP→AC client 的两项 race 测试各100轮／200事实通过、零跳过，Runtime三套Docker及部署业务/清理通过。协调者与独立 review 无 blocker，正常 squash 为 3a7293dd4441ff7711b38f527c31ab1f5e92d8cf；本地 main 已快进、合并 tree 与验收候选一致、原 TODO 和两份诊断源逐字保留。合并后 main CI 待跟踪。证据：artifacts/verification/reliability-20261021/issue-33/{final-pr-review,root-ff-review}.json。
 
 - 并发执行安排（2026-10-21，用户要求提速）：Runtime Controller 主线在 .worktrees/observation-commit-order 修 #33，随后 #39；ACP 子线在 .worktrees/acp-error-catalog 提前准备 #53 共享错误目录，#50 恢复设计已审查；Controller 子线在 .worktrees/controller-publication-ownership 提前复现 #43 跨实例发布竞争。不同工作树／明确写集合并行，协调者独占 Git、Docker、串行验证及合并。交付和依赖仍按上述顺序；草案及先行反例不计作 issue 完成。

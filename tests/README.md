@@ -4,6 +4,36 @@ This document describes where tests live, how to run them from the repository
 root, which external dependencies each level needs, and the resource-hygiene
 rules every test runner follows.
 
+## Readiness phase measurements
+
+The acknowledged-readiness profile still runs 100 serial fresh-Agent rounds,
+requires the publication proxy's two-second delay, admits only the original
+Controller ready event, sends one first Prompt without retry, and independently
+joins deleted Runtime resources. Timing never changes these checks.
+
+Each round records monotonic create, ready-context/ACK-ready observation,
+initialize, session creation, first-Prompt, deletion and resource-cleanup
+durations. Poll request/sleep observations are nested within these phases;
+publication injection and upstream round-trip times use the proxy's own clock.
+These overlap and must not be added to the outer durations. RPC time includes
+network and service work: pure service time is unavailable, not zero. The
+unattributed remainder includes harness/evidence and resource joining, and
+does not establish a service bottleneck. Host command overhead compares elapsed
+durations, never timestamps from different processes.
+
+The host writes a numeric allowlisted `timings.json` beside readiness evidence
+and appends the phase table to GitHub Job Summary when available. It includes
+partial rounds and separate business/final-cleanup outcomes; timing publication
+failure cannot replace either outcome. Missing values remain `null`/`n/a`.
+Raw round identities, credentials, payloads and error text are not copied into
+the timing report. Timing data does not replace the original acceptance evidence.
+
+Focused feedback: `node --test --test-concurrency=1 tests/e2e/agent-readiness/*.test.mjs`.
+The complete remote selected suite remains mandatory. This instrumentation
+batch makes no speedup claim and does not change scheduling or parallelize rounds.
+
+## Deployment secret regression
+
 Deployment secret regression is in `tests/integration/deployment/development-secrets.test.mjs`:
 the generator, file mode/non-overwrite checks and all twelve unset/empty Compose
 fields run in `make test-repo` / `make test-deployment-wiring` with Compose CLI,
