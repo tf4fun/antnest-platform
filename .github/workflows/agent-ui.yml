@@ -8,7 +8,14 @@ on:
       - services/agent-ui/**
       - tests/integration/agent-ui/**
       - services/agent-acp-service/package-lock.json
-      - contracts/**
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/agent-ui/**
+      - contracts/edge-gateway/**
+      - contracts/identity/**
+      - contracts/platform/**
+      - contracts/skill-learning/**
+      - tests/support/ci-ownership.json
       - .nvmrc
       - .github/workflows/agent-ui.yml
       - .github/workflows/_image.yml
@@ -17,21 +24,30 @@ on:
       - services/agent-ui/**
       - tests/integration/agent-ui/**
       - services/agent-acp-service/package-lock.json
-      - contracts/**
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/agent-ui/**
+      - contracts/edge-gateway/**
+      - contracts/identity/**
+      - contracts/platform/**
+      - contracts/skill-learning/**
+      - tests/support/ci-ownership.json
       - .nvmrc
       - .github/workflows/agent-ui.yml
       - .github/workflows/_image.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-agent-ui
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     name: Typecheck and test
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -63,6 +79,7 @@ jobs:
         run: npm run test:bridge:integration
 
   image:
+    if: github.event_name != 'pull_request'
     needs: check
     permissions:
       contents: read
