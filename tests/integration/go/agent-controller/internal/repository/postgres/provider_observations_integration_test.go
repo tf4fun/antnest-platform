@@ -163,7 +163,7 @@ func TestProviderObservationsScopeIndependentConnectionsAndOrganizations(t *test
 	firstSource, err := repository.ReadExecutionSource(ctx, first.OrganizationID)
 	require.NoError(t, err)
 	require.Len(t, firstSource.ProviderObservations, 1)
-	secondSource, err := repository.ReadExecutionSource(ctx, second.OrganizationID)
+	secondSource, err := repository.ReadExecutionSource(ctx, secondOriginal.OrganizationID)
 	require.NoError(t, err)
 	require.Len(t, secondSource.ProviderObservations, 1)
 	require.NotEqual(t, firstSource.ProviderObservations[0].Binding.OrganizationID,
